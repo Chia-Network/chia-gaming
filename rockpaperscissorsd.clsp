@@ -1,0 +1,23 @@
+(mod (alice_move bob_image total new_validation alice_share bob_preimage)
+
+
+(defun-inline check_new_validation (new_validation)
+  (not new_validation)
+)
+
+(defun check_bob_image (bob_image bob_preimage)
+  (= bob_image (sha256 bob_preimage))
+)
+
+(defun check_split (result total alice_share)
+  (if (= result 0) (= total (+ alice_share alice_share))
+      (= (if (= result 1) total 0) alice_share)
+    )
+)
+
+(if (all
+    (check_new_validation new_validation)
+    (check_bob_image bob_image bob_preimage)
+    (check_split (r (divmod (- alice_move bob_preimage) 3)) total alice_share)
+    ) () (x))
+)
