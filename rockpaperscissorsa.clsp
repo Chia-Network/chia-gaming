@@ -1,8 +1,11 @@
 (mod (total new_validation bob_share alice_image)
 
+(include *standard-cl-21*)
+(include assert.clinc)
 (include curry-and-treehash.clinc)
-(compile-file rockpaperscissorsb rockpaperscissorsb.clsp)
-(defconst bhash (sha256tree rockpaperscissorsb))
+;(compile-file rockpaperscissorsb rockpaperscissorsb.clsp)
+;(defconst bhash (sha256tree rockpaperscissorsb))
+(defconst bhash 0x090f0edbb2185f352540e5a6985d08ce4bd3560ecbb3499b5ac6a322857f0404)
 
 (defun check_split (bob_share)
   (not bob_share)
@@ -13,8 +16,8 @@
       (sha256tree alice_image)))
 )
 
-(if (all
+(assert
     (check_new_validation alice_image new_validation)
     (check_split bob_share)
-    ) () (x))
+    ())
 )
