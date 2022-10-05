@@ -1,6 +1,7 @@
 (mod (alice_move bob_image total new_validation alice_share bob_preimage)
 
-
+(include *standard-cl-21*)
+(include assert.clinc)
 (defun-inline check_new_validation (new_validation)
   (not new_validation)
 )
@@ -15,9 +16,9 @@
     )
 )
 
-(if (all
+(assert
     (check_new_validation new_validation)
     (check_bob_image bob_image bob_preimage)
     (check_split (r (divmod (- alice_move bob_preimage) 3)) total alice_share)
-    ) () (x))
+    ())
 )
