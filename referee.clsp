@@ -1,0 +1,38 @@
+(mod ((@ curried_parameters (MOD_HASH TOTAL TIMEOUT MOVERKEY WAITERKEY MOVERPUZZLEHASH WAITERPUZZLEHASH 
+        PREV_VALIDATOR MOVE NEW_VALIDATOR MOVERSHARE)) action . args)
+
+    (include *standard-cl-21*)
+    (include assert.clinc)
+    (include curry-and-treehash.clinc)
+    (include condition_codes.clinc)
+    (defconstant move 0)
+    (defconstant accept 1)
+    (defconstant accuse 2)
+    (defconstant timeout 3)
+    (compile-file refaccuse "referee_accuse.clsp")
+    (defconst accusehash (sha256tree refaccuse))
+
+    (defun new_puzhash (MOD_HASH TOTAL TIMEOUT MOVERKEY WAITERKEY MOVERPUZZLEHASH WAITERPUZZLEHASH 
+            PREV_VALIDATOR (MOVE NEW_VALIDATOR WAITERSHARE))
+        (puzzle-hash-of-curried-function MOD_HASH (sha256tree (list MOD_HASH TOTAL TIMEOUT 
+                WAITERKEY MOVERKEY WAITERPUZZLEHASH MOVERPUZZLEHASH 
+                PREV_VALIDATOR MOVE NEW_VALIDATOR WAITERSHARE)))
+    )
+
+    (c
+        (list AGG_SIG_UNSAFE (if (= action timeout) WAITERKEY MOVERKEY) (sha256tree (c action args)))
+        (if (= action accept)
+            (list (list CREATE_COIN MOVERPUZZLEHASH MOVERSHARE)
+                    (list CREATE_COIN WAITERPUZZLEHASH (- TOTAL MOVERSHARE)))
+            (if (= action timeout)
+                (list ASSERT_SECONDS_RELATIVE TIMEOUT)
+                (if (= action accuse)
+                    (list (list CREATE_COIN (puzzle-hash-of-curried-function accusehash 
+                            (sha256tree (r curried_parameters))) TOTAL))
+                    (list (list CREATE_COIN (new_puzhash MOD_HASH TOTAL TIMEOUT MOVERKEY WAITERKEY MOVERPUZZLEHASH WAITERPUZZLEHASH 
+                            NEW_VALIDATOR args)))
+                )
+            )
+        )
+    )
+)

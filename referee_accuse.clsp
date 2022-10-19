@@ -1,0 +1,28 @@
+(mod ((@ curried_parameters (TOTAL TIMEOUT _MOVER_KEY WAITER_KEY MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH 
+        PREV_VALIDATOR MOVE NEW_VALIDATOR MOVER_SHARE)) action . args)
+
+    (include *standard-cl-21*)
+    (include assert.clinc)
+    (include curry-and-treehash.clinc)
+    (include condition_codes.clinc)
+    (defconstant prove 5)
+    (defconstant timeout 3)
+
+    (defun validate ((TOTAL TIMEOUT _MOVER_KEY WAITER_KEY MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH 
+        PREV_VALIDATOR MOVE NEW_VALIDATOR MOVER_SHARE) (validator_reveal justification))
+        (assert (= PREV_VALIDATOR (sha256tree validator_reveal))
+            (a validator_reveal (list TOTAL MOVE NEW_VALIDATOR MOVER_SHARE justification))
+        )
+    )
+
+    (c
+        (list AGG_SIG_UNSAFE (if (= action timeout) MOVER_KEY WAITER_KEY) (sha256tree (c action args)))
+        (if (= action timeout)
+            (list (list ASSERT_SECONDS_RELATIVE TIMEOUT) (list CREATE_COIN MOVER_PUZZLE_HASH AMOUNT))
+            (c 
+                (list CREATE_COIN WAITER_PUZZLE_HASH AMOUNT)
+                (validate curried_parameters args)
+            )
+        )
+    )
+)
