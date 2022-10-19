@@ -1,11 +1,10 @@
-(mod (alice_image total new_validation alice_share bob_image)
+(mod (alice_image total bob_image new_validation alice_share _justification)
 
 (include *standard-cl-21*)
 (include assert.clinc)
 (include curry-and-treehash.clinc)
-;(compile-file rockpaperscissorsc "rockpaperscissorsc.clsp")
-;(defconst chash (sha256tree rockpaperscissorsc))
-(defconst chash 0x46d48cd31a81c4bd07f717f32f82c57565e5172eabd22aa145aaa87198f02b0c)
+(compile-file rockpaperscissorsc "rockpaperscissorsc.clsp")
+(defconst chash (sha256tree rockpaperscissorsc))
 
 (defun check_split (alice_share)
   (not alice_share)
