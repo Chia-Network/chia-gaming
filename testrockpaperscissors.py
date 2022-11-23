@@ -32,12 +32,12 @@ def testrps(amove, bmove):
     alice_move = Program.to(amove)
 
     cd = MOD_D.curry(alice_move, bob_image)
-    assert cd.run([total, bob_preimage, b'', alice_final]).atom == b''
+    assert cd.run([total, bob_preimage, b'', alice_final, b'j']).atom == b'j'
     cc = MOD_C.curry(alice_image, bob_image)
-    assert drun(cc, [total, alice_preimage, cd.tree_hash(), 0]).atom == b''
+    assert cc.run([total, alice_preimage, cd.tree_hash(), 0, b'j']).atom == b'j'
     cb = MOD_B.curry(alice_image)
-    assert cb.run([total, bob_image, cc.tree_hash(), 0]).atom == b''
-    assert MOD_A.run([total, alice_image, cb.tree_hash(), 0]).atom == b''
+    assert cb.run([total, bob_image, cc.tree_hash(), 0, b'j']).atom == b'j'
+    assert MOD_A.run([total, alice_image, cb.tree_hash(), 0, b'j']).atom == b'j'
 
 def testall():
     for i in range(3):
