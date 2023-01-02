@@ -1,22 +1,14 @@
 (mod (alice_image total bob_image new_validation alice_share justification)
 
-(include *standard-cl-21*)
-(include assert.clinc)
-(include curry-and-treehash.clinc)
-(compile-file rockpaperscissorsc "rockpaperscissorsc.clsp")
-(defconst chash (sha256tree rockpaperscissorsc))
+    (include *standard-cl-21*)
+    (include assert.clinc)
+    (include curry-and-treehash.clinc)
+    (compile-file rockpaperscissorsc "rockpaperscissorsc.clsp")
+    (defconst chash (sha256tree rockpaperscissorsc))
 
-(defun check_split (alice_share)
-  (not alice_share)
-)
-
-(defun check_new_validation (alice_image bob_image new_validation)
-  (= new_validation (puzzle-hash-of-curried-function chash (sha256tree bob_image)
-      (sha256tree alice_image)))
-)
-
-(assert
-    (check_new_validation alice_image bob_image new_validation)
-    (check_split alice_share)
-    justification)
+    (assert
+        (= new_validation (curry_hashes chash (sha256tree (list alice_image bob_image))))
+        (not alice_share)
+        0
+    )
 )
