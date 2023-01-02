@@ -1,24 +1,18 @@
-(mod (alice_move bob_image total bob_preimage new_validation alice_share justification)
+(mod ((alice_move bob_image) total bob_preimage new_validation alice_share justification)
 
-(include *standard-cl-21*)
-(include assert.clinc)
-(defun-inline check_new_validation (new_validation)
-  (not new_validation)
-)
+    (include *standard-cl-21*)
+    (include assert.clinc)
 
-(defun check_bob_image (bob_image bob_preimage)
-  (= bob_image (sha256 bob_preimage))
-)
-
-(defun check_split (result total alice_share)
-  (if (= result 0) (= total (+ alice_share alice_share))
-      (= (if (= result 1) total 0) alice_share)
+    (assert
+        (not new_validation)
+        (= bob_image (sha256 bob_preimage))
+        (assign result (r (divmod (- alice_move bob_preimage) 3))
+            (if 
+                (= result 2) (= alice_share 0)
+                result (= total alice_share)
+                (= total (+ alice_share alice_share))
+            )
+        )
+        0
     )
-)
-
-(assert
-    (check_new_validation new_validation)
-    (check_bob_image bob_image bob_preimage)
-    (check_split (r (divmod (- alice_move bob_preimage) 3)) total alice_share)
-    justification)
 )

@@ -1,28 +1,59 @@
-(mod ((@ curried_parameters (TOTAL TIMEOUT _MOVER_KEY WAITER_KEY MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH 
-        PREV_VALIDATOR MOVE NEW_VALIDATOR MOVER_SHARE)) action . args)
+
+(mod ((AMOUNT TIMEOUT ACCUSED_PUZZLE_HASH ACCUSER_PUZZLE_HASH) . args)
 
     (include *standard-cl-21*)
     (include assert.clinc)
-    (include curry-and-treehash.clinc)
     (include condition_codes.clinc)
-    (defconstant prove 5)
-    (defconstant timeout 3)
+    (include curry.clinc)
+    (include sha256tree.clinc)
+    (defconstant prove 0)
+    (defconstant timeout 1)
 
-    (defun validate ((TOTAL TIMEOUT _MOVER_KEY WAITER_KEY MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH 
-        PREV_VALIDATOR MOVE NEW_VALIDATOR MOVER_SHARE) (validator_reveal justification))
-        (assert (= PREV_VALIDATOR (sha256tree validator_reveal))
-            (a validator_reveal (list TOTAL MOVE NEW_VALIDATOR MOVER_SHARE justification))
+    (defmacro prefix-list ARGS
+        (defun compile-list (args)
+            (if args
+                (if (r args)
+                    ;; We have at least 2 things left... recurse once.
+                    (qq (c (unquote (f args)) (unquote (compile-list (r args)))))
+                    ;; This is the last item, so we return it whole (improper list form).
+                    (qq (unquote (f args)))
+                )
+                0
+            )
         )
+        (compile-list ARGS)
     )
 
-    (c
-        (list AGG_SIG_UNSAFE (if (= action timeout) MOVER_KEY WAITER_KEY) (sha256tree (c action args)))
-        (if (= action timeout)
-            (list (list ASSERT_SECONDS_RELATIVE TIMEOUT) (list CREATE_COIN MOVER_PUZZLE_HASH AMOUNT))
-            (c 
-                (list CREATE_COIN WAITER_PUZZLE_HASH AMOUNT)
-                (validate curried_parameters args)
+    (if args
+        (assign (GREAT_GRANDPARENT_ID GRANDPARENT_VALIDATION_PROGRAM GRANDPARENT_EVERYTHING_ELSE_HASH
+                PARENT_VALIDATION_PROGRAM_HASH MOVE SPLIT MAX_MOVE_SIZE REFEREE_MOD_HASH justification) args
+            (prefix-list
+                (list 
+                    ASSERT_MY_PARENT_ID 
+                    (sha256
+                        ; grandparent id calculation
+                        (sha256 
+                            GREAT_GRANDPARENT_ID
+                            (curry_hashes REFEREE_MOD_HASH 
+                                ; grandparent curried parameter list calculation
+                                (sha256 2 (sha256 1 (sha256tree GRANDPARENT_VALIDATION_PROGRAM)) GRANDPARENT_EVERYTHING_ELSE_HASH))
+                            AMOUNT
+                        )
+                        ; parent's puzzle hash
+                        (curry_hashes REFEREE_MOD_HASH (sha256tree (list PARENT_VALIDATION_PROGRAM_HASH MOVE SPLIT AMOUNT 
+                            TIMEOUT MAX_MOVE_SIZE ACCUSED_PUZZLE_HASH ACCUSER_PUZZLE_HASH)))
+                        AMOUNT
+                    )
+                )
+                (list CREATE_COIN ACCUSED_PUZZLE_HASH AMOUNT)
+                (list CREATE_COIN_ANNOUNCEMENT 0)
+                (a GRANDPARENT_VALIDATION_PROGRAM (list AMOUNT MOVE SPLIT PARENT_VALIDATION_PROGRAM_HASH justification))
             )
+        )
+        (list 
+            (list ASSERT_SECONDS_RELATIVE TIMEOUT) 
+            (list CREATE_COIN ACCUSER_PUZZLE_HASH AMOUNT)
+            (list CREATE_COIN_ANNOUNCEMENT 0)
         )
     )
 )

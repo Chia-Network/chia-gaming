@@ -1,37 +1,56 @@
-(mod ((@ curried_parameters (MOD_HASH TOTAL TIMEOUT MOVERKEY WAITERKEY MOVERPUZZLEHASH WAITERPUZZLEHASH 
-        PREV_VALIDATOR MOVE NEW_VALIDATOR_HASH MOVERSHARE)) action . args)
+(mod ((VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT TIMEOUT MAX_MOVE_SIZE 
+        MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH MOD_HASH) action . args)
 
     (include *standard-cl-21*)
     (include assert.clinc)
-    (include curry-and-treehash.clinc)
+    (include curry.clinc)
     (include condition_codes.clinc)
     (defconstant move 0)
-    (defconstant accept 1)
-    (defconstant accuse 2)
-    (defconstant timeout 3)
+    (defconstant accuse 1)
+    (defconstant timeout 2)
     (compile-file refaccuse "referee_accuse.clsp")
     (defconst accusehash (sha256tree refaccuse))
 
-    (defun after_move_hash (MOD_HASH TOTAL TIMEOUT MOVERKEY WAITERKEY MOVERPUZZLEHASH WAITERPUZZLEHASH 
-            PREV_VALIDATOR (MOVE NEW_VALIDATOR WAITERSHARE))
-        (puzzle-hash-of-curried-function MOD_HASH (sha256tree (list MOD_HASH TOTAL TIMEOUT 
-                WAITERKEY MOVERKEY WAITERPUZZLEHASH MOVERPUZZLEHASH 
-                PREV_VALIDATOR MOVE NEW_VALIDATOR WAITERSHARE)))
+    (defun-inline <= (a b)
+        (not (> a b))
     )
 
-    (c
-        (list AGG_SIG_UNSAFE (if (= action timeout) WAITERKEY MOVERKEY) (sha256tree (c action args)))
-        (if (= action accept)
-            (list (list CREATE_COIN MOVERPUZZLEHASH MOVERSHARE)
-                    (list CREATE_COIN WAITERPUZZLEHASH (- TOTAL MOVERSHARE)))
-            (if (= action timeout)
-                (list ASSERT_SECONDS_RELATIVE TIMEOUT)
-                (if (= action accuse)
-                    (list (list CREATE_COIN (puzzle-hash-of-curried-function accusehash 
-                            (sha256tree (r curried_parameters))) TOTAL))
-                    (list (list CREATE_COIN (after_move_hash MOD_HASH TOTAL TIMEOUT MOVERKEY WAITERKEY MOVERPUZZLEHASH WAITERPUZZLEHASH 
-                            NEW_VALIDATOR args) TOTAL))
+    (defun maybe_create (hash size remaining)
+        (if size
+            (c (list CREATE_COIN hash size) remaining)
+            remaining
+        )
+    )
+
+    (if (= action timeout)
+        (maybe_create MOVER_PUZZLE_HASH SPLIT
+            (maybe_create WAITER_PUZZLE_HASH (- AMOUNT SPLIT)
+                (list 
+                    (list ASSERT_SECONDS_RELATIVE TIMEOUT)
+                    (list CREATE_COIN_ANNOUNCEMENT 0)
                 )
+            )
+        )
+        (assign create 
+            (if action
+                (list CREATE_COIN (curry_hashes accusehash (sha256tree (list AMOUNT 
+                        TIMEOUT WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH))) AMOUNT)
+                (list 
+                    CREATE_COIN
+                    (assign (MOVE NEW_VALIDATOR_HASH WAITER_SHARE) args
+                        (assert
+                            (<= (strlen MOVE) MAX_MOVE_SIZE)
+                            (curry_hashes MOD_HASH (sha256tree (list NEW_VALIDATOR_HASH MOVE WAITER_SHARE 
+                                AMOUNT TIMEOUT MAX_MOVE_SIZE WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH MOD_HASH)))
+                        )
+                    )
+                    AMOUNT
+                )
+            )
+            (list 
+                (list AGG_SIG_ME MOVERKEY (sha256tree (list create)))
+                (list CREATE_COIN_ANNOUNCEMENT 0)
+                create
             )
         )
     )
