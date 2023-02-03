@@ -5,7 +5,7 @@
 (include curry-and-treehash.clinc)
 
 (defun check_new_validation (new_validation MODHASH NONCE)
-    (= new_validation (puzzle-hash-of-curried-function MODHASH (sha256 1 MODHASH) (sha256tree (+ NONCE 1))))
+    (= new_validation (puzzle-hash-of-curried-function MODHASH (sha256 1 MODHASH) (shatree (+ NONCE 1))))
 )
 
 (assert

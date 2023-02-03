@@ -4,7 +4,7 @@
     (include assert.clinc)
     (include curry-and-treehash.clinc)
     (compile-file rockpaperscissorsb rockpaperscissorsb.clsp)
-    (defconst bhash (sha256tree rockpaperscissorsb))
+    (defconst bhash (shatree rockpaperscissorsb))
 
     (assert
         (= new_validation (curry_hashes bhash (sha256 1 alice_image)))

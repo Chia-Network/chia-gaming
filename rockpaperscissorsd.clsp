@@ -1,12 +1,13 @@
-(mod ((alice_move bob_image) total bob_preimage new_validation alice_share justification)
+(mod ((ALICE_MOVE BOB_IMAGE) total bob_preimage new_validation alice_share justification)
 
     (include *standard-cl-21*)
     (include assert.clinc)
+    (include utils.clinc)
 
     (assert
         (not new_validation)
-        (= bob_image (sha256 bob_preimage))
-        (assign result (r (divmod (- alice_move bob_preimage) 3))
+        (= BOB_IMAGE (sha256 bob_preimage))
+        (assign result (r (divmod (- ALICE_MOVE bob_preimage) 3))
             (if 
                 (= result 2) (= alice_share 0)
                 result (= total alice_share)
