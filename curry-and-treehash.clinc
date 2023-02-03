@@ -1,7 +1,7 @@
 (
   ;; The code below is used to calculate of the tree hash of a curried function
   ;; without actually doing the curry, and using other optimization tricks
-  ;; like unrolling `sha256tree`.
+  ;; like unrolling `shatree`.
 
   (defconstant ONE 1)
   (defconstant TWO 2)
@@ -84,9 +84,9 @@
   )
 
   ; takes a lisp tree and returns the hash of it
-  (defun sha256tree (TREE)
+  (defun shatree (TREE)
         (if (l TREE)
-            (sha256 2 (sha256tree (f TREE)) (sha256tree (r TREE)))
+            (sha256 2 (shatree (f TREE)) (shatree (r TREE)))
             (sha256 1 TREE)))
 
 )
