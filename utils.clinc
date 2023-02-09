@@ -1,0 +1,17 @@
+(
+    (defmacro ifc ARGS
+        (defun list-length (lst)
+            (if (l lst)
+                (+ 1 (list-length (r lst)))
+                0
+            )
+        )
+        (defun do-continued-if (ARGS)
+            (if (= (list-length ARGS) 3)
+                (qq (i (unquote (f ARGS)) (com (unquote (f (r ARGS)))) (com (unquote (f (r (r ARGS)))))))
+                (qq (i (unquote (f ARGS)) (com (unquote (f (r ARGS)))) (unquote (do-continued-if (r (r ARGS))))))
+            )
+        )
+        (qq (a (unquote (do-continued-if ARGS)) @))
+    )
+)
