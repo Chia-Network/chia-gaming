@@ -1,0 +1,11 @@
+(
+    ;; hash a tree
+    ;; This is used to calculate a puzzle hash given a puzzle program.
+    (defun shatree
+        (TREE)
+        (if (l TREE)
+            (sha256 2 (shatree (f TREE)) (shatree (r TREE)))
+            (sha256 1 TREE)
+        )
+    )
+)
