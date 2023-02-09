@@ -1,8 +1,9 @@
 (mod ((ALICE_IMAGE BOB_IMAGE) total alice_preimage new_validation bob_share justification)
 
-    (include *standard-cl-21*)
+    (include *standard-cl-22*)
     (include assert.clinc)
-    (include curry-and-treehash.clinc)
+    (include curry.clinc)
+    (include shatree.clinc)
     (compile-file rockpaperscissorsd rockpaperscissorsd.clsp)
     (defconst dhash (shatree rockpaperscissorsd))
 

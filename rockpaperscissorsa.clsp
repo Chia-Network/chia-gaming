@@ -1,8 +1,9 @@
 (mod (total alice_image new_validation bob_share justification)
 
-    (include *standard-cl-21*)
+    (include *standard-cl-22*)
     (include assert.clinc)
-    (include curry-and-treehash.clinc)
+    (include curry.clinc)
+    (include shatree.clinc)
     (compile-file rockpaperscissorsb rockpaperscissorsb.clsp)
     (defconst bhash (shatree rockpaperscissorsb))
 
