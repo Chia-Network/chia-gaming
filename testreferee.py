@@ -18,6 +18,8 @@ from chia.types.spend_bundle import SpendBundle
 from chia.types.coin_spend import CoinSpend
 from blspy import G2Element
 
+from steprun import diag_run_clvm
+
 compile_clvm('referee.clsp', 'referee.clvm.hex', ['.'])
 referee = Program.from_bytes(bytes.fromhex(open("referee.clvm.hex").read()))
 refhash = referee.tree_hash()
@@ -89,15 +91,15 @@ class RefereeWrap:
                 self.timeout, self.max_move_size, self.mover_puzzle.tree_hash(), self.waiter_puzzle.tree_hash(), 
                 referee.tree_hash()])
 
-    def SpendMove(self, password, move, split, validation_program_hash):
+    def SpendMove(self, password, move_to_make, split, validation_program_hash):
         """
         returns (solution, new RefereeWrap)
         """
-        new_puzzle_hash = referee.curry([validation_program_hash, move, split, self.coin.amount,
+        new_puzzle_hash = referee.curry([validation_program_hash, move_to_make, split, self.coin.amount,
             self.timeout, self.max_move_size, self.waiter_puzzle.tree_hash(), 
-            self.mover_puzzle.tree_hash()]).tree_hash()
-        solution = Program.to([move, split, validation_program_hash, self.mover_puzzle, 
-                [password, [51, new_puzzle_hash, self.coin.amount]]])
+                                         self.mover_puzzle.tree_hash(), refhash]).tree_hash()
+        solution = Program.to([move, move_to_make, split, validation_program_hash, self.mover_puzzle, 
+                               [password, [51, new_puzzle_hash, self.coin.amount]]])
         coin = Coin(self.coin.name(), new_puzzle_hash, self.coin.amount)
         everything_else_hash = Program.to([self.move, self.split, self.coin.amount, self.timeout, 
                 self.max_move_size, self.mover_puzzle.tree_hash(), self.waiter_puzzle.tree_hash(), 
@@ -237,6 +239,11 @@ async def test_rps(amove, bmove, setup_sim):
         solution, ref2 = referee.SpendMove('alice', alice_image, 0, bpuz.tree_hash())
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(referee.coin, referee.get_puzzle(), 
                 solution)], G2Element()))
+        if status != MempoolInclusionStatus.SUCCESS:
+            print('RUN FAILURE')
+            print(solution)
+            diag_run_clvm(referee.get_puzzle(), solution, 'referee.sym')
+
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
         savepoint = sym.block_height
@@ -244,6 +251,12 @@ async def test_rps(amove, bmove, setup_sim):
         solution, accuse = ref2.SpendAccuse('bob')
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref2.coin, ref2.get_puzzle(), 
                 solution)], G2Element()))
+
+        if status != MempoolInclusionStatus.SUCCESS:
+            print('RUN FAILURE')
+            print(solution)
+            diag_run_clvm(referee.get_puzzle(), solution, 'referee.sym')
+
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
         savepoint2 = sym.block_height
