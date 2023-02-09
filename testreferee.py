@@ -12,6 +12,11 @@ from clvm.EvalError import EvalError
 from chia.types.mempool_inclusion_status import MempoolInclusionStatus
 from chia.util.errors import Err
 from dataclasses import dataclass
+from typing import Any
+from chia_rs import Coin
+from chia.types.spend_bundle import SpendBundle
+from chia.types.coin_spend import CoinSpend
+from blspy import G2Element
 
 compile_clvm('referee.clsp', 'referee.clvm.hex', ['.'])
 referee = Program.from_bytes(bytes.fromhex(open("referee.clvm.hex").read()))
@@ -38,7 +43,7 @@ def drun(prog: Program, *args: Program):
         print(f"brun -x -y main.sym {prog} {Program.to(list(args))}")
         raise
 
-def sha256(blob:bytes) -> bytes:
+def sha(blob:bytes) -> bytes:
     return sha256(blob).digest()
 
 @pytest.fixture(scope="function")
@@ -59,8 +64,8 @@ def bootstrap_referee(parent_coin_id, initial_validation_program_hash, initial_s
     returns referee_wrap
     """
     puzzle_hash = referee.curry(
-        [initial_validation_program_hash, 0, initial_split, amount, timeout, max_move_size, mover_puzzle.get_tree_hash(), 
-        waiter_puzzle.get_tree_hash(), referee.get_tree_hash()]).get_tree_hash()
+        [initial_validation_program_hash, 0, initial_split, amount, timeout, max_move_size, mover_puzzle.tree_hash(), 
+        waiter_puzzle.tree_hash(), referee.tree_hash()]).tree_hash()
     coin = Coin(parent_coin_id, puzzle_hash, amount)
     return RefereeWrap(coin, bytes(32), bytes(32),
             initial_validation_program_hash, 0, initial_split, timeout, max_move_size, 
@@ -81,24 +86,24 @@ class RefereeWrap:
 
     def get_puzzle(self):
         return referee.curry([self.validation_program_hash, self.move, self.split, self.coin.amount, 
-                self.timeout, self.max_move_size, self.mover_puzzle.get_tree_hash(), self.waiter_puzzle.get_tree_hash(), 
-                referee.get_tree_hash()])
+                self.timeout, self.max_move_size, self.mover_puzzle.tree_hash(), self.waiter_puzzle.tree_hash(), 
+                referee.tree_hash()])
 
     def SpendMove(self, password, move, split, validation_program_hash):
         """
         returns (solution, new RefereeWrap)
         """
         new_puzzle_hash = referee.curry([validation_program_hash, move, split, self.coin.amount,
-            self.timeout, self.max_move_size, self.waiter_puzzle.get_tree_hash(), 
-            self.mover_puzzle.get_tree_hash()]).get_tree_hash()
+            self.timeout, self.max_move_size, self.waiter_puzzle.tree_hash(), 
+            self.mover_puzzle.tree_hash()]).tree_hash()
         solution = Program.to([move, split, validation_program_hash, self.mover_puzzle, 
                 [password, [51, new_puzzle_hash, self.coin.amount]]])
         coin = Coin(self.coin.name(), new_puzzle_hash, self.coin.amount)
         everything_else_hash = Program.to([self.move, self.split, self.coin.amount, self.timeout, 
-                self.max_move_size, self.mover_puzzle.get_tree_hash(), self.waiter_puzzle.get_tree_hash(), 
-                referee.get_tree_hash()]).get_tree_hash()
+                self.max_move_size, self.mover_puzzle.tree_hash(), self.waiter_puzzle.tree_hash(), 
+                referee.tree_hash()]).tree_hash()
         return (solution, RefereeWrap(coin, self.validation_program_hash, everything_else_hash,
-            validation_program_hash, move, split, self.amount, self.timeout, self.max_move_size,
+            validation_program_hash, move, split, self.timeout, self.max_move_size,
             self.waiter_puzzle, self.mover_puzzle))
 
     def SpendAccuse(self, password):
@@ -107,20 +112,20 @@ class RefereeWrap:
         """
         new_puzzle_hash = referee_accuse.curry([self.parent_validation_program_hash, 
                 self.validation_program_hash, self.move, self.split, self.coin.amount,
-                self.timeout, self.waiter_puzzle.get_tree_hash(), self.mover_puzzle.get_tree_hash()]).get_tree_hash()
-        solution = [accuse, self.coin.parent_coin_info, self.parent_validation_program_hash, 
-                self.parent_everything_else_hash, self.mover_puzzle, [password, [51, new_puzzle_hash, self.coin.amount]]]
+                self.timeout, self.waiter_puzzle.tree_hash(), self.mover_puzzle.tree_hash()]).tree_hash()
+        solution = Program.to([accuse, self.coin.parent_coin_info, self.parent_validation_program_hash, 
+                self.parent_everything_else_hash, self.mover_puzzle, [password, [51, new_puzzle_hash, self.coin.amount]]])
         coin = Coin(self.coin.name(), new_puzzle_hash, self.coin.amount)
         return (solution, RefereeAccuseWrap(coin, self.parent_validation_program_hash, self.validation_program_hash,
-                self.move, self.split, self.timeout, self.waiter_puzzle.get_tree_hash(), 
-                self.mover_puzzle.get_tree_hash()))
+                self.move, self.split, self.timeout, self.waiter_puzzle.tree_hash(), 
+                self.mover_puzzle.tree_hash()))
 
     def SpendTimeout(self):
         """
         returns (solution, movercoinid, waitercoinid)
         """
-        movercoinid = Coin(self.coin.name(), self.mover_puzzle.get_tree_hash(), self.split).name()
-        waitercoinid = Coin(self.coin.name(), self.waiter_puzzle.get_tree_hash(), 
+        movercoinid = Coin(self.coin.name(), self.mover_puzzle.tree_hash(), self.split).name()
+        waitercoinid = Coin(self.coin.name(), self.waiter_puzzle.tree_hash(), 
                 self.coin.amount - self.split).name()
         return (Program.to((timeout, 0)), movercoinid, waitercoinid)
 
@@ -138,7 +143,7 @@ class RefereeAccuseWrap:
     def get_puzzle(self):
         return referee_accuse.curry([self.old_validation_puzzle_hash, self.new_validation_puzzle_hash, 
                 self.move, self.split, self.coin.amount, self.timeout, self.accused_puzzle_hash, 
-                self.accuser_puzzle_hash]).get_tree_hash()
+                self.accuser_puzzle_hash]).tree_hash()
 
     def SpendTimeout(self):
         """
@@ -156,34 +161,34 @@ class RefereeAccuseWrap:
         return (solution, coin.name())
 
 @pytest.mark.asyncio
-@pytest.mark.parameterize('amove', [1, 2, 3])
-@pytest.mark.parameterize('bmove', [1, 2, 3])
+@pytest.mark.parametrize('amove', [1, 2, 3])
+@pytest.mark.parametrize('bmove', [1, 2, 3])
 async def test_rps(amove, bmove, setup_sim):
     total = 100
     alice_final = (total//2 if amove == bmove else (0 if bmove == (amove + 1) % 3 else total))
     alice_preimage = int_to_bytes(60 + amove)
-    alice_image = sha256(alice_preimage)
+    alice_image = sha(alice_preimage)
     bob_preimage = int_to_bytes(60 + bmove)
-    bob_image = sha256(bob_preimage)
+    bob_image = sha(bob_preimage)
     alice_move = int_to_bytes(amove)
     nil = Program.to(0)
 
     # (mod (password . conditions) (if (= password 'alice') conditions (x)))
     alice_puzzle = Program.from_bytes(bytes.fromhex('ff02ffff03ffff09ff02ffff0185616c69636580ffff0103ffff01ff088080ff0180'))
-    alice_puzzle_hash = alice_puzzle.get_tree_hash()
+    alice_puzzle_hash = alice_puzzle.tree_hash()
     # (mod (password . conditions) (if (= password 'bob') conditions (x)))
     bob_puzzle = Program.from_bytes(bytes.fromhex('ff02ffff03ffff09ff02ffff0183626f6280ffff0103ffff01ff088080ff0180'))
-    bob_puzzle_hash = bob_puzzle.get_tree_hash()
+    bob_puzzle_hash = bob_puzzle.tree_hash()
 
-    async with setup_sim as sym, client:
+    async with setup_sim as (sym, client):
         acs = Program.to(1)
-        acs_hash = acs.get_tree_hash()
+        acs_hash = acs.tree_hash()
         await sym.farm_block(acs_hash)
         mycoin = (await client.get_coin_records_by_puzzle_hashes([acs_hash], include_spent_coins = False))[0].coin
         # make a coin for a game
-        referee = bootstrap_referee(mycoin.name(), MOD_A.get_tree_hash(), 2, 6, 1000, 50, alice_puzzle, bob_puzzle)
+        referee = bootstrap_referee(mycoin.name(), MOD_A.tree_hash(), 2, total, 1000, 50, alice_puzzle, bob_puzzle)
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(mycoin, acs, Program.to([[51, referee.coin.puzzle_hash, 
-                referee.coin.amount]]), G2Element())]))
+                referee.coin.amount]]))], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
         savepoint = sym.block_height
@@ -206,8 +211,8 @@ async def test_rps(amove, bmove, setup_sim):
         assert status == MempoolInclusionStatus.SUCCESS
         assert err is None
         await sym.farm_block()
-        assert (await client.get_coin_records_by_ids([alice_reward_id], include_spent_coins = False))[0].coin.amount == 2
-        assert (await client.get_coin_records_by_ids([bob_reward_id], include_spent_coins = False))[0].coin.amount == 4
+        assert (await client.get_coin_records_by_names([alice_reward_id], include_spent_coins = False))[0].coin.amount == 2
+        assert (await client.get_coin_records_by_names([bob_reward_id], include_spent_coins = False))[0].coin.amount == total - 2
         await sym.rewind(savepoint)
         # Alice makes an illegally large move, fails
         solution, ref2 = referee.SpendMove('alice', bytes(100), 0, bytes(32))
@@ -229,7 +234,7 @@ async def test_rps(amove, bmove, setup_sim):
         assert err == Err.GENERATOR_RUNTIME_ERROR
         # Alice move 1 commit to image
         bpuz = MOD_B.curry(alice_image)
-        solution, ref2 = referee.SpendMove('alice', alice_image, 0, bpuz.get_tree_hash())
+        solution, ref2 = referee.SpendMove('alice', alice_image, 0, bpuz.tree_hash())
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(referee.coin, referee.get_puzzle(), 
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
@@ -248,7 +253,7 @@ async def test_rps(amove, bmove, setup_sim):
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
-        reward_coin = await client.get_coin_records_by_ids([reward_id], include_spent_coins = 
+        reward_coin = await client.get_coin_records_by_names([reward_id], include_spent_coins = 
                 False)[0].coin
         assert reward_coin.amount == referee.coin.amount
         assert reward_coin.puzzle_hash == alice_puzzle_hash
@@ -266,14 +271,14 @@ async def test_rps(amove, bmove, setup_sim):
         assert status == MempoolInclusionStatus.SUCCESS
         assert err is None
         await sym.farm_block()
-        reward_coin = await client.get_coin_records_by_ids([reward_id], include_spent_coins = 
+        reward_coin = await client.get_coin_records_by_names([reward_id], include_spent_coins = 
                 False)[0].coin
         assert reward_coin.amount == referee.coin.amount
         assert reward_coin.puzzle_hash == bob_puzzle_hash
         await sym.rewind(savepoint)
         # Bob move 2 commit to image
         cpuz = MOD_C.curry([alice_image, bob_image])
-        solution, ref3 = ref2.SpendMove('bob', bob_image, 0, cpuz.get_tree_hash())
+        solution, ref3 = ref2.SpendMove('bob', bob_image, 0, cpuz.tree_hash())
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref2.coin, ref2.get_puzzle(), 
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
@@ -291,15 +296,15 @@ async def test_rps(amove, bmove, setup_sim):
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
-        reward_coin = await client.get_coin_records_by_ids([reward_id], include_spent_coins = 
-                False))[0].coin
+        reward_coin = await client.get_coin_records_by_names([reward_id], include_spent_coins = 
+                False)[0].coin
         assert reward_coin.amount == referee.coin.amount
         assert reward_coin.puzzle_hash == bob_puzzle_hash
         await sym.rewind(savepoint)
         # Alice reveals wrong preimage
         alice_bad_preimage = int_to_bytes(61 + amove)
         dpuz = MOD_D.curry([(alice_move + 1) % 3, bob_image])
-        solution, ref4 = ref3.SpendMove('alice', alice_bad_preimage, 0, dpuz.get_tree_hash())
+        solution, ref4 = ref3.SpendMove('alice', alice_bad_preimage, 0, dpuz.tree_hash())
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref3.coin, ref3.get_puzzle(), 
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
@@ -319,7 +324,7 @@ async def test_rps(amove, bmove, setup_sim):
         await sym.rewind(savepoint)
         # Alice move 3 reveal preimage
         dpuz = MOD_D.curry([alice_move, bob_image])
-        solution, ref4 = ref3.SpendMove('alice', alice_preimage, 0, dpuz.get_tree_hash())
+        solution, ref4 = ref3.SpendMove('alice', alice_preimage, 0, dpuz.tree_hash())
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref3.coin, ref3.get_puzzle(), 
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
@@ -339,7 +344,7 @@ async def test_rps(amove, bmove, setup_sim):
         await sym.rewind(savepoint)
         # Bob move 4 reveal wrong preimage
         bob_bad_preimage = int_to_bytes(121 + amove)
-        solution, ref5 = ref4.SpendMove('bob', bob_bad_preimage, 0, dpuz.get_tree_hash())
+        solution, ref5 = ref4.SpendMove('bob', bob_bad_preimage, 0, dpuz.tree_hash())
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref4.coin, ref4.get_puzzle(), 
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
@@ -365,7 +370,7 @@ async def test_rps(amove, bmove, setup_sim):
         await sym.rewind(savepoint)
         if amove == bmove:
             # Bob move 4 gives wrong split
-            solution, ref5 = ref4.SpendMove('bob', bob_preimage, 0, dpuz.get_tree_hash())
+            solution, ref5 = ref4.SpendMove('bob', bob_preimage, 0, dpuz.tree_hash())
             (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref4.coin, ref4.get_puzzle(), 
                     solution)], G2Element()))
             assert status == MempoolInclusionStatus.SUCCESS
@@ -384,12 +389,7 @@ async def test_rps(amove, bmove, setup_sim):
             assert err == Err.GENERATOR_RUNTIME_ERROR
             await sym.rewind(savepoint)
         # Bob move 4 reveal preimage
-        split = 0
-        if amove == bmove:
-            split = ref5.coin.amount // 2
-        elif amove == (bmove + 1) % 3:
-            split = ref5.coin.amount
-        solution, ref5 = ref4.SpendMove('bob', bob_preimage, split, dpuz.get_tree_hash())
+        solution, ref5 = ref4.SpendMove('bob', bob_preimage, alice_final, dpuz.tree_hash())
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref4.coin, ref4.get_puzzle(), 
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
@@ -410,14 +410,14 @@ async def test_rps(amove, bmove, setup_sim):
         assert status == MempoolInclusionStatus.SUCCESS
         assert err is None
         await sym.farm_block()
-        if split != 0:
-            assert (await client.get_coin_records_by_ids([alice_reward_id], include_spent_coins = False))[0].coin.amount == split
+        if alice_final != 0:
+            assert (await client.get_coin_records_by_names([alice_reward_id], include_spent_coins = False))[0].coin.amount == alice_final
         else:
-            assert len(await client.get_coin_records_by_ids([alice_reward_id], include_spent_coins = False)) == 0
-        if split != ref5.coin.amount:
-            assert (await client.get_coin_records_by_ids([bob_reward_id], include_spent_coins = False))[0].coin.amount == ref5.coin.amount - split
+            assert len(await client.get_coin_records_by_names([alice_reward_id], include_spent_coins = False)) == 0
+        if alice_final != ref5.coin.amount:
+            assert (await client.get_coin_records_by_names([bob_reward_id], include_spent_coins = False))[0].coin.amount == ref5.coin.amount - alice_final
         else:
-            assert len(await client.get_coin_records_by_ids([bob_reward_id], include_spent_coins = False)) == 0
+            assert len(await client.get_coin_records_by_names([bob_reward_id], include_spent_coins = False)) == 0
         await sym.rewind(savepoint)
         # Alice accuses
         solution, accuse = ref5.SpendAccuse('alice')

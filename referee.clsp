@@ -1,7 +1,7 @@
 (mod ((VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT TIMEOUT MAX_MOVE_SIZE 
         MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH MOD_HASH) action . args)
 
-    (include *standard-cl-21*)
+    (include *standard-cl-22*)
     (include assert.clinc)
     (include curry.clinc)
     (include shatree.clinc)
@@ -11,6 +11,29 @@
     (defconstant timeout 2)
     (compile-file refaccuse "referee_accuse.clsp")
     (defconst accusehash (shatree refaccuse))
+    (defun reduce (fun lst init)
+        (if lst
+            (reduce fun (r lst) (a fun (list (f lst) init)))
+            init
+        )
+    )
+    (defun <= (A B) (not (> A B)))
+    (defun >= (A B) (not (> B A)))
+    (defun print (A B) B)
+    (defmacro prefix_list ARGS
+        (defun compile-list (args)
+            (if args
+                (if (r args)
+                    ;; We have at least 2 things left... recurse once.
+                    (qq (c (unquote (f args)) (unquote (compile-list (r args)))))
+                    ;; This is the last item, so we return it whole (improper list form).
+                    (qq (unquote (f args)))
+                )
+                0
+            )
+        )
+        (compile-list ARGS)
+    )
 
     (if (= action timeout)
         (reduce
@@ -32,17 +55,18 @@
         (if action
             ; accuse
             (assign 
-                (grandparent_id parent_validation_program_hash parent_everything_else_hash 
+                (grandparent_id parent_validation_puzzle_hash parent_everything_else_hash 
                         mover_puzzle_reveal solution) args
                 new_puzzle_hash (curry_hashes accusehash (shatree (list 
-                        parent_validation_puzzle_hash VALIDATION_PROGRAM_HASH MOVE SPLIT AMOUNT 
+                        parent_validation_puzzle_hash VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT 
                         TIMEOUT WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH)))
                 conditions (a mover_puzzle_reveal solution)
                 (assert
                     (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
                     (reduce
-                        (lambda ((@ condition (condname arg1 arg2)) agg)
-                            (if agg 1 
+                        (lambda ((& new_puzzle_hash AMOUNT) (@ condition (condname arg1 arg2)) agg)
+                            (if agg 
+                                1 
                                 (if (= condname CREATE_COIN) 
                                     (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
                                     0
@@ -57,7 +81,7 @@
                             (sha256
                                 grandparent_id
                                 (curry_hashes MOD_HASH
-                                    (sha256 2 (sha256 1 parent_validation_program_hash) parent_everything_else_hash)
+                                    (sha256 2 (sha256 1 parent_validation_puzzle_hash) parent_everything_else_hash)
                                 )
                                 AMOUNT
                             )
@@ -72,16 +96,17 @@
                 (new_move new_split new_validation_program_hash mover_puzzle_reveal solution) args
                 new_puzzle_hash (curry_hashes MOD_HASH (shatree (list new_validation_program_hash new_move new_split
                         AMOUNT TIMEOUT MAX_MOVE_SIZE WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH MOD_HASH)))
-                conditions (a mover_puzzle_reveal solution)
+                conditions (a mover_puzzle_reveal (print 'called' solution))
                 (assert
                     (<= (strlen new_move) MAX_MOVE_SIZE)
                     (<= new_split AMOUNT)
-                    (>= newsplit 0)
+                    (>= new_split 0)
                     (= 32 (strlen new_validation_program_hash))
                     (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
                     (reduce
-                        (lambda ((@ condition (condname arg1 arg2)) agg)
-                            (if agg 1 
+                        (lambda ((& new_puzzle_hash AMOUNT) (@ condition (condname arg1 arg2)) agg)
+                            (if agg 
+                                1 
                                 (if (= condname CREATE_COIN)
                                     (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
                                     0
