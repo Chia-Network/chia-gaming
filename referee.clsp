@@ -54,9 +54,10 @@
         )
         (if action
             ; accuse
-            (assign 
+            (assign
+                dummy (print 5501 MOVER_PUZZLE_HASH)
                 (grandparent_id parent_validation_puzzle_hash parent_everything_else_hash 
-                        mover_puzzle_reveal solution) args
+                        mover_puzzle_reveal solution) (print 5561 args)
                 new_puzzle_hash (curry_hashes accusehash (shatree (list 
                         parent_validation_puzzle_hash VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT 
                         TIMEOUT WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH)))
@@ -79,11 +80,11 @@
                     (prefix_list
                         (list ASSERT_MY_PARENT_ID 
                             (sha256
-                                grandparent_id
-                                (curry_hashes MOD_HASH
+                                (print 5551 grandparent_id)
+                                (print 5552 (curry_hashes MOD_HASH
                                     (sha256 2 (sha256 1 parent_validation_puzzle_hash) parent_everything_else_hash)
-                                )
-                                AMOUNT
+                                ))
+                                (print 5553 AMOUNT)
                             )
                         )
                         (list CREATE_COIN_ANNOUNCEMENT 0)
