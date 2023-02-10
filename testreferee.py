@@ -23,7 +23,7 @@ from steprun import diag_run_clvm, compile_module_with_symbols
 compile_module_with_symbols(['.'],'referee.clsp')
 referee = Program.from_bytes(bytes.fromhex(open("referee.clvm.hex").read()))
 refhash = referee.tree_hash()
-compile_clvm('referee_accuse.clsp', 'referee_accuse.clvm.hex', ['.'])
+compile_module_with_symbols(['.'],'referee_accuse.clsp')
 referee_accuse = Program.from_bytes(bytes.fromhex(open("referee_accuse.clvm.hex").read()))
 refaccusehash = referee.tree_hash()
 compile_clvm('rockpaperscissorsa.clsp', 'rockpaperscissorsa.clvm.hex', ['.'])
@@ -146,14 +146,21 @@ class RefereeWrap:
         print(f"ACCUSE parent_id {Program.to(self.coin.parent_coin_info)}")
         print(f"ACCUSE referee mover_puzzle {self.mover_puzzle.tree_hash()}")
         print(f"ACCUSE referee waiter_puzzle {self.waiter_puzzle.tree_hash()}")
-        new_puzzle_hash = referee_accuse.curry([self.parent_validation_program_hash, 
-                self.validation_program_hash, self.move, self.split, self.coin.amount,
-                self.timeout, self.waiter_puzzle.tree_hash(), self.mover_puzzle.tree_hash()]).tree_hash()
-        solution = Program.to([accuse, self.grandparent_id, self.parent_validation_program_hash, 
+        new_puzzle_hash = referee_accuse.curry([
+            self.parent_validation_program_hash,
+            self.validation_program_hash,
+            self.move,
+            self.split,
+            self.coin.amount,
+            self.timeout,
+            self.waiter_puzzle.tree_hash(),
+            self.mover_puzzle.tree_hash()
+        ]).tree_hash()
+        solution = Program.to([accuse, self.grandparent_id, self.parent_validation_program_hash,
                 self.parent_everything_else_hash, self.mover_puzzle, [password, [51, new_puzzle_hash, self.coin.amount]]])
         coin = Coin(self.coin.name(), new_puzzle_hash, self.coin.amount)
         return (solution, RefereeAccuseWrap(coin, self.parent_validation_program_hash, self.validation_program_hash,
-                self.move, self.split, self.timeout, self.waiter_puzzle.tree_hash(), 
+                self.move, self.split, self.timeout, self.waiter_puzzle.tree_hash(),
                 self.mover_puzzle.tree_hash()))
 
     def SpendTimeout(self):
@@ -177,9 +184,9 @@ class RefereeAccuseWrap:
     accuser_puzzle_hash: Any
 
     def get_puzzle(self):
-        return referee_accuse.curry([self.old_validation_puzzle_hash, self.new_validation_puzzle_hash, 
-                self.move, self.split, self.coin.amount, self.timeout, self.accused_puzzle_hash, 
-                self.accuser_puzzle_hash]).tree_hash()
+        return referee_accuse.curry([self.old_validation_puzzle_hash, self.new_validation_puzzle_hash,
+                self.move, self.split, self.coin.amount, self.timeout, self.accused_puzzle_hash,
+                self.accuser_puzzle_hash])
 
     def SpendTimeout(self):
         """
@@ -297,12 +304,21 @@ async def test_rps(amove, bmove, setup_sim):
         savepoint2 = sym.block_height
         # Alice accusation defend, gets everything
         solution, reward_id = accuse.SpendDefend(MOD_A, nil)
+        print(solution)
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(accuse.coin, accuse.get_puzzle(), 
                 solution)], G2Element()))
+
+        print(err)
+        if status != MempoolInclusionStatus.SUCCESS:
+            print('RUN FAILURE')
+            print(solution)
+            diag_run_clvm(accuse.get_puzzle(), solution, 'referee_accuse.sym')
+
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
-        reward_coin = await client.get_coin_records_by_names([reward_id], include_spent_coins = 
-                False)[0].coin
+        reward_coin_wrapper = await client.get_coin_records_by_names([reward_id], include_spent_coins = 
+                False)
+        reward_coin = reward_coin_wrapper[0].coin
         assert reward_coin.amount == referee.coin.amount
         assert reward_coin.puzzle_hash == alice_puzzle_hash
         await sym.rewind(savepoint2)
@@ -319,8 +335,9 @@ async def test_rps(amove, bmove, setup_sim):
         assert status == MempoolInclusionStatus.SUCCESS
         assert err is None
         await sym.farm_block()
-        reward_coin = await client.get_coin_records_by_names([reward_id], include_spent_coins = 
-                False)[0].coin
+        reward_coin_wrapper = await client.get_coin_records_by_names([reward_id], include_spent_coins = 
+                False)
+        reward_coin = reward_coin_wrapper[0].coin
         assert reward_coin.amount == referee.coin.amount
         assert reward_coin.puzzle_hash == bob_puzzle_hash
         await sym.rewind(savepoint)
@@ -344,8 +361,8 @@ async def test_rps(amove, bmove, setup_sim):
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
-        reward_coin = await client.get_coin_records_by_names([reward_id], include_spent_coins = 
-                False)[0].coin
+        reward_coin = (await client.get_coin_records_by_names([reward_id], include_spent_coins = 
+                False))[0].coin
         assert reward_coin.amount == referee.coin.amount
         assert reward_coin.puzzle_hash == bob_puzzle_hash
         await sym.rewind(savepoint)
