@@ -18,9 +18,9 @@ from chia.types.spend_bundle import SpendBundle
 from chia.types.coin_spend import CoinSpend
 from blspy import G2Element
 
-from steprun import diag_run_clvm
+from steprun import diag_run_clvm, compile_module_with_symbols
 
-compile_clvm('referee.clsp', 'referee.clvm.hex', ['.'])
+compile_module_with_symbols(['.'],'referee.clsp')
 referee = Program.from_bytes(bytes.fromhex(open("referee.clvm.hex").read()))
 refhash = referee.tree_hash()
 compile_clvm('referee_accuse.clsp', 'referee_accuse.clvm.hex', ['.'])
@@ -34,6 +34,7 @@ compile_clvm('rockpaperscissorsc.clsp', 'rockpaperscissorsc.clvm.hex', ['.'])
 MOD_C = Program.from_bytes(bytes.fromhex(open("rockpaperscissorsc.clvm.hex").read()))
 compile_clvm('rockpaperscissorsd.clsp', 'rockpaperscissorsd.clvm.hex', ['.'])
 MOD_D = Program.from_bytes(bytes.fromhex(open("rockpaperscissorsd.clvm.hex").read()))
+
 move = 0
 accuse = 1
 timeout = 2
