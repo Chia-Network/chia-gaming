@@ -368,7 +368,7 @@ async def test_rps(amove, bmove, setup_sim):
         await sym.rewind(savepoint)
         # Alice reveals wrong preimage
         alice_bad_preimage = int_to_bytes(61 + amove)
-        dpuz = MOD_D.curry([(alice_move + 1) % 3, bob_image])
+        dpuz = MOD_D.curry([(amove + 1) % 3, bob_image])
         solution, ref4 = ref3.SpendMove('alice', alice_bad_preimage, 0, dpuz.tree_hash())
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref3.coin, ref3.get_puzzle(), 
                 solution)], G2Element()))
