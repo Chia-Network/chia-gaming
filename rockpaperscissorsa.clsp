@@ -1,4 +1,4 @@
-(mod (total alice_image new_validation bob_share justification)
+(mod (total alice_image bob_share new_validation justification)
 
     (include *standard-cl-22*)
     (include assert.clinc)

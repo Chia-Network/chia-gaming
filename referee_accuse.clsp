@@ -1,4 +1,3 @@
-
 (mod ((GRANDPARENT_VALIDATION_PUZZLE_HASH PARENT_VALIDATION_PUZZLE_HASH MOVE SPLIT AMOUNT 
         TIMEOUT ACCUSED_PUZZLE_HASH ACCUSER_PUZZLE_HASH) . args)
 
@@ -9,6 +8,8 @@
     (include shatree.clinc)
     (defconstant timeout 0)
     (defconstant defend 1)
+
+    (defun print (A B) (if A B B))
 
     (defun reduce (fun lst init)
         (if lst
@@ -31,10 +32,10 @@
         (compile-list ARGS)
     )
 
-    (if args
+    (if (print 6601 args)
         ; defend
-        (assign (GRANDPARENT_VALIDATION_PROGRAM justification) args
-            (assert (= (shatree GRANDPARENT_VALIDATION_PROGRAM) GRANDPARENT_VALIDATION_PUZZLE_HASH)
+        (assign (GRANDPARENT_VALIDATION_PROGRAM justification) (print 6601 args)
+            (assert (print 6602 (= (shatree (print 6603 GRANDPARENT_VALIDATION_PROGRAM)) (print 6604 GRANDPARENT_VALIDATION_PUZZLE_HASH)))
                 (prefix_list
                     (list CREATE_COIN ACCUSED_PUZZLE_HASH AMOUNT)
                     (list CREATE_COIN_ANNOUNCEMENT 0)
