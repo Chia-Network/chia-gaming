@@ -19,9 +19,7 @@
     )
     (defun <= (A B) (not (> A B)))
     (defun >= (A B) (not (> B A)))
-    (defun print (A B)
-      (f (c B A))
-      )
+    (defun print (A B) (if A B B))
     (defmacro prefix_list ARGS
         (defun compile-list (args)
             (if args
