@@ -210,10 +210,6 @@ class HashGuesser:
             def filter_kind_of_sexp(pairs):
                 return lambda row: (row[0].startswith('ff') == pairs)
 
-            # The program we're looking at wasn't a pair so we'll try the inputs
-            # we have.  We can do a search of the entire tree space but there's
-            # no limit to the inputs we can construct.  We'll assume the user
-            # got the shape right.
             ppair = program.pair
             has_pair = ppair is not None
             if has_pair:
