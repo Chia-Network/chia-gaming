@@ -243,4 +243,5 @@ if __name__ == '__main__':
     print(f'want {want_hash} {disassemble(want_program)}')
     wrong_program = Program.to([TEST, b"wrong thing"])
     guess = h.guess_hash_input(want_hash, wrong_program)
+    assert guess[0] == str(want_program)
     print(disassemble(Program.fromhex(guess[0])), guess[1])
