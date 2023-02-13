@@ -130,7 +130,6 @@ class HashGuesser:
         the_input = self.get_hash_inputs_if_known(hashhex)
         if the_input is None:
             cursor = self.conn.cursor()
-            print(f'insert {path} {desc} {program} {hashhex}')
             cursor.execute("insert into hashes (path,desc,program,hash) values (?,?,?,?)", (str(path),str(desc),str(program),hashhex))
             self.conn.commit()
 
@@ -151,7 +150,7 @@ class HashGuesser:
                 self.sha256tree_internal(converted.pair[0], path=self.path + ".pair[0]")
                 self.sha256tree_internal(converted.pair[1], pait=self.path + ".pair[1]")
         except:
-            print('not a pair')
+            pass
 
         hashed = binascii.hexlify(converted.get_tree_hash()).decode('utf8')
         self.insert_hash(path,anything,converted,hashed)
@@ -188,7 +187,6 @@ class HashGuesser:
         def check_main_hash(x):
             program = Program.to(x)
             hashed = self.sha256tree_internal(program)
-            print(f'{hashed} try {disassemble(program)}')
             return hashed
 
         queue = [(faulty_program, check_main_hash)]
@@ -228,7 +226,6 @@ class HashGuesser:
             rows = filter(filter_kind_of_sexp(has_pair), cursor.fetchall())
             for row in rows:
                 program = Program.fromhex(row[0])
-                print(f'try program {disassemble(program)}')
                 if not self.recursion_check(faulty_program, program):
                     check_hash = check_target(program)
                     if check_hash == target_hash:
@@ -250,4 +247,4 @@ if __name__ == '__main__':
     print(f'want {want_hash} {disassemble(want_program)}')
     wrong_program = Program.to([TEST, b"wrong thing"])
     guess = h.guess_hash_input(want_hash, wrong_program)
-    print(disassemble(Program.fromhex(guess[0])))
+    print(disassemble(Program.fromhex(guess[0])), guess[1])
