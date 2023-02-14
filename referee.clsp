@@ -19,7 +19,6 @@
     )
     (defun <= (A B) (not (> A B)))
     (defun >= (A B) (not (> B A)))
-    (defun print (A B) (if A B B))
     (defmacro prefix_list ARGS
         (defun compile-list (args)
             (if args
@@ -55,36 +54,35 @@
         (if action
             ; accuse
             (assign
-                dummy (print 5501 MOVER_PUZZLE_HASH)
                 (grandparent_id parent_validation_puzzle_hash parent_everything_else_hash 
-                        mover_puzzle_reveal solution) (print 5561 args)
+                        mover_puzzle_reveal solution) args
                 new_puzzle_hash (curry_hashes accusehash (shatree (list 
                         parent_validation_puzzle_hash VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT 
                         TIMEOUT WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH)))
                 conditions (a mover_puzzle_reveal solution)
                 (assert
-                    (print 4401 (= (print 4491 MOVER_PUZZLE_HASH) (print 4492 (shatree mover_puzzle_reveal))))
-                    (print 4402 (reduce
+                    (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
+                    (reduce
                         (lambda ((& new_puzzle_hash AMOUNT) (@ condition (condname arg1 arg2)) agg)
                             (if agg 
                                 1 
-                                (if (print 4405 (= condname CREATE_COIN))
-                                    (logand (print 4403 (= arg1 new_puzzle_hash)) (print 4404 (= arg2 AMOUNT)))
+                                (if (= condname CREATE_COIN)
+                                    (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
                                     0
                                 )
                             )
                         )
                         conditions
                         0
-                    ))
+                    )
                     (prefix_list
                         (list ASSERT_MY_PARENT_ID 
                             (sha256
-                                (print 5551 grandparent_id)
-                                (print 5552 (curry_hashes MOD_HASH
+                                grandparent_id
+                                (curry_hashes MOD_HASH
                                     (sha256 2 (sha256 1 parent_validation_puzzle_hash) parent_everything_else_hash)
-                                ))
-                                (print 5553 AMOUNT)
+                                )
+                                AMOUNT
                             )
                         )
                         (list CREATE_COIN_ANNOUNCEMENT 0)
@@ -99,24 +97,25 @@
                         AMOUNT TIMEOUT MAX_MOVE_SIZE WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH MOD_HASH)))
                 conditions (a mover_puzzle_reveal solution)
                 (assert
-                    (print 3323 (<= (strlen new_move) MAX_MOVE_SIZE))
-                    (print 3324 (<= new_split AMOUNT))
-                    (print 3325 (>= new_split 0))
-                    (print 3326 (= 32 (strlen new_validation_program_hash)))
-                    (print 3327 (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal)))
-                    (print 3328 (reduce
+                    VALIDATION_PROGRAM_HASH
+                    (<= (strlen new_move) MAX_MOVE_SIZE)
+                    (<= new_split AMOUNT)
+                    (>= new_split 0)
+                    (logior (not new_validation_program_hash) (= 32 (strlen new_validation_program_hash)))
+                    (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
+                    (reduce
                         (lambda ((& new_puzzle_hash AMOUNT) (@ condition (condname arg1 arg2)) agg)
                             (if agg 
                                 1 
                                 (if (= condname CREATE_COIN)
-                                    (logand (print 3329 (= arg1 new_puzzle_hash)) (print 3330 (= arg2 AMOUNT)))
+                                    (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
                                     0
                                 )
                             )
                         )
-                        (print 3322 conditions)
+                        conditions
                         0
-                    ))
+                    )
                     conditions
                 )
             )
