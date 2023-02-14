@@ -7,6 +7,7 @@ from clvm.casts import int_to_bytes, int_from_bytes
 
 from hsms.streamables.program import Program
 from clvm_tools_rs import compile_clvm
+from clvm_tools.binutils import disassemble
 
 from clvm.EvalError import EvalError
 from chia.types.mempool_inclusion_status import MempoolInclusionStatus
@@ -204,8 +205,8 @@ class RefereeAccuseWrap:
         return (solution, coin.name())
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('amove', [1, 2, 3])
-@pytest.mark.parametrize('bmove', [1, 2, 3])
+@pytest.mark.parametrize('amove', [0, 1, 2])
+@pytest.mark.parametrize('bmove', [0, 1, 2])
 async def test_rps(amove, bmove, setup_sim):
     total = 100
     alice_final = (total//2 if amove == bmove else (0 if bmove == (amove + 1) % 3 else total))
@@ -280,11 +281,6 @@ async def test_rps(amove, bmove, setup_sim):
         solution, ref2 = referee.SpendMove('alice', alice_image, 0, bpuz.tree_hash())
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(referee.coin, referee.get_puzzle(), 
                 solution)], G2Element()))
-        if status != MempoolInclusionStatus.SUCCESS:
-            print('RUN FAILURE')
-            print(solution)
-            diag_run_clvm(referee.get_puzzle(), solution, 'referee.sym')
-
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
         savepoint = sym.block_height
@@ -292,13 +288,6 @@ async def test_rps(amove, bmove, setup_sim):
         solution, accuse = ref2.SpendAccuse('bob')
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref2.coin, ref2.get_puzzle(), 
                 solution)], G2Element()))
-
-        print(err)
-        if status != MempoolInclusionStatus.SUCCESS:
-            print('RUN FAILURE')
-            print(solution)
-            diag_run_clvm(ref2.get_puzzle(), solution, 'referee.sym')
-
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
         savepoint2 = sym.block_height
@@ -307,13 +296,6 @@ async def test_rps(amove, bmove, setup_sim):
         print(solution)
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(accuse.coin, accuse.get_puzzle(), 
                 solution)], G2Element()))
-
-        print(err)
-        if status != MempoolInclusionStatus.SUCCESS:
-            print('RUN FAILURE')
-            print(solution)
-            diag_run_clvm(accuse.get_puzzle(), solution, 'referee_accuse.sym')
-
         assert status == MempoolInclusionStatus.SUCCESS
         await sym.farm_block()
         reward_coin_wrapper = await client.get_coin_records_by_names([reward_id], include_spent_coins = 
@@ -454,7 +436,7 @@ async def test_rps(amove, bmove, setup_sim):
             assert err == Err.GENERATOR_RUNTIME_ERROR
             await sym.rewind(savepoint)
         # Bob move 4 reveal preimage
-        solution, ref5 = ref4.SpendMove('bob', bob_preimage, alice_final, dpuz.tree_hash())
+        solution, ref5 = ref4.SpendMove('bob', bob_preimage, alice_final, nil)
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(ref4.coin, ref4.get_puzzle(), 
                 solution)], G2Element()))
         assert status == MempoolInclusionStatus.SUCCESS
@@ -469,8 +451,8 @@ async def test_rps(amove, bmove, setup_sim):
         # timeout, split correct
         sym.pass_time(2000)
         await sym.farm_block()
-        solution, alice_reward_id, bob_reward_id = referee.SpendTimeout()
-        spend = SpendBundle([CoinSpend(referee.coin, referee.get_puzzle(), solution)], G2Element())
+        solution, alice_reward_id, bob_reward_id = ref5.SpendTimeout()
+        spend = SpendBundle([CoinSpend(ref5.coin, ref5.get_puzzle(), solution)], G2Element())
         (status, err) = await client.push_tx(spend)
         assert status == MempoolInclusionStatus.SUCCESS
         assert err is None
@@ -494,4 +476,4 @@ async def test_rps(amove, bmove, setup_sim):
         solution, reward_id = accuse.SpendDefend(dpuz, nil)
         (status, err) = await client.push_tx(SpendBundle([CoinSpend(accuse.coin, accuse.get_puzzle(), 
                 solution)], G2Element()))
-        assert status == MempoolInclusionStatus.SUCCESS
+        assert (status, err) == (MempoolInclusionStatus.SUCCESS, None)
