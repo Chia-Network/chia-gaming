@@ -1,16 +1,41 @@
+
+; This file shouldn't start with a carriage return but there's currently a problem with syntax highlighting
+; if the file starts with a comment
+; Adjudicates a two player turn based game
+; VALIDATION_PROGRAM_HASH LAST_MOVE and SPLIT were all accepted optimistically from the last move
+; VALIDATION_PROGRAM_HASH will check the next move. It may be nil which means no futher moves are allowed
+; SPLIT is how much the mover will get if they fold/accept. It's set to the final split at the end 
+; of the game. It's often set to 0 the rest of the time but has a value for folding in Poker
+; SPLIT is implicitly accepted by allowing a timeout
+; AMOUNT TIMEOUT and MAX_MOVE_SIZE are all fixed for the duration of the game
+; (maybe they should be hard coded instead of parameterized?)
+; MOVER_PUZZLE_HASH and WAITER_PUZZLE_HASH are swapped each move. They are used to commit to moves 
+; and as targets for rewards
+; MOD_HASH should be the shatree of referree itself
+; action can be timeout, move, or accuse
+; action and args should really be a single type cased value
+; If action is timeout args are ignored
+; If action is accuse args proves the previous validation program hash and a 
+; justification for MOVER_PUZZLE
+; If action is move new values are given to be accepted optimistically and 
+; a justification for MOVER_PUZZLE
 (mod ((VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT TIMEOUT MAX_MOVE_SIZE 
         MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH MOD_HASH) action . args)
-
+    ; This should be bumped up to cl-22 at least
     (include *standard-cl-21*)
+    ; This shoud be a bulk import from a standard library
     (include assert.clinc)
     (include curry.clinc)
     (include shatree.clinc)
     (include condition_codes.clinc)
+    ; This should be a type enumeration and timeout should be 0 to be consistent with accused states
     (defconstant move 0)
     (defconstant accuse 1)
     (defconstant timeout 2)
+    ; There should be a shorthand for doing these two lines in one
     (compile-file refaccuse "referee_accuse.clsp")
     (defconst accusehash (shatree refaccuse))
+    ; From here to the meat should be in a standard library
     (defun reduce (fun lst init)
         (if lst
             (reduce fun (r lst) (a fun (list (f lst) init)))
@@ -19,6 +44,7 @@
     )
     (defun <= (A B) (not (> A B)))
     (defun >= (A B) (not (> B A)))
+    ; This should have a shorter name
     (defmacro prefix_list ARGS
         (defun compile-list (args)
             (if args
@@ -34,7 +60,9 @@
         (compile-list ARGS)
     )
 
+    ; This should be a case statement
     (if (= action timeout)
+        ; This should be a (flatmap) but those haven't been invented yet
         (reduce
             (lambda ((hash size) remaining)
                 (if size
@@ -48,20 +76,30 @@
             )
             (list 
                 (list ASSERT_SECONDS_RELATIVE TIMEOUT)
+                ; Hopefully these are unnecessary by the time this gets deployed
                 (list CREATE_COIN_ANNOUNCEMENT 0)
             )
         )
         (if action
             ; accuse
             (assign
+                ; grandparent_id is this puzzle's parent's parent id
+                ; parent_validation_puzzle_hash is the previous validation puzzle hash
+                ; parent_everything_else_hash is the using the shatree trick of avoiding 
+                ; to have to reveal everything else by giving its shatree
+                ; solution is passed in to mover_puzzle and its format is puzzle specific
                 (grandparent_id parent_validation_puzzle_hash parent_everything_else_hash 
                         mover_puzzle_reveal solution) args
+                ; The puzzle hash of the child to make
                 new_puzzle_hash (curry_hashes accusehash (shatree (list 
                         parent_validation_puzzle_hash VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT 
                         TIMEOUT WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH)))
+                ; conditions are filtered for what's required rather than generated here
                 conditions (a mover_puzzle_reveal solution)
                 (assert
                     (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
+                    ; conditions must include making the accuse coin
+                    ; this should use (match) but that hasn't been invented yet
                     (reduce
                         (lambda ((& new_puzzle_hash AMOUNT) (@ condition (condname arg1 arg2)) agg)
                             (if agg 
@@ -76,6 +114,7 @@
                         0
                     )
                     (prefix_list
+                        ; auditing the inputs
                         (list ASSERT_MY_PARENT_ID 
                             (sha256
                                 grandparent_id
@@ -97,12 +136,14 @@
                         AMOUNT TIMEOUT MAX_MOVE_SIZE WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH MOD_HASH)))
                 conditions (a mover_puzzle_reveal solution)
                 (assert
+                    ; When VALIDATION_PROGRAM_HASH is nil no further moves are allowed
                     VALIDATION_PROGRAM_HASH
                     (<= (strlen new_move) MAX_MOVE_SIZE)
                     (<= new_split AMOUNT)
                     (>= new_split 0)
                     (logior (not new_validation_program_hash) (= 32 (strlen new_validation_program_hash)))
                     (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
+                    ; Check that the child output is made. This should use (match)
                     (reduce
                         (lambda ((& new_puzzle_hash AMOUNT) (@ condition (condname arg1 arg2)) agg)
                             (if agg 
