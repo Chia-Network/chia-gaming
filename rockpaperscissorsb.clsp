@@ -1,3 +1,5 @@
+
+; This should go straight to Bob making a move to skip a commitment step
 (mod (ALICE_IMAGE total bob_image alice_share new_validation justification)
 
     (include *standard-cl-22*)

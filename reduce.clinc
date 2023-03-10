@@ -1,0 +1,10 @@
+
+(
+    ; From here to the meat should be in a standard library
+    (defun reduce (fun lst init)
+        (if lst
+            (reduce fun (r lst) (a fun (list (f lst) init)))
+            init
+        )
+    )
+)

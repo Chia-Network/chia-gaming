@@ -1,0 +1,12 @@
+
+(
+    (defun match (process remaining)
+        (if remaining
+            (if (a process (list (f remaining)))
+                (f remaining)
+                (match process (r remaining))
+            )
+            0
+        )
+    )
+)

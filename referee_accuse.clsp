@@ -10,40 +10,21 @@
     ; ACCUSED should be renamed to DEFENDER to not look so similar to ACCUSER
     ; The type of args is either defend and a justification or timeout
 
-    (include *standard-cl-21*)
+    (include *standard-cl-22*)
     (include assert.clinc)
     (include condition_codes.clinc)
     (include curry.clinc)
     (include shatree.clinc)
+    (include reduce.clinc)
+    (include prefix.clinc)
     (defconstant timeout 0)
     (defconstant defend 1)
-
-    (defun reduce (fun lst init)
-        (if lst
-            (reduce fun (r lst) (a fun (list (f lst) init)))
-            init
-        )
-    )
-    (defmacro prefix_list ARGS
-        (defun compile-list (args)
-            (if args
-                (if (r args)
-                    ;; We have at least 2 things left... recurse once.
-                    (qq (c (unquote (f args)) (unquote (compile-list (r args)))))
-                    ;; This is the last item, so we return it whole (improper list form).
-                    (qq (unquote (f args)))
-                )
-                0
-            )
-        )
-        (compile-list ARGS)
-    )
 
     (if args
         ; defend
         (assign (GRANDPARENT_VALIDATION_PUZZLE justification) args
             (assert (= (shatree GRANDPARENT_VALIDATION_PUZZLE) GRANDPARENT_VALIDATION_PUZZLE_HASH)
-                (prefix_list
+                (prefix
                     (list CREATE_COIN ACCUSED_PUZZLE_HASH AMOUNT)
                     (list CREATE_COIN_ANNOUNCEMENT 0)
                     (a GRANDPARENT_VALIDATION_PUZZLE (list AMOUNT MOVE SPLIT PARENT_VALIDATION_PUZZLE_HASH justification))

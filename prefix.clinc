@@ -1,0 +1,16 @@
+(
+    (defmacro prefix ARGS
+        (defun compile-list (args)
+            (if args
+                (if (r args)
+                    ;; We have at least 2 things left... recurse once.
+                    (qq (c (unquote (f args)) (unquote (compile-list (r args)))))
+                    ;; This is the last item, so we return it whole (improper list form).
+                    (qq (unquote (f args)))
+                )
+                0
+            )
+        )
+        (compile-list ARGS)
+    )
+)

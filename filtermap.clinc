@@ -1,0 +1,14 @@
+
+(
+    (defun filtermap (process remaining init)
+        (if remaining
+            (assign next (a process (list (f remaining)))
+                (if next 
+                    (c next (filtermap process (r remaining) init))
+                    (filtermap process (r remaining) init)
+                )
+            )
+            init
+        )
+    )
+)

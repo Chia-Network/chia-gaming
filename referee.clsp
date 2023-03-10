@@ -21,12 +21,15 @@
 ; a justification for MOVER_PUZZLE
 (mod ((VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT TIMEOUT MAX_MOVE_SIZE 
         MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH MOD_HASH) action . args)
-    ; This should be bumped up to cl-22 at least
-    (include *standard-cl-21*)
+    (include *standard-cl-22*)
     ; This shoud be a bulk import from a standard library
     (include assert.clinc)
     (include curry.clinc)
+    (include reduce.clinc)
+    (include match.clinc)
     (include shatree.clinc)
+    (include filtermap.clinc)
+    (include prefix.clinc)
     (include condition_codes.clinc)
     ; This should be a type enumeration and timeout should be 0 to be consistent with accused states
     (defconstant move 0)
@@ -35,39 +38,16 @@
     ; There should be a shorthand for doing these two lines in one
     (compile-file refaccuse "referee_accuse.clsp")
     (defconst accusehash (shatree refaccuse))
-    ; From here to the meat should be in a standard library
-    (defun reduce (fun lst init)
-        (if lst
-            (reduce fun (r lst) (a fun (list (f lst) init)))
-            init
-        )
-    )
     (defun <= (A B) (not (> A B)))
     (defun >= (A B) (not (> B A)))
-    ; This should have a shorter name
-    (defmacro prefix_list ARGS
-        (defun compile-list (args)
-            (if args
-                (if (r args)
-                    ;; We have at least 2 things left... recurse once.
-                    (qq (c (unquote (f args)) (unquote (compile-list (r args)))))
-                    ;; This is the last item, so we return it whole (improper list form).
-                    (qq (unquote (f args)))
-                )
-                0
-            )
-        )
-        (compile-list ARGS)
-    )
 
     ; This should be a case statement
     (if (= action timeout)
-        ; This should be a (flatmap) but those haven't been invented yet
-        (reduce
-            (lambda ((hash size) remaining)
+        (filtermap
+            (lambda (hash size)
                 (if size
-                    (c (list CREATE_COIN hash size) remaining)
-                    remaining
+                    (list CREATE_COIN hash size)
+                    0
                 )
             )
             (list 
@@ -99,21 +79,16 @@
                 (assert
                     (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
                     ; conditions must include making the accuse coin
-                    ; this should use (match) but that hasn't been invented yet
-                    (reduce
-                        (lambda ((& new_puzzle_hash AMOUNT) (@ condition (condname arg1 arg2)) agg)
-                            (if agg 
-                                1 
-                                (if (= condname CREATE_COIN)
-                                    (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
-                                    0
-                                )
+                    (match 
+                        (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))
+                            (if (= condname CREATE_COIN)
+                                (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
+                                0
                             )
                         )
                         conditions
-                        0
                     )
-                    (prefix_list
+                    (prefix
                         ; auditing the inputs
                         (list ASSERT_MY_PARENT_ID 
                             (sha256
@@ -143,19 +118,15 @@
                     (>= new_split 0)
                     (logior (not new_validation_program_hash) (= 32 (strlen new_validation_program_hash)))
                     (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
-                    ; Check that the child output is made. This should use (match)
-                    (reduce
-                        (lambda ((& new_puzzle_hash AMOUNT) (@ condition (condname arg1 arg2)) agg)
-                            (if agg 
-                                1 
-                                (if (= condname CREATE_COIN)
-                                    (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
-                                    0
-                                )
+                    ; Check that the child output is made
+                    (match
+                        (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))
+                            (if (= condname CREATE_COIN)
+                                (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
+                                0
                             )
                         )
                         conditions
-                        0
                     )
                     conditions
                 )
