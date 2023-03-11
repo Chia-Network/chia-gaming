@@ -1,4 +1,5 @@
 import pytest
+import json
 from hashlib import sha256
 from contextlib import asynccontextmanager
 from chia.clvm.spend_sim import SimClient, SpendSim
@@ -247,6 +248,9 @@ async def test_rps(amove, bmove, setup_sim):
         spend = SpendBundle([CoinSpend(referee.coin, referee.get_puzzle(), solution)], G2Element())
         (status, err) = await client.push_tx(spend)
         assert status == MempoolInclusionStatus.FAILED
+
+        diag_run_clvm(referee.get_puzzle(), solution, 'referee.sym')
+
         assert err == Err.ASSERT_SECONDS_RELATIVE_FAILED
         # timeout succeeds
         sym.pass_time(2000)

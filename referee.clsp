@@ -35,6 +35,9 @@
     (defconstant move 0)
     (defconstant accuse 1)
     (defconstant timeout 2)
+
+    (defun print (X R) (i X R R))
+
     ; There should be a shorthand for doing these two lines in one
     (compile-file refaccuse "referee_accuse.clsp")
     (defconst accusehash (shatree refaccuse))
@@ -44,7 +47,7 @@
     ; This should be a case statement
     (if (= action timeout)
         (filtermap
-            (lambda (hash size)
+            (lambda ((hash size))
                 (if size
                     (list CREATE_COIN hash size)
                     0
