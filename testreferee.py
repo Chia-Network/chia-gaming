@@ -1,5 +1,4 @@
 import pytest
-import json
 from hashlib import sha256
 from contextlib import asynccontextmanager
 from chia.clvm.spend_sim import SimClient, SpendSim
