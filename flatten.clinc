@@ -1,0 +1,12 @@
+(
+    (defun flatten_list (everything)
+        (if 
+            (not everything) 0
+            (prepend (f everything) (flatten_list (r everything)))
+        )
+    )
+    (defun flatten everything
+        (flatten_list everything)
+    )
+
+)

@@ -1,0 +1,16 @@
+(mod (total alice_commit bob_share new_validation justification)
+
+    (include *standard-cl-22*)
+    (include assert.clinc)
+    (include curry.clinc)
+    (include shatree.clinc)
+    (compile-file calpokerb calpokerb.clsp)
+    (defconst bhash (shatree calpokerb))
+
+    (assert
+        (= new_validation (curry_hashes bhash (sha256 1 alice_commit)))
+        (= (len alice_image) 32)
+        (not bob_share)
+        0
+    )
+)

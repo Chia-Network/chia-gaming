@@ -1,0 +1,74 @@
+
+(mod ()
+    (include *standard-cl-22*)
+    (include sort.clinc)
+    (include assert.clinc)
+    (include deep_compare.clinc)
+    (include prepend.clinc)
+    (defun permutations_inner (pre post agg)
+        (if (not post)
+            agg
+            (assign 
+                myatom (f post)
+                newrest (r post)
+                (map (lambda ((& myatom) x) (c myatom x))
+                    (permutations (prepend pre newrest))
+                    (permutations_inner (c myatom pre) newrest agg)
+                )
+            )
+        )
+    )
+    (defun permutations (vals)
+        (permutations_inner 0 vals 0)
+    )
+    (defun reverse_inner (reversed rest)
+        (if rest
+            (reverse_inner (c (f rest) reversed) (r rest))
+            reversed
+        )
+    )
+    (defun reverse (vals)
+        (reverse_inner 0 vals)
+    )
+    (defun range_inner (next final)
+        (if (= next final)
+            0
+            (c next (range_inner (+ next 1) final))
+        )
+    )
+    (defun range (i)
+        (range_inner 0 i)
+    )
+    (defun last (next . remainder)
+        (if remainder
+            (last remainder)
+            next
+        )
+    )
+    (defun busy (myfunc mylist returnval)
+        (if mylist
+            (last
+                (a myfunc (f mylist))
+                (busy myfunc (r mylist) returnval)
+            )
+            returnval
+        )
+    )
+    (defun try_list (mylist)
+        (busy (lambda ((& mylist) newlist) (assert (deep= mylist newlist) 0))
+            (permutations mylist)
+            0
+        )
+    )
+    (last
+        (busy (lambda (i) (try_list (range i)))
+            (range 4)
+            0
+        )
+        (try_list 0)
+        (try_list (range 15))
+        (try_list (reverse (range 15)))
+        (try_list (list -1 -1 0 0 2 2 3 3))
+        1
+    )
+)
