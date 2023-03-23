@@ -1,0 +1,16 @@
+(mod (ALICE_COMMIT total bob_seed alice_share new_validation justification)
+
+    (include *standard-cl-22*)
+    (include assert.clinc)
+    (include curry.clinc)
+    (include shatree.clinc)
+    (compile-file calpokerc calpokerc.clsp)
+    (defconst chash (shatree calpokerc))
+
+    (assert
+        (= new_validation (curry_hashes chash (shatree (list ALICE_COMMIT bob_seed))))
+        (= (len bob_seed) 16)
+        (not alice_share)
+        0
+    )
+)

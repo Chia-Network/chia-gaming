@@ -1,0 +1,49 @@
+(mod ((BOB_PICKS CARDS ALICE_COMMIT) total alice_salted_picks bob_share new_validation justification)
+
+    (include *standard-cl-22*)
+    (include assert.clinc)
+    (include curry.clinc)
+    (include shatree.clinc)
+    (include deep_compare.clinc)
+    (include handcalc.clinc)
+    (include map.clinc)
+
+    (defun onecount (mynum)
+        (if mynum
+            (+ (& mynum 1) (onecount (>> mynum 1)))
+            0
+        )
+    )
+    (defun extract_cards (mask cards)
+        (if (not cards)
+            (list 0 0)
+            (assign (inner_left inner_right) (extract_cards (>> mask 1) (r cards))
+                (if (& mask 1)
+                    (list (c (f cards) inner_left) inner_right)
+                    (list inner_left (c (f cards) inner_right))
+                )
+            )
+        )
+    )
+    (assign alice_picks (substr alice_salted_picks 0 1)
+        (alice_cards, bob_cards) (extract_cards (| BOB_PICKS (<< 8 alice_picks)) 
+            (map (lambda (x) (list (+ 1 (% x 13)) (+ 1 (% x 4)))) cards))
+        (result (deep_compare (handcalce alice_cards) (handcalc bob_cards)))
+        (assert
+            (not new_validation)
+            (= (len alice_salted_picks) 17)
+            (= (sha256 alice_salted_picks ALICE_COMMIT))
+            (= (onecount alice_picks) 4)
+            (= bob_share
+                (if (not result)
+                    (/ total 2)
+                    (if (= result 1)
+                        total
+                        0
+                    )
+                )
+            )
+            0
+        )
+    )
+)

@@ -1,0 +1,41 @@
+
+(
+    (defun deep_compare (a b)
+        (if (l a)
+            (if (l b)
+                (assign inner_result (deep_compare (f a) (f b))
+                    (if inner_result
+                        inner_result
+                        (deep_compare (r a) (r b))
+                    )
+                )
+                -1
+            )
+            (if (l b)
+                1
+                (if (< a b)
+                    -1
+                    (> a b)
+                )
+            )
+        )
+    )
+    (defun deep< (a b)
+        (= (deep_compare a b) -1)
+    )
+    (defun deep> (a b)
+        (= (deep_compare a b) 1)
+    )
+    (defun deep= (a b)
+        (= (deep_compare a b) 0)
+    )
+    (defun deep<= (a b)
+        (not (deep> a b))
+    )
+    (defun deep>= (a b)
+        (not (deep< a b))
+    )
+    (defun deep!= (a b)
+        (not (deep= a b))
+    )
+)

@@ -1,0 +1,23 @@
+(mod ((CARDS ALICE_COMMIT) total bob_picks alice_share new_validation justification)
+
+    (include *standard-cl-22*)
+    (include assert.clinc)
+    (include curry.clinc)
+    (include shatree.clinc)
+    (compile-file calpokere calpokere.clsp)
+    (defconst ehash (shatree calpokere))
+
+    (defun onecount (mynum)
+        (if mynum
+            (+ (& mynum 1) (onecount (>> mynum 1)))
+            0
+        )
+    )
+    (assert
+        (= (len bob_picks) 1)
+        (= (onecount bob_picks) 4)
+        (= new_validation (curry_hashes ehash (shatree (list bob_picks CARDS ALICE_COMMIT))))
+        (not alice_share)
+        0
+    )
+)

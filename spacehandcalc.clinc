@@ -1,0 +1,104 @@
+
+; ranks are 1-13 with 1 being two, 12 being king, and 13 being ace
+; there are no suits, flushes, or ace-to-four straights
+; takes a list of card ranks and returns the value of the best poker 
+; hand which can be made with them
+; returned list is hand type followed by cards in descending order
+; all sorting is done highest to lowest
+(
+    (include *standard-cl-22*)
+    (include sort.clinc)
+    (include deep_compare.clinc)
+    (include filtermap.clinc)
+    (include slice.clinc)
+    (include max.clinc)
+    (defconstant FIVE_OF_A_KIND 10)
+    (defconstant STRAIGHT_FLUSH 9)
+    (defconstant FOUR_OF_A_KIND 8)
+    (defconstant FULL_HOUSE 7)
+    (defconstant FLUSH 6)
+    (defconstant STRAIGHT 5)
+    (defconstant THREE_OF_A_KIND 4)
+    (defconstant TWO_PAIR 3)
+    (defconstant PAIR 2)
+    (defconstant HIGH_CARD 1)
+    (defun straight_high_inner (ranks last count)
+        (if (not ranks)
+            ; at the end of the list
+            0
+            (if (= last (f ranks))
+                ; skip identical cards
+                (straight_high_inner (r ranks) started_ace last count)
+                ; if the partial straight continues
+                (if (= (f ranks) (- last 1))
+                    (if (= count 4)
+                        ; found a straight, add 3 to last because next and last are included
+                        (+ last 3)
+                        ; keep looking for a straight with the count going up by one
+                        (straight_high_inner (r ranks) started_ace (f ranks) (+ count 1))
+                    )
+                    ; reset the count
+                    (straight_high_inner (r ranks) started_ace (f ranks) 1)
+                )
+            )
+        )
+    )
+    ; returns the high card of a straight or 0 if there isn't any
+    ; ranks must be sorted in descending order
+    (defun straight_high (ranks)
+        (straight_high_inner (ranks (= (f ranks) 13) 0 0))
+    )
+    (defun group_by_count_inner (items last count)
+        (if (not items)
+            0
+            (if (= (f items) last)
+                (group_by_count_inner (r items) last (+ count 1))
+                (assign val (group_by_count_inner (r items) (f items) 1)
+                    (if last
+                        (c (c count last) val)
+                        val
+                    )
+                )
+            )
+        )
+    )
+    (defun group_by_count (items)
+        (group_by_count_inner items 0 0)
+    )
+    (defun space_hand_calc (cards)
+        (assign 
+            rest (lambda (x) (r x))
+            greater (lambda (x y) (> x y))
+            ranks (sort greater cards)
+            sh (straight_high ranks)
+            max_straight (if sh
+                (list STRAIGHT sh)
+                0
+            )
+            groups (sort deep> (group_by_count ranks))
+            (top_count . top_card) (f groups)
+            (second_count . second_card) (f (r groups))
+            topcards (map rest groups)
+            max_group (if (= top_count 1)
+                (c HIGH_CARD (slice topcards 5))
+                (if (= top_count 2)
+                    (if (= second_count 1)
+                        (c PAIR (slice topcards 4))
+                        (c TWO_PAIR (slice topcards 3))
+                    )
+                    (if (= top_count 3)
+                        (if (= second_count 1)
+                            (c THREE_OF_A_KIND (slice topcards 3))
+                            (c FULL_HOUSE (slice topcards 2))
+                        )
+                        (if (= top_count 4)
+                            (c FOUR_OF_A_KIND (slice topcards 2))
+                            (c FIVE_OF_A_KIND (slice topcards 1))
+                        )
+                    )
+                )
+            )
+            (max deep< (list max_straight max_group))
+        )
+    )
+)
