@@ -1,0 +1,11 @@
+(
+    (defun range_inner (next final)
+        (if (= next final)
+            0
+            (c next (range_inner (+ next 1) final))
+        )
+    )
+    (defun range (i)
+        (range_inner 0 i)
+    )
+)
