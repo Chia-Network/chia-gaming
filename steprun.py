@@ -28,7 +28,7 @@ def run_until_end(p):
             last = step_result
             if 'Result-Location' in last and \
                'Arguments' in last and \
-               'print' in last['Result-Location'] and \
+               'permutations_inner' in last['Result-Location'] and \
                'Value' in last:
                 value_assembled = assemble(last['Value'])
                 assembled_arg_list = []
