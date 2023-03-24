@@ -1,23 +1,23 @@
 
 (
-    (defun split_inner (rest aggl aggr)
+    (defun split_inner (@ everything (rest aggl aggr))
         (if rest
             (split_inner (r rest) aggr (c (f rest) aggl))
-            (list aggl aggr)
+            (r everything)
         )
     )
     (defun split (mylist)
         (split_inner mylist 0 0)
     )
-    (defun merge_inner (myless A B agg)
+    (defun merge_inner (myless a b agg)
         ; this should use continued if
-        (if (not A)
-            (prepend (reverse agg) B)
-            (if (not B)
-                (prepend (reverse agg) A)
-                (if (a myless (list (f A) (f B)))
-                    (merge_inner myless (r A) B (c (f A) agg))
-                    (merge_inner myless A (r B) (c (f B) agg))
+        (if (not a)
+            (prepend (reverse agg) b)
+            (if (not b)
+                (prepend (reverse agg) a)
+                (if (a myless (list (f a) (f b)))
+                    (merge_inner myless (r a) b (c (f a) agg))
+                    (merge_inner myless a (r b) (c (f b) agg))
                 )
             )
         )
@@ -31,10 +31,14 @@
     (defun sort (myless mylist)
       (if mylist
           (if (r mylist)
-              (sort-split myless (split mylist))
-              mylist
+              (assign (a b) (split mylist)
+                sa (sort myless a)
+                sb (sort myless b)
+                (merge sa sb)
               )
-          mylist
+              mylist
           )
+          mylist
+      )
     )
 )
