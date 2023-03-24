@@ -1,0 +1,10 @@
+(mod (X)
+  (include *standard-cl-21*)
+  (include prepend.clinc)
+  (include sort.clinc)
+  (include assert.clinc)
+  (include map.clinc)
+  (include reverse.clinc)
+
+  (sort (lambda (a b) (> b a)) X)
+  )
