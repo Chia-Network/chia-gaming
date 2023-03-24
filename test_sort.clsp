@@ -4,6 +4,7 @@
     (include sort.clinc)
     (include assert.clinc)
     (include deep_compare.clinc)
+    (include reverse.clinc)
     (include prepend.clinc)
     (defun permutations_inner (pre post agg)
         (if (not post)
@@ -20,15 +21,6 @@
     )
     (defun permutations (vals)
         (permutations_inner 0 vals 0)
-    )
-    (defun reverse_inner (reversed rest)
-        (if rest
-            (reverse_inner (c (f rest) reversed) (r rest))
-            reversed
-        )
-    )
-    (defun reverse (vals)
-        (reverse_inner 0 vals)
     )
     (defun range_inner (next final)
         (if (= next final)

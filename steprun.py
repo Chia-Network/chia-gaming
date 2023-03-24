@@ -48,7 +48,9 @@ def diag_run_clvm(program, args, symbols):
     p = start_clvm_program(hex_form_of_program, hex_form_of_args, symbols)
     report = run_until_end(p)
     if 'Failure' in report:
-        print(report['Failure'])
+        raise Exception(report)
+    else:
+        return assemble(report['Final'])
 
 if __name__ == '__main__':
     # smoke test
