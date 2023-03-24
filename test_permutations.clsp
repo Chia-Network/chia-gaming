@@ -1,0 +1,46 @@
+(mod ()
+    (include *standard-cl-22*)
+    (include sort.clinc)
+    (include assert.clinc)
+    (include deep_compare.clinc)
+    (include permutations.clinc)
+
+    (defun ! (x)
+        (if x
+            (* x (! (- x 1)))
+            1
+        )
+    )
+    (defun no_repeats_inner ((first . remainder))
+        (if remainder
+            (if (deep= first (f remainder))
+                0
+                (no_repeats_inner remainder)
+            )
+            1
+        )
+    )
+    (defun no_repeats (mylist)
+        (no_repeats_inner (sort mylist))
+    )
+    (assert
+        (busy
+            (lambda (listlen)
+                (assign 
+                    mylist (range listlen)
+                    permed (permutations mylist)
+                    (assert
+                        (= (len permed) (! listlen))
+                        (all (map no_repeats permed))
+                        (no_repeats permed)
+                    )
+                )
+            )
+            (range 5)
+            1
+        )
+        (= (permutations 0) 0)
+        (= 12 (len (c 0 (range 3))))
+        0
+    )
+)
