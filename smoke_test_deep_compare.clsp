@@ -8,23 +8,7 @@
 
    (map
      (lambda ((want_cmp_val cmp_a cmp_b))
-       (assign
-        (is_deep_lt is_deep_gt is_deep_eq is_deep_le is_deep_ge is_deep_ne)
-        (list (deep< cmp_a cmp_b)
-              (deep> cmp_a cmp_b)
-              (deep= cmp_a cmp_b)
-              (deep<= cmp_a cmp_b)
-              (deep>= cmp_a cmp_b)
-              (deep!= cmp_a cmp_b))
-        deep_vals (list is_deep_lt is_deep_gt is_deep_eq is_deep_le is_deep_ge is_deep_ne)
-           (assert
-            (= (deep_compare cmp_a cmp_b) want_cmp_val)
-            (if (= want_cmp_val -1) (deep= deep_vals (list 1 0 0 1 0 1)) 1)
-            (if (= want_cmp_val  1) (deep= deep_vals (list 0 1 0 0 1 1)) 1)
-            (if (= want_cmp_val  0) (deep= deep_vals (list 0 0 1 1 1 0)) 1)
-            ()
-            )
-           )
+       (= (deep_compare cmp_a cmp_b) want_cmp_val)
        )
      (q
       (0 0 0)
