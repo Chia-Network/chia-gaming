@@ -26,18 +26,12 @@ def run_until_end(p):
         step_result = p.step()
         if step_result is not None:
             last = step_result
-            if 'Result-Location' in last and \
-               'Arguments' in last and \
-               'permutations_inner' in last['Result-Location'] and \
-               'Value' in last:
-                value_assembled = assemble(last['Value'])
-                assembled_arg_list = []
-                while value_assembled.pair is not None:
-                    assembled_arg_list.append(value_assembled.pair[0])
-                    value_assembled = value_assembled.pair[1]
-                if len(assembled_arg_list) > 2:
-                    to_show = disassemble(Program.to(assembled_arg_list[-2:]))
-                    print(f"print {last['Operator']} {to_show}")
+            if 'Print' in last:
+                to_print = last['Print']
+                if 'Print-Location' in last:
+                    print(f"{last['Print-Location']}: print {to_print}")
+                else:
+                    print(f"print {to_print}")
 
     return last
 

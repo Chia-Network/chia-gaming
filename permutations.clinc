@@ -1,13 +1,11 @@
 (
-    (defun print (P R) (i P R R))
-
     (defun permutations_inner (pre post agg)
-        (if (print (list 999 pre post) (not post))
+        (if (not post)
             agg
             (assign
                 myatom (f post)
                 newrest (r post)
-                (map (lambda ((& myatom) x) (print 998 (c myatom x)))
+                (map (lambda ((& myatom) x) (c myatom x))
                     (permutations (prepend pre newrest))
                     (permutations_inner (c myatom pre) newrest agg)
                 )

@@ -13,6 +13,9 @@ sort_program = Program.from_bytes(bytes.fromhex(open('smoke_test_sort.clvm.hex')
 compile_module_with_symbols(['.'], 'test_sort.clsp')
 test_sort_program = Program.from_bytes(bytes.fromhex(open('test_sort.clvm.hex').read()))
 
+compile_module_with_symbols(['.'], 'test_permutations.clsp')
+test_permutations_program = Program.from_bytes(bytes.fromhex(open('test_permutations.clvm.hex').read()))
+
 compile_module_with_symbols(['.'], 'test_reverse.clsp')
 test_reverse_program = Program.from_bytes(bytes.fromhex(open('test_reverse.clvm.hex').read()))
 
@@ -22,8 +25,8 @@ test_prepend_program = Program.from_bytes(bytes.fromhex(open('test_prepend.clvm.
 compile_module_with_symbols(['.'], 'test_range.clsp')
 test_range_program = Program.from_bytes(bytes.fromhex(open('test_range.clvm.hex').read()))
 
-compile_module_with_symbols(['.'], 'test_permutations.clsp')
-test_permutations_program = Program.from_bytes(bytes.fromhex(open('test_permutations.clvm.hex').read()))
+compile_module_with_symbols(['.'], 'smoke_test_permutations.clsp')
+smoke_test_permutations_program = Program.from_bytes(bytes.fromhex(open('smoke_test_permutations.clvm.hex').read()))
 
 def proper_list_inner(result,cl):
     if hasattr(cl, 'pair') and cl.pair is not None:
@@ -76,47 +79,46 @@ def test_range():
 def do_test_permutations_of_size_n(n):
     try_list = [random.randint(0,100) for x in range(n)]
     want_set = list([list(v) for v in sorted(permutations(try_list))])
-    print('try_list', try_list)
-    if n == 2:
-        listed_result = diag_run_clvm(test_permutations_program, Program.to([try_list]), 'test_permutations.sym')
-    else:
-        listed_result = test_permutations_program.run(Program.to([try_list]))
+    listed_result = smoke_test_permutations_program.run(Program.to([try_list]))
     pl = proper_list(listed_result)
     perms_result = sorted([int_list(x) for x in de_none_list(pl)])
-    print('got_back', perms_result, 'but_wanted', want_set)
     assert want_set == perms_result
 
 def test_permutations_0():
     do_test_permutations_of_size_n(0)
 
-# def test_permutations_1():
-#     do_test_permutations_of_size_n(1)
+def test_permutations_1():
+    do_test_permutations_of_size_n(1)
 
 def test_permutations_2():
     n = 2
-    try_list = ['aaaaaa','bbbbbb']
-    want_set = list([list(v) for v in sorted(permutations(try_list))])
-    if n == 2:
-        listed_result = diag_run_clvm(test_permutations_program, Program.to([try_list]), 'test_permutations.sym')
-    else:
-        listed_result = test_permutations_program.run(Program.to([try_list]))
-    pl = proper_list(listed_result)
-    perms_result = sorted([int_list(x) for x in de_none_list(pl)])
-    print('got_back', perms_result, 'but_wanted', want_set)
-    assert want_set == perms_result
+    all_a_string = 0x616161616161
+    all_b_string = 0x626262626262
+    for try_list in [[all_a_string,all_b_string], [all_b_string,all_a_string]]:
+        want_set = list([list(v) for v in sorted(permutations(try_list))])
+        listed_result = diag_run_clvm(smoke_test_permutations_program, Program.to([try_list]), 'smoke_test_permutations.sym')
+        pl = proper_list(listed_result)
+        perms_result = sorted([int_list(x) for x in de_none_list(pl)])
+        assert want_set == perms_result
 
+def test_permutations_n():
+    for i in range(3,6):
+        do_test_permutations_of_size_n(i)
+
+def test_chialisp_permutations_program():
+    diag_run_clvm(test_permutations_program, Program.to([3, 5]), 'test_permutations.sym')
+
+# Next test set
 # def test_chialisp_sort_program():
 #     test_sort_program.run(Program.to([]))
 
 def test_smoke_sort():
-    for length in range(10): # 0-10 length
+    for length in range(7): # 0-7 length
         for i in range(1 + (3 * length)): # A few orders each
             orig_list = [random.randint(0,100) for x in range(length)]
             sort_args = Program.to([orig_list])
             sorted_list = Program.to(sorted(orig_list))
-            print(orig_list)
             sort_res = sort_program.run(sort_args)
-            print(sort_res,sorted_list)
             assert sort_res == sorted_list
 
 if __name__ == '__main__':

@@ -5,6 +5,7 @@
   (include assert.clinc)
   (include map.clinc)
   (include reverse.clinc)
+  (include print.clinc)
 
   (sort (lambda (a b) (> b a)) X)
   )

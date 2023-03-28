@@ -1,0 +1,12 @@
+(
+  (defun enquote-rest (L)
+    (if L
+      (c (c 1 (f L)) (enquote-rest (r L)))
+      ()
+      )
+    )
+
+  (defun all-in-list (L)
+    (a (c 34 (enquote-rest L)) ())
+    )
+)

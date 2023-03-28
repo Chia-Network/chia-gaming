@@ -1,0 +1,9 @@
+(mod (X)
+  (include *standard-cl-21*)
+  (include map.clinc)
+  (include prepend.clinc)
+  (include print.clinc)
+  (include permutations.clinc)
+
+  (permutations X)
+  )

@@ -1,0 +1,3 @@
+(
+  (defun len (L) (if L (+ 1 (len (r L))) 0))
+)

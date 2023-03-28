@@ -1,6 +1,7 @@
 
 (mod ()
-    (include *standard-cl-22*)
+    (include *standard-cl-21*)
+    (include print.clinc)
     (include sort.clinc)
     (include assert.clinc)
     (include deep_compare.clinc)
@@ -9,30 +10,17 @@
     (include map.clinc)
     (include range.clinc)
     (include permutations.clinc)
+    (include last.clinc)
+    (include busy.clinc)
 
-    (defun last (next . remainder)
-        (if remainder
-            (last remainder)
-            next
-        )
-    )
-    (defun busy (myfunc mylist returnval)
-        (if mylist
-            (last
-                (a myfunc (f mylist))
-                (busy myfunc (r mylist) returnval)
-            )
-            returnval
-        )
-    )
     (defun try_list (mylist)
-        (busy (lambda ((& mylist) newlist) (assert (deep= mylist newlist) 0))
+        (busy (lambda ((& mylist) newlist) (assert (deep= (sort deep= mylist) (print "nl" newlist)) 0))
             (permutations mylist)
             0
         )
     )
     (last
-        (busy (lambda (i) (try_list (range i)))
+        (busy (lambda (i) (try_list (print "sortme" (range i))))
             (range 4)
             0
         )
