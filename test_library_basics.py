@@ -101,16 +101,15 @@ def test_permutations_2():
         perms_result = sorted([int_list(x) for x in de_none_list(pl)])
         assert want_set == perms_result
 
+def test_chialisp_sort_program():
+    diag_run_clvm(test_sort_program, Program.to([]), 'test_sort.sym')
+
 def test_permutations_n():
     for i in range(3,6):
         do_test_permutations_of_size_n(i)
 
 def test_chialisp_permutations_program():
     diag_run_clvm(test_permutations_program, Program.to([3, 5]), 'test_permutations.sym')
-
-# Next test set
-# def test_chialisp_sort_program():
-#     test_sort_program.run(Program.to([]))
 
 def test_smoke_sort():
     for length in range(7): # 0-7 length

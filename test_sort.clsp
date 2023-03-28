@@ -13,21 +13,25 @@
     (include last.clinc)
     (include busy.clinc)
 
-    (defun try_list (mylist)
-        (busy (lambda ((& mylist) newlist) (assert (deep= (sort deep= mylist) (print "nl" newlist)) 0))
-            (permutations mylist)
+    (defun try_list (mylist newlist)
+        (assert (deep= (print "sorted" (sort (lambda (A B) (deep< A B)) newlist)) mylist) 0)
+    )
+
+    (defun try_permuted_list (mylist)
+        (busy (lambda ((& mylist) newlist) (try_list mylist newlist))
+            (print "sort all these" (permutations (print "mylist" mylist)))
             0
         )
     )
     (last
-        (busy (lambda (i) (try_list (print "sortme" (range i))))
+        (try_list 0 0)
+        (try_list (range 15) (range 15))
+        (try_list (range 15) (reverse (range 15)))
+        (try_permuted_list (list -1 -1 0 0 2))
+        (busy (lambda (i) (try_permuted_list (print "sortme" (range i))))
             (range 4)
             0
         )
-        (try_list 0)
-        (try_list (range 15))
-        (try_list (reverse (range 15)))
-        (try_list (list -1 -1 0 0 2 2 3 3))
         1
     )
 )
