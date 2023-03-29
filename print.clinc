@@ -1,0 +1,3 @@
+(
+    (defun print (R P) (if (all "$print$" R P) P P))
+)
