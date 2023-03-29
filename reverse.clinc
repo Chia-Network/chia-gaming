@@ -1,0 +1,11 @@
+(
+    (defun reverse_inner (reversed rest)
+        (if rest
+            (reverse_inner (c (f rest) reversed) (r rest))
+            reversed
+        )
+    )
+    (defun reverse (vals)
+        (reverse_inner 0 vals)
+    )
+)

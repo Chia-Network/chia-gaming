@@ -1,0 +1,17 @@
+(
+  (defun map-with-rest (F L R)
+    (if L
+      (c (a F (list (f L))) (map-with-rest F (r L) R))
+      R
+      )
+    )
+
+  (defmacro map ARGS
+    (defun list-len (X) (if X (+ 1 (list-len (r X))) 0))
+
+    (if (= (list-len ARGS) 3)
+      (qq (map-with-rest (unquote (f ARGS)) (unquote (f (r ARGS))) (unquote (f (r (r ARGS))))))
+      (qq (map-with-rest (unquote (f ARGS)) (unquote (f (r ARGS))) ()))
+      )
+    )
+)
