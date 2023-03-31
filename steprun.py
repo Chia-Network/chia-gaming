@@ -39,7 +39,7 @@ def diag_run_clvm(program, args, symbols):
     hex_form_of_program = binascii.hexlify(bytes(program)).decode('utf8')
     hex_form_of_args = binascii.hexlify(bytes(args)).decode('utf8')
     symbols = json.loads(open(symbols).read())
-    p = start_clvm_program(hex_form_of_program, hex_form_of_args, symbols)
+    p = start_clvm_program(hex_form_of_program, hex_form_of_args, symbols, None, False)
     report = run_until_end(p)
     if 'Failure' in report:
         raise Exception(report)
