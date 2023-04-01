@@ -28,6 +28,12 @@ test_range_program = Program.from_bytes(bytes.fromhex(open('test_range.clvm.hex'
 compile_module_with_symbols(['.'], 'smoke_test_permutations.clsp')
 smoke_test_permutations_program = Program.from_bytes(bytes.fromhex(open('smoke_test_permutations.clvm.hex').read()))
 
+compile_module_with_symbols(['.'], 'test_handcalc.clsp')
+test_handcalc_program = Program.from_bytes(bytes.fromhex(open('test_handcalc.clvm.hex').read()))
+
+def test_handcalc():
+    diag_run_clvm(test_handcalc_program, Program.to([]), 'test_handcalc.sym')
+
 def proper_list_inner(result,cl):
     if hasattr(cl, 'pair') and cl.pair is not None:
         result.append(cl.pair[0])
