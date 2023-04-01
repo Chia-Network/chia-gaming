@@ -7,12 +7,6 @@
 ; doesn't work for ten or more cards if there are multiple flushes
 ; all sorting is done highest to lowest
 (
-    (include *standard-cl-22*)
-    (include sort.clinc)
-    (include deep_compare.clinc)
-    (include filtermap.clinc)
-    (include slice.clinc)
-    (include max.clinc)
     (defconstant STRAIGHT_FLUSH 9)
     (defconstant FOUR_OF_A_KIND 8)
     (defconstant FULL_HOUSE 7)
@@ -37,10 +31,10 @@
     ; returns the flush suit or 0 if there isn't any
     ; suits must be clustered/sorted
     (defun find_flush (suits)
-        (find_flush_inner (sort deep> suits) 0 0)
+        (find_flush_inner (sort (lambda (x y) (deep> x y)) suits) 0 0)
     )
     (defun straight_high_inner (ranks started_ace last count)
-        (if (not ranks)
+        (if (not (print (list "straight_high_inner -- ranks" started_ace last count) ranks))
             ; at the end of the list
             (if (logand (= last 1) (= count 4) started_ace)
                 ; ace to five
@@ -68,7 +62,7 @@
     ; returns the high card of a straight or 0 if there isn't any
     ; ranks must be sorted in descending order
     (defun straight_high (ranks)
-        (straight_high_inner (ranks (= (f ranks) 14) 0 0))
+        (straight_high_inner ranks (= (f ranks) 14) 0 0)
     )
     (defun group_by_count_inner (items last count)
         (if (not items)
@@ -88,40 +82,56 @@
         (group_by_count_inner items 0 0)
     )
     (defun handcalc (cards)
-        (assign 
+        (assign
             first (lambda (x) (f x))
             rest (lambda (x) (r x))
-            fsuit (find_flush (map rest cards))
-            max_flush (if (= fsuit 0)
+            fsuit (find_flush (map rest (print "cards in handcalc" cards)))
+            max_flush (print "hc-max-flush" (if (not fsuit)
                 0
-                (assign 
-                    fnosuits (sort deep> (filtermap (lambda ((& suit)) (if (= (r card) suit) (f card) 0)) cards))
-                    fsh (straight_high fnosuits)
-                    (if fsh
+                (assign
+                    fnosuits
+                       (print "have-fnosuits" (sort
+                          (lambda (x y) (deep> x y))
+                          (print "hc-max-flush-filtermap" (filtermap
+                             (lambda ((& fsuit) (card_rank . card_suit))
+                                 (assign
+                                    (if (= (print (list "hc-max-flush-fmap" fsuit card_rank card_suit) fsuit) card_suit)
+                                        card_rank
+                                        0
+                                        )
+                                    )
+                               )
+                             cards
+                             0
+                             ))
+                          ))
+
+                    fsh (straight_high (print "fsh-nosuits" fnosuits))
+                    (if (print "fsh-straight-high" fsh)
                         (list STRAIGHT_FLUSH fsh)
-                        (c FLUSH (slice fnosuits 5))
+                        (c FLUSH (print "have-slice-fnosuits" (slice fnosuits 5)))
                     )
                 )
-            )
-            nosuits (sort deep> (map first cards))
-            sh (straight_high nosuits)
+            ))
+            nosuits (print "hc-nosuits" (sort (lambda (x y) (deep> x y)) (map first cards)))
+            sh (print "hc-sh" (straight_high nosuits))
             max_straight (if sh
                 (list STRAIGHT sh)
                 0
             )
-            groups (sort deep> (group_by_count nosuits))
+            groups (print "hc-groups" (sort (lambda ((& nosuits) x y) (deep> x y)) (group_by_count nosuits)))
             (top_count . top_card) (f groups)
             (second_count . second_card) (f (r groups))
             topcards (map rest groups)
-            max_group (if (= top_count 1)
+            max_group (if (= (print "top_count" top_count) 1)
                 (c HIGH_CARD (slice topcards 5))
-                (if (= top_count 2)
-                    (if (= second_count 1)
+                (if (= (print "top_count" top_count) 2)
+                    (if (= (print "second_count" second_count) 1)
                         (c PAIR (slice topcards 4))
                         (c TWO_PAIR (slice topcards 3))
                     )
-                    (if (= top_count 3)
-                        (if (= second_count 1)
+                    (if (= (print "top_count" top_count) 3)
+                        (if (= (print "second_count" second_count) 1)
                             (c THREE_OF_A_KIND (slice topcards 3))
                             (c FULL_HOUSE (slice topcards 2))
                         )
@@ -129,7 +139,7 @@
                     )
                 )
             )
-            (max deep< (list max_flush max_straight max_group))
+            (max (lambda (x y) (deep< x y)) (list max_flush max_straight max_group))
         )
     )
 )

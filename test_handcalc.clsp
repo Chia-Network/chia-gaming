@@ -1,367 +1,376 @@
 
 (mod ()
-    (include *standard-cl-22*)
+    (include *standard-cl-21*)
     (include deep_compare.clinc)
     (include assert.clinc)
     (include reverse.clinc)
+    (include prepend.clinc)
+    (include map.clinc)
+    (include sort.clinc)
+    (include filtermap.clinc)
+    (include slice.clinc)
+    (include max.clinc)
+    (include print.clinc)
     (include handcalc.clinc)
+
     (defun runtests (myfunc firstarg secondarg . remaining)
         (assign
-            firstval (handcalc firstarg)
-            secondval (handcalc secondarg)
-        )
-        (assert
-            (a myfunc (list firstval secondval))
-            (deep= firstval (handcalc (reverse firstarg)))
-            (deep= secondval (handcalc (reverse secondarg)))
-            (if remaining
-                (runtests remaining)
-                0
+            firstval (handcalc (print "firstarg" firstarg))
+            secondval (handcalc (print "secondarg" secondarg))
+            (assert
+                (a myfunc (list (print "firstval" firstval) (print "secondval" secondval)))
+                (deep= firstval (handcalc (reverse firstarg)))
+                (deep= secondval (handcalc (reverse secondarg)))
+                (if remaining
+                    (runtests remaining)
+                    0
+                )
             )
         )
     )
+
     (runtests
         ; all beats both emerge over and measure higher
         ; straight flush with higher kicker ties
         ; A1 K1 Q1 J1 T1 91 = A1 K1 Q1 J1 T1 81
-        deep=
-        (list (c 12 1) (c 11 1) (c 14 1) (c 13 1) (c 10 1) (c 9 1))
-        (list (c 12 1) (c 11 1) (c 14 1) (c 13 1) (c 10 1) (c 8 1))
+        (lambda (x y) (deep= x y))
+        (print "runtests fa" (list (c 12 1) (c 11 1) (c 14 1) (c 13 1) (c 10 1) (c 9 1)))
+        (print "runtests sa" (list (c 12 1) (c 11 1) (c 14 1) (c 13 1) (c 10 1) (c 8 1)))
         ; straight flushes of different suits tie
         ; A1 K1 Q1 J1 T1 = A2 K2 Q2 J2 T2
-        deep=
-        (list (c 14 1) (c 13 1) (c 12 1) (c 11 1) (c 10 1))
-        (list (c 14 2) (c 13 2) (c 12 2) (c 11 2) (c 10 2))
+;;        deep=
+;;        (list (c 14 1) (c 13 1) (c 12 1) (c 11 1) (c 10 1))
+;;        (list (c 14 2) (c 13 2) (c 12 2) (c 11 2) (c 10 2))
         ; higher straight flush beats lower straight flush
         ; A1 K1 Q1 J1 T1 > 61 51 41 31 21
-        deep>
-        (list (c 14 1) (c 13 1) (c 12 1) (c 11 1) (c 10 1))
-        (list (c 6 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 1) (c 12 1) (c 11 1) (c 10 1))
+;;        (list (c 6 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
         ; A1 K1 Q1 J1 T1 91 = A1 K1 Q1 J1 T1
-        deep=
-        (list (c 12 1) (c 11 1) (c 14 1) (c 13 1) (c 10 1) (c 9 1))
-        (list (c 14 2) (c 11 2) (c 10 2) (c 13 2) (c 12 2))
+;;        deep=
+;;        (list (c 12 1) (c 11 1) (c 14 1) (c 13 1) (c 10 1) (c 9 1))
+;;        (list (c 14 2) (c 11 2) (c 10 2) (c 13 2) (c 12 2))
         ; lower (2-6) straight flush beats ace to four straight flush
         ; 61 51 41 31 21 > A2 52 42 32 22
-        deep>
-        (list (c 6 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
-        (list (c 14 2) (c 5 2) (c 4 2) (c 3 2) (c 2 2))
+;;        deep>
+;;        (list (c 6 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
+;;        (list (c 14 2) (c 5 2) (c 4 2) (c 3 2) (c 2 2))
         ; A1 61 51 41 31 21 = 61 51 41 31 21
-        deep=
-        (list (c 14 1) (c 6 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
-        (list (c 6 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
+;;        deep=
+;;        (list (c 14 1) (c 6 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
+;;        (list (c 6 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
         ; ace to four straight flush with higher kicker ties
         ; A2 52 42 32 22 61 = A1 51 41 31 21 71
-        deep=
-        (list (c 14 2) (c 5 2) (c 4 2) (c 3 2) (c 2 2) (c 6 1))
-        (list (c 14 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1) (c 7 1))
+;;        deep=
+;;        (list (c 14 2) (c 5 2) (c 4 2) (c 3 2) (c 2 2) (c 6 1))
+;;        (list (c 14 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1) (c 7 1))
         ; ace to four straight flushes of different suits tie
         ; A1 51 41 31 21 = A2 52 42 32 22
-        deep=
-        (list (c 14 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
-        (list (c 14 2) (c 5 2) (c 4 2) (c 3 2) (c 2 2))
+;;        deep=
+;;        (list (c 14 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
+;;        (list (c 14 2) (c 5 2) (c 4 2) (c 3 2) (c 2 2))
         ; ace to four straight flush beats four of a kind
         ; A1 51 41 31 21 > K1 K2 K3 K4 J1
-        deep>
-        (list (c 14 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 11 1))
+;;        deep>
+;;        (list (c 14 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 11 1))
         ; A1 A2 A3 A4 51 41 31 21 = A1 51 41 31 21
-        deep=
-        (list (c 14 1) (c 14 2) (c 14 3) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
-        (list (c 14 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
+;;        deep=
+;;        (list (c 14 1) (c 14 2) (c 14 3) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
+;;        (list (c 14 1) (c 5 1) (c 4 1) (c 3 1) (c 2 1))
         ; four of a kind with higher kicker wins
         ; K1 K2 K3 K4 Q1 > K1 K2 K3 K4 J1
-        deep>
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 12 1))
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 11 1))
+;;        deep>
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 12 1))
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 11 1))
         ; K1 K2 K3 K4 T1 91 = K1 K2 K3 K4 T1
-        deep>
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 10 1) (c 9 1))
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 10 1))
+;;        deep>
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 10 1) (c 9 1))
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 10 1))
         ; four of a kind with higher second kicker ties
         ; K1 K2 K3 K4 Q1 J1 = K1 K2 K3 K4 Q1 T1
-        deep=
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 12 1) (c 11 1))
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 12 1) (c 10 1))
+;;        deep=
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 12 1) (c 11 1))
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 12 1) (c 10 1))
         ; higher four of a kind beats lower four of a kind
         ; K1 K2 K3 K4 21 > 31 32 33 34 A1
-        deep=
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 2 1))
-        (list (c 3 1) (c 3 2) (c 3 3) (c 3 4) (c 14 1))
+;;        deep=
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 2 1))
+;;        (list (c 3 1) (c 3 2) (c 3 3) (c 3 4) (c 14 1))
         ; K1 K2 K3 K4 31 32 33 34 = K1 K2 K3 K4 32
-        deep=
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 3 1) (c 3 2) (c 3 3) (c 3 4))
-        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 3 2))
+;;        deep=
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 3 1) (c 3 2) (c 3 3) (c 3 4))
+;;        (list (c 13 1) (c 13 2) (c 13 3) (c 13 4) (c 3 2))
         ; four of a kind beats full house
         ; 21 22 23 24 31 > A1 A2 A3 K1 K2
-        deep>
-        (list (c 2 1) (c 2 2) (c 2 3) (c 2 4) (c 3 1))
-        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2))
+;;        deep>
+;;        (list (c 2 1) (c 2 2) (c 2 3) (c 2 4) (c 3 1))
+;;        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2))
         ; 21 22 23 24 A1 A2 A3 = 21 22 23 24 A2
-        deep=
-        (list (c 2 1) (c 2 2) (c 2 3) (c 2 4) (c 14 1) (c 14 2) (c 14 3))
-        (list (c 2 1) (c 2 2) (c 2 3) (c 2 4) (c 14 2))
+;;        deep=
+;;        (list (c 2 1) (c 2 2) (c 2 3) (c 2 4) (c 14 1) (c 14 2) (c 14 3))
+;;        (list (c 2 1) (c 2 2) (c 2 3) (c 2 4) (c 14 2))
         ; full house with higher set wins
         ; 51 52 53 21 22 > 31 32 33 71 72
-        deep>
-        (list (c 5 1) (c 5 2) (c 5 3) (c 2 1) (c 2 2))
-        (list (c 3 1) (c 3 2) (c 3 3) (c 7 1) (c 72))
+;;        deep>
+;;        (list (c 5 1) (c 5 2) (c 5 3) (c 2 1) (c 2 2))
+;;        (list (c 3 1) (c 3 2) (c 3 3) (c 7 1) (c 72))
         ; A1 A2 A3 K1 K2 K3 = A1 A2 A3 K1 K2
-        deep=
-        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2) (c 13 3))
-        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2))
+;;        deep=
+;;        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2) (c 13 3))
+;;        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2))
         ; full house with same set and higher pair wins
         ; 51 52 53 41 42 > 51 52 53 31 32
-        deep>
-        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2))
-        (list (c 5 1) (c 5 2) (c 5 3) (c 3 1) (c 3 2))
+;;        deep>
+;;        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2))
+;;        (list (c 5 1) (c 5 2) (c 5 3) (c 3 1) (c 3 2))
         ; A1 A2 A3 K1 K2 51 52 = A1 A2 A3 K1 K2
-        deep=
-        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2) (c 5 1) (c 5 2))
-        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2))
+;;        deep=
+;;        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2) (c 5 1) (c 5 2))
+;;        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2))
         ; full house ties with two sets
         ; 51 52 53 41 42 A1 = 51 52 53 41 42 43
-        deep=
-        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2) (c 14 1))
-        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2) (c 4 3))
+;;        deep=
+;;        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2) (c 14 1))
+;;        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2) (c 4 3))
         ; full house beats flush
         ; 51 52 53 41 42 > A1 Q1 T1 81 71
-        deep>
-        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2))
-        (list (c 14 1) (c 12 1) (c 10 1) (c 8 1) (c 7 1))
+;;        deep>
+;;        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2))
+;;        (list (c 14 1) (c 12 1) (c 10 1) (c 8 1) (c 7 1))
         ; 51 52 53 41 42 A1 K1 Q1 = 51 52 53 41 42
-        deep=
-        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2) (c 14 1) (c 13 1) (c 12 1))
-        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2))
+;;        deep=
+;;        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2) (c 14 1) (c 13 1) (c 12 1))
+;;        (list (c 5 1) (c 5 2) (c 5 3) (c 4 1) (c 4 2))
         ; higher flush beats lower flush
         ; A1 61 51 41 31 > K1 Q1 J1 T1 81
-        deep>
-        (list (c 14 1) (c 6 1) (c 5 1) (c 4 1) (c 3 1))
-        (list (c 13 1) (c 12 2) (c 11 1) (c 10 1) (c 8 1))
+;;        deep>
+;;        (list (c 14 1) (c 6 1) (c 5 1) (c 4 1) (c 3 1))
+;;        (list (c 13 1) (c 12 2) (c 11 1) (c 10 1) (c 8 1))
         ; A1 K1 Q1 J1 81 71 = A1 K1 Q1 J1 81
-        deep=
-        (list (c 14 1) (c 13 1) (c 12 1) (c 11 1) (c 8 1) (c 7 1))
-        (list (c 14 1) (c 13 1) (c 12 1) (c 11 1) (c 8 1))
+;;        deep=
+;;        (list (c 14 1) (c 13 1) (c 12 1) (c 11 1) (c 8 1) (c 7 1))
+;;        (list (c 14 1) (c 13 1) (c 12 1) (c 11 1) (c 8 1))
         ; flush with higher second card wins
         ; A1 K1 51 41 31 > A1 Q1 J1 T1 91
-        deep>
-        (list (c 14 1) (c 13 1) (c 5 1) (c 4 1) (c 3 1))
-        (list (c 14 1) (c 12 2) (c 11 1) (c 10 1) (c 9 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 1) (c 5 1) (c 4 1) (c 3 1))
+;;        (list (c 14 1) (c 12 2) (c 11 1) (c 10 1) (c 9 1))
         ; flush with higher third card wins
         ; A1 K1 Q1 41 31 > A1 K1 J1 T1 91
-        deep>
-        (list (c 14 1) (c 13 1) (c 12 1) (c 4 1) (c 3 1))
-        (list (c 14 1) (c 13 1) (c 11 1) (c 10 1) (c 9 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 1) (c 12 1) (c 4 1) (c 3 1))
+;;        (list (c 14 1) (c 13 1) (c 11 1) (c 10 1) (c 9 1))
         ; flush with higher fourth card wins
         ; A1 K1 Q1 T1 21 > A1 K1 Q1 91 81
-        deep>
-        (list (c 14 1) (c 13 1) (c 12 1) (c 10 1) (c 2 1))
-        (list (c 14 1) (c 13 1) (c 12 1) (c 9 1) (c 8 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 1) (c 12 1) (c 10 1) (c 2 1))
+;;        (list (c 14 1) (c 13 1) (c 12 1) (c 9 1) (c 8 1))
         ; flush with higher fifth card wins
         ; A1 K1 Q1 T1 81 > A1 K1 Q1 T1 71
-        deep>
-        (list (c 14 1) (c 13 1) (c 12 1) (c 10 1) (c 8 1))
-        (list (c 14 1) (c 13 1) (c 12 1) (c 10 1) (c 7 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 1) (c 12 1) (c 10 1) (c 8 1))
+;;        (list (c 14 1) (c 13 1) (c 12 1) (c 10 1) (c 7 1))
         ; flushes of different suits tie
         ; A1 K1 J1 T1 81 = A2 K2 J2 T2 82
-        deep=
-        (list (c 14 1) (c 13 1) (c 11 1) (c 10 1) (c 8 1))
-        (list (c 14 2) (c 13 2) (c 11 2) (c 10 2) (c 8 2))
+;;        deep=
+;;        (list (c 14 1) (c 13 1) (c 11 1) (c 10 1) (c 8 1))
+;;        (list (c 14 2) (c 13 2) (c 11 2) (c 10 2) (c 8 2))
         ; same flush with higher sixth card ties
         ; A1 K1 J1 T1 81 71 = A1 K1 J1 T1 81 61
-        deep=
-        (list (c 14 1) (c 13 1) (c 11 1) (c 10 1) (c 8 1) (c 7 1))
-        (list (c 14 1) (c 13 1) (c 11 1) (c 10 1) (c 8 1) (c 6 1))
+;;        deep=
+;;        (list (c 14 1) (c 13 1) (c 11 1) (c 10 1) (c 8 1) (c 7 1))
+;;        (list (c 14 1) (c 13 1) (c 11 1) (c 10 1) (c 8 1) (c 6 1))
         ; flush beats straight
         ; 71 61 51 41 21 > A1 K2 Q3 J4 T1
-        deep>
-        (list (c 7 1) (c 6 1) (c 5 1) (c 4 1) (c 2 1))
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1))
+;;        deep>
+;;        (list (c 7 1) (c 6 1) (c 5 1) (c 4 1) (c 2 1))
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1))
         ; A1 K2 Q3 J4 T1 81 71 61 = A1 T1 81 71 61
-        deep=
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1) (c 8 1) (c 7 1) (c 6 1))
-        (list (c 14 1) (c 10 2) (c 8 1) (c 7 1) (c 6 1))
+;;        deep=
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1) (c 8 1) (c 7 1) (c 6 1))
+;;        (list (c 14 1) (c 10 2) (c 8 1) (c 7 1) (c 6 1))
         ; straight with higher kicker ties
         ; A1 K2 Q3 J4 T1 92 = A1 K2 Q3 J4 T1 22
-        deep=
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1) (c 9 2))
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1) (c 2 2))
+;;        deep=
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1) (c 9 2))
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1) (c 2 2))
         ; straights of different suits tie
         ; A1 K2 Q3 J4 T1 = A2 K3 Q4 J1 T2
-        deep=
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1))
-        (list (c 14 2) (c 13 3) (c 12 4) (c 11 1) (c 10 2))
+;;        deep=
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1))
+;;        (list (c 14 2) (c 13 3) (c 12 4) (c 11 1) (c 10 2))
         ; higher straight beats lower straight
         ; A1 K2 Q3 J4 T1 > 61 52 43 34 21
-        deep>
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1))
-        (list (c 6 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1))
+;;        (list (c 6 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
         ; A1 K2 Q3 J4 T1 92 83 = A1 K2 Q3 J4 T1
-        deep=
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1) (c 9 2) (c 8 3))
-        (list (c 14 2) (c 13 3) (c 12 4) (c 11 1) (c 10 2))
+;;        deep=
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 10 1) (c 9 2) (c 8 3))
+;;        (list (c 14 2) (c 13 3) (c 12 4) (c 11 1) (c 10 2))
         ; lower (2-6) straight beats ace to four straight
         ; 61 52 43 34 21 > A1 52 43 34 21
-        deep>
-        (list (c 6 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
-        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
+;;        deep>
+;;        (list (c 6 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
+;;        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
         ; A1 62 53 44 31 22 = 62 53 44 31 22
-        deep=
-        (list (c 14 1) (c 6 2) (c 5 3) (c 4 4) (c 3 1) (c 2 2))
-        (list (c 6 2) (c 5 3) (c 4 4) (c 3 1) (c 2 2))
+;;        deep=
+;;        (list (c 14 1) (c 6 2) (c 5 3) (c 4 4) (c 3 1) (c 2 2))
+;;        (list (c 6 2) (c 5 3) (c 4 4) (c 3 1) (c 2 2))
         ; ace to four straight with higher kicker ties
         ; A1 52 43 34 21 K2 = A1 52 43 34 21 72
-        deep=
-        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1) (c 13 2))
-        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1) (c 7 2))
+;;        deep=
+;;        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1) (c 13 2))
+;;        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1) (c 7 2))
         ; ace to fours of different suits tie
         ; A1 52 43 34 21 = A2 53 44 31 22
-        deep=
-        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
-        (list (c 14 2) (c 5 3) (c 4 4) (c 3 1) (c 2 2))
+;;        deep=
+;;        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
+;;        (list (c 14 2) (c 5 3) (c 4 4) (c 3 1) (c 2 2))
         ; ace to four straight beats set
         ; A1 52 43 34 21 > A1 A2 A3 K1 Q2
-        deep>
-        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
-        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 12 2))
+;;        deep>
+;;        (list (c 14 1) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
+;;        (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 12 2))
         ; A1 A2 A3 52 43 34 21 = A1 52 43 34 21
-        deep=
-        (list (c 14 1) (c 14 2) (c 14 3) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
-        (list (c 14 1) (c 5 2) (c 4 3) (c 13 2) (c 2 1))
+;;        deep=
+;;        (list (c 14 1) (c 14 2) (c 14 3) (c 5 2) (c 4 3) (c 3 4) (c 2 1))
+;;        (list (c 14 1) (c 5 2) (c 4 3) (c 13 2) (c 2 1))
         ; higher set wins
         ; 71 72 73 34 21 > 51 52 53 A4 K1
-        deep>
-        (list (c 7 1) (c 7 2) (c 7 3) (c 3 4) (c 2 1))
-        (list (c 5 1) (c 5 2) (c 5 3) (c 14 4) (c 13 1))
+;;        deep>
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 3 4) (c 2 1))
+;;        (list (c 5 1) (c 5 2) (c 5 3) (c 14 4) (c 13 1))
         ; set with higher first kicker wins
         ; 71 72 73 A1 22 > 71 72 73 K1 Q2
-        deep>
-        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 2 2))
-        (list (c 7 1) (c 7 2) (c 7 3) (c 13 1) (c 12 2))
+;;        deep>
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 2 2))
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 13 1) (c 12 2))
         ; 71 72 73 A1 K2 J3 54 43 = 71 72 73 A1 K2
-        deep=
-        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2) (c 11 3) (c 5 4) (c 4 3))
-        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2))
+;;        deep=
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2) (c 11 3) (c 5 4) (c 4 3))
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2))
         ; set with higher second kicker wins
         ; 71 72 73 A1 K2 > 71 72 73 A1 Q2
-        deep>
-        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2))
-        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 12 2))
+;;        deep>
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2))
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 12 2))
         ; set with higher third kicker ties
         ; 71 72 73 A1 K2 Q3 = 71 72 73 A1 K2 J3
-        deep=
-        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2) (c 12 3))
-        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2) (c 11 3))
+;;        deep=
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2) (c 12 3))
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 14 1) (c 13 2) (c 11 3))
         ; set beats two pair
         ; 71 72 73 34 21 > A1 A2 K3 K4 Q1
-        deep>
-        (list (c 7 1) (c 7 2) (c 7 3) (c 3 4) (c 2 1))
-        (list (c 14 1) (c 14 2) (c 13 3) (c 13 4) (c 12 1))
+;;        deep>
+;;        (list (c 7 1) (c 7 2) (c 7 3) (c 3 4) (c 2 1))
+;;        (list (c 14 1) (c 14 2) (c 13 3) (c 13 4) (c 12 1))
         ; two pair with higher high pair wins
         ; K1 K2 33 34 21 > Q1 Q2 J3 J4 A1
-        deep>
-        (list (c 13 1) (c 13 2) (c 3 3) (c 3 4) (c 2 1))
-        (list (c 12 1) (c 12 2) (c 11 3) (c 11 4) (c 14 1))
+;;        deep>
+;;        (list (c 13 1) (c 13 2) (c 3 3) (c 3 4) (c 2 1))
+;;        (list (c 12 1) (c 12 2) (c 11 3) (c 11 4) (c 14 1))
         ; A1 A2 K1 K2 J1 J2 = A1 A2 K1 K2 J3
-        deep=
-        (list (c 14 1) (c 14 2) (c 13 1) (c 13 2) (c 11 1) (c 11 2))
-        (list (c 14 1) (c 14 2) (c 13 1) (c 13 2) (c 11 3))
+;;        deep=
+;;        (list (c 14 1) (c 14 2) (c 13 1) (c 13 2) (c 11 1) (c 11 2))
+;;        (list (c 14 1) (c 14 2) (c 13 1) (c 13 2) (c 11 3))
         ; two pair with tied higher pair and higher lower pair wins
         ; K1 K2 71 72 23 > K1 K2 63 64 A1
-        deep>
-        (list (c 13 1) (c 13 2) (c 7 1) (c 7 2) (c 2 3))
-        (list (c 13 1) (c 13 2) (c 6 3) (c 6 4) (c 14 1))
+;;        deep>
+;;        (list (c 13 1) (c 13 2) (c 7 1) (c 7 2) (c 2 3))
+;;        (list (c 13 1) (c 13 2) (c 6 3) (c 6 4) (c 14 1))
         ; two pair with higher kicker wins
         ; K1 K2 Q3 Q4 J1 > K1 K2 Q3 Q4 T1
-        deep>
-        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 11 1))
-        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 10 1))
+;;        deep>
+;;        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 11 1))
+;;        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 10 1))
         ; K1 K2 Q3 Q4 A1 T1 92 63 = K1 K2 Q3 Q4 A1
-        deep=
-        (list (c 13 1) (c 13 2) (c 3 3) (c 3 4) (c 14 1) (c 10 1) (c 9 2) (c 6 3))
-        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 14 1))
+;;        deep=
+;;        (list (c 13 1) (c 13 2) (c 3 3) (c 3 4) (c 14 1) (c 10 1) (c 9 2) (c 6 3))
+;;        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 14 1))
         ; two pair with higher second kicker ties
         ; K1 K2 Q3 Q4 J1 T2 = K1 K2 Q3 Q4 J1 92
-        deep=
-        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 11 1) (c 10 2))
-        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 11 1) (c 9 2))
+;;        deep=
+;;        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 11 1) (c 10 2))
+;;        (list (c 13 1) (c 13 2) (c 12 3) (c 12 4) (c 11 1) (c 9 2))
         ; two pair beats pair
         ; 41 42 33 34 21 > A1 A2 K3 Q4 J1
-        deep>
-        (list (c 4 1) (c 4 2) (c 3 3) (c 3 4) (c 2 1))
-        (list (c 14 1) (c 14 2) (c 13 3) (c 12 4) (c 11 1))
+;;        deep>
+;;        (list (c 4 1) (c 4 2) (c 3 3) (c 3 4) (c 2 1))
+;;        (list (c 14 1) (c 14 2) (c 13 3) (c 12 4) (c 11 1))
         ; higher pair wins
         ; 71 72 53 44 31 > 61 62 A3 K4 Q1
-        deep>
-        (list (c 7 1) (c 7 2) (c 5 3) (c 4 4) (c 3 1))
-        (list (c 6 1) (c 6 2) (c 14 3) (c 13 4) (c 12 1))
+;;        deep>
+;;        (list (c 7 1) (c 7 2) (c 5 3) (c 4 4) (c 3 1))
+;;        (list (c 6 1) (c 6 2) (c 14 3) (c 13 4) (c 12 1))
         ; tied pair with higher first kicker wins
         ; 91 92 A3 34 21 > 91 92 K3 Q4 J1
-        deep>
-        (list (c 9 1) (c 9 2) (c 14 3) (c 3 4) (c 2 1))
-        (list (c 9 1) (c 9 2) (c 13 3) (c 12 4) (c 11 1))
+;;        deep>
+;;        (list (c 9 1) (c 9 2) (c 14 3) (c 3 4) (c 2 1))
+;;        (list (c 9 1) (c 9 2) (c 13 3) (c 12 4) (c 11 1))
         ; 21 22 A1 Q2 J3 94 81 = 21 22 A1 Q2 J3
-        deep=
-        (list (c 2 1) (c 2 2) (c 14 1) (c 12 2) (c 11 3) (c 9 4) (c 8 1))
-        (list (c 2 1) (c 2 2) (c 14 1) (c 12 2) (c 11 3))
+;;        deep=
+;;        (list (c 2 1) (c 2 2) (c 14 1) (c 12 2) (c 11 3) (c 9 4) (c 8 1))
+;;        (list (c 2 1) (c 2 2) (c 14 1) (c 12 2) (c 11 3))
         ; tied pair with higher second kicker wins
         ; 91 92 A3 K4 21 > 91 92 A3 Q4 J1
-        deep>
-        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 2 1))
-        (list (c 9 1) (c 9 2) (c 14 3) (c 12 4) (c 11 1))
+;;        deep>
+;;        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 2 1))
+;;        (list (c 9 1) (c 9 2) (c 14 3) (c 12 4) (c 11 1))
         ; tied pair with higher third kicker wins
         ; 91 92 A3 K4 Q1 > 91 92 A3 K4 J1
-        deep>
-        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 12 1))
-        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 11 1))
+;;        deep>
+;;        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 12 1))
+;;        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 11 1))
         ; tied pair with higher fourth kicker ties
         ; 91 92 A3 K4 Q1 J2 = 91 92 A3 K4 Q1 T2
-        deep=
-        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 12 1) (c 11 2))
-        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 12 1) (c 10 2))
+;;        deep=
+;;        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 12 1) (c 11 2))
+;;        (list (c 9 1) (c 9 2) (c 14 3) (c 13 4) (c 12 1) (c 10 2))
         ; pair beats high card
         ; 21 22 33 44 51 > A1 Q2 J3 T4 91
-        deep>
-        (list (c 2 1) (c 2 2) (c 3 3) (c 4 4) (c 5 1))
-        (list (c 14 1) (c 12 2) (c 11 3) (c 10 4) (c 9 1))
+;;        deep>
+;;        (list (c 2 1) (c 2 2) (c 3 3) (c 4 4) (c 5 1))
+;;        (list (c 14 1) (c 12 2) (c 11 3) (c 10 4) (c 9 1))
         ; higher high card wins
         ; A1 22 33 44 61 > K1 Q2 J3 T4 81
-        deep>
-        (list (c 14 1) (c 2 2) (c 3 3) (c 4 4) (c 6 1))
-        (list (c 13 1) (c 12 2) (c 11 3) (c 10 4) (c 8 1))
+;;        deep>
+;;        (list (c 14 1) (c 2 2) (c 3 3) (c 4 4) (c 6 1))
+;;        (list (c 13 1) (c 12 2) (c 11 3) (c 10 4) (c 8 1))
         ; A1 K2 J3 T4 81 72 53 = A1 K2 J3 T4 81
-        deep=
-        (list (c 14 1) (c 13 2) (c 11 3) (c 10 4) (c 8 1) (c 7 2) (c 5 3))
-        (list (c 14 1) (c 13 2) (c 11 3) (c 10 4) (c 8 1))
+;;        deep=
+;;        (list (c 14 1) (c 13 2) (c 11 3) (c 10 4) (c 8 1) (c 7 2) (c 5 3))
+;;        (list (c 14 1) (c 13 2) (c 11 3) (c 10 4) (c 8 1))
         ; higher second card wins
         ; A1 K2 23 34 41 > A1 Q2 J3 T4 91
-        deep>
-        (list (c 14 1) (c 13 2) (c 2 3) (c 3 4) (c 4 1))
-        (list (c 14 1) (c 12 2) (c 11 3) (c 10 4) (c 9 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 2) (c 2 3) (c 3 4) (c 4 1))
+;;        (list (c 14 1) (c 12 2) (c 11 3) (c 10 4) (c 9 1))
         ; higher third card wins
         ; A1 K2 Q3 24 41 > A1 K2 J3 T4 91
-        deep>
-        (list (c 14 1) (c 13 2) (c 12 3) (c 2 4) (c 4 1))
-        (list (c 14 1) (c 13 2) (c 11 3) (c 10 4) (c 9 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 2 4) (c 4 1))
+;;        (list (c 14 1) (c 13 2) (c 11 3) (c 10 4) (c 9 1))
         ; higher fourth card wins
         ; A1 K2 Q3 J4 31 > A1 K2 Q3 T4 91
-        deep>
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 3 1))
-        (list (c 14 1) (c 13 2) (c 12 3) (c 10 4) (c 9 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 3 1))
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 10 4) (c 9 1))
         ; higher fifth card wins
         ; A1 K2 Q3 J4 91 > A1 K2 Q3 J4 81
-        deep>
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 9 1))
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 8 1))
+;;        deep>
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 9 1))
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 8 1))
         ; higher sixth card ties
         ; A1 K2 Q3 J4 91 22 = A1 K2 Q3 J4 91 82
-        deep=
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 9 1) (c 2 2))
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 9 1) (c 8 2))
+;;        deep=
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 9 1) (c 2 2))
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 9 1) (c 8 2))
         ; high cards of different suits ties
         ; A1 K2 Q3 J4 91 = A2 K3 Q4 J1 92
-        deep=
-        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 9 1))
-        (list (c 14 2) (c 13 3) (c 12 4) (c 11 1) (c 9 2))
+;;        deep=
+;;        (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 9 1))
+;;        (list (c 14 2) (c 13 3) (c 12 4) (c 11 1) (c 9 2))
     )
 )
