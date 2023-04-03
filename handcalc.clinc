@@ -65,7 +65,7 @@
         (straight_high_inner ranks (= (f ranks) 14) 0 0)
     )
     (defun group_by_count_inner (items last count)
-        (if (not (print (list "group_by_count_inner" items last count) items))
+        (if (not items)
             (list (c count last))
             (if (= (f items) last)
                 (group_by_count_inner (r items) last (+ count 1))
@@ -83,13 +83,13 @@
             first (lambda (x) (f x))
             rest (lambda (x) (r x))
             fsuit (find_flush (map rest cards))
-            max_flush (print "hc-max-flush" (if (not fsuit)
+            max_flush (if (not fsuit)
                 0
                 (assign-lambda
                     fnosuits
-                       (print "max-flush-sort" (sort
+                       (sort
                           (lambda (x y) (deep> x y))
-                          (print "filtermap-output" (filtermap
+                          (filtermap
                              (lambda ((& fsuit) (card_rank . card_suit))
                                     (if (= fsuit card_suit)
                                         card_rank
@@ -98,43 +98,43 @@
                                     )
                              cards
                              0
-                             ))
-                          ))
+                             )
+                          )
 
                     fsh (straight_high fnosuits)
                     (if fsh
                         (list STRAIGHT_FLUSH fsh)
-                        (c FLUSH (slice (print "slice-for-flush" fnosuits) 5))
+                        (c FLUSH (slice fnosuits 5))
                     )
                 )
-            ))
-            nosuits (print "hc-nosuits" (sort (lambda (x y) (deep> x y)) (map first cards)))
-            sh (print "hc-sh" (straight_high nosuits))
-            max_straight (print "hc-max-straight" (if sh
+            )
+            nosuits (sort (lambda (x y) (deep> x y)) (map first cards))
+            sh (straight_high nosuits)
+            max_straight (if sh
                 (list STRAIGHT sh)
                 0
-            ))
-            groups (print "hc-groups" (sort (lambda (x y) (deep> x y)) (print "grouped-by-count" (group_by_count nosuits))))
+            )
+            groups (sort (lambda (x y) (deep> x y)) (group_by_count nosuits))
             (top_count . top_card) (f groups)
             (second_count . second_card) (f (r groups))
             topcards (map rest groups)
-            max_group (print "hc-max-group" (if (= (print "top_count" top_count) 1)
-                (c HIGH_CARD (slice (print "topcards" topcards) 5))
-                (if (= (print "top_count" top_count) 2)
-                    (if (= (print "second_count" second_count) 1)
+            max_group (if (= top_count 1)
+                (c HIGH_CARD (slice topcards 5))
+                (if (= top_count 2)
+                    (if (= second_count 1)
                         (c PAIR (slice topcards 4))
-                        (c TWO_PAIR (slice (print "topcards" topcards) 3))
+                        (c TWO_PAIR (slice topcards 3))
                     )
-                    (if (= (print "top_count" top_count) 3)
-                        (if (= (print "second_count" second_count) 1)
+                    (if (= top_count 3)
+                        (if (= second_count 1)
                             (c THREE_OF_A_KIND (slice topcards 3))
                             (c FULL_HOUSE (slice topcards 2))
                         )
                         (c FOUR_OF_A_KIND (slice topcards 2))
                     )
                 )
-            ))
-            (print "got-from-max" (max (lambda (x y) (deep< x y)) (print "max-of" (list max_flush max_straight max_group))))
+            )
+            (max (lambda (x y) (deep< x y)) (list max_flush max_straight max_group))
         )
     )
 )

@@ -18,7 +18,7 @@
             firstval (handcalc (print "firstarg" firstarg))
             secondval (handcalc (print "secondarg" secondarg))
             (assert
-                (a myfunc (list (print "firstval" firstval) (print "secondval" secondval)))
+                (a myfunc (list firstval secondval))
                 (deep= firstval (handcalc (reverse firstarg)))
                 (deep= secondval (handcalc (reverse secondarg)))
                 (if remaining
