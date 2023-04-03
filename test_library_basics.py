@@ -31,6 +31,9 @@ smoke_test_permutations_program = Program.from_bytes(bytes.fromhex(open('smoke_t
 compile_module_with_symbols(['.'], 'test_handcalc.clsp')
 test_handcalc_program = Program.from_bytes(bytes.fromhex(open('test_handcalc.clvm.hex').read()))
 
+def test_smoke_compare():
+    compare_program.run(Program.to([]))
+
 def test_handcalc():
     diag_run_clvm(test_handcalc_program, Program.to([]), 'test_handcalc.sym')
 
@@ -56,9 +59,6 @@ def with_random_lists(n,f):
         for i in range(1 + (3 * length)): # A few orders each
             orig_list = [random.randint(0,100) for x in range(length)]
             f(orig_list)
-
-def test_smoke_compare():
-    compare_program.run(Program.to([]))
 
 def test_prepend():
     for length1 in range(5):
