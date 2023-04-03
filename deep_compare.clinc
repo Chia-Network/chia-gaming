@@ -3,16 +3,16 @@
     (defun deep_compare (a b)
         (if (l a)
             (if (l b)
-                (assign inner_result (deep_compare (f a) (f b))
+                (assign-lambda inner_result (deep_compare (f a) (f b))
                     (if inner_result
                         inner_result
                         (deep_compare (r a) (r b))
                     )
                 )
-                -1
+                1
             )
             (if (l b)
-                1
+                -1
                 (if (> a b)
                     1
                     (- 0 (> b a))
