@@ -16,6 +16,100 @@
     (defconstant TWO_PAIR 3)
     (defconstant PAIR 2)
     (defconstant HIGH_CARD 1)
+    (defun hand< (a b)
+        (if a
+            (if (= (f a) (f b))
+                (hand< (r a) (r b))
+                (< (f a) (f b))
+            )
+            ; This can only happen when a and b are identical
+            0
+        )
+    )
+    (defun merge (a b)
+        (if (not a)
+            b
+            (if (not b)
+                a
+                (if (> (f a) (f b))
+                    (c (f a) (merge (r a) b))
+                    (c (f b) (merge a (r b)))
+                )
+            )
+        )
+    )
+    ; Sorts atoms into descending order
+    ; This is optimized for sorting short lists
+    ; A more general function would return a list of lists of ascending sizes 
+    ; to be merged 
+    (defun atomsort ((@ firstpos (first @ secondpos (second @ thirdpos (third . remaining)))))
+        (if firstpos
+            (if secondpos
+                (if thirdpos
+                    (assign-inline
+                        mylist
+                        (if (> first second)
+                            (if (> second third)
+                                (list first second third)
+                                (if (> first third)
+                                    (list first third second)
+                                    (list third first second)
+                                )
+                            )
+                            (if (> first third)
+                                (list second first third)
+                                (if (> second third)
+                                    (list second third first)
+                                    (list third second first)
+                                )
+                            )
+                        )
+                        (merge mylist (atomsort remaining))
+                    )
+                    (if (> first second)
+                        firstpos
+                        (list second first)
+                    )
+                )
+                firstpos
+            )
+            0
+        )
+    )
+    (defun count_suits ((@ cards ((firstrank . firstsuit) . remaining)))
+        (if (not cards)
+            (c (c 0 0) (c 0 0))
+            (assign ((@ cd (clubs . diamonds)) . (@ hs (hearts . spades))) (count_suits remaining)
+                (if (= firstsuit 1)
+                    (c (c (+ clubs 1) diamonds) hs)
+                    (if (= firstsuit 2)
+                        (c (c clubs (+ diamonds 1) hs))
+                        (if (= firstsuit 3)
+                            (c cd (c (+ hearts 1) spades))
+                            (c cd (c hearts (+ spades 1)))
+                        )
+                    )
+                )
+            )
+        )
+    )
+    (defun find_flush_2 (cards)
+        (assign ((clubs . diamonds) . (hearts . spades)) (count_suits cards)
+            (if (> 4 clubs)
+                1
+                (if (> 4 diamonds)
+                    2
+                    (if (> 4 hearts)
+                        3
+                        (if (> 4 spades)
+                            4
+                            0
+                        )
+                    )
+                )
+            )
+        )
+    )
     (defun find_flush_inner (suits last count)
         (if (not suits)
             0
@@ -31,30 +125,28 @@
     ; returns the flush suit or 0 if there isn't any
     ; suits must be clustered/sorted
     (defun find_flush (suits)
-        (find_flush_inner (sort (lambda (x y) (deep> x y)) suits) 0 0)
+        (find_flush_inner (atomsort suits) 0 0)
     )
-    (defun straight_high_inner (ranks started_ace last count)
+    (defun straight_high_inner (ranks last count)
         (if (not ranks)
-            ; at the end of the list
-            (if (logand (= last 2) (= count 4) started_ace)
-                ; ace to five
+            (if (logand (= last 2) (= count 4))
+                ; maybe ace to five
                 5
-                ; no straight
                 0
             )
             (if (= last (f ranks))
                 ; skip identical cards
-                (straight_high_inner (r ranks) started_ace last count)
+                (straight_high_inner (r ranks) last count)
                 ; if the partial straight continues
                 (if (= (f ranks) (- last 1))
                     (if (= count 4)
                         ; found a straight, add 3 to last because next and last are included
                         (+ last 3)
                         ; keep looking for a straight with the count going up by one
-                        (straight_high_inner (r ranks) started_ace (f ranks) (+ count 1))
+                        (straight_high_inner (r ranks) last (+ count 1))
                     )
                     ; reset the count
-                    (straight_high_inner (r ranks) started_ace (f ranks) 1)
+                    (straight_high_inner (r ranks) (f ranks) 1)
                 )
             )
         )
@@ -62,15 +154,23 @@
     ; returns the high card of a straight or 0 if there isn't any
     ; ranks must be sorted in descending order
     (defun straight_high (ranks)
-        (straight_high_inner ranks (= (f ranks) 14) 0 0)
+        (assign high (straight_high_inner ranks 0 0)
+            (if (= high 5)
+                (if (= (f ranks) 14)
+                    5
+                    0
+                )
+                high
+            )
+        )
     )
     (defun group_by_count_inner (items last count)
         (if (not items)
-            (list (c count last))
+            (logior (lsh count 4) last)
             (if (= (f items) last)
                 (group_by_count_inner (r items) last (+ count 1))
-                (assign val (group_by_count_inner (r items) (f items) 1)
-                    (c (c count last) val)
+                (assign-inline val (group_by_count_inner (r items) (f items) 1)
+                    (c (logior (lsh count 4) last) val)
                 )
             )
         )
@@ -82,39 +182,39 @@
         (assign-lambda
             first (lambda (x) (f x))
             rest (lambda (x) (r x))
-            fsuit (find_flush (map rest cards))
+            fsuit (find_flush_2 (map rest cards))
             max_flush (if (not fsuit)
-                0
-                (assign-lambda
-                    fnosuits
-                       (sort
-                          (lambda (x y) (deep> x y))
-                          (filtermap
-                             (lambda ((& fsuit) (card_rank . card_suit))
-                                    (if (= fsuit card_suit)
-                                        card_rank
-                                        0
-                                        )
-                                    )
-                             cards
-                             0
-                             )
-                          )
-
-                    fsh (straight_high fnosuits)
+                (list 0)
+                (assign
+                    flushcards
+                    (filtermap 
+                        (lambda ((& fsuit) (card_rank . card_suit))
+                            (if (= fsuit card_suit)
+                                card_rank
+                                0
+                            )
+                        )
+                        cards
+                        0
+                    )
+                    flushranks (atomsort flushcards)
+                    fsh (straight_high flushranks)
                     (if fsh
                         (list STRAIGHT_FLUSH fsh)
-                        (c FLUSH (slice fnosuits 5))
+                        (c FLUSH (slice flushranks 5))
                     )
                 )
             )
-            nosuits (sort (lambda (x y) (deep> x y)) (map first cards))
-            sh (straight_high nosuits)
+            ranks (atomsort (map first cards))
+            sh (straight_high ranks)
             max_straight (if sh
                 (list STRAIGHT sh)
-                0
+                (list 0)
             )
-            groups (sort (lambda (x y) (deep> x y)) (group_by_count nosuits))
+            groups (map 
+                (lambda (myval) (c (lsh myval -4) (logand myval 0x0F)))
+                (atomsort (group_by_count ranks))
+            )
             (top_count . top_card) (f groups)
             (second_count . second_card) (f (r groups))
             topcards (map rest groups)
@@ -134,7 +234,17 @@
                     )
                 )
             )
-            (max (lambda (x y) (deep< x y)) (list max_flush max_straight max_group))
+            ; max of max_flush max_straight and max_group
+            (if (> (f max_flush) (f max_straight))
+                (if (> (f max_flush) (f max_group))
+                    max_flush
+                    max_group
+                )
+                (if (> (f max_straight) (f max_group))
+                    max_straight
+                    max_group
+                )
+            )
         )
     )
 )
