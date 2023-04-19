@@ -6,10 +6,8 @@
     (include reverse.clinc)
     (include prepend.clinc)
     (include map.clinc)
-    (include sort.clinc)
     (include filtermap.clinc)
     (include slice.clinc)
-    (include max.clinc)
     (include print.clinc)
     (include handcalc.clinc)
 
