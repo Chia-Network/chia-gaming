@@ -76,14 +76,14 @@
             0
         )
     )
-    (defun count_suits ((@ cards ((firstrank . firstsuit) . remaining)))
-        (if (not cards)
+    (defun count_suits ((@ suits (firstsuit . remaining)))
+        (if (not suits)
             (c (c 0 0) (c 0 0))
             (assign ((@ cd (clubs . diamonds)) . (@ hs (hearts . spades))) (count_suits remaining)
                 (if (= firstsuit 1)
                     (c (c (+ clubs 1) diamonds) hs)
                     (if (= firstsuit 2)
-                        (c (c clubs (+ diamonds 1) hs))
+                        (c (c clubs (+ diamonds 1)) hs)
                         (if (= firstsuit 3)
                             (c cd (c (+ hearts 1) spades))
                             (c cd (c hearts (+ spades 1)))
@@ -93,15 +93,15 @@
             )
         )
     )
-    (defun find_flush_2 (cards)
-        (assign ((clubs . diamonds) . (hearts . spades)) (count_suits cards)
-            (if (> 4 clubs)
+    (defun find_flush_2 (suits)
+        (assign ((clubs . diamonds) . (hearts . spades)) (count_suits suits)
+            (if (> clubs 4)
                 1
-                (if (> 4 diamonds)
+                (if (> diamonds 4)
                     2
-                    (if (> 4 hearts)
+                    (if (> hearts 4)
                         3
-                        (if (> 4 spades)
+                        (if (> spades 4)
                             4
                             0
                         )
@@ -143,7 +143,7 @@
                         ; found a straight, add 3 to last because next and last are included
                         (+ last 3)
                         ; keep looking for a straight with the count going up by one
-                        (straight_high_inner (r ranks) last (+ count 1))
+                        (straight_high_inner (r ranks) (f ranks) (+ count 1))
                     )
                     ; reset the count
                     (straight_high_inner (r ranks) (f ranks) 1)
@@ -156,17 +156,14 @@
     (defun straight_high (ranks)
         (assign high (straight_high_inner ranks 0 0)
             (if (= high 5)
-                (if (= (f ranks) 14)
-                    5
-                    0
-                )
+                (* (= (f ranks) 14) 5)
                 high
             )
         )
     )
     (defun group_by_count_inner (items last count)
         (if (not items)
-            (logior (lsh count 4) last)
+            (list (logior (lsh count 4) last))
             (if (= (f items) last)
                 (group_by_count_inner (r items) last (+ count 1))
                 (assign-inline val (group_by_count_inner (r items) (f items) 1)

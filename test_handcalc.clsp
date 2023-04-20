@@ -13,8 +13,8 @@
 
     (defun runtests_inner ((myfunc firstarg secondarg . remaining))
         (assign-lambda
-            firstval (handcalc (print "firstarg" firstarg))
-            secondval (handcalc (print "secondarg" secondarg))
+            firstval (handcalc firstarg)
+            secondval (handcalc secondarg)
             (assert
                 (a myfunc (list firstval secondval))
                 (deep= firstval (handcalc (reverse firstarg)))
