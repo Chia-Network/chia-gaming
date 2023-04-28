@@ -16,15 +16,17 @@
     (defconstant TWO_PAIR 3)
     (defconstant PAIR 2)
     (defconstant HIGH_CARD 1)
-    (defun hand< (a b)
-        (if a
-            (if (= (f a) (f b))
-                (hand< (r a) (r b))
-                (< (f a) (f b))
+    (defun hand_compare (a b)
+        (if (= (f a) (f b))
+            (if (r a)
+                (hand_compare (r a) (r b))
+                0
             )
-            ; This can only happen when a and b are identical
-            0
+            (- (* 2 (> (f a) (f b))) 1)
         )
+    )
+    (defun hand< (a b)
+        (= (hand_compare a b) -1)
     )
     (defun merge (a b)
         (if (not a)
@@ -46,7 +48,7 @@
         (if firstpos
             (if secondpos
                 (if thirdpos
-                    (assign-inline
+                    (assign-lambda
                         mylist
                         (if (> first second)
                             (if (> second third)
@@ -76,10 +78,10 @@
             0
         )
     )
-    (defun count_suits ((@ suits (firstsuit . remaining)))
+    (defun count_suits_2 ((@ suits (firstsuit . remaining)))
         (if (not suits)
             (c (c 0 0) (c 0 0))
-            (assign ((@ cd (clubs . diamonds)) . (@ hs (hearts . spades))) (count_suits remaining)
+            (assign-lambda ((@ cd (clubs . diamonds)) . (@ hs (hearts . spades))) (count_suits remaining)
                 (if (= firstsuit 1)
                     (c (c (+ clubs 1) diamonds) hs)
                     (if (= firstsuit 2)
@@ -94,7 +96,7 @@
         )
     )
     (defun find_flush_2 (suits)
-        (assign ((clubs . diamonds) . (hearts . spades)) (count_suits suits)
+        (assign-lambda ((clubs . diamonds) . (hearts . spades)) (count_suits suits)
             (if (> clubs 4)
                 1
                 (if (> diamonds 4)
@@ -110,22 +112,29 @@
             )
         )
     )
-    (defun find_flush_inner (suits last count)
-        (if (not suits)
+    (defun count_suits (suits)
+        (if suits
+            (+ (count_suits (r suits)) (ash 1 (* 4 (- (f suits) 1))))
             0
-            (if (= (f suits) last)
-                (if (= count 4)
-                    last
-                    (find_flush_inner (r suits) last (+ count 1))
-                )
-                (find_flush_inner (r suits) (f suits) 1)
-            )
         )
     )
-    ; returns the flush suit or 0 if there isn't any
-    ; suits must be clustered/sorted
     (defun find_flush (suits)
-        (find_flush_inner (atomsort suits) 0 0)
+        (assign-lambda 
+            myvals (print (list 'suit counts' suits) (count_suits suits))
+            (if (print 'fourval' (> (logand myvals 0xF000) 0x4000))
+                4
+                (if (print 'threeval' (> (logand myvals 0x0F00) 0x0400))
+                    3
+                    (if (print 'twoval' (> (logand myvals 0xF0) 0x40))
+                        2
+                        (if (print 'oneval' (> (logand myvals 0x0F) 0x04))
+                            1
+                            0
+                        )
+                    )
+                )
+            )
+        )
     )
     (defun straight_high_inner (ranks last count)
         (if (not ranks)
@@ -154,7 +163,7 @@
     ; returns the high card of a straight or 0 if there isn't any
     ; ranks must be sorted in descending order
     (defun straight_high (ranks)
-        (assign high (straight_high_inner ranks 0 0)
+        (assign-lambda high (straight_high_inner ranks 0 0)
             (if (= high 5)
                 (* (= (f ranks) 14) 5)
                 high
@@ -179,10 +188,10 @@
         (assign-lambda
             first (lambda (x) (f x))
             rest (lambda (x) (r x))
-            fsuit (find_flush_2 (map rest cards))
+            fsuit (find_flush (map rest cards))
             max_flush (if (not fsuit)
                 (list 0)
-                (assign
+                (assign-lambda
                     flushcards
                     (filtermap 
                         (lambda ((& fsuit) (card_rank . card_suit))
