@@ -120,14 +120,14 @@
     )
     (defun find_flush (suits)
         (assign-lambda 
-            myvals (print (list 'suit counts' suits) (count_suits suits))
-            (if (print 'fourval' (> (logand myvals 0xF000) 0x4000))
+            myvals (count_suits suits)
+            (if (> (logand myvals 0xF000) 0x4000)
                 4
-                (if (print 'threeval' (> (logand myvals 0x0F00) 0x0400))
+                (if (> (logand myvals 0x0F00) 0x0400)
                     3
-                    (if (print 'twoval' (> (logand myvals 0xF0) 0x0040))
+                    (if (> (logand myvals 0x00F0) 0x0040)
                         2
-                        (if (print 'oneval' (> (logand myvals 0x0F) 0x04))
+                        (if (> (logand myvals 0x0F) 0x04)
                             1
                             0
                         )
