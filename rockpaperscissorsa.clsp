@@ -1,5 +1,4 @@
-(mod (total alice_image bob_share new_validation justification)
-
+(mod (((alice_image new_validation_hash)) conditions)
     (include *standard-cl-22*)
     (include assert.clinc)
     (include curry.clinc)
@@ -8,8 +7,12 @@
     (defconst bhash (shatree rockpaperscissorsb))
 
     (assert
-        (= new_validation (curry_hashes bhash (sha256 1 alice_image)))
-        (not bob_share)
-        0
+        (not
+            (all
+                (= new_validation_hash (sha256 bhash (shatree alice_image)))
+                (= (len alice_image) 32)
+            )
+        )
+        conditions
     )
 )

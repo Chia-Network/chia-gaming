@@ -9,118 +9,71 @@
 ; SPLIT is implicitly accepted by allowing a timeout
 ; AMOUNT TIMEOUT and MAX_MOVE_SIZE are all fixed for the duration of the game
 ; (maybe they should be hard coded instead of parameterized?)
-; MOVER_PUZZLE_HASH and WAITER_PUZZLE_HASH are swapped each move. They are used to commit to moves 
-; and as targets for rewards
-; MOD_HASH should be the shatree of referree itself
+; ALICE_PUZZLE_HASH and BOB_PUZZLE_HASH are used to commit to moves and as targets for rewards
+; MOD_HASH should be the shatree of referee itself
 ; action can be timeout, move, or accuse
 ; action and args should really be a single type cased value
 ; If action is timeout args are ignored
 ; If action is accuse args proves the previous validation program hash and a 
-; justification for MOVER_PUZZLE
+; solution for MOVER_PUZZLE
 ; If action is move new values are given to be accepted optimistically and 
-; a justification for MOVER_PUZZLE
-(mod ((VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT TIMEOUT MAX_MOVE_SIZE 
-        MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH MOD_HASH) action . args)
+; a solution for MOVER_PUZZLE
+(mod (@ all_args ((LAST_MOVE VALIDATION_INFO_HASH ALICE_SHARE PREVIOUS_VALIDATION_INFO_HASH ALICE_TURN 
+        @ constants (AMOUNT TIMEOUT ALICE_PUZZLE_HASH BOB_PUZZLE_HASH MAX_MOVE_SIZE MOD_HASH)) .
+        ; I am going to hell
+        @ args (arg1 arg2)))
     (include *standard-cl-22*)
-    ; This shoud be a bulk import from a standard library
+    ; This should be a bulk import from a standard library
     (include assert.clinc)
     (include curry.clinc)
-    (include reduce.clinc)
     (include match.clinc)
     (include shatree.clinc)
-    (include filtermap.clinc)
     (include prefix.clinc)
     (include condition_codes.clinc)
-    ; This should be a type enumeration and timeout should be 0 to be consistent with accused states
-    (defconstant move 0)
-    (defconstant accuse 1)
-    (defconstant timeout 2)
 
     (defun print (X R) (i X R R))
 
-    ; There should be a shorthand for doing these two lines in one
-    (compile-file refaccuse "referee_accuse.clsp")
-    (defconst accusehash (shatree refaccuse))
     (defun <= (A B) (not (> A B)))
     (defun >= (A B) (not (> B A)))
 
-    ; This should be a case statement
-    (if (= action timeout)
-        (filtermap
-            (lambda ((hash size))
-                (if size
-                    (list CREATE_COIN hash size)
-                    0
-                )
-            )
-            (list 
-                (list MOVER_PUZZLE_HASH SPLIT)
-                (list WAITER_PUZZLE_HASH (- AMOUNT SPLIT))
-            )
-            (list 
-                (list ASSERT_SECONDS_RELATIVE TIMEOUT)
-                ; Hopefully these are unnecessary by the time this gets deployed
-                (list CREATE_COIN_ANNOUNCEMENT 0)
-            )
+    (if (not args)
+        ; timeout
+        (list
+            (list ASSERT_SECONDS_RELATIVE TIMEOUT)
+            (i ALICE_SHARE (list CREATE_COIN ALICE_PUZZLE_HASH ALICE_SHARE) (list 1))
+            (i (- amount ALICE_SHARE) (list CREATE_COIN BOB_PUZZLE_HASH (- amount ALICE_SHARE)) (list 1))
         )
-        (if action
+        (if (l arg2)
             ; accuse
             (assign
-                ; grandparent_id is this puzzle's parent's parent id
-                ; parent_validation_puzzle_hash is the previous validation puzzle hash
-                ; parent_everything_else_hash is the using the shatree trick of avoiding 
-                ; to have to reveal everything else by giving its shatree
-                ; solution is passed in to mover_puzzle and its format is puzzle specific
-                (grandparent_id parent_validation_puzzle_hash parent_everything_else_hash 
-                        mover_puzzle_reveal solution) args
-                ; The puzzle hash of the child to make
-                new_puzzle_hash (curry_hashes accusehash (shatree (list 
-                        parent_validation_puzzle_hash VALIDATION_PROGRAM_HASH LAST_MOVE SPLIT AMOUNT 
-                        TIMEOUT WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH)))
-                ; conditions are filtered for what's required rather than generated here
-                conditions (a mover_puzzle_reveal solution)
+                (validation_program_args previous_validation_program mover_puzzle solution) args
+                previous_program_hash (shatree previous_validation_program)
                 (assert
-                    (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
-                    ; conditions must include making the accuse coin
-                    (match 
-                        (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))
-                            (if (= condname CREATE_COIN)
-                                (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
-                                0
-                            )
-                        )
-                        conditions
-                    )
-                    (prefix
-                        ; auditing the inputs
-                        (list ASSERT_MY_PARENT_ID 
-                            (sha256
-                                grandparent_id
-                                (curry_hashes MOD_HASH
-                                    (sha256 2 (sha256 1 parent_validation_puzzle_hash) parent_everything_else_hash)
-                                )
-                                AMOUNT
-                            )
-                        )
-                        (list CREATE_COIN_ANNOUNCEMENT 0)
-                        conditions
-                    )
+                    (= (i ALICE_TURN ALICE_PUZZLE_HASH BOB_PUZZLE_HASH) (shatree mover_puzzle))
+                    (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_program_hash (shatree 
+                            validation_program_args)))
+                    ; the validation program can give opportunity for rebuttal by requiring
+                    ; that a rebuttal coin be made in the conditions 
+                    ; It usually returns the conditions verbatim
+                    (a previous_validation_program (list all_args
+                            (a mover_puzzle solution) previous_program_hash))
                 )
             )
             ; move
             (assign 
-                (new_move new_split new_validation_program_hash mover_puzzle_reveal solution) args
-                new_puzzle_hash (curry_hashes MOD_HASH (shatree (list new_validation_program_hash new_move new_split
-                        AMOUNT TIMEOUT MAX_MOVE_SIZE WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH MOD_HASH)))
-                conditions (a mover_puzzle_reveal solution)
+                (new_move new_validation_info_hash new_alice_share mover_puzzle solution) args
+                new_puzzle_hash (curry_hashes MOD_HASH (shatree (list
+                        new_move new_validation_info_hash new_alice_share
+                        VALIDATION_INFO_HASH (not ALICE_TURN) &rest constants)))
+                conditions (a mover_puzzle solution)
                 (assert
-                    ; When VALIDATION_PROGRAM_HASH is nil no further moves are allowed
-                    VALIDATION_PROGRAM_HASH
+                    ; When VALIDATION_INFO_HASH is nil no further moves are allowed
+                    VALIDATION_INFO_HASH
                     (<= (strlen new_move) MAX_MOVE_SIZE)
                     (<= new_split AMOUNT)
                     (>= new_split 0)
-                    (logior (not new_validation_program_hash) (= 32 (strlen new_validation_program_hash)))
-                    (= MOVER_PUZZLE_HASH (shatree mover_puzzle_reveal))
+                    (logior (not new_validation_info_hash) (= 32 (strlen new_validation_info_hash)))
+                    (= (i ALICE_TURN ALICE_PUZZLE_HASH BOB_PUZZLE_HASH) (shatree mover_puzzle))
                     ; Check that the child output is made
                     (match
                         (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))

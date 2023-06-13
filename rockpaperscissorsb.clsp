@@ -1,6 +1,5 @@
 
-; This should go straight to Bob making a move to skip a commitment step
-(mod (ALICE_IMAGE total bob_image alice_share new_validation justification)
+(mod (((bob_move new_validation_hash) (ALICE_IMAGE)) conditions)
 
     (include *standard-cl-22*)
     (include assert.clinc)
@@ -10,8 +9,12 @@
     (defconst chash (shatree rockpaperscissorsc))
 
     (assert
-        (= new_validation (curry_hashes chash (shatree (list ALICE_IMAGE bob_image))))
-        (not alice_share)
-        0
+        (not
+            (all
+                (= new_validation (curry_hashes chash (shatree (list ALICE_IMAGE bob_move))))
+                (= (len bob_move) 1)
+            )
+        )
+        conditions
     )
 )
