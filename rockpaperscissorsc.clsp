@@ -1,16 +1,28 @@
-(mod ((ALICE_IMAGE BOB_IMAGE) total alice_preimage bob_share new_validation justification)
-
+(mod (((alice_preimage new_validation_hash alice_share junk1 junk2 total) (ALICE_IMAGE BOB_MOVE)) conditions)
     (include *standard-cl-22*)
     (include assert.clinc)
     (include curry.clinc)
     (include shatree.clinc)
-    (compile-file rockpaperscissorsd rockpaperscissorsd.clsp)
-    (defconst dhash (shatree rockpaperscissorsd))
 
     (assert
-        (= new_validation (curry_hashes dhash (shatree (list (r (divmod alice_preimage 3)) BOB_IMAGE))))
-        (= ALICE_IMAGE (sha256 alice_preimage))
-        (not bob_share)
-        0
+        (not
+            (all
+                (not new_validation_hash)
+                (= ALICE_IMAGE (sha256 alice_preimage))
+                (= alice_share
+                    (assign 
+                        (junk3 result) (divmod (- alice_preimage BOB_MOVE) 3)
+                        (if (not result)
+                            (/ total 2)
+                            (if (= result 2)
+                                0
+                                total
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        conditions
     )
 )
