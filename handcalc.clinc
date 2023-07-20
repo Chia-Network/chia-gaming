@@ -78,7 +78,7 @@
             0
         )
     )
-    (defun count_suits_2 ((@ suits (firstsuit . remaining)))
+    (defun count_suits ((@ suits (firstsuit . remaining)))
         (if (not suits)
             (c (c 0 0) (c 0 0))
             (assign-lambda ((@ cd (clubs . diamonds)) . (@ hs (hearts . spades))) (count_suits remaining)
@@ -95,7 +95,7 @@
             )
         )
     )
-    (defun find_flush_2 (suits)
+    (defun find_flush (suits)
         (assign-lambda ((clubs . diamonds) . (hearts . spades)) (count_suits suits)
             (if (> clubs 4)
                 1
@@ -105,30 +105,6 @@
                         3
                         (if (> spades 4)
                             4
-                            0
-                        )
-                    )
-                )
-            )
-        )
-    )
-    (defun count_suits (suits)
-        (if suits
-            (+ (count_suits (r suits)) (ash 1 (* 4 (- (f suits) 1))))
-            0
-        )
-    )
-    (defun find_flush (suits)
-        (assign-lambda 
-            myvals (print (list 'suit counts' suits) (count_suits suits))
-            (if (print 'fourval' (> (logand myvals 0xF000) 0x4000))
-                4
-                (if (print 'threeval' (> (logand myvals 0x0F00) 0x0400))
-                    3
-                    (if (print 'twoval' (> (logand myvals 0xF0) 0x0040))
-                        2
-                        (if (print 'oneval' (> (logand myvals 0x0F) 0x04))
-                            1
                             0
                         )
                     )

@@ -1,0 +1,25 @@
+
+; Bob turn
+; curried a next program hash, dictionary key, and bet amount
+; state is an Alice commitment and series of Bob guesses and Alice clues with the 
+; latest being a clue
+; move is a Bob guess
+; evidence may be a range of exclusion if Alice is showing that Bob's guess is invalid
+(mod ((NEXT_HASH DICTIONARY_KEY BET_SIZE) (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    state me mover_puzzle solution evidence)
+
+    (if
+        (all
+            (= (len move) 5)
+            (= next_validation_hash (sha256 NEXT_HASH 
+                (shatree (c alice_commit (c move move_list)))))
+        )
+        (assert
+            (>= move range_begin)
+            (<= move range_end)
+            (list (list AGG_SIG_UNSAFE (sha256 range_begin range_end) DICTIONARY_KEY))
+        )
+        0
+    )
+)
