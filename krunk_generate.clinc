@@ -1,0 +1,74 @@
+
+; Alice turn
+; curried a next program hash
+; state is empty
+; move is an Alice hash of salted word
+; evidence is empty
+(defun make_a (dictionary_key)
+    (curry krunk_a (list (make_b dictionary_key)))
+)
+; Bob turn
+; curried a next program hash and a dictionary key
+; state is an Alice commitment
+; move is a Bob guess
+; evidence may be range of exclusion if Alice is showing Bob's guess is invalid
+(defun make_b (dictionary_key)
+    (curry krunk_b (list (make_c dictionary_key) (curry krunk_adjudicate dictionary_key)))
+)
+; Alice turn
+; curried a next program hash and a dictionary key
+; state is an Alice commitment and a Bob guess
+; move is an Alice clue or word reveal if hit
+; evidence may be range of exclusion if Bob is showing Alice's word is invalid
+(defun make_c (dictionary_key)
+    (curry krunk_c (list (make_d dictionary_key) (curry krunk_adjudicate dictionary_key)))
+)
+; Bob turn
+; curried a list of possible next program hashes and a dictionary key
+; state is a Alice commitment, Bob guess and Alice clue
+; move is a Bob guess and number of remaining guesses
+; evidence may be range of exclusion if Alice is showing Bob's word is invalid
+(defun make_d (dictionary_key)
+    (curry krunk_d (list (list
+            (make_e dictionary_key 100 0)
+            (make_e dictionary_key 20 1)
+            (make_e dictionary_key 5 2)
+            (make_e dictionary_key 1 3)
+        )
+        (curry krunk_adjudicate dictionary_key))
+    )
+)
+; Alice turn
+; curried a next program hash, dictionary key, and bet amount
+; state is an Alice commitment and series of Bob guesses and Alice clues with the 
+; latest being a guess
+; move is an Alice clue or word reveal if hit
+; evidence can be index where clue is wrong or be range of exclusion if
+; Bob is showing Alice's word is invalid
+(defun make_e (dictionary_key bet_amount turns_left)
+    (if (not turns_left)
+        (make_g dictionary_key bet_amount)
+        (curry krunk_e (list (make_f dictionary_key bet_amount turns_left) 
+            (curry krunk_adjudicate dictionary_key) bet_amount)
+        )
+    )
+)
+; Bob turn
+; curried a next program hash, dictionary key, and bet amount
+; state is an Alice commitment and series of Bob guesses and Alice clues with the 
+; latest being a clue
+; move is a Bob guess
+; evidence may be a range of exclusion if Alice is showing that Bob's guess is invalid
+(defun make_f (dictionary_key bet_amount turns_left)
+    (curry krunk_f (list (make_e dictionary_key bet_amount (- turns_left 1)) 
+        (curry krunk_adjudicate dictionary_key) bet_amount)
+    )
+)
+; Alice turn
+; curried a dictionary key and a bet amount
+; move is Alice word reveal
+; evidence can be index where clue is wrong or range of exclusion if Alice's word is
+; not in the dictionary
+(defun make_g @args (dictionary_key bet_amount)
+    (curry krunk_g (list (curry krunk_adjudicate dictionary_key) bet_amount))
+)

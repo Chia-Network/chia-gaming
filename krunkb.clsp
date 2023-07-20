@@ -1,0 +1,26 @@
+
+; Bob turn
+; curried a next program hash and a dictionary key
+; state is an Alice commitment
+; move is a Bob guess
+; evidence may be range of exclusion if Alice is showing Bob's guess is invalid
+(mod ((CHASH DICTIONARY_KEY) (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    state me mover_puzzle solution (range_begin range_end))
+    (include *standard-cl-22*)
+    (include assert.clinc)
+    (include shatree.clinc)
+    
+    (if
+        (all
+            (= (len move) 5)
+            (= next_validation_hash (sha256 CHASH (shatree (c state (list move)))))
+        )
+        (assert
+            (>= move range_begin)
+            (<= move range_end)
+            (list (list AGG_SIG_UNSAFE (sha256 range_begin range_end) DICTIONARY_KEY))
+        )
+        0
+    )
+)

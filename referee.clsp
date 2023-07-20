@@ -1,27 +1,20 @@
 
-; This file shouldn't start with a carriage return but there's currently a problem with syntax highlighting
-; if the file starts with a comment
 ; Adjudicates a two player turn based game
-; VALIDATION_PROGRAM_HASH LAST_MOVE and SPLIT were all accepted optimistically from the last move
-; VALIDATION_PROGRAM_HASH will check the next move. It may be nil which means no futher moves are allowed
-; SPLIT is how much the mover will get if they fold/accept. It's set to the final split at the end 
-; of the game. It's often set to 0 the rest of the time but has a value for folding in Poker
-; SPLIT is implicitly accepted by allowing a timeout
-; AMOUNT TIMEOUT and MAX_MOVE_SIZE are all fixed for the duration of the game
-; (maybe they should be hard coded instead of parameterized?)
-; ALICE_PUZZLE_HASH and BOB_PUZZLE_HASH are used to commit to moves and as targets for rewards
+; MOVE, VALIDATION_HASH and MOVER_SHARE were all accepted optimistically from the last move
+; Both VALIDATION_HASH values are a sha256 of a validation program hash and the shatree of a state
+; The next validation program hash may be nil which means no futher moves are allowed
+; MOVER_SHARE is how much the mover will get if they fold/accept
 ; MOD_HASH should be the shatree of referee itself
-; action can be timeout, move, or accuse
-; action and args should really be a single type cased value
-; If action is timeout args are ignored
-; If action is accuse args proves the previous validation program hash and a 
-; solution for MOVER_PUZZLE
-; If action is move new values are given to be accepted optimistically and 
-; a solution for MOVER_PUZZLE
-(mod (@ all_args ((LAST_MOVE VALIDATION_INFO_HASH ALICE_SHARE PREVIOUS_VALIDATION_INFO_HASH ALICE_TURN 
-        @ constants (AMOUNT TIMEOUT ALICE_PUZZLE_HASH BOB_PUZZLE_HASH MAX_MOVE_SIZE MOD_HASH)) .
-        ; I am going to hell
-        @ args (arg1 arg2)))
+; If action is timeout args is nil
+; If action is accuse args is (state validation_program mover_puzzle solution evidence)
+; If action is move args is (new_move new_validation_info_hash new_mover_share mover_puzzle solution)
+; validation programs get passed this:
+; ((MOVE NEXT_VALIDATION_HASH MOVER_SHARE PREVIOUS_VALIDATION_HASH MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH
+;        AMOUNT TIMEOUT MAX_MOVE_SIZE REFEREE_HASH)
+;        state me mover_puzzle solution . evidence)
+(mod (@ all_args ((MOVE VALIDATION_PROGRAM_HASH MOVER_SHARE PREVIOUS_VALIDATION_PROGRAM_HASH 
+        MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH 
+        @ constants (AMOUNT TIMEOUT MAX_MOVE_SIZE MOD_HASH)) . args))
     (include *standard-cl-22*)
     ; This should be a bulk import from a standard library
     (include assert.clinc)
@@ -31,61 +24,58 @@
     (include prefix.clinc)
     (include condition_codes.clinc)
 
-    (defun print (X R) (i X R R))
-
     (defun <= (A B) (not (> A B)))
     (defun >= (A B) (not (> B A)))
+    (defun concat (A B) 
+        (if A 
+            (c (f A) (concat (r A) B)) 
+            B
+        )
+    )
 
     (if (not args)
         ; timeout
         (list
             (list ASSERT_SECONDS_RELATIVE TIMEOUT)
-            (i ALICE_SHARE (list CREATE_COIN ALICE_PUZZLE_HASH ALICE_SHARE) (list 1))
-            (i (- amount ALICE_SHARE) (list CREATE_COIN BOB_PUZZLE_HASH (- amount ALICE_SHARE)) (list 1))
+            (i MOVER_SHARE (list CREATE_COIN MOVER_PUZZLE_HASH MOVER_SHARE) (list 1))
+            (i (- amount MOVER_SHARE) (list CREATE_COIN WAITER_PUZZLE_HASH (- amount MOVER_SHARE)) (list 1))
         )
-        (if (l arg2)
-            ; accuse
-            (assign
-                (validation_program_args previous_validation_program mover_puzzle solution) args
-                previous_program_hash (shatree previous_validation_program)
-                (assert
-                    (= (i ALICE_TURN ALICE_PUZZLE_HASH BOB_PUZZLE_HASH) (shatree mover_puzzle))
-                    (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_program_hash (shatree 
-                            validation_program_args)))
-                    ; the validation program can give opportunity for rebuttal by requiring
-                    ; that a rebuttal coin be made in the conditions 
-                    ; It usually returns the conditions verbatim
-                    (a previous_validation_program (list all_args
-                            (a mover_puzzle solution) previous_program_hash))
-                )
+        (l (r (r args)))
+        ; accuse
+        (assign
+            (validation_program_args previous_validation_program mover_puzzle solution) args
+            (assert
+                (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
+                (= PREVIOUS_VALIDATION_INFO_HASH (sha256 (shatree previous_validation_program) (shatree 
+                        validation_program_args)))
+                ; usually returns the conditions verbatim
+                (concat (a previous_validation_program all_args)
+                        (a mover_puzzle solution))
             )
-            ; move
-            (assign 
-                (new_move new_validation_info_hash new_alice_share mover_puzzle solution) args
-                new_puzzle_hash (curry_hashes MOD_HASH (shatree (list
-                        new_move new_validation_info_hash new_alice_share
-                        VALIDATION_INFO_HASH (not ALICE_TURN) &rest constants)))
-                conditions (a mover_puzzle solution)
-                (assert
-                    ; When VALIDATION_INFO_HASH is nil no further moves are allowed
-                    VALIDATION_INFO_HASH
-                    (<= (strlen new_move) MAX_MOVE_SIZE)
-                    (<= new_split AMOUNT)
-                    (>= new_split 0)
-                    (logior (not new_validation_info_hash) (= 32 (strlen new_validation_info_hash)))
-                    (= (i ALICE_TURN ALICE_PUZZLE_HASH BOB_PUZZLE_HASH) (shatree mover_puzzle))
-                    ; Check that the child output is made
-                    (match
-                        (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))
-                            (if (= condname CREATE_COIN)
-                                (logand (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
-                                0
-                            )
-                        )
-                        conditions
+        )
+        ; move
+        (assign 
+            (new_move new_validation_info_hash new_mover_share mover_puzzle solution) args
+            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list
+                    new_move new_validation_info_hash new_mover_share
+                    VALIDATION_INFO_HASH WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH &rest constants)))
+            conditions (a mover_puzzle solution)
+            (assert
+                ; When VALIDATION_INFO_HASH is nil no further moves are allowed
+                VALIDATION_INFO_HASH
+                (<= (strlen new_move) MAX_MOVE_SIZE)
+                (<= new_mover_share AMOUNT)
+                (>= new_mover_share 0)
+                (logior (not new_validation_info_hash) (= 32 (strlen new_validation_info_hash)))
+                (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
+                ; Check that the child output is made
+                (match
+                    (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))
+                        (logand (= condname CREATE_COIN) (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
                     )
                     conditions
                 )
+                conditions
             )
         )
     )

@@ -1,0 +1,43 @@
+(defun make_clue (word guess)
+    (assign
+        (not_green_word not_green_guess green) (make_green (expand word) (expand guess))
+        yellow (make_yellow not_green_word not_green_guess)
+        (merge_colors green yellow 0)
+    )
+)
+(defun expand_word word
+    (list (substr 0 1 word) (substr 1 2 word) (substr 2 3 word) (substr 3 4 word) (substr 4 5 word))
+)
+(defun make_yellow (word guess)
+    (if (not guess)
+        0
+        (assign 
+            (new_word included) (one_yellow word (f guess))
+            (c included (make_yellow new_word (r guess)))
+        )
+    )
+)
+(defun one_yellow (word letter)
+    (if (not word)
+        (list 0 0)
+        (if (= (f word) letter)
+            (list (r word) 1)
+            (assign 
+                (rest_word included) (one_yellow (r word) letter)
+                (list (c (f word) rest_word) included)
+            )
+        )
+    )
+)
+)
+(defun merge_colors (green yellow val)
+    (if (not green)
+        val
+        (merge_colors (r green) &rest
+            (if (f green)
+                (list yellow (+ 2 (* 3 val)))
+                (list (r yellow) (+ (f yellow) (* 3 val)))
+            )
+        )
+    )
+)

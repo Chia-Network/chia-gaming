@@ -1,0 +1,40 @@
+
+; Alice turn
+; curried a dictionary key and a bet amount
+; move is Alice word reveal
+; evidence can be index where clue is wrong or range of exclusion if Alice's word is
+; not in the dictionary
+(mod ((DICTIONARY_KEY BET_SIZE) (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (alice_commit . move_list) me mover_puzzle solution evidence)
+
+    (defun myindex (mylist num)
+        (if (not num)
+            mylist
+            (myindex (r (r mylist)) (- num 1))
+        )
+    )
+
+    (if 
+        (all
+            (= (len move) 37)
+            (= (sha256 move) alice_commit)
+            (= mover_share 
+                (* (div amount 200) 
+                    (if (= (substr move 0 5) (f move_list)) 
+                        (- 100 BET_SIZE) 
+                        (+ 100 BET_SIZE)
+                    )
+                )
+            )
+        )
+        (assert
+            (assign 
+                (clue guess) (myindex move_list evidence)
+                (!= clue (make_clue (substr move 0 5) guess))
+            )
+            0
+        )
+        0
+    )
+)
