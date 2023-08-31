@@ -11,7 +11,7 @@
     (assert
         (not
             (all
-                (= new_validation (curry_hashes chash (shatree (list ALICE_IMAGE bob_move))))
+                (= new_validation (sha256 chash (shatree (list ALICE_IMAGE bob_move))))
                 (= (len bob_move) 1)
             )
         )

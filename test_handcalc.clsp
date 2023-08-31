@@ -12,6 +12,7 @@
     (include handcalc.clinc)
 
     (defun runtests_inner ((myfunc firstarg secondarg . remaining))
+        (print 'this is a test'
         (assign-lambda
             firstval (handcalc firstarg)
             secondval (handcalc secondarg)
@@ -24,7 +25,7 @@
                     0
                 )
             )
-        )
+        ))
     )
 
     (defun runtests tests (if tests (runtests_inner tests) ()))
@@ -373,5 +374,5 @@
         (lambda (x y) (deep= x y))
         (list (c 14 1) (c 13 2) (c 12 3) (c 11 4) (c 9 1))
         (list (c 14 2) (c 13 3) (c 12 4) (c 11 1) (c 9 2))
-        )
+    )
 )

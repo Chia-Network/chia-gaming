@@ -1,0 +1,233 @@
+
+; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
+; suits are 1-4 with no particular labelling
+; takes a list of cards (rank . suit) and returns the value of the best poker 
+; hand which can be made with them
+; returned list is hand type followed by cards in descending order
+; doesn't work for ten or more cards if there are multiple flushes
+; all sorting is done highest to lowest
+(
+    (defconstant STRAIGHT_FLUSH 9)
+    (defconstant FOUR_OF_A_KIND 8)
+    (defconstant FULL_HOUSE 7)
+    (defconstant FLUSH 6)
+    (defconstant STRAIGHT 5)
+    (defconstant THREE_OF_A_KIND 4)
+    (defconstant TWO_PAIR 3)
+    (defconstant PAIR 2)
+    (defconstant HIGH_CARD 1)
+    (defun hand< (a b)
+        (if a
+            (if (= (f a) (f b))
+                (hand< (r a) (r b))
+                (< (f a) (f b))
+            )
+            0
+        )
+    )
+    (defun merge (a b)
+        (if (not a)
+            b
+            (if (not b)
+                a
+                (if (hand< (f a) (f b))
+                    (c (f a) (merge (r a) b))
+                    (c (f b) (merge a (r b)))
+                )
+            )
+        )
+    )
+    (defun handsort_inner (@ mylist (first second third) length)
+        (if (> length 3)
+            (merge (handsort_inner mylist (/ length 2)) 
+                (handsort_inner (sliceright mylist (/ length 2)) (- length (/ length 2))))
+            (if (= length 3)
+                (if (hand< first second)
+                    (if (hand< second third)
+                        (list first second third)
+                        (if (hand< first third)
+                            (list first third second)
+                            (list third first second)
+                        )
+                    )
+                    (if (hand< first third)
+                        (list second first third)
+                        (if (hand< second third)
+                            (list second third first)
+                            (list third second first)
+                        )
+                    )
+                )
+                (if (hand< first second)
+                    (list first second)
+                    (list second first)
+                )
+            )
+        )
+    )
+    (defun handsort (@ mylist (first) length)
+        (if length
+            (if (= length 1)
+                (list first)
+                (handsort_inner mylist length)
+            )
+            0
+        )
+    )
+    (defund count_suits (@ cards ((firstrank . firstsuit) . remaining))
+        (if (not cards)
+            (list 0 0 0 0)
+            ; this should use capture
+            (assign (clubs diamonds hearts spades) (count_suits (r cards))
+                (if (= firstsuit 1)
+                    (list (+ clubs 1) diamonds hearts spades)
+                    (if (= firstsuit 2)
+                        (list clubs (+ diamonds 1) hearts spades)
+                        (if (= firstsuit 3)
+                            (list clubs diamonds (+ hearts 1) spades)
+                            (list clubs diamonds hearts (+ spades 1))
+                        )
+                    )
+                )
+            )
+        )
+    )
+    (defun find_flush_2 (cards)
+        (assign (clubs diamonds hearts spades) (count_suits cards)
+            (if (> 4 clubs)
+                1
+                (if (> 4 diamonds)
+                    2
+                    (if (> 4 hearts)
+                        3
+                        (if (> 4 spades)
+                            4
+                            0
+                        )
+                    )
+                )
+            )
+        )
+    )
+    (defun find_flush_inner (suits last count)
+        (if (not suits)
+            0
+            (if (= (f suits) last)
+                (if (= count 4)
+                    last
+                    (find_flush_inner (r suits) last (+ count 1))
+                )
+                (find_flush_inner (r suits) (f suits) 1)
+            )
+        )
+    )
+    ; returns the flush suit or 0 if there isn't any
+    ; suits must be clustered/sorted
+    (defun find_flush (suits)
+        (find_flush_inner (sort (lambda (x y) (deep> x y)) suits) 0 0)
+    )
+    (defun straight_high_inner (ranks started_ace last count)
+        (if (not ranks)
+            ; at the end of the list
+            (if (logand (= last 2) (= count 4) started_ace)
+                ; ace to five
+                5
+                ; no straight
+                0
+            )
+            (if (= last (f ranks))
+                ; skip identical cards
+                (straight_high_inner (r ranks) started_ace last count)
+                ; if the partial straight continues
+                (if (= (f ranks) (- last 1))
+                    (if (= count 4)
+                        ; found a straight, add 3 to last because next and last are included
+                        (+ last 3)
+                        ; keep looking for a straight with the count going up by one
+                        (straight_high_inner (r ranks) started_ace (f ranks) (+ count 1))
+                    )
+                    ; reset the count
+                    (straight_high_inner (r ranks) started_ace (f ranks) 1)
+                )
+            )
+        )
+    )
+    ; returns the high card of a straight or 0 if there isn't any
+    ; ranks must be sorted in descending order
+    (defun straight_high (ranks)
+        (straight_high_inner ranks (= (f ranks) 14) 0 0)
+    )
+    (defun group_by_count_inner (items last count)
+        (if (not items)
+            (list (c count last))
+            (if (= (f items) last)
+                (group_by_count_inner (r items) last (+ count 1))
+                (assign val (group_by_count_inner (r items) (f items) 1)
+                    (c (c count last) val)
+                )
+            )
+        )
+    )
+    (defun group_by_count (items)
+        (group_by_count_inner items (f items) 0)
+    )
+    (defun handcalc (cards)
+        (assign-lambda
+            first (lambda (x) (f x))
+            rest (lambda (x) (r x))
+            fsuit (find_flush2 (map rest cards))
+            max_flush (if (not fsuit)
+                0
+                (assign-lambda
+                    fnosuits
+                       (sort
+                          (lambda (x y) (deep> x y))
+                          (filtermap
+                             (lambda ((& fsuit) (card_rank . card_suit))
+                                    (if (= fsuit card_suit)
+                                        card_rank
+                                        0
+                                        )
+                                    )
+                             cards
+                             0
+                             )
+                          )
+
+                    fsh (straight_high fnosuits)
+                    (if fsh
+                        (list STRAIGHT_FLUSH fsh)
+                        (c FLUSH (slice fnosuits 5))
+                    )
+                )
+            )
+            nosuits (sort (lambda (x y) (deep> x y)) (map first cards))
+            sh (straight_high nosuits)
+            max_straight (if sh
+                (list STRAIGHT sh)
+                0
+            )
+            groups (sort (lambda (x y) (deep> x y)) (group_by_count nosuits))
+            (top_count . top_card) (f groups)
+            (second_count . second_card) (f (r groups))
+            topcards (map rest groups)
+            max_group (if (= top_count 1)
+                (c HIGH_CARD (slice topcards 5))
+                (if (= top_count 2)
+                    (if (= second_count 1)
+                        (c PAIR (slice topcards 4))
+                        (c TWO_PAIR (slice topcards 3))
+                    )
+                    (if (= top_count 3)
+                        (if (= second_count 1)
+                            (c THREE_OF_A_KIND (slice topcards 3))
+                            (c FULL_HOUSE (slice topcards 2))
+                        )
+                        (c FOUR_OF_A_KIND (slice topcards 2))
+                    )
+                )
+            )
+            (max (lambda (x y) (deep< x y)) (list max_flush max_straight max_group))
+        )
+    )
+)

@@ -12,11 +12,9 @@
     (include filtermap.clinc)
     (include slice.clinc)
     (include max.clinc)
-    (defconstant FIVE_OF_A_KIND 10)
-    (defconstant STRAIGHT_FLUSH 9)
-    (defconstant FOUR_OF_A_KIND 8)
-    (defconstant FULL_HOUSE 7)
-    (defconstant FLUSH 6)
+    (defconstant FIVE_OF_A_KIND 8)
+    (defconstant FOUR_OF_A_KIND 7)
+    (defconstant FULL_HOUSE 6)
     (defconstant STRAIGHT 5)
     (defconstant THREE_OF_A_KIND 4)
     (defconstant TWO_PAIR 3)
@@ -28,17 +26,17 @@
             0
             (if (= last (f ranks))
                 ; skip identical cards
-                (straight_high_inner (r ranks) started_ace last count)
+                (straight_high_inner (r ranks) last count)
                 ; if the partial straight continues
                 (if (= (f ranks) (- last 1))
                     (if (= count 4)
                         ; found a straight, add 3 to last because next and last are included
                         (+ last 3)
                         ; keep looking for a straight with the count going up by one
-                        (straight_high_inner (r ranks) started_ace (f ranks) (+ count 1))
+                        (straight_high_inner (r ranks) (f ranks) (+ count 1))
                     )
                     ; reset the count
-                    (straight_high_inner (r ranks) started_ace (f ranks) 1)
+                    (straight_high_inner (r ranks) (f ranks) 1)
                 )
             )
         )
@@ -65,7 +63,7 @@
     (defun group_by_count (items)
         (group_by_count_inner items 0 0)
     )
-    (defun space_hand_calc (cards)
+    (defun space_hand_calc_inner (cards)
         (assign 
             rest (lambda (x) (r x))
             greater (lambda (x y) (> x y))
@@ -99,6 +97,12 @@
                 )
             )
             (max deep< (list max_straight max_group))
+        )
+    )
+    (defun space_hand_calc (cards boosted)
+        (assign 
+            result (space_hand_calc_inner cards)
+            (list (f result) boosted (r result))
         )
     )
 )

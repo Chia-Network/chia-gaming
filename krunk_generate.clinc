@@ -1,34 +1,62 @@
+(
+; Alternates moving and validating
+; Moving takes (readable_move amount) and returns (0 readable_state move new_validator new_validation_hash split) 
+; or (1 error_info)
+; The validator and hash will be nil if the game is done
 
-; Alice turn
-; curried a next program hash
-; state is empty
-; move is an Alice hash of salted word
-; evidence is empty
-(defun make_a (dictionary_key)
-    (curry krunk_a (list (make_b dictionary_key)))
+; Validating takes (move new_validation_hash split amount) and returns either (0 readable_state mover)
+; or (1 state validation_program evidence aggsig) if there's cheating
+; mover is nil if it's the end of the game
+
+; Checking takes complete args and either assert fails if there's no sign of cheating or returns
+; a list of extra conditions, usually empty
+
+(include assert.clinc)
+(include shatree.clinc)
+(include curry.clinc)
+
+(defun make_mover_a (dictionary dictionary_key)
+    (assign (next next_hash) (make_validator_b dictionary dictionary_key amount)
+        (curry mover_a (list next next_hash dictionary dictionary_key amount))
+    )
 )
-; Bob turn
+
+(defun make_validator_a (dictionary dictionary_key)
+    (assign (next next_hash) (make_mover_b dictionary dictionary_key amount)
+        (curry mover_a (list next next_hash dictionary dictionary_key amount))
+    )
+)
+
+; Alice challenging
 ; curried a next program hash and a dictionary key
 ; state is an Alice commitment
 ; move is a Bob guess
 ; evidence may be range of exclusion if Alice is showing Bob's guess is invalid
-(defun make_b (dictionary_key)
+(defun make_mover_b (dictionary dictionary_key)
     (curry krunk_b (list (make_c dictionary_key) (curry krunk_adjudicate dictionary_key)))
 )
-; Alice turn
+
+(defun make_validator_b (dictionary dictionary_key)
+)
+
+; Bob challenging
 ; curried a next program hash and a dictionary key
 ; state is an Alice commitment and a Bob guess
 ; move is an Alice clue or word reveal if hit
 ; evidence may be range of exclusion if Bob is showing Alice's word is invalid
-(defun make_c (dictionary_key)
+(defun make_mover_c (dictionary dictionary_key)
     (curry krunk_c (list (make_d dictionary_key) (curry krunk_adjudicate dictionary_key)))
 )
-; Bob turn
+
+(defun make_validator_c (dictionary dictionary_key)
+)
+
+; Alice challenging
 ; curried a list of possible next program hashes and a dictionary key
 ; state is a Alice commitment, Bob guess and Alice clue
 ; move is a Bob guess and number of remaining guesses
 ; evidence may be range of exclusion if Alice is showing Bob's word is invalid
-(defun make_d (dictionary_key)
+(defun make_mover_d (dictionary dictionary_key)
     (curry krunk_d (list (list
             (make_e dictionary_key 100 0)
             (make_e dictionary_key 20 1)
@@ -38,14 +66,18 @@
         (curry krunk_adjudicate dictionary_key))
     )
 )
-; Alice turn
+
+(defun make_validator_d (dictionary dictionary_key)
+)
+
+; Bob challenging
 ; curried a next program hash, dictionary key, and bet amount
 ; state is an Alice commitment and series of Bob guesses and Alice clues with the 
 ; latest being a guess
 ; move is an Alice clue or word reveal if hit
 ; evidence can be index where clue is wrong or be range of exclusion if
 ; Bob is showing Alice's word is invalid
-(defun make_e (dictionary_key bet_amount turns_left)
+(defun make_mover_e (turns_left dictionary dictionary_key bet_amount)
     (if (not turns_left)
         (make_g dictionary_key bet_amount)
         (curry krunk_e (list (make_f dictionary_key bet_amount turns_left) 
@@ -53,22 +85,320 @@
         )
     )
 )
-; Bob turn
+
+(defun make_validator_e (turns_left dictionary dictionary_key bet_amount)
+)
+
+; Alice challenging
 ; curried a next program hash, dictionary key, and bet amount
 ; state is an Alice commitment and series of Bob guesses and Alice clues with the 
 ; latest being a clue
 ; move is a Bob guess
 ; evidence may be a range of exclusion if Alice is showing that Bob's guess is invalid
-(defun make_f (dictionary_key bet_amount turns_left)
+(defun make_mover_f (turns_left dictionary dictionary_key bet_amount)
     (curry krunk_f (list (make_e dictionary_key bet_amount (- turns_left 1)) 
         (curry krunk_adjudicate dictionary_key) bet_amount)
     )
 )
-; Alice turn
+
+(defun make_validator_f (turns_left dictionary dictionary_key bet_amount)
+)
+
+; Bob challenging
 ; curried a dictionary key and a bet amount
 ; move is Alice word reveal
 ; evidence can be index where clue is wrong or range of exclusion if Alice's word is
 ; not in the dictionary
-(defun make_g @args (dictionary_key bet_amount)
+(defun make_mover_g (dictionary dictionary_key bet_amount)
     (curry krunk_g (list (curry krunk_adjudicate dictionary_key) bet_amount))
+)
+
+(defun make_validator_g (dictionary dictionary_key bet_amount)
+)
+
+(defconst GHASH (shatree krunk_g))
+(defconst FHASH (shatree krunk_f))
+(defconst EHASH (shatree krunk_e))
+(defconst EHASH1 (shatree (curry_hashes EHASH (shatree (curry_hashes FHASH (shatree GHASH))))))
+(defconst EHASH2 (shatree (curry_hashes EHASH (shatree (curry_hashes FHASH (shatree EHASH1))))))
+(defconst EHASH3 (shatree (curry_hashes EHASH (shatree (curry_hashes FHASH (shatree EHASH2))))))
+(defconst DHASH (shatree krunk_d))
+(defconst CHASH (shatree krunk_c))
+(defconst BHASH (shatree krunk_b))
+(defconst AHASH (shatree krunk_a))
+
+
+; Bob challenging
+; state is the dictionary key
+; move is an Alice commit to a salted word
+; evidence is empty
+(defun krunk_a ((move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    dictionary_key me mover_puzzle solution evidence)
+
+    (assert
+        (not
+            (all
+                (= (strlen move) 32)
+                (= next_validation_hash (sha256 BHASH (shatree (list move dictionary_key))))
+            )
+        )
+        0
+    )
+)
+
+; Alice challenging
+; state is (alice_commit dictionary_key)
+; move is a Bob guess
+; evidence may be range of exclusion if Alice is showing Bob's guess is invalid
+(defun krunk_b ((move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (@ state (alice_commit dictionary_key)) me mover_puzzle solution evidence)
+    
+    (if
+        (all
+            (= (strlen move) 5)
+            (= next_validation_hash (sha256 CHASH (shatree (c move state))))
+        )
+        (assert
+            (>= move (substr evidence 0 5))
+            (<= move (substr evidence 5 10))
+            (list (list AGG_SIG_UNSAFE evidence dictionary_key))
+        )
+        0
+    )
+)
+
+; Bob challenging
+; state is (bob_guess alice_commit dictionary_key)
+; move is an Alice clue or commit preimage if hit
+; evidence is empty
+(defun krunk_c ((move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (@ state (bob_guess alice_commit dictionary_key)) me mover_puzzle solution evidence)
+    
+    (assert
+        (if (= (strlen move) 1)
+            (any
+                (>= move 114)
+                (!= next_validation_hash (sha256 DHASH (shatree (c move state))))
+            )
+            (any
+                (!= (strlen move) 37)
+                (!= (sha256 move) alice_commit)
+                (!= (substr move 0 5) bob_guess)
+            )
+        )
+        0
+    )
+)
+
+(defun index (myliist num)
+    (if (not num)
+        (f mylist)
+        (index (r mylist) (- num 1))
+    )
+)
+
+; Alice challenging
+; state is a (alice_clue bob_guess alice_commit dictionary_key)
+; move is a Bob guess and number of remaining guesses
+; evidence may be range of exclusion if Alice is showing Bob's word is invalid
+(defun krunk_d ((move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (@ state (alice_clue bob_guess @ constants (alice_commit dictionary_key))) me mover_puzzle solution evidence)
+
+    (assign
+        new_bob_guess (substr move 0 5)
+        turns_left (substr move 5 6)
+        (next_hash bet_amount)
+        (if (not turns_left) (list GHASH 100)
+            (= turns_left 1) (list EHASH1 20)
+            (= turns_left 2) (list EHASH2 5)
+            (list EHASH3 1)
+        )
+        (if
+            (all
+                (= (strlen move) 6)
+                (= next_validation_hash
+                    (sha256 next_hash
+                        (shatree (list (list new_bob_guess alice_clue bob_guess) 
+                            bet_amount &rest constants))
+                    )
+                )
+            )
+            (assert
+                (>= new_bob_guess (substr evidence 0 5))
+                (<= new_bob_guess (substr evidence 5 10))
+                (list (list AGG_SIG_UNSAFE evidence dictionary_key))
+            )
+            0
+        )
+    )
+)
+
+(defun myindex (mylist num)
+    (if (not num)
+        mylist
+        (myindex (r (r mylist)) (- num 1))
+    )
+)
+
+; Bob challenging
+; state is ((bob_guess alice_clue bob_guess alice_clue ...) bet_amount alice_commit dictionary_key)
+; move is an Alice clue or word reveal if hit
+; evidence can be index where clue is wrong
+(defun krunk_e (NEXT_HASH (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (move_list @ constants (bet_amount alice_commit dictionary_key)) me mover_puzzle solution evidence)
+
+    (if (= (strlen move) 37)
+        (assert
+            (any
+                (!= (substr move 0 5) (f move_list))
+                (!= (sha256 move) alice_commit)
+                (!= mover_share (* (div amount 200) (+ 100 bet_amount)))
+                (assign 
+                    (myclue guess) (myindex move_list evidence)
+                    (!= myclue (make_clue (substr move 0 5) guess))
+                )
+            )
+            0
+        )
+        (assert
+            (any
+                (!= (len move) 1)
+                (>= move 114)
+                (!= next_validation_hash (sha256 NEXT_HASH (shatree (c (c move move_list) constants))))
+            )
+            0
+        )
+    )
+)
+
+(defun move_f ((NEXT_VALIDATOR NEXT_HASH DICTIONARY_KEY BET_SIZE) (@STATE ((alice_commit . move_list))) move amount)
+    (list 
+        (curry NEXT_VALIDATOR (c alice_commit ()))
+    )
+)
+
+(defun validate_f ((NEXT_VALIDATOR HASH DICTIONARY_KEY BET_SIZE) STATE move new_validation_hash split amount)
+    booga booga
+)
+
+; Alice challenging
+; state is ((alice_clue bob_guess alice_clue bob_guess ...) bet_amount alice_commit dictionary_key)
+; move is a Bob guess
+; evidence may be a range of exclusion if Alice is showing that Bob's guess is invalid
+(defun krunk_f (NEXT_HASH (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (move_list @ constants (bet_amount alice_commit dictionary_key)) me mover_puzzle solution evidence)
+
+    (if
+        (all
+            (= (strlen move) 5)
+            (= next_validation_hash (sha256 NEXT_HASH 
+                (shatree (c (c move move_list) constants))))
+        )
+        (assert
+            (>= move (substr evidence 0 5))
+            (<= move (substr evidence 5 10))
+            (list (list AGG_SIG_UNSAFE evidence dictionary_key))
+        )
+        0
+    )
+)
+
+; Moving takes (readable_move amount) and returns (0 readable_state move new_validator new_validation_hash split) 
+; or (1 error_info)
+; The validator and hash will be nil if the game is done
+(defun move_g (BET_SIZE (ALICE_PREIMAGE STATE) move amount)
+    (assign bob_wins (= (substr ALICE_PREIMAGE 0 5) (f (r STATE)))
+        (list 0 (+ bob_wins 1) ALICE_PREIMAGE 0 0
+            (if bob_wins
+                (* (/ amount 100) (+ 100 BET_SIZE))
+                (* (/ amount 100) (- 100 BET_SIZE))
+            )
+        )
+    )
+)
+
+; Validating takes (move new_validation_hash split amount) and returns either (0 readable_state mover)
+; or (1 state validation_program evidence aggsig) if there's cheating
+; mover is nil if it's the end of the game
+(defun validate_g ((DICTIONARY DICTIONARY_KEY BET_SIZE) (@STATE ((alice_commit . move_list)))  
+        move new_validation_hash split amount)
+    (assign 
+        validation_program (curry krunk_g (list DICTIONARY BET_SIZE))
+        run_validation_program (lambda ((& move validation_program split STATE) evidence) 
+                (validation_program (list (list move 0 split 0 0 0 amount) 
+                STATE 0 0 0 evidence)) evidence)
+        proof (find_failure validation_program (list 0 1 2 3 4))
+        (if proof
+            (list 1 STATE validation_program (r proof))
+            (assign (@proof2 (begin_range end_range signature)) 
+                    (find_exclusion_proof (substr move 0 5) DICTIONARY)
+                (if proof
+                    (list 1 STATE validation_program 
+                        (list (concat begin_range end_range)) signature)
+                    0
+                )
+            )
+        )
+    )
+)
+
+; Bob challenging
+; move is Alice word reveal
+; state is ((bob_guess alice_clue bob_guess ...) bet_amount alice_commit dictionary_key)
+; evidence can be index where clue is wrong or range of exclusion if Alice's word is
+; not in the dictionary
+(defun krunk_g ((move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (move_list bet_amount alice_commit dictionary_key) me mover_puzzle solution evidence)
+
+    (if 
+        (all
+            (= (len move) 37)
+            (= (sha256 move) alice_commit)
+            (= mover_share 
+                (* (div amount 200) 
+                    (if (= (substr move 0 5) (f move_list)) 
+                        (+ 100 bet_amount) 
+                        (- 100 bet_amount)
+                    )
+                )
+            )
+        )
+        (if (= (len evidence) 10)
+            (assign 
+                word (substr 0 5 move)
+                (assert
+                    (>= word (substr evidence 0 5))
+                    (<= word (substr evidence 5 10))
+                    (list (list AGG_SIG_UNSAFE evidence dictionary_key))
+                )
+            )
+            (assert
+                (assign 
+                    (clue guess) (myindex (r move_list) evidence)
+                    (!= clue (make_clue (substr move 0 5) guess))
+                )
+                0
+            )
+        )
+        0
+    )
+)
+
+; format of dictionary is (lower_dictionary word high_dictionary) or (low high signature)
+(defun find_exclusion_proof (word @dictionary (first second third))
+    (if (= (type first) atom)
+        (if (logand (>= word first) (<= word second))
+            dictionary
+            0
+        )
+        (find_exclusion_proof word (if (< word second) first third))
+    )
+)
 )

@@ -9,13 +9,13 @@
 ; If action is accuse args is (state validation_program mover_puzzle solution evidence)
 ; If action is move args is (new_move new_validation_info_hash new_mover_share mover_puzzle solution)
 ; validation programs get passed this:
-; ((MOVE NEXT_VALIDATION_HASH MOVER_SHARE PREVIOUS_VALIDATION_HASH MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH
-;        AMOUNT TIMEOUT MAX_MOVE_SIZE REFEREE_HASH)
-;        state me mover_puzzle solution . evidence)
-(mod (@ all_args ((MOVE VALIDATION_PROGRAM_HASH MOVER_SHARE PREVIOUS_VALIDATION_PROGRAM_HASH 
+; ((last_move next_validation_hash my_share me_hash my_puzzle_hash opponent_puzzle_hash
+;        amount timeout max_move_size referee_hash)
+;        state me mover_puzzle solution evidence)
+(mod (@ all_args ((MOVE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH 
         MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH 
         @ constants (AMOUNT TIMEOUT MAX_MOVE_SIZE MOD_HASH)) . args))
-    (include *standard-cl-22*)
+    (include *standard-cl-23*)
     ; This should be a bulk import from a standard library
     (include assert.clinc)
     (include curry.clinc)
@@ -40,17 +40,16 @@
             (i MOVER_SHARE (list CREATE_COIN MOVER_PUZZLE_HASH MOVER_SHARE) (list 1))
             (i (- amount MOVER_SHARE) (list CREATE_COIN WAITER_PUZZLE_HASH (- amount MOVER_SHARE)) (list 1))
         )
-        (l (r (r args)))
+        (l (f (r args)))
         ; accuse
         (assign
-            (validation_program_args previous_validation_program mover_puzzle solution) args
+            (previous_state previous_validation_program mover_puzzle solution) args
             (assert
                 (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
                 (= PREVIOUS_VALIDATION_INFO_HASH (sha256 (shatree previous_validation_program) (shatree 
-                        validation_program_args)))
+                        previous_state)))
                 ; usually returns the conditions verbatim
-                (concat (a previous_validation_program all_args)
-                        (a mover_puzzle solution))
+                (concat (a previous_validation_program all_args) (a mover_puzzle solution))
             )
         )
         ; move
@@ -61,8 +60,7 @@
                     VALIDATION_INFO_HASH WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH &rest constants)))
             conditions (a mover_puzzle solution)
             (assert
-                ; When VALIDATION_INFO_HASH is nil no further moves are allowed
-                VALIDATION_INFO_HASH
+                PREVIOUS_VALIDATION_INFO_HASH
                 (<= (strlen new_move) MAX_MOVE_SIZE)
                 (<= new_mover_share AMOUNT)
                 (>= new_mover_share 0)
