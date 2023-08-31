@@ -1,0 +1,168 @@
+
+; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
+; suits are 1-4 with no particular labelling
+; takes a list of five cards (rank . suit) and returns the value of the best poker 
+; hand which can be made with them
+; returned list is hand type followed by cards in descending order
+; doesn't work for ten or more cards if there are multiple flushes
+; all sorting is done highest to lowest
+(
+    (defconstant STRAIGHT_FLUSH 9)
+    (defconstant FOUR_OF_A_KIND 8)
+    (defconstant FULL_HOUSE 7)
+    (defconstant FLUSH 6)
+    (defconstant STRAIGHT 5)
+    (defconstant THREE_OF_A_KIND 4)
+    (defconstant TWO_PAIR 3)
+    (defconstant PAIR 2)
+    (defconstant HIGH_CARD 1)
+    (defconstant GROUP 1)
+    (defun hand_compare (a b)
+        (if (= (f a) (f b))
+            (if (r a)
+                (hand_compare (r a) (r b))
+                0
+            )
+            (- (* 2 (> (f a) (f b))) 1)
+        )
+    )
+    (defun hand< (a b)
+        (= (hand_compare a b) -1)
+    )
+    (defun merge (a b)
+        (if (not a)
+            b
+            (if (not b)
+                a
+                (if (> (f a) (f b))
+                    (c (f a) (merge (r a) b))
+                    (c (f b) (merge a (r b)))
+                )
+            )
+        )
+    )
+    ; Sorts atoms into descending order
+    ; This is optimized for sorting short lists
+    ; A more general function would return a list of lists of ascending sizes 
+    ; to be merged 
+    (defun atomsort ((@ firstpos (first @ secondpos (second @ thirdpos (third . remaining)))))
+        (if firstpos
+            (if secondpos
+                (if thirdpos
+                    (assign-lambda
+                        mylist
+                        (if (> first second)
+                            (if (> second third)
+                                (list first second third)
+                                (if (> first third)
+                                    (list first third second)
+                                    (list third first second)
+                                )
+                            )
+                            (if (> first third)
+                                (list second first third)
+                                (if (> second third)
+                                    (list second third first)
+                                    (list third second first)
+                                )
+                            )
+                        )
+                        (merge mylist (atomsort remaining))
+                    )
+                    (if (> first second)
+                        firstpos
+                        (list second first)
+                    )
+                )
+                firstpos
+            )
+            0
+        )
+    )
+    ; returns the high card of a straight or asserts if there isn't any
+    ; ranks must be sorted in descending order
+    (defun straight_high (rank1 rank2 rank3 rank4 rank5)
+        (assert
+            (not logior (= rank1 rank2) (= rank2 rank3) (= rank3 rank4) (= rank4 rank5)))
+            (if (logiand (= rank1 14) (= rank2 5))
+                (assert (= rank5 2)
+                    14
+                )
+                (assert (= rank5 (- rank1 4))
+                    rank1
+                )
+            )
+        )
+    )
+    (defun group_by_count_inner (items last count)
+        (if (not items)
+            (list (logior (lsh count 4) last))
+            (if (= (f items) last)
+                (group_by_count_inner (r items) last (+ count 1))
+                (assign-inline val (group_by_count_inner (r items) (f items) 1)
+                    (c (logior (lsh count 4) last) val)
+                )
+            )
+        )
+    )
+    (defun group_by_count (items)
+        (group_by_count_inner items (f items) 0)
+    )
+    (defun onehandcalc (hand_type ((card1rank . card1suit) (card2rank . card2suit) (card3rank . card3suit)
+                (card4rank . card4suit) (card5rank . card5suit)))
+        (assign-lambda
+            ranks (atomsort (list card1rank card2rank card3rank card4rank card5rank))
+            (if (= hand_type GROUP)
+                (assign-lambda
+                    (@ groups ((top_count . top_card) (second_count . second_card))) 
+                        (map (lambda (myval) (c (lsh myval -4) (logand myval 0x0F)))
+                        (atomsort (group_by_count ranks))
+                    )
+                    (c
+                        (if (= top_count 1)
+                            HIGH_CARD
+                            (if (= top_count 2)
+                                (if (= second_count 1)
+                                    PAIR
+                                    TWO_PAIR
+                                )
+                                (if (= top_count 3)
+                                    (if (= second_count 1)
+                                        THREE_OF_A_KIND
+                                        FULL_HOUSE
+                                    )
+                                    FOUR_OF_A_KIND
+                                )
+                            )
+                        )
+                        (map (lambda (p . q) q) groups)
+                    )
+                )
+                (if (= hand_type STRAIGHT)
+                    (assign-lambda
+                        fsh (straight_high ranks)
+                        (assert
+                            fsh
+                            (list STRAIGHT fsh)
+                        )
+                    )
+                    (assert
+                        (logand (= card1suit card2suit) (= card1suit card3suit) 
+                                (= card1suit card4suit) (= card1suit card5suit)
+                        )
+                        (if (= hand_type FLUSH)
+                            (c FLUSH ranks)
+                            (assign-lambda
+                                fsh (straight_high ranks)
+                                (assert
+                                    fsh
+                                    (list STRAIGHT_FLUSH fsh)
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+)

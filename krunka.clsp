@@ -6,7 +6,7 @@
 ; evidence is empty
 (mod (BHASH (move next_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    state me mover_puzzle solution . evidence)
+    state me mover_puzzle solution evidence)
     (include *standard-cl-22*)
     (include assert.clinc)
     (include shatree.clinc)

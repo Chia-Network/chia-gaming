@@ -2,7 +2,6 @@
     (include *standard-cl-22*)
     (include assert.clinc)
     (include curry.clinc)
-    (include shatree.clinc)
 
     (assert
         (not
