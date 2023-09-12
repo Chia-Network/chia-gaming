@@ -7,6 +7,7 @@
 ; doesn't work for ten or more cards if there are multiple flushes
 ; all sorting is done highest to lowest
 (
+    (include assert.clinc)
     (defconstant STRAIGHT_FLUSH 9)
     (defconstant FOUR_OF_A_KIND 8)
     (defconstant FULL_HOUSE 7)
@@ -83,7 +84,7 @@
     ; ranks must be sorted in descending order
     (defun straight_high (rank1 rank2 rank3 rank4 rank5)
         (assert
-            (not logior (= rank1 rank2) (= rank2 rank3) (= rank3 rank4) (= rank4 rank5)))
+            (not logior (= rank1 rank2) (= rank2 rank3) (= rank3 rank4) (= rank4 rank5))
             (if (logiand (= rank1 14) (= rank2 5))
                 (assert (= rank5 2)
                     14
