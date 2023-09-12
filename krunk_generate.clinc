@@ -359,7 +359,7 @@
 
     (if 
         (all
-            (= (len move) 37)
+            (= (strlen move) 37)
             (= (sha256 move) alice_commit)
             (= mover_share 
                 (* (div amount 200) 

@@ -1,0 +1,215 @@
+(
+(include assert.clinc)
+(include shatree.clinc)
+
+(defconst EHASH (shatree calpokere))
+(defconst DHASH (shatree calpokerd))
+(defconst CHASH (shatree calpokerc))
+(defconst BHASH (shatree calpokerb))
+(defconst AHASH (shatree calpokera))
+
+; Bob challenging
+; state is empty
+; move is alice commit to a salted word
+; evidence is empty
+(defun calpokera ((move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    dictionary_key me mover_puzzle solution evidence)
+
+    (assert
+        (not
+            (all
+                (= new_validation_hash (sha256 BHASH (sha256 1 move)))
+                (= (strlen move) 32)
+            )
+        )
+        0
+    )
+)
+
+; Alice challenging
+; state is alice's commit
+; move is bob's seed
+; evidence is empty
+(defun calpokerb ((move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    alice_commit me mover_puzzle solution evidence)
+    (assert
+        (not
+            (all
+                (= new_validation_hash (sha256 CHASH (shatree (list alice_commit bob_seed))))
+                (= (strlen bob_seed) 16)
+            )
+        )
+        0
+    )
+)
+
+(defun make_cards (randomness)
+    (assign
+        (handa newrandomness) (choose 52 8 randomness)
+        (handb newrandomness2) (choose (- 52 8) newrandomness)
+        (list handa (mergeover handa handb))
+    )
+)
+
+(defun <= (a b)
+    (not (> a b))
+)
+
+; like mergein but only calculates the contents of inner with offsets
+; applied and doesn't interleave the contents of outer
+(defun mergeover (outer inner offset)
+    (if (not inner)
+        0
+        (assign first (+ (f inner) offset)
+            (if (not outer)
+                (c first (mergeover 0 (r inner) offset))
+                (if (<= (f outer) first)
+                    (mergeover (r outer) inner (+ offset 1))
+                    (c first (mergeover outer (r inner) offset))
+                )
+            )
+        )
+    )
+)
+
+; slide the things in inner in between the things in outer assuming 
+; things in inner are already bumped up by offset things from outer which 
+; came before
+(defun mergein (outer inner offset)
+    (if (not inner)
+        outer
+        (assign first (+ (f inner) offset)
+            (if (not outer)
+                (c first (mergein 0 (r inner) offset))
+                (if (<= (f outer) first)
+                    (c (f outer) (mergein (r outer) inner (+ offset 1)))
+                    (c first (mergein outer (r inner) offset))
+                )
+            )
+        )
+    )
+)
+
+; pick numchoose things out of numcards options with randomness extracted from vals
+; returns (cards newvals) cards are always in sorted order
+(defun choose (numcards numchoose randomness)
+    (if (= numchoose 1)
+        (assign (newrandomness card) (divmod randomness numcards)
+            (list (list card) newrandomness)
+        )
+        (assign 
+            half (lsh numchoose -1)
+            (cards1 newrandomness2) (choose numcards half randomness)
+            (cards2 newrandomness3) (choose (- numcards half) (- numchoose half) newrandomness2)
+            (list (mergein cards1 cards2 0) newrandomness3)
+        )
+    )
+)
+
+; Bob challenging
+; state is alice's commit and bob's seed
+; move is alice's reveal of her card generating seed and her commit to which cards she's picking
+; evidence is empty
+(defun calpokerc ((move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (alice_commit bob_seed) me mover_puzzle solution evidence)
+    (assert
+        (not
+            (all
+                (= (strlen move) 48)
+                (= (sha256 (substr move 0 16)) alice_commit)
+                (= new_validation (sha256 DHASH (shatree (list (make_cards 
+                    (sha256 (substr move 0 16) bob_seed)) (substr move 16 48)))))
+            )
+        )
+        0
+    )
+)
+
+(defun onecount (mymask)
+    (if mymask
+        (+ (& mymask 1) (onecount (lsh mymask -1)))
+        0
+    )
+)
+
+; Alice challenging
+; state is the cards for both players and alice's card pick commitment
+; move is Bob's picks
+; evidence is empty
+(defun calpokerd ((bob_picks next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (cards alice_commit) me mover_puzzle solution evidence)
+    (assert
+        (not
+            (all
+                (= (strlen bob_picks) 1)
+                (= (onecount bob_picks) 4)
+                (= new_validation_hash (sha256 EHASH (shatree (list bob_picks cards alice_commit))))
+            )
+        )
+        0
+    )
+)
+
+
+(include onehandcalc.clinc)
+(include map.clinc)
+
+; Use mask to determine which cards are prepended to leftcards and which to rightcards
+(defun extract_cards (mask cards leftcards rightcards)
+    (if (not cards)
+        (list leftcards rightcards)
+        (if (logand mask 1)
+            (extract_cards (lsh mask -1) (r cards) leftcards (c (f cards) rightcards))
+            (extract_cards (lsh mask -1) (r cards) (c (f cards) leftcards) rightcards)
+        )
+    )
+)
+
+(defun make_card (val)
+    (assign
+        (rank suit) (divmod val 4)
+        (list (+ 2 rank) (+ 1 suit))
+    )
+)
+
+; Bob challenging
+; state is (Bob's picks (alice_cards bob_cards) alice_commit)
+; move is (alice_salted_picks alice_hand_type)
+; evidence is Bob's hand type
+(defun calpokere ((move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (bob_picks (alice_cards bob_cards) alice_commit) me mover_puzzle solution bob_hand_type)
+    (assign
+        alice_picks (substr move 0 1)
+        alice_salted_picks (substr move 0 17)
+        alice_hand_type (substr move 17 18)
+        (alice_final_cards bob_final_cards) (extract_cards bob_picks bob_cards &rest (extract_cards alice_picks alice_cards 0 0))
+        result (hand_compare (onehandcalc alice_hand_type (map make_card alice_final_cards)) 
+            (onehandcalc bob_hand_type (map make_card bob_final_cards)))
+        (assert
+            (not
+                (all
+                    (not new_validation_hash)
+                    (= (strlen move) 18)
+                    (= (sha256 alice_salted_picks alice_commit))
+                    (= (onecount alice_picks) 4)
+                    (<= alice_share
+                        (if (not result)
+                            (/ total 2)
+                            (if (= result 1)
+                                0
+                                total
+                            )
+                        )
+                    )
+                )
+            )
+            0
+        )
+    )
+)
+)

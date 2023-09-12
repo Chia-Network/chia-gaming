@@ -1,8 +1,0 @@
-(mod (DICTIONARY_KEY (WORD PLAINTIFF_KEY DEFENDANT_KEY TIMEOUT AMOUNT) . path)
-    (include *standard-cl-22*)
-
-    (if path
-        (list (list CREATE_COIN PLAINTIFF_KEY AMOUNT) (list ASSERT_SECONDS_RELATIVE TIMEOUT))
-        (list (list CREATE_COIN DEFENDANT_KEY AMOUNT) (list AGG_SIG_UNSAFE DICTIONARY_KEY WORD))
-    )
-)
