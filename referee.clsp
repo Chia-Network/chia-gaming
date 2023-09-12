@@ -5,6 +5,7 @@
 ; The next validation program hash may be nil which means no futher moves are allowed
 ; MOVER_SHARE is how much the mover will get if they fold/accept
 ; MOD_HASH should be the shatree of referee itself
+; NONCE is for anti-replay prevention
 ; If action is timeout args is nil
 ; If action is accuse args is (state validation_program mover_puzzle solution evidence)
 ; If action is move args is (new_move new_validation_info_hash new_mover_share mover_puzzle solution)
@@ -14,7 +15,7 @@
 ;        state me mover_puzzle solution evidence)
 (mod (@ all_args ((MOVE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH 
         MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH 
-        @ constants (AMOUNT TIMEOUT MAX_MOVE_SIZE MOD_HASH)) . args))
+        @ constants (AMOUNT TIMEOUT MAX_MOVE_SIZE MOD_HASH NONCE)) . args))
     (include *standard-cl-23*)
     ; This should be a bulk import from a standard library
     (include assert.clinc)
