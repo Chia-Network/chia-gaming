@@ -45,12 +45,14 @@
         ; accuse
         (assign
             (previous_state previous_validation_program mover_puzzle solution) args
+            previous_validation_program_hash (shatree previous_validation_program)
             (assert
                 (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
-                (= PREVIOUS_VALIDATION_INFO_HASH (sha256 (shatree previous_validation_program) (shatree 
+                (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree 
                         previous_state)))
                 ; usually returns the conditions verbatim
-                (concat (a previous_validation_program all_args) (a mover_puzzle solution))
+                (concat (a previous_validation_program (c previous_validation_program_hash all_args)) 
+                        (a mover_puzzle solution))
             )
         )
         ; move
