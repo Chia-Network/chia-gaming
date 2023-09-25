@@ -1,0 +1,214 @@
+(
+(include spacehandcalc.clinc)
+(include assert.clinc)
+
+(defconst END_HASH (shatree space_poker_end))
+(defconst CONTINUE_RIVER (curry space_poker_continue_street END_HASH))
+(defconst CONTINUE_RIVER_HASH (shatree CONTINUE_RIVER))
+(defconst START_RIVER (curry space_poker_start_street CONTINUE_RIVER_HASH))
+(defconst START_RIVER_HASH (shatree START_RIVER))
+(defconst CONTINUE_TURN (curry space_poker_continue_street START_RIVER_HASH))
+(defconst CONTINUE_TURN_HASH (shatree CONTINUE_TURN))
+(defconst START_TURN (curry space_poker_start_street CONTINUE_TURN_HASH))
+(defconst START_TURN_HASH (shatree START_TURN))
+(defconst CONTINUE_FLOP (curry space_poker_continue_street START_TURN_HASH))
+(defconst CONTINUE_FLOP_HASH (shatree CONTINUE_FLOP))
+(defconst START_FLOP (curry space_poker_start_street CONTINUE_FLOP_HASH))
+(defconst START_FLOP_HASH (shatree START_FLOP))
+(defconst CONTINUE_PREFLOP (curry space_poker_continue_street START_FLOP_HASH))
+(defconst CONTINUE_PREFLOP_HASH (shatree CONTINUE_PREFLOP))
+(defconst START_PREFLOP (curry space_poker_start_street CONTINUE_PREFLOP_HASH))
+(defconst START_PREFLOP_HASH (shatree START_PREFLOP))
+(defconst BHASH (shatree space_poker_b))
+(defconst AHASH (shatree space_poker_a))
+
+
+; Bob challenging
+; state is minraise
+; move is Alice image5
+; evidence is nil
+; split should be Alice keeps an ante
+(defun space_poker_a (mod_hash (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    state me mover_puzzle solution evidence)
+    (assert
+        (not
+            (all
+                (= (strlen move) 32)
+                (= next_validation_hash (sha256 BHASH (shatree (list state move))))
+                (= mover_share (- (/ amount 2) state))
+            )
+        )
+        0
+    )
+)
+
+; Alice challenging
+; state is minraise and Alice image5
+; move is Bob image4
+; evidence is nil
+; split should be Bob keeps an ante
+(defun space_poker_b (mod_hash (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (minraise alice_image5) me mover_puzzle solution evidence)
+    (assert
+        (not
+            (all
+                (= (strlen move) 32)
+                (= next_validation_hash (sha256 START_FLOP_HASH (shatree (list minraise (+ minraise minraise) 
+                        (- (/ amount 2) minraise) alice_image5 move))))
+                (= mover_share (- (/ amount 2) state))
+            )
+        )
+        0
+    )
+)
+
+; Elsa challlenging
+; state is minraise, amount in pot, Anna's stack size, Anna's imageN, and Elsa's imageN-1
+; move is Anna's imageN-1 and raise amount (0 for check)
+; split should be Anna keeps new amount in pot
+(defun space_poker_start_street (NEXT_PROGRAM mod_hash (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (minraise pot_size anna_stack anna_imagen elsa_imagen-1) me mover_puzzle solution evidence)
+    (assign
+        anna_imagen-1 (substr move 0 32)
+        raise_amount (substr move 32 (strlen move))
+        (assert
+            (not
+                (all
+                    (= (sha256 anna_imagen-1) anna_imagen)
+                    (>= raise_amount minraise)
+                    (<= raise_amount anna_stack)
+                    (= next_validation_hash (sha256 NEXT_PROGRAM (shatree (list minraise (+ pot_size raise_amount)
+                            (- (- amount anna_stack) pot_size) elsa_imagen-1 anna_imagen-1))))
+                    (= mover_share (+ raise_amount (- amount anna_stack)))
+                )
+            )
+            0
+        )
+    )
+)
+
+; Elsa challenging
+; state is minraise, amount in pot, raise amount, Anna's stack size, Anna's imageN, and Elsa's imageN
+; move is raise or Anna's imageN-1
+; split should be Anna keeps new amount in pot
+(defun space_poker_continue_street (NEXT_PROGRAM mod_hash (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (minraise pot_size raise_amount anna_stack_size anna_imagen elsa_imagen) me mover_puzzle solution evidence)
+    (if (= (strlen move) 32)
+        (assert
+            (not
+                (all
+                    (= (sha256 move) anna_imagen)
+                    (= next_validation_hash (sha256 NEXT_PROGRAM (shatree (list minraise (+ pot_size raise_amount)
+                            (- (- amount anna_stack_size) pot_size) elsa_imagen move))))
+                    (= mover_share (+ raise_amount (- amount anna_stack_size)))
+                )
+            )
+            0
+        )
+        (assert
+            (not
+                (all
+                    (<= minraise move)
+                    (>= anna_stack_size move)
+                    (= next_validation_hash (sha256 mod_hash (shatree (list minraise (+ pot_size raise_amount move)
+                            (- (- amount anna_stack_size) pot_size) elsa_imagen anna_imagen))))
+                )
+            )
+            0
+        )
+    )
+)
+
+(defun extract_one_card (vala valb)
+    (+ 2 (% (sha256 (logxor vala valb)) 13))
+)
+
+(defun extract_hole_cards (vala valb pre)
+    (assign
+        v1 (% (sha256 (logxor vala valb) (* 13 13)))
+        (card1 . card2) (divmod v1 13)
+        (list (+ card1 2) (+ card2 2) &rest pre)
+    )
+)
+
+(defun extract_three_cards (vala valb)
+    (assign
+        v1 (% (sha256 (logxor vala valb) (* 13 13 13)))
+        (card1 . v2) (divmod v1 (* 13 13))
+        (card2 . card3) (divmod v2 13)
+        (list (+ card1 2) (+ card2 2) (+ card3 2))
+    )
+)
+
+(defun select_cards (card_list selections)
+    (assign
+        (pos1 . pos2) (divmod selections 7)
+        (assert 
+            (> pos2 pos1)
+            (>= 0 pos1)
+            (select_cards_inner 0 (list pos1 pos2 100) card_list)
+        )
+    )
+)
+
+(defun select_cards_inner (mypos poslist cards)
+    (if (not cards)
+        0
+        (if (= mypos (f poslist))
+            (select_cards_inner (+ 1 mypos) (r poslist) (r cards))
+            (c (f cards) (select_cards_inner (+ 1 mypos) poslist (r cards)))
+        )
+    )
+)
+
+(defun amount_due (pot_size result)
+    (if (not result)
+        (/ pot_size 2)
+        (= result 1)
+        pot_size
+        0
+    )
+)
+
+; Elsa challenging
+; state is minraise, amount in pot, Anna's stack size, Anna's image1 and Elsa's preimage
+; move is Anna's preimage and card selection
+; evidence is Elsa's card selection
+; split should send pot to winner of the hand or even split if chop
+(defun space_poker_end (mod_hash (move next_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (minraise pot_size anna_stack_size anna_image1 elsa_preimage) me mover_puzzle solution evidence)
+    (assign
+        anna_preimage (substr move 0 32)
+        anna_card_selection (substr move 32 33)
+        elsa_image1 (sha256 elsa_preimage)
+        elsa_image2 (sha256 elsa_image1)
+        elsa_image3 (sha256 elsa_image2)
+        elsa_image4 (sha256 elsa_image3)
+        anna_image2 (sha256 anna_image1)
+        anna_image3 (sha256 anna_image2)
+        anna_image4 (sha256 anna_image3)
+        table_cards (list (extract_one_card anna_image2 elsa_image2) (extract_one_card anna_image1 elsa_image1) &rest 
+            (extract_three_cards anna_image3 elsa_image3))
+        anna_all_cards (extract_hole_cards anna_preimage elsa_image4 table_cards)
+        anna_hand (spacehandcalc (select_cards anna_all_cards anna_card_selection))
+        elsa_all_cards (extract_hole_cards elsa_preimage anna_image4 table_cards)
+        elsa_hand (spacehandcalc (select_cards elsa_all_cards evidence))
+        (assert
+            (not
+                (all
+                    (= (sha256 anna_preimage anna_image1))
+                    (= next_validation_hash 0)
+                    (>= mover_share (+ (- (- amount anna_stack_size) pot_size) 
+                            (amount_due pot_size (hand_compare elsa_hand anna_hand))))
+                )
+            )
+            0
+        )
+    )
+)
+)
