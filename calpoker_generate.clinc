@@ -12,7 +12,7 @@
 ; state is empty
 ; move is alice commit to a salted word
 ; evidence is empty
-(defun calpokera ((move next_validation_hash mover_share previous_validation_hash 
+(defun calpokera (mod_hash (move next_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     dictionary_key me mover_puzzle solution evidence)
 
@@ -31,7 +31,7 @@
 ; state is alice's commit
 ; move is bob's seed
 ; evidence is empty
-(defun calpokerb ((move next_validation_hash mover_share previous_validation_hash 
+(defun calpokerb (mod_hash (move next_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     alice_commit me mover_puzzle solution evidence)
     (assert
@@ -112,7 +112,7 @@
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 ; evidence is empty
-(defun calpokerc ((move next_validation_hash mover_share previous_validation_hash 
+(defun calpokerc (mod_hash (move next_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     (alice_commit bob_seed) me mover_puzzle solution evidence)
     (assert
@@ -130,7 +130,7 @@
 
 (defun onecount (mymask)
     (if mymask
-        (+ (& mymask 1) (onecount (lsh mymask -1)))
+        (+ (logand mymask 1) (onecount (lsh mymask -1)))
         0
     )
 )
@@ -139,7 +139,7 @@
 ; state is the cards for both players and alice's card pick commitment
 ; move is Bob's picks
 ; evidence is empty
-(defun calpokerd ((bob_picks next_validation_hash mover_share previous_validation_hash 
+(defun calpokerd (mod_hash (bob_picks next_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     (cards alice_commit) me mover_puzzle solution evidence)
     (assert
@@ -176,20 +176,32 @@
     )
 )
 
+(defun pull_out_cards (selections cards count)
+    (if (not cards)
+        (assert 
+            (= count 4)
+            0
+        )
+        (logand selections 1)
+        (c (make_card (f cards)) (pull_out_cards (lsh -1 selections) (r cards) (+ count 1)))
+        (pull_out_cards (lsh -1 selections) (r cards) count)
+    )
+)
+
 ; Bob challenging
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
 ; move is (alice_salted_picks alice_hand_type)
 ; evidence is Bob's hand type
-(defun calpokere ((move next_validation_hash mover_share previous_validation_hash 
+(defun calpokere (mod_hash (move next_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (bob_picks (alice_cards bob_cards) alice_commit) me mover_puzzle solution bob_hand_type)
+    (bob_picks (alice_cards bob_cards) alice_commit) me mover_puzzle solution bob_card_selections)
     (assign
         alice_picks (substr move 0 1)
         alice_salted_picks (substr move 0 17)
-        alice_hand_type (substr move 17 18)
+        alice_card_selections (substr move 17 18)
         (alice_final_cards bob_final_cards) (extract_cards bob_picks bob_cards &rest (extract_cards alice_picks alice_cards 0 0))
-        result (hand_compare (onehandcalc alice_hand_type (map make_card alice_final_cards)) 
-            (onehandcalc bob_hand_type (map make_card bob_final_cards)))
+        result (hand_compare (onehandcalc (pull_out_cards alice_card_selections alice_final_cards 0))
+            (onehandcalc (pull_out_cards bob_card_selections bob_final_cards 0)))
         (assert
             (not
                 (all
