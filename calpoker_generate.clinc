@@ -179,7 +179,7 @@
 (defun pull_out_cards (selections cards count)
     (if (not cards)
         (assert 
-            (= count 4)
+            (= count 5)
             0
         )
         (logand selections 1)

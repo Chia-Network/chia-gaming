@@ -6,7 +6,6 @@
 ; returned list is hand type followed by cards in descending order
 ; all sorting is done highest to lowest
 (
-    (include *standard-cl-22*)
     (include sort.clinc)
     (include deep_compare.clinc)
     (include filtermap.clinc)

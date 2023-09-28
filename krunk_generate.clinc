@@ -393,7 +393,7 @@
 
 ; format of dictionary is (lower_dictionary word high_dictionary) or (low high signature)
 (defun find_exclusion_proof (word @dictionary (first second third))
-    (if (= (type first) atom)
+    (if (not (l first))
         (if (logand (>= word first) (<= word second))
             dictionary
             0
