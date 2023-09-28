@@ -43,7 +43,7 @@
     ; A more general function would return a list of lists of ascending sizes 
     ; to be merged 
     (defun atomsort ((@ firstpos (first @ secondpos (second @ thirdpos (third . remaining)))))
-        (if firstpos
+        (if (print 'firstpos' firstpos)
             (if secondpos
                 (if thirdpos
                     (assign-lambda
@@ -77,7 +77,7 @@
         )
     )
     (defun check_flush ((rank1 . suit1) (rank2 . suit2) (rank3 . suit3) (rank4 . suit4) (rank5 . suit5))
-        (logand (= suit1 suit2) (= suit2 suit3) (= suit3 suit4) (= suit4 suit5))
+        (logand (= suit1 suit2) (= suit1 suit3) (= suit1 suit4) (= suit1 suit5))
     )
     ; returns the high card of a straight or 0 if there isn't any
     (defun straight_high (count1 count2 count3 count4 count5 card1 card2 card3 card4 card5)

@@ -1,39 +1,44 @@
 (
-    (defun last_inner ((next . remainder))
-        (if remainder
-            (last_inner remainder)
-            next
-        )
+  (defun prefix (L P)
+    (if L
+      (c (f L) (prefix (r L) P))
+      P
     )
+  )
 
-    (defmacro last ARGS
-      (defun snoc (L agg)
-        (if L
-          (if (r L)
-              (snoc (r L) (c (f L) agg))
-              (c (f L) agg)
-              )
-          (c () ())
-          )
-        )
-
-      (defun prefix (L P)
-        (if L
-	          (c (f L) (prefix (r L) P))
-	          P
-	          )
- 	      )
-
-      (if ARGS
-        (if (r ARGS)
-          (assign
-	          (final . rest) (snoc ARGS ())
-	          reversed (prefix rest (list final))
-            (qq (last_inner (unquote (c list reversed))))
-	          )
-          (qq (last_inner (unquote (f ARGS))))
-         )
-        (x "Last takes at least one argument")
-        )
+  (defun last_inner ((next . remainder))
+      (if remainder
+          (last_inner remainder)
+          next
       )
+  )
+
+  (defun snoc (L agg)
+    (if L
+      (if (r L)
+        (snoc (r L) (c (f L) agg))
+        (c (f L) agg)
+      )
+      (c () ())
+    )
+  )
+
+  (defun echo myargs
+    myargs
+  )
+
+  (defmac last ARGS
+
+    (if ARGS
+      (if (r ARGS)
+        (assign
+          (final . rest) (snoc ARGS ())
+          reversed (prefix rest (echo final))
+          (qq (last_inner (unquote (c (q . echo) reversed))))
+          )
+        (qq (last_inner (unquote (f ARGS))))
+        )
+      (x "Last takes at least one argument")
+      )
+    )
 )
