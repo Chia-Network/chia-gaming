@@ -3,19 +3,9 @@
 ; suits are 1-4 with no particular labelling
 ; takes a list of cards (rank . suit) and returns the value of the best poker 
 ; hand which can be made with them
-; returned list is hand type followed by cards in descending order
 ; doesn't work for ten or more cards if there are multiple flushes
 ; all sorting is done highest to lowest
 (
-    (defconstant STRAIGHT_FLUSH 9)
-    (defconstant FOUR_OF_A_KIND 8)
-    (defconstant FULL_HOUSE 7)
-    (defconstant FLUSH 6)
-    (defconstant STRAIGHT 5)
-    (defconstant THREE_OF_A_KIND 4)
-    (defconstant TWO_PAIR 3)
-    (defconstant PAIR 2)
-    (defconstant HIGH_CARD 1)
     (defun hand_compare (a b)
         (if (= (f a) (f b))
             (if (r a)
@@ -25,9 +15,11 @@
             (- (* 2 (> (f a) (f b))) 1)
         )
     )
+
     (defun hand< (a b)
         (= (hand_compare a b) -1)
     )
+
     (defun merge (a b)
         (if (not a)
             b
@@ -40,6 +32,7 @@
             )
         )
     )
+
     ; Sorts atoms into descending order
     ; This is optimized for sorting short lists
     ; A more general function would return a list of lists of ascending sizes 
@@ -78,40 +71,17 @@
             0
         )
     )
-    (defun count_suits ((@ suits (firstsuit . remaining)))
-        (if (not suits)
-            (c (c 0 0) (c 0 0))
-            (assign-lambda ((@ cd (clubs . diamonds)) . (@ hs (hearts . spades))) (count_suits remaining)
-                (if (= firstsuit 1)
-                    (c (c (+ clubs 1) diamonds) hs)
-                    (if (= firstsuit 2)
-                        (c (c clubs (+ diamonds 1)) hs)
-                        (if (= firstsuit 3)
-                            (c cd (c (+ hearts 1) spades))
-                            (c cd (c hearts (+ spades 1)))
-                        )
-                    )
-                )
-            )
-        )
-    )
+
     (defun find_flush (suits)
-        (assign-lambda ((clubs . diamonds) . (hearts . spades)) (count_suits suits)
-            (if (> clubs 4)
-                1
-                (if (> diamonds 4)
-                    2
-                    (if (> hearts 4)
-                        3
-                        (if (> spades 4)
-                            4
-                            0
-                        )
-                    )
-                )
+        (assign 
+            ((count1 . suit1)) (group_by_count_clean (atomsort suits))
+            (if (< 5 count1)
+                0
+                suit1
             )
         )
     )
+
     (defun straight_high_inner (ranks last count)
         (if (not ranks)
             (if (logand (= last 2) (= count 4))
@@ -136,16 +106,18 @@
             )
         )
     )
+
     ; returns the high card of a straight or 0 if there isn't any
     ; ranks must be sorted in descending order
     (defun straight_high (ranks)
-        (assign-lambda high (straight_high_inner ranks 0 0)
+        (assign high (straight_high_inner ranks 0 0)
             (if (= high 5)
                 (* (= (f ranks) 14) 5)
                 high
             )
         )
     )
+
     (defun group_by_count_inner (items last count)
         (if (not items)
             (list (logior (lsh count 4) last))
@@ -157,74 +129,109 @@
             )
         )
     )
-    (defun group_by_count (items)
-        (group_by_count_inner items (f items) 0)
+
+    (defun group_by_count_clean (items)
+        (map
+            (lambda (x) (c (lsh x -4) (& x 15)))
+            (group_by_count_inner items (f items) 0)
+        )
     )
+
+    (defun find_straight_flush_indices (flush_suit straight_flush_high cards)
+        (find_straight_indices straight_flush_high 
+            (map (lambda (@ card (rank . suit)) (if (= suit flush_suit) card (c 0 0))) cards))
+    )
+
+    (defun flush_cards_with_index (flush_suit index (@ cards ((first_rank . first_suit))))
+        (if (not cards)
+            0
+            (if (= flush_suit first_suit)
+                (c (logior (lsh first_rank 4) index) (flush_cards_with_index flush_suit (+ index 1) (r cards)))
+                (flush_cards_with_index flush_suit (+ index 1) (r cards))
+            )
+        )
+    )
+
+    (defun find_flush_indices (flush_suit cards)
+        myfiltered (truncate 5 (atomsort (flush_cards_with_index flush_suit 0 cards)))
+        (to_bitfield 0 (reverse (atomsort (map (lambda (x) (logand x 15)) myfiltered))))
+    )
+
+    ; includes should be in ascending order
+    (defun to_bitfield (index includes)
+        (if (not includes)
+            0
+            (if (= index (f includes))
+                (logior 1 (lsh 1 (to_bitfield (+ index 1) (r includes))))
+                (lsh 1 (to_bitfield (+ index 1) includes))
+            )
+        )
+    )
+
+    (defun find_straight_includes (ranks with_index)
+        (if (= (f ranks)) (lsh -4 (f with_index))
+            (logior (logand 15 (f with_index)) (lsh 1 (find_straight_includes (r ranks) (r with_index))))
+            (lsh 1 (find_straight_includes ranks (r with_index)))
+        )
+    )
+
+    (defun find_straight_indices (my_straight_high cards)
+        (assign
+            with_index (atomsort (label_rank_indices 0 cards))
+            my_ranks (if (= my_straight_high 5) (list 14 5 4 3 2) 
+                (list my_straight_high (- my_straight_high 1) (- my_straight_high 2) 
+                (- my_straight_high 3) (- my_straight_high 4)))
+            includes (reverse (atomsort (find_straight_includes my_ranks with_index)))
+            (to_bitfield 0 includes)
+        )
+    )
+
+    (defun find_single_indices (count rank cards)
+        (if (logior (not cards) (not count))
+            0
+            (logior (= rank (f cards)) (lsh 1 (find_single_indices (- count 1) (r cards))))
+        )
+    )
+
+    (defun find_hand_indices ((@ hand ((firstcount . firstrank))) cards)
+        (if (not hand)
+            0
+            (logior (find_hand_indices (r hand) cards) (find_single_indices firstcount firstrank cards))
+        )
+    )
+
+    (defun crop_hand (leftover ((firstcount . firstrank) @ remaining))
+        (if (firstcount >= leftover)
+            (c leftover 0)
+            (c firstcount (crop_hand (- leftover firstcount) remaining))
+        )
+    )
+
     (defun handcalc (cards)
-        (assign-lambda
+        (assign
             first (lambda (x) (f x))
-            rest (lambda (x) (r x))
-            fsuit (find_flush (map rest cards))
-            max_flush (if (not fsuit)
-                (list 0)
-                (assign-lambda
-                    flushcards
-                    (filtermap 
-                        (lambda ((& fsuit) (card_rank . card_suit))
-                            (if (= fsuit card_suit)
-                                card_rank
-                                0
-                            )
+            sorted_ranks (atomsort (map first cards))
+            hand (crop_hand 5 (group_by_count_clean sorted_ranks))
+            ((firstcount . firstrank) (secondcount . secondrank)) hand
+            flush_suit (find_flush (map cards rest))
+            (if flush_suit
+                (assign 
+                    flush_cards (filtermap (lambda ((& flush_suit) rank . suit) (if (= suit flush_suit) rank 0)))
+                    straight_flush_high (straight_high (atomsort flush_cards))
+                    (if straight_flush_high
+                        (find_straight_flush_indices flush_suit straight_flush_high cards)
+                        (if (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1)))
+                            (find_flush_indices flush_suit cards)
+                            (find_hand_indices hand cards)
                         )
-                        cards
-                        0
-                    )
-                    flushranks (atomsort flushcards)
-                    fsh (straight_high flushranks)
-                    (if fsh
-                        (list STRAIGHT_FLUSH fsh)
-                        (c FLUSH (slice flushranks 5))
                     )
                 )
-            )
-            ranks (atomsort (map first cards))
-            sh (straight_high ranks)
-            max_straight (if sh
-                (list STRAIGHT sh)
-                (list 0)
-            )
-            groups (map 
-                (lambda (myval) (c (lsh myval -4) (logand myval 0x0F)))
-                (atomsort (group_by_count ranks))
-            )
-            (top_count . top_card) (f groups)
-            (second_count . second_card) (f (r groups))
-            topcards (map rest groups)
-            max_group (if (= top_count 1)
-                (c HIGH_CARD (slice topcards 5))
-                (if (= top_count 2)
-                    (if (= second_count 1)
-                        (c PAIR (slice topcards 4))
-                        (c TWO_PAIR (slice topcards 3))
+                (assign 
+                    my_straight_high (straight_high sorted_ranks)
+                    (if (logand my_straight_high (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1))))
+                        (find_straight_indices my_straight_high cards)
+                        (find_hand_indices hand cards)
                     )
-                    (if (= top_count 3)
-                        (if (= second_count 1)
-                            (c THREE_OF_A_KIND (slice topcards 3))
-                            (c FULL_HOUSE (slice topcards 2))
-                        )
-                        (c FOUR_OF_A_KIND (slice topcards 2))
-                    )
-                )
-            )
-            ; max of max_flush max_straight and max_group
-            (if (> (f max_flush) (f max_straight))
-                (if (> (f max_flush) (f max_group))
-                    max_flush
-                    max_group
-                )
-                (if (> (f max_straight) (f max_group))
-                    max_straight
-                    max_group
                 )
             )
         )

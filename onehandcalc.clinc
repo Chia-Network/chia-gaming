@@ -112,9 +112,12 @@
             (if shigh
                 (if (check_flush &rest cards)
                     (list 5 shigh)
-                    (list 3 1 2 shigh)
+                    (if (logior (= (f hand 4)) (logand (= (f hand 3)) (= (f (r hand)) 2)))
+                        hand
+                        (list 3 1 2 shigh)
+                    )
                 )
-                (if (check_flush &rest cards)
+                (if (logiand (check_flush &rest cards) (logior (< (f hand 3)) (logand (= (f hand 3)) (< (f (r hand)) 2))))
                     (list 3 1 3 (r (r (r (r (r hand))))))
                     hand
                 )
