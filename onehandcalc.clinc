@@ -90,12 +90,21 @@
             0
         )
     )
+
+    (defun flatten_card ((rank . suit))
+        (logior (lsh rank 4) suit)
+    )
+
+    (defun unflatten_card (my_card)
+        (c (lsh my_card -4) (logand my_card 15))
+    )
+
     (defun group_by_count_inner (items last count)
         (if (not items)
-            (list (logior (lsh count 4) last))
+            (list (flatten_card (c count last)))
             (if (= (f items) last)
                 (group_by_count_inner (r items) last (+ count 1))
-                (c (logior (lsh count 4) last) (group_by_count_inner (r items) (f items) 1))
+                (c (flatten_card (c count last)) (group_by_count_inner (r items) (f items) 1))
             )
         )
     )
