@@ -18,15 +18,15 @@
     )
 
     (defun try_permuted_list (mylist)
-        (busy (lambda ((& mylist) newlist) (try_list mylist newlist))
+        (busy (lambda ((& mylist) newlist) (try_list (reverse mylist) newlist))
             (permutations mylist)
             0
         )
     )
     (last
         (try_list 0 0)
-        (try_list (range 15) (range 15))
-        (try_list (range 15) (reverse (range 15)))
+        (try_list (reverse (range 15)) (range 15))
+        (try_list (reverse (range 15)) (reverse (range 15)))
         (try_permuted_list (list -1 -1 0 0 2))
         (busy (lambda (i) (try_permuted_list (range i)))
             (range 4)
