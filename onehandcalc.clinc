@@ -111,6 +111,7 @@
     (defun group_by_count (items)
         (group_by_count_inner items (f items) 0)
     )
+
     (defun onehandcalc (@ cards (((card1rank . card1suit) (card2rank . card2suit) (card3rank . card3suit)
                 (card4rank . card4suit) (card5rank . card5suit))))
         (assign
