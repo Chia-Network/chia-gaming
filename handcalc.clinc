@@ -90,8 +90,8 @@
         (if (not includes)
             0
             (if (= index (f includes))
-                (logior 1 (lsh 1 (to_bitfield (+ index 1) (r includes))))
-                (lsh 1 (to_bitfield (+ index 1) includes))
+                (logior 1 (lsh (to_bitfield (+ index 1) (r includes)) 1))
+                (lsh (to_bitfield (+ index 1) includes) 1)
             )
         )
     )

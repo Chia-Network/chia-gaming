@@ -43,7 +43,7 @@
     ; A more general function would return a list of lists of ascending sizes 
     ; to be merged 
     (defun atomsort ((@ firstpos (first @ secondpos (second @ thirdpos (third . remaining)))))
-        (if (print 'firstpos' firstpos)
+        (if firstpos
             (if secondpos
                 (if thirdpos
                     (assign-lambda
