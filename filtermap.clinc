@@ -1,6 +1,6 @@
 
 (
-    (defun filtermap (process remaining init)
+    (defun filtermap_fun (process remaining init)
         (if remaining
             (assign next (a process (list (f remaining)))
                 (if next 
@@ -9,6 +9,13 @@
                 )
             )
             init
+        )
+    )
+
+    (defmac filtermap (process remaining . maybe_init)
+        (if maybe_init
+           (qq (filtermap_fun (unquote process) (unquote remaining) (unquote (f maybe_init))))
+           (qq (filtermap_fun (unquote process) (unquote remaining) ()))
         )
     )
 )
