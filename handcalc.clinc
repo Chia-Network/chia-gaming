@@ -57,13 +57,13 @@
         )
     )
 
-    (defun find_straight_flush_indices (@ cards (flush_suit straight_flush_high ((first_rank . first_suit) . remaining)))
+    (defun find_straight_flush_indices (flush_suit straight_flush_high (@ cards ((first_rank . first_suit) . remaining)))
         (if (not cards)
             0
             (assign
                 hit (logand (= first_suit flush_suit) (logior (logand (= straight_flush_high 5) (= first_rank 5))
                     (logand (<= first_rank straight_flush_high) (> first_rank (- straight_flush_high 5)))))
-                (logior (lsh 1 (find_straight_flush_indices flush_suit straight_flush_high remaining)) hit)
+                (logior (lsh (find_straight_flush_indices flush_suit straight_flush_high remaining) 1) hit)
             )
         )
     )
@@ -97,7 +97,7 @@
     )
 
     (defun find_straight_includes (ranks with_index)
-        (if (= (f ranks) (lsh -4 (f with_index)))
+        (if (= (f ranks) (lsh (f with_index) -4))
             (c (logand 15 (f with_index)) (find_straight_includes (r ranks) (r with_index)))
             (find_straight_includes ranks (r with_index))
         )
@@ -138,8 +138,8 @@
             ((firstcount . firstrank) (secondcount . secondrank)) hand
             flush_suit (find_flush (map rest cards))
             (if flush_suit
-                (assign 
-                    flush_cards (filtermap (lambda ((& flush_suit) rank . suit) (if (= suit flush_suit) rank 0)) cards)
+                (assign-lambda
+                    flush_cards (filtermap (lambda ((& flush_suit) (@ thecard (rank . suit))) (if (= suit flush_suit) rank 0)) cards)
                     straight_flush_high (straight_high_extended (atomsort flush_cards))
                     (if straight_flush_high
                         (find_straight_flush_indices flush_suit straight_flush_high cards)
