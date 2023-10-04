@@ -14,12 +14,27 @@
     (include onehandcalc.clinc)
     (include handcalc.clinc)
 
+    (defun cards-by-bitmask (mask cards)
+      (if cards
+        (let ((next-cards (cards-by-bitmask (lsh mask -1) (r cards))))
+          (if (logand 1 mask)
+            (c (f cards) next-cards)
+            next-cards
+          )
+        )
+        ()
+      )
+    )
+
     (defun runtests_inner ((myfunc firstarg secondarg . remaining))
         (assign-lambda
             firstval (print "first handcalc" (handcalc (print "first-handcalc arg" firstarg)))
             secondval (print "second handcalc" (handcalc (print "second-handcalc arg" secondarg)))
+            first-chosen-cards (print "first chosen cards were" (cards-by-bitmask firstval firstarg))
+            second-chosen-cards (print "second chosen cards were" (cards-by-bitmask secondval secondarg))
+            
             (assert
-                (a myfunc (list firstval secondval))
+                (a myfunc (list first-chosen-cards second-chosen-cards))
                 (deep= firstval (handcalc (reverse firstarg)))
                 (deep= secondval (handcalc (reverse secondarg)))
                 (if remaining
