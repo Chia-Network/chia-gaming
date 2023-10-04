@@ -1,0 +1,5 @@
+(
+  (defun-inline >= (A B) (logior (= A B) (> A B)))
+  (defun-inline <= (A B) (> B A))
+  (defun-inline <  (A B) (>= B A))
+)

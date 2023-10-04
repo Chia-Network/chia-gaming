@@ -1,0 +1,8 @@
+(
+(defun truncate (N (@ L (LF . LR)))
+    (if (all N L)
+        (c LF (truncate (- N 1) LR))
+        ()
+    )
+)
+)

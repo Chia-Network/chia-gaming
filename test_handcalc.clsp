@@ -1,21 +1,23 @@
 
 (mod ()
     (include *standard-cl-23*)
+    (include relops.clinc)
     (include deep_compare.clinc)
     (include assert.clinc)
     (include reverse.clinc)
     (include prepend.clinc)
+    (include truncate.clinc)
     (include map.clinc)
     (include filtermap.clinc)
     (include slice.clinc)
     (include print.clinc)
+    (include onehandcalc.clinc)
     (include handcalc.clinc)
 
     (defun runtests_inner ((myfunc firstarg secondarg . remaining))
-        (print 'this is a test'
         (assign-lambda
-            firstval (handcalc firstarg)
-            secondval (handcalc secondarg)
+            firstval (print "first handcalc" (handcalc (print "first-handcalc arg" firstarg)))
+            secondval (print "second handcalc" (handcalc (print "second-handcalc arg" secondarg)))
             (assert
                 (a myfunc (list firstval secondval))
                 (deep= firstval (handcalc (reverse firstarg)))
@@ -25,7 +27,7 @@
                     0
                 )
             )
-        ))
+        )
     )
 
     (defun runtests tests (if tests (runtests_inner tests) ()))

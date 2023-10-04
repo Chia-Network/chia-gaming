@@ -6,8 +6,6 @@
 ; doesn't work for ten or more cards if there are multiple flushes
 ; all sorting is done highest to lowest
 (
-    (include onehandcalc.clinc)
-
     (defun find_flush (suits)
         (assign 
             ((count1 . suit1)) (group_by_count_clean (atomsort suits))
@@ -59,7 +57,7 @@
         )
     )
 
-    (defun find_straight_flush_indices (flush_suit straight_flush_high ((first_rank . first_suit) . remaining))
+    (defun find_straight_flush_indices (@ cards (flush_suit straight_flush_high ((first_rank . first_suit) . remaining)))
         (if (not cards)
             0
             (assign
@@ -99,7 +97,7 @@
     )
 
     (defun find_straight_includes (ranks with_index)
-        (if (= (f ranks)) (lsh -4 (f with_index))
+        (if (= (f ranks) (lsh -4 (f with_index)))
             (c (logand 15 (f with_index)) (find_straight_includes (r ranks) (r with_index)))
             (find_straight_includes ranks (r with_index))
         )
