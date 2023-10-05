@@ -26,15 +26,42 @@
       )
     )
 
+    (defun count-bits (mask)
+        (if mask
+            (let ((next (count-bits (lsh mask -1))))
+                (if (logand mask 1)
+                    (+ 1 next)
+                    next
+                )
+            )
+            0
+        )
+    )
+
+    (defun must-have-bits (N M)
+        (if (= (count-bits M) N)
+            M
+            (x "Mask" M "should have" N "bits")
+        )
+    )
+
+    (defun must-be-len (N L)
+        (if (= (list-len L) N)
+            L
+            (x "List" L "should have" N "elements")
+        )
+    )
+
     (defun runtests_inner ((myfunc firstarg secondarg . remaining))
         (assign-lambda
             firstval (print "first handcalc" (handcalc (print "first-handcalc arg" firstarg)))
             secondval (print "second handcalc" (handcalc (print "second-handcalc arg" secondarg)))
-            first-chosen-cards (print "first chosen cards were" (cards-by-bitmask firstval firstarg))
-            second-chosen-cards (print "second chosen cards were" (cards-by-bitmask secondval secondarg))
-            
+            first-chosen-cards (cards-by-bitmask (must-have-bits 5 firstval) firstarg)
+            second-chosen-cards (cards-by-bitmask (must-have-bits 5 secondval) secondarg)
+            first-ohc (print "first onehandcalc" (onehandcalc (print "pre-first-ohc" (must-be-len 5 first-chosen-cards))))
+            second-ohc (print "second onehandcalc" (onehandcalc (print "pre-second-ohc" (must-be-len 5 second-chosen-cards))))
             (assert
-                (a myfunc (list first-chosen-cards second-chosen-cards))
+                (a myfunc (list first-ohc second-ohc))
                 (deep= firstval (handcalc (reverse firstarg)))
                 (deep= secondval (handcalc (reverse secondarg)))
                 (if remaining
