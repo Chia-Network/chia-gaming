@@ -40,8 +40,8 @@
     )
     ; Sorts atoms into descending order
     ; This is optimized for sorting short lists
-    ; A more general function would return a list of lists of ascending sizes 
-    ; to be merged 
+    ; A more general function would return a list of lists of ascending sizes
+    ; to be merged
     (defun atomsort ((@ firstpos (first @ secondpos (second @ thirdpos (third . remaining)))))
         (if firstpos
             (if secondpos
@@ -76,18 +76,25 @@
             0
         )
     )
-    (defun check_flush ((rank1 . suit1) (rank2 . suit2) (rank3 . suit3) (rank4 . suit4) (rank5 . suit5))
-        (logand (= suit1 suit2) (= suit1 suit3) (= suit1 suit4) (= suit1 suit5))
+    (defun check_flush (@ cards ((rank1 . suit1) (rank2 . suit2) (rank3 . suit3) (rank4 . suit4) (rank5 . suit5)))
+        (if (= (list-len cards) 5)
+            (logand (= suit1 suit2) (= suit1 suit3) (= suit1 suit4) (= suit1 suit5))
+            (x "check_flush wrong length" cards)
+        )
     )
+
     ; returns the high card of a straight or 0 if there isn't any
-    (defun straight_high (count1 count2 count3 count4 count5 card1 card2 card3 card4 card5)
-        (if (not (= count1 1))
-            0
-            (= card5 (- card1 4))
-            card1
-            (= card1 14)
-            (* (= card2 5) 5)
-            0
+    (defun straight_high (@ all-args (count1 count2 count3 count4 count5 rank1 rank2 rank3 rank4 rank5))
+        (if (= (list-len all-args) 10)
+            (if (not (= count1 1))
+                0
+                (= rank5 (- rank1 4))
+                rank1
+                (= rank1 14)
+                (* (= rank2 5) 5)
+                0
+            )
+            (x "straight_high wrong args len" all-args)
         )
     )
 
@@ -112,23 +119,27 @@
         (group_by_count_inner items (f items) 0)
     )
 
-    (defun onehandcalc (@ cards (((card1rank . card1suit) (card2rank . card2suit) (card3rank . card3suit)
+    (defun ranks_of_hand (count1 count2 count3 count4 count5 . ranks)
+        ranks
+    )
+
+    (defun onehandcalc ((@ cards ((card1rank . card1suit) (card2rank . card2suit) (card3rank . card3suit)
                 (card4rank . card4suit) (card5rank . card5suit))))
-        (assign
+        (assign-lambda
             ranks (atomsort (list card1rank card2rank card3rank card4rank card5rank))
             raw_groups (atomsort (group_by_count ranks))
-            hand (map (lambda (x) (lsh -4 x)) raw_groups (map (lambda (x) (logand x 15)) raw_groups))
+            hand (map (lambda (x) (lsh x -4)) raw_groups (map (lambda (x) (logand x 15)) raw_groups))
             shigh (straight_high &rest hand)
             (if shigh
                 (if (check_flush &rest cards)
                     (list 5 shigh)
-                    (if (logior (= (f hand 4)) (logand (= (f hand 3)) (= (f (r hand)) 2)))
+                    (if (logior (= (f hand) 4) (logand (= (f hand) 3) (= (f (r hand)) 2)))
                         hand
                         (list 3 1 2 shigh)
                     )
                 )
-                (if (logiand (check_flush &rest cards) (logior (< (f hand 3)) (logand (= (f hand 3)) (< (f (r hand)) 2))))
-                    (list 3 1 3 (r (r (r (r (r hand))))))
+                (if (logand (check_flush &rest cards) (logior (< (f hand) 3) (logand (= (f hand) 3) (< (f (r hand)) 2))))
+                    (list 3 1 3 (ranks_of_hand &rest hand))
                     hand
                 )
             )
