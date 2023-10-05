@@ -61,7 +61,7 @@
         (if (not cards)
             0
             (assign
-                hit (logand (= first_suit flush_suit) (logior (logand (= straight_flush_high 5) (= first_rank 5))
+                hit (logand (= first_suit flush_suit) (logior (logand (= straight_flush_high 5) (= first_rank 14))
                     (logand (<= first_rank straight_flush_high) (> first_rank (- straight_flush_high 5)))))
                 (logior (lsh (find_straight_flush_indices flush_suit straight_flush_high remaining) 1) hit)
             )
