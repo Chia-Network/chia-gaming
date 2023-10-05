@@ -405,9 +405,9 @@ let rec remove_rank_from_hand rank = function
   | f_hand :: r_hand ->
     if CountAndRank.rank f_hand == rank then
       if CountAndRank.count f_hand > 0 then
-        r_hand
-      else
         (CountAndRank.make ((CountAndRank.count f_hand) - 1) (CountAndRank.rank f_hand)) :: r_hand
+      else
+        r_hand
     else
       f_hand :: (remove_rank_from_hand rank r_hand)
 
