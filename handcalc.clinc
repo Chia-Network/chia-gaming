@@ -160,7 +160,7 @@
     )
 
     (defun find_hand_indices ((@ numbered-cards ((number . card) . rest)))
-        (if numbered-cards
+        (if (print "find_hand_indices" numbered-cards)
             (logior (lsh 1 number) (find_hand_indices rest))
             0
         )
@@ -219,8 +219,18 @@
                 ;; Else
                 (assign
                     my_straight_high (straight_high_extended sorted_ranks)
-                    (if (print "handcalc decision 2" (logand my_straight_high (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1)))))
+                    (if (print (list "handcalc decision 2" my_straight_high firstcount secondcount)
+                            (all
+                                my_straight_high
+                                (logior
+                                    (< firstcount 3)
+                                    (logand (= firstcount 3) (= secondcount 1))
+                                )
+                            )
+                        )
+
                         (print "handcalc: find_straight_indices yields" (find_straight_indices (print "handcalc: my_straight_high" my_straight_high) cards))
+
                         (find_hand_indices (print "handcalc: giving find_hand_indices" (truncate 5 (bucket_cards_by_frequency_groups hand (print "handcalc: numbered cards" (number_cards 0 cards))))))
                     )
                 )
