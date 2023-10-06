@@ -85,16 +85,13 @@
 
     ; returns the high card of a straight or 0 if there isn't any
     (defun straight_high (@ all-args (count1 count2 count3 count4 count5 rank1 rank2 rank3 rank4 rank5))
-        (if (= (list-len all-args) 10)
-            (if (not (= count1 1))
-                0
-                (= rank5 (- rank1 4))
-                rank1
-                (= rank1 14)
-                (* (= rank2 5) 5)
-                0
-            )
-            (x "straight_high wrong args len" all-args)
+        (if (not (= count1 1))
+            0
+            (= rank5 (- rank1 4))
+            rank1
+            (= rank1 14)
+            (* (= rank2 5) 5)
+            0
         )
     )
 
