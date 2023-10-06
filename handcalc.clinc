@@ -180,17 +180,21 @@
         )
     )
 
+    (defun normal_full_house (firstcount secondcount hand cards)
+      (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
+    )
+
     (defun handcalc (cards)
-        (assign
+        (assign-lambda
             first (lambda (x) (f x))
             rest (lambda (x) (r x))
             sorted_ranks (atomsort (map first cards))
             hand (group_by_count_clean sorted_ranks)
             ((firstcount . firstrank) (secondcount . secondrank)) hand
             flush_suit (find_flush (map rest cards))
-            (if (logand (= firstcount 3) (= secondcount 2))
-                ;; Full house
-                (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
+            (if ;; Full house
+                (logand (= firstcount 3) (= secondcount 2))
+                (normal_full_house firstcount secondcount hand cards)
 
                 ;; Flush
                 flush_suit

@@ -58,9 +58,9 @@
         (assign
             reversed-cards (reverse cards)
 
-            handcalc-result (handcalc cards)
+            handcalc-result (print (list "handcalc fwd result for cards" cards) (handcalc cards))
 
-            reverse-handcalc-result (handcalc reversed-cards)
+            reverse-handcalc-result (print (list "handcalc rev result for cards" reversed-cards) (handcalc reversed-cards))
 
             chosen-cards (cards-by-bitmask (must-have-bits 5 handcalc-result) cards)
 
@@ -83,9 +83,9 @@
             second-rev-ohc (print (list "second rev onehandcalc from " second-rev-cards) (onehandcalc (must-be-len 5 second-rev-cards)))
 
             (assert
-                (print (list "compare hands" first-ohc second-ohc) (a myfunc (list first-ohc second-ohc)))
-                (print "first equal" (deep= first-ohc first-rev-ohc))
-                (print "second equal" (deep= second-ohc second-rev-ohc))
+                (print (list "======== compare hands ========" first-ohc second-ohc) (a myfunc (list first-ohc second-ohc)))
+                (print (list "======== first equal ==========" first-ohc first-rev-ohc) (deep= first-ohc first-rev-ohc))
+                (print (list "======== second equal =========" second-ohc second-rev-ohc) (deep= second-ohc second-rev-ohc))
                 (if remaining
                     (runtests_inner remaining)
                     0
