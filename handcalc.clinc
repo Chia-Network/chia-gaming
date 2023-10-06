@@ -122,9 +122,12 @@
     )
 
     (defun find_straight_includes (ranks with_index)
-        (if (= (f ranks) (lsh (f with_index) -4))
-            (c (logand 15 (f with_index)) (find_straight_includes (r ranks) (r with_index)))
-            (find_straight_includes ranks (r with_index))
+        (if (all ranks with_index)
+            (if (= (f ranks) (lsh (f with_index) -4))
+                (c (logand 15 (f with_index)) (find_straight_includes (r ranks) (r with_index)))
+                (find_straight_includes ranks (r with_index))
+            )
+            0
         )
     )
 
