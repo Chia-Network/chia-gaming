@@ -105,7 +105,7 @@
 
     (defun find_flush_indices (flush_suit cards)
         (assign
-            myfiltered (truncate 5 (atomsort (flush_cards_with_index flush_suit 0 cards)))
+            myfiltered (truncate 5 (atomsort (print "find_flush_indices: flush_cards_with_index" (flush_cards_with_index flush_suit 0 cards))))
             (to_bitfield 0 (reverse (atomsort (map (lambda (x) (logand x 15)) myfiltered))))
         )
     )
@@ -130,11 +130,21 @@
 
     (defun find_straight_indices (my_straight_high cards)
         (assign
-            with_index (atomsort (ranks_with_indices 0 cards))
-            my_ranks (if (= my_straight_high 5) (list 14 5 4 3 2)
-                (list my_straight_high (- my_straight_high 1) (- my_straight_high 2)
-                (- my_straight_high 3) (- my_straight_high 4)))
-            includes (reverse (atomsort (find_straight_includes my_ranks with_index)))
+            with_index (atomsort (ranks_with_indices 0 (print (list "fsi: cards" my_straight_high) cards)))
+            my_ranks
+                (print "fsi: my_ranks"
+                    (if (= my_straight_high 5)
+                        (list 14 5 4 3 2)
+                        (list
+                            my_straight_high
+                            (- my_straight_high 1)
+                            (- my_straight_high 2)
+                            (- my_straight_high 3)
+                            (- my_straight_high 4)
+                        )
+                    )
+                )
+            includes (print "fsi: includes" (reverse (atomsort (find_straight_includes my_ranks with_index))))
             (to_bitfield 0 includes)
         )
     )
@@ -181,11 +191,16 @@
         (assign
             first (lambda (x) (f x))
             rest (lambda (x) (r x))
-            sorted_ranks (atomsort (map first cards))
-            hand (group_by_count_clean sorted_ranks)
+            sorted_ranks (print "handcalc: sorted ranks" (atomsort (map first cards)))
+            hand (print "handcalc: group by count" (group_by_count_clean sorted_ranks))
             ((firstcount . firstrank) (secondcount . secondrank)) hand
             flush_suit (find_flush (map rest cards))
-            (if flush_suit
+            (if (logand (= firstcount 3) (= secondcount 2))
+                ;; Full house
+                (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
+
+                ;; Flush
+                (print "handcalc: flush_suit" flush_suit)
                 (assign-lambda
                     flush_cards (filtermap (lambda ((& flush_suit) (@ thecard (rank . suit))) (if (= suit flush_suit) rank 0)) cards)
                     straight_flush_high (straight_high_extended (atomsort flush_cards))
@@ -197,11 +212,13 @@
                         )
                     )
                 )
+
+                ;; Else
                 (assign
                     my_straight_high (straight_high_extended sorted_ranks)
-                    (if (logand my_straight_high (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1))))
-                        (find_straight_indices my_straight_high cards)
-                        (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
+                    (if (print "handcalc decision 2" (logand my_straight_high (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1)))))
+                        (print "handcalc: find_straight_indices yields" (find_straight_indices (print "handcalc: my_straight_high" my_straight_high) cards))
+                        (find_hand_indices (print "handcalc: giving find_hand_indices" (truncate 5 (bucket_cards_by_frequency_groups hand (print "handcalc: numbered cards" (number_cards 0 cards))))))
                     )
                 )
             )
