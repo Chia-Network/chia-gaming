@@ -146,11 +146,17 @@
         )
     )
 
-    (defun find_hand_indices (cards)
-        (assign
-            flattened_cards (print "find_hand_indices: flattened_cards" (truncate 5 (atomsort (ranks_with_indices 0 cards))))
-            indices (reverse (atomsort (map (lambda (x) (logand x 15)) flattened_cards)))
-            (to_bitfield 0 indices)
+    (defun find_hand_indices ((@ numbered-cards ((number . card) . rest)))
+        (if numbered-cards
+            (logior (lsh 1 number) (find_hand_indices rest))
+            0
+        )
+    )
+
+    (defun number_cards (num cards)
+        (if cards
+            (c (c num (f cards)) (number_cards (+ num 1) (r cards)))
+            ()
         )
     )
 
@@ -162,7 +168,7 @@
             (assign
                 (hand_freq . want_rank) (f hand)
 
-                (cards_with_rank . cards_without_rank) (partition (lambda ((& want_rank) (rank . suit)) (= rank want_rank)) cards)
+                (cards_with_rank . cards_without_rank) (partition (lambda ((& want_rank) (num . (rank . suit))) (= rank want_rank)) cards)
 
                 ;; We have the cards with this rank... go to the next wanted rank.
                 (append cards_with_rank (bucket_cards_by_frequency_groups (r hand) cards_without_rank))
@@ -195,7 +201,7 @@
                     my_straight_high (print "handcalc: my_straight_high" (straight_high_extended sorted_ranks))
                     (if (logand my_straight_high (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1))))
                         (find_straight_indices my_straight_high cards)
-                        (print "handcalc: find_hand_indices" (find_hand_indices (bucket_cards_by_frequency_groups hand cards)))
+                        (print "handcalc: find_hand_indices" (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards)))))
                     )
                 )
             )
