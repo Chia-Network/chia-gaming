@@ -1,0 +1,15 @@
+(
+    (defun partition_inner (matched not-matched F L)
+        (if L
+            (if (a F (list (f L)))
+                (partition_inner (c (f L) matched) not-matched F (r L))
+                (partition_inner matched (c (f L) not-matched) F (r L))
+            )
+            (c matched not-matched)
+        )
+    )
+
+    (defun partition (F L)
+        (partition_inner () () F L)
+    )
+)

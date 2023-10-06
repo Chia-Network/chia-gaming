@@ -1,0 +1,8 @@
+(
+    (defun append (L R)
+         (if L
+             (c (f L) (append (r L) R))
+             R
+         )
+    )
+)
