@@ -53,7 +53,7 @@
     (defun group_by_count_clean (items)
         (map
             unflatten_card
-            (atomsort (print (list "group_by_count_inner on" items) (group_by_count_inner items (f items) 0)))
+            (atomsort (group_by_count_inner items (f items) 0))
         )
     )
 
@@ -97,7 +97,7 @@
         (if (not cards)
             0
             (if (= flush_suit first_suit)
-                (c (flatten_card first_rank index) (flush_cards_with_index flush_suit (+ index 1) (r cards)))
+                (c (flatten_card (c first_rank index)) (flush_cards_with_index flush_suit (+ index 1) (r cards)))
                 (flush_cards_with_index flush_suit (+ index 1) (r cards))
             )
         )
@@ -188,12 +188,12 @@
             (if flush_suit
                 (assign-lambda
                     flush_cards (print "handcalc: flush cards" (filtermap (lambda ((& flush_suit) (@ thecard (rank . suit))) (if (= suit flush_suit) rank 0)) cards))
-                    straight_flush_high (straight_high_extended (atomsort flush_cards))
+                    straight_flush_high (print "handcalc: straight_flush_high" (straight_high_extended (atomsort flush_cards)))
                     (if straight_flush_high
-                        (print (list "straight flush high: find_straight_flush_indices returns for" cards) (find_straight_flush_indices flush_suit straight_flush_high cards))
-                        (if (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1)))
-                            (find_flush_indices flush_suit cards)
-                            (find_hand_indices cards)
+                        (print (list "handcalc: straight flush high: find_straight_flush_indices returns for" cards) (find_straight_flush_indices flush_suit straight_flush_high cards))
+                        (if (print "handcalc: sfh condition" (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1))))
+                            (find_flush_indices flush_suit (print "handcalc: ffi" cards))
+                            (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 (print "handcalc: sfh not condition" cards)))))
                         )
                     )
                 )
