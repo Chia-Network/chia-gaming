@@ -1,6 +1,7 @@
 import * as process from 'process';
 import { program } from 'commander';
 import * as fs from 'fs';
+import { resolve } from 'path';
 const {compile} = require('../clvm_tools_rs/wasm/pkg/clvm_tools_wasm');
 
 function collect<A>(value: A, previous: Array<A>): Array<A> {
@@ -10,7 +11,7 @@ function collect<A>(value: A, previous: Array<A>): Array<A> {
 program
     .description('simple chialisp compiler interface')
     .argument('<chialisp program>', 'program to compile')
-    .option('--output <output hex file>', 'hex output')
+    .option('-o, --output <output hex file>', 'hex output')
     .option('-i, --include <path ...>', 'add search path', collect, []);
 
 program.parse();
@@ -41,8 +42,28 @@ try {
     let program_output = compile(
         input_program,
         input_file,
-        opts.include
+        opts.include,
+        {
+            "read_new_file": (filename: string, dirs: Array<string>) => {
+                for (let d in dirs) {
+                    let dir = dirs[d];
+                    let path = resolve(dir, filename);
+                    try {
+                        return fs.readFileSync(path, 'utf8');
+                    } catch (e) {
+                        // Ok, try the next dir.
+                    }
+                }
+
+                throw `Could not find file ${filename}`;
+            }
+        }
     );
+
+    if (program_output.error) {
+        console.error(program_output.error);
+        process.exit(1);
+    }
 
     fs.writeFileSync(opts.output, program_output.hex);
 } catch (e) {
