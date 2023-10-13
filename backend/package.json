@@ -2,9 +2,9 @@
   "main": "build/index.js",
   "types": "build/types/index.d.ts",
   "scripts": {
-    "start": "webpack serve --config webpack.config.demo.js",
-    "build": "scripts/build.sh && webpack && tsc",
-    "build:demo": "webpack --config webpack.config.demo.js",
+    "start": "./node_modules/.bin/webpack serve --config webpack.config.demo.js",
+    "build": "scripts/rust-build.sh && ./node_modules/.bin/webpack && tsc",
+    "build:demo": "./node_modules/.bin/webpack --config webpack.config.demo.js",
     "test": "jest",
     "coverage": "npm run test -- --coverage",
     "prepare": "npm run build",
