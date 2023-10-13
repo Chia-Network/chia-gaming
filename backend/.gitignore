@@ -21,4 +21,5 @@ yarn-debug.log*
 yarn-error.log*
 
 build
+cli
 clvm_tools_rs
