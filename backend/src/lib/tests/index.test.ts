@@ -15,7 +15,7 @@ it('can compile clvm', async () => {
                     let dir = dirs[d];
                     let path = resolve(dir, filename);
                     try {
-                        return fs.readFileSync(path, 'utf8');
+                        return [path, fs.readFileSync(path, 'utf8')];
                     } catch (e) {
                         // Ok, try the next dir.
                     }
