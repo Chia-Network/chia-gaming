@@ -38,6 +38,6 @@ run_with_messages \
     "failed to install wasm-pack"
 
 run_with_messages \
-    "cd clvm_tools_rs/wasm && wasm-pack build --release --target=nodejs 2>&1 | tee /dev/null" \
+    "cd clvm_tools_rs/wasm && wasm-pack build --release --target=nodejs" \
     "built clvm_tools_rs wasm code" \
     "failed to build clvm_tools_rs wasm code"

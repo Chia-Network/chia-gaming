@@ -18,6 +18,9 @@ function get_file_date(filename: string): number|undefined {
 }
 
 const compiler_options = {
+    "log": (msg: string) => {
+        console.warn(msg);
+    },
     "read_new_file": (filename: string, dirs: Array<string>) => {
         for (let d in dirs) {
             let dir = dirs[d];
@@ -38,6 +41,7 @@ program
     .argument('<chialisp program>', 'program to compile')
     .option('-s, --symbols <output sym file>', 'symbol file')
     .option('-o, --output <output hex file>', 'hex output')
+    .option('-N, --no-check-dependencies')
     .option('-i, --include <path ...>', 'add search path', collect, []);
 
 program.parse();
@@ -70,32 +74,33 @@ if (!symbol_file) {
 }
 
 try {
-    let dependencies = get_dependencies(
-        input_program,
-        input_file,
-        opts.include,
-        compiler_options
-    );
+    let outputIsNewer = false;
+    if (opts.checkDependencies) {
+        let dependencies = get_dependencies(
+            input_program,
+            input_file,
+            opts.include,
+            compiler_options
+        );
 
-    if (dependencies.error) {
-        console.error(dependencies.error);
-        process.exit(1);
-    }
-
-    let outputTime = get_file_date(opts.output);
-    let outputIsNewer;
-
-    if (outputTime) {
-        outputIsNewer = get_file_date(input_file) < outputTime;
-
-        for (let d in dependencies) {
-            const dep = dependencies[d];
-            if (get_file_date(dep) > outputTime) {
-                outputIsNewer = false;
-            }
+        if (dependencies.error) {
+            console.error(dependencies.error);
+            process.exit(1);
         }
-    } else {
-        outputIsNewer = false;
+
+        let outputTime = get_file_date(opts.output);
+        if (outputTime) {
+            outputIsNewer = get_file_date(input_file) < outputTime;
+
+            for (let d in dependencies) {
+                const dep = dependencies[d];
+                if (get_file_date(dep) > outputTime) {
+                    outputIsNewer = false;
+                }
+            }
+        } else {
+            outputIsNewer = false;
+        }
     }
 
     if (!outputIsNewer) {
