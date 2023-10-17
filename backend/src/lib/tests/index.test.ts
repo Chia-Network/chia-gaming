@@ -45,6 +45,10 @@ function poker_lib_string_of_rank(rank) {
     }
 }
 
+function string_of_suit(suit) {
+    return " hdcs".charAt(suit);
+}
+
 class Card {
     value: number
 
@@ -53,7 +57,7 @@ class Card {
     }
 
     rank(): number {
-        return (this.value / 4) + 1;
+        return Math.floor((this.value / 4)) + 1;
     }
 
     suit(): number {
@@ -63,7 +67,7 @@ class Card {
     toString(): string {
         const rank = this.value / 4;
         const suit = this.value % 4;
-        return string_of_rank(rank + 1) + "hdcs".charAt(suit);
+        return string_of_rank(rank + 1) + string_of_suit(suit + 1);
     }
 }
 
@@ -104,17 +108,42 @@ class HandcalcTestRig {
         this.run_onehandcalc_program = Program.from_hex(run_onehandcalc_hex);
     }
 
-    hand_description_from_onehandcalc(ohc_output) {
+    hand_description_from_onehandcalc(cards, ohc_output) {
         if (ohc_output[0] == 5) {
             // Straight flush
-            return `Straight Flush, ${poker_lib_string_of_rank(ohc_output[1])}s High`;
+            let suits = [... Array(5)].map((_) => 0);
+            cards.forEach((c) => { suits[c.suit()]++; });
+            let use_suit = suits.map((c,i) => [i,c]).filter((pair) => pair[1] == 5)[0][0];
+            let have_flush_ace = cards.filter((c) => {
+                let cond1 = c.suit() == use_suit;
+                let cond2 = c.rank() == 1;
+                return cond1 && cond2;
+            }).length;
+            let use_rank = ohc_output[1];
+            if (have_flush_ace) {
+                use_rank = 1;
+            }
+            return `Straight Flush, ${poker_lib_string_of_rank(use_rank)}${string_of_suit(use_suit)} High`;
         } else if (ohc_output[0] == 4) {
             // Four of a kind
             return `Four of a Kind, ${poker_lib_string_of_rank(ohc_output[2])}'s`;
         } else if (ohc_output[0] == 3) {
             if (ohc_output[1] == 1 && ohc_output[2] == 3) {
-                // Flush
-                return `Flush, ${poker_lib_string_of_rank(ohc_output[3])}s High`;
+                // Flush.  onehandcalc doesn't give the suit so we need to find it.
+                let suits = [... Array(5)].map((_) => 0);
+                cards.forEach((c) => { suits[c.suit()]++; });
+                let use_suit = suits.map((c,i) => [i,c]).filter((pair) => pair[1] == 5)[0][0];
+                // if There's an ace in the flush, then use that instead.
+                let have_flush_ace = cards.filter((c) => {
+                    let cond1 = c.suit() == use_suit;
+                    let cond2 = c.rank() == 1;
+                    return cond1 && cond2;
+                }).length;
+                let use_rank = ohc_output[3][0];
+                if (have_flush_ace) {
+                    use_rank = 1;
+                }
+                return `Flush, ${poker_lib_string_of_rank(use_rank)}${string_of_suit(use_suit)} High`;
             } else if (ohc_output[1] == 1 && ohc_output[2] == 2) {
                 return `Straight, ${poker_lib_string_of_rank(ohc_output[3])} High`;
             } else if (ohc_output[1] == 1 && ohc_output[2] == 1) {
@@ -122,11 +151,20 @@ class HandcalcTestRig {
                 return `Three of a Kind, ${poker_lib_string_of_rank(ohc_output[3])}'s`;
             } else if (ohc_output[1] == 2) {
                 // Full house
-                return `Full House, ${poker_lib_string_of_rank(ohc_output(3))}'s over ${string_of_rank(ohc_output(4))}'s`;
+                return `Full House, ${poker_lib_string_of_rank(ohc_output[2])}'s over ${poker_lib_string_of_rank(ohc_output[3])}'s`;
             }
         } else if (ohc_output[0] == 2) {
-            // Pair
-            return `Pair, ${poker_lib_string_of_rank(ohc_output[5])}`;
+            if (ohc_output[1] == 2) {
+                // We give king high, but library gives ace high.
+                if (ohc_output[4] == 1) {
+                    ohc_output[4] = ohc_output[3];
+                    ohc_output[3] = 1;
+                }
+                return `Two Pair, ${poker_lib_string_of_rank(ohc_output[3])}'s & ${poker_lib_string_of_rank(ohc_output[4])}'s`;
+            } else {
+                // Pair
+                return `Pair, ${poker_lib_string_of_rank(ohc_output[4])}'s`;
+            }
         } else {
             // High card
             return `${poker_lib_string_of_rank(ohc_output[5])} High`;
@@ -166,7 +204,7 @@ class HandcalcTestRig {
         const classified = this.run_onehandcalc(chosen_cards);
         const hand = Hand.solve(chosen_cards.map((c) => c.toString()));
 
-        assert.equal(this.hand_description_from_onehandcalc(classified), hand.descr);
+        assert.equal(this.hand_description_from_onehandcalc(chosen_cards, classified), hand.descr);
 
         return {
             'hand': hand,
@@ -188,9 +226,27 @@ it('can try playing poker hands', async () => {
     try {
         cards_result = test_rig.run_card_hand_test(cards);
     } catch (e) {
-        console.error(e.toString());
         assert.equal(e, null);
     }
 
     assert.equal(cards_result.hand.descr, "Three of a Kind, 5's");
+});
+
+function rnd() {
+    return Math.floor(Math.random() * 200);
+}
+
+it('can deal with arbitrary card choices', async () => {
+    const test_rig = new HandcalcTestRig();
+
+    // Generate 1000 hands and check them.
+    for (let i = 0; i < 1000; i++) {
+        const deck = new CardDeck(rnd(), rnd(), rnd());
+        const cards = deck.deal(7);
+        try {
+            let cards_result = test_rig.run_card_hand_test(cards);
+        } catch (e) {
+            assert.equal(e, null);
+        }
+    }
 });
