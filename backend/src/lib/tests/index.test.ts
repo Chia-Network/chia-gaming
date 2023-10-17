@@ -27,3 +27,48 @@ it('can compile clvm', async () => {
     );
     assert.equal(program_output.hex, 'ff10ff02ffff010180');
 });
+
+class Card {
+    value: number
+
+    constructor(value: number) {
+        this.value = value;
+    }
+
+    toString(): string {
+        const rank = this.value / 4;
+        const suit = this.value % 4;
+        return "HDCS".charAt(suit) + "A23456789TJQK".charAt(rank);
+    }
+}
+
+class CardDeck {
+    deck: [Card];
+    a: number;
+    b: number;
+    c: number;
+
+    constructor(a: number, b: number, c: number) {
+        this.deck = [... Array(52)].map((_, i) => new Card(i));
+        this.a = a;
+        this.b = b;
+        this.c = c;
+    }
+
+    deal(n: number): [Card] {
+        let out_deck = [];
+        for (let i = 0; this.deck.length > 0 && i < n; i++) {
+            const use_index = (this.a * (i * i) + this.b * i + this.c) % this.deck.length;
+            const use_card = this.deck[use_index];
+            out_deck.push(use_card);
+            this.deck.splice(use_index, 1);
+        }
+        return out_deck;
+    }
+}
+
+it('can try playing poker hands', async () => {
+    const deck = new CardDeck(99, 3, 17);
+    const cards = deck.deal(7);
+    assert.equal(cards.join(','), 'D5,C5,D6,CT,H9,H5,S3');
+});
