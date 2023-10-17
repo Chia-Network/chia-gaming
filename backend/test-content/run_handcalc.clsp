@@ -1,0 +1,22 @@
+(mod (hand)
+
+  (include *standard-cl-23*)
+
+  (include relops.clinc)
+  (include deep_compare.clinc)
+  (include assert.clinc)
+  (include reverse.clinc)
+  (include prepend.clinc)
+  (include truncate.clinc)
+  (include map.clinc)
+  (include filtermap.clinc)
+  (include slice.clinc)
+  (include print.clinc)
+  (include partition.clinc)
+  (include append.clinc)
+  (include onehandcalc.clinc)
+  (include handcalc.clinc)
+
+  (handcalc hand)
+  )
+
