@@ -96,6 +96,23 @@ class CardDeck {
     }
 }
 
+function use_ace_for_flush_if_needed(cards, top_rank) {
+    // Straight flush
+    let suits = [... Array(5)].map((_) => 0);
+    cards.forEach((c) => { suits[c.suit()]++; });
+    let use_suit = suits.map((c,i) => [i,c]).filter((pair) => pair[1] == 5)[0][0];
+    let have_flush_ace = cards.filter((c) => {
+        let cond1 = c.suit() == use_suit;
+        let cond2 = c.rank() == 1;
+        return cond1 && cond2;
+    }).length;
+    let use_rank = top_rank;
+    if (have_flush_ace) {
+        use_rank = 1;
+    }
+    return new Card((use_rank - 1) * 4 + (use_suit - 1));
+}
+
 class HandcalcTestRig {
     run_handcalc_program: IProgram
     run_onehandcalc_program: IProgram
@@ -110,40 +127,15 @@ class HandcalcTestRig {
 
     hand_description_from_onehandcalc(cards, ohc_output) {
         if (ohc_output[0] == 5) {
-            // Straight flush
-            let suits = [... Array(5)].map((_) => 0);
-            cards.forEach((c) => { suits[c.suit()]++; });
-            let use_suit = suits.map((c,i) => [i,c]).filter((pair) => pair[1] == 5)[0][0];
-            let have_flush_ace = cards.filter((c) => {
-                let cond1 = c.suit() == use_suit;
-                let cond2 = c.rank() == 1;
-                return cond1 && cond2;
-            }).length;
-            let use_rank = ohc_output[1];
-            if (have_flush_ace) {
-                use_rank = 1;
-            }
-            return `Straight Flush, ${poker_lib_string_of_rank(use_rank)}${string_of_suit(use_suit)} High`;
+            let high_card = use_ace_for_flush_if_needed(cards, Number(ohc_output[1]));
+            return `Straight Flush, ${poker_lib_string_of_rank(high_card.rank())}${string_of_suit(high_card.suit())} High`;
         } else if (ohc_output[0] == 4) {
             // Four of a kind
             return `Four of a Kind, ${poker_lib_string_of_rank(ohc_output[2])}'s`;
         } else if (ohc_output[0] == 3) {
             if (ohc_output[1] == 1 && ohc_output[2] == 3) {
-                // Flush.  onehandcalc doesn't give the suit so we need to find it.
-                let suits = [... Array(5)].map((_) => 0);
-                cards.forEach((c) => { suits[c.suit()]++; });
-                let use_suit = suits.map((c,i) => [i,c]).filter((pair) => pair[1] == 5)[0][0];
-                // if There's an ace in the flush, then use that instead.
-                let have_flush_ace = cards.filter((c) => {
-                    let cond1 = c.suit() == use_suit;
-                    let cond2 = c.rank() == 1;
-                    return cond1 && cond2;
-                }).length;
-                let use_rank = ohc_output[3][0];
-                if (have_flush_ace) {
-                    use_rank = 1;
-                }
-                return `Flush, ${poker_lib_string_of_rank(use_rank)}${string_of_suit(use_suit)} High`;
+                let high_card = use_ace_for_flush_if_needed(cards, Number(ohc_output[3][0]));
+                return `Flush, ${poker_lib_string_of_rank(high_card.rank())}${string_of_suit(high_card.suit())} High`;
             } else if (ohc_output[1] == 1 && ohc_output[2] == 2) {
                 return `Straight, ${poker_lib_string_of_rank(ohc_output[3])} High`;
             } else if (ohc_output[1] == 1 && ohc_output[2] == 1) {
