@@ -23,9 +23,11 @@
             (- (* 2 (> (f a) (f b))) 1)
         )
     )
+
     (defun hand< (a b)
         (= (hand_compare a b) -1)
     )
+
     (defun merge (a b)
         (if (not a)
             b
@@ -38,6 +40,7 @@
             )
         )
     )
+
     ; Sorts atoms into descending order
     ; This is optimized for sorting short lists
     ; A more general function would return a list of lists of ascending sizes
@@ -76,11 +79,9 @@
             0
         )
     )
+
     (defun check_flush (@ cards ((rank1 . suit1) (rank2 . suit2) (rank3 . suit3) (rank4 . suit4) (rank5 . suit5)))
-        (if (= (list-len cards) 5)
-            (logand (= suit1 suit2) (= suit1 suit3) (= suit1 suit4) (= suit1 suit5))
-            (x "check_flush wrong length" cards)
-        )
+        (logand (= suit1 suit2) (= suit1 suit3) (= suit1 suit4) (= suit1 suit5))
     )
 
     ; returns the high card of a straight or 0 if there isn't any
@@ -112,6 +113,7 @@
             )
         )
     )
+
     (defun group_by_count (items)
         (group_by_count_inner items (f items) 0)
     )

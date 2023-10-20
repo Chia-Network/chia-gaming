@@ -1,6 +1,249 @@
 (
+; Proposer function takes readable_info and returns (player_contribution, 
+;       [(whether_my_move, driver, validation_program_hash, state, mover_share)])
+; Accepter function takes (player_contribution, 
+;       [(whether_opponent_move, validation_program_hash, state, mover_share)]) and returns
+;       (UNHANDLED) or (ERROR) or (ACCEPTABLE readable_info initial_driver)
+; Driver functions are either moving or waiting type
+; Moving driver functions take (local_move amount entropy) and return (move validation_program_hash state split waiting_driver message_parser)
+; Waiting driver functions take (amount state move new_validation_hash split) and return (MAKE_MOVE readable_info moving_driver message) or 
+;       (SLASH validator state evidence)
+; Message parsers take a message and return readable_info or asserts
+
 (include assert.clinc)
 (include shatree.clinc)
+
+(defconst MAKE_MOVE 0)
+(defconst SLASH 1)
+(defconst ERROR 0)
+(defconst UNHANDLED 1)
+(defconst ACCEPTABLE 2)
+
+(defun calpoker_alice_proposer (bet_size)
+    (list
+        bet_size
+        (list
+            (list
+                1
+                calpoker_alice_driver_a
+                AHASH
+                0
+                bet_size
+            )
+        )
+    )
+)
+
+; state is empty
+; local_move is nil
+; makes a move using entropy
+(defun calpoker_alice_driver_a (local_move amount entropy)
+    (assign
+        preimage (substr entropy 0 16)
+        image (sha256 preimage)
+        (list
+            image
+            BHASH
+            image
+            0
+            (curry calpoker_alice_driver_b preimage)
+        )
+    )
+)
+
+; state is alice's commit
+; move is bob's seed
+; immediately sends a message giving Alice's seed
+(defun calpoker_alice_driver_b (PREIMAGE amount image move new_validation_info split)
+    (if (slashable amount calpokerb image move new_validation_info split 0)
+        (list SLASH capokerb image)
+        (assign
+            cards (make_cards (sha256 PREIMAGE move))
+            (list MAKE_MOVE (make_cards_readable cards) 
+                    (curry calpoker_alice_driver_c PREIMAGE cards) PREIMAGE)
+        )
+    )
+)
+
+(defun bitify (mylist)
+    (if (not mylist)
+        0
+        (logior (f mylist) (lsh (bitify (r mylist)) 1))
+    )
+)
+
+; state is alice's commit and bob's seed
+; move is alice's reveal of her card generating seed and her commit to which cards she's picking
+(defun calpoker_alice_driver_c (PREIMAGE CARDS local_move amount entropy)
+    (assign
+        my_picks (bitify local_move)
+        salt (substr entropy 0 16)
+        new_commit (sha256 (concat salt my_picks))
+        (list 
+            new_commit
+            DHASH
+            (list CARDS new_commit)
+            0
+            (curry calpoker_alice_driver_d salt my_picks)
+            PREIMAGE
+        )
+    )
+)
+
+(defun split_cards (cards picks)
+    (if (not cards)
+        (list 0 0)
+        (assign
+            (inner_my_cards inner_other_cards) (split_cards (r cards) (r picks))
+            (if (f picks)
+                (list (c (f cards) inner_my_cards) inner_other_cards)
+                (list inner_my_cards (c (f cards) inner_other_cards))
+            )
+        )
+    )
+)
+
+; state is the cards for both players and alice's card pick commitment
+; move is Bob's picks
+; should immediately respond with a move revealing picks and selecting best cards and final split
+(defun calpoker_alice_driver_d (MY_SALT MY_PICKS amount (@ state ((cards my_commit))) move new_validation_info split)
+    (if (slashable amount calpokerd state move new_validation_info split 0)
+        (list SLASH capokerd state)
+        (assign
+            (my_cards_me my_cards_bob) (split_cards (f cards) MY_PICKS)
+            (bob_cards_bob bob_cards_me) (split_cards (r cards) move)
+            my_all_cards (map make_card (append my_cards_me bob_cards_me))
+            bob_all_cards (map make_card (append bob_cards_bob my_cards_bob))
+            my_picks (handcalc my_all_cards)
+            bob_picks (handcalc bob_all_cards)
+            my_hand_value (onehandcalc (pull_out_cards my_picks my_all_cards))
+            bob_hand_value (onehandcalc (pull_out_cards bob_picks bob_all_cards))
+            win_result (hand_compare my_hand_value bob_hand_value)
+            split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
+            (list MAKE_MOVE
+                (list (to_bitfield move) (to_bitfield my_picks) (to_bitfield bob_picks)
+                    my_hand_value bob_hand_value win_result)
+                (lambda (& MY_SALT MY_PICKS split) (list (concat MY_SALT MY_PICKS) 0 split))
+            )
+        )
+    )
+)
+
+(defun calpoker_bob_accepter (player_contribution ((whether_opponent_move 
+            validation_program_hash state mover_share) . extra))
+    (if (!= validation_program_hash AHASH)
+        (list UNHANDLED)
+        (any
+            extra
+            (not whether_opponent_move)
+            state
+            (!= player_contribution mover_share)
+        )
+        (list ERROR)
+        (list ACCEPTABLE 0 calpoker_bob_driver_a)
+    )
+)
+
+; state is empty
+; move is alice commit to a salted word
+(defun calpoker_bob_driver_a (amount state move new_validation_info split)
+    (if (slashable AMOUNT calpokera 0 move new_validation_info split 0)
+        (list SLASH capokera 0)
+        (list MAKE_MOVE 0 (curry move calpoker_alice_driver_b))
+    )
+)
+
+; Moving driver functions take (local_move entropy) and return (move new_validation_hash split waiting_driver message_parser)
+; state is alice_commit
+; move is bob_seed
+(defun calpoker_bob_driver_b (ALICE_COMMIT amount local_move entropy)
+    (assign
+        seed (substr entropy 0 16)
+        (list
+            seed
+            CHASH
+            (list ALICE_COMMIT seed)
+            0
+            (curry ALICE_COMMIT seed calpoker_alice_driver_c)
+            (curry ALICE_COMMIT seed parse_message)
+        )
+    )
+)
+
+(defun parse_message (ALICE_COMMIT BOB_SEED message)
+    (assert 
+        (= (sha256 message) ALICE_COMMIT)
+        (make_cards_readable (make_cards (sha256 message BOB_SEED)))
+    )
+)
+
+; state is alice's commit and bob's seed
+; move is alice's reveal of her card generating seed and her commit to which cards she's picking
+; expecting a message revealing Alice's seed which results in local display once verified
+(defun calpoker_bob_driver_c (amount (@ state ((alice_commit bob_seed))) move new_validation_info split)
+    (if (slashable amount calpokerc state move new_validation_info split 0)
+        (list SLASH calpokerc state)
+        (assign
+            (alice_cards bob_cards) (make_cards (sha256 (substr move 0 16) bob_seed))
+            alice_picks_commit (substr move 16 48)
+            (list MAKE_MOVE (make_cards_readable cards)
+                (curry alice_cards bob_cards alice_picks_commit calpoker_alice_driver_d))
+        )
+    )
+)
+
+(defun slashable (amount validater state move new_validation_hash split evidence)
+    (assign
+        (returnval . exception) (run validater (list 0 (list move new_validation_hash split 0 0 0 amount) 
+                state 0 0 0 evidence))
+        (not exception)
+    )
+)
+
+; state is ((alice_cards bob_cards) alice_pick_commitment)
+; move is Bob's picks
+(defun calpoker_bob_driver_d (local_move ((alice_cards bob_cards) alice_commit_2))
+    (assign
+        my_move (bitify local_move)
+        (list
+            my_move
+            EHASH
+            (list my_move (list alice_cards bob_cards) alice_commit_2)
+            0
+            calpoker_bob_driver_e
+        )
+    )
+)
+
+; state is (Bob's picks (alice_cards bob_cards) alice_commit)
+; move is alice_salted_picks
+; either fraud proves or accepts split
+(defun calpoker_bob_driver_e (amount (@ state ((bob_selects (alice_cards_bob_cards) alice_commit_2))) move new_validation_info split)
+    (if (slashable amount calpokere state move new_validation_info split 0)
+        (list SLASH calpokere state)
+        (assign
+            alice_selects (substr move 16 17)
+            (alice_cards_alice alice_cards_bob) (split_cards alice_cards alice_picks)
+            (bob_cards_bob bob_cards_alice) (split_cards bob_cards bob_selects)
+            alice_all_cards (map make_card (append alice_cards_alice bob_cards_alice))
+            bob_all_cards (map make_card (append bob_cards_bob alice_cards_bob))
+            alice_picks (handcalc my_all_cards)
+            bob_picks (handcalc bob_all_cards)
+            alice_hand_value (onehandcalc (pull_out_cards alice_picks alice_all_cards))
+            bob_hand_value (onehandcalc (pull_out_cards bob_picks bob_all_cards))
+            win_result (hand_compare alice_hand_value bob_hand_value)
+            correct_split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
+            (if (< split correct_split)
+                (list SLASH calpokere state bob_picks)
+                (list MAKE_MOVE
+                    (list (to_bitfield alice_selects) (to_bitfield bob_picks) (to_bitfield alice_picks)
+                        bob_hand_value alice_hand_value (- 0 win_result))
+                    0
+                )
+            )
+        )
+    )
+)
 
 (defconst EHASH (shatree calpokere))
 (defconst DHASH (shatree calpokerd))
@@ -14,7 +257,7 @@
 ; evidence is empty
 (defun calpokera (mod_hash (move next_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    dictionary_key me mover_puzzle solution evidence)
+    state me mover_puzzle solution evidence)
 
     (assert
         (not
@@ -43,6 +286,20 @@
         )
         0
     )
+)
+
+(defun make_card_readable (val)
+    (assign
+        (rank . suit) (divmod val 4)
+        (if (= rank 12)
+            (list 1 (+ 1 suit))
+            (list (+ 2 rank) (+ 1 suit))
+        )
+    )
+)
+
+(defun make_cards_readable ((cardsa cardsb))
+    (list (map make_card_readable cardsa) (map make_card cardsb))
 )
 
 (defun make_cards (randomness)
@@ -154,8 +411,7 @@
     )
 )
 
-
-(include onehandcalc.clinc)
+(include handcalc.clinc)
 (include map.clinc)
 
 ; Use mask to determine which cards are prepended to leftcards and which to rightcards
@@ -171,37 +427,34 @@
 
 (defun make_card (val)
     (assign
-        (rank suit) (divmod val 4)
+        (rank . suit) (divmod val 4)
         (list (+ 2 rank) (+ 1 suit))
     )
 )
 
-(defun pull_out_cards (selections cards count)
+(defun pull_out_cards (selections cards)
     (if (not cards)
-        (assert 
-            (= count 5)
-            0
+        0
+        (if (logand selections 1)
+            (c (f cards) (pull_out_cards (lsh -1 selections) (r cards)))
+            (pull_out_cards (lsh -1 selections) (r cards))
         )
-        (logand selections 1)
-        (c (make_card (f cards)) (pull_out_cards (lsh -1 selections) (r cards) (+ count 1)))
-        (pull_out_cards (lsh -1 selections) (r cards) count)
     )
 )
 
 ; Bob challenging
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
-; move is (alice_salted_picks alice_hand_type)
-; evidence is Bob's hand type
+; move is alice_salted_picks
+; evidence is Bob's card selections
 (defun calpokere (mod_hash (move next_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     (bob_picks (alice_cards bob_cards) alice_commit) me mover_puzzle solution bob_card_selections)
     (assign
-        alice_picks (substr move 0 1)
-        alice_salted_picks (substr move 0 17)
-        alice_card_selections (substr move 17 18)
+        alice_salted_picks (substr move 0 16)
+        alice_card_selections (substr move 16 17)
         (alice_final_cards bob_final_cards) (extract_cards bob_picks bob_cards &rest (extract_cards alice_picks alice_cards 0 0))
-        result (hand_compare (onehandcalc (pull_out_cards alice_card_selections alice_final_cards 0))
-            (onehandcalc (pull_out_cards bob_card_selections bob_final_cards 0)))
+        result (hand_compare (onehandcalc (pull_out_cards alice_card_selections alice_final_cards))
+            (onehandcalc (pull_out_cards bob_card_selections bob_final_cards)))
         (assert
             (not
                 (all
