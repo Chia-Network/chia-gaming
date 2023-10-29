@@ -15,7 +15,7 @@
 ;        state me mover_puzzle solution evidence)
 (mod (@ all_args ((MOVE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH 
         MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH 
-        @ constants (AMOUNT TIMEOUT MAX_MOVE_SIZE MOD_HASH NONCE)) . args))
+        @ constants (AMOUNT TIMEOUT MAX_MOVE_SIZE MAX_SOLUTION_SIZE MOD_HASH NONCE)) . args))
     (include *standard-cl-23*)
     ; This should be a bulk import from a standard library
     (include assert.clinc)
@@ -34,15 +34,22 @@
         )
     )
 
+    (defun total_length (x)
+        (if (l x)
+            (+ 1 (total_length (f x)) (total_length (r x)))
+            (strlen x)
+        )
+    )
+
     (if (not args)
         ; timeout
         (list
-            (list ASSERT_SECONDS_RELATIVE TIMEOUT)
+            (list ASSERT_HEIGHT_RELATIVE TIMEOUT)
             (i MOVER_SHARE (list CREATE_COIN MOVER_PUZZLE_HASH MOVER_SHARE) (list 1))
             (i (- amount MOVER_SHARE) (list CREATE_COIN WAITER_PUZZLE_HASH (- amount MOVER_SHARE)) (list 1))
         )
         (l (f (r args)))
-        ; accuse
+        ; slash
         (assign
             (previous_state previous_validation_program mover_puzzle solution) args
             previous_validation_program_hash (shatree previous_validation_program)
@@ -51,8 +58,10 @@
                 (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree 
                         previous_state)))
                 ; usually returns the conditions verbatim
-                (concat (a previous_validation_program (c previous_validation_program_hash all_args)) 
+                (c (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT)
+                    (concat (a previous_validation_program (c previous_validation_program_hash all_args)) 
                         (a mover_puzzle solution))
+                )
             )
         )
         ; move
@@ -64,7 +73,8 @@
             conditions (a mover_puzzle solution)
             (assert
                 PREVIOUS_VALIDATION_INFO_HASH
-                (<= (strlen new_move) MAX_MOVE_SIZE)
+                (<= (strlen MOVE) MAX_MOVE_SIZE)
+                (<= (total_length all_args) MAX_SOLUTION_SIZE)
                 (<= new_mover_share AMOUNT)
                 (>= new_mover_share 0)
                 (logior (not new_validation_info_hash) (= 32 (strlen new_validation_info_hash)))
@@ -76,7 +86,7 @@
                     )
                     conditions
                 )
-                conditions
+                (c (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT) conditions)
             )
         )
     )
