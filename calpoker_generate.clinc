@@ -3,7 +3,7 @@
 ;       [(whether_my_move driver validation_program_hash state mover_share)])
 ; Accepter function takes (player_contribution 
 ;       [(whether_opponent_move validation_program_hash state mover_share)]) and returns
-;       (UNHANDLED) or (ERROR) or (ACCEPTABLE readable_info initial_driver)
+;       (ERROR) or (ACCEPTABLE readable_info initial_driver)
 ; Driver functions are either moving or waiting type
 ; Moving driver takes (local_move amount state entropy) and returns
 ;       (move validation_program_hash state split waiting_driver message_parser)
@@ -18,19 +18,18 @@
 (defconst MAKE_MOVE 0)
 (defconst SLASH 1)
 (defconst ERROR 0)
-(defconst UNHANDLED 1)
-(defconst ACCEPTABLE 2)
+(defconst ACCEPTABLE 1)
 
-(defun calpoker_alice_proposer (bet_size)
+(defun calpoker_proposer (message contribution)
     (list
-        bet_size
+        contribution
         (list
             (list
                 1
                 calpoker_alice_driver_a
                 AHASH
                 0
-                bet_size
+                contribution
             )
         )
     )
@@ -126,11 +125,11 @@
     )
 )
 
-(defun calpoker_bob_accepter (player_contribution ((whether_opponent_move 
+(defun calpoker_accepter (player_contribution ((whether_opponent_move 
             validation_program_hash state mover_share) . extra))
-    (if (!= validation_program_hash AHASH)
-        (list UNHANDLED)
+    (if 
         (any
+            (!= validation_program_hash AHASH)
             extra
             (not whether_opponent_move)
             state
