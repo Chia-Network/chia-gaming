@@ -13,9 +13,8 @@
 ; ((last_move next_validation_hash my_share me_hash my_puzzle_hash opponent_puzzle_hash
 ;        amount timeout max_move_size referee_hash)
 ;        state me mover_puzzle solution evidence)
-(mod (@ all_args ((MOVE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH 
-        MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH 
-        @ constants (AMOUNT TIMEOUT MAX_MOVE_SIZE MAX_SOLUTION_SIZE MOD_HASH NONCE)) . args))
+(mod (@ all_args ((MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH) . args))
     (include *standard-cl-23*)
     ; This should be a bulk import from a standard library
     (include assert.clinc)
@@ -31,13 +30,6 @@
         (if A 
             (c (f A) (concat (r A) B)) 
             B
-        )
-    )
-
-    (defun total_length (x)
-        (if (l x)
-            (+ 1 (total_length (f x)) (total_length (r x)))
-            (strlen x)
         )
     )
 
@@ -66,15 +58,14 @@
         )
         ; move
         (assign 
-            (new_move new_validation_info_hash new_mover_share mover_puzzle solution) args
-            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list
-                    new_move new_validation_info_hash new_mover_share
-                    VALIDATION_INFO_HASH WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH &rest constants)))
+            (new_move new_validation_info_hash new_mover_share new_max_move_size mover_puzzle solution) args
+            new_puzzle_hash (curry_hashes (shatree (list
+                    new_move new_validation_info_hash new_mover_share new_max_move_size
+                    VALIDATION_INFO_HASH WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH &rest constants)) MOD_HASH)
             conditions (a mover_puzzle solution)
             (assert
                 PREVIOUS_VALIDATION_INFO_HASH
                 (<= (strlen MOVE) MAX_MOVE_SIZE)
-                (<= (total_length all_args) MAX_SOLUTION_SIZE)
                 (<= new_mover_share AMOUNT)
                 (>= new_mover_share 0)
                 (logior (not new_validation_info_hash) (= 32 (strlen new_validation_info_hash)))
@@ -86,7 +77,8 @@
                     )
                     conditions
                 )
-                (c (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT) conditions)
+                (li (list REMARK new_move new_validation_info_hash new_mover_share new_max_move_size) 
+                        (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT) &rest conditions)
             )
         )
     )
