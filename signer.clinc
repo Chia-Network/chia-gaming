@@ -1,0 +1,29 @@
+
+(
+; returns (public_key signer)
+; The signer takes a value to be signed and returns an aggsig
+(defun signer (private_key)
+)
+
+; returns a signer which takes a value to be signed and returns an aggsig which 
+; needs to be combined with the rest of the signature
+(defun partial_signer (my_private_key combined_public_key)
+)
+
+(defun add_public_keys (key1 key2)
+)
+
+(defun add_signatures (signature_1 signature_2)
+)
+
+(defun standard_puzzle (public_key)
+)
+
+; equivalent to (shatree (standard_puzzle public_key)) but much more efficient
+(defun standard_puzzle_hash (public_key)
+)
+
+; returns a solution maker which takes a list of conditions and returns (solution aggsig)
+(defun standard_puzzle_solution_maker (public_key signer)
+)
+)

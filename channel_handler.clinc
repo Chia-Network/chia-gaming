@@ -1,0 +1,37 @@
+
+; Peer incoming messages:
+; bootstrap (contribution size, my change address, opponent change address, game_drivers, locally_initiated, entropy)
+; channel coin requested (puzzle hash, amount)
+; message arrived (message)
+
+; Peer outgoing messages:
+; request shared coin creation (puzzle hash, amount)
+; send message (message)
+
+; Full node/local peer incoming messages:
+; channel coin created (parent id, puzzle hash, amount)
+; lost connection
+; coin spent (coin id, solution)
+; timeout occurred (coin id, relative height)
+; local timeout happened (seconds)
+
+; Full node/local peer outgoing messages
+; spend_coin (coin parent id, coin puzzle, coin amount, solution, aggsig)
+; inform me of timeout (coin id, relative height)
+; inform me of timeout (id, seconds)
+; drop connection
+
+; UX incoming messages:
+; Start game (id, contribution, type, human_readable)
+; accept (id)
+; reject (id)
+; move (id, move)
+; shut down
+
+; UX outgoing messages:
+; is_acceptable (id, readable)
+; Game started (id)
+; Game start failed (id)
+; Game update (id, readable)
+; Game ended (id, my split, opponent split)
+
