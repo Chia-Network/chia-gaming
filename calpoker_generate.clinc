@@ -1,39 +1,5 @@
 (
-; Proposer function takes readable_info and returns (player_contribution, 
-;       [(whether_my_move driver validation_program_hash state mover_share)])
-; Accepter function takes (player_contribution 
-;       [(whether_opponent_move validation_program_hash state mover_share)]) and returns
-;       (ERROR) or (ACCEPTABLE readable_info initial_driver)
-; Driver functions are either moving or waiting type
-; Moving driver takes (local_move amount state entropy) and returns
-;       (move validation_program_hash state split waiting_driver message_parser)
-; Waiting driver takes (amount state move split) and returns
-;       (MAKE_MOVE readable_info validation_program_hash state moving_driver message) or 
-;       (SLASH evidence)
-; Message parsers take a message and return readable_info or asserts
-
-(include assert.clinc)
-(include shatree.clinc)
-
-(defconst MAKE_MOVE 0)
-(defconst SLASH 1)
-(defconst ERROR 0)
-(defconst ACCEPTABLE 1)
-
-(defun calpoker_proposer (message contribution)
-    (list
-        contribution
-        (list
-            (list
-                1
-                calpoker_alice_driver_a
-                AHASH
-                0
-                contribution
-            )
-        )
-    )
-)
+(defconst calpoker_template (li calpoker_alice_driver_a calpoker_bob_driver_a &rest calpoker_chain_template))
 
 ; state is empty
 ; local_move is nil
@@ -46,6 +12,7 @@
             image
             BHASH
             image
+            16
             0
             (curry calpoker_alice_driver_b preimage)
         )
@@ -55,8 +22,8 @@
 ; state is alice's commit
 ; move is bob's seed
 ; immediately sends a message giving Alice's seed
-(defun calpoker_alice_driver_b (PREIMAGE amount image move split)
-    (list MAKE_MOVE (make_cards_readable (make_cards (sha256 PREIMAGE move))) CHASH (list image move) calpokerc 
+(defun calpoker_alice_driver_b (PREIMAGE amount image move max_move_size split)
+    (list MAKE_MOVE (make_cards_readable (make_cards (sha256 PREIMAGE move amount))) CHASH (list image move) calpokerc 
             (curry calpoker_alice_driver_c PREIMAGE) PREIMAGE)
 )
 
@@ -71,7 +38,7 @@
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 (defun calpoker_alice_driver_c (PREIMAGE local_move amount (alice_commit bob_seed) entropy)
     (assign
-        cards (make_cards (sha256 PREIMAGE bob_seed))
+        cards (make_cards (sha256 PREIMAGE bob_seed amount))
         my_picks (bitify local_move)
         salt (substr entropy 0 16)
         new_commit (sha256 (concat salt my_picks))
@@ -79,6 +46,7 @@
             new_commit
             DHASH
             (list CARDS new_commit)
+            1
             0
             (curry calpoker_alice_driver_d salt my_picks)
             PREIMAGE
@@ -103,7 +71,7 @@
 ; move is Bob's picks
 ; should immediately respond with a move revealing picks and selecting best cards and final split
 (defun calpoker_alice_driver_d (MY_SALT MY_PICKS amount 
-            (@ state (cards my_commit)) move split)
+            (@ state (cards my_commit)) move max_move_size split)
     (assign
         (my_cards_me my_cards_bob) (split_cards (f cards) MY_PICKS)
         (bob_cards_bob bob_cards_me) (split_cards (r cards) move)
@@ -125,24 +93,9 @@
     )
 )
 
-(defun calpoker_accepter (player_contribution ((whether_opponent_move 
-            validation_program_hash state mover_share) . extra))
-    (if 
-        (any
-            (!= validation_program_hash AHASH)
-            extra
-            (not whether_opponent_move)
-            state
-            (!= player_contribution mover_share)
-        )
-        (list ERROR)
-        (list ACCEPTABLE 0 calpoker_bob_driver_a)
-    )
-)
-
 ; state is empty
 ; move is alice commit to a salted word
-(defun calpoker_bob_driver_a (amount state move split)
+(defun calpoker_bob_driver_a (amount state move max_move_size split)
     (list MAKE_MOVE 0 BHASH move calpoker_alice_driver_b)
 )
 
@@ -155,6 +108,7 @@
             seed
             CHASH
             (list alice_commit seed)
+            48
             0
             calpoker_alice_driver_c
             parse_message
@@ -165,18 +119,18 @@
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 ; expecting a message revealing Alice's seed which results in local display once verified
-(defun calpoker_bob_driver_c (amount (@ state (alice_commit bob_seed)) move split)
+(defun calpoker_bob_driver_c (amount (@ state (alice_commit bob_seed)) move max_move_size split)
     (assign
-        (@ cards (alice_cards bob_cards)) (make_cards (sha256 (substr move 0 16) bob_seed))
+        (@ cards (alice_cards bob_cards)) (make_cards (sha256 (substr move 0 16) bob_seed amount))
         alice_picks_commit (substr move 16 48)
         (list MAKE_MOVE (make_cards_readable cards) DHASH (list cards alice_picks_commit) calpoker_alice_driver_d)
     )
 )
 
-(defun parse_message (message (alice_commit bob_seed))
+(defun parse_message (message (alice_commit bob_seed) amount)
     (assert 
         (= (sha256 message) alice_commit)
-        (make_cards_readable (make_cards (sha256 message bob_seed)))
+        (make_cards_readable (make_cards (sha256 message bob_seed amount)))
     )
 )
 
@@ -198,6 +152,7 @@
             EHASH
             (list my_move (list alice_cards bob_cards) alice_commit_2)
             0
+            0
             calpoker_bob_driver_e
         )
     )
@@ -206,7 +161,7 @@
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_picks
 ; either fraud proves or accepts split
-(defun calpoker_bob_driver_e (amount (@ state (bob_selects (alice_cards_bob_cards) alice_commit_2)) move split)
+(defun calpoker_bob_driver_e (amount (@ state (bob_selects (alice_cards_bob_cards) alice_commit_2)) move max_move_size split)
     (assign
         alice_selects (substr move 16 17)
         (alice_cards_alice alice_cards_bob) (split_cards alice_cards alice_picks)
@@ -226,239 +181,6 @@
                     bob_hand_value alice_hand_value (- 0 win_result))
                 0
             )
-        )
-    )
-)
-
-(defconst EHASH (shatree calpokere))
-(defconst DHASH (shatree calpokerd))
-(defconst CHASH (shatree calpokerc))
-(defconst BHASH (shatree calpokerb))
-(defconst AHASH (shatree calpokera))
-
-; Bob challenging
-; state is empty
-; move is alice commit to a salted word
-; evidence is empty
-(defun calpokera (mod_hash (move next_validation_hash mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    state me mover_puzzle solution evidence)
-
-    (assert
-        (not
-            (all
-                (= new_validation_hash (sha256 BHASH (sha256 1 move)))
-                (= (strlen move) 32)
-            )
-        )
-        0
-    )
-)
-
-; Alice challenging
-; state is alice's commit
-; move is bob's seed
-; evidence is empty
-(defun calpokerb (mod_hash (move next_validation_hash mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    alice_commit me mover_puzzle solution evidence)
-    (assert
-        (not
-            (all
-                (= new_validation_hash (sha256 CHASH (shatree (list alice_commit bob_seed))))
-                (= (strlen bob_seed) 16)
-            )
-        )
-        0
-    )
-)
-
-(defun make_card_readable (val)
-    (assign
-        (rank . suit) (divmod val 4)
-        (if (= rank 12)
-            (list 1 (+ 1 suit))
-            (list (+ 2 rank) (+ 1 suit))
-        )
-    )
-)
-
-(defun make_cards_readable ((cardsa cardsb))
-    (list (map make_card_readable cardsa) (map make_card cardsb))
-)
-
-(defun make_cards (randomness)
-    (assign
-        (handa newrandomness) (choose 52 8 randomness)
-        (handb newrandomness2) (choose (- 52 8) newrandomness)
-        (list handa (mergeover handa handb))
-    )
-)
-
-(defun <= (a b)
-    (not (> a b))
-)
-
-; like mergein but only calculates the contents of inner with offsets
-; applied and doesn't interleave the contents of outer
-(defun mergeover (outer inner offset)
-    (if (not inner)
-        0
-        (assign first (+ (f inner) offset)
-            (if (not outer)
-                (c first (mergeover 0 (r inner) offset))
-                (if (<= (f outer) first)
-                    (mergeover (r outer) inner (+ offset 1))
-                    (c first (mergeover outer (r inner) offset))
-                )
-            )
-        )
-    )
-)
-
-; slide the things in inner in between the things in outer assuming 
-; things in inner are already bumped up by offset things from outer which 
-; came before
-(defun mergein (outer inner offset)
-    (if (not inner)
-        outer
-        (assign first (+ (f inner) offset)
-            (if (not outer)
-                (c first (mergein 0 (r inner) offset))
-                (if (<= (f outer) first)
-                    (c (f outer) (mergein (r outer) inner (+ offset 1)))
-                    (c first (mergein outer (r inner) offset))
-                )
-            )
-        )
-    )
-)
-
-; pick numchoose things out of numcards options with randomness extracted from vals
-; returns (cards newvals) cards are always in sorted order
-(defun choose (numcards numchoose randomness)
-    (if (= numchoose 1)
-        (assign (newrandomness card) (divmod randomness numcards)
-            (list (list card) newrandomness)
-        )
-        (assign 
-            half (lsh numchoose -1)
-            (cards1 newrandomness2) (choose numcards half randomness)
-            (cards2 newrandomness3) (choose (- numcards half) (- numchoose half) newrandomness2)
-            (list (mergein cards1 cards2 0) newrandomness3)
-        )
-    )
-)
-
-; Bob challenging
-; state is alice's commit and bob's seed
-; move is alice's reveal of her card generating seed and her commit to which cards she's picking
-; evidence is empty
-(defun calpokerc (mod_hash (move next_validation_hash mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (alice_commit bob_seed) me mover_puzzle solution evidence)
-    (assert
-        (not
-            (all
-                (= (strlen move) 48)
-                (= (sha256 (substr move 0 16)) alice_commit)
-                (= new_validation (sha256 DHASH (shatree (list (make_cards 
-                    (sha256 (substr move 0 16) bob_seed)) (substr move 16 48)))))
-            )
-        )
-        0
-    )
-)
-
-(defun onecount (mymask)
-    (if mymask
-        (+ (logand mymask 1) (onecount (lsh mymask -1)))
-        0
-    )
-)
-
-; Alice challenging
-; state is the cards for both players and alice's card pick commitment
-; move is Bob's picks
-; evidence is empty
-(defun calpokerd (mod_hash (bob_picks next_validation_hash mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (cards alice_commit) me mover_puzzle solution evidence)
-    (assert
-        (not
-            (all
-                (= (strlen bob_picks) 1)
-                (= (onecount bob_picks) 4)
-                (= new_validation_hash (sha256 EHASH (shatree (list bob_picks cards alice_commit))))
-            )
-        )
-        0
-    )
-)
-
-(include handcalc.clinc)
-(include map.clinc)
-
-; Use mask to determine which cards are prepended to leftcards and which to rightcards
-(defun extract_cards (mask cards leftcards rightcards)
-    (if (not cards)
-        (list leftcards rightcards)
-        (if (logand mask 1)
-            (extract_cards (lsh mask -1) (r cards) leftcards (c (f cards) rightcards))
-            (extract_cards (lsh mask -1) (r cards) (c (f cards) leftcards) rightcards)
-        )
-    )
-)
-
-(defun make_card (val)
-    (assign
-        (rank . suit) (divmod val 4)
-        (list (+ 2 rank) (+ 1 suit))
-    )
-)
-
-(defun pull_out_cards (selections cards)
-    (if (not cards)
-        0
-        (if (logand selections 1)
-            (c (f cards) (pull_out_cards (lsh -1 selections) (r cards)))
-            (pull_out_cards (lsh -1 selections) (r cards))
-        )
-    )
-)
-
-; Bob challenging
-; state is (Bob's picks (alice_cards bob_cards) alice_commit)
-; move is alice_salted_picks
-; evidence is Bob's card selections
-(defun calpokere (mod_hash (move next_validation_hash mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (bob_picks (alice_cards bob_cards) alice_commit) me mover_puzzle solution bob_card_selections)
-    (assign
-        alice_salted_picks (substr move 0 16)
-        alice_card_selections (substr move 16 17)
-        (alice_final_cards bob_final_cards) (extract_cards bob_picks bob_cards &rest (extract_cards alice_picks alice_cards 0 0))
-        result (hand_compare (onehandcalc (pull_out_cards alice_card_selections alice_final_cards))
-            (onehandcalc (pull_out_cards bob_card_selections bob_final_cards)))
-        (assert
-            (not
-                (all
-                    (not new_validation_hash)
-                    (= (strlen move) 18)
-                    (= (sha256 alice_salted_picks alice_commit))
-                    (= (onecount alice_picks) 4)
-                    (<= alice_share
-                        (if (not result)
-                            (/ total 2)
-                            (if (= result 1)
-                                0
-                                total
-                            )
-                        )
-                    )
-                )
-            )
-            0
         )
     )
 )
