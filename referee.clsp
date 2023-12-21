@@ -7,7 +7,7 @@
 ; MOD_HASH should be the shatree of referee itself
 ; NONCE is for anti-replay prevention
 ; If action is timeout args is nil
-; If action is accuse args is (state validation_program mover_puzzle solution evidence)
+; If action is slash args is (state validation_program mover_puzzle solution evidence)
 ; If action is move args is (new_move new_validation_info_hash new_mover_share mover_puzzle solution)
 ; validation programs get passed this:
 ; ((last_move next_validation_hash my_share me_hash my_puzzle_hash opponent_puzzle_hash
@@ -50,7 +50,7 @@
                 (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree 
                         previous_state)))
                 ; usually returns the conditions verbatim
-                (c (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT)
+                (c (list REMARK)
                     (concat (a previous_validation_program (c previous_validation_program_hash all_args)) 
                         (a mover_puzzle solution))
                 )
@@ -59,9 +59,9 @@
         ; move
         (assign 
             (new_move new_validation_info_hash new_mover_share new_max_move_size mover_puzzle solution) args
-            new_puzzle_hash (curry_hashes (shatree (list
-                    new_move new_validation_info_hash new_mover_share new_max_move_size
-                    VALIDATION_INFO_HASH WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH &rest constants)) MOD_HASH)
+            new_puzzle_hash (curry_hashes (shatree (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT 
+                    AMOUNT MOD_HASH NONCE new_move new_max_move_size new_validation_hash new_mover_share
+                    VALIDATION_INFO_HASH)) MOD_HASH)
             conditions (a mover_puzzle solution)
             (assert
                 PREVIOUS_VALIDATION_INFO_HASH
