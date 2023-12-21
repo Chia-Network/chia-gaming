@@ -4,7 +4,7 @@
 ; returns [(puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)]
 ; First player driver is my turn, second player driver is their turn type
 ; My turn driver takes (readable_move amount state entropy) and returns
-;       (move aggsig validation_program validation_program_hash new_state max_move_size mover_share waiting_driver 
+;       (move validation_program validation_program_hash new_state max_move_size mover_share waiting_driver 
 ;       message_parser)
 ;       or nil for accept
 ; if waiting_driver is nil that means the last move is being made
@@ -14,14 +14,14 @@
 ;       (MAKE_MOVE readable_info moving_driver message) or 
 ;       (SLASH evidence aggsig)
 ; If game is done moving_driver is nil
-(defun make_referee_makers ((my_turn_driver their_turn_driver whether_paired required_size_factor 
+(defun make_referee_makers (my_turn_driver their_turn_driver whether_paired 
         initial_max_move_size initial_validator_program initial_validator_program_hash 
-        initial_state initial_mover_share) player_contribution
+        initial_state initial_mover_share player_contribution
         timeout player_one_puzzle_hash player_two_puzzle_hash nonce)
     (assign 
-        WRITEME (get order of puzzles sorted)
         one_maker (lambda ((& initial_max_move_size initial_validator_program initial_validator_program_hash
-            initial_state initial_mover_share) first_driver second_driver first_puzzle_hash second_puzzle_hash amount)
+            initial_state initial_mover_share my_turn_driver their_turn_driver nonce) 
+            first_puzzle_hash second_puzzle_hash amount)
             (assign 
                 initial_validation_info_hash (sha256 initial_validator_program_hash (shatree initial_state))
                 initial_puzzle_hash (curry_to_hash player_one_puzzle_hash player_two_puzzle_hash timeout 
@@ -41,16 +41,16 @@
             )
         )
         (if whether_paired
-            (li (one_maker my_turn_driver their_turn_driver player_one_puzzle_hash player_two_puzzle_hash player_contribution) 
-                (one_maker their_turn_driver my_turn_driver player_two_puzzle_hash player_one_puzzle_hash player_contribution))
-            (li (one_maker my_turn_driver their_turn_driver player_one_puzzle_hash player_two_puzzle_hash (* 2 player_contribution)))
+            (li (one_maker player_one_puzzle_hash player_two_puzzle_hash player_contribution) 
+                (one_maker player_two_puzzle_hash player_one_puzzle_hash player_contribution))
+            (li (one_maker player_one_puzzle_hash player_two_puzzle_hash (* 2 player_contribution)))
         )
     )
 )
 
 ; returns (MOVE readable new_puzzle_hash my_turn_coin_handler message) or
-;       (ACCEPT readable puzzle_reveal new_puzzle_hash my_share)
-;       (SLASH puzzle_reveal new_puzzle_hash slashing_coin_solution agg_sig) or
+;       (ACCEPT readable puzzle_reveal my_share)
+;       (SLASH puzzle_reveal slashing_coin_solution agg_sig) or
 ;       (SLASHED)
 ;       (TIMEOUDOUT my_share)
 ; messages are optional and mostly used for early reveals of pre-commits
@@ -68,17 +68,18 @@
             new_puzzle_hash (curry_to_hash MY_INNER_PUZZLE_HASH THEIR_INNER_PUZZLE_HASH TIMEOUT AMOUNT referee_hash NONCE 
                 new_move new_max_move_size new_validation_info_hash new_mover_share NEW_VALIDATION_INFO_HASH referee_hash)
             (slash_solution slash_aggsig) (a my_inner_solution_maker (li (li CREATE_COIN my_target_puzzle AMOUNT)))
-            (returnval . exception) (run new_puzzle (STATE VALIDATION_PROGRAM my_inner_puzzle solution 0))
+            full_slash_solution (li STATE VALIDATION_PROGRAM my_inner_puzzle slash_solution 0)
+            (returnval . exception) (run new_puzzle full_slash_solution)
             (if (not exception)
-                (li SLASH new_puzzle new_puzzle_hash (li STATE VALIDATION_PROGRAM my_inner_puzzle solution) aggsig)
+                (li SLASH new_puzzle full_slash_solution slash_aggsig)
                 (assign
                     (move_type readable_info moving_driver message) (a (li AMOUNT STATE new_move 
                         new_validation_info_hash new_max_move_size new_mover_share) DRIVER)
                     (if (= move_type SLASH)
-                        (li SLASH new_puzzle new_puzzle_hash (li STATE VALIDATION_PROGRAM my_inner_puzzle 
-                                readable_info) (aggregate slash_aggsig moving_driver))
+                        (li SLASH new_puzzle (li STATE VALIDATION_PROGRAM my_inner_puzzle 
+                                slash_solution readable_info) (aggregate slash_aggsig moving_driver))
                         (not moving_driver)
-                        (li ACCEPT readable_info new_puzzle new_puzzle_hash new_mover_share)
+                        (li ACCEPT readable_info new_puzzle new_mover_share)
                         (li MOVE readable_info new_puzzle_hash moving_driver message)
                     )
                 )
@@ -87,20 +88,17 @@
     )
 )
 
-; returns (MOVE puzzle_reveal coin_solution agg_sig 
-;       new_puzzle new_puzzle_hash new_coin_handler  
+; returns (MOVE puzzle_reveal coin_solution agg_sig new_puzzle new_puzzle_hash new_coin_handler 
 ;       my_share message_parser) or
 ;       (ACCEPT puzzle_reveal my_share)
 ; In the move case if new_coin_handler is nil the timeout is clean and should be mutually agreeable
-; assumes that the returned solution will be the one which goes through, anything else is an error
 ; message_parser takes a message and returns readable
-; my_solution_maker takes a shatree value of conditions and returns (solution aggsig)
+; my_inner_solution_maker takes a shatree value of conditions and returns (solution aggsig)
 (defun my_turn_referee_maker (PUZZLE_REVEAL MY_INNER_PUZZLE_HASH THEIR_INNER_PUZZLE_HASH AMOUNT 
-        TIMEOUT NONCE MOVE 
-        NEW_VALIDATION_INFO_HASH MOVER_SHARE
+        TIMEOUT NONCE MOVE NEW_VALIDATION_INFO_HASH MOVER_SHARE
         STATE DRIVER my_inner_puzzle my_inner_solution_maker readable_move entropy)
     (assign 
-        (@ result (new_move aggsig new_validation_program new_validation_program_hash new_new_state 
+        (@ result (new_move new_validation_program new_validation_program_hash new_new_state 
                 new_max_move_size new_mover_share waiting_driver inner_message_parser)) 
                 (a DRIVER (li readable_move AMOUNT STATE entropy))
         (if (not result)
@@ -123,7 +121,7 @@
                         waiting_driver their_turn_referee_maker)
                 message_parser (lambda ((& message_parser AMOUNT new_new_state) message) 
                         (a message_parser message new_new_state AMOUNT))
-                (li MOVE PUZZLE_REVEAL new_solution (aggregate aggsig inner_aggsig) new_puzzle new_puzzle_hash 
+                (li MOVE PUZZLE_REVEAL new_solution inner_aggsig new_puzzle new_puzzle_hash 
                         new_coin_handler new_mover_share message_parser)
             )
         )
