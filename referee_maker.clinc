@@ -12,8 +12,8 @@
 ;
 ; their turn driver takes (amount old_state move validation_info_hash max_move_size mover_share) and returns
 ;       (MAKE_MOVE readable_info moving_driver message) or 
+;       (ACCEPT readable_info puzzle_reveal my_share) or
 ;       (SLASH evidence aggsig)
-; If game is done moving_driver is nil
 (defun make_referee_makers (my_turn_driver their_turn_driver whether_paired 
         initial_max_move_size initial_validator_program initial_validator_program_hash 
         initial_state initial_mover_share player_contribution
@@ -78,7 +78,7 @@
                     (if (= move_type SLASH)
                         (li SLASH new_puzzle (li STATE VALIDATION_PROGRAM my_inner_puzzle 
                                 slash_solution readable_info) (aggregate slash_aggsig moving_driver))
-                        (not moving_driver)
+                        (= move_type ACCEPT)
                         (li ACCEPT readable_info new_puzzle new_mover_share)
                         (li MOVE readable_info new_puzzle_hash moving_driver message)
                     )

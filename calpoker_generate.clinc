@@ -10,11 +10,13 @@
         image (sha256 preimage)
         (list
             image
-            BHASH
+            calpokerb
+            calpokerb_hash
             image
             16
             0
             (curry calpoker_alice_driver_b preimage)
+            0
         )
     )
 )
@@ -23,7 +25,7 @@
 ; move is bob's seed
 ; immediately sends a message giving Alice's seed
 (defun calpoker_alice_driver_b (PREIMAGE amount image move validation_info_hash max_move_size split)
-    (list MAKE_MOVE (make_cards_readable (make_cards (sha256 PREIMAGE move amount))) CHASH (list image move) calpokerc 
+    (list MAKE_MOVE (make_cards_readable (make_cards (sha256 PREIMAGE move amount))) 
             (curry calpoker_alice_driver_c PREIMAGE) PREIMAGE)
 )
 
@@ -44,12 +46,13 @@
         new_commit (sha256 (concat salt my_picks))
         (list 
             new_commit
-            DHASH
+            calpokerd
+            calpokerd_hash
             (list CARDS new_commit)
             1
             0
             (curry calpoker_alice_driver_d salt my_picks)
-            PREIMAGE
+            0
         )
     )
 )
@@ -86,9 +89,9 @@
         (list MAKE_MOVE
             (list (to_bitfield move) (to_bitfield my_picks) (to_bitfield bob_picks)
                 my_hand_value bob_hand_value win_result)
-            EHASH
+            (lambda (& MY_SALT MY_PICKS split) (list (concat MY_SALT MY_PICKS) 0 0 0 0 split 0 0) 
             0
-            (lambda (& MY_SALT MY_PICKS split) (list (concat MY_SALT MY_PICKS) 0 0 split))
+            )
         )
     )
 )
@@ -96,7 +99,7 @@
 ; state is empty
 ; move is alice commit to a salted word
 (defun calpoker_bob_driver_a (amount state move validation_program_hash max_move_size split)
-    (list MAKE_MOVE 0 BHASH move calpoker_alice_driver_b)
+    (list MAKE_MOVE 0 calpoker_bob_driver_b 0)
 )
 
 ; state is alice_commit
@@ -106,13 +109,21 @@
         seed (substr entropy 0 16)
         (list
             seed
-            CHASH
+            calpokerc
+            calpokerc_hash
             (list alice_commit seed)
             48
             0
-            calpoker_alice_driver_c
+            calpoker_bob_driver_c
             parse_message
         )
+    )
+)
+
+(defun parse_message (message (alice_commit bob_seed) amount)
+    (assert 
+        (= (sha256 message) alice_commit)
+        (make_cards_readable (make_cards (sha256 message bob_seed amount)))
     )
 )
 
@@ -123,14 +134,7 @@
     (assign
         (@ cards (alice_cards bob_cards)) (make_cards (sha256 (substr move 0 16) bob_seed amount))
         alice_picks_commit (substr move 16 48)
-        (list MAKE_MOVE (make_cards_readable cards) DHASH (list cards alice_picks_commit) calpoker_alice_driver_d)
-    )
-)
-
-(defun parse_message (message (alice_commit bob_seed) amount)
-    (assert 
-        (= (sha256 message) alice_commit)
-        (make_cards_readable (make_cards (sha256 message bob_seed amount)))
+        (list MAKE_MOVE (make_cards_readable cards) calpoker_bob_driver_d 0)
     )
 )
 
@@ -149,11 +153,13 @@
         my_move (bitify local_move)
         (list
             my_move
-            EHASH
+            calpokere
+            calpokere_hash
             (list my_move (list alice_cards bob_cards) alice_commit_2)
-            0
+            17
             0
             calpoker_bob_driver_e
+            0
         )
     )
 )
@@ -177,10 +183,9 @@
         correct_split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
         (if (< split correct_split)
             (list SLASH bob_picks)
-            (list MAKE_MOVE
+            (list ACCEPT
                 (list (to_bitfield alice_selects) (to_bitfield bob_picks) (to_bitfield alice_picks)
                     bob_hand_value alice_hand_value (- 0 win_result))
-                0
             )
         )
     )

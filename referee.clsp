@@ -43,7 +43,7 @@
         (l (f (r args)))
         ; slash
         (assign
-            (previous_state previous_validation_program mover_puzzle solution) args
+            (previous_state previous_validation_program mover_puzzle solution evidence) args
             previous_validation_program_hash (shatree previous_validation_program)
             (assert
                 (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
