@@ -1,5 +1,4 @@
-(mod (X Y)
-  (include *standard-cl-21*)
-  (include prepend.clinc)
-  (prepend X Y)
-  )
+(include *standard-cl-23*)
+
+(import std.prepend)
+(export (X Y) (prepend X Y))
