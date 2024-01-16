@@ -1,8 +1,0 @@
-(
-    (defun prepend (a b)
-        (if a
-            (c (f a) (prepend (r a) b))
-            b
-        )
-    )
-)

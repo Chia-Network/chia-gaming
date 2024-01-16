@@ -1,40 +1,19 @@
-(mod (M N)
-    (include *standard-cl-21*)
-    (include prepend.clinc)
-    (include reverse.clinc)
-    (include map.clinc)
-    (include len.clinc)
-    (include range.clinc)
-    (include sort.clinc)
-    (include assert.clinc)
-    (include deep_compare.clinc)
-    (include permutations.clinc)
-    (include last.clinc)
-    (include busy.clinc)
-    (include all-in-list.clinc)
-    (include print.clinc)
+(include *standard-cl-23*)
+(import std.prepend)
+(import std.reverse)
+(import std.map)
+(import std.len)
+(import std.range)
+(import std.sort)
+(import std.assert)
+(import std.deep_compare)
+(import std.permutations)
+(import std.last)
+(import std.busy)
+(import std.all_in_list)
+(import std.print)
 
-    (defun ! (x)
-        (if x
-            (* x (! (- x 1)))
-            1
-        )
-    )
-    (defun no_repeats_inner ((first . remainder))
-        (if remainder
-            (if (deep= first (f remainder))
-                0
-                (no_repeats_inner remainder)
-            )
-            1
-        )
-    )
-    (defun no_repeats (mylist)
-      (if mylist
-        (no_repeats_inner (sort (lambda (a b) (= (deep_compare a b) -1)) mylist))
-        1
-      )
-    )
+(export (M N)
     (assert
         ;; Is permutations expected to collapse equal alternatives when two of
         ;; the items to shuffle are equal?
@@ -61,3 +40,28 @@
         0
     )
 )
+
+(defun ! (x)
+    (if x
+        (* x (! (- x 1)))
+        1
+    )
+)
+
+(defun no_repeats_inner ((first . remainder))
+    (if remainder
+        (if (deep= first (f remainder))
+            0
+            (no_repeats_inner remainder)
+        )
+        1
+    )
+)
+
+(defun no_repeats (mylist)
+    (if mylist
+        (no_repeats_inner (sort (lambda (a b) (= (deep_compare a b) -1)) mylist))
+        1
+    )
+)
+
