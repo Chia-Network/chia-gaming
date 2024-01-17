@@ -1,0 +1,26 @@
+(include *standard-cl-23*)
+
+(import qualified onchain.calpoker.b as pokerb)
+(import std.assert)
+
+
+; Bob challenging
+; state is empty
+; move is alice commit to a salted word
+; evidence is empty
+(export (mod_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    state me mover_puzzle solution evidence)
+
+    (assert
+        (not
+            (all
+                (= new_validation_hash (sha256 pokerb.program_hash (sha256 1 move)))
+                (= (strlen move) 32)
+                (= max_move_size 16)
+            )
+        )
+        0
+    )
+)
+
