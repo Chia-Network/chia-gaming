@@ -1,6 +1,5 @@
 (
 
-; Identifier for a template is the shatree of everything after the drivers
 ; returns [(puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)]
 ; First player driver is my turn, second player driver is their turn type
 ; My turn driver takes (readable_move amount state entropy) and returns
@@ -92,7 +91,7 @@
 ;       my_share message_parser) or
 ;       (ACCEPT puzzle_reveal my_share)
 ; In the move case if new_coin_handler is nil the timeout is clean and should be mutually agreeable
-; message_parser takes a message and returns readable
+; message_parser takes (message state amount) and returns readable
 ; my_inner_solution_maker takes a shatree value of conditions and returns (solution aggsig)
 (defun my_turn_referee_maker (PUZZLE_REVEAL MY_INNER_PUZZLE_HASH THEIR_INNER_PUZZLE_HASH AMOUNT 
         TIMEOUT NONCE MOVE NEW_VALIDATION_INFO_HASH MOVER_SHARE

@@ -5,16 +5,19 @@
 ; updates to the unrolling puzzle. The keys of the state channel puzzle and the unrolling puzzle don't 
 ; have to be related
 
-(defun state_channel_unrolling (SHARED_PUZZLE OLD_SEQUENCE_NUMBER DEFAULT_CONDITIONS solution)
+(defun state_channel_unrolling (SHARED_PUZZLE_HASH OLD_SEQUENCE_NUMBER DEFAULT_CONDITIONS_HASH reveal solution)
     (if (not (isthere solution))
         ; These probably contain a relative timelock
-        DEFAULT_CONDITIONS
+        (assert (= DEFAULT_CONDITIONS_HASH (shatree reveal))
+            reveal
+        )
         (assign
-            conditions (a SHARED_PUZZLE solution)
+            conditions (a reveal solution)
             new_sequence_number (extract_sequence_number conditions)
             (assert
                 (> new_sequence_number OLD_SEQUENCE_NUMBER)
                 (logand 1 (logxor new_sequence_number OLD_SEQUENCE_NUMBER))
+                (= SHARED_PUZZLE_HASH (shatree reveal))
                 conditions
             )
         )
