@@ -1,3 +1,4 @@
+
 ; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
 ; suits are 1-4 with no particular labelling
 ; takes a list of five cards (rank . suit) and returns the value of the best poker 
@@ -12,10 +13,6 @@
 ; two pair (2 2 1 high_pair_rank low_pair_rank kicker)
 ; pair (2 1 1 1 pair_rank first_kicker second_kicker third_kicker)
 ; high card (1 1 1 1 1 high_card first_kicker second_kicker third_kicker fourth_kicker)
-
-(import std.map)
-(import std.relops)
-
 (defun hand_compare (a b)
     (if (= (f a) (f b))
         (if (r a)

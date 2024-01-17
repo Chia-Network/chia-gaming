@@ -2,11 +2,6 @@
 (include assert.clinc)
 (include shatree.clinc)
 
-(defconst MAKE_MOVE 0)
-(defconst SLASH 1)
-
-(defconst calpoker_chain_template (li 0 200 32 AHASH 0 100))
-
 (defconst EHASH (shatree calpokere))
 (defconst DHASH (shatree calpokerd))
 (defconst CHASH (shatree calpokerc))
