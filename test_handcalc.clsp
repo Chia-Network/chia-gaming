@@ -1,102 +1,102 @@
+(include *standard-cl-23*)
+(import std.relops)
+(import std.deep_compare)
+(import std.assert)
+(import std.reverse)
+(import std.prepend)
+(import std.truncate)
+(import std.map)
+(import std.filtermap)
+(import std.slice)
+(import std.print)
+(import std.partition)
+(import std.append)
 
-(mod ()
-    (include *standard-cl-23*)
-    (include relops.clinc)
-    (include deep_compare.clinc)
-    (include assert.clinc)
-    (include reverse.clinc)
-    (include prepend.clinc)
-    (include truncate.clinc)
-    (include map.clinc)
-    (include filtermap.clinc)
-    (include slice.clinc)
-    (include print.clinc)
-    (include partition.clinc)
-    (include append.clinc)
-    (include onehandcalc.clinc)
-    (include handcalc.clinc)
+(import handcalc exposing handcalc)
+(import onehandcalc exposing onehandcalc)
 
-    (defun cards-by-bitmask (mask cards)
-      (if cards
-        (let ((next-cards (cards-by-bitmask (lsh mask -1) (r cards))))
-          (if (logand 1 mask)
-            (c (f cards) next-cards)
-            next-cards
-          )
-        )
-        ()
+(defun cards-by-bitmask (mask cards)
+  (if cards
+    (let ((next-cards (cards-by-bitmask (lsh mask -1) (r cards))))
+      (if (logand 1 mask)
+        (c (f cards) next-cards)
+        next-cards
       )
     )
+    ()
+  )
+)
 
-    (defun count-bits (mask)
-        (if mask
-            (let ((next (count-bits (lsh mask -1))))
-                (if (logand mask 1)
-                    (+ 1 next)
-                    next
-                )
-            )
-            0
-        )
-    )
-
-    (defun must-have-bits (N M)
-        (if (= (count-bits M) N)
-            M
-            (x "Mask" M "should have" N "bits")
-        )
-    )
-
-    (defun must-be-len (N L)
-        (if (= (list-len L) N)
-            L
-            (x "List" L "should have" N "elements")
-        )
-    )
-
-    (defun generate_handcalc_and_reverse_response (cards)
-        (assign
-            reversed-cards (reverse cards)
-
-            handcalc-result (print (list "handcalc fwd result for cards" cards) (handcalc cards))
-
-            reverse-handcalc-result (print (list "handcalc rev result for cards" reversed-cards) (handcalc reversed-cards))
-
-            chosen-cards (cards-by-bitmask (must-have-bits 5 handcalc-result) cards)
-
-            reverse-chosen-cards (cards-by-bitmask (must-have-bits 5 reverse-handcalc-result) reversed-cards)
-
-            (c (must-be-len 5 chosen-cards) (must-be-len 5 reverse-chosen-cards))
-        )
-    )
-
-    (defun runtests_inner ((myfunc firstarg secondarg . remaining))
-        (assign-lambda
-            (first-chosen-cards . first-rev-cards) (generate_handcalc_and_reverse_response firstarg)
-
-            (second-chosen-cards . second-rev-cards) (generate_handcalc_and_reverse_response secondarg)
-
-            first-ohc (print (list "first onehandcalc from " first-chosen-cards) (onehandcalc (must-be-len 5 first-chosen-cards)))
-            second-ohc (print (list "second onehandcalc from " second-chosen-cards) (onehandcalc (must-be-len 5 second-chosen-cards)))
-
-            first-rev-ohc (print (list "first rev onehandcalc from " first-rev-cards) (onehandcalc (must-be-len 5 first-rev-cards)))
-            second-rev-ohc (print (list "second rev onehandcalc from " second-rev-cards) (onehandcalc (must-be-len 5 second-rev-cards)))
-
-            (assert
-                (print (list "======== compare hands ========" first-ohc second-ohc) (a myfunc (list first-ohc second-ohc)))
-                (print (list "======== first equal ==========" first-ohc first-rev-ohc) (deep= first-ohc first-rev-ohc))
-                (print (list "======== second equal =========" second-ohc second-rev-ohc) (deep= second-ohc second-rev-ohc))
-                (if remaining
-                    (runtests_inner remaining)
-                    0
-                )
+(defun count-bits (mask)
+    (if mask
+        (let ((next (count-bits (lsh mask -1))))
+            (if (logand mask 1)
+                (+ 1 next)
+                next
             )
         )
+        0
     )
+)
 
-    (defun runtests tests (if tests (runtests_inner tests) ()))
+(defun must-have-bits (N M)
+    (if (= (count-bits M) N)
+        M
+        (x "Mask" M "should have" N "bits")
+    )
+)
 
-    ;; Join these up when large application bug is fixed.
+(defun must-be-len (N L)
+    (if (= (list-len L) N)
+        L
+        (x "List" L "should have" N "elements")
+    )
+)
+
+(defun generate_handcalc_and_reverse_response (cards)
+    (assign
+        reversed-cards (reverse cards)
+
+        handcalc-result (print (list "handcalc fwd result for cards" cards) (handcalc cards))
+
+        reverse-handcalc-result (print (list "handcalc rev result for cards" reversed-cards) (handcalc reversed-cards))
+
+        chosen-cards (cards-by-bitmask (must-have-bits 5 handcalc-result) cards)
+
+        reverse-chosen-cards (cards-by-bitmask (must-have-bits 5 reverse-handcalc-result) reversed-cards)
+
+        (c (must-be-len 5 chosen-cards) (must-be-len 5 reverse-chosen-cards))
+    )
+)
+
+(defun runtests_inner ((myfunc firstarg secondarg . remaining))
+    (assign-lambda
+        (first-chosen-cards . first-rev-cards) (generate_handcalc_and_reverse_response firstarg)
+
+        (second-chosen-cards . second-rev-cards) (generate_handcalc_and_reverse_response secondarg)
+
+        first-ohc (print (list "first onehandcalc from " first-chosen-cards) (onehandcalc (must-be-len 5 first-chosen-cards)))
+        second-ohc (print (list "second onehandcalc from " second-chosen-cards) (onehandcalc (must-be-len 5 second-chosen-cards)))
+
+        first-rev-ohc (print (list "first rev onehandcalc from " first-rev-cards) (onehandcalc (must-be-len 5 first-rev-cards)))
+        second-rev-ohc (print (list "second rev onehandcalc from " second-rev-cards) (onehandcalc (must-be-len 5 second-rev-cards)))
+
+        (assert
+            (print (list "======== compare hands ========" first-ohc second-ohc) (a myfunc (list first-ohc second-ohc)))
+            (print (list "======== first equal ==========" first-ohc first-rev-ohc) (deep= first-ohc first-rev-ohc))
+            (print (list "======== second equal =========" second-ohc second-rev-ohc) (deep= second-ohc second-rev-ohc))
+            (if remaining
+                (runtests_inner remaining)
+                0
+            )
+        )
+    )
+)
+
+(defun runtests tests (if tests (runtests_inner tests) ()))
+
+;; Join these up when large application bug is fixed.
+(export ()
     (runtests
         ; all beats both emerge over and measure higher
         ; straight flush with higher kicker ties
