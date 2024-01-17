@@ -1,5 +1,8 @@
 (
-(defconst calpoker_template (li calpoker_alice_driver_a calpoker_bob_driver_a &rest calpoker_chain_template))
+; initial_mover_handler initial_waiter_handler initial_move required_size_factor
+; initial_max_move_size initial_validator initial_validator_hash 
+; initial_previous_puzzle_hash initial_mover_share_proportion
+(defconst calpoker_template (li calpoker_alice_driver_a calpoker_bob_driver_a 0 200 32 calpokera AHASH 0 100))
 
 ; state is empty
 ; local_move is nil
