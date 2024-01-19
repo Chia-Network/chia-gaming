@@ -1,6 +1,6 @@
 (include *standard-cl-23*)
 
-(import onchain.onehandcalc exposing onehandcalc extract_cards hand_compare)
+(import onchain.calpoker.onehandcalc exposing onehandcalc hand_compare)
 (import std.assert)
 (import std.relops)
 

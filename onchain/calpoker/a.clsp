@@ -1,6 +1,6 @@
 (include *standard-cl-23*)
 
-(import qualified onchain.calpoker.b as pokerb)
+(import onchain.calpoker.b exposing (program_hash as bhash))
 (import std.assert)
 
 
@@ -15,7 +15,7 @@
     (assert
         (not
             (all
-                (= new_validation_hash (sha256 pokerb.program_hash (sha256 1 move)))
+                (= new_validation_hash (sha256 bhash (sha256 1 move)))
                 (= (strlen move) 32)
                 (= max_move_size 16)
             )
