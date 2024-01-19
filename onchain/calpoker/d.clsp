@@ -1,6 +1,6 @@
 (include *standard-cl-23*)
 
-(import qualified onchain.calpoker.e as pokere)
+(import onchain.calpoker.e exposing (program_hash as ehash))
 (import std.assert)
 (import std.shatree)
 
@@ -16,7 +16,7 @@
             (all
                 (= (strlen bob_picks) 1)
                 (= (onecount bob_picks) 4)
-                (= new_validation_hash (sha256 pokere.program_hash (shatree (list bob_picks cards alice_commit))))
+                (= new_validation_hash (sha256 ehash (shatree (list bob_picks cards alice_commit))))
                 (= max_move_size 18)
             )
         )

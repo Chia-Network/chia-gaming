@@ -1,6 +1,6 @@
 (include *standard-cl-23*)
 
-(import qualified onchain.calpoker.c as pokerc)
+(import onchain.calpoker.c exposing (program_hash as chash))
 (import std.assert)
 (import std.shatree)
 
@@ -14,7 +14,7 @@
     (assert
         (not
             (all
-                (= new_validation_hash (sha256 pokerc.program_hash (shatree (list alice_commit move))))
+                (= new_validation_hash (sha256 chash (shatree (list alice_commit move))))
                 (= (strlen move) 16)
                 (= max_move_size 48)
             )
