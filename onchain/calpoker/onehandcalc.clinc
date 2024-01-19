@@ -15,6 +15,7 @@
 
 (import std.map)
 (import std.relops)
+(import std.isthere)
 
 (defun hand_compare (a b)
     (if (= (f a) (f b))
@@ -47,38 +48,35 @@
 ; This is optimized for sorting short lists
 ; A more general function would return a list of lists of ascending sizes
 ; to be merged
-(defun atomsort ((@ firstpos (first @ secondpos (second @ thirdpos (third . remaining)))))
-    (if firstpos
-        (if secondpos
-            (if thirdpos
-                (assign-lambda
-                    mylist
-                    (if (> first second)
-                        (if (> second third)
-                            (list first second third)
-                            (if (> first third)
-                                (list first third second)
-                                (list third first second)
-                            )
-                        )
-                        (if (> first third)
-                            (list second first third)
-                            (if (> second third)
-                                (list second third first)
-                                (list third second first)
-                            )
-                        )
+(defun atomsort (@ whole_list (first second third . remaining))
+    (if (not whole_list)
+        0
+        (not (isthere second))
+        whole_list
+        (not (isthere third))
+        (if (> first second)
+            whole_list
+            (list second first)
+        )
+        (merge 
+            (if (> first second)
+                (if (> second third)
+                    (list first second third)
+                    (if (> first third)
+                        (list first third second)
+                        (list third first second)
                     )
-                    (merge mylist (atomsort remaining))
                 )
-                (if (> first second)
-                    firstpos
-                    (list second first)
+                (if (> first third)
+                    (list second first third)
+                    (if (> second third)
+                        (list second third first)
+                        (list third second first)
+                    )
                 )
             )
-            firstpos
+            (atomsort remaining)
         )
-        0
     )
 )
 
