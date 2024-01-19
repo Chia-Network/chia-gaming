@@ -16,7 +16,6 @@
 (import std.map)
 (import std.relops)
 (import std.isthere)
-(import std.print)
 
 (defun hand_compare (a b)
     (if (= (f a) (f b))
