@@ -1,4 +1,8 @@
-(
+(defconst MAKE_MOVE 0)
+(defconst ACCEPT 1)
+(defconst SLASH 2)
+(defconst SLASHED 3)
+(defconst TIMEDOUT 4)
 
 ; returns [(puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)]
 ; First player driver is my turn, second player driver is their turn type
@@ -47,7 +51,7 @@
     )
 )
 
-; returns (MOVE readable new_puzzle_hash my_turn_coin_handler message) or
+; returns (MAKE_MOVE readable new_puzzle_hash my_turn_coin_handler message) or
 ;       (ACCEPT readable puzzle_reveal my_share)
 ;       (SLASH puzzle_reveal slashing_coin_solution agg_sig) or
 ;       (SLASHED)
@@ -79,7 +83,7 @@
                                 slash_solution readable_info) (aggregate slash_aggsig moving_driver))
                         (= move_type ACCEPT)
                         (li ACCEPT readable_info new_puzzle new_mover_share)
-                        (li MOVE readable_info new_puzzle_hash moving_driver message)
+                        (li MAKE_MOVE readable_info new_puzzle_hash moving_driver message)
                     )
                 )
             )
@@ -87,7 +91,7 @@
     )
 )
 
-; returns (MOVE puzzle_reveal coin_solution agg_sig new_puzzle new_puzzle_hash new_coin_handler 
+; returns (MAKE_MOVE puzzle_reveal coin_solution agg_sig new_puzzle new_puzzle_hash new_coin_handler 
 ;       my_share message_parser) or
 ;       (ACCEPT puzzle_reveal my_share)
 ; In the move case if new_coin_handler is nil the timeout is clean and should be mutually agreeable
@@ -126,4 +130,4 @@
         )
     )
 )
-)
+
