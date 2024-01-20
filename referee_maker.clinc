@@ -1,3 +1,6 @@
+(import std.shatree)
+(import std.curry)
+
 (defconst MAKE_MOVE 0)
 (defconst ACCEPT 1)
 (defconst SLASH 2)
@@ -27,18 +30,18 @@
             first_puzzle_hash second_puzzle_hash amount)
             (assign 
                 initial_validation_info_hash (sha256 initial_validator_program_hash (shatree initial_state))
-                initial_puzzle_hash (curry_to_hash player_one_puzzle_hash player_two_puzzle_hash timeout 
+                initial_puzzle_hash (curry_to_hash referee_hash player_one_puzzle_hash player_two_puzzle_hash timeout 
                     AMOUNT referee_hash nonce 0 initial_max_move_size initial_validation_info_hash 
-                    initial_mover_share 0 referee_hash)
-                initial_puzzle (curry player_one_puzzle_hash player_two_puzzle_hash timeout 
+                    initial_mover_share 0)
+                initial_puzzle (curry referee player_one_puzzle_hash player_two_puzzle_hash timeout 
                     AMOUNT referee_hash nonce 0 initial_max_move_size initial_validation_info_hash 
-                    initial_mover_share 0 referee)
-                first_player_maker (curry initial_puzzle player_one_puzzle_hash player_two_puzzle_hash amount timeout nonce 
-                    0 initial_validation_info_hash initial_mover_share initial_state my_turn_driver
-                    my_turn_referee_maker)
-                second_player_maker (curry player_two_puzzle_hash player_one_puzzle_hash amount timeout nonce 
-                    0 initial_validation_info_hash initial_mover_share initial_max_move_size initial_puzzle initial_puzzle_hash 
-                    initial_state their_turn_driver their_turn_referee_maker)
+                    initial_mover_share 0)
+                first_player_maker (curry my_turn_referee_maker initial_puzzle player_one_puzzle_hash 
+                    player_two_puzzle_hash amount timeout nonce 0 initial_validation_info_hash initial_mover_share 
+                    initial_state my_turn_driver)
+                second_player_maker (curry their_turn_referee_maker player_two_puzzle_hash player_one_puzzle_hash amount 
+                    timeout nonce 0 initial_validation_info_hash initial_mover_share initial_max_move_size initial_puzzle 
+                    initial_puzzle_hash initial_state their_turn_driver)
                 (li initial_puzzle_hash amount first_player_maker second_player_maker initial_puzzle 
                     initial_mover_share)
             )
@@ -122,8 +125,8 @@
                         new_move NEW_VALIDATION_INFO_HASH new_validation_info_hash new_mover_share 
                         new_max_move_size new_validation_program new_validation_program_hash new_new_state 
                         waiting_driver their_turn_referee_maker)
-                message_parser (lambda ((& message_parser AMOUNT new_new_state) message) 
-                        (a message_parser message new_new_state AMOUNT))
+                message_parser (lambda ((& inner_message_parser AMOUNT new_new_state) message) 
+                        (a inner_message_parser message new_new_state AMOUNT))
                 (li MOVE PUZZLE_REVEAL new_solution inner_aggsig new_puzzle new_puzzle_hash 
                         new_coin_handler new_mover_share message_parser)
             )
