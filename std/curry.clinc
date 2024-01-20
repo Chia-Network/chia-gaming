@@ -81,6 +81,19 @@
     (tree-hash-of-apply mod-hash (calculate-hash-of-curried-parameters curry-parameter-hashes))
 )
 
+(defun curry_unhashed_inner ((@ args (first_arg . rest_arg)))
+    (if args
+        (c (qq (shatree (unquote first_arg))) (curry_unhashed_inner rest_arg))
+        0
+    )
+)
+
+;; Given a mod hash and unhashed arguments, return the modhash of the resulting
+;; curried callable object.
+(defmac curry_unhashed_args (mod-hash . args)
+    (c (q . curry_hashes) (c mod-hash (curry_unhashed_inner args)))
+)
+
 (defun curry (mod . parameters)
     (li TWO (c 1 mod) (build_curry_parameters parameters))
 )
@@ -92,8 +105,6 @@
     )
 )
 
-;; this is included for future compilers that handle it properly. If you get weird
-;; errors using this, it may be your tooling. Use `curry` above instead, or inline manually.
 (defun-inline curry_hashes_inline (mod-hash . curry-parameter-hashes)
     (tree-hash-of-apply mod-hash (calculate-hash-of-curried-parameters curry-parameter-hashes))
 )
