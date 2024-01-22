@@ -21,7 +21,7 @@
 ; initial_mover_handler initial_waiter_handler initial_move required_size_factor
 ; initial_max_move_size initial_validator initial_validator_hash 
 ; initial_previous_puzzle_hash initial_mover_share_proportion
-(defun calpoker_template () (li calpoker_alice_driver_a calpoker_bob_driver_a 0 200 32 pokera pokera_hash 0 100))
+(defconst calpoker_template (li calpoker_alice_driver_a calpoker_bob_driver_a 0 200 32 pokera pokera_hash 0 100))
 
 ; state is empty
 ; local_move is nil
@@ -193,7 +193,7 @@
         validation_program_hash max_move_size split)
     (assign
         alice_selects (substr move 16 17)
-        (alice_cards_alice alice_cards_bob) (split_cards alice_cards alice_picks)
+        (alice_cards_alice alice_cards_bob) (split_cards alice_cards alice_selects)
         (bob_cards_bob bob_cards_alice) (split_cards bob_cards bob_selects)
         alice_all_cards (map make_card (append alice_cards_alice bob_cards_alice))
         bob_all_cards (map make_card (append bob_cards_bob alice_cards_bob))
