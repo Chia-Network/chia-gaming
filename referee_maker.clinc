@@ -32,7 +32,7 @@
     (assign
         amount (+ player_contribution player_contribution)
         one_maker (lambda ((& initial_max_move_size initial_validator_program initial_validator_program_hash
-            initial_state initial_mover_share my_turn_driver their_turn_driver nonce)
+            initial_state initial_mover_share my_turn_driver their_turn_driver nonce timeout player_one_puzzle_hash player_two_puzzle_hash)
             first_puzzle_hash second_puzzle_hash amount)
             (assign
                 initial_validation_info_hash (sha256 initial_validator_program_hash (shatree initial_state))
