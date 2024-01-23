@@ -5,12 +5,7 @@
 (import std.isthere)
 (import std.run)
 (import onchain.referee exposing (program as referee) (program_hash as referee_hash))
-
-(defconst MAKE_MOVE 0)
-(defconst ACCEPT 1)
-(defconst SLASH 2)
-(defconst SLASHED 3)
-(defconst TIMEDOUT 4)
+(import onchain.game_codes)
 
 ; returns [(puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)]
 ; First player driver is my turn, second player driver is their turn type

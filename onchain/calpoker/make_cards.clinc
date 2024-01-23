@@ -1,3 +1,5 @@
+(import std.relops)
+
 (defun make_cards (randomness)
     (assign
         (handa newrandomness) (choose 52 8 randomness)

@@ -1,8 +1,12 @@
 (include *standard-cl-23*)
 
-(import onchain.calpoker.onehandcalc exposing onehandcalc hand_compare)
+(import onchain.calpoker.onehandcalc)
+(import onchain.calpoker.make_card)
+(import onchain.calpoker.arrange_cards)
+(import std.list_compare)
 (import std.assert)
 (import std.relops)
+(import std.popcount)
 
 ; Bob challenging
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
@@ -15,15 +19,15 @@
         alice_salted_picks (substr move 0 17)
         alice_picks (substr move 16 17)
         alice_card_selections (substr move 17 18)
-        (alice_final_cards bob_final_cards) (extract_cards bob_picks bob_cards &rest (extract_cards alice_picks alice_cards 0 0))
-        result (hand_compare (onehandcalc (pull_out_cards alice_card_selections alice_final_cards))
+        (alice_final_cards bob_final_cards) (split_cards_inner bob_picks bob_cards &rest (split_cards alice_picks alice_cards))
+        result (list_compare (onehandcalc (pull_out_cards alice_card_selections alice_final_cards))
             (onehandcalc (pull_out_cards bob_card_selections bob_final_cards)))
         (assert
             (not
                 (all
                     (= (strlen move) 18)
                     (= (sha256 alice_salted_picks alice_commit))
-                    (= (onecount alice_picks) 4)
+                    (= (popcount alice_picks) 4)
                     (<= bob_share
                         (if (not result)
                             (/ amount 2)
@@ -39,32 +43,3 @@
         )
     )
 )
-
-; Use mask to determine which cards are prepended to leftcards and which to rightcards
-(defun extract_cards (mask cards leftcards rightcards)
-    (if (not cards)
-        (list leftcards rightcards)
-        (if (logand mask 1)
-            (extract_cards (lsh mask -1) (r cards) leftcards (c (f cards) rightcards))
-            (extract_cards (lsh mask -1) (r cards) (c (f cards) leftcards) rightcards)
-        )
-    )
-)
-
-(defun pull_out_cards (selections cards)
-    (if (not cards)
-        0
-        (if (logand selections 1)
-            (c (f cards) (pull_out_cards (lsh -1 selections) (r cards)))
-            (pull_out_cards (lsh -1 selections) (r cards))
-        )
-    )
-)
-
-(defun onecount (mymask)
-    (if mymask
-        (+ (logand mymask 1) (onecount (lsh mymask -1)))
-        0
-    )
-)
-

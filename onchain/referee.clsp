@@ -8,6 +8,7 @@
 (import std.condition_codes)
 (import std.match)
 (import std.li)
+(import onchain.game_codes)
 
 ; Adjudicates a two player turn based game
 ; MOVE, VALIDATION_HASH and MOVER_SHARE were all accepted optimistically from the last move

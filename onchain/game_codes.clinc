@@ -4,4 +4,3 @@
 (defconst TIMEOUT 3)
 (defconst SLASHED 4)
 (defconst TIMEDOUT 5)
-
