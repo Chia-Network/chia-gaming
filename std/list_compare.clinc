@@ -1,0 +1,13 @@
+(defun list_compare (a b)
+    (if (= (f a) (f b))
+        (if (r a)
+            (hand_compare (r a) (r b))
+            0
+        )
+        (- (* 2 (> (f a) (f b))) 1)
+    )
+)
+
+(defun list< (a b)
+    (= (list_compare a b) -1)
+)

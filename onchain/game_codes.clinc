@@ -1,0 +1,7 @@
+(defconst MAKE_MOVE 0)
+(defconst ACCEPT 1)
+(defconst SLASH 2)
+(defconst TIMEOUT 3)
+(defconst SLASHED 4)
+(defconst TIMEDOUT 5)
+
