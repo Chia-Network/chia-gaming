@@ -1,0 +1,7 @@
+
+(defun popcount (mymask)
+    (if mymask
+        (+ (logand mymask 1) (popcount (lsh mymask -1)))
+        0
+    )
+)
