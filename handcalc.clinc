@@ -189,10 +189,6 @@
 )
 
 (defun handcalc (cards)
-    (to_bitfield (handcalc_inner cards))
-)
-
-(defun handcalc_inner (cards)
     (assign-lambda
         first (lambda (x) (f x))
         rest (lambda (x) (r x))
