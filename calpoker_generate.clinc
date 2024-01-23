@@ -11,17 +11,18 @@
 (import std.assert)
 (import std.append)
 (import std.relops)
-(import handcalc exposing handcalc to_bitfield)
-(import onchain.calpoker.onehandcalc exposing onehandcalc extract_cards hand_compare)
-
-(defconst MAKE_MOVE 0)
-(defconst ACCEPT 1)
-(defconst SLASH 2)
+(import std.list_compare)
+(import handcalc exposing handcalc)
+(import onchain.calpoker.onehandcalc exposing onehandcalc)
+(import onchain.game_codes)
+(import onchain.calpoker.make_card exposing make_card)
+(import onchain.calpoker.make_cards exposing make_cards)
+(import onchain.calpoker.arrange_cards exposing split_cards pull_out_cards)
 
 ; initial_mover_handler initial_waiter_handler initial_move required_size_factor
 ; initial_max_move_size initial_validator initial_validator_hash 
 ; initial_previous_puzzle_hash initial_mover_share_proportion
-(defconst calpoker_template (li calpoker_alice_driver_a calpoker_bob_driver_a 0 200 32 pokera pokera_hash 0 100))
+(defun calpoker_template () (li calpoker_alice_driver_a calpoker_bob_driver_a 0 200 32 pokera pokera_hash 0 100))
 
 ; state is empty
 ; local_move is nil
@@ -47,7 +48,7 @@
 ; move is bob's seed
 ; immediately sends a message giving Alice's seed
 (defun calpoker_alice_driver_b (PREIMAGE amount image move validation_info_hash max_move_size split)
-    (list MAKE_MOVE (make_cards_readable (make_cards (sha256 PREIMAGE move amount))) 
+    (list MAKE_MOVE (make_cards_readable (sha256 PREIMAGE move amount)) 
             (curry calpoker_alice_driver_c PREIMAGE) PREIMAGE)
 )
 
@@ -79,19 +80,6 @@
     )
 )
 
-(defun split_cards (cards picks)
-    (if (not cards)
-        (list 0 0)
-        (assign
-            (inner_my_cards inner_other_cards) (split_cards (r cards) (r picks))
-            (if (f picks)
-                (list (c (f cards) inner_my_cards) inner_other_cards)
-                (list inner_my_cards (c (f cards) inner_other_cards))
-            )
-        )
-    )
-)
-
 ; state is the cards for both players and alice's card pick commitment
 ; move is Bob's picks
 ; should immediately respond with a move revealing picks and selecting best cards and final split
@@ -106,10 +94,10 @@
         bob_picks (handcalc bob_all_cards)
         my_hand_value (onehandcalc (pull_out_cards my_picks my_all_cards))
         bob_hand_value (onehandcalc (pull_out_cards bob_picks bob_all_cards))
-        win_result (hand_compare my_hand_value bob_hand_value)
+        win_result (list_compare my_hand_value bob_hand_value)
         split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
         (list MAKE_MOVE
-            (list (to_bitfield move) (to_bitfield my_picks) (to_bitfield bob_picks)
+            (list move my_picks bob_picks
                 my_hand_value bob_hand_value win_result)
             (lambda (& MY_SALT MY_PICKS split) (list (concat MY_SALT MY_PICKS) 0 0 0 0 split 0 0) 
             0
@@ -145,7 +133,7 @@
 (defun parse_message (message (alice_commit bob_seed) amount)
     (assert 
         (= (sha256 message) alice_commit)
-        (make_cards_readable (make_cards (sha256 message bob_seed amount)))
+        (make_cards_readable (sha256 message bob_seed amount))
     )
 )
 
@@ -153,11 +141,7 @@
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 ; expecting a message revealing Alice's seed which results in local display once verified
 (defun calpoker_bob_driver_c (amount (@ state (alice_commit bob_seed)) move validation_program_hash max_move_size split)
-    (assign
-        (@ cards (alice_cards bob_cards)) (make_cards (sha256 (substr move 0 16) bob_seed amount))
-        alice_picks_commit (substr move 16 48)
-        (list MAKE_MOVE (make_cards_readable cards) calpoker_bob_driver_d 0)
-    )
+    (list MAKE_MOVE (make_cards_readable (sha256 (substr move 0 16) bob_seed amount)) calpoker_bob_driver_d 0)
 )
 
 (defun slashable (amount validater state move new_validation_hash split evidence)
@@ -201,20 +185,23 @@
         bob_picks (handcalc bob_all_cards)
         alice_hand_value (onehandcalc (pull_out_cards alice_picks alice_all_cards))
         bob_hand_value (onehandcalc (pull_out_cards bob_picks bob_all_cards))
-        win_result (hand_compare alice_hand_value bob_hand_value)
+        win_result (list_compare alice_hand_value bob_hand_value)
         correct_split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
         (if (< split correct_split)
             (list SLASH bob_picks)
             (list ACCEPT
-                (list (to_bitfield alice_selects) (to_bitfield bob_picks) (to_bitfield alice_picks)
+                (list alice_selects bob_picks alice_picks
                     bob_hand_value alice_hand_value (- 0 win_result))
             )
         )
     )
 )
 
-(defun make_cards_readable ((cardsa cardsb))
-    (list (map make_card_readable cardsa) (map make_card cardsb))
+(defun make_cards_readable (seed)
+    (assign
+        (cardsa cardsb) (make_cards seed)
+        (list (map make_card_readable cardsa) (map make_card_readable cardsb))
+    )
 )
 
 (defun make_card_readable (val)
@@ -223,82 +210,6 @@
         (if (= rank 12)
             (list 1 (+ 1 suit))
             (list (+ 2 rank) (+ 1 suit))
-        )
-    )
-)
-
-(defun make_card (val)
-    (assign
-        (rank . suit) (divmod val 4)
-        (list (+ 2 rank) (+ 1 suit))
-    )
-)
-
-(defun make_cards (randomness)
-    (assign
-        (handa newrandomness) (choose 52 8 randomness)
-        (handb newrandomness2) (choose (- 52 8) newrandomness)
-        (list handa (mergeover handa handb))
-    )
-)
-
-; pick numchoose things out of numcards options with randomness extracted from vals
-; returns (cards newvals) cards are always in sorted order
-(defun choose (numcards numchoose randomness)
-    (if (= numchoose 1)
-        (assign (newrandomness card) (divmod randomness numcards)
-            (list (list card) newrandomness)
-        )
-        (assign 
-            half (lsh numchoose -1)
-            (cards1 newrandomness2) (choose numcards half randomness)
-            (cards2 newrandomness3) (choose (- numcards half) (- numchoose half) newrandomness2)
-            (list (mergein cards1 cards2 0) newrandomness3)
-        )
-    )
-)
-
-; like mergein but only calculates the contents of inner with offsets
-; applied and doesn't interleave the contents of outer
-(defun mergeover (outer inner offset)
-    (if (not inner)
-        0
-        (assign first (+ (f inner) offset)
-            (if (not outer)
-                (c first (mergeover 0 (r inner) offset))
-                (if (<= (f outer) first)
-                    (mergeover (r outer) inner (+ offset 1))
-                    (c first (mergeover outer (r inner) offset))
-                )
-            )
-        )
-    )
-)
-
-; slide the things in inner in between the things in outer assuming 
-; things in inner are already bumped up by offset things from outer which 
-; came before
-(defun mergein (outer inner offset)
-    (if (not inner)
-        outer
-        (assign first (+ (f inner) offset)
-            (if (not outer)
-                (c first (mergein 0 (r inner) offset))
-                (if (<= (f outer) first)
-                    (c (f outer) (mergein (r outer) inner (+ offset 1)))
-                    (c first (mergein outer (r inner) offset))
-                )
-            )
-        )
-    )
-)
-
-(defun pull_out_cards (selections cards)
-    (if (not cards)
-        0
-        (if (logand selections 1)
-            (c (f cards) (pull_out_cards (lsh -1 selections) (r cards)))
-            (pull_out_cards (lsh -1 selections) (r cards))
         )
     )
 )

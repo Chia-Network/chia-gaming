@@ -3,6 +3,7 @@
 (import onchain.calpoker.e exposing (program_hash as ehash))
 (import std.assert)
 (import std.shatree)
+(import std.popcount)
 
 ; Alice challenging
 ; state is the cards for both players and alice's card pick commitment
@@ -15,18 +16,11 @@
         (not
             (all
                 (= (strlen bob_picks) 1)
-                (= (onecount bob_picks) 4)
+                (= (popcount bob_picks) 4)
                 (= new_validation_hash (sha256 ehash (shatree (list bob_picks cards alice_commit))))
                 (= max_move_size 18)
             )
         )
-        0
-    )
-)
-
-(defun onecount (mymask)
-    (if mymask
-        (+ (logand mymask 1) (onecount (lsh mymask -1)))
         0
     )
 )

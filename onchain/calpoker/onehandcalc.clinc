@@ -16,69 +16,8 @@
 (import std.map)
 (import std.relops)
 (import std.isthere)
-
-(defun hand_compare (a b)
-    (if (= (f a) (f b))
-        (if (r a)
-            (hand_compare (r a) (r b))
-            0
-        )
-        (- (* 2 (> (f a) (f b))) 1)
-    )
-)
-
-(defun hand< (a b)
-    (= (hand_compare a b) -1)
-)
-
-(defun merge (a b)
-    (if (not a)
-        b
-        (if (not b)
-            a
-            (if (> (f a) (f b))
-                (c (f a) (merge (r a) b))
-                (c (f b) (merge a (r b)))
-            )
-        )
-    )
-)
-
-; Sorts atoms into descending order
-; This is optimized for sorting short lists
-; A more general function would return a list of lists of ascending sizes
-; to be merged
-(defun atomsort ((@ whole_list (first second third . remaining)))
-    (if (not whole_list)
-        0
-        (not (isthere second))
-        whole_list
-        (not (isthere third))
-        (if (> first second)
-            whole_list
-            (list second first)
-        )
-        (merge 
-            (if (> first second)
-                (if (> second third)
-                    (list first second third)
-                    (if (> first third)
-                        (list first third second)
-                        (list third first second)
-                    )
-                )
-                (if (> first third)
-                    (list second first third)
-                    (if (> second third)
-                        (list second third first)
-                        (list third second first)
-                    )
-                )
-            )
-            (atomsort remaining)
-        )
-    )
-)
+(import std.atomsort)
+(import onchain.calpoker.flatten_card)
 
 (defun check_flush (@ cards ((rank1 . suit1) (rank2 . suit2) (rank3 . suit3) (rank4 . suit4) (rank5 . suit5)))
     (logand (= suit1 suit2) (= suit1 suit3) (= suit1 suit4) (= suit1 suit5))
@@ -94,14 +33,6 @@
         (* (= rank2 5) 5)
         0
     )
-)
-
-(defun flatten_card ((rank . suit))
-    (logior (lsh rank 4) suit)
-)
-
-(defun unflatten_card (my_card)
-    (c (lsh my_card -4) (logand my_card 15))
 )
 
 (defun group_by_count_inner (items last count)

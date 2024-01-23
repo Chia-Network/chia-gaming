@@ -1,9 +1,10 @@
 (include *standard-cl-23*)
 
-(import onchain.calpoker.d exposing (program_hash as dhash))
 (import std.assert)
 (import std.shatree)
 (import std.relops)
+(import onchain.calpoker.d exposing (program_hash as dhash))
+(import onchain.calpoker.make_cards)
 
 ; Bob challenging
 ; state is alice's commit and bob's seed
@@ -26,61 +27,3 @@
     )
 )
 
-(defun make_cards (randomness)
-    (assign
-        (handa newrandomness) (choose 52 8 randomness)
-        (handb newrandomness2) (choose (- 52 8) newrandomness)
-        (list handa (mergeover handa handb))
-    )
-)
-
-; pick numchoose things out of numcards options with randomness extracted from vals
-; returns (cards newvals) cards are always in sorted order
-(defun choose (numcards numchoose randomness)
-    (if (= numchoose 1)
-        (assign (newrandomness card) (divmod randomness numcards)
-            (list (list card) newrandomness)
-        )
-        (assign 
-            half (lsh numchoose -1)
-            (cards1 newrandomness2) (choose numcards half randomness)
-            (cards2 newrandomness3) (choose (- numcards half) (- numchoose half) newrandomness2)
-            (list (mergein cards1 cards2 0) newrandomness3)
-        )
-    )
-)
-
-; like mergein but only calculates the contents of inner with offsets
-; applied and doesn't interleave the contents of outer
-(defun mergeover (outer inner offset)
-    (if (not inner)
-        0
-        (assign first (+ (f inner) offset)
-            (if (not outer)
-                (c first (mergeover 0 (r inner) offset))
-                (if (<= (f outer) first)
-                    (mergeover (r outer) inner (+ offset 1))
-                    (c first (mergeover outer (r inner) offset))
-                )
-            )
-        )
-    )
-)
-
-; slide the things in inner in between the things in outer assuming 
-; things in inner are already bumped up by offset things from outer which 
-; came before
-(defun mergein (outer inner offset)
-    (if (not inner)
-        outer
-        (assign first (+ (f inner) offset)
-            (if (not outer)
-                (c first (mergein 0 (r inner) offset))
-                (if (<= (f outer) first)
-                    (c (f outer) (mergein (r outer) inner (+ offset 1)))
-                    (c first (mergein outer (r inner) offset))
-                )
-            )
-        )
-    )
-)

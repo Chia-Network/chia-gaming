@@ -1,3 +1,5 @@
+(import onchain.calpoker.make_card)
+
 (defun split_cards (mask cards)
     (split_cards_inner mask cards 0 0)
 )
@@ -7,8 +9,8 @@
     (if (not cards)
         (list leftcards rightcards)
         (if (logand mask 1)
-            (extract_cards (lsh mask -1) (r cards) leftcards (c (f cards) rightcards))
-            (extract_cards (lsh mask -1) (r cards) (c (f cards) leftcards) rightcards)
+            (split_cards (lsh mask -1) (r cards) leftcards (c (f cards) rightcards))
+            (split_cards (lsh mask -1) (r cards) (c (f cards) leftcards) rightcards)
         )
     )
 )
