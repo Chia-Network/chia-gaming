@@ -1,19 +1,16 @@
 
 ; Peer wire protocol messages
-; Chat - contains a human readable payload, does nothing
 ; Handshake 1
 ;   Launcher coin id
 ;   My pubkey for state coin
 ;   My pubkey for unroll coin
 ;   My pubkey for use in referee
 ;   My puzzle hash for rewards
-;   My stack size
 ; Handshake 2
 ;   My pubkey for state coin
 ;   My pubkey for unroll coin
 ;   My pubkey for use in referee
 ;   My puzzle hash for rewards
-;   My stack size
 ;   Initial unroll half signature
 ; Handshake 3
 ;   Initial unroll half signature
@@ -43,8 +40,6 @@
 ;       Game nonce
 ;       Puzzle solution (whether closes out/new puzzle hash implicit)
 ;       Solution aggsig
-;       Half signature of initiate unroll
-;       Half signature of state rebut
 ; Message
 ;   Nonce
 ;   Message
@@ -57,59 +52,59 @@
 ; Closeout seen on chain
 
 
-; This layer assumes the local wallet always has a proper connection to a wallet.
+; This layer assumes there is always a proper connection to a wallet which is always 
+; connected to a full node
 ; Wallet messages
 ; -> generate offer (funding amount, target puzzle hash, target coin amount)
-; <- offer (bundle, target parent/launcher coin)
+; <- offer (bundle, target parent/launcher coin id)
 ; <- generated offer succeeded
 ; <- generated offer failed
-; -> finish offer (offer, launcher coin, output coin, my contribution)
+; -> finish offer (offer, launcher coin id, output coin puzzle hash, output coin amount, my contribution)
 ; <- offer acceptance succeeded
 ; <- offer acceptance failed
 ; -> register coin interest (coin id, relative height)
 ; <- timeout hit (coin id, relative height)
 ; <- coin spent (coin id, conditions)
-; -> post transaction (transaction, id)
-; <- transaction succeeded (id)
-; <- transaction failed (id)
+; -> spend coin (coin id, puzzle reveal, solution, aggsig)
 
 
 ; the UX has to do its own queries to the wallet to find out about available funds
 ; and full node connectivity status
 ;
 ; UX incoming messages:
-; Start (bankroll size, games)
-; Accept other side bankroll and games
-; Start game (id, contribution, type, human_readable)
+; Start game (id contribution type)
 ; accept (id)
 ; reject (id)
-; move (id, move)
+; move (id move entropy)
 ; shut down
 ;
 ; UX outgoing messages:
-; Other side wants (their bankroll size, shared games)
-; is_acceptable (id, readable)
 ; Game started (id)
-; Game start failed (id)
-; Game update (id, readable)
-; Game ended (id, my split, opponent split)
+; Game start failed (id readable)
+; Game requested (id, contribution, type)
+; Game opponent move (id readable)
+; Game message (id readable)
+; Game ended (id readable my_share)
+; Cleanly shut down
 ; Error (readable)
 
 
-; Game types database format
-; 
+; Game types format
+; identifier is shatree of everything after the handlers
+; (initial_mover_handler initial_waiter_handler whether_needs_pair required_size_factor
+; initial_max_move_size initial_validator initial_validator_hash 
+; initial_state initial_mover_share_proportion)
 
-; returns [(puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)]
+; returns (puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)
 ; First player driver is my turn, second player driver is their turn type
-; Message parsers take (message state amount) and return readable_info
-(defun make_referee_makers (my_turn_driver their_turn_driver whether_paired 
+(defun make_referee_maker (my_turn_driver their_turn_driver 
         initial_max_move_size initial_validator_program initial_validator_program_hash 
-        initial_state initial_mover_share player_contribution
+        initial_state initial_mover_share amount
         timeout player_one_puzzle_hash player_two_puzzle_hash nonce))
 
 ; returns (MOVE readable new_puzzle_hash my_turn_coin_handler message) or
 ;       (ACCEPT readable puzzle_reveal my_share)
-;       (SLASH puzzle_reveal slashing_coin_solution agg_sig) or
+;       (SLASH puzzle_reveal slashing_coin_solution agg_sig) 
 ;       (SLASHED)
 ;       (TIMEOUDOUT my_share)
 ; messages are optional and mostly used for early reveals of pre-commits
@@ -117,7 +112,7 @@
         conditions))
 
 ; returns (MOVE puzzle_reveal coin_solution agg_sig new_puzzle new_puzzle_hash new_coin_handler 
-;       my_share message_parser) or
+;       my_share message_parser) 
 ;       (ACCEPT puzzle_reveal my_share)
 ; In the move case if new_coin_handler is nil the timeout is clean and should be mutually agreeable
 ; message_parser takes (message state amount) and returns readable
@@ -125,35 +120,45 @@
 (defun my_turn_referee_maker (my_inner_puzzle my_inner_solution_maker readable_move entropy))
 
 
-; returns (public_key signer)
-; The signer takes a value to be signed and returns an aggsig
-(defun signer (private_key)
-)
+; returns puzzle
+(defun standard_puzzle (public_key))
 
-; returns a signer which takes a value to be signed and returns an aggsig which 
-; needs to be combined with the rest of the signature
-(defun partial_signer (my_private_key combined_public_key)
-)
-
-(defun add_public_keys (key1 key2)
-)
-
-(defun add_signatures (signature_1 signature_2)
-)
-
-(defun standard_puzzle (public_key)
-)
-
+; returns puzzle_hash
 ; equivalent to (shatree (standard_puzzle public_key)) but much more efficient
-(defun standard_puzzle_hash (public_key)
-)
+(defun standard_puzzle_hash (public_key))
 
-; returns a solution maker which takes a list of conditions and returns (solution aggsig)
-(defun standard_puzzle_solution_maker (public_key signer)
-)
+; returns (solution aggsig)
+(defun standard_solution (private_key coin_id conditions))
+
+; returns (solution aggsig)
+(defun standard_solution_partial (private_key coin_id conditions aggregate_public_key))
+
+; returns signature
+(defun unsafe_sign (private_key value))
+
+; returns signature
+(defun unsafe_sign_partial (private_key value aggregate_public_key))
+
+; returns public_key
+(defun private_to_public_key (mykey))
+
+; returns public_key
+(defun aggregate_public_keys (key1 key2))
+
+; returns signature
+(defun aggregate_signatures (signature_1 signature_2))
 
 ; Miscellaneous
-; -> inform me of local timeout (seconds)
-; <- timeout hit (seconds)
+; -> inform me of local timeout (seconds, id)
+; <- timeout hit (id)
+; -> disconnected
+; <- error/disconnect
 
-; Factory takes (payout puzzle hash, game types database)
+; Factory takes (my_payout_puzzle_hash my_bankroll_size their_bankroll_size game_types_database whether_me_initiate entropy
+;       standard_puzzle standard_puzzle_hash standard_solution standard_solution_partial 
+;       unsafe_sign unsafe_sign_partial private_to_public_key aggregate_public_keys aggregate_signatures)
+
+
+; State
+; handshaking/playing over channel/unrolling/playing on chain
+; 
