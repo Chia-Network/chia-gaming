@@ -3,7 +3,7 @@
 (defun make_cards (randomness)
     (assign
         (handa newrandomness) (choose 52 8 randomness)
-        (handb newrandomness2) (choose (- 52 8) newrandomness)
+        (handb newrandomness2) (choose (- 52 8) 8 newrandomness)
         (list handa (mergeover handa handb))
     )
 )

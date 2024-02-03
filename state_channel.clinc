@@ -1,5 +1,4 @@
 
-(
 ; The actual state channel coin is a vanilla coin which does 2-of-2 aggregation at the signature level and
 ; unrolls to the unrolling puzzle. Unrolls to the unrolling puzzle are signed in tandem with sequence number 
 ; updates to the unrolling puzzle. The keys of the state channel puzzle and the unrolling puzzle don't 
@@ -31,5 +30,4 @@
             (extract_sequence_number (r conditions))
         )
     )
-)
 )

@@ -57,7 +57,7 @@
                     VALIDATION_INFO_HASH)) MOD_HASH)
             conditions (a mover_puzzle solution)
             (assert
-                PREVIOUS_VALIDATION_INFO_HASH
+                VALIDATION_INFO_HASH
                 (<= (strlen MOVE) MAX_MOVE_SIZE)
                 (<= new_mover_share AMOUNT)
                 (>= new_mover_share 0)

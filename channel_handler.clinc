@@ -85,6 +85,7 @@
 ; Game opponent move (id readable)
 ; Game message (id readable)
 ; Game ended (id readable my_share)
+; Unroll to chain
 ; Cleanly shut down
 ; Error (readable)
 
@@ -121,11 +122,11 @@
 
 
 ; returns puzzle
-(defun standard_puzzle (public_key))
+(defun make_standard_puzzle (public_key))
 
 ; returns puzzle_hash
 ; equivalent to (shatree (standard_puzzle public_key)) but much more efficient
-(defun standard_puzzle_hash (public_key))
+(defun make_standard_puzzle_hash (public_key))
 
 ; returns (solution aggsig)
 (defun standard_solution (private_key coin_id conditions))
@@ -154,8 +155,8 @@
 ; -> disconnected
 ; <- error/disconnect
 
-; Factory takes (my_payout_puzzle_hash my_bankroll_size their_bankroll_size game_types_database whether_me_initiate entropy
-;       standard_puzzle standard_puzzle_hash standard_solution standard_solution_partial 
+; Factory takes (my_payout_puzzle_hash my_bankroll_size their_bankroll_size game_types whether_me_initiate entropy
+;       make_standard_puzzle make_standard_puzzle_hash standard_solution standard_solution_partial 
 ;       unsafe_sign unsafe_sign_partial private_to_public_key aggregate_public_keys aggregate_signatures)
 
 
