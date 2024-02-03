@@ -1,2 +1,2 @@
 
-(defun li x x)
+(defun-inline li x x)

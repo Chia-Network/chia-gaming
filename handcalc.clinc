@@ -1,8 +1,8 @@
 
 ; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
 ; suits are 1-4 with no particular labelling
-; takes a list of cards (rank . suit) and returns the value of the best poker 
-; hand which can be made with them
+; takes a list of cards (rank . suit) and returns a bitfield of 
+; which cards to include to make the best possible hand
 ; doesn't work for ten or more cards if there are multiple flushes
 ; all sorting is done highest to lowest
 
@@ -68,14 +68,14 @@
 )
 
 (defun find_straight_flush_indices (flush_suit straight_flush_high (@ cards ((first_rank . first_suit) . remaining)))
-  (if (not cards)
+    (if (not cards)
         0
         (assign
             straight_to_ace_match
                 (logand
                     (= straight_flush_high 5)
                     (= first_rank 14)
-                 )
+                )
 
             rank_in_range
                 (logand
@@ -163,7 +163,7 @@
 (defun number_cards (num cards)
     (if cards
         (c (c num (f cards)) (number_cards (+ num 1) (r cards)))
-        ()
+        0
     )
 )
 

@@ -7,7 +7,7 @@
 (import onchain.referee exposing (program as referee) (program_hash as referee_hash))
 (import onchain.game_codes)
 
-; returns [(puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)]
+; returns (puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)
 ; First player driver is my turn, second player driver is their turn type
 ; My turn driver takes (readable_move amount state entropy) and returns
 ;       (move validation_program validation_program_hash new_state max_move_size mover_share waiting_driver
@@ -20,38 +20,26 @@
 ;       (MAKE_MOVE readable_info moving_driver message) or
 ;       (ACCEPT readable_info puzzle_reveal my_share) or
 ;       (SLASH evidence aggsig)
-(defun make_referee_makers (my_turn_driver their_turn_driver whether_paired
+(defun make_referee_maker (my_turn_driver their_turn_driver 
         initial_max_move_size initial_validator_program initial_validator_program_hash
-        initial_state initial_mover_share player_contribution
+        initial_state initial_mover_share amount
         timeout player_one_puzzle_hash player_two_puzzle_hash nonce)
     (assign
-        amount (+ player_contribution player_contribution)
-        one_maker (lambda ((& initial_max_move_size initial_validator_program initial_validator_program_hash
-            initial_state initial_mover_share my_turn_driver their_turn_driver nonce timeout player_one_puzzle_hash player_two_puzzle_hash)
-            first_puzzle_hash second_puzzle_hash amount)
-            (assign
-                initial_validation_info_hash (sha256 initial_validator_program_hash (shatree initial_state))
-                initial_puzzle_hash (curry_unhashed_args referee_hash player_one_puzzle_hash player_two_puzzle_hash timeout
-                    amount referee_hash nonce 0 initial_max_move_size initial_validation_info_hash
-                    initial_mover_share 0)
-                initial_puzzle (curry referee player_one_puzzle_hash player_two_puzzle_hash timeout
-                    amount referee_hash nonce 0 initial_max_move_size initial_validation_info_hash
-                    initial_mover_share 0)
-                first_player_maker (curry my_turn_referee_maker initial_puzzle player_one_puzzle_hash
-                    player_two_puzzle_hash amount timeout nonce 0 initial_validation_info_hash initial_mover_share
-                    initial_state my_turn_driver)
-                second_player_maker (curry their_turn_referee_maker player_two_puzzle_hash player_one_puzzle_hash amount
-                    timeout nonce 0 initial_validation_info_hash initial_mover_share initial_max_move_size initial_puzzle
-                    initial_puzzle_hash initial_state their_turn_driver)
-                (li initial_puzzle_hash amount first_player_maker second_player_maker initial_puzzle
-                    initial_mover_share)
-            )
-        )
-        (if whether_paired
-            (li (a one_maker (li player_one_puzzle_hash player_two_puzzle_hash player_contribution))
-                (a one_maker (li player_two_puzzle_hash player_one_puzzle_hash player_contribution)))
-            (li (a one_maker (li player_one_puzzle_hash player_two_puzzle_hash amount)))
-        )
+        initial_validation_info_hash (sha256 initial_validator_program_hash (shatree initial_state))
+        initial_puzzle_hash (curry_unhashed_args referee_hash player_one_puzzle_hash player_two_puzzle_hash timeout
+            amount referee_hash nonce 0 initial_max_move_size initial_validation_info_hash
+            initial_mover_share 0)
+        initial_puzzle (curry referee player_one_puzzle_hash player_two_puzzle_hash timeout
+            amount referee_hash nonce 0 initial_max_move_size initial_validation_info_hash
+            initial_mover_share 0)
+        first_player_maker (curry my_turn_referee_maker initial_puzzle player_one_puzzle_hash
+            player_two_puzzle_hash amount timeout nonce 0 initial_validation_info_hash initial_mover_share
+            initial_state my_turn_driver)
+        second_player_maker (curry their_turn_referee_maker player_two_puzzle_hash player_one_puzzle_hash amount
+            timeout nonce 0 initial_validation_info_hash initial_mover_share initial_max_move_size initial_puzzle
+            initial_puzzle_hash initial_state their_turn_driver)
+        (li initial_puzzle_hash amount first_player_maker second_player_maker initial_puzzle
+            initial_mover_share)
     )
 )
 
@@ -59,7 +47,7 @@
 ;       (ACCEPT readable puzzle_reveal my_share)
 ;       (SLASH puzzle_reveal slashing_coin_solution agg_sig) or
 ;       (SLASHED)
-;       (TIMEOUDOUT my_share)
+;       (TIMEDOUT my_share)
 ; messages are optional and mostly used for early reveals of pre-commits
 (defun their_turn_referee_maker (MY_INNER_PUZZLE_HASH THEIR_INNER_PUZZLE_HASH AMOUNT TIMEOUT NONCE MOVE PREV_VALIDATION_INFO_HASH
         NEW_VALIDATION_INFO_HASH MOVER_SHARE MAX_MOVE_SIZE VALIDATION_PROGRAM VALIDATION_PROGRAM_HASH

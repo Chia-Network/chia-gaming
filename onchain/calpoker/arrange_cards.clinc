@@ -1,5 +1,7 @@
 (import onchain.calpoker.make_card)
 
+(import std.popcount)
+
 (defun split_cards (mask cards)
     (split_cards_inner mask cards 0 0)
 )
@@ -15,12 +17,18 @@
     )
 )
 
-(defun pull_out_cards (selections cards)
+(defun pull_out_cards_inner (selections cards)
     (if (not cards)
         0
         (if (logand selections 1)
             (c (make_card (f cards)) (pull_out_cards (lsh -1 selections) (r cards)))
             (pull_out_cards (lsh -1 selections) (r cards))
         )
+    )
+)
+
+(defun pull_out_cards args
+    (assert (= (popcount (f args)) 5)
+        (pull_out_cards_inner &rest args)
     )
 )
