@@ -28,7 +28,7 @@
 ;   Nonce
 ; Reject Proposal
 ;   Nonce
-; Request rejection of proposal - requires fast response
+; Request rejection of proposal
 ;   Nonce
 ; Request potato - requires fast response
 ; Give potato
@@ -50,22 +50,32 @@
 ; Finish closeout
 ;   Half signature of direct payout
 ; Closeout seen on chain
+;
+; Incoming
+; received message from peer (message)
+;
+; Outgoing
+; send message to peer (message)
 
 
 ; This layer assumes there is always a proper connection to a wallet which is always 
 ; connected to a full node
 ; Wallet messages
-; -> generate offer (funding amount, target puzzle hash, target coin amount)
-; <- offer (bundle, target parent/launcher coin id)
-; <- generated offer succeeded
-; <- generated offer failed
-; -> finish offer (offer, launcher coin id, output coin puzzle hash, output coin amount, my contribution)
-; <- offer acceptance succeeded
-; <- offer acceptance failed
-; -> register coin interest (coin id, relative height)
-; <- timeout hit (coin id, relative height)
-; <- coin spent (coin id, conditions)
-; -> spend coin (coin id, puzzle reveal, solution, aggsig)
+;
+; Incoming
+; offer (bundle launcher_coin_id)
+; generated offer succeeded
+; generated offer failed
+; offer acceptance succeeded
+; offer acceptance failed
+; timeout hit (coin_id)
+; coin spent (coin_id conditions)
+;
+; Outgoing
+; generate offer (my_funding_amount target_puzzle_hash target_amount)
+; finish offer (offer launcher_coin_id target_puzzle_hash target_amount my_contribution)
+; register coin interest (coin_id relative_height_timelock)
+; spend coin (coin_id puzzle_reveal solution aggsig)
 
 
 ; the UX has to do its own queries to the wallet to find out about available funds
@@ -81,20 +91,40 @@
 ; UX outgoing messages:
 ; Game started (id)
 ; Game start failed (id readable)
-; Game requested (id, contribution, type)
+; Game requested (id contribution type)
 ; Game opponent move (id readable)
 ; Game message (id readable)
 ; Game ended (id readable my_share)
-; Unroll to chain
-; Cleanly shut down
-; Error (readable)
 
+; Miscellaneous
+;
+; Incoming
+; timeout hit (id)
+;
+; Outgoing
+; inform me of local timeout (id seconds)
+; error (error_type message)
+; shutdown complete (whether_clean)
 
 ; Game types format
 ; identifier is shatree of everything after the handlers
 ; (initial_mover_handler initial_waiter_handler whether_needs_pair required_size_factor
 ; initial_max_move_size initial_validator initial_validator_hash 
 ; initial_state initial_mover_share_proportion)
+
+; Factory takes (my_payout_puzzle_hash my_bankroll_size their_bankroll_size game_types whether_me_initiate entropy)
+
+
+; State
+; whether I have the potato
+; whether waiting for potato (timeout)
+; my pending proposals
+; my next proposal id
+; their pending poposals
+; their next proposal id
+; my moves backlog
+; 
+
 
 ; returns (puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)
 ; First player driver is my turn, second player driver is their turn type
@@ -109,7 +139,7 @@
 ;       (SLASHED)
 ;       (TIMEOUDOUT my_share)
 ; messages are optional and mostly used for early reveals of pre-commits
-(defun their_turn_referee_maker (my_inner_puzzle my_inner_solution_maker my_target_puzzle 
+(defun their_turn_referee_maker (my_private_key my_target_puzzle 
         conditions))
 
 ; returns (MOVE puzzle_reveal coin_solution agg_sig new_puzzle new_puzzle_hash new_coin_handler 
@@ -118,7 +148,7 @@
 ; In the move case if new_coin_handler is nil the timeout is clean and should be mutually agreeable
 ; message_parser takes (message state amount) and returns readable
 ; my_inner_solution_maker takes a shatree value of conditions and returns (solution aggsig)
-(defun my_turn_referee_maker (my_inner_puzzle my_inner_solution_maker readable_move entropy))
+(defun my_turn_referee_maker (my_private_key readable_move entropy))
 
 
 ; returns puzzle
@@ -149,17 +179,16 @@
 ; returns signature
 (defun aggregate_signatures (signature_1 signature_2))
 
-; Miscellaneous
-; -> inform me of local timeout (seconds, id)
-; <- timeout hit (id)
-; -> disconnected
-; <- error/disconnect
-
-; Factory takes (my_payout_puzzle_hash my_bankroll_size their_bankroll_size game_types whether_me_initiate entropy
-;       make_standard_puzzle make_standard_puzzle_hash standard_solution standard_solution_partial 
-;       unsafe_sign unsafe_sign_partial private_to_public_key aggregate_public_keys aggregate_signatures)
 
 
-; State
-; handshaking/playing over channel/unrolling/playing on chain
-; 
+; Game Manager calls
+; As long as nonces are unique and their_puzzle_hash and my_puzzle_hash are different every 
+; initial puzzle_hash is guaranteed to be unique and should be used as the identifier of that game
+; Make coins (template player_contribution me_initiate nonce their_puzzle_hash my_private_key my_target_puzzle)
+; returns [(puzzle_hash amount readable handler)]
+;
+; handler calls
+; make move (readable entropy) returns (puzzle_reveal solution aggsig new_puzzle_hash
+;    new_puzzle timeout_time timeout_solution my_timeout_share new_handler)
+; coin spent (conditions) returns (SLASH puzzle_reveal aggsig) or (TIMEDOUT my_share) or 
+;    (MOVE readable message new_handler new_puzzle_hash new_puzzle timeout_time timeout_solution my_timeout_share)
