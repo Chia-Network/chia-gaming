@@ -9,7 +9,7 @@
 (import std.permutations)
 (import std.last)
 (import std.busy)
-(import onchain.calpoker.onehandcalc exposing onehandcalc atomsort)
+(import onchain.calpoker.onehandcalc exposing atomsort)
 
 (defun try_list (mylist newlist)
     (assert (deep= (print 'result' (atomsort (print 'about to sort' newlist))) mylist) 0)
