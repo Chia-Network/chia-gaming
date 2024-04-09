@@ -60,9 +60,10 @@
 ;       new puzzle hash
 ;       state_channel_half_signature
 ;       unroll_half_signature
-;       contribution
-;       game_info
-;       returns error or ([id], new state)
+;       my contribution
+;       their contribution
+;       [(amount, game_handler, is_my_turn, validation puzzle, state, inital_move, max_move_size, mover_share)]
+;       returns error or (new_state, [id])
 ; received potato clean shutdown
 ;       non_potato_state
 ;       state_channel_half_signature
@@ -75,8 +76,9 @@
 ;
 ; send potato start game
 ;       potato_state
-;       contribution
-;       game_info
+;       my contribution
+;       their contribution
+;       [(amount, game_handler, is_my_turn, timeout, validation puzzle, state, inital_move, max_move_size, mover_share)]
 ;       returns (no_potato_state, new_puzzle_hash, channel_half_signature, unroll_half_signature, [id])
 ; send potato move 
 ;       potato_state
@@ -105,12 +107,6 @@
 ;       state
 ;       conditions
 ;       returns error or (my_clean_balance, their_clean_balance, [(id, coin_id, game_coin)], [cancelled_game_id])
-
-; Game info format
-; higher layer is assumed to have confirmed agreement on everything after handlers
-; (initial_mover_handler initial_waiter_handler whether_makes_pair required_size_factor
-; initial_max_move_size initial_validator initial_validator_hash 
-; initial_state initial_mover_share_proportion)
 
 ; Game coin calls
 ;
@@ -157,31 +153,29 @@
 
 
 
-
-; referee factory takes (amount game_info local_initiate timeout my_private_key 
-;       their_puzzle_hash nonce) and returns 
-;       [(amount, referee_maker, is_my_turn, puzzle_hash)]
+; referee factory takes (amount, game_handler, is_my_turn, timeout, validation puzzle, state, 
+;       inital_move, max_move_size mover_share
+;       local_initiate my_private_key their_puzzle_hash nonce) and returns (state, puzzle_hash)
 ; 
-; my turn referee maker off chain takes (readable_move entropy) and returns (their_turn_referee_maker 
-;       puzzle_hash move validation_info_hash max_move_size mover_share message_parser)
-; accepter off chain takes () and returns (my_share)
-; my turn referee maker on chain takes takes (readable_move coinid entropy) and returns (their_turn_referee_maker 
-;       puzzle_reveal solution aggsig new_puzzle_hash)
-; make timeout on chain takes () and returns (puzzle_reveal solution aggsig my_share)
+; my_turn_move_off_chain takes (readable_move entropy) and returns (their_turn_referee_maker 
+;       puzzle_hash move validation_info_hash max_move_size mover_share)
+; my_turn_accept_off_chain takes () and returns (my_share)
+; my_turn_move_on_chain takes (readable_move coinid entropy) and returns (their_turn_referee_maker 
+;       puzzle_reveal solution aggsig new_coin_id)
+; my_turn_timeout_on_chain takes () and returns (puzzle_reveal solution aggsig my_share)
 ;
-; their turn referee maker off chain takes (puzzle_hash move validation_info_hash 
+; their_turn_move_off_chain takes (puzzle_hash move validation_info_hash 
 ;       max_move_size mover_share) and returns error or 
 ;       (my_turn_referee_maker readable_move)
-; their turn timeout off chain takes (my_share) and returns error or nil
-; their turn referee maker on chain takes (coinid conditions) and returns error or
+; their_turn_off_chain_message_arrived takes (message) and returns error or readable
+; their_turn_timeout_off_chain takes (my_share) and returns error or nil
+; their_turn_moved_on_chain takes (coinid conditions) and returns error or
 ;       (TIMEDOUT my_share) or
-;       (MAKE_MOVE my_turn_referee_maker readable puzzle_hash message) or
+;       (MAKE_MOVE my_turn_referee_maker readable puzzle_hash) or
 ;       (SLASH puzzle_reveal solution aggsig)
-; their turn make timeout on chain takes () and returns (puzzle_reveal solution aggsig my_share)
+; their_turn_timeout_on_chain takes () and returns (puzzle_reveal solution aggsig my_share)
 
 
-; game factory takes (amount game_info local_initiate) and returns [(amount, driver, is_my_turn, 
-;       validation_program, state, max_move_size, mover_share)]
 ; My turn driver takes (readable_move entropy) and returns
 ;       (waiting_driver move validation_program state max_move_size mover_share
 ;       message_parser)
