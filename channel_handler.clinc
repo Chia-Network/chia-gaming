@@ -1,154 +1,196 @@
 
-; Peer wire protocol messages
-; Handshake 1
-;   Launcher coin id
-;   My pubkey for state coin
-;   My pubkey for unroll coin
-;   My pubkey for use in referee
-;   My puzzle hash for rewards
-; Handshake 2
-;   My pubkey for state coin
-;   My pubkey for unroll coin
-;   My pubkey for use in referee
-;   My puzzle hash for rewards
-;   Initial unroll half signature
-; Handshake 3
-;   Initial unroll half signature
-; Handshake 4
-;   Offer
-; Handshake 5
-;   Offer completion
-; Handshake 6
-;   Ack seeing on chain
-; Handshake 7
-;   Ack seeing on chain
-; Propose game
-;   Game identifier
-;   Player contribution
-;   Nonce
-; Reject Proposal
-;   Nonce
-; Request rejection of proposal
-;   Nonce
-; Request potato - requires fast response
-; Give potato
-;   Half signature of initiate unroll
-;   Half signature of state rebut
-;   Accept game proposal - requires fast response
-;       proposal nonce
-;   make move in game
-;       Game nonce
-;       Puzzle solution (whether closes out/new puzzle hash implicit)
-;       Solution aggsig
-; Message
-;   Nonce
-;   Message
-; Initiate closeout
-;   Can only be done when there are no pending games
-;   Can only be done when posessing the potato
-;   Half signature of direct payout
-; Finish closeout
-;   Half signature of direct payout
-; Closeout seen on chain
+; Higher layer is cognizant of who has the potato, out of game balances, and 
+; (id, amount, turn) for games in progress as well as having UX for them. It's responsible for 
+; queueing up actions until after we have the potato
+; Higher layer is also responsible for making sure there's a meeting of the minds before attempting to 
+; start a game and checking that the game start attempt is one that it already agreed to.
 ;
-; Incoming
-; received message from peer (message)
+; make pubkeys
+;       entropy
+;       returns (my public key for state coin, my public key for unroll coin, my public key for referees)
+; get handshake info
+;       entropy
+;       Launcher coin id
+;       whether we initiate
+;       My puzzle hash for rewards
+;       their pubkey for state coin
+;       their pubkey for unroll coin
+;       their pubkey for use in referee
+;       their puzzle hash for rewards
+;       my contribution
+;       their contribution
+;       returns puzzle_hash, initial_channel_half_signature
+; make_state
+;       entropy
+;       Launcher coin id
+;       whether we initiate
+;       My puzzle hash for rewards
+;       their pubkey for state coin
+;       their pubkey for unroll coin
+;       their pubkey for use in referee
+;       their puzzle hash for rewards
+;       my contribution
+;       their contribution
+;       their_initial_channel_half_signature
+;       returns error or state
 ;
-; Outgoing
-; send message to peer (message)
+; received potato vanilla
+;       non_potato_state
+;       new_puzzle_hash
+;       state_channel_half_signature
+;       unroll_half_signature
+;       returns error or potato_state
+; received potato with move
+;       non_potato_state
+;       new puzzle hash
+;       state_channel_half_signature
+;       unroll_half_signature
+;       id 
+;       move
+;       returns error or (potato_state, readable)
+; received potato with accept
+;       non_potato_state
+;       new puzzle hash
+;       state_channel_half_signature
+;       unroll_half_signature
+;       id
+;       returns error or (potato_state, my_share)
+; received potato with game addition
+;       non_potato_state
+;       new puzzle hash
+;       state_channel_half_signature
+;       unroll_half_signature
+;       contribution
+;       game_info
+;       returns error or ([id], new state)
+; received potato clean shutdown
+;       non_potato_state
+;       state_channel_half_signature
+;       returns error or (channel puzzle reveal, solution, aggsig)
+; received message from peer
+;       non_potato_state
+;       id
+;       message
+;       returns error or readable
+;
+; send potato start game
+;       potato_state
+;       contribution
+;       game_info
+;       returns (no_potato_state, new_puzzle_hash, channel_half_signature, unroll_half_signature, [id])
+; send potato move 
+;       potato_state
+;       id
+;       readable_move
+;       returns (no_potato_state, new_puzzle_hash, channel_half_signature, unroll_half_signature, move)
+; send potato accept
+;       potato_state
+;       id 
+;       returns (no_potato_state, new_puzzle_hash, channel_half_signature, unroll_half_signature, split)
+; send potato nil 
+;       potato_state
+;       returns (no_potato_state, new_puzzle_hash, channel_half_signature, unroll_half_signature)
+; send potato clean shutdown
+;       potato_state
+;       returns channel_half_signature
+;
+; start unroll
+;       state
+;       returns (channel_puzzle, solution, aggsig)
+; state channel coin spent
+;       state
+;       conditions
+;       returns error or (unroll coin id, unroll coin puzzle reveal, solution, aggsig, whether has timeout)
+; unroll coin spent
+;       state
+;       conditions
+;       returns error or (my_clean_balance, their_clean_balance, [(id, coin_id, game_coin)], [cancelled_game_id])
 
-
-; This layer assumes there is always a proper connection to a wallet which is always 
-; connected to a full node
-; Wallet messages
-;
-; Incoming
-; offer (bundle launcher_coin_id)
-; generated offer succeeded
-; generated offer failed
-; offer acceptance succeeded
-; offer acceptance failed
-; timeout hit (coin_id)
-; coin spent (coin_id conditions)
-;
-; Outgoing
-; generate offer (my_funding_amount target_puzzle_hash target_amount)
-; finish offer (offer launcher_coin_id target_puzzle_hash target_amount my_contribution)
-; register coin interest (coin_id relative_height_timelock)
-; spend coin (coin_id puzzle_reveal solution aggsig)
-
-
-; the UX has to do its own queries to the wallet to find out about available funds
-; and full node connectivity status
-;
-; UX incoming messages:
-; Start game (id contribution type)
-; accept (id)
-; reject (id)
-; move (id move entropy)
-; shut down
-;
-; UX outgoing messages:
-; Game started (id)
-; Game start failed (id readable)
-; Game requested (id contribution type)
-; Game opponent move (id readable)
-; Game message (id readable)
-; Game ended (id readable my_share)
-
-; Miscellaneous
-;
-; Incoming
-; timeout hit (id)
-;
-; Outgoing
-; inform me of local timeout (id seconds)
-; error (error_type message)
-; shutdown complete (whether_clean)
-
-; Game types format
-; identifier is shatree of everything after the handlers
-; (initial_mover_handler initial_waiter_handler whether_needs_pair required_size_factor
+; Game info format
+; higher layer is assumed to have confirmed agreement on everything after handlers
+; (initial_mover_handler initial_waiter_handler whether_makes_pair required_size_factor
 ; initial_max_move_size initial_validator initial_validator_hash 
 ; initial_state initial_mover_share_proportion)
 
-; Factory takes (my_payout_puzzle_hash my_bankroll_size their_bankroll_size game_types whether_me_initiate entropy)
+; Game coin calls
+;
+; make move (my_turn_state readable) returns (new_state puzzle_reveal solution aggsig new_coin_id)
+; make_timeout_my_move (my_turn_state) returns (puzzle_reveal solution aggsig my_balance 
+;       payback_puzzle_reveal solution aggsig)
+;
+; coin spent (their_turn_state conditions) returns error or 
+;       (MOVED new_state new_coin_id readable) or
+;       (TIMEDOUT my_share) or 
+;       (SLASH new_coin_id puzzle_reveal solution aggsig)
+; make_timeout_their_move (their_turn_state) returns (puzzle_reveal solution aggsig 
+;       my_balance payback_puzzle_reveal solution aggsig)
 
 
-; State
-; whether I have the potato
-; whether waiting for potato (timeout)
-; my pending proposals
-; my next proposal id
-; their pending poposals
-; their next proposal id
-; my moves backlog
+; Potato State
+; state channel coin id
+; current state number
+; current games: (id puzzle_hash amount coin_handler)
+; my out of game balance
+; opponent out of game balance
+; my channel coin private key
+; my unroll coin private key
+; my referee private key
+; my reward puzzle hash
+; opponent channel coin public key
+; opponent unroll coin public key
+; opponent referee public key
+; opponent reward puzzle hash
+; entropy
+; Solution of state channel coin
+; Signature of unroll of state channel coin
+; Solution of unroll coin
+; Signature of unroll of unroll coin
+
+; Not Potato State
+; current state number
+; previous state
+; my last move. Nil if just started game/sent potato
+; game id just started. Only non-nil if we just made a game start
+; current games: (id balance puzzle_hash amount coin_handler)
+; my out of game balance
+; opponent out of game balance
+
+
+
+
+; referee factory takes (amount game_info local_initiate timeout my_private_key 
+;       their_puzzle_hash nonce) and returns 
+;       [(amount, referee_maker, is_my_turn, puzzle_hash)]
 ; 
+; my turn referee maker off chain takes (readable_move entropy) and returns (their_turn_referee_maker 
+;       puzzle_hash move validation_info_hash max_move_size mover_share message_parser)
+; accepter off chain takes () and returns (my_share)
+; my turn referee maker on chain takes takes (readable_move coinid entropy) and returns (their_turn_referee_maker 
+;       puzzle_reveal solution aggsig new_puzzle_hash)
+; make timeout on chain takes () and returns (puzzle_reveal solution aggsig my_share)
+;
+; their turn referee maker off chain takes (puzzle_hash move validation_info_hash 
+;       max_move_size mover_share) and returns error or 
+;       (my_turn_referee_maker readable_move)
+; their turn timeout off chain takes (my_share) and returns error or nil
+; their turn referee maker on chain takes (coinid conditions) and returns error or
+;       (TIMEDOUT my_share) or
+;       (MAKE_MOVE my_turn_referee_maker readable puzzle_hash message) or
+;       (SLASH puzzle_reveal solution aggsig)
+; their turn make timeout on chain takes () and returns (puzzle_reveal solution aggsig my_share)
 
 
-; returns (puzzle_hash amount first_player_handler second_player_handler initial_puzzle initial_first_player_share)
-; First player driver is my turn, second player driver is their turn type
-(defun make_referee_maker (my_turn_driver their_turn_driver 
-        initial_max_move_size initial_validator_program initial_validator_program_hash 
-        initial_state initial_mover_share amount
-        timeout player_one_puzzle_hash player_two_puzzle_hash nonce))
+; game factory takes (amount game_info local_initiate) and returns [(amount, driver, is_my_turn, 
+;       validation_program, state, max_move_size, mover_share)]
+; My turn driver takes (readable_move entropy) and returns
+;       (waiting_driver move validation_program state max_move_size mover_share
+;       message_parser)
+; Message parser takes (message) and returns readable_info
+;
+; their turn driver takes (move validation_info_hash max_move_size mover_share) and returns
+;       (MAKE_MOVE moving_driver readable_info message) or
+;       (SLASH evidence aggsig)
 
-; returns (MOVE readable new_puzzle_hash my_turn_coin_handler message) or
-;       (ACCEPT readable puzzle_reveal my_share)
-;       (SLASH puzzle_reveal slashing_coin_solution agg_sig) 
-;       (SLASHED)
-;       (TIMEOUDOUT my_share)
-; messages are optional and mostly used for early reveals of pre-commits
-(defun their_turn_referee_maker (my_private_key my_target_puzzle 
-        conditions))
-
-; returns (MOVE puzzle_reveal coin_solution agg_sig new_puzzle new_puzzle_hash new_coin_handler 
-;       my_share message_parser) 
-;       (ACCEPT puzzle_reveal my_share)
-; In the move case if new_coin_handler is nil the timeout is clean and should be mutually agreeable
-; message_parser takes (message state amount) and returns readable
-; my_inner_solution_maker takes a shatree value of conditions and returns (solution aggsig)
-(defun my_turn_referee_maker (my_private_key readable_move entropy))
 
 
 ; returns puzzle
@@ -178,17 +220,3 @@
 
 ; returns signature
 (defun aggregate_signatures (signature_1 signature_2))
-
-
-
-; Game Manager calls
-; As long as nonces are unique and their_puzzle_hash and my_puzzle_hash are different every 
-; initial puzzle_hash is guaranteed to be unique and should be used as the identifier of that game
-; Make coins (template player_contribution me_initiate nonce their_puzzle_hash my_private_key my_target_puzzle)
-; returns [(puzzle_hash amount readable handler)]
-;
-; handler calls
-; make move (readable entropy) returns (puzzle_reveal solution aggsig new_puzzle_hash
-;    new_puzzle timeout_time timeout_solution my_timeout_share new_handler)
-; coin spent (conditions) returns (SLASH puzzle_reveal aggsig) or (TIMEDOUT my_share) or 
-;    (MOVE readable message new_handler new_puzzle_hash new_puzzle timeout_time timeout_solution my_timeout_share)
