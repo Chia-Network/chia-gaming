@@ -27,7 +27,7 @@
 ; state is empty
 ; local_move is nil
 ; makes a move using entropy
-(defun calpoker_alice_driver_a (local_move amount state entropy)
+(defun calpoker_alice_driver_a (local_move amount state split max_move_size entropy)
     (assign
         preimage (substr entropy 0 16)
         image (sha256 preimage)
@@ -61,7 +61,7 @@
 
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
-(defun calpoker_alice_driver_c (PREIMAGE local_move amount (alice_commit bob_seed) entropy)
+(defun calpoker_alice_driver_c (PREIMAGE local_move amount (alice_commit bob_seed) split max_move_size entropy)
     (assign
         cards (make_cards (sha256 PREIMAGE bob_seed amount))
         my_picks (bitify local_move)
@@ -114,7 +114,7 @@
 
 ; state is alice_commit
 ; move is bob_seed
-(defun calpoker_bob_driver_b (local_move amount alice_commit entropy)
+(defun calpoker_bob_driver_b (local_move amount alice_commit split max_move_size entropy)
     (assign
         seed (substr entropy 0 16)
         (list
@@ -187,11 +187,11 @@
         bob_hand_value (onehandcalc (pull_out_cards bob_picks bob_all_cards))
         win_result (list_compare alice_hand_value bob_hand_value)
         correct_split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
-        (if (< split correct_split)
+        (if (!= split correct_split)
             (list SLASH bob_picks)
-            (list ACCEPT
+            (list MAKE_MOVE
                 (list alice_selects bob_picks alice_picks
-                    bob_hand_value alice_hand_value (- 0 win_result))
+                    bob_hand_value alice_hand_value split)
             )
         )
     )
