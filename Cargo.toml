@@ -1,0 +1,17 @@
+[package]
+name = "chia_gaming"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clvm_tools_rs = "0.1.41"
+clvmr = { version = "0.6.1", features = ["pre-eval"] }
+serde_json = "1.0"
+
+[lib]
+name = "chia_gaming"
+create-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "chia-gaming"
+path = "src/cmd/main.rs"
