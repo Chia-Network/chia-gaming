@@ -6,130 +6,59 @@
 ; Higher layer is also responsible for making sure there's a meeting of the minds before attempting to 
 ; start a game and checking that the game start attempt is one that it already agreed to.
 ;
-; make pubkeys
-;       entropy
-;       returns (my public key for state coin, my public key for unroll coin, my public key for referee and reward coins)
-; get handshake info
-;       entropy
-;       Launcher coin id
-;       whether we initiate
-;       their pubkey for state coin
-;       their pubkey for unroll coin
-;       their pubkey for use in referee and reward coins
-;       my contribution
-;       their contribution
-;       returns initial_puzzle_hash, initial_channel_half_signature
-; make_state
-;       entropy
-;       Launcher coin id
-;       whether we initiate
-;       their pubkey for state coin
-;       their pubkey for unroll coin
-;       their pubkey for use in referee
-;       my contribution
-;       their contribution
-;       their_initial_channel_half_signature
-;       returns error or state
+; ChannelHandler()
+; to handshake Alice and Bob agree on parameters, then exchange pubkeys, then exchange initial unrolls, 
+; and finally trade an offer and acceptance of creating the state channel
 ;
-; send potato nil 
-;       potato_state
-;       returns (no_potato_state, channel_half_signature, unroll_half_signature)
-; received potato nil
-;       non_potato_state
-;       state_channel_half_signature
-;       unroll_half_signature
-;       returns error or potato_state
-; send potato move 
-;       potato_state
-;       id
-;       readable_move 
-;       returns (no_potato_state, channel_half_signature, unroll_half_signature, move, validation_info_hash,
-;               max_move_size, mover_share)
-; received potato with move
-;       non_potato_state
-;       state_channel_half_signature
-;       unroll_half_signature
-;       id 
-;       move 
-;       validation_info_hash 
-;       max_move_size 
-;       mover_share
-;       returns error or (potato_state, readable, message)
-; received message
-;       non_potato_state
-;       id
-;       message
-;       returns error or readable
-; send potato accept
-;       potato_state
-;       id 
-;       returns (no_potato_state, channel_half_signature, unroll_half_signature, my_share)
-; received potato accept
-;       non_potato_state
-;       state_channel_half_signature
-;       unroll_half_signature
-;       id
-;       returns error or (potato_state, my_share)
-; send potato start game
-;       potato_state
-;       my contribution
-;       their contribution
-;       [(id, amount, game_handler, is_my_turn, timeout, initial_validation_puzzle, initial_validation_puzzle_hash, 
-;               initial_state, inital_move, initial_max_move_size, initial_mover_share)]
-;       returns (no_potato_state, channel_half_signature, unroll_half_signature)
-; received potato start game
-;       non_potato_state
-;       state_channel_half_signature
-;       unroll_half_signature
-;       my contribution
-;       their contribution
-;       [(id, amount, game_handler, is_my_turn, timeout, initial_validation_puzzle, initial_validation_puzzle_hash, 
-;               initial_state, inital_move, initial_max_move_size, initial_mover_share)]
-;       returns error or (new_state)
-; send potato clean shutdown
-;       potato_state
-;       conditions
-;       returns channel_half_signature
-; received potato clean shutdown
-;       non_potato_state
-;       conditions
-;       state_channel_half_signature
-;       returns error or (channel_puzzle_reveal, solution, aggsig)
+; (my_state_coin_pubkey, my_unroll_coin_pubkey, my_referee_puzzle_hash) get_pubkeys()
 ;
+; (initial_puzzle_hash, my_initial_channel_half_signature) initiate(launcher_coin_id, whether_we_start, 
+;       their_state_pubkey, their_unroll_pubkey, their_referee_puzzle_hash, my_contribution, 
+;       their_contribution) throws error
 ;
-; get unroll spend
-;       state
-;       returns (channel_puzzle, solution, aggsig)
-; state channel coin spent
-;       state
-;       conditions
-;       returns error or (unroll coin id, unroll coin puzzle reveal, solution, aggsig, whether has timeout)
-; unroll coin spent
-;       state
-;       conditions
-;       returns error or (my_clean_reward_id, [(id, coin_id, game_coin)], [cancelled_game_id])
-; spend reward coins
-;       [coinid]
-;       target_puzzle_hash
-;       returns (shared_puzzle_reveal [coinid solution] aggsig result_coin_id)
+; void finish_handshake(their_initial_channel_half_signature) throws error
+;
+; (my_channel_half_signature, my_unroll_half_signature) send_potato_nil()
+;
+; void received_potato_nil(their_channel_half_signature, their_unroll_half_signature) throws error
+;
+; (my_channel_half_signature, their_unroll_half_signature) send_potato_start_game(my_contribution,
+;       their_contribution, [(id, amount, game_handler, is_my_turn, timeout, initial_validation_puzzle, 
+;       initial_validation_puzzle_hash, initial_state, initial_move, initial_max_move_size, initial_mover_share)])
+;
+; void received_potato_start_game(their_channel_half_signature, their_unroll_half_signature, [(id, amount, 
+;       game_handler, is_my_turn, timeout, initial_validation_puzzle, initial_validation_puzzle_hash, 
+;       initial_state, initial_move, initial_max_move_size, initial_mover_share)]) throws error
+;
+; (their_channel_half_signature, their_unroll_half_signature, move, validation_info_hash, max_move_size, 
+;       mover_share) send_potato_move(id, readable_move)
+;
+; (readable_move, message) received_potato_move(their_channel_half_signature, their_unroll_half_signature,
+;       id, move, validation_info_hash, max_move_size, mover_share) throws error
+;
+; readable_move received_message(id, message) throws error
+;
+; (my_channel_half_signature, my_unroll_half_signature, my_share) send_potato_accept(id)
+;
+; my_share received_potato_accept(their_channel_half_signature, their_unroll_half_signature, id) throws error
+;
+; (channel_puzzle_reveal, solution, my_half_signature) send_potato_clean_shutdown(conditions) 
+;
+; (channel_puzzle_reveal, solution, aggsig) received_potato_clean_shutdown(their_channel_half_signature, 
+;       conditions) throws error
+;
+; (channel_puzzle, solution, aggsig) get_unroll_spend()
+;
+; (unroll_coin_id, puzzle_reveal, solution, aggsig, whether_has_timeout) state_channel_spent(conditions) throws error
+;
+; (my_clean_reward_id, [(id, coin_id, referee)], id_of_cancelled_game, id_to_move_play, 
+;       id_of_accept_game) unroll_coin_spent(conditions) throws error
+;
+; (shared_puzzle_reveal, [(coinid, solution)], aggsig, result_coin_id) spend_reward_coins([coinid], target_puzzle_hash)
 
-; Game coin calls
-;
-; make_move (my_turn_state readable) returns (their_turn_state puzzle_reveal solution aggsig new_coin_id)
-; if an unexpected spend happens it can be compared to a timeout spend
-; make_timeout_my_move (my_turn_state) returns (puzzle_reveal solution aggsig my_reward_coin_id)
-;
-; make_timeout_their_move (their_turn_state) returns (puzzle_reveal solution aggsig my_reward_coin_id)
-; coin_spent_their_move (their_turn_state conditions) returns error or 
-;       (MOVED new_state new_coin_id readable) or
-;       (TIMEDOUT my_reward_coin_id) or 
-;       (SLASH puzzle_reveal solution aggsig my_reward_coin_id)
-
-
-; Potato State
+; ChannelHandler fields
 ; state channel coin id
-; current state number
-; current games: [(id puzzle_hash amount whether_my_move referee_maker)]
+; {id: (puzzle_hash, amount, referee)}
 ; my out of game balance
 ; opponent out of game balance
 ; my channel coin private key
@@ -137,46 +66,44 @@
 ; my referee private key
 ; opponent channel coin public key
 ; opponent unroll coin public key
-; opponent referee public key
-; entropy
-; state channel aggregate pubkey
-; Solution of state channel coin
-; state channel coin aggregate signature
-; Solution of unroll coin
-; Signature of unroll of unroll coin
-
-; Not Potato State
+; opponent referee puzzle hash
+; whether I have the potato
 ; current state number
-; previous state
-; my last move. Nil if just started game/sent potato
-; game id just started. Only non-nil if we just made a game start
-; current games: (id balance puzzle_hash amount coin_handler)
-; my out of game balance
-; opponent out of game balance
+; last state channel aggsig
+; last unroll aggsig
+; id of game of move I just made (nil if I have potato)
+; id of game I just made (nil if I have potato)
+; id of game I just accepted (nil if I have potato)
+; referee of game I just accepted (nil if I have potato)
+; last nonce number
 
 
-
-; referee factory takes (amount, game_handler, is_my_turn, timeout, validation puzzle, validation_puzzle_hash,
-;       state, inital_move, max_move_size mover_share
-;       local_initiate my_private_key their_puzzle_hash nonce) and returns (state, puzzle_hash)
-; 
-; my_turn_move_off_chain takes (my_turn_state readable_move entropy) and returns (their_turn_state 
-;       move validation_info_hash max_move_size mover_share)
-; my_turn_move_on_chain takes (my_turn_state coinid readable_move entropy) and returns (their_turn_state 
-;       puzzle_reveal solution aggsig new_coin_id)
-; my_turn_accept_off_chain takes (my_turn_state) and returns (my_share)
-; my_turn_timeout_on_chain takes (my_turn_state coinid) and returns (puzzle_reveal solution aggsig my_reward_coin_id)
+; RefereeHandler(amount, game_handler, is_my_turn, timeout, validation_puzzle, validation_puzzle_hash, 
+;       initial_state, initial_move, initial_max_move_size, initial_mover_share, local_initiate, 
+;       my_private_key, their_puzzle_hash, nonce)
 ;
-; their_turn_move_off_chain takes (their_turn_state move validation_info_hash 
-;       max_move_size mover_share) and returns error or 
-;       (my_turn_state readable_move message)
-; their_turn_moved_on_chain takes (their_turn_state coinid conditions) and returns error or
-;       (TIMEDOUT my_reward_coin_id) or
-;       (MAKE_MOVE my_turn_state readable new_coin_id) or
-;       (SLASH new_coin_id puzzle_reveal solution aggsig reward_coin_id)
-; their_turn_off_chain_message_arrived takes (their_turn_state message) and returns error or readable
-; their_turn_timeout_off_chain takes (their_turn_state) and returns (my_share)
-; their_turn_timeout_on_chain takes (their_turn_state coinid) and returns (puzzle_reveal solution aggsig my_reward_coin_id)
+; puzzle_hash get_initial_puzzle_hash()
+; 
+; (puzzle_hash, move, validation_info_hash, max_move_size, mover_share) my_turn_make_move(readable_move)
+;
+; called after my_turn_make_move() and reiterates what it was told
+; (puzzle_reveal, solution, aggsig, new_coin_id) get_transaction_for_move(coinid)
+;
+; takes into account whose turn it is
+; my_share get_my_share()
+;
+; takes into account whose turn it is
+; (puzzle_reveal, solution, aggsig, my_reward_coin_id) get_timeout_transaction(coinid)
+;
+; ((MOVE, new_coin_id, readable) or (TIMEDOUT, my_reward_coin_id)) my_turn_coin_spent (coinid, conditions) throws error
+;
+; (puzzle_hash, readable_move, message) their_turn_move_off_chain (mave, validation_info_hash, max_move_size, 
+;       mover_share) throws error
+;
+; ((TIMEDOUT, my_reward_coin_id) or (MOVED, new_coin_id, readable) or (SLASH, new_coin_id, puzzle_reveal, 
+;       solution, aggsig, my_reward_coin_id)) their_turn_coin_spent(coinid, conditions) throws error
+; 
+; readable message_arrived(message) throws error
 
 
 ; My turn driver takes (readable_new_move amount last_state last_move last_mover_share entropy) and returns
