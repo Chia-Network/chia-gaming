@@ -7,6 +7,8 @@ edition = "2021"
 clvm_tools_rs = "0.1.41"
 clvmr = { version = "0.6.1", features = ["pre-eval"] }
 serde_json = "1.0"
+rand = "0.8.5"
+bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 
 [lib]
 name = "chia_gaming"
