@@ -85,7 +85,10 @@ pub enum Error {
 pub struct ClvmObject(NodePtr);
 
 #[derive(Clone)]
-pub struct Puzzle(ClvmObject);
+pub struct Program(ClvmObject);
+
+#[derive(Clone)]
+pub struct Puzzle(Program);
 
 #[derive(Clone)]
 pub enum GameHandler {

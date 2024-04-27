@@ -2,7 +2,7 @@ use rand::prelude::*;
 use rand::distributions::Standard;
 use clvmr::allocator::Allocator;
 
-use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, RefereeID, Puzzle, PuzzleHash, Error, GameHandler, Timeout, ClvmObject, Hash};
+use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, RefereeID, Program, Puzzle, PuzzleHash, Error, GameHandler, Timeout, ClvmObject, Hash};
 
 #[derive(Default)]
 pub struct ChannelHandlerPrivateKeys {
@@ -58,30 +58,6 @@ pub struct ReadableMove(ClvmObject);
 
 pub struct ReadableUX(ClvmObject);
 
-/// A channel handler runs the game by facilitating the phases of game startup
-/// and passing on move information as well as termination to other layers.
-#[derive(Default)]
-pub struct ChannelHandler {
-    private_keys: ChannelHandlerPrivateKeys,
-
-    their_channel_coin_public_key: PublicKey,
-    their_unroll_coin_public_key: PublicKey,
-    their_referee_puzzle_hash: PuzzleHash,
-    state_channel_coin_string: Option<CoinString>,
-    my_out_of_game_balance: Amount,
-    their_out_of_game_balance: Amount,
-    have_potato: bool,
-    current_state_number: usize,
-    next_nonce_number: usize,
-
-    last_channel_aggsig: Aggsig,
-    last_unroll_aggsig: Aggsig,
-    game_id_of_most_recent_move: Option<GameID>,
-    game_id_of_most_recent_created_game: Option<GameID>,
-    game_id_of_most_recent_accepted_game: Option<GameID>,
-    referee_of_most_recent_accepted_game: Option<RefereeID>,
-}
-
 pub struct MoveResult {
     signatures: PotatoSignatures,
     move_peer: Vec<u8>,
@@ -106,7 +82,7 @@ pub struct SpentResult {
 pub struct OnChainGameCoin<'a> {
     game_id_up: GameID,
     coin_string_up: CoinString,
-    referee_up: &'a RefereeMaker
+    referee_up: &'a mut RefereeMaker
 }
 
 pub struct SpendRewardResult {
@@ -121,6 +97,30 @@ pub struct CoinSpentResult<'a> {
     game_id_cancelled_ux: ClvmObject,
     game_id_to_move_up: GameID,
     game_id_of_accept_up: GameID
+}
+
+/// A channel handler runs the game by facilitating the phases of game startup
+/// and passing on move information as well as termination to other layers.
+#[derive(Default)]
+pub struct ChannelHandler {
+    private_keys: ChannelHandlerPrivateKeys,
+
+    their_channel_coin_public_key: PublicKey,
+    their_unroll_coin_public_key: PublicKey,
+    their_referee_puzzle_hash: PuzzleHash,
+    state_channel_coin_string: Option<CoinString>,
+    my_out_of_game_balance: Amount,
+    their_out_of_game_balance: Amount,
+    have_potato: bool,
+    current_state_number: usize,
+    next_nonce_number: usize,
+
+    last_channel_aggsig: Aggsig,
+    last_unroll_aggsig: Aggsig,
+    game_id_of_most_recent_move: Option<GameID>,
+    game_id_of_most_recent_created_game: Option<GameID>,
+    game_id_of_most_recent_accepted_game: Option<GameID>,
+    referee_of_most_recent_accepted_game: Option<RefereeID>,
 }
 
 impl ChannelHandler {
@@ -211,5 +211,70 @@ impl ChannelHandler {
     }
 }
 
+pub struct RefereeMakerMoveResult {
+    puzzle_hash_for_unroll: PuzzleHash,
+    move_made: Vec<u8>,
+    validation_info_hash: Hash,
+    max_move_size: usize,
+    mover_share: Amount
+}
+
+pub struct TheirTurnMoveResult {
+    puzzle_hash_for_unroll: PuzzleHash,
+    readable_move: ClvmObject,
+    message: ClvmObject
+}
+
+pub enum TheirTurnCoinSpentResult {
+    Timedout {
+        my_reward_coin_string: CoinString
+    },
+    Moved {
+        new_coin_string: CoinString,
+        readable: ClvmObject
+    },
+    Slash {
+        new_coin_string: CoinString,
+        puzzle_reveal: Puzzle,
+        solution: ClvmObject,
+        aggsig: Aggsig,
+        my_reward_coin_string: CoinString
+    }
+}
+
 pub struct RefereeMaker {
+}
+
+impl RefereeMaker {
+    pub fn new(allocator: &mut Allocator, amount: Amount, game_handler: Program, is_my_turn: bool, timeout: Timeout, validation_puzzle: Puzzle, validation_puzzle_hash: PuzzleHash, initial_state: ClvmObject, initial_move: &[u8], initial_move_max_size: usize, initial_mover_share: Amount, my_private_key: PrivateKey, their_puzzle_hash: PuzzleHash, nonce: usize) -> Self {
+        todo!();
+    }
+
+    pub fn get_initial_puzzle_hash(&self) -> PuzzleHash {
+        todo!();
+    }
+
+    pub fn my_turn_make_move(&mut self, allocator: &mut Allocator, readable_move: &ClvmObject) -> RefereeMakerMoveResult {
+        todo!();
+    }
+
+    pub fn get_transaction_for_move(&mut self, allocator: &mut Allocator, coin_string: &CoinString) -> (TransactionBundle, CoinString) {
+        todo!();
+    }
+
+    pub fn get_my_share(&self, allocator: &mut Allocator) -> Amount {
+        todo!();
+    }
+
+    pub fn get_timeout_transaction(&self, allocator: &mut Allocator) -> (TransactionBundle, CoinString) {
+        todo!();
+    }
+
+    pub fn their_turn_move_off_chain(&mut self, allocator: &mut Allocator, their_move: &[u8], validation_info_hash: &Hash, max_move_size: usize, mover_share: &Amount) -> TheirTurnMoveResult {
+        todo!();
+    }
+
+    pub fn their_turn_coin_spent(&mut self, allocator: &mut Allocator, coin_string: &CoinString, conditions: &ClvmObject) -> Result<TheirTurnCoinSpentResult, Error> {
+        todo!();
+    }
 }
