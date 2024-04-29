@@ -101,6 +101,32 @@ pub struct CoinSpentResult<'a> {
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
+///
+/// Involves two puzzles:
+/// 1) channel coin puzzle: vanilla 2 of 2 to the 2 sides' public keys
+///
+/// 2) unroll coin -- calculate based on current state
+///   curried in:
+///     shared puzzle hash
+///       2 of 2 combining the unroll pubkeys of the 2 sides.
+///         involves
+///           take their unroll coin public key and our unroll public key from
+///           our unroll private key and aggsig combine them for this 2 of 2 key.
+///
+/// this is a standard puzzle ala chia.wallet.puzzles that can be spent
+/// with the above noted key and should be computed as such.
+///
+/// generated using DEFAULT_HIDDEN_PUZZLE_HASH and puzzle_for_pk as in
+/// chia-blockchain.
+///
+/// old seq num
+/// rotating all the time
+/// default_conditions
+///
+///   args:
+///     reveal
+///     solution
+///
 #[derive(Default)]
 pub struct ChannelHandler {
     private_keys: ChannelHandlerPrivateKeys,
@@ -121,18 +147,24 @@ pub struct ChannelHandler {
     game_id_of_most_recent_created_game: Option<GameID>,
     game_id_of_most_recent_accepted_game: Option<GameID>,
     referee_of_most_recent_accepted_game: Option<RefereeID>,
+
+    standard_puzzle: Puzzle
 }
 
 impl ChannelHandler {
-    pub fn new(private_keys: ChannelHandlerPrivateKeys) -> Self {
+    pub fn new(
+        standard_puzzle: Puzzle,
+        private_keys: ChannelHandlerPrivateKeys
+    ) -> Self {
         ChannelHandler {
             private_keys,
+            standard_puzzle,
             .. ChannelHandler::default()
         }
     }
 
-    pub fn construct_with_rng<R: Rng>(rng: &mut R) -> ChannelHandler {
-        ChannelHandler::new(rng.gen())
+    pub fn construct_with_rng<R: Rng>(standard_puzzle: Puzzle, rng: &mut R) -> ChannelHandler {
+        ChannelHandler::new(standard_puzzle, rng.gen())
     }
 
     pub fn initiate(&mut self, allocator: &mut Allocator, initiation: &ChannelHandlerInitiationData) -> ChannelHandlerInitiationResult {
@@ -143,6 +175,7 @@ impl ChannelHandler {
         self.their_referee_puzzle_hash = initiation.their_referee_puzzle_hash.clone();
         self.my_out_of_game_balance = initiation.my_contribution.clone();
         self.their_out_of_game_balance = initiation.their_contribution.clone();
+
         todo!();
     }
 
