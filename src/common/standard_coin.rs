@@ -1,55 +1,120 @@
 use std::io;
 use std::fs::read_to_string;
 
+use lazy_static::lazy_static;
+
+use num_bigint::{BigInt, Sign};
+
+use chia_bls;
+
+use clvm_traits::{ToClvm, ToClvmError, clvm_curried_args};
+
 use clvmr::allocator::{Allocator, NodePtr};
 use clvmr::reduction::EvalErr;
 
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
-use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, Stream, UnvalidatedBytesFromType};
+use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream, UnvalidatedBytesFromType, sha256};
 use clvm_tools_rs::classic::clvm::serialize::{sexp_from_stream, SimpleCreateCLVMObject};
+use clvm_utils::CurriedProgram;
 
-pub trait ErrToString {
-    fn into_str(&self) -> String;
+use crate::common::types;
+use crate::common::types::{PublicKey, Puzzle, PuzzleHash, ClvmObject, ToClvmObject, AllocEncoder, IntoErr};
+
+lazy_static! {
+    pub static ref GROUP_ORDER: Vec<u8> = {
+        vec![
+            0x73,
+            0xED,
+            0xA7,
+            0x53,
+            0x29,
+            0x9D,
+            0x7D,
+            0x48,
+            0x33,
+            0x39,
+            0xD8,
+            0x08,
+            0x09,
+            0xA1,
+            0xD8,
+            0x05,
+            0x53,
+            0xBD,
+            0xA4,
+            0x02,
+            0xFF,
+            0xFE,
+            0x5B,
+            0xFE,
+            0xFF,
+            0xFF,
+            0xFF,
+            0xFF,
+            0x00,
+            0x00,
+            0x00,
+            0x01
+        ]
+    };
 }
-
-impl ErrToString for EvalErr {
-    fn into_str(&self) -> String {
-        format!("{self:?}")
-    }
-}
-
-impl ErrToString for SyntaxErr {
-    fn into_str(&self) -> String {
-        format!("{self:?}")
-    }
-}
-
-impl ErrToString for io::Error {
-    fn into_str(&self) -> String {
-        format!("{self:?}")
-    }
-}
-
-pub trait IntoErr<X> {
-    fn into_estr(self) -> Result<X, String>;
-}
-
-impl<X, E> IntoErr<X> for Result<X, E> where E: ErrToString {
-    fn into_estr(self) -> Result<X, String> {
-        self.map_err(|e| e.into_str())
-    }
-}
-
-pub fn hex_to_sexp(allocator: &mut Allocator, hex_data: String) -> Result<NodePtr, String> {
-    let mut hex_stream = Stream::new(Some(Bytes::new_validated(Some(UnvalidatedBytesFromType::Hex(hex_data.to_string()))).into_estr()?));
-    sexp_from_stream(
+pub fn hex_to_sexp(allocator: &mut Allocator, hex_data: String) -> Result<ClvmObject, types::Error> {
+    let mut hex_stream = Stream::new(Some(Bytes::new_validated(Some(UnvalidatedBytesFromType::Hex(hex_data.to_string()))).into_gen()?));
+    Ok(ClvmObject::from_nodeptr(sexp_from_stream(
         allocator,
         &mut hex_stream,
         Box::new(SimpleCreateCLVMObject {})
-    ).map(|x| x.1).into_estr()
+    ).map(|x| x.1).into_gen()?))
 }
 
-fn get_standard_coin_puzzle(allocator: &mut Allocator) -> Result<NodePtr, String> {
-    let hex_data = read_to_string("resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex").into_estr()?;
+pub fn read_hex_puzzle(allocator: &mut Allocator, name: &str) -> Result<ClvmObject, types::Error> {
+    let hex_data = read_to_string(name).into_gen()?;
     hex_to_sexp(allocator, hex_data)
+}
+
+pub fn get_standard_coin_puzzle(allocator: &mut Allocator) -> Result<ClvmObject, types::Error> {
+    read_hex_puzzle(allocator, "resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex")
+}
+
+pub fn get_default_hidden_puzzle(allocator: &mut Allocator) -> Result<ClvmObject, types::Error> {
+    read_hex_puzzle(allocator, "resources/default_hidden_puzzle.hex")
+}
+
+fn group_order_int() -> BigInt {
+    BigInt::from_bytes_be(Sign::NoSign, &GROUP_ORDER)
+}
+
+fn calculate_synthetic_offset(public_key: &chia_bls::PublicKey, hidden_puzzle_hash: &PuzzleHash) -> BigInt {
+    let mut blob_input = public_key.to_bytes().to_vec();
+    for b in hidden_puzzle_hash.bytes().iter() {
+        blob_input.push(*b);
+    }
+    let blob = sha256(Bytes::new(Some(BytesFromType::Raw(blob_input))));
+    BigInt::from_bytes_be(Sign::NoSign, blob.data()) % group_order_int()
+}
+
+fn calculate_synthetic_public_key(public_key: &chia_bls::PublicKey, hidden_puzzle_hash: &PuzzleHash) -> Result<chia_bls::PublicKey, types::Error> {
+    let private_key_int = calculate_synthetic_offset(public_key, hidden_puzzle_hash);
+    let (_, mut private_key_bytes_right) = private_key_int.to_bytes_be();
+    let mut private_key_bytes: [u8; 32] = [0; 32];
+    for (i, b) in private_key_bytes_right.iter().enumerate() {
+        private_key_bytes[i + 32 - private_key_bytes.len()] = *b;
+    }
+    let synthetic_offset = chia_bls::SecretKey::from_bytes(&private_key_bytes).map(Ok).unwrap_or_else(|e| Err(format!("calculate_synthetic_public_key: {e:?}"))).into_gen()?;
+    Ok(public_key.clone() + &synthetic_offset.public_key())
+}
+
+pub fn puzzle_for_synthetic_public_key(allocator: &mut Allocator, standard_coin_puzzle: &Puzzle, synthetic_public_key: &chia_bls::PublicKey) -> Result<Puzzle, types::Error> {
+    let curried_program = CurriedProgram {
+        program: standard_coin_puzzle,
+        args: clvm_curried_args!(synthetic_public_key.to_bytes())
+    };
+    Ok(Puzzle::from_nodeptr(curried_program.to_clvm(&mut AllocEncoder(allocator)).into_gen()?))
+}
+
+pub fn puzzle_for_pk(allocator: &mut Allocator, standard_coin_puzzle: &Puzzle, public_key: PublicKey, hidden_puzzle_hash: &PuzzleHash) -> Result<Puzzle, types::Error> {
+    chia_bls::PublicKey::from_bytes(public_key.bytes()).into_gen().and_then(|g1| {
+        let synthetic_public_key = calculate_synthetic_public_key(&g1, hidden_puzzle_hash)?;
+        Ok(puzzle_for_synthetic_public_key(allocator, standard_coin_puzzle, &synthetic_public_key)?)
+    })
 }
