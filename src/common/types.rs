@@ -90,6 +90,12 @@ pub struct Program(ClvmObject);
 #[derive(Clone)]
 pub struct Puzzle(Program);
 
+impl Default for Puzzle {
+    fn default() -> Self {
+        Puzzle(Program(ClvmObject(NodePtr(0))))
+    }
+}
+
 #[derive(Clone)]
 pub enum GameHandler {
     MyTurnHandler(ClvmObject),
