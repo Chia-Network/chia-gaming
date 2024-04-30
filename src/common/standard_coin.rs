@@ -19,7 +19,7 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_utils::CurriedProgram;
 
 use crate::common::types;
-use crate::common::types::{PublicKey, Puzzle, PuzzleHash, ClvmObject, ToClvmObject, AllocEncoder, IntoErr};
+use crate::common::types::{PublicKey, Puzzle, PuzzleHash, ClvmObject, ToClvmObject, AllocEncoder, IntoErr, Aggsig};
 
 lazy_static! {
     pub static ref GROUP_ORDER: Vec<u8> = {
@@ -120,4 +120,27 @@ pub fn puzzle_for_pk(allocator: &mut Allocator, standard_coin_puzzle: &Puzzle, p
         let synthetic_public_key = calculate_synthetic_public_key(&g1, hidden_puzzle_hash)?;
         Ok(puzzle_for_synthetic_public_key(allocator, standard_coin_puzzle, &synthetic_public_key)?)
     })
+}
+
+pub fn standard_solution(allocator: &mut Allocator, conditions: ClvmObject) -> Result<ClvmObject, types::Error> {
+    Ok(ClvmObject::from_nodeptr((0, (conditions, (0, 0))).to_clvm(&mut AllocEncoder(allocator)).into_gen()?))
+}
+
+pub fn private_to_public_key(private_key: &types::PrivateKey) -> Result<types::PublicKey, types::Error> {
+    let sk = private_key.to_bls()?;
+    let pubkey = sk.public_key();
+    Ok(PublicKey::from_bytes(&pubkey.to_bytes()))
+}
+
+pub fn aggregate_public_keys(pk1: &PublicKey, pk2: &PublicKey) -> Result<types::PublicKey, types::Error> {
+    let pk1_bls = pk1.to_bls()?;
+    let pk2_bls = pk2.to_bls()?;
+    Ok(PublicKey::from_bytes(&(pk1_bls + &pk2_bls).to_bytes()))
+}
+
+pub fn aggregate_signatures(as1: &Aggsig, as2: &Aggsig) -> Result<types::Aggsig, types::Error> {
+    let mut as1_bls = as1.to_bls()?;
+    let as2_bls = as2.to_bls()?;
+    as1_bls.aggregate(&as2_bls);
+    Ok(Aggsig::from_bytes(as1_bls.to_bytes()))
 }

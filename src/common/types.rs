@@ -26,6 +26,12 @@ impl Default for PrivateKey {
     }
 }
 
+impl PrivateKey {
+    pub fn to_bls(&self) -> Result<chia_bls::SecretKey, Error> {
+        chia_bls::SecretKey::from_bytes(&self.0).into_gen()
+    }
+}
+
 /// Public key
 #[derive(Clone)]
 pub struct PublicKey([u8; 48]);
@@ -37,6 +43,10 @@ impl Default for PublicKey {
 }
 
 impl PublicKey {
+    pub fn to_bls(&self) -> Result<chia_bls::PublicKey, Error> {
+        chia_bls::PublicKey::from_bytes(&self.0).into_gen()
+    }
+
     pub fn bytes<'a>(&'a self) -> &'a [u8; 48] {
         &self.0
     }
@@ -74,6 +84,16 @@ impl Default for Aggsig {
     // Revisit for empty aggsig.
     fn default() -> Self {
         Aggsig([0; 96])
+    }
+}
+
+impl Aggsig {
+    pub fn from_bytes(by: [u8; 96]) -> Aggsig {
+        Aggsig(by)
+    }
+
+    pub fn to_bls(&self) -> Result<chia_bls::Signature, Error> {
+        chia_bls::Signature::from_bytes(&self.0).into_gen()
     }
 }
 
