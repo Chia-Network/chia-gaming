@@ -19,7 +19,13 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_utils::CurriedProgram;
 
 use crate::common::types;
-use crate::common::types::{PublicKey, Puzzle, PuzzleHash, ClvmObject, ToClvmObject, AllocEncoder, IntoErr, Aggsig};
+use crate::common::types::{PublicKey, Puzzle, PuzzleHash, ClvmObject, ToClvmObject, AllocEncoder, IntoErr, Aggsig, Sha256tree};
+
+pub fn shatree_atom_cant_fail(by: &[u8]) -> PuzzleHash {
+    let mut allocator = Allocator::new();
+    let atom = allocator.new_atom(by).unwrap();
+    ClvmObject::from_nodeptr(atom).sha256tree(&mut allocator)
+}
 
 lazy_static! {
     pub static ref GROUP_ORDER: Vec<u8> = {
@@ -57,6 +63,100 @@ lazy_static! {
             0x00,
             0x01
         ]
+    };
+    pub static ref DEFAULT_HIDDEN_PUZZLE_HASH: PuzzleHash = {
+        let ph: [u8; 32] = [
+            0x71,
+            0x1d,
+            0x6c,
+            0x4e,
+            0x32,
+            0xc9,
+            0x2e,
+            0x53,
+            0x17,
+            0x9b,
+            0x19,
+            0x94,
+            0x84,
+            0xcf,
+            0x8c,
+            0x89,
+            0x75,
+            0x42,
+            0xbc,
+            0x57,
+            0xf2,
+            0xb2,
+            0x25,
+            0x82,
+            0x79,
+            0x9f,
+            0x9d,
+            0x65,
+            0x7e,
+            0xec,
+            0x46,
+            0x99,
+        ];
+        PuzzleHash::from_bytes(ph)
+    };
+    pub static ref DEFAULT_PUZZLE_HASH: PuzzleHash = {
+        let ph: [u8; 32] = [
+            0xe9,
+            0xaa,
+            0xa4,
+            0x9f,
+            0x45,
+            0xba,
+            0xd5,
+            0xc8,
+            0x89,
+            0xb8,
+            0x6e,
+            0xe3,
+            0x34,
+            0x15,
+            0x50,
+            0xc1,
+            0x55,
+            0xcf,
+            0xdd,
+            0x10,
+            0xc3,
+            0xa6,
+            0x75,
+            0x7d,
+            0xe6,
+            0x18,
+            0xd2,
+            0x06,
+            0x12,
+            0xff,
+            0xfd,
+            0x52,
+        ];
+        PuzzleHash::from_bytes(ph)
+    };
+
+    pub static ref ONE_TREEHASH: PuzzleHash = {
+        shatree_atom_cant_fail(&[1])
+    };
+
+    pub static ref Q_KW_TREEHASH: PuzzleHash = {
+        shatree_atom_cant_fail(&[1])
+    };
+
+    pub static ref A_KW_TREEHASH: PuzzleHash = {
+        shatree_atom_cant_fail(&[2])
+    };
+
+    pub static ref C_KW_TREEHASH: PuzzleHash = {
+        shatree_atom_cant_fail(&[4])
+    };
+
+    pub static ref NULL_TREEHASH: PuzzleHash = {
+        shatree_atom_cant_fail(&[])
     };
 }
 pub fn hex_to_sexp(allocator: &mut Allocator, hex_data: String) -> Result<ClvmObject, types::Error> {
@@ -115,10 +215,63 @@ pub fn puzzle_for_synthetic_public_key(allocator: &mut Allocator, standard_coin_
     Ok(Puzzle::from_nodeptr(nodeptr))
 }
 
-pub fn puzzle_for_pk(allocator: &mut Allocator, standard_coin_puzzle: &Puzzle, public_key: &PublicKey, hidden_puzzle_hash: &PuzzleHash) -> Result<Puzzle, types::Error> {
+pub fn curried_values_tree_hash(allocator: &mut Allocator, arguments: &[PuzzleHash]) -> Result<PuzzleHash, types::Error> {
+    if arguments.is_empty() {
+        return Ok(ONE_TREEHASH.clone());
+    }
+
+    let structure = ClvmObject::from_nodeptr(
+        (
+            (C_KW_TREEHASH.clone(), (Q_KW_TREEHASH.clone(), arguments[0].clone())),
+            (curried_values_tree_hash(allocator, &arguments[1..])?, NULL_TREEHASH.clone())
+        ).to_clvm(&mut AllocEncoder(allocator)).into_gen()?
+    );
+
+    Ok(structure.sha256tree(allocator))
+}
+
+pub fn curry_and_treehash(allocator: &mut Allocator, hash_of_quoted_mod_hash: &PuzzleHash, hashed_arguments: &[PuzzleHash]) -> Result<PuzzleHash, types::Error> {
+    let curried_values = curried_values_tree_hash(allocator, hashed_arguments)?;
+    let structure = ClvmObject::from_nodeptr(
+        (
+            A_KW_TREEHASH.clone(),
+            (hash_of_quoted_mod_hash, (curried_values, NULL_TREEHASH.clone()))
+        ).to_clvm(&mut AllocEncoder(allocator)).into_gen()?
+    );
+
+    Ok(structure.sha256tree(allocator))
+}
+
+pub fn calculate_hash_of_quoted_mod_hash(allocator: &mut Allocator, mod_hash: &PuzzleHash) -> Result<PuzzleHash, types::Error> {
+    let structure = ClvmObject::from_nodeptr(
+        (Q_KW_TREEHASH.clone(), mod_hash).to_clvm(&mut AllocEncoder(allocator)).into_gen()?
+    );
+
+    Ok(structure.sha256tree(allocator))
+}
+
+pub fn puzzle_hash_for_synthetic_public_key(allocator: &mut Allocator, synthetic_public_key: &chia_bls::PublicKey) -> Result<PuzzleHash, types::Error> {
+    let our_public_key = PublicKey::from_bytes(&synthetic_public_key.clone().to_bytes());
+    let quoted_mod_hash = calculate_hash_of_quoted_mod_hash(allocator, &DEFAULT_PUZZLE_HASH)?;
+    let public_key_hash = ClvmObject::from_nodeptr(
+        our_public_key.to_clvm(&mut AllocEncoder(allocator)).into_gen()?
+    ).sha256tree(allocator);
+    curry_and_treehash(allocator, &quoted_mod_hash, &[public_key_hash])
+}
+
+pub fn puzzle_for_pk(allocator: &mut Allocator, public_key: &PublicKey) -> Result<Puzzle, types::Error> {
+    let standard_puzzle = get_standard_coin_puzzle(allocator)?;
     chia_bls::PublicKey::from_bytes(public_key.bytes()).into_gen().and_then(|g1| {
-        let synthetic_public_key = calculate_synthetic_public_key(&g1, hidden_puzzle_hash)?;
-        Ok(puzzle_for_synthetic_public_key(allocator, standard_coin_puzzle, &synthetic_public_key)?)
+        let synthetic_public_key = calculate_synthetic_public_key(&g1, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
+        Ok(puzzle_for_synthetic_public_key(allocator, &standard_puzzle, &synthetic_public_key)?)
+    })
+}
+
+#[deprecated]
+pub fn puzzle_hash_for_pk(allocator: &mut Allocator, public_key: &PublicKey) -> Result<PuzzleHash, types::Error> {
+    chia_bls::PublicKey::from_bytes(public_key.bytes()).into_gen().and_then(|g1| {
+        let synthetic_public_key = calculate_synthetic_public_key(&g1, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
+        Ok(puzzle_hash_for_synthetic_public_key(allocator, &synthetic_public_key)?)
     })
 }
 

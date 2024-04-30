@@ -63,11 +63,8 @@ lazy_static! {
 #[test]
 fn test_standard_puzzle() {
     let mut allocator = Allocator::new();
-    let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should exist");
-    let hidden_puzzle = get_default_hidden_puzzle(&mut allocator).expect("should exist");
-    let hidden_puzzle_hash = hidden_puzzle.sha256tree(&mut allocator);
     let test_key = PublicKey::from_bytes(&TEST_PUBLIC_KEY_BYTES);
-    let puzzle = puzzle_for_pk(&mut allocator, &standard_puzzle, &test_key, &hidden_puzzle_hash).expect("should work");
+    let puzzle = puzzle_for_pk(&mut allocator, &test_key).expect("should work");
     let puzzle_hash = puzzle.sha256tree(&mut allocator);
     let expected_puzzle = hex_to_sexp(&mut allocator, EXPECTED_PUZZLE_HEX.clone()).expect("should convert");
     let expected_hash = expected_puzzle.sha256tree(&mut allocator);
