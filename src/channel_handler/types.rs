@@ -32,12 +32,14 @@ pub struct ChannelHandlerInitiationData {
 }
 
 pub struct ChannelHandlerInitiationResult {
-    initial_puzzle_hash_up: PuzzleHash,
+    channel_puzzle_hash_up: PuzzleHash,
     my_initial_channel_half_signature_peer: Aggsig
 }
 
 pub struct PotatoSignatures {
+    // Half signed thing signing to the new state.
     my_channel_half_signature_peer: Aggsig,
+    // Half signed thing allowing you to supercede an earlier state to this one.
     my_unroll_half_signature_peer: Aggsig,
 }
 
@@ -138,9 +140,13 @@ pub struct ChannelHandler {
     my_out_of_game_balance: Amount,
     their_out_of_game_balance: Amount,
     have_potato: bool,
+    // Has a parity between the two players of whether have_potato means odd
+    // or even, but odd-ness = have-potato is arbitrary.
     current_state_number: usize,
+    // Increments per game started.
     next_nonce_number: usize,
 
+    // Used in unrolling.
     last_channel_aggsig: Aggsig,
     last_unroll_aggsig: Aggsig,
     game_id_of_most_recent_move: Option<GameID>,
@@ -150,8 +156,6 @@ pub struct ChannelHandler {
 
     standard_puzzle: Puzzle
 }
-
-
 
 impl ChannelHandler {
     pub fn new(
@@ -178,7 +182,29 @@ impl ChannelHandler {
         self.my_out_of_game_balance = initiation.my_contribution.clone();
         self.their_out_of_game_balance = initiation.their_contribution.clone();
 
+        self.current_state_number = 0;
+        self.next_nonce_number = 0;
+
+        // XXX more member settings.
+
+        // Unroll puzzle knows its sequence number and knows the hashes of the
+        // things to exit in the two different ways (one is a hash of a list of
+        // conditions, (default conditions hash), other is the shared puzzle hash.
+        // Either the shared puzzle is revealed with a solution.
+        //
+        // After a timeout period, an opportunity exists to spend with the default
+        // conditions.
+        //
+        // The shared puzzle hash passed into the state_channel puzzle
+        // essentially an invocation of
+        // state_channel.clinc::state_channel_unrolling
+        // should be a standard puzzle with a aggsig parent condition.
         todo!();
+
+        // ChannelHandlerInitiationResult {
+        //     channel_puzzle_hash_up: 
+        //     my_initial_channel_half_signature_peer: Aggsig
+        // }
     }
 
     pub fn finish_handshake(&mut self, allocator: &mut Allocator, their_initial_channel_hash_signature: &Aggsig) -> Result<(), Error> {
