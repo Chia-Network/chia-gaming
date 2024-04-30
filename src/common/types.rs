@@ -11,6 +11,7 @@ use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 
 use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
 use chia_bls;
+use chia_bls::signature::sign;
 
 /// Coin String
 #[derive(Default, Clone)]
@@ -18,17 +19,22 @@ pub struct CoinString(Vec<u8>);
 
 /// Private Key
 #[derive(Clone)]
-pub struct PrivateKey([u8; 32]);
+pub struct PrivateKey(chia_bls::SecretKey);
 
 impl Default for PrivateKey {
     fn default() -> Self {
-        PrivateKey([0; 32])
+        PrivateKey(chia_bls::SecretKey::from_seed(&[0; 32]))
     }
 }
 
 impl PrivateKey {
-    pub fn to_bls(&self) -> Result<chia_bls::SecretKey, Error> {
-        chia_bls::SecretKey::from_bytes(&self.0).into_gen()
+    pub fn to_bls(&self) -> &chia_bls::SecretKey {
+        &self.0
+    }
+
+    pub fn sign<Msg: AsRef<[u8]>>(&self, msg: Msg) -> Result<Aggsig, Error> {
+        let sig = sign(&self.0, msg);
+        Ok(Aggsig::from_bytes(sig.to_bytes()))
     }
 }
 
@@ -103,7 +109,7 @@ impl Distribution<PrivateKey> for Standard {
         for i in 0..32 {
             pk[i] = rng.gen();
         }
-        PrivateKey(pk)
+        PrivateKey(chia_bls::SecretKey::from_seed(&pk))
     }
 }
 
@@ -114,6 +120,12 @@ pub struct GameID(Vec<u8>);
 /// Amount
 #[derive(Default, Clone)]
 pub struct Amount(u64);
+
+impl Amount {
+    pub fn new(amt: u64) -> Amount {
+        Amount(amt)
+    }
+}
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Hash([u8; 32]);
@@ -241,12 +253,6 @@ impl ToClvmObject for Puzzle {
 impl ToClvm<NodePtr> for Puzzle {
     fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
         self.to_clvm_obj().to_clvm(encoder)
-    }
-}
-
-impl Default for Puzzle {
-    fn default() -> Self {
-        Puzzle(Program(ClvmObject(NodePtr(0))))
     }
 }
 

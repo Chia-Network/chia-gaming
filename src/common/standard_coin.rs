@@ -280,7 +280,7 @@ pub fn standard_solution(allocator: &mut Allocator, conditions: ClvmObject) -> R
 }
 
 pub fn private_to_public_key(private_key: &types::PrivateKey) -> Result<types::PublicKey, types::Error> {
-    let sk = private_key.to_bls()?;
+    let sk = private_key.to_bls();
     let pubkey = sk.public_key();
     Ok(PublicKey::from_bytes(&pubkey.to_bytes()))
 }

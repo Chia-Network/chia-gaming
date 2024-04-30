@@ -23,18 +23,18 @@ impl Distribution<ChannelHandlerPrivateKeys> for Standard {
 }
 
 pub struct ChannelHandlerInitiationData {
-    launcher_coin_string: CoinString,
-    we_start_with_potato: bool,
-    their_state_pubkey: PublicKey,
-    their_unroll_pubkey: PublicKey,
-    their_referee_puzzle_hash: PuzzleHash,
-    my_contribution: Amount,
-    their_contribution: Amount,
+    pub launcher_coin_string: CoinString,
+    pub we_start_with_potato: bool,
+    pub their_state_pubkey: PublicKey,
+    pub their_unroll_pubkey: PublicKey,
+    pub their_referee_puzzle_hash: PuzzleHash,
+    pub my_contribution: Amount,
+    pub their_contribution: Amount,
 }
 
 pub struct ChannelHandlerInitiationResult {
-    channel_puzzle_hash_up: PuzzleHash,
-    my_initial_channel_half_signature_peer: Aggsig
+    pub channel_puzzle_hash_up: PuzzleHash,
+    pub my_initial_channel_half_signature_peer: Aggsig
 }
 
 pub struct PotatoSignatures {
@@ -154,27 +154,23 @@ pub struct ChannelHandler {
     game_id_of_most_recent_created_game: Option<GameID>,
     game_id_of_most_recent_accepted_game: Option<GameID>,
     referee_of_most_recent_accepted_game: Option<RefereeID>,
-
-    standard_puzzle: Puzzle
 }
 
 impl ChannelHandler {
     pub fn new(
-        standard_puzzle: Puzzle,
         private_keys: ChannelHandlerPrivateKeys
     ) -> Self {
         ChannelHandler {
             private_keys,
-            standard_puzzle,
             .. ChannelHandler::default()
         }
     }
 
-    pub fn construct_with_rng<R: Rng>(standard_puzzle: Puzzle, rng: &mut R) -> ChannelHandler {
-        ChannelHandler::new(standard_puzzle, rng.gen())
+    pub fn construct_with_rng<R: Rng>(rng: &mut R) -> ChannelHandler {
+        ChannelHandler::new(rng.gen())
     }
 
-    pub fn initiate(&mut self, allocator: &mut Allocator, initiation: &ChannelHandlerInitiationData) -> Result<ChannelHandlerInitiationResult, Error> {
+    pub fn initiate(&mut self, allocator: &mut Allocator, default_conditions_hash: &PuzzleHash, initiation: &ChannelHandlerInitiationData) -> Result<ChannelHandlerInitiationResult, Error> {
         let our_channel_pubkey = private_to_public_key(&self.private_keys.my_channel_coin_private_key)?;
         let our_unroll_pubkey = private_to_public_key(&self.private_keys.my_unroll_coin_private_key)?;
         if initiation.their_state_pubkey == our_channel_pubkey {
@@ -216,11 +212,16 @@ impl ChannelHandler {
         let combined_public_key = aggregate_public_keys(&our_channel_pubkey, &self.their_channel_coin_public_key)?;
         let shared_puzzle_hash = puzzle_hash_for_pk(allocator, &combined_public_key)?;
 
-        todo!();
-        // ChannelHandlerInitiationResult {
-        //     channel_puzzle_hash_up: 
-        //     my_initial_channel_half_signature_peer: Aggsig
-        // }
+        // Signature signs the conditions.
+        // Seems like the conditions are the DEFAULT_CONDITIONS of the state
+        // channel unroll.
+
+        let signature = self.private_keys.my_channel_coin_private_key.sign(&default_conditions_hash.bytes())?;
+
+        Ok(ChannelHandlerInitiationResult {
+            channel_puzzle_hash_up: shared_puzzle_hash,
+            my_initial_channel_half_signature_peer: signature,
+        })
     }
 
     pub fn finish_handshake(&mut self, allocator: &mut Allocator, their_initial_channel_hash_signature: &Aggsig) -> Result<(), Error> {
