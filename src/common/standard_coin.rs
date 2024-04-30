@@ -15,6 +15,7 @@ use clvmr::reduction::EvalErr;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream, UnvalidatedBytesFromType, sha256};
 use clvm_tools_rs::classic::clvm::serialize::{sexp_from_stream, SimpleCreateCLVMObject};
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_utils::CurriedProgram;
 
 use crate::common::types;
@@ -67,21 +68,21 @@ pub fn hex_to_sexp(allocator: &mut Allocator, hex_data: String) -> Result<ClvmOb
     ).map(|x| x.1).into_gen()?))
 }
 
-pub fn read_hex_puzzle(allocator: &mut Allocator, name: &str) -> Result<ClvmObject, types::Error> {
+pub fn read_hex_puzzle(allocator: &mut Allocator, name: &str) -> Result<Puzzle, types::Error> {
     let hex_data = read_to_string(name).into_gen()?;
-    hex_to_sexp(allocator, hex_data)
+    Ok(Puzzle::from_nodeptr(hex_to_sexp(allocator, hex_data)?.to_nodeptr()))
 }
 
-pub fn get_standard_coin_puzzle(allocator: &mut Allocator) -> Result<ClvmObject, types::Error> {
+pub fn get_standard_coin_puzzle(allocator: &mut Allocator) -> Result<Puzzle, types::Error> {
     read_hex_puzzle(allocator, "resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex")
 }
 
-pub fn get_default_hidden_puzzle(allocator: &mut Allocator) -> Result<ClvmObject, types::Error> {
+pub fn get_default_hidden_puzzle(allocator: &mut Allocator) -> Result<Puzzle, types::Error> {
     read_hex_puzzle(allocator, "resources/default_hidden_puzzle.hex")
 }
 
 fn group_order_int() -> BigInt {
-    BigInt::from_bytes_be(Sign::NoSign, &GROUP_ORDER)
+    BigInt::from_bytes_be(Sign::Plus, &GROUP_ORDER)
 }
 
 fn calculate_synthetic_offset(public_key: &chia_bls::PublicKey, hidden_puzzle_hash: &PuzzleHash) -> BigInt {
@@ -90,7 +91,7 @@ fn calculate_synthetic_offset(public_key: &chia_bls::PublicKey, hidden_puzzle_ha
         blob_input.push(*b);
     }
     let blob = sha256(Bytes::new(Some(BytesFromType::Raw(blob_input))));
-    BigInt::from_bytes_be(Sign::NoSign, blob.data()) % group_order_int()
+    BigInt::from_bytes_be(Sign::Plus, blob.data()) % group_order_int()
 }
 
 fn calculate_synthetic_public_key(public_key: &chia_bls::PublicKey, hidden_puzzle_hash: &PuzzleHash) -> Result<chia_bls::PublicKey, types::Error> {
@@ -107,12 +108,15 @@ fn calculate_synthetic_public_key(public_key: &chia_bls::PublicKey, hidden_puzzl
 pub fn puzzle_for_synthetic_public_key(allocator: &mut Allocator, standard_coin_puzzle: &Puzzle, synthetic_public_key: &chia_bls::PublicKey) -> Result<Puzzle, types::Error> {
     let curried_program = CurriedProgram {
         program: standard_coin_puzzle,
-        args: clvm_curried_args!(synthetic_public_key.to_bytes())
+        args: clvm_curried_args!(PublicKey::from_bls(synthetic_public_key))
     };
-    Ok(Puzzle::from_nodeptr(curried_program.to_clvm(&mut AllocEncoder(allocator)).into_gen()?))
+    let nodeptr = curried_program.to_clvm(&mut AllocEncoder(allocator)).into_gen()?;
+    let dis = disassemble(allocator, nodeptr, None);
+    eprintln!("disassembled {dis}");
+    Ok(Puzzle::from_nodeptr(nodeptr))
 }
 
-pub fn puzzle_for_pk(allocator: &mut Allocator, standard_coin_puzzle: &Puzzle, public_key: PublicKey, hidden_puzzle_hash: &PuzzleHash) -> Result<Puzzle, types::Error> {
+pub fn puzzle_for_pk(allocator: &mut Allocator, standard_coin_puzzle: &Puzzle, public_key: &PublicKey, hidden_puzzle_hash: &PuzzleHash) -> Result<Puzzle, types::Error> {
     chia_bls::PublicKey::from_bytes(public_key.bytes()).into_gen().and_then(|g1| {
         let synthetic_public_key = calculate_synthetic_public_key(&g1, hidden_puzzle_hash)?;
         Ok(puzzle_for_synthetic_public_key(allocator, standard_coin_puzzle, &synthetic_public_key)?)

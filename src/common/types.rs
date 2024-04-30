@@ -44,6 +44,26 @@ impl PublicKey {
     pub fn into_bytes(self) -> [u8; 48] {
         self.0
     }
+
+    pub fn from_bytes(bytes: &[u8]) -> PublicKey {
+        let mut fixed: [u8; 48] = [0; 48];
+        for (i, b) in bytes.iter().enumerate() {
+            fixed[i % fixed.len()] = *b;
+        }
+        PublicKey(fixed)
+    }
+}
+
+impl ToClvm<NodePtr> for PublicKey {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        encoder.encode_atom(&self.0)
+    }
+}
+
+impl PublicKey {
+    pub fn from_bls(pk: &chia_bls::PublicKey) -> PublicKey {
+        PublicKey(pk.to_bytes())
+    }
 }
 
 /// Aggsig
@@ -75,7 +95,7 @@ pub struct GameID(Vec<u8>);
 #[derive(Default, Clone)]
 pub struct Amount(u64);
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Hash([u8; 32]);
 
 impl Default for Hash {
@@ -91,7 +111,7 @@ impl Hash {
 }
 
 /// Puzzle hash
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Eq, PartialEq, Debug)]
 pub struct PuzzleHash(Hash);
 
 impl PuzzleHash {
@@ -105,6 +125,7 @@ impl PuzzleHash {
 pub struct RefereeID(usize);
 
 /// Error type
+#[derive(Debug)]
 pub enum Error {
     ClvmError(EvalErr),
     IoError(io::Error),
@@ -120,13 +141,16 @@ pub struct ClvmObject(NodePtr);
 
 impl ToClvm<NodePtr> for ClvmObject {
     fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
-        todo!();
+        Ok(self.0)
     }
 }
 
 impl ClvmObject {
     pub fn from_nodeptr(p: NodePtr) -> ClvmObject {
         ClvmObject(p)
+    }
+    pub fn to_nodeptr(&self) -> NodePtr {
+        self.0
     }
 }
 
@@ -137,7 +161,7 @@ pub trait ToClvmObject {
     }
 }
 
-trait Sha256tree {
+pub trait Sha256tree {
     fn sha256tree(&self, allocator: &mut Allocator) -> PuzzleHash;
 }
 
@@ -216,7 +240,7 @@ impl<'a> ClvmEncoder for AllocEncoder<'a> {
 
     // Required methods
     fn encode_atom(&mut self, bytes: &[u8]) -> Result<Self::Node, ToClvmError> {
-        todo!();
+        self.0.new_atom(bytes).map_err(|e| ToClvmError::Custom(format!("{e:?}")))
     }
 
     fn encode_pair(
@@ -224,7 +248,7 @@ impl<'a> ClvmEncoder for AllocEncoder<'a> {
         first: Self::Node,
         rest: Self::Node
     ) -> Result<Self::Node, ToClvmError> {
-        todo!();
+        self.0.new_pair(first, rest).map_err(|e| ToClvmError::Custom(format!("{e:?}")))
     }
 }
 
