@@ -60,7 +60,7 @@ lazy_static! {
     };
 }
 pub fn hex_to_sexp(allocator: &mut Allocator, hex_data: String) -> Result<ClvmObject, types::Error> {
-    let mut hex_stream = Stream::new(Some(Bytes::new_validated(Some(UnvalidatedBytesFromType::Hex(hex_data.to_string()))).into_gen()?));
+    let mut hex_stream = Stream::new(Some(Bytes::new_validated(Some(UnvalidatedBytesFromType::Hex(hex_data))).into_gen()?));
     Ok(ClvmObject::from_nodeptr(sexp_from_stream(
         allocator,
         &mut hex_stream,
