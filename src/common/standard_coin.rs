@@ -112,7 +112,6 @@ pub fn puzzle_for_synthetic_public_key(allocator: &mut Allocator, standard_coin_
     };
     let nodeptr = curried_program.to_clvm(&mut AllocEncoder(allocator)).into_gen()?;
     let dis = disassemble(allocator, nodeptr, None);
-    eprintln!("disassembled {dis}");
     Ok(Puzzle::from_nodeptr(nodeptr))
 }
 
