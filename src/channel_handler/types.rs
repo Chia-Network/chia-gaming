@@ -3,6 +3,7 @@ use rand::distributions::Standard;
 use clvmr::allocator::Allocator;
 
 use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, RefereeID, Program, Puzzle, PuzzleHash, Error, GameHandler, Timeout, ClvmObject, Hash};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys};
 
 #[derive(Default)]
 pub struct ChannelHandlerPrivateKeys {
@@ -173,7 +174,17 @@ impl ChannelHandler {
         ChannelHandler::new(standard_puzzle, rng.gen())
     }
 
-    pub fn initiate(&mut self, allocator: &mut Allocator, initiation: &ChannelHandlerInitiationData) -> ChannelHandlerInitiationResult {
+    pub fn initiate(&mut self, allocator: &mut Allocator, initiation: &ChannelHandlerInitiationData) -> Result<ChannelHandlerInitiationResult, Error> {
+        let our_channel_pubkey = private_to_public_key(&self.private_keys.my_channel_coin_private_key)?;
+        let our_unroll_pubkey = private_to_public_key(&self.private_keys.my_unroll_coin_private_key)?;
+        if initiation.their_state_pubkey == our_channel_pubkey {
+            return Err(Error::Channel("Duplicated channel coin public key".to_string()));
+        }
+
+        if initiation.their_unroll_pubkey == our_unroll_pubkey {
+            return Err(Error::Channel("Duplicated unroll coin public key".to_string()));
+        }
+
         self.state_channel_coin_string = Some(initiation.launcher_coin_string.clone());
         self.have_potato = initiation.we_start_with_potato;
         self.their_channel_coin_public_key = initiation.their_state_pubkey.clone();
@@ -199,8 +210,13 @@ impl ChannelHandler {
         // essentially an invocation of
         // state_channel.clinc::state_channel_unrolling
         // should be a standard puzzle with a aggsig parent condition.
-        todo!();
 
+        // Puzzle hash of a standard puzzle with a pubkey that combines our
+        // channel private_key to pubkey and their channel pubkey.
+        let combined_public_key = aggregate_public_keys(&our_channel_pubkey, &self.their_channel_coin_public_key)?;
+        let shared_puzzle_hash = puzzle_hash_for_pk(allocator, &combined_public_key)?;
+
+        todo!();
         // ChannelHandlerInitiationResult {
         //     channel_puzzle_hash_up: 
         //     my_initial_channel_half_signature_peer: Aggsig

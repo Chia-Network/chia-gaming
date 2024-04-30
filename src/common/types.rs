@@ -33,7 +33,7 @@ impl PrivateKey {
 }
 
 /// Public key
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct PublicKey([u8; 48]);
 
 impl Default for PublicKey {
@@ -125,6 +125,9 @@ impl Default for Hash {
 }
 
 impl Hash {
+    pub fn from_bytes(by: [u8; 32]) -> Hash {
+        Hash(by)
+    }
     pub fn bytes<'a>(&'a self) -> &'a [u8] {
         &self.0
     }
@@ -135,8 +138,17 @@ impl Hash {
 pub struct PuzzleHash(Hash);
 
 impl PuzzleHash {
+    pub fn from_bytes(by: [u8; 32]) -> PuzzleHash {
+        PuzzleHash(Hash::from_bytes(by))
+    }
     pub fn bytes<'a>(&'a self) -> &'a [u8] {
         self.0.bytes()
+    }
+}
+
+impl ToClvm<NodePtr> for PuzzleHash {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        encoder.encode_atom(&self.0.0)
     }
 }
 
@@ -153,7 +165,7 @@ pub enum Error {
     EncodeErr(ToClvmError),
     StrErr(String),
     BlsErr(chia_bls::Error),
-    Channel
+    Channel(String)
 }
 
 #[derive(Clone)]
