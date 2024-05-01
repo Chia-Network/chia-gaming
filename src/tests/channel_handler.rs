@@ -5,7 +5,8 @@ use rand_chacha::ChaCha8Rng;
 use clvmr::allocator::Allocator;
 
 use crate::common::types::{Amount, CoinString, PublicKey, ClvmObject, CoinID, Sha256tree};
-use crate::channel_handler::types::{ChannelHandler, ChannelHandlerInitiationData, ChannelHandlerEnv, read_unroll_metapuzzle, read_unroll_puzzle};
+use crate::channel_handler::handler::ChannelHandler;
+use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, read_unroll_metapuzzle, read_unroll_puzzle};
 
 lazy_static! {
     pub static ref THEIR_STATE_PUBKEY: PublicKey = {
