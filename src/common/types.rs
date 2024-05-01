@@ -6,6 +6,7 @@ use rand::distributions::Standard;
 use clvmr::allocator::{Allocator, NodePtr};
 use clvmr::reduction::EvalErr;
 
+use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, sha256};
 use clvm_tools_rs::classic::clvm_tools::sha256tree;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 
@@ -13,9 +14,46 @@ use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
 use chia_bls;
 use chia_bls::signature::sign;
 
+/// CoinID
+#[derive(Default, Clone)]
+pub struct CoinID(Hash);
+
+impl CoinID {
+    pub fn bytes<'a>(&'a self) -> &'a [u8] {
+        self.0.bytes()
+    }
+}
+
+impl ToClvm<NodePtr> for CoinID {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        self.0.to_clvm(encoder)
+    }
+}
+
 /// Coin String
 #[derive(Default, Clone)]
 pub struct CoinString(Vec<u8>);
+
+impl CoinString {
+    pub fn from_parts(parent: &CoinID, puzzle_hash: &PuzzleHash, amount: &Amount) -> CoinString {
+        let mut allocator = Allocator::new();
+        let amount_clvm = amount.to_clvm(&mut AllocEncoder(&mut allocator)).unwrap();
+        let mut res = Vec::new();
+        res.append(&mut parent.bytes().to_vec());
+        res.append(&mut puzzle_hash.bytes().to_vec());
+        res.append(&mut allocator.atom(amount_clvm).to_vec());
+        CoinString(res)
+    }
+
+    pub fn to_coin_id(&self) -> CoinID {
+        let h = sha256(Bytes::new(Some(BytesFromType::Raw(self.0.clone()))));
+        let mut fixed: [u8; 32] = [0; 32];
+        for (i, b) in h.data().iter().enumerate() {
+            fixed[i % fixed.len()] = *b;
+        }
+        CoinID(Hash::from_bytes(fixed))
+    }
+}
 
 /// Private Key
 #[derive(Clone)]
@@ -70,11 +108,11 @@ impl PublicKey {
     }
 }
 
-impl ToClvm<NodePtr> for PublicKey {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
-        encoder.encode_atom(&self.0)
-    }
-}
+                    impl ToClvm<NodePtr> for PublicKey {
+                        fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+                            encoder.encode_atom(&self.0)
+                        }
+                    }
 
 impl PublicKey {
     pub fn from_bls(pk: &chia_bls::PublicKey) -> PublicKey {
@@ -125,6 +163,22 @@ impl Amount {
     pub fn new(amt: u64) -> Amount {
         Amount(amt)
     }
+
+    pub fn add(&self, amt: &Amount) -> Amount {
+        Amount(self.0 + amt.0)
+    }
+}
+
+impl ToClvm<NodePtr> for Amount {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        self.0.to_clvm(encoder)
+    }
+}
+
+impl From<Amount> for u64 {
+    fn from(amt: Amount) -> Self {
+        amt.0
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -135,6 +189,13 @@ impl Default for Hash {
         Hash([0; 32])
     }
 }
+
+impl ToClvm<NodePtr> for Hash {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        encoder.encode_atom(&self.0)
+    }
+}
+
 
 impl Hash {
     pub fn from_bytes(by: [u8; 32]) -> Hash {
@@ -173,6 +234,7 @@ pub struct RefereeID(usize);
 pub enum Error {
     ClvmError(EvalErr),
     IoError(io::Error),
+    BasicError,
     SyntaxErr(SyntaxErr),
     EncodeErr(ToClvmError),
     StrErr(String),
@@ -313,12 +375,6 @@ impl ErrToError for io::Error {
     }
 }
 
-impl ErrToError for ToClvmError {
-    fn into_gen(self) -> Error {
-        Error::EncodeErr(self)
-    }
-}
-
 impl ErrToError for String {
     fn into_gen(self) -> Error {
         Error::StrErr(self)
@@ -328,6 +384,12 @@ impl ErrToError for String {
 impl ErrToError for chia_bls::Error {
     fn into_gen(self) -> Error {
         Error::BlsErr(self)
+    }
+}
+
+impl ErrToError for ToClvmError {
+    fn into_gen(self) -> Error {
+        Error::EncodeErr(self)
     }
 }
 

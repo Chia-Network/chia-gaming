@@ -2,8 +2,8 @@ use lazy_static::lazy_static;
 
 use clvmr::Allocator;
 
-use crate::common::standard_coin::{get_default_hidden_puzzle, get_standard_coin_puzzle, puzzle_for_pk, hex_to_sexp};
-use crate::common::types::{PublicKey, Sha256tree, ToClvmObject};
+use crate::common::standard_coin::{puzzle_for_pk, hex_to_sexp};
+use crate::common::types::{PublicKey, Sha256tree};
 
 lazy_static! {
     pub static ref TEST_PUBLIC_KEY_BYTES: Vec<u8> = vec![
