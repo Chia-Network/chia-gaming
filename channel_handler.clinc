@@ -164,12 +164,15 @@
 (defun standard_solution (private_key coin_id conditions))
 
 ; returns (solution aggsig)
+;; [X]
 (defun standard_solution_partial (private_key coin_id conditions aggregate_public_key))
 
 ; returns signature
+;; [X]
 (defun unsafe_sign (private_key value))
 
 ; returns signature
+;; [X]
 (defun unsafe_sign_partial (private_key value aggregate_public_key))
 
 ; returns public_key

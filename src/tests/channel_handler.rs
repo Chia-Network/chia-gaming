@@ -4,8 +4,8 @@ use rand_chacha::ChaCha8Rng;
 
 use clvmr::allocator::Allocator;
 
-use crate::common::types::{Amount, CoinString, PublicKey, ClvmObject, PuzzleHash, Sha256tree};
-use crate::channel_handler::types::{ChannelHandler, ChannelHandlerInitiationData};
+use crate::common::types::{Amount, CoinString, PublicKey, ClvmObject, CoinID, Sha256tree};
+use crate::channel_handler::types::{ChannelHandler, ChannelHandlerInitiationData, ChannelHandlerEnv, read_unroll_metapuzzle, read_unroll_puzzle};
 
 lazy_static! {
     pub static ref THEIR_STATE_PUBKEY: PublicKey = {
@@ -121,11 +121,16 @@ fn test_smoke_can_initiate_channel_handler() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let mut ch = ChannelHandler::construct_with_rng(&mut rng);
     let their_referee = ClvmObject::from_nodeptr(allocator.one());
-    let default_conditions = ClvmObject::from_nodeptr(allocator.null());
-    let default_conditions_hash = default_conditions.sha256tree(&mut allocator);
     let ref_puzzle_hash = their_referee.sha256tree(&mut allocator);
-    let initiation_result = ch.initiate(&mut allocator, &default_conditions_hash, &ChannelHandlerInitiationData {
-        launcher_coin_string: CoinString::default(),
+    let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
+    let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+    let mut env = ChannelHandlerEnv {
+        allocator: &mut allocator,
+        unroll_metapuzzle,
+        unroll_puzzle,
+    };
+    let initiation_result = ch.initiate(&mut env, &ChannelHandlerInitiationData {
+        launcher_coin_id: CoinID::default(),
         we_start_with_potato: false,
         their_state_pubkey: THEIR_STATE_PUBKEY.clone(),
         their_unroll_pubkey: THEIR_UNROLL_PUBKEY.clone(),
