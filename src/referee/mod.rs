@@ -1,6 +1,6 @@
 use clvmr::allocator::NodePtr;
 use crate::common::types::{Aggsig, Amount, CoinString, PuzzleHash, Hash, Puzzle, Program, Timeout, PrivateKey, Error, AllocEncoder};
-use crate::channel_handler::types::TransactionBundle;
+use crate::common::types::TransactionBundle;
 
 pub struct RefereeMakerMoveResult {
     puzzle_hash_for_unroll: PuzzleHash,

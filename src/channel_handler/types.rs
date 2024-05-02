@@ -72,28 +72,10 @@ pub struct MoveResult {
     pub mover_share_peer: Amount
 }
 
-pub struct TransactionBundle {
-    pub puzzle: Puzzle,
-    pub solution: NodePtr,
-    pub signature: Aggsig
-}
-
-pub struct SpentResult {
-    pub transaction_bundle: TransactionBundle,
-    pub unroll_coin_string_up: CoinString,
-    pub transaction_up: TransactionBundle,
-    pub whether_has_timeout_up: bool
-}
-
 pub struct OnChainGameCoin<'a> {
     pub game_id_up: GameID,
     pub coin_string_up: CoinString,
     pub referee_up: &'a mut RefereeMaker
-}
-
-pub struct SpendRewardResult {
-    pub coins_with_solutions: Vec<TransactionBundle>,
-    pub result_coin_string_up: CoinString
 }
 
 pub struct CoinSpentResult<'a> {
