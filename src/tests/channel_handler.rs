@@ -77,6 +77,30 @@ impl ChannelHandlerGame {
         self.players[who].ch.initiate(env, data)
     }
 
+    fn handshake(&mut self, env: &mut ChannelHandlerEnv, launcher_coin: &CoinID) -> Result<[ChannelHandlerInitiationResult; 2], Error> {
+        let chi_data1 = ChannelHandlerInitiationData {
+            launcher_coin_id: launcher_coin.clone(),
+            we_start_with_potato: false,
+            their_state_pubkey: self.player(0).state_pubkey.clone(),
+            their_unroll_pubkey: self.player(0).unroll_pubkey.clone(),
+            their_referee_puzzle_hash: self.player(1).ref_puzzle_hash.clone(),
+            my_contribution: self.player(0).contribution.clone(),
+            their_contribution: self.player(1).contribution.clone()
+        };
+        let initiation_result1 = self.initiate(env, 0, &chi_data1)?;
+        let chi_data2 = ChannelHandlerInitiationData {
+            launcher_coin_id: launcher_coin.clone(),
+            we_start_with_potato: true,
+            their_state_pubkey: self.player(1).state_pubkey.clone(),
+            their_unroll_pubkey: self.player(1).unroll_pubkey.clone(),
+            their_referee_puzzle_hash: self.player(0).ref_puzzle_hash.clone(),
+            my_contribution: self.player(1).contribution.clone(),
+            their_contribution: self.player(0).contribution.clone()
+        };
+        let initiation_result2 = self.initiate(env, 1, &chi_data2)?;
+        Ok([initiation_result1, initiation_result2])
+    }
+
     fn finish_handshake(&mut self, env: &mut ChannelHandlerEnv, who: usize, aggsig: &Aggsig) -> Result<(), Error> {
         self.players[who].ch.finish_handshake(env, aggsig)
     }
@@ -103,28 +127,10 @@ fn test_smoke_can_initiate_channel_handler() {
     // This coin will be spent (virtually) into the unroll coin which supports
     // half-signatures so that unroll can be initated by either party.
     let launcher_coin = CoinID::default();
-    let chi_data1 = ChannelHandlerInitiationData {
-        launcher_coin_id: launcher_coin.clone(),
-        we_start_with_potato: false,
-        their_state_pubkey: game.player(0).state_pubkey.clone(),
-        their_unroll_pubkey: game.player(0).unroll_pubkey.clone(),
-        their_referee_puzzle_hash: game.player(1).ref_puzzle_hash.clone(),
-        my_contribution: game.player(0).contribution.clone(),
-        their_contribution: game.player(1).contribution.clone()
-    };
-    let initiation_result1 = game.initiate(&mut env, 0, &chi_data1).expect("should construct");
-    let chi_data2 = ChannelHandlerInitiationData {
-        launcher_coin_id: launcher_coin.clone(),
-        we_start_with_potato: true,
-        their_state_pubkey: game.player(1).state_pubkey.clone(),
-        their_unroll_pubkey: game.player(1).unroll_pubkey.clone(),
-        their_referee_puzzle_hash: game.player(0).ref_puzzle_hash.clone(),
-        my_contribution: game.player(1).contribution.clone(),
-        their_contribution: game.player(0).contribution.clone()
-    };
-    let initiation_result2 = game.initiate(&mut env, 1, &chi_data2).expect("should construct");
-    let finish_hs_result1 = game.finish_handshake(&mut env, 1, &initiation_result1.my_initial_channel_half_signature_peer).expect("should finish handshake");
-    let finish_hs_result2 = game.finish_handshake(&mut env, 0, &initiation_result2.my_initial_channel_half_signature_peer).expect("should finish handshake");
+    let init_results = game.handshake(&mut env, &launcher_coin).expect("should work");
+
+    let finish_hs_result1 = game.finish_handshake(&mut env, 1, &init_results[0].my_initial_channel_half_signature_peer).expect("should finish handshake");
+    let finish_hs_result2 = game.finish_handshake(&mut env, 0, &init_results[1].my_initial_channel_half_signature_peer).expect("should finish handshake");
     todo!();
 }
 
