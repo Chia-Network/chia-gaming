@@ -4,12 +4,15 @@ use std::ops::{Add, AddAssign};
 use rand::prelude::*;
 use rand::distributions::Standard;
 
-use clvmr::allocator::{Allocator, NodePtr};
+use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, sha256};
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
+use clvm_tools_rs::classic::clvm::sexp::flatten;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
+
+use crate::common::constants::{AGG_SIG_UNSAFE, AGG_SIG_ME, CREATE_COIN};
 
 use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
 use chia_bls;
@@ -481,5 +484,64 @@ pub trait IntoErr<X> {
 impl<X, E> IntoErr<X> for Result<X, E> where E: ErrToError {
     fn into_gen(self) -> Result<X, Error> {
         self.map_err(|e| e.into_gen())
+    }
+}
+
+pub enum CoinCondition {
+    AggSigMe(PublicKey, Vec<u8>),
+    AggSigUnsafe(PublicKey, Vec<u8>),
+    CreateCoin(PuzzleHash),
+}
+
+fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<CoinCondition> {
+    let mut exploded = Vec::new();
+    flatten(allocator.allocator(), condition, &mut exploded);
+    let public_key_from_bytes = |b: &[u8]| -> Result<PublicKey, Error> {
+        let mut fixed: [u8; 48] = [0; 48];
+        for (i,b) in b.iter().enumerate() {
+            fixed[i % 48] = *b;
+        }
+        PublicKey::from_bytes(fixed)
+    };
+    let puzzle_hash_from_bytes = |b: &[u8]| -> PuzzleHash {
+        let mut fixed: [u8; 32] = [0; 32];
+        for (i,b) in b.iter().enumerate() {
+            fixed[i % 32] = *b;
+        }
+        PuzzleHash::from_bytes(fixed)
+    };
+    if exploded.len() > 2 {
+        if matches!(
+            (allocator.allocator().sexp(exploded[0]),
+             allocator.allocator().sexp(exploded[1]),
+             allocator.allocator().sexp(exploded[2])
+            ), (SExp::Atom, SExp::Atom, SExp::Atom)
+        ) {
+            let atoms: Vec<Vec<u8>> = exploded.iter().take(3).map(|a| {
+                allocator.allocator().atom(*a).to_vec()
+            }).collect();
+            if *atoms[0] == *AGG_SIG_UNSAFE {
+                if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
+                    return Some(CoinCondition::AggSigUnsafe(pk, atoms[2].to_vec()));
+                }
+            } else if *atoms[0] == *AGG_SIG_ME {
+                if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
+                    return Some(CoinCondition::AggSigMe(pk, atoms[2].to_vec()));
+                }
+            } else if *atoms[0] == *CREATE_COIN {
+                return Some(CoinCondition::CreateCoin(puzzle_hash_from_bytes(&atoms[1])));
+            }
+        }
+    }
+
+    None
+}
+
+impl CoinCondition {
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, conditions: NodePtr) -> Vec<CoinCondition> {
+        // Ensure this borrow of allocator is finished for what's next.
+        let mut exploded = Vec::new();
+        flatten(allocator.allocator(), conditions, &mut exploded);
+        exploded.iter().flat_map(|cond| parse_condition(allocator, *cond)).collect()
     }
 }
