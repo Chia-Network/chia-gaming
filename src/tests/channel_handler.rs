@@ -5,15 +5,12 @@ use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::types::{Amount, CoinID, Sha256tree, PrivateKey, AllocEncoder, Node, Hash};
 use crate::channel_handler::handler::ChannelHandler;
 use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, read_unroll_metapuzzle, read_unroll_puzzle};
-use crate::common::standard_coin::private_to_public_key;
 use crate::tests::constants::{THEIR_STATE_PUBKEY, THEIR_UNROLL_PUBKEY};
 
 #[test]
 fn test_smoke_can_initiate_channel_handler() {
     let mut allocator = AllocEncoder::new();
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
-    let private_key: PrivateKey = rng.gen();
-    let public_key = private_to_public_key(&private_key);
     let mut ch = ChannelHandler::construct_with_rng(&mut rng);
     let their_referee = allocator.allocator().one();
     let ref_puzzle_hash = Node(their_referee).sha256tree(&mut allocator);

@@ -9,7 +9,7 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use crate::common::constants::DEFAULT_HIDDEN_PUZZLE_HASH;
 use crate::common::standard_coin::{puzzle_for_pk, hex_to_sexp, private_to_public_key, unsafe_sign_partial, get_standard_coin_puzzle, partial_signer, puzzle_hash_for_pk, calculate_synthetic_public_key, standard_solution};
 use crate::common::types::{PublicKey, Sha256tree, PrivateKey, AllocEncoder, Aggsig, PuzzleHash, Node, ToQuotedProgram};
-use crate::tests::constants::{EXPECTED_PUZZLE_HEX, TEST_PUBLIC_KEY_BYTES, KEY_PAIR_PUBLIC, KEY_PAIR_PRIVATE, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, STANDARD_PUZZLE_HASH, KEY_PAIR_SYNTHETIC_PUBLIC_KEY, TEST_EXPECTED_COIN_SIGNATURE};
+use crate::tests::constants::{EXPECTED_PUZZLE_HEX, TEST_PUBLIC_KEY_BYTES, KEY_PAIR_PUBLIC, KEY_PAIR_PRIVATE, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, STANDARD_PUZZLE_HASH, KEY_PAIR_SYNTHETIC_PUBLIC_KEY};
 
 #[test]
 fn test_standard_puzzle() {
@@ -59,7 +59,6 @@ fn test_standard_puzzle_form() {
 
 #[test]
 fn test_calculate_synthetic_public_key() {
-    let private_key = PrivateKey::from_bytes(&KEY_PAIR_PRIVATE.clone()).expect("should work");
     let public_key = PublicKey::from_bytes(KEY_PAIR_PUBLIC.clone()).expect("should work");
     let synthetic_public_key = PublicKey::from_bytes(KEY_PAIR_SYNTHETIC_PUBLIC_KEY.clone()).expect("should work");
     let hidden_puzzle_hash = DEFAULT_HIDDEN_PUZZLE_HASH.clone();
