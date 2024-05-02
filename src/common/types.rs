@@ -1,8 +1,6 @@
 use std::io;
 use std::ops::{Add, AddAssign};
 
-use num_bigint::BigInt;
-
 use rand::prelude::*;
 use rand::distributions::Standard;
 
@@ -10,8 +8,8 @@ use clvmr::allocator::{Allocator, NodePtr};
 use clvmr::reduction::EvalErr;
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, sha256};
-use clvm_tools_rs::classic::clvm_tools::sha256tree;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
+use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
 
 use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
 use chia_bls;
@@ -39,12 +37,12 @@ pub struct CoinString(Vec<u8>);
 
 impl CoinString {
     pub fn from_parts(parent: &CoinID, puzzle_hash: &PuzzleHash, amount: &Amount) -> CoinString {
-        let mut allocator = Allocator::new();
-        let amount_clvm = amount.to_clvm(&mut AllocEncoder(&mut allocator)).unwrap();
+        let mut allocator = AllocEncoder::new();
+        let amount_clvm = amount.to_clvm(&mut allocator).unwrap();
         let mut res = Vec::new();
         res.append(&mut parent.bytes().to_vec());
         res.append(&mut puzzle_hash.bytes().to_vec());
-        res.append(&mut allocator.atom(amount_clvm).to_vec());
+        res.append(&mut allocator.allocator().atom(amount_clvm).to_vec());
         CoinString(res)
     }
 
@@ -54,7 +52,7 @@ impl CoinString {
 }
 
 /// Private Key
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PrivateKey(chia_bls::SecretKey);
 
 impl Default for PrivateKey {
@@ -83,6 +81,10 @@ impl PrivateKey {
         PrivateKey(sk)
     }
 
+    pub fn from_bytes(by: &[u8; 32]) -> Result<PrivateKey, Error> {
+        Ok(PrivateKey::from_bls(chia_bls::SecretKey::from_bytes(by).into_gen()?))
+    }
+
     pub fn to_bls(&self) -> &chia_bls::SecretKey {
         &self.0
     }
@@ -94,17 +96,20 @@ impl PrivateKey {
     pub fn bytes(&self) -> [u8; 32] {
         self.0.to_bytes()
     }
+}
 
-    pub fn scalar_multiply(scalar: &BigInt) -> PrivateKey {
-        // start with result = the "Point at infinity" and bit_val = self.
-        // For each bit in scalar, add bit_val to result if 1 and double bit_val
-        // by addition.
-        todo!();
+impl Distribution<PrivateKey> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PrivateKey {
+        let mut pk = [0; 32];
+        for i in 0..32 {
+            pk[i] = rng.gen();
+        }
+        PrivateKey(chia_bls::SecretKey::from_seed(&pk))
     }
 }
 
 /// Public key
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct PublicKey(chia_bls::PublicKey);
 
 impl Default for PublicKey {
@@ -177,13 +182,19 @@ impl Aggsig {
     pub fn to_bls(&self) -> chia_bls::Signature {
         self.0.clone()
     }
+
     pub fn verify(&self, public_key: &PublicKey, msg: &[u8]) -> bool {
         verify(&self.0, &public_key.to_bls(), msg)
     }
+
     pub fn aggregate(&self, other: &Aggsig) -> Aggsig {
         let mut result = self.0.clone();
         result.aggregate(&other.0);
         Aggsig(result)
+    }
+
+    pub fn scalar_multiply(&mut self, int_bytes: &[u8]) {
+        self.0.scalar_multiply(int_bytes)
     }
 }
 
@@ -202,13 +213,9 @@ impl Add for Aggsig {
     }
 }
 
-impl Distribution<PrivateKey> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PrivateKey {
-        let mut pk = [0; 32];
-        for i in 0..32 {
-            pk[i] = rng.gen();
-        }
-        PrivateKey(chia_bls::SecretKey::from_seed(&pk))
+impl ToClvm<NodePtr> for Aggsig {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        encoder.encode_atom(&self.0.to_bytes())
     }
 }
 
@@ -321,94 +328,65 @@ pub enum Error {
     Channel(String)
 }
 
-#[derive(Clone)]
-pub struct ClvmObject(NodePtr);
+pub struct Node(pub NodePtr);
 
-impl ToClvm<NodePtr> for ClvmObject {
+impl Node {
+    fn new(n: NodePtr) -> Node { Node(n) }
+}
+
+impl ToClvm<NodePtr> for Node {
     fn to_clvm(&self, _encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
     }
 }
 
-impl ClvmObject {
-    pub fn nil(allocator: &mut Allocator) -> ClvmObject {
-        ClvmObject(allocator.null())
-    }
+pub trait ToQuotedProgram {
+    fn to_quoted_program(&self, allocator: &mut AllocEncoder) -> Result<Program, Error>;
+}
 
-    pub fn from_nodeptr(p: NodePtr) -> ClvmObject {
-        ClvmObject(p)
-    }
-    pub fn to_nodeptr(&self) -> NodePtr {
-        self.0
-    }
-    /// Quote this data so it can be run as code that returns the same data.
-    pub fn to_quoted_program(&self, allocator: &mut Allocator) -> Result<Program, Error> {
-        let pair = allocator.new_pair(allocator.one(), self.to_nodeptr()).into_gen()?;
+impl ToQuotedProgram for NodePtr {
+    fn to_quoted_program(&self, allocator: &mut AllocEncoder) -> Result<Program, Error> {
+        let pair = allocator.0.new_pair(allocator.0.one(), *self).into_gen()?;
         Ok(Program::from_nodeptr(pair))
     }
 }
 
-pub trait ToClvmObject {
-    fn to_clvm_obj(&self) -> ClvmObject;
-    fn to_nodeptr(&self) -> NodePtr {
-        self.to_clvm_obj().0
-    }
-}
-
 pub trait Sha256tree {
-    fn sha256tree(&self, allocator: &mut Allocator) -> PuzzleHash;
+    fn sha256tree(&self, allocator: &mut AllocEncoder) -> PuzzleHash;
 }
 
-impl Sha256tree for ClvmObject {
-    fn sha256tree(&self, allocator: &mut Allocator) -> PuzzleHash {
-        let by = sha256tree::sha256tree(allocator, self.0);
-        let mut hash_into: [u8; 32] = [0; 32];
-        for (i,b) in by.data().iter().take(32).enumerate() {
-            hash_into[i] = *b;
+impl<X: ToClvm<NodePtr>> Sha256tree for X {
+    fn sha256tree(&self, allocator: &mut AllocEncoder) -> PuzzleHash {
+        let node = self.to_clvm(allocator).unwrap_or_else(|_| allocator.0.null());
+        let mut fixed: [u8; 32] = [0; 32];
+        for (i, b) in sha256tree(allocator.allocator(), node).data().iter().enumerate() {
+            fixed[i % 32] = *b;
         }
-        PuzzleHash(Hash(hash_into))
-    }
-}
-
-impl<X: ToClvmObject> Sha256tree for X {
-    fn sha256tree(&self, allocator: &mut Allocator) -> PuzzleHash {
-        self.to_clvm_obj().sha256tree(allocator)
+        PuzzleHash::from_bytes(fixed)
     }
 }
 
 #[derive(Clone)]
-pub struct Program(ClvmObject);
+pub struct Program(NodePtr);
 
 impl Program {
     pub fn from_nodeptr(n: NodePtr) -> Program {
-        Program(ClvmObject::from_nodeptr(n))
+        Program(n)
     }
 }
 
 impl ToClvm<NodePtr> for Program {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
-        self.0.to_clvm(encoder)
-    }
-}
-
-impl ToClvmObject for Program {
-    fn to_clvm_obj(&self) -> ClvmObject {
-        self.0.clone()
+    fn to_clvm(&self, _encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        Ok(self.0)
     }
 }
 
 #[derive(Clone)]
 pub struct Puzzle(Program);
 
-impl ToClvmObject for Puzzle {
-    fn to_clvm_obj(&self) -> ClvmObject {
-        self.0.to_clvm_obj()
-    }
-}
-
 impl ToClvm<NodePtr> for Puzzle {
     fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
-        self.to_clvm_obj().to_clvm(encoder)
+        self.0.to_clvm(encoder)
     }
 }
 
@@ -420,16 +398,26 @@ impl Puzzle {
 
 #[derive(Clone)]
 pub enum GameHandler {
-    MyTurnHandler(ClvmObject),
-    TheirTurnHandler(ClvmObject)
+    MyTurnHandler(NodePtr),
+    TheirTurnHandler(NodePtr)
 }
 
 #[derive(Clone)]
 pub struct Timeout(u64);
 
-pub struct AllocEncoder<'a>(pub &'a mut Allocator);
+pub struct AllocEncoder(Allocator);
 
-impl<'a> ClvmEncoder for AllocEncoder<'a> {
+impl AllocEncoder {
+    pub fn new() -> Self {
+        AllocEncoder(Allocator::new())
+    }
+
+    pub fn allocator<'a>(&'a mut self) -> &'a mut Allocator {
+        &mut self.0
+    }
+}
+
+impl ClvmEncoder for AllocEncoder {
     type Node = NodePtr;
 
     fn encode_atom(&mut self, bytes: &[u8]) -> Result<Self::Node, ToClvmError> {

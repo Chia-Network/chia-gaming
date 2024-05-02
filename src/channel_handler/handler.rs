@@ -1,11 +1,9 @@
-use std::ops::Add;
-
 use rand::prelude::*;
 
-use clvmr::allocator::Allocator;
+use clvmr::allocator::{Allocator, NodePtr};
 use clvm_traits::ToClvm;
 
-use crate::common::types::{Aggsig, Amount, ClvmObject, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, AllocEncoder, Hash, IntoErr, Sha256tree};
+use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial};
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, TransactionBundle, SpentResult, CoinSpentResult, SpendRewardResult};
 
@@ -84,7 +82,7 @@ impl ChannelHandler {
     ///
     /// The order is important and the first two coins' order are determined by
     /// whether the potato was ours first.
-    pub fn get_state_channel_unroll_conditions(&self, env: &mut ChannelHandlerEnv, my_balance: &Amount, their_balance: &Amount, puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]) -> Result<ClvmObject, Error> {
+    pub fn get_state_channel_unroll_conditions(&self, env: &mut ChannelHandlerEnv, my_balance: &Amount, their_balance: &Amount, puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]) -> Result<NodePtr, Error> {
         let their_first_coin = (51, (self.their_referee_puzzle_hash.clone(), (their_balance.clone(), ())));
 
         // Our ref is a standard puzzle whose public key is our ref pubkey.
@@ -100,29 +98,28 @@ impl ChannelHandler {
                 (their_first_coin, our_first_coin)
             };
 
-        let mut alloc_enc = AllocEncoder(env.allocator);
-        let start_coin_one_clvm = start_coin_one.to_clvm(&mut alloc_enc).into_gen()?;
-        let start_coin_two_clvm = start_coin_two.to_clvm(&mut alloc_enc).into_gen()?;
-        let mut result_coins: Vec<ClvmObject> = vec![
-            ClvmObject::from_nodeptr(start_coin_one_clvm),
-            ClvmObject::from_nodeptr(start_coin_two_clvm),
+        let start_coin_one_clvm = start_coin_one.to_clvm(env.allocator).into_gen()?;
+        let start_coin_two_clvm = start_coin_two.to_clvm(env.allocator).into_gen()?;
+        let mut result_coins: Vec<Node> = vec![
+            Node(start_coin_one_clvm),
+            Node(start_coin_two_clvm),
         ];
 
         // Signatures for the unroll puzzle are always unsafe.
         // Signatures for the channel puzzle are always safe (std format).
         // Meta puzzle for the unroll can't be standard.
         for (ph, a) in puzzle_hashes_and_amounts.iter() {
-            let clvm_conditions = (51, (ph.clone(), (a.clone(), ()))).to_clvm(&mut alloc_enc).into_gen()?;
-            result_coins.push(ClvmObject::from_nodeptr(clvm_conditions));
+            let clvm_conditions = (51, (ph.clone(), (a.clone(), ()))).to_clvm(env.allocator).into_gen()?;
+            result_coins.push(Node(clvm_conditions));
         }
 
-        Ok(ClvmObject::from_nodeptr((result_coins).to_clvm(&mut AllocEncoder(env.allocator)).into_gen()?))
+        Ok((result_coins).to_clvm(env.allocator).into_gen()?)
     }
 
-    pub fn create_conditions_and_signature_to_create_unroll_coin(&self, env: &mut ChannelHandlerEnv) -> Result<(ClvmObject, Aggsig), Error> {
+    pub fn create_conditions_and_signature_to_create_unroll_coin(&self, env: &mut ChannelHandlerEnv) -> Result<(NodePtr, Aggsig), Error> {
         let amount_of_unroll_coin = self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone();
         let default_conditions = self.get_state_channel_unroll_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
-        let default_conditions_hash = default_conditions.sha256tree(env.allocator);
+        let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         let unroll_coin_parent =
             if let Some(coin_string) = self.state_channel_coin_string.as_ref() {
                 coin_string.to_coin_id()
@@ -132,26 +129,26 @@ impl ChannelHandler {
         let unroll_puzzle = env.curried_unroll_puzzle(0, default_conditions_hash)?;
         let unroll_puzzle_hash = unroll_puzzle.sha256tree(env.allocator);
         let create_conditions = vec![
-            ClvmObject::from_nodeptr((51, (unroll_puzzle_hash.clone(), (amount_of_unroll_coin, ()))).to_clvm(&mut AllocEncoder(env.allocator)).into_gen()?)
+            Node((51, (unroll_puzzle_hash.clone(), (amount_of_unroll_coin, ()))).to_clvm(env.allocator).into_gen()?)
         ];
-        let create_conditions_obj = ClvmObject::from_nodeptr(create_conditions.to_clvm(&mut AllocEncoder(env.allocator)).into_gen()?);
+        let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
         let channel_coin_public_key = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         let aggregated_key_for_unroll_create = aggregate_public_keys(&channel_coin_public_key, &self.their_channel_coin_public_key);
         standard_solution_partial(env.allocator, &self.private_keys.my_unroll_coin_private_key, &unroll_coin_parent, create_conditions_obj, &aggregated_key_for_unroll_create)
     }
 
-    pub fn create_conditions_and_signature_to_spend_unroll_coin(&self, env: &mut ChannelHandlerEnv, conditions: &ClvmObject) -> Result<(ClvmObject, Aggsig), Error> {
+    pub fn create_conditions_and_signature_to_spend_unroll_coin(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<(NodePtr, Aggsig), Error> {
         // Should make together two signatures.  One for the unroll coin and
         // one to spend the unroll coin.
         let unroll_private_key = &self.private_keys.my_unroll_coin_private_key;
-        let conditions_hash = conditions.sha256tree(env.allocator);
+        let conditions_hash = Node(conditions).sha256tree(env.allocator);
         let unroll_pubkey = private_to_public_key(&unroll_private_key);
         let aggregate_key_for_unroll_unsafe_sig = aggregate_public_keys(&unroll_pubkey, &self.their_unroll_coin_public_key);
         let to_spend_unroll_sig = unsafe_sign_partial(unroll_private_key, &aggregate_key_for_unroll_unsafe_sig, &conditions_hash.bytes());
         Ok((conditions.clone(), to_spend_unroll_sig))
     }
 
-    pub fn state_channel_unroll_signature(&self, env: &mut ChannelHandlerEnv, conditions: &ClvmObject) -> Result<UnrollCoinSignatures, Error> {
+    pub fn state_channel_unroll_signature(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<UnrollCoinSignatures, Error> {
         let (_, to_create_unroll_sig) = self.create_conditions_and_signature_to_create_unroll_coin(env)?;
         let (_, to_spend_unroll_sig) = self.create_conditions_and_signature_to_spend_unroll_coin(env, conditions)?;
 
@@ -217,7 +214,7 @@ impl ChannelHandler {
         // There are no game coins and a balance for both sides.
 
         let default_conditions = self.get_state_channel_unroll_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
-        let default_conditions_hash = default_conditions.sha256tree(env.allocator);
+        let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         let signature = self.private_keys.my_channel_coin_private_key.sign(&default_conditions_hash.bytes());
 
         Ok(ChannelHandlerInitiationResult {
@@ -254,7 +251,7 @@ impl ChannelHandler {
         todo!();
     }
 
-    pub fn received_message(&mut self, _allocator: &mut Allocator, _game_id: &GameID, _message: &ClvmObject) -> Result<ReadableUX, Error> {
+    pub fn received_message(&mut self, _allocator: &mut Allocator, _game_id: &GameID, _message: NodePtr) -> Result<ReadableUX, Error> {
         todo!();
     }
 
@@ -266,11 +263,11 @@ impl ChannelHandler {
         todo!();
     }
 
-    pub fn send_potato_clean_shutdown(&self, _allocator: &mut Allocator, _conditions: &ClvmObject) -> TransactionBundle {
+    pub fn send_potato_clean_shutdown(&self, _allocator: &mut Allocator, _conditions: NodePtr) -> TransactionBundle {
         todo!();
     }
 
-    pub fn received_potato_clean_shutdown(&self, __allocator: &mut Allocator, _their_channel_half_signature: &Aggsig, _conditions: &ClvmObject) -> Result<(), Error> {
+    pub fn received_potato_clean_shutdown(&self, __allocator: &mut Allocator, _their_channel_half_signature: &Aggsig, _conditions: NodePtr) -> Result<(), Error> {
         todo!();
     }
 
@@ -278,11 +275,11 @@ impl ChannelHandler {
         todo!();
     }
 
-    pub fn state_channel_spent(&self, _allocator: &mut Allocator, _condition: &ClvmObject) -> Result<SpentResult, Error> {
+    pub fn state_channel_spent(&self, _allocator: &mut Allocator, _condition: NodePtr) -> Result<SpentResult, Error> {
         todo!();
     }
 
-    pub fn unroll_coin_spent<'a>(&'a self, _allocator: &mut Allocator, _conditions: &ClvmObject) -> Result<CoinSpentResult<'a>, Error> {
+    pub fn unroll_coin_spent<'a>(&'a self, _allocator: &mut Allocator, _conditions: NodePtr) -> Result<CoinSpentResult<'a>, Error> {
         todo!();
     }
 
