@@ -9,7 +9,7 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use crate::common::constants::DEFAULT_HIDDEN_PUZZLE_HASH;
 use crate::common::standard_coin::{puzzle_for_pk, hex_to_sexp, private_to_public_key, unsafe_sign_partial, get_standard_coin_puzzle, partial_signer, puzzle_hash_for_pk, calculate_synthetic_public_key, standard_solution};
 use crate::common::types::{PublicKey, Sha256tree, PrivateKey, AllocEncoder, Aggsig, PuzzleHash, Node, ToQuotedProgram};
-use crate::tests::constants::{EXPECTED_PUZZLE_HEX, TEST_PUBLIC_KEY_BYTES, KEY_PAIR_PUBLIC, KEY_PAIR_PRIVATE, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, STANDARD_PUZZLE_HASH, KEY_PAIR_SYNTHETIC_PUBLIC_KEY};
+use crate::tests::constants::{EXPECTED_PUZZLE_HEX, TEST_PUBLIC_KEY_BYTES, KEY_PAIR_PUBLIC, KEY_PAIR_PRIVATE, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, STANDARD_PUZZLE_HASH, KEY_PAIR_SYNTHETIC_PUBLIC_KEY, TEST_EXPECTED_COIN_SIGNATURE};
 
 #[test]
 fn test_standard_puzzle() {
@@ -88,7 +88,8 @@ fn test_standard_puzzle_solution_maker() {
     let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &public_key).expect("should work");
     let conditions = ((51, (puzzle_hash.clone(), (99, ()))), ()).to_clvm(&mut allocator).expect("should work");
     let quoted_conditions = conditions.to_quoted_program(&mut allocator).expect("should quote");
-    let expected_added_condition = (50, (synthetic_public_key, (quoted_conditions.sha256tree(&mut allocator), ())));
+    let quoted_conditions_hash = quoted_conditions.sha256tree(&mut allocator);
+    let expected_added_condition = (50, (synthetic_public_key, (quoted_conditions_hash.clone(), ())));
     let (solution, signature) = standard_solution(&mut allocator, &mut &private_key, conditions).expect("should work");
     let expected_full_conditions = (expected_added_condition, Node(conditions)).to_clvm(&mut allocator).expect("should work");
     eprintln!("solution {}", disassemble(allocator.allocator(), solution, None));
@@ -104,4 +105,5 @@ fn test_standard_puzzle_solution_maker() {
         disassemble(allocator.allocator(), res.1, None),
         disassemble(allocator.allocator(), expected_full_conditions, None)
     );
+    assert!(signature.verify(&public_key, &quoted_conditions_hash.bytes()));
 }
