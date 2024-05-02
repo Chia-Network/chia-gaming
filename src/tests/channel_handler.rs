@@ -12,34 +12,25 @@ use crate::channel_handler::handler::ChannelHandler;
 use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, ChannelHandlerInitiationResult, read_unroll_metapuzzle, read_unroll_puzzle};
 
 struct ChannelHandlerParty {
-    private_key: PrivateKey,
     ch: ChannelHandler,
     unroll_metapuzzle: Puzzle,
     unroll_puzzle: Puzzle,
     referee: Puzzle,
     ref_puzzle_hash: PuzzleHash,
-    state_pubkey: PublicKey,
-    unroll_pubkey: PublicKey,
     contribution: Amount,
 }
 
 impl ChannelHandlerParty {
     fn new<R: Rng>(allocator: &mut AllocEncoder, rng: &mut R, unroll_metapuzzle: Puzzle, unroll_puzzle: Puzzle, contribution: Amount) -> ChannelHandlerParty {
-        let private_key: PrivateKey = rng.gen();
         let ch = ChannelHandler::construct_with_rng(rng);
         let referee = Puzzle::from_nodeptr(allocator.allocator().one());
         let ref_puzzle_hash = referee.sha256tree(allocator);
-        let state_pubkey = private_to_public_key(&private_key);
-        let unroll_pubkey = calculate_synthetic_public_key(&state_pubkey, &ref_puzzle_hash).expect("should work");
         ChannelHandlerParty {
-            private_key,
             ch,
             unroll_metapuzzle,
             unroll_puzzle,
             referee,
             ref_puzzle_hash,
-            state_pubkey,
-            unroll_pubkey,
             contribution
         }
     }
@@ -83,8 +74,8 @@ impl ChannelHandlerGame {
         let chi_data1 = ChannelHandlerInitiationData {
             launcher_coin_id: launcher_coin.clone(),
             we_start_with_potato: false,
-            their_state_pubkey: self.player(0).state_pubkey.clone(),
-            their_unroll_pubkey: self.player(0).unroll_pubkey.clone(),
+            their_channel_pubkey: private_to_public_key(&self.player(1).ch.channel_private_key()),
+            their_unroll_pubkey: private_to_public_key(&self.player(1).ch.unroll_private_key()),
             their_referee_puzzle_hash: self.player(1).ref_puzzle_hash.clone(),
             my_contribution: self.player(0).contribution.clone(),
             their_contribution: self.player(1).contribution.clone()
@@ -93,8 +84,8 @@ impl ChannelHandlerGame {
         let chi_data2 = ChannelHandlerInitiationData {
             launcher_coin_id: launcher_coin.clone(),
             we_start_with_potato: true,
-            their_state_pubkey: self.player(1).state_pubkey.clone(),
-            their_unroll_pubkey: self.player(1).unroll_pubkey.clone(),
+            their_channel_pubkey: private_to_public_key(&self.player(0).ch.channel_private_key()),
+            their_unroll_pubkey: private_to_public_key(&self.player(0).ch.unroll_private_key()),
             their_referee_puzzle_hash: self.player(0).ref_puzzle_hash.clone(),
             my_contribution: self.player(1).contribution.clone(),
             their_contribution: self.player(0).contribution.clone()
@@ -126,7 +117,7 @@ fn test_smoke_can_initiate_channel_handler() {
         [Amount::new(100), Amount::new(100)]
     );
 
-    // This coin will be spent (virtually) into the unroll coin which supports
+    // This coin will be spent (virtually) into the channel coin which supports
     // half-signatures so that unroll can be initated by either party.
     let launcher_coin = CoinID::default();
     let init_results = game.handshake(&mut env, &launcher_coin).expect("should work");
@@ -138,7 +129,14 @@ fn test_smoke_can_initiate_channel_handler() {
     let shutdown_spend_target = puzzle_hash_for_pk(env.allocator, &game.player(1).ch.clean_shutdown_public_key()).expect("should give");
     let amount_to_take = game.player(1).ch.clean_shutdown_amount();
     let conditions = ((51, (shutdown_spend_target, (amount_to_take, ()))), ()).to_clvm(env.allocator).expect("should create conditions");
-    let shutdown_transaction = game.player(1).ch.send_potato_clean_shutdown(&mut env, conditions).expect("should give transaction");
-    todo!();
+    let shutdown_transaction = game.player(1).ch.send_potato_clean_shutdown(
+        &mut env,
+        conditions
+    ).expect("should give transaction");
+    let counter_shutdown = game.player(0).ch.received_potato_clean_shutdown(
+        &mut env,
+        &shutdown_transaction.signature,
+        conditions
+    ).expect("should give counter transaction");
 }
 
