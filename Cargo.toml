@@ -12,9 +12,11 @@ rand_chacha = "0.3.1"
 clvm-traits = "0.7.0"
 subtle = "2.5.0"
 num-bigint = "0.4.4"
+num-traits = "0.2.18"
 chia-bls = "0.7.0"
 clvm-utils = "0.7.0"
 lazy_static = "1.4.0"
+ff = { version = "0.13.0", features = ["derive"] }
 bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 
 [lib]

@@ -1,22 +1,24 @@
-use std::io;
+use rand::prelude::*;
 use std::fs::read_to_string;
 
 use lazy_static::lazy_static;
 
-use num_bigint::{BigInt, Sign};
+use num_bigint::{BigInt, Sign, ToBigInt};
+use num_traits::ops::bytes::ToBytes;
 
 use chia_bls;
 
 use clvm_traits::{ToClvm, clvm_curried_args};
 
-use clvmr::allocator::Allocator;
+use clvmr::allocator::{Allocator, NodePtr, SExp};
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream, UnvalidatedBytesFromType, sha256};
 use clvm_tools_rs::classic::clvm::serialize::{sexp_from_stream, SimpleCreateCLVMObject};
+use clvm_tools_rs::classic::clvm::sexp::flatten;
 use clvm_utils::CurriedProgram;
 
 use crate::common::types;
-use crate::common::types::{PublicKey, Puzzle, PuzzleHash, ClvmObject, ToClvmObject, AllocEncoder, IntoErr, Aggsig, Sha256tree, PrivateKey, CoinID, ErrToError};
+use crate::common::types::{PublicKey, Puzzle, PuzzleHash, ClvmObject, AllocEncoder, IntoErr, Aggsig, Sha256tree, PrivateKey, CoinID, Program};
 
 pub fn shatree_atom_cant_fail(by: &[u8]) -> PuzzleHash {
     let mut allocator = Allocator::new();
@@ -25,6 +27,8 @@ pub fn shatree_atom_cant_fail(by: &[u8]) -> PuzzleHash {
 }
 
 lazy_static! {
+    pub static ref CREATE_COIN: Vec<u8> = vec![51];
+
     pub static ref GROUP_ORDER: Vec<u8> = {
         vec![
             0x73,
@@ -193,7 +197,7 @@ fn calculate_synthetic_offset(public_key: &chia_bls::PublicKey, hidden_puzzle_ha
 
 fn calculate_synthetic_public_key(public_key: &chia_bls::PublicKey, hidden_puzzle_hash: &PuzzleHash) -> Result<chia_bls::PublicKey, types::Error> {
     let private_key_int = calculate_synthetic_offset(public_key, hidden_puzzle_hash);
-    let (_, mut private_key_bytes_right) = private_key_int.to_bytes_be();
+    let (_, private_key_bytes_right) = private_key_int.to_bytes_be();
     let mut private_key_bytes: [u8; 32] = [0; 32];
     for (i, b) in private_key_bytes_right.iter().enumerate() {
         private_key_bytes[i + 32 - private_key_bytes.len()] = *b;
@@ -205,7 +209,7 @@ fn calculate_synthetic_public_key(public_key: &chia_bls::PublicKey, hidden_puzzl
 pub fn puzzle_for_synthetic_public_key(allocator: &mut Allocator, standard_coin_puzzle: &Puzzle, synthetic_public_key: &chia_bls::PublicKey) -> Result<Puzzle, types::Error> {
     let curried_program = CurriedProgram {
         program: standard_coin_puzzle,
-        args: clvm_curried_args!(PublicKey::from_bls(synthetic_public_key))
+        args: clvm_curried_args!(PublicKey::from_bls(synthetic_public_key.clone()))
     };
     let nodeptr = curried_program.to_clvm(&mut AllocEncoder(allocator)).into_gen()?;
     Ok(Puzzle::from_nodeptr(nodeptr))
@@ -247,7 +251,7 @@ pub fn calculate_hash_of_quoted_mod_hash(allocator: &mut Allocator, mod_hash: &P
 }
 
 pub fn puzzle_hash_for_synthetic_public_key(allocator: &mut Allocator, synthetic_public_key: &chia_bls::PublicKey) -> Result<PuzzleHash, types::Error> {
-    let our_public_key = PublicKey::from_bytes(&synthetic_public_key.clone().to_bytes());
+    let our_public_key = PublicKey::from_bls(synthetic_public_key.clone());
     let quoted_mod_hash = calculate_hash_of_quoted_mod_hash(allocator, &DEFAULT_PUZZLE_HASH)?;
     let public_key_hash = ClvmObject::from_nodeptr(
         our_public_key.to_clvm(&mut AllocEncoder(allocator)).into_gen()?
@@ -257,54 +261,84 @@ pub fn puzzle_hash_for_synthetic_public_key(allocator: &mut Allocator, synthetic
 
 pub fn puzzle_for_pk(allocator: &mut Allocator, public_key: &PublicKey) -> Result<Puzzle, types::Error> {
     let standard_puzzle = get_standard_coin_puzzle(allocator)?;
-    chia_bls::PublicKey::from_bytes(public_key.bytes()).into_gen().and_then(|g1| {
-        let synthetic_public_key = calculate_synthetic_public_key(&g1, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
-        Ok(puzzle_for_synthetic_public_key(allocator, &standard_puzzle, &synthetic_public_key)?)
-    })
+    let g1 = public_key.to_bls();
+    let synthetic_public_key = calculate_synthetic_public_key(&g1, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
+    Ok(puzzle_for_synthetic_public_key(allocator, &standard_puzzle, &synthetic_public_key)?)
 }
 
 pub fn puzzle_hash_for_pk(allocator: &mut Allocator, public_key: &PublicKey) -> Result<PuzzleHash, types::Error> {
-    chia_bls::PublicKey::from_bytes(public_key.bytes()).into_gen().and_then(|g1| {
-        let synthetic_public_key = calculate_synthetic_public_key(&g1, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
-        Ok(puzzle_hash_for_synthetic_public_key(allocator, &synthetic_public_key)?)
-    })
+    let g1 = public_key.to_bls();
+    let synthetic_public_key = calculate_synthetic_public_key(&g1, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
+    Ok(puzzle_hash_for_synthetic_public_key(allocator, &synthetic_public_key)?)
+}
+
+pub fn solution_for_delegated_puzzle(allocator: &mut Allocator, delegated_puzzle: Program, solution: ClvmObject) -> Result<ClvmObject, types::Error> {
+    let solution_form = (0, (delegated_puzzle, (solution, ()))).to_clvm(&mut AllocEncoder(allocator)).into_gen()?;
+    Ok(ClvmObject::from_nodeptr(solution_form))
+}
+
+pub fn solution_for_conditions(allocator: &mut Allocator, conditions: ClvmObject) -> Result<ClvmObject, types::Error> {
+    let delegated_puzzle = conditions.to_quoted_program(allocator)?;
+    let nil = ClvmObject::nil(allocator);
+    solution_for_delegated_puzzle(allocator, delegated_puzzle, nil)
 }
 
 pub fn standard_solution(allocator: &mut Allocator, private_key: &PrivateKey, coin_id: &CoinID, conditions: ClvmObject) -> Result<(ClvmObject, Aggsig), types::Error> {
-    let conditions = ClvmObject::from_nodeptr((0, ((1, conditions), (0, 0))).to_clvm(&mut AllocEncoder(allocator)).into_gen()?);
+    let solution = solution_for_conditions(allocator, conditions)?;
+    let mut exploded_conditions: Vec<NodePtr> = Vec::new();
+    flatten(allocator, solution.to_nodeptr(), &mut exploded_conditions);
+
+    for condition in exploded_conditions.iter() {
+        let mut exploded_condition: Vec<NodePtr> = Vec::new();
+        flatten(allocator, *condition, &mut exploded_condition);
+        if exploded_condition.len() <= 2 {
+            continue;
+        }
+        // Enough length
+
+        if !matches!(allocator.sexp(exploded_condition[0]), SExp::Atom) {
+            continue;
+        }
+
+        // Headed by an atom
+        let atom_buf = allocator.atom(exploded_condition[0]);
+
+        if atom_buf != *CREATE_COIN {
+            continue;
+        }
+
+        // Is a create coin.
+        todo!();
+    }
     todo!();
 }
 
-pub fn standard_solution_partial(allocator: &mut Allocator, private_key: &PrivateKey, coin_id: &CoinID, conditions: ClvmObject, aggregate_public_key: &PublicKey) -> Result<(ClvmObject, Aggsig), types::Error> {
-    let conditions = ClvmObject::from_nodeptr((0, ((1, conditions), (0, 0))).to_clvm(&mut AllocEncoder(allocator)).into_gen()?);
+#[deprecated]
+pub fn standard_solution_partial(_allocator: &mut Allocator, _private_key: &PrivateKey, _coin_id: &CoinID, _conditions: ClvmObject, _aggregate_public_key: &PublicKey) -> Result<(ClvmObject, Aggsig), types::Error> {
     todo!();
 }
 
-pub fn private_to_public_key(private_key: &types::PrivateKey) -> Result<types::PublicKey, types::Error> {
+pub fn private_to_public_key(private_key: &types::PrivateKey) -> types::PublicKey {
     let sk = private_key.to_bls();
-    let pubkey = sk.public_key();
-    Ok(PublicKey::from_bytes(&pubkey.to_bytes()))
+    PublicKey::from_bls(sk.public_key())
 }
 
-pub fn aggregate_public_keys(pk1: &PublicKey, pk2: &PublicKey) -> Result<types::PublicKey, types::Error> {
-    let pk1_bls = pk1.to_bls()?;
-    let pk2_bls = pk2.to_bls()?;
-    Ok(PublicKey::from_bytes(&(pk1_bls + &pk2_bls).to_bytes()))
+pub fn aggregate_public_keys(pk1: &PublicKey, pk2: &PublicKey) -> types::PublicKey {
+    let mut result = pk1.clone();
+    result += pk2.clone();
+    result
 }
 
-pub fn aggregate_signatures(as1: &Aggsig, as2: &Aggsig) -> Result<types::Aggsig, types::Error> {
-    let mut as1_bls = as1.to_bls()?;
-    let as2_bls = as2.to_bls()?;
-    as1_bls.aggregate(&as2_bls);
-    Ok(Aggsig::from_bytes(as1_bls.to_bytes()))
+pub fn aggregate_signatures(as1: &Aggsig, as2: &Aggsig) -> types::Aggsig {
+    as1.aggregate(as2)
 }
 
-pub fn unsafe_sign<Msg: AsRef<[u8]>>(sk: &PrivateKey, msg: Msg) -> Result<Aggsig, types::Error> {
+pub fn unsafe_sign<Msg: AsRef<[u8]>>(sk: &PrivateKey, msg: Msg) -> Aggsig {
     sk.sign(msg)
 }
 
 pub fn unsafe_sign_partial<Msg: AsRef<[u8]>>(sk: &PrivateKey, pk: &PublicKey, msg: Msg) -> Aggsig {
     let mut aug_msg = pk.bytes().to_vec();
     aug_msg.extend_from_slice(msg.as_ref());
-    Aggsig::from_bytes(chia_bls::sign_raw(&sk.to_bls(), aug_msg).to_bytes())
+    Aggsig::from_bls(chia_bls::sign_raw(&sk.to_bls(), aug_msg))
 }

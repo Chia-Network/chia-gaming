@@ -4,13 +4,13 @@ use rand_chacha::ChaCha8Rng;
 
 use clvmr::allocator::Allocator;
 
-use crate::common::types::{Amount, CoinString, PublicKey, ClvmObject, CoinID, Sha256tree};
+use crate::common::types::{Amount, PublicKey, ClvmObject, CoinID, Sha256tree};
 use crate::channel_handler::handler::ChannelHandler;
 use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, read_unroll_metapuzzle, read_unroll_puzzle};
 
 lazy_static! {
     pub static ref THEIR_STATE_PUBKEY: PublicKey = {
-        PublicKey::from_bytes(&[
+        PublicKey::from_bytes([
             0xb6,
             0x4e,
             0x83,
@@ -59,11 +59,11 @@ lazy_static! {
             0xdb,
             0x79,
             0xcd,
-        ])
+        ]).expect("should be a real pubkey")
     };
 
     pub static ref THEIR_UNROLL_PUBKEY: PublicKey = {
-        PublicKey::from_bytes(&[
+        PublicKey::from_bytes([
             0x99,
             0xf7,
             0xa7,
@@ -112,7 +112,7 @@ lazy_static! {
             0x9b,
             0x1c,
             0x42,
-        ])
+        ]).expect("should be a public key")
     };
 }
 
@@ -130,7 +130,7 @@ fn test_smoke_can_initiate_channel_handler() {
         unroll_metapuzzle,
         unroll_puzzle,
     };
-    let initiation_result = ch.initiate(&mut env, &ChannelHandlerInitiationData {
+    let _initiation_result = ch.initiate(&mut env, &ChannelHandlerInitiationData {
         launcher_coin_id: CoinID::default(),
         we_start_with_potato: false,
         their_state_pubkey: THEIR_STATE_PUBKEY.clone(),
