@@ -3,6 +3,7 @@ use rand::prelude::*;
 use clvmr::allocator::{Allocator, NodePtr};
 use clvm_traits::ToClvm;
 
+use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node, SpentResult, TransactionBundle, SpendRewardResult, Program, ToQuotedProgram, PrivateKey};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial, solution_for_conditions, puzzle_for_pk, agg_sig_me_message};
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, CoinSpentResult};
@@ -97,25 +98,31 @@ impl ChannelHandler {
         self.my_out_of_game_balance.clone()
     }
 
+    pub fn prepend_state_number_rem_to_conditions(&self, env: &mut ChannelHandlerEnv, state_number: usize, conditions: NodePtr) -> Result<NodePtr, Error> {
+        // Add rem condition for the state number
+        let rem_condition = (REM, (state_number, ()));
+        (rem_condition, Node(conditions)).to_clvm(env.allocator).into_gen()
+    }
+
     /// Returns a list of create coin conditions which the unroll coin should do.
     /// We don't care about the parent coin id since we're not constraining it.
     ///
     /// The order is important and the first two coins' order are determined by
     /// whether the potato was ours first.
-    pub fn get_state_channel_unroll_conditions(
+    pub fn get_unroll_coin_conditions(
         &self,
         env: &mut ChannelHandlerEnv,
         my_balance: &Amount,
         their_balance: &Amount,
         puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]
     ) -> Result<NodePtr, Error> {
-        let their_first_coin = (51, (self.their_referee_puzzle_hash.clone(), (their_balance.clone(), ())));
+        let their_first_coin = (CREATE_COIN, (self.their_referee_puzzle_hash.clone(), (their_balance.clone(), ())));
 
         // Our ref is a standard puzzle whose public key is our ref pubkey.
         let ref_pubkey = private_to_public_key(&self.private_keys.my_referee_private_key);
         let standard_puzzle_hash_of_ref = puzzle_hash_for_pk(env.allocator, &ref_pubkey)?;
 
-        let our_first_coin = (51 as u32, (standard_puzzle_hash_of_ref, (my_balance.clone(), ())));
+        let our_first_coin = (CREATE_COIN, (standard_puzzle_hash_of_ref, (my_balance.clone(), ())));
 
         let (start_coin_one, start_coin_two) =
             if self.started_with_potato {
@@ -135,27 +142,27 @@ impl ChannelHandler {
         // Signatures for the channel puzzle are always safe (std format).
         // Meta puzzle for the unroll can't be standard.
         for (ph, a) in puzzle_hashes_and_amounts.iter() {
-            let clvm_conditions = (51, (ph.clone(), (a.clone(), ()))).to_clvm(env.allocator).into_gen()?;
+            let clvm_conditions = (CREATE_COIN, (ph.clone(), (a.clone(), ()))).to_clvm(env.allocator).into_gen()?;
             result_coins.push(Node(clvm_conditions));
         }
 
         Ok((result_coins).to_clvm(env.allocator).into_gen()?)
     }
 
-    pub fn create_conditions_and_signature_to_create_unroll_coin(&self, env: &mut ChannelHandlerEnv) -> Result<(NodePtr, Aggsig), Error> {
+    pub fn create_conditions_and_signature_of_channel_coin(&self, env: &mut ChannelHandlerEnv) -> Result<(NodePtr, Aggsig), Error> {
         let amount_of_unroll_coin = self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone();
-        let default_conditions = self.get_state_channel_unroll_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
+        let default_conditions = self.get_unroll_coin_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
         let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         let unroll_coin_parent =
             if let Some(coin_string) = self.state_channel_coin_string.as_ref() {
                 coin_string.to_coin_id()
             } else {
-                return Err(Error::Channel("state_channel_unroll_signature called without having created state_channel_coin_string".to_string()));
+                return Err(Error::Channel("create_conditions_and_signature_of_channel_coin without having created state_channel_coin_string".to_string()));
             };
         let unroll_puzzle = env.curried_unroll_puzzle(0, default_conditions_hash)?;
         let unroll_puzzle_hash = unroll_puzzle.sha256tree(env.allocator);
         let create_conditions = vec![
-            Node((51, (unroll_puzzle_hash.clone(), (amount_of_unroll_coin, ()))).to_clvm(env.allocator).into_gen()?)
+            Node((CREATE_COIN, (unroll_puzzle_hash.clone(), (amount_of_unroll_coin, ()))).to_clvm(env.allocator).into_gen()?)
         ];
         let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
         let channel_coin_public_key = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
@@ -182,8 +189,8 @@ impl ChannelHandler {
     }
 
     pub fn state_channel_unroll_signature(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<UnrollCoinSignatures, Error> {
-        let (_, to_create_unroll_sig) = self.create_conditions_and_signature_to_create_unroll_coin(env)?;
-        let (_, to_spend_unroll_sig) = self.create_conditions_and_signature_to_spend_unroll_coin(env, conditions)?;
+        let (_, to_create_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env)?;
+        let (_, to_spend_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env)?;
 
         Ok(UnrollCoinSignatures {
             to_create_unroll_coin: to_create_unroll_sig,
@@ -247,7 +254,7 @@ impl ChannelHandler {
         // The seq number is zero.
         // There are no game coins and a balance for both sides.
 
-        let default_conditions = self.get_state_channel_unroll_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
+        let default_conditions = self.get_unroll_coin_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
         let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         let signature = self.private_keys.my_channel_coin_private_key.sign(&default_conditions_hash.bytes());
 
@@ -374,11 +381,11 @@ impl ChannelHandler {
 
     /// Ensure that we include the last state sequence number in a memo so we can
     /// possibly supercede an earlier unroll.
-    pub fn get_unroll_spend(&self, _allocator: &mut Allocator) -> TransactionBundle {
+    pub fn get_channel_coin_spend(&self, _allocator: &mut Allocator) -> TransactionBundle {
         todo!();
     }
 
-    pub fn state_channel_spent(&self, _allocator: &mut Allocator, _condition: NodePtr) -> Result<SpentResult, Error> {
+    pub fn channel_coin_spent(&self, _allocator: &mut Allocator, _condition: NodePtr) -> Result<SpentResult, Error> {
         todo!();
     }
 

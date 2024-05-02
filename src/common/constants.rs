@@ -2,10 +2,13 @@ use lazy_static::lazy_static;
 use crate::common::types::PuzzleHash;
 use crate::common::standard_coin::shatree_atom_cant_fail;
 
+pub const CREATE_COIN: u32 = 51;
+pub const REM: u32 = 1;
+
 lazy_static! {
-    pub static ref AGG_SIG_UNSAFE: [u8; 1] = [49];
-    pub static ref AGG_SIG_ME: [u8; 1] = [50];
-    pub static ref CREATE_COIN: [u8; 1] = [51];
+    pub static ref AGG_SIG_UNSAFE_ATOM: [u8; 1] = [49];
+    pub static ref AGG_SIG_ME_ATOM: [u8; 1] = [50];
+    pub static ref CREATE_COIN_ATOM: [u8; 1] = [51];
 
     pub static ref GROUP_ORDER: Vec<u8> = {
         vec![

@@ -97,7 +97,7 @@ pub fn read_unroll_metapuzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Er
 }
 
 pub fn read_unroll_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
-    read_hex_puzzle(allocator, "resources/state_channel_state_channel_unrolling.hex")
+    read_hex_puzzle(allocator, "resources/unroll_puzzle_state_channel_unrolling.hex")
 }
 
 pub struct ChannelHandlerEnv<'a> {

@@ -13,7 +13,7 @@ use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
-use crate::common::constants::{AGG_SIG_UNSAFE, AGG_SIG_ME, CREATE_COIN};
+use crate::common::constants::{AGG_SIG_UNSAFE_ATOM, AGG_SIG_ME_ATOM, CREATE_COIN_ATOM};
 
 use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
 use chia_bls;
@@ -527,15 +527,15 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
             let atoms: Vec<Vec<u8>> = exploded.iter().take(3).map(|a| {
                 allocator.allocator().atom(*a).to_vec()
             }).collect();
-            if *atoms[0] == *AGG_SIG_UNSAFE {
+            if *atoms[0] == *AGG_SIG_UNSAFE_ATOM {
                 if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
                     return Some(CoinCondition::AggSigUnsafe(pk, atoms[2].to_vec()));
                 }
-            } else if *atoms[0] == *AGG_SIG_ME {
+            } else if *atoms[0] == *AGG_SIG_ME_ATOM {
                 if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
                     return Some(CoinCondition::AggSigMe(pk, atoms[2].to_vec()));
                 }
-            } else if *atoms[0] == *CREATE_COIN {
+            } else if *atoms[0] == *CREATE_COIN_ATOM {
                 return Some(CoinCondition::CreateCoin(puzzle_hash_from_bytes(&atoms[1])));
             }
         }
