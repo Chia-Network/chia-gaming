@@ -23,6 +23,19 @@ fn test_standard_puzzle() {
 }
 
 #[test]
+fn test_public_key_add() {
+    let mut rng = ChaCha8Rng::from_seed([0; 32]);
+    let private_key_1: PrivateKey = rng.gen();
+    let private_key_2: PrivateKey = rng.gen();
+    let pk1 = private_to_public_key(&private_key_1);
+    let pk2 = private_to_public_key(&private_key_2);
+    assert_ne!(pk1, pk2);
+    let pk3 = pk1.clone() + pk2.clone();
+    assert_ne!(pk3, pk1);
+    assert_ne!(pk3, pk2);
+}
+
+#[test]
 fn test_bram_2_of_2_signature() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let private_key_1: PrivateKey = rng.gen();

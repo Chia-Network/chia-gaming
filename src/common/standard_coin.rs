@@ -230,7 +230,6 @@ pub fn standard_solution_partial(
     //
     // Since the caller specifies the AGG_SIG conditions, they'll have what
     // they're supposed to in their pubkey field (i think).
-    let standard_puzzle = get_standard_coin_puzzle(allocator)?;
     let quoted_conds = conditions.to_quoted_program(allocator)?;
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
@@ -258,6 +257,7 @@ pub fn standard_solution_partial(
                     unroll_coin_parent,
                     agg_sig_me_additional_data
                 );
+                eprintln!("public_key {aggregate_public_key:?} {agg_sig_me_message:?}");
                 add_signature(&mut aggregated_signature, partial_signer(
                     private_key, aggregate_public_key, &agg_sig_me_message
                 ));

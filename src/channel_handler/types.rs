@@ -28,7 +28,7 @@ impl Distribution<ChannelHandlerPrivateKeys> for Standard {
 pub struct ChannelHandlerInitiationData {
     pub launcher_coin_id: CoinID,
     pub we_start_with_potato: bool,
-    pub their_state_pubkey: PublicKey,
+    pub their_channel_pubkey: PublicKey,
     pub their_unroll_pubkey: PublicKey,
     pub their_referee_puzzle_hash: PuzzleHash,
     pub my_contribution: Amount,
