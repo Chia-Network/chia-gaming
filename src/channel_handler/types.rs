@@ -1,10 +1,10 @@
 use rand::prelude::*;
 use rand::distributions::Standard;
-use clvmr::allocator::Allocator;
+use clvmr::allocator::NodePtr;
 use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 
-use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, GameHandler, Timeout, ClvmObject, Hash, CoinID, AllocEncoder, IntoErr};
+use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, GameHandler, Timeout, Hash, CoinID, AllocEncoder, IntoErr};
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::referee::RefereeMaker;
 
@@ -52,17 +52,17 @@ pub struct GameStartInfo {
     pub amount: Amount,
     pub game_handler: GameHandler,
     pub timeout: Timeout,
-    pub initial_validation_puzzle: ClvmObject,
+    pub initial_validation_puzzle: NodePtr,
     pub initial_validation_puzzle_hash: PuzzleHash,
-    pub initial_state: ClvmObject,
+    pub initial_state: NodePtr,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount
 }
 
-pub struct ReadableMove(ClvmObject);
+pub struct ReadableMove(NodePtr);
 
-pub struct ReadableUX(ClvmObject);
+pub struct ReadableUX(NodePtr);
 
 pub struct MoveResult {
     pub signatures: PotatoSignatures,
@@ -74,7 +74,7 @@ pub struct MoveResult {
 
 pub struct TransactionBundle {
     pub puzzle: Puzzle,
-    pub solution: ClvmObject,
+    pub solution: NodePtr,
     pub signature: Aggsig
 }
 
@@ -100,7 +100,7 @@ pub struct CoinSpentResult<'a> {
     pub my_clean_reward_coin_string_up: CoinString,
     // New coins that now exist.
     pub new_game_coins_on_chain: Vec<OnChainGameCoin<'a>>,
-    pub game_id_cancelled_ux: ClvmObject,
+    pub game_id_cancelled_ux: NodePtr,
     pub game_id_to_move_up: GameID,
     pub game_id_of_accept_up: GameID
 }
@@ -110,22 +110,22 @@ pub struct UnrollCoinSignatures {
     pub to_spend_unroll_coin: Aggsig
 }
 
-pub fn read_unroll_metapuzzle(allocator: &mut Allocator) -> Result<Puzzle, Error> {
+pub fn read_unroll_metapuzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
     read_hex_puzzle(allocator, "resources/unroll_meta_puzzle.hex")
 }
 
-pub fn read_unroll_puzzle(allocator: &mut Allocator) -> Result<Puzzle, Error> {
+pub fn read_unroll_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
     read_hex_puzzle(allocator, "resources/state_channel_state_channel_unrolling.hex")
 }
 
 pub struct ChannelHandlerEnv<'a> {
-    pub allocator: &'a mut Allocator,
+    pub allocator: &'a mut AllocEncoder,
     pub unroll_metapuzzle: Puzzle,
     pub unroll_puzzle: Puzzle,
 }
 
 impl<'a> ChannelHandlerEnv<'a> {
-    pub fn new(allocator: &'a mut Allocator, unroll_metapuzzle: Puzzle, unroll_puzzle: Puzzle) -> ChannelHandlerEnv {
+    pub fn new(allocator: &'a mut AllocEncoder, unroll_metapuzzle: Puzzle, unroll_puzzle: Puzzle) -> ChannelHandlerEnv {
         ChannelHandlerEnv {
             allocator,
             unroll_metapuzzle,
@@ -138,7 +138,7 @@ impl<'a> ChannelHandlerEnv<'a> {
             program: self.unroll_puzzle.clone(),
             args: clvm_curried_args!(self.unroll_metapuzzle.clone(), old_seq_number, default_conditions_hash)
         };
-        let nodeptr = curried_program.to_clvm(&mut AllocEncoder(self.allocator)).into_gen()?;
+        let nodeptr = curried_program.to_clvm(self.allocator).into_gen()?;
         Ok(Puzzle::from_nodeptr(nodeptr))
     }
 }
