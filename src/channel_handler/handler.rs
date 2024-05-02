@@ -3,9 +3,9 @@ use rand::prelude::*;
 use clvmr::allocator::{Allocator, NodePtr};
 use clvm_traits::ToClvm;
 
-use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node};
+use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node, SpentResult, TransactionBundle, SpendRewardResult};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial};
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, TransactionBundle, SpentResult, CoinSpentResult, SpendRewardResult};
+use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, CoinSpentResult};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -271,11 +271,19 @@ impl ChannelHandler {
         todo!();
     }
 
-    pub fn send_potato_clean_shutdown(&self, _allocator: &mut Allocator, _conditions: NodePtr) -> TransactionBundle {
+    /// Uses the channel coin key to post standard format coin generation to the
+    /// real blockchain via a TransactionBundle.
+    pub fn send_potato_clean_shutdown(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<TransactionBundle, Error> {
+        assert!(self.have_potato);
+        // let standard_puzzle = get_standard_coin_puzzle(allocator)?;
+        // let pubkey = private_to_public_key(&self.private_keys.my_unroll_coin_private_key
+        // TransactionBundle {
+        //     self.
         todo!();
     }
 
     pub fn received_potato_clean_shutdown(&self, __allocator: &mut Allocator, _their_channel_half_signature: &Aggsig, _conditions: NodePtr) -> Result<(), Error> {
+        assert!(!self.have_potato);
         todo!();
     }
 

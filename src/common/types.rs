@@ -545,3 +545,21 @@ impl CoinCondition {
         exploded.iter().flat_map(|cond| parse_condition(allocator, *cond)).collect()
     }
 }
+
+pub struct TransactionBundle {
+    pub puzzle: Puzzle,
+    pub solution: NodePtr,
+    pub signature: Aggsig
+}
+
+pub struct SpentResult {
+    pub transaction_bundle: TransactionBundle,
+    pub unroll_coin_string_up: CoinString,
+    pub transaction_up: TransactionBundle,
+    pub whether_has_timeout_up: bool
+}
+
+pub struct SpendRewardResult {
+    pub coins_with_solutions: Vec<TransactionBundle>,
+    pub result_coin_string_up: CoinString
+}
