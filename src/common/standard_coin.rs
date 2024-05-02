@@ -231,10 +231,6 @@ pub fn standard_solution_partial(
     // Since the caller specifies the AGG_SIG conditions, they'll have what
     // they're supposed to in their pubkey field (i think).
     let standard_puzzle = get_standard_coin_puzzle(allocator)?;
-    let puzzle = puzzle_for_synthetic_public_key(
-        allocator, &standard_puzzle, aggregate_public_key
-    )?;
-
     let quoted_conds = conditions.to_quoted_program(allocator)?;
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
@@ -256,7 +252,7 @@ pub fn standard_solution_partial(
     let conds = CoinCondition::from_nodeptr(allocator, conditions);
     for cond in conds.iter() {
         match cond {
-            CoinCondition::CreateCoin(ph) => {
+            CoinCondition::CreateCoin(_ph) => {
                 let agg_sig_me_message = agg_sig_me_message(
                     &quoted_conds_hash.bytes(),
                     unroll_coin_parent,
