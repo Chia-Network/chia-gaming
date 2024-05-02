@@ -1,9 +1,8 @@
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use clvmr::allocator::Allocator;
-
-use crate::common::types::{Amount, CoinID, Sha256tree, PrivateKey, AllocEncoder, Node};
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+use crate::common::types::{Amount, CoinID, Sha256tree, PrivateKey, AllocEncoder, Node, Hash};
 use crate::channel_handler::handler::ChannelHandler;
 use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, read_unroll_metapuzzle, read_unroll_puzzle};
 use crate::common::standard_coin::private_to_public_key;
@@ -24,6 +23,7 @@ fn test_smoke_can_initiate_channel_handler() {
         allocator: &mut allocator,
         unroll_metapuzzle,
         unroll_puzzle,
+        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone())
     };
     let _initiation_result = ch.initiate(&mut env, &ChannelHandlerInitiationData {
         launcher_coin_id: CoinID::default(),

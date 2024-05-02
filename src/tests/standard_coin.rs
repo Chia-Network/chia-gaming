@@ -1,12 +1,15 @@
 use clvm_traits::ToClvm;
 
-use clvmr::Allocator;
 use rand_chacha::ChaCha8Rng;
 use rand::{Rng, SeedableRng};
 
-use crate::common::standard_coin::{puzzle_for_pk, hex_to_sexp, private_to_public_key, unsafe_sign_partial, get_standard_coin_puzzle, partial_signer, puzzle_hash_for_pk};
-use crate::common::types::{PublicKey, Sha256tree, PrivateKey, AllocEncoder, Aggsig, PuzzleHash, Node};
-use crate::tests::constants::{EXPECTED_PUZZLE_HEX, TEST_PUBLIC_KEY_BYTES, KEY_PAIR_PUBLIC, KEY_PAIR_PRIVATE, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, STANDARD_PUZZLE_HASH};
+use clvm_tools_rs::classic::clvm_tools::stages::stage_0::{DefaultProgramRunner, TRunProgram};
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+
+use crate::common::constants::DEFAULT_HIDDEN_PUZZLE_HASH;
+use crate::common::standard_coin::{puzzle_for_pk, hex_to_sexp, private_to_public_key, unsafe_sign_partial, get_standard_coin_puzzle, partial_signer, puzzle_hash_for_pk, calculate_synthetic_public_key, standard_solution};
+use crate::common::types::{PublicKey, Sha256tree, PrivateKey, AllocEncoder, Aggsig, PuzzleHash, Node, ToQuotedProgram};
+use crate::tests::constants::{EXPECTED_PUZZLE_HEX, TEST_PUBLIC_KEY_BYTES, KEY_PAIR_PUBLIC, KEY_PAIR_PRIVATE, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, STANDARD_PUZZLE_HASH, KEY_PAIR_SYNTHETIC_PUBLIC_KEY};
 
 #[test]
 fn test_standard_puzzle() {
@@ -55,7 +58,20 @@ fn test_standard_puzzle_form() {
 }
 
 #[test]
+fn test_calculate_synthetic_public_key() {
+    let private_key = PrivateKey::from_bytes(&KEY_PAIR_PRIVATE.clone()).expect("should work");
+    let public_key = PublicKey::from_bytes(KEY_PAIR_PUBLIC.clone()).expect("should work");
+    let synthetic_public_key = PublicKey::from_bytes(KEY_PAIR_SYNTHETIC_PUBLIC_KEY.clone()).expect("should work");
+    let hidden_puzzle_hash = DEFAULT_HIDDEN_PUZZLE_HASH.clone();
+    assert_eq!(
+        calculate_synthetic_public_key(&public_key, &hidden_puzzle_hash).expect("should work"),
+        synthetic_public_key
+    );
+}
+
+#[test]
 // From: https://github.com/richardkiss/chialisp_stdlib/blob/bram-api/tests/test_signing.py
+// Thanks for giving this concise explanation.
 fn test_standard_puzzle_solution_maker() {
     // (defun standard_puzzle_solution_maker (conditions private_key)
     // make a standard puzzle (which we've already tested)
@@ -67,19 +83,25 @@ fn test_standard_puzzle_solution_maker() {
     let mut allocator = AllocEncoder::new();
     let private_key = PrivateKey::from_bytes(&KEY_PAIR_PRIVATE.clone()).expect("should work");
     let public_key = PublicKey::from_bytes(KEY_PAIR_PUBLIC.clone()).expect("should work");
+    let synthetic_public_key = calculate_synthetic_public_key(&public_key, &DEFAULT_HIDDEN_PUZZLE_HASH).expect("should compute");
+    let puzzle = puzzle_for_pk(&mut allocator, &public_key).expect("should work");
     let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &public_key).expect("should work");
-    let conditions = ((51, (puzzle_hash, (99, ())))).to_clvm(&mut allocator).expect("should work");
-    todo!();
-    // let (solution, signature) = standard_solution(&mut allocator, &mut &private_key, &
-    // r = std_puzzle.run(solution)
-    // print(r)
-    // assert r.pair[1] == conditions
-    // inner_puzzle = Program.to((1, conditions))
-    // qcth = inner_puzzle.tree_hash()
-    // expected_sig_condition = Program.to([50, PK1, qcth])
-    // assert r.pair[0] == expected_sig_condition
-
-    // sig1 = BLSSecretExponent.from_int(1).sign(b"foo")
-    // signature = sig1.from_bytes(signature_program.atom)
-    // assert signature.verify(hash_key_pairs=[(PK1, qcth)])
+    let conditions = ((51, (puzzle_hash.clone(), (99, ()))), ()).to_clvm(&mut allocator).expect("should work");
+    let quoted_conditions = conditions.to_quoted_program(&mut allocator).expect("should quote");
+    let expected_added_condition = (50, (synthetic_public_key, (quoted_conditions.sha256tree(&mut allocator), ())));
+    let (solution, signature) = standard_solution(&mut allocator, &mut &private_key, conditions).expect("should work");
+    let expected_full_conditions = (expected_added_condition, Node(conditions)).to_clvm(&mut allocator).expect("should work");
+    eprintln!("solution {}", disassemble(allocator.allocator(), solution, None));
+    let runner = DefaultProgramRunner::new();
+    let puzzle_node = puzzle.to_clvm(&mut allocator).expect("should convert");
+    let res = runner.run_program(
+        allocator.allocator(),
+        puzzle_node,
+        solution,
+        None
+    ).expect("should run");
+    assert_eq!(
+        disassemble(allocator.allocator(), res.1, None),
+        disassemble(allocator.allocator(), expected_full_conditions, None)
+    );
 }

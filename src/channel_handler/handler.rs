@@ -134,7 +134,14 @@ impl ChannelHandler {
         let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
         let channel_coin_public_key = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         let aggregated_key_for_unroll_create = aggregate_public_keys(&channel_coin_public_key, &self.their_channel_coin_public_key);
-        standard_solution_partial(env.allocator, &self.private_keys.my_unroll_coin_private_key, &unroll_coin_parent, create_conditions_obj, &aggregated_key_for_unroll_create)
+        standard_solution_partial(
+            env.allocator,
+            &self.private_keys.my_unroll_coin_private_key,
+            &unroll_coin_parent,
+            create_conditions_obj,
+            &aggregated_key_for_unroll_create,
+            &env.agg_sig_me_additional_data
+        )
     }
 
     pub fn create_conditions_and_signature_to_spend_unroll_coin(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<(NodePtr, Aggsig), Error> {

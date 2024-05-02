@@ -122,14 +122,16 @@ pub struct ChannelHandlerEnv<'a> {
     pub allocator: &'a mut AllocEncoder,
     pub unroll_metapuzzle: Puzzle,
     pub unroll_puzzle: Puzzle,
+    pub agg_sig_me_additional_data: Hash,
 }
 
 impl<'a> ChannelHandlerEnv<'a> {
-    pub fn new(allocator: &'a mut AllocEncoder, unroll_metapuzzle: Puzzle, unroll_puzzle: Puzzle) -> ChannelHandlerEnv {
+    pub fn new(allocator: &'a mut AllocEncoder, unroll_metapuzzle: Puzzle, unroll_puzzle: Puzzle, agg_sig_me_additional_data: Hash) -> ChannelHandlerEnv {
         ChannelHandlerEnv {
             allocator,
             unroll_metapuzzle,
-            unroll_puzzle
+            unroll_puzzle,
+            agg_sig_me_additional_data
         }
     }
 
