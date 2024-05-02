@@ -1,12 +1,13 @@
+use std::ops::Add;
+
 use rand::prelude::*;
 
 use clvmr::allocator::Allocator;
-use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
+use clvm_traits::ToClvm;
 
 use crate::common::types::{Aggsig, Amount, ClvmObject, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, AllocEncoder, Hash, IntoErr, Sha256tree};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial};
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, TransactionBundle, SpentResult, CoinSpentResult, SpendRewardResult};
-use crate::referee::RefereeMaker;
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -87,7 +88,7 @@ impl ChannelHandler {
         let their_first_coin = (51, (self.their_referee_puzzle_hash.clone(), (their_balance.clone(), ())));
 
         // Our ref is a standard puzzle whose public key is our ref pubkey.
-        let ref_pubkey = private_to_public_key(&self.private_keys.my_referee_private_key)?;
+        let ref_pubkey = private_to_public_key(&self.private_keys.my_referee_private_key);
         let standard_puzzle_hash_of_ref = puzzle_hash_for_pk(env.allocator, &ref_pubkey)?;
 
         let our_first_coin = (51 as u32, (standard_puzzle_hash_of_ref, (my_balance.clone(), ())));
@@ -119,7 +120,7 @@ impl ChannelHandler {
     }
 
     pub fn create_conditions_and_signature_to_create_unroll_coin(&self, env: &mut ChannelHandlerEnv) -> Result<(ClvmObject, Aggsig), Error> {
-        let amount_of_unroll_coin = self.my_out_of_game_balance.add(&self.their_out_of_game_balance.clone().into());
+        let amount_of_unroll_coin = self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone();
         let default_conditions = self.get_state_channel_unroll_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
         let default_conditions_hash = default_conditions.sha256tree(env.allocator);
         let unroll_coin_parent =
@@ -134,8 +135,8 @@ impl ChannelHandler {
             ClvmObject::from_nodeptr((51, (unroll_puzzle_hash.clone(), (amount_of_unroll_coin, ()))).to_clvm(&mut AllocEncoder(env.allocator)).into_gen()?)
         ];
         let create_conditions_obj = ClvmObject::from_nodeptr(create_conditions.to_clvm(&mut AllocEncoder(env.allocator)).into_gen()?);
-        let channel_coin_public_key = private_to_public_key(&self.private_keys.my_channel_coin_private_key)?;
-        let aggregated_key_for_unroll_create = aggregate_public_keys(&channel_coin_public_key, &self.their_channel_coin_public_key)?;
+        let channel_coin_public_key = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
+        let aggregated_key_for_unroll_create = aggregate_public_keys(&channel_coin_public_key, &self.their_channel_coin_public_key);
         standard_solution_partial(env.allocator, &self.private_keys.my_unroll_coin_private_key, &unroll_coin_parent, create_conditions_obj, &aggregated_key_for_unroll_create)
     }
 
@@ -143,14 +144,11 @@ impl ChannelHandler {
         // Should make together two signatures.  One for the unroll coin and
         // one to spend the unroll coin.
         let unroll_private_key = &self.private_keys.my_unroll_coin_private_key;
-        let default_conditions = self.get_state_channel_unroll_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
-        let default_conditions_hash = default_conditions.sha256tree(env.allocator);
-        let unroll_puzzle = env.curried_unroll_puzzle(0, default_conditions_hash.clone())?;
-        let unroll_puzzle_hash = unroll_puzzle.sha256tree(env.allocator);
-        let unroll_pubkey = private_to_public_key(&unroll_private_key)?;
-        let aggregate_key_for_unroll_unsafe_sig = aggregate_public_keys(&unroll_pubkey, &self.their_unroll_coin_public_key)?;
-        let to_spend_unroll_sig = unsafe_sign_partial(unroll_private_key, &aggregate_key_for_unroll_unsafe_sig, &default_conditions_hash.bytes());
-        Ok((default_conditions, to_spend_unroll_sig))
+        let conditions_hash = conditions.sha256tree(env.allocator);
+        let unroll_pubkey = private_to_public_key(&unroll_private_key);
+        let aggregate_key_for_unroll_unsafe_sig = aggregate_public_keys(&unroll_pubkey, &self.their_unroll_coin_public_key);
+        let to_spend_unroll_sig = unsafe_sign_partial(unroll_private_key, &aggregate_key_for_unroll_unsafe_sig, &conditions_hash.bytes());
+        Ok((conditions.clone(), to_spend_unroll_sig))
     }
 
     pub fn state_channel_unroll_signature(&self, env: &mut ChannelHandlerEnv, conditions: &ClvmObject) -> Result<UnrollCoinSignatures, Error> {
@@ -164,8 +162,8 @@ impl ChannelHandler {
     }
 
     pub fn initiate(&mut self, env: &mut ChannelHandlerEnv, initiation: &ChannelHandlerInitiationData) -> Result<ChannelHandlerInitiationResult, Error> {
-        let our_channel_pubkey = private_to_public_key(&self.private_keys.my_channel_coin_private_key)?;
-        let our_unroll_pubkey = private_to_public_key(&self.private_keys.my_unroll_coin_private_key)?;
+        let our_channel_pubkey = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
+        let our_unroll_pubkey = private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
         if initiation.their_state_pubkey == our_channel_pubkey {
             return Err(Error::Channel("Duplicated channel coin public key".to_string()));
         }
@@ -174,9 +172,9 @@ impl ChannelHandler {
             return Err(Error::Channel("Duplicated unroll coin public key".to_string()));
         }
 
-        let combined_state_channel_pubkey = aggregate_public_keys(&our_channel_pubkey, &initiation.their_state_pubkey)?;
+        let combined_state_channel_pubkey = aggregate_public_keys(&our_channel_pubkey, &initiation.their_state_pubkey);
         let state_channel_coin_puzzle_hash = puzzle_hash_for_pk(env.allocator, &combined_state_channel_pubkey)?;
-        let state_channel_coin_amt = initiation.my_contribution.add(&initiation.their_contribution);
+        let state_channel_coin_amt = initiation.my_contribution.clone() + initiation.their_contribution.clone();
         self.state_channel_coin_string = Some(CoinString::from_parts(&initiation.launcher_coin_id, &state_channel_coin_puzzle_hash, &state_channel_coin_amt));
 
         self.have_potato = initiation.we_start_with_potato;
@@ -207,7 +205,7 @@ impl ChannelHandler {
 
         // Puzzle hash of a standard puzzle with a pubkey that combines our
         // channel private_key to pubkey and their channel pubkey.
-        let combined_public_key = aggregate_public_keys(&our_channel_pubkey, &self.their_channel_coin_public_key)?;
+        let combined_public_key = aggregate_public_keys(&our_channel_pubkey, &self.their_channel_coin_public_key);
         let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &combined_public_key)?;
 
         // Signature signs the conditions.
@@ -220,7 +218,7 @@ impl ChannelHandler {
 
         let default_conditions = self.get_state_channel_unroll_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
         let default_conditions_hash = default_conditions.sha256tree(env.allocator);
-        let signature = self.private_keys.my_channel_coin_private_key.sign(&default_conditions_hash.bytes())?;
+        let signature = self.private_keys.my_channel_coin_private_key.sign(&default_conditions_hash.bytes());
 
         Ok(ChannelHandlerInitiationResult {
             channel_puzzle_hash_up: shared_puzzle_hash,

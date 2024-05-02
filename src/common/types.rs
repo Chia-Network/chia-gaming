@@ -1,4 +1,7 @@
 use std::io;
+use std::ops::{Add, AddAssign};
+
+use num_bigint::BigInt;
 
 use rand::prelude::*;
 use rand::distributions::Standard;
@@ -12,7 +15,7 @@ use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 
 use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
 use chia_bls;
-use chia_bls::signature::sign;
+use chia_bls::signature::{sign, verify};
 
 /// CoinID
 #[derive(Default, Clone)]
@@ -46,12 +49,7 @@ impl CoinString {
     }
 
     pub fn to_coin_id(&self) -> CoinID {
-        let h = sha256(Bytes::new(Some(BytesFromType::Raw(self.0.clone()))));
-        let mut fixed: [u8; 32] = [0; 32];
-        for (i, b) in h.data().iter().enumerate() {
-            fixed[i % fixed.len()] = *b;
-        }
-        CoinID(Hash::from_bytes(fixed))
+        CoinID(Hash::new(&self.0))
     }
 }
 
@@ -65,79 +63,142 @@ impl Default for PrivateKey {
     }
 }
 
+impl AddAssign for PrivateKey {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += &rhs.0;
+    }
+}
+
+impl Add for PrivateKey {
+    type Output = PrivateKey;
+
+    fn add(mut self, rhs: Self) -> PrivateKey {
+        self += rhs;
+        self
+    }
+}
+
 impl PrivateKey {
+    pub fn from_bls(sk: chia_bls::SecretKey) -> PrivateKey {
+        PrivateKey(sk)
+    }
+
     pub fn to_bls(&self) -> &chia_bls::SecretKey {
         &self.0
     }
 
-    pub fn sign<Msg: AsRef<[u8]>>(&self, msg: Msg) -> Result<Aggsig, Error> {
-        let sig = sign(&self.0, msg);
-        Ok(Aggsig::from_bytes(sig.to_bytes()))
+    pub fn sign<Msg: AsRef<[u8]>>(&self, msg: Msg) -> Aggsig {
+        Aggsig(sign(&self.0, msg))
+    }
+
+    pub fn bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
+    }
+
+    pub fn scalar_multiply(scalar: &BigInt) -> PrivateKey {
+        // start with result = the "Point at infinity" and bit_val = self.
+        // For each bit in scalar, add bit_val to result if 1 and double bit_val
+        // by addition.
+        todo!();
     }
 }
 
 /// Public key
 #[derive(Clone, Eq, PartialEq)]
-pub struct PublicKey([u8; 48]);
+pub struct PublicKey(chia_bls::PublicKey);
 
 impl Default for PublicKey {
     fn default() -> Self {
-        PublicKey([0; 48])
+        PublicKey(chia_bls::PublicKey::default())
     }
 }
 
 impl PublicKey {
-    pub fn to_bls(&self) -> Result<chia_bls::PublicKey, Error> {
-        chia_bls::PublicKey::from_bytes(&self.0).into_gen()
+    pub fn to_bls(&self) -> chia_bls::PublicKey {
+        self.0.clone()
     }
 
-    pub fn bytes<'a>(&'a self) -> &'a [u8; 48] {
-        &self.0
+    pub fn bytes(&self) -> [u8; 48] {
+        self.0.to_bytes()
     }
 
-    pub fn into_bytes(self) -> [u8; 48] {
-        self.0
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> PublicKey {
-        let mut fixed: [u8; 48] = [0; 48];
-        for (i, b) in bytes.iter().enumerate() {
-            fixed[i % fixed.len()] = *b;
-        }
-        PublicKey(fixed)
+    pub fn from_bytes(bytes: [u8; 48]) -> Result<PublicKey, Error> {
+        Ok(PublicKey(chia_bls::PublicKey::from_bytes(&bytes).into_gen()?))
     }
 }
 
-                    impl ToClvm<NodePtr> for PublicKey {
-                        fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
-                            encoder.encode_atom(&self.0)
-                        }
-                    }
+impl AddAssign for PublicKey {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += &rhs.0;
+    }
+}
+
+impl Add for PublicKey {
+    type Output = PublicKey;
+
+    fn add(mut self, rhs: Self) -> PublicKey {
+        self += rhs;
+        self
+    }
+}
+
+impl ToClvm<NodePtr> for PublicKey {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        encoder.encode_atom(&self.0.to_bytes())
+    }
+}
 
 impl PublicKey {
-    pub fn from_bls(pk: &chia_bls::PublicKey) -> PublicKey {
-        PublicKey(pk.to_bytes())
+    pub fn from_bls(pk: chia_bls::PublicKey) -> PublicKey {
+        PublicKey(pk)
     }
 }
 
 /// Aggsig
-#[derive(Clone)]
-pub struct Aggsig([u8; 96]);
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct Aggsig(chia_bls::Signature);
 
 impl Default for Aggsig {
     // Revisit for empty aggsig.
     fn default() -> Self {
-        Aggsig([0; 96])
+        Aggsig(chia_bls::Signature::default())
     }
 }
 
 impl Aggsig {
-    pub fn from_bytes(by: [u8; 96]) -> Aggsig {
-        Aggsig(by)
+    pub fn from_bls(bls: chia_bls::Signature) -> Aggsig {
+        Aggsig(bls)
     }
 
-    pub fn to_bls(&self) -> Result<chia_bls::Signature, Error> {
-        chia_bls::Signature::from_bytes(&self.0).into_gen()
+    pub fn from_bytes(by: [u8; 96]) -> Result<Aggsig, Error> {
+        Ok(Aggsig(chia_bls::Signature::from_bytes(&by).into_gen()?))
+    }
+
+    pub fn to_bls(&self) -> chia_bls::Signature {
+        self.0.clone()
+    }
+    pub fn verify(&self, public_key: &PublicKey, msg: &[u8]) -> bool {
+        verify(&self.0, &public_key.to_bls(), msg)
+    }
+    pub fn aggregate(&self, other: &Aggsig) -> Aggsig {
+        let mut result = self.0.clone();
+        result.aggregate(&other.0);
+        Aggsig(result)
+    }
+}
+
+impl AddAssign for Aggsig {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += &rhs.0;
+    }
+}
+
+impl Add for Aggsig {
+    type Output = Aggsig;
+
+    fn add(mut self, rhs: Self) -> Aggsig {
+        self += rhs;
+        self
     }
 }
 
@@ -163,9 +224,20 @@ impl Amount {
     pub fn new(amt: u64) -> Amount {
         Amount(amt)
     }
+}
 
-    pub fn add(&self, amt: &Amount) -> Amount {
-        Amount(self.0 + amt.0)
+impl AddAssign for Amount {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
+    }
+}
+
+impl Add for Amount {
+    type Output = Amount;
+
+    fn add(mut self, rhs: Self) -> Amount {
+        self += rhs;
+        self
     }
 }
 
@@ -196,12 +268,19 @@ impl ToClvm<NodePtr> for Hash {
     }
 }
 
-
 impl Hash {
+    pub fn new(by: &[u8]) -> Hash {
+        let hash_data = sha256(Bytes::new(Some(BytesFromType::Raw(by.to_vec()))));
+        let mut fixed: [u8; 32] = [0; 32];
+        for (i, b) in hash_data.data().iter().enumerate() {
+            fixed[i % 32] = *b;
+        }
+        Hash(fixed)
+    }
     pub fn from_bytes(by: [u8; 32]) -> Hash {
         Hash(by)
     }
-    pub fn bytes<'a>(&'a self) -> &'a [u8] {
+    pub fn bytes<'a>(&'a self) -> &'a [u8; 32] {
         &self.0
     }
 }
@@ -246,17 +325,26 @@ pub enum Error {
 pub struct ClvmObject(NodePtr);
 
 impl ToClvm<NodePtr> for ClvmObject {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(&self, _encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
     }
 }
 
 impl ClvmObject {
+    pub fn nil(allocator: &mut Allocator) -> ClvmObject {
+        ClvmObject(allocator.null())
+    }
+
     pub fn from_nodeptr(p: NodePtr) -> ClvmObject {
         ClvmObject(p)
     }
     pub fn to_nodeptr(&self) -> NodePtr {
         self.0
+    }
+    /// Quote this data so it can be run as code that returns the same data.
+    pub fn to_quoted_program(&self, allocator: &mut Allocator) -> Result<Program, Error> {
+        let pair = allocator.new_pair(allocator.one(), self.to_nodeptr()).into_gen()?;
+        Ok(Program::from_nodeptr(pair))
     }
 }
 
@@ -291,15 +379,21 @@ impl<X: ToClvmObject> Sha256tree for X {
 #[derive(Clone)]
 pub struct Program(ClvmObject);
 
-impl ToClvmObject for Program {
-    fn to_clvm_obj(&self) -> ClvmObject {
-        self.0.clone()
-    }
-}
-
 impl Program {
     pub fn from_nodeptr(n: NodePtr) -> Program {
         Program(ClvmObject::from_nodeptr(n))
+    }
+}
+
+impl ToClvm<NodePtr> for Program {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        self.0.to_clvm(encoder)
+    }
+}
+
+impl ToClvmObject for Program {
+    fn to_clvm_obj(&self) -> ClvmObject {
+        self.0.clone()
     }
 }
 
@@ -338,7 +432,6 @@ pub struct AllocEncoder<'a>(pub &'a mut Allocator);
 impl<'a> ClvmEncoder for AllocEncoder<'a> {
     type Node = NodePtr;
 
-    // Required methods
     fn encode_atom(&mut self, bytes: &[u8]) -> Result<Self::Node, ToClvmError> {
         self.0.new_atom(bytes).map_err(|e| ToClvmError::Custom(format!("{e:?}")))
     }
