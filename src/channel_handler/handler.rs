@@ -4,7 +4,7 @@ use clvmr::allocator::{Allocator, NodePtr};
 use clvm_traits::ToClvm;
 
 use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node, SpentResult, TransactionBundle, SpendRewardResult};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial, solution_for_conditions, puzzle_for_pk};
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, CoinSpentResult};
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -77,12 +77,28 @@ impl ChannelHandler {
         ChannelHandler::new(rng.gen())
     }
 
+    /// Return the right public key to use for a clean shutdown.
+    pub fn clean_shutdown_public_key(&self) -> PublicKey {
+        private_to_public_key(&self.private_keys.my_channel_coin_private_key)
+    }
+
+    /// Return the right amount to use for a clean shutdown coin output.
+    pub fn clean_shutdown_amount(&self) -> Amount {
+        self.my_out_of_game_balance.clone()
+    }
+
     /// Returns a list of create coin conditions which the unroll coin should do.
     /// We don't care about the parent coin id since we're not constraining it.
     ///
     /// The order is important and the first two coins' order are determined by
     /// whether the potato was ours first.
-    pub fn get_state_channel_unroll_conditions(&self, env: &mut ChannelHandlerEnv, my_balance: &Amount, their_balance: &Amount, puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]) -> Result<NodePtr, Error> {
+    pub fn get_state_channel_unroll_conditions(
+        &self,
+        env: &mut ChannelHandlerEnv,
+        my_balance: &Amount,
+        their_balance: &Amount,
+        puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]
+    ) -> Result<NodePtr, Error> {
         let their_first_coin = (51, (self.their_referee_puzzle_hash.clone(), (their_balance.clone(), ())));
 
         // Our ref is a standard puzzle whose public key is our ref pubkey.
@@ -275,11 +291,28 @@ impl ChannelHandler {
     /// real blockchain via a TransactionBundle.
     pub fn send_potato_clean_shutdown(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<TransactionBundle, Error> {
         assert!(self.have_potato);
-        // let standard_puzzle = get_standard_coin_puzzle(allocator)?;
-        // let pubkey = private_to_public_key(&self.private_keys.my_unroll_coin_private_key
-        // TransactionBundle {
-        //     self.
-        todo!();
+        let pubkey = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
+        let state_channel_coin =
+            if let Some(ssc) = self.state_channel_coin_string.as_ref() {
+                ssc.to_coin_id()
+            } else {
+                return Err(Error::StrErr("send_potato_clean_shutdown without state_channel_coin".to_string()));
+            };
+
+        let (solution, signature) =
+            standard_solution_partial(
+                env.allocator,
+                &self.private_keys.my_channel_coin_private_key,
+                &state_channel_coin,
+                conditions,
+                &(pubkey.clone() + self.their_channel_coin_public_key.clone()),
+                &env.agg_sig_me_additional_data
+            )?;
+        Ok(TransactionBundle {
+            solution,
+            signature,
+            puzzle: puzzle_for_pk(env.allocator, &pubkey)?,
+        })
     }
 
     pub fn received_potato_clean_shutdown(&self, __allocator: &mut Allocator, _their_channel_half_signature: &Aggsig, _conditions: NodePtr) -> Result<(), Error> {

@@ -9,8 +9,9 @@ use clvmr::reduction::EvalErr;
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, sha256};
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
-use clvm_tools_rs::classic::clvm::sexp::flatten;
+use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::common::constants::{AGG_SIG_UNSAFE, AGG_SIG_ME, CREATE_COIN};
 
@@ -487,6 +488,7 @@ impl<X, E> IntoErr<X> for Result<X, E> where E: ErrToError {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum CoinCondition {
     AggSigMe(PublicKey, Vec<u8>),
     AggSigUnsafe(PublicKey, Vec<u8>),
@@ -494,8 +496,13 @@ pub enum CoinCondition {
 }
 
 fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<CoinCondition> {
-    let mut exploded = Vec::new();
-    flatten(allocator.allocator(), condition, &mut exploded);
+    let exploded =
+        if let Some(pl) = proper_list(allocator.allocator(), condition, true) {
+            pl
+        } else {
+            return None;
+        };
+
     let public_key_from_bytes = |b: &[u8]| -> Result<PublicKey, Error> {
         let mut fixed: [u8; 48] = [0; 48];
         for (i,b) in b.iter().enumerate() {
@@ -540,9 +547,11 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
 impl CoinCondition {
     pub fn from_nodeptr(allocator: &mut AllocEncoder, conditions: NodePtr) -> Vec<CoinCondition> {
         // Ensure this borrow of allocator is finished for what's next.
-        let mut exploded = Vec::new();
-        flatten(allocator.allocator(), conditions, &mut exploded);
-        exploded.iter().flat_map(|cond| parse_condition(allocator, *cond)).collect()
+        if let Some(exploded) = proper_list(allocator.allocator(), conditions, true) {
+            exploded.iter().flat_map(|cond| parse_condition(allocator, *cond)).collect()
+        } else {
+            Vec::new()
+        }
     }
 }
 
