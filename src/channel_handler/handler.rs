@@ -230,11 +230,12 @@ impl ChannelHandler {
         })
     }
 
-    pub fn finish_handshake(&mut self, _allocator: &mut Allocator, _their_initial_channel_hash_signature: &Aggsig) -> Result<(), Error> {
-        todo!();
+    pub fn finish_handshake(&mut self, env: &mut ChannelHandlerEnv, their_initial_channel_hash_signature: &Aggsig) -> Result<(), Error> {
+        self.last_channel_aggsig = their_initial_channel_hash_signature.clone();
+        Ok(())
     }
 
-    pub fn send_empty_potato(&mut self, _allocator: &mut Allocator) -> PotatoSignatures {
+    pub fn send_empty_potato(&mut self, env: &mut ChannelHandlerEnv) -> PotatoSignatures {
         todo!();
     }
 
