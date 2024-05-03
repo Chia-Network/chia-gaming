@@ -1,6 +1,5 @@
 use lazy_static::lazy_static;
-use crate::common::types::{Sha256Input, PuzzleHash, Hash};
-use crate::common::standard_coin::shatree_atom_cant_fail;
+use crate::common::types::{Sha256Input, Hash};
 
 lazy_static! {
     pub static ref Q_KW_TREEHASH: Hash = Sha256Input::Array(vec![

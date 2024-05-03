@@ -9,11 +9,9 @@ use rand::distributions::Standard;
 use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 
-use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, sha256};
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::common::constants::{AGG_SIG_UNSAFE_ATOM, AGG_SIG_ME_ATOM, CREATE_COIN_ATOM};
 
