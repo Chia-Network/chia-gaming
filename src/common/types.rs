@@ -1,10 +1,13 @@
 use std::io;
 use std::ops::{Add, AddAssign};
 
-use sha2::{Sha256, Digest};
+use num_bigint::{BigInt, Sign};
+use num_traits::cast::ToPrimitive;
 
 use rand::prelude::*;
 use rand::distributions::Standard;
+
+use sha2::{Sha256, Digest};
 
 use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
@@ -13,7 +16,7 @@ use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
 
-use crate::common::constants::{AGG_SIG_UNSAFE_ATOM, AGG_SIG_ME_ATOM, CREATE_COIN_ATOM};
+use crate::common::constants::{AGG_SIG_UNSAFE_ATOM, AGG_SIG_ME_ATOM, CREATE_COIN_ATOM, REM_ATOM};
 
 use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
 use chia_bls;
@@ -227,6 +230,12 @@ impl ToClvm<NodePtr> for Aggsig {
 #[derive(Default, Clone, Debug)]
 pub struct GameID(Vec<u8>);
 
+impl GameID {
+    pub fn new(s: Vec<u8>) -> GameID {
+        GameID(s)
+    }
+}
+
 /// Amount
 #[derive(Default, Clone, Debug)]
 pub struct Amount(u64);
@@ -381,10 +390,18 @@ pub enum Error {
     Channel(String)
 }
 
+#[derive(Clone, Debug)]
 pub struct Node(pub NodePtr);
 
+impl Default for Node {
+    fn default() -> Node {
+        let allocator = Allocator::new();
+        Node(allocator.null())
+    }
+}
+
 impl Node {
-    fn new(n: NodePtr) -> Node { Node(n) }
+    pub fn new(n: NodePtr) -> Node { Node(n) }
 }
 
 impl ToClvm<NodePtr> for Node {
@@ -461,6 +478,12 @@ pub enum GameHandler {
 
 #[derive(Clone)]
 pub struct Timeout(u64);
+
+impl Timeout {
+    pub fn new(t: u64) -> Self {
+        Timeout(t)
+    }
+}
 
 pub struct AllocEncoder(Allocator);
 
@@ -546,6 +569,7 @@ pub enum CoinCondition {
     AggSigMe(PublicKey, Vec<u8>),
     AggSigUnsafe(PublicKey, Vec<u8>),
     CreateCoin(PuzzleHash),
+    Rem(Vec<u8>),
 }
 
 fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<CoinCondition> {
@@ -583,6 +607,8 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
                 }
             } else if *atoms[0] == CREATE_COIN_ATOM {
                 return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(Hash::from_slice(&atoms[1]))));
+            } else if *atoms[0] == REM_ATOM {
+                return Some(CoinCondition::Rem(atoms[1].to_vec()));
             }
         }
     }
@@ -629,4 +655,9 @@ pub struct SpentResult {
 pub struct SpendRewardResult {
     pub coins_with_solutions: Vec<TransactionBundle>,
     pub result_coin_string_up: CoinString
+}
+
+pub fn usize_from_atom(a: &[u8]) -> Option<usize> {
+    let bi = BigInt::from_bytes_be(Sign::Plus, a);
+    bi.to_usize()
 }

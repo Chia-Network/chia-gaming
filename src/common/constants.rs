@@ -14,6 +14,7 @@ pub const REM: u32 = 1;
 pub const AGG_SIG_UNSAFE_ATOM: [u8; 1] = [49];
 pub const AGG_SIG_ME_ATOM: [u8; 1] = [50];
 pub const CREATE_COIN_ATOM: [u8; 1] = [51];
+pub const REM_ATOM: [u8; 1] = [1];
 
 pub const GROUP_ORDER: [u8; 32] = [
     0x73,

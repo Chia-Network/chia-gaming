@@ -4,10 +4,10 @@ use rand_chacha::ChaCha8Rng;
 use clvm_traits::ToClvm;
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::types::{Amount, CoinID, Sha256tree, AllocEncoder, Hash, PuzzleHash, Puzzle, Error, Aggsig};
+use crate::common::types::{Amount, CoinID, Sha256tree, AllocEncoder, Hash, PuzzleHash, Puzzle, Error, Aggsig, Node, Timeout, GameID, GameHandler};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, puzzle_for_pk};
 use crate::channel_handler::handler::ChannelHandler;
-use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, ChannelHandlerInitiationResult, read_unroll_metapuzzle, read_unroll_puzzle};
+use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, ChannelHandlerInitiationResult, read_unroll_metapuzzle, read_unroll_puzzle, GameStartInfo};
 
 struct ChannelHandlerParty {
     ch: ChannelHandler,
@@ -133,5 +133,59 @@ fn test_smoke_can_initiate_channel_handler() {
         &shutdown_transaction.signature,
         conditions
     ).expect("should give counter transaction");
+}
+
+#[test]
+fn test_smoke_can_start_game() {
+    let mut allocator = AllocEncoder::new();
+    let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
+    let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+    let mut env = ChannelHandlerEnv {
+        allocator: &mut allocator,
+        unroll_metapuzzle,
+        unroll_puzzle,
+        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone())
+    };
+    let mut rng = ChaCha8Rng::from_seed([0; 32]);
+    let mut game = ChannelHandlerGame::new(
+        &mut env,
+        &mut rng,
+        [Amount::new(100), Amount::new(100)]
+    );
+
+    // This coin will be spent (virtually) into the channel coin which supports
+    // half-signatures so that unroll can be initated by either party.
+    let launcher_coin = CoinID::default();
+    let init_results = game.handshake(&mut env, &launcher_coin).expect("should work");
+
+    let _finish_hs_result1 = game.finish_handshake(&mut env, 1, &init_results[0].my_initial_channel_half_signature_peer).expect("should finish handshake");
+    let _finish_hs_result2 = game.finish_handshake(&mut env, 0, &init_results[1].my_initial_channel_half_signature_peer).expect("should finish handshake");
+
+    // Set up for the spend.
+    let shutdown_spend_target = puzzle_hash_for_pk(env.allocator, &game.player(1).ch.clean_shutdown_public_key()).expect("should give");
+    let amount_to_take = game.player(1).ch.clean_shutdown_amount();
+    let conditions = ((51, (shutdown_spend_target, (amount_to_take, ()))), ()).to_clvm(env.allocator).expect("should create conditions");
+    let our_share = Amount::new(100);
+    let their_share = Amount::new(100);
+
+    // Fake
+    let game_handler = env.allocator.allocator().null();
+    let initial_validation_puzzle = game_handler;
+    let initial_validation_puzzle_hash = Node(initial_validation_puzzle).sha256tree(&mut env.allocator);
+    let initial_state = env.allocator.allocator().null();
+
+    let timeout = Timeout::new(1337);
+    let game_start_potato_sigs = game.player(1).ch.send_potato_start_game(&mut env, our_share.clone(), their_share.clone(), &[GameStartInfo {
+        game_id: GameID::new(vec![0]),
+        game_handler: GameHandler::TheirTurnHandler(game_handler),
+        timeout: timeout.clone(),
+        initial_validation_puzzle,
+        initial_validation_puzzle_hash,
+        initial_state,
+        initial_move: Vec::new(),
+        initial_max_move_size: 1,
+        initial_mover_share: our_share.clone(),
+        amount: our_share + their_share,
+    }]);
 }
 
