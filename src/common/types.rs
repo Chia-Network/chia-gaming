@@ -1,6 +1,8 @@
 use std::io;
 use std::ops::{Add, AddAssign};
 
+use sha2::{Sha256, Digest};
+
 use rand::prelude::*;
 use rand::distributions::Standard;
 
@@ -224,11 +226,11 @@ impl ToClvm<NodePtr> for Aggsig {
 }
 
 /// Game ID
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct GameID(Vec<u8>);
 
 /// Amount
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Amount(u64);
 
 impl Amount {
@@ -281,18 +283,61 @@ impl ToClvm<NodePtr> for Hash {
 
 impl Hash {
     pub fn new(by: &[u8]) -> Hash {
-        let hash_data = sha256(Bytes::new(Some(BytesFromType::Raw(by.to_vec()))));
-        let mut fixed: [u8; 32] = [0; 32];
-        for (i, b) in hash_data.data().iter().enumerate() {
-            fixed[i % 32] = *b;
-        }
-        Hash(fixed)
+        Sha256Input::Bytes(by).hash()
     }
     pub fn from_bytes(by: [u8; 32]) -> Hash {
         Hash(by)
     }
+    pub fn from_slice(by: &[u8]) -> Hash {
+        let mut fixed: [u8; 32] = [0; 32];
+        for (i,b) in by.iter().enumerate() {
+            fixed[i % 32] = *b;
+        }
+        Hash::from_bytes(fixed)
+    }
     pub fn bytes<'a>(&'a self) -> &'a [u8; 32] {
         &self.0
+    }
+}
+
+#[derive(Debug)]
+pub enum Sha256Input<'a> {
+    Bytes(&'a [u8]),
+    Hashed(Vec<Sha256Input<'a>>),
+    Hash(&'a Hash),
+    Array(Vec<Sha256Input<'a>>),
+}
+
+impl<'a> Sha256Input<'a> {
+    fn update(&self, hasher: &mut Sha256) {
+        match self {
+            Sha256Input::Bytes(b) => {
+                hasher.update(b);
+            }
+            Sha256Input::Hash(hash) => {
+                hasher.update(&hash.bytes());
+            }
+            Sha256Input::Hashed(input) => {
+                let mut new_hasher = Sha256::new();
+                for i in input.iter() {
+                    i.update(&mut new_hasher);
+                }
+                let result = new_hasher.finalize();
+                hasher.update(&result[..]);
+            }
+            Sha256Input::Array(inputs) => {
+                for i in inputs.iter() {
+                    i.update(hasher);
+                }
+            }
+        }
+    }
+
+    pub fn hash(&self) -> Hash {
+        let mut hasher = Sha256::new();
+        self.update(&mut hasher);
+        let result = hasher.finalize();
+        Hash::from_slice(&result[..])
     }
 }
 
@@ -304,8 +349,14 @@ impl PuzzleHash {
     pub fn from_bytes(by: [u8; 32]) -> PuzzleHash {
         PuzzleHash(Hash::from_bytes(by))
     }
+    pub fn from_hash(h: Hash) -> PuzzleHash {
+        PuzzleHash(h)
+    }
     pub fn bytes<'a>(&'a self) -> &'a [u8] {
         self.0.bytes()
+    }
+    pub fn hash<'a>(&'a self) -> &'a Hash {
+        &self.0
     }
 }
 
@@ -376,6 +427,10 @@ pub struct Program(NodePtr);
 impl Program {
     pub fn from_nodeptr(n: NodePtr) -> Program {
         Program(n)
+    }
+
+    pub fn to_nodeptr(&self) -> NodePtr {
+        self.0
     }
 }
 
@@ -510,13 +565,6 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
         }
         PublicKey::from_bytes(fixed)
     };
-    let puzzle_hash_from_bytes = |b: &[u8]| -> PuzzleHash {
-        let mut fixed: [u8; 32] = [0; 32];
-        for (i,b) in b.iter().enumerate() {
-            fixed[i % 32] = *b;
-        }
-        PuzzleHash::from_bytes(fixed)
-    };
     if exploded.len() > 2 {
         if matches!(
             (allocator.allocator().sexp(exploded[0]),
@@ -527,16 +575,16 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
             let atoms: Vec<Vec<u8>> = exploded.iter().take(3).map(|a| {
                 allocator.allocator().atom(*a).to_vec()
             }).collect();
-            if *atoms[0] == *AGG_SIG_UNSAFE_ATOM {
+            if *atoms[0] == AGG_SIG_UNSAFE_ATOM {
                 if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
                     return Some(CoinCondition::AggSigUnsafe(pk, atoms[2].to_vec()));
                 }
-            } else if *atoms[0] == *AGG_SIG_ME_ATOM {
+            } else if *atoms[0] == AGG_SIG_ME_ATOM {
                 if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
                     return Some(CoinCondition::AggSigMe(pk, atoms[2].to_vec()));
                 }
-            } else if *atoms[0] == *CREATE_COIN_ATOM {
-                return Some(CoinCondition::CreateCoin(puzzle_hash_from_bytes(&atoms[1])));
+            } else if *atoms[0] == CREATE_COIN_ATOM {
+                return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(Hash::from_slice(&atoms[1]))));
             }
         }
     }
@@ -555,10 +603,22 @@ impl CoinCondition {
     }
 }
 
+#[derive(Clone)]
 pub struct TransactionBundle {
     pub puzzle: Puzzle,
     pub solution: NodePtr,
     pub signature: Aggsig
+}
+
+impl Default for TransactionBundle {
+    fn default() -> Self {
+        let allocator = Allocator::new();
+        TransactionBundle {
+            puzzle: Puzzle::from_nodeptr(allocator.null()),
+            solution: allocator.null(),
+            signature: Aggsig::default()
+        }
+    }
 }
 
 pub struct SpentResult {

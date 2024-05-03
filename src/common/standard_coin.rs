@@ -8,14 +8,14 @@ use clvm_traits::{ToClvm, clvm_curried_args};
 
 use clvmr::allocator::NodePtr;
 
-use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream, UnvalidatedBytesFromType, sha256};
+use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream, UnvalidatedBytesFromType};
 use clvm_tools_rs::classic::clvm::serialize::{sexp_from_stream, SimpleCreateCLVMObject};
 
 use clvm_utils::CurriedProgram;
 
-use crate::common::constants::{GROUP_ORDER, ONE_TREEHASH, Q_KW_TREEHASH, A_KW_TREEHASH, C_KW_TREEHASH, NULL_TREEHASH, DEFAULT_PUZZLE_HASH, DEFAULT_HIDDEN_PUZZLE_HASH};
+use crate::common::constants::{GROUP_ORDER, DEFAULT_PUZZLE_HASH, DEFAULT_HIDDEN_PUZZLE_HASH, ONE, TWO, A_KW, C_KW, Q_KW, Q_KW_TREEHASH};
 use crate::common::types;
-use crate::common::types::{PublicKey, Puzzle, PuzzleHash, AllocEncoder, IntoErr, Aggsig, Sha256tree, PrivateKey, CoinID, Program, Node, ToQuotedProgram, Hash, CoinCondition};
+use crate::common::types::{PublicKey, Puzzle, PuzzleHash, AllocEncoder, IntoErr, Aggsig, Sha256tree, PrivateKey, CoinID, Program, Node, ToQuotedProgram, Hash, CoinCondition, Sha256Input};
 
 pub fn shatree_atom_cant_fail(by: &[u8]) -> PuzzleHash {
     let mut allocator = AllocEncoder::new();
@@ -52,8 +52,8 @@ fn group_order_int() -> BigInt {
 fn calculate_synthetic_offset(public_key: &PublicKey, hidden_puzzle_hash: &PuzzleHash) -> BigInt {
     let mut blob_input = public_key.bytes().to_vec();
     blob_input.extend_from_slice(&mut hidden_puzzle_hash.bytes());
-    let blob = sha256(Bytes::new(Some(BytesFromType::Raw(blob_input))));
-    BigInt::from_bytes_be(Sign::Plus, blob.data()) % group_order_int()
+    let blob = Sha256Input::Bytes(&blob_input).hash();
+    BigInt::from_bytes_be(Sign::Plus, blob.bytes()) % group_order_int()
 }
 
 pub fn calculate_synthetic_public_key(public_key: &PublicKey, hidden_puzzle_hash: &PuzzleHash) -> Result<PublicKey, types::Error> {
@@ -77,51 +77,82 @@ pub fn puzzle_for_synthetic_public_key(allocator: &mut AllocEncoder, standard_co
     Ok(Puzzle::from_nodeptr(nodeptr))
 }
 
-pub fn curried_values_tree_hash(allocator: &mut AllocEncoder, arguments: &[PuzzleHash]) -> Result<PuzzleHash, types::Error> {
-    if arguments.is_empty() {
-        return Ok(ONE_TREEHASH.clone());
+fn hash_of_consed_parameter_hash(environment: &Hash, parameter: &Hash) -> Hash {
+    Sha256Input::Array(vec![
+        Sha256Input::Bytes(&TWO),
+        Sha256Input::Hashed(vec![
+            Sha256Input::Bytes(&ONE),
+            Sha256Input::Bytes(&C_KW),
+        ]),
+        Sha256Input::Hashed(vec![
+            Sha256Input::Bytes(&TWO),
+            Sha256Input::Hashed(vec![
+                Sha256Input::Bytes(&TWO),
+                Sha256Input::Hashed(vec![
+                    Sha256Input::Bytes(&ONE),
+                    Sha256Input::Bytes(&Q_KW),
+                ]),
+                Sha256Input::Hash(&parameter),
+            ]),
+            Sha256Input::Hashed(vec![
+                Sha256Input::Bytes(&TWO),
+                Sha256Input::Hash(&environment),
+                Sha256Input::Hashed(vec![Sha256Input::Bytes(&ONE)])
+            ])
+        ])
+    ]).hash()
+}
+
+pub fn curry_and_treehash(allocator: &mut AllocEncoder, hash_of_quoted_mod_hash: &PuzzleHash, hashed_arguments: &[PuzzleHash]) -> PuzzleHash {
+    let mut env = Sha256Input::Bytes(&[1,1]).hash();
+
+    for arg in hashed_arguments.iter().rev() {
+        env = hash_of_consed_parameter_hash(&env, arg.hash());
     }
 
-    let structure = (
-        (C_KW_TREEHASH.clone(), (Q_KW_TREEHASH.clone(), arguments[0].clone())),
-        (curried_values_tree_hash(allocator, &arguments[1..])?, NULL_TREEHASH.clone())
-    ).to_clvm(allocator).into_gen()?;
-
-    Ok(Node(structure).sha256tree(allocator))
+    PuzzleHash::from_hash(Sha256Input::Array(vec![
+        Sha256Input::Bytes(&TWO),
+        Sha256Input::Hashed(vec![
+            Sha256Input::Bytes(&ONE),
+            Sha256Input::Bytes(&A_KW)
+        ]),
+        Sha256Input::Hashed(vec![
+            Sha256Input::Bytes(&TWO),
+            Sha256Input::Hash(hash_of_quoted_mod_hash.hash()),
+            Sha256Input::Hashed(vec![
+                Sha256Input::Bytes(&TWO),
+                Sha256Input::Hash(&env),
+                Sha256Input::Hashed(vec![
+                    Sha256Input::Bytes(&ONE)
+                ])
+            ])
+        ])
+    ]).hash())
 }
 
-pub fn curry_and_treehash(allocator: &mut AllocEncoder, hash_of_quoted_mod_hash: &PuzzleHash, hashed_arguments: &[PuzzleHash]) -> Result<PuzzleHash, types::Error> {
-    let curried_values = curried_values_tree_hash(allocator, hashed_arguments)?;
-    let structure = (
-        A_KW_TREEHASH.clone(),
-        (hash_of_quoted_mod_hash, (curried_values, NULL_TREEHASH.clone()))
-    ).to_clvm(allocator).into_gen()?;
-
-    Ok(Node(structure).sha256tree(allocator))
-}
-
-pub fn calculate_hash_of_quoted_mod_hash(allocator: &mut AllocEncoder, mod_hash: &PuzzleHash) -> Result<PuzzleHash, types::Error> {
-    let structure =
-        (Q_KW_TREEHASH.clone(), mod_hash).to_clvm(allocator).into_gen()?;
-
-    Ok(Node(structure).sha256tree(allocator))
+pub fn calculate_hash_of_quoted_mod_hash(allocator: &mut AllocEncoder, mod_hash: &PuzzleHash) -> Hash {
+    Sha256Input::Array(vec![
+        Sha256Input::Bytes(&TWO),
+        Sha256Input::Hash(&Q_KW_TREEHASH),
+        Sha256Input::Hash(&mod_hash.hash())
+    ]).hash()
 }
 
 pub fn puzzle_hash_for_synthetic_public_key(allocator: &mut AllocEncoder, synthetic_public_key: &PublicKey) -> Result<PuzzleHash, types::Error> {
-    let quoted_mod_hash = calculate_hash_of_quoted_mod_hash(allocator, &DEFAULT_PUZZLE_HASH)?;
+    let quoted_mod_hash = PuzzleHash::from_hash(calculate_hash_of_quoted_mod_hash(allocator, &PuzzleHash::from_bytes(DEFAULT_PUZZLE_HASH.clone())));
     let public_key_hash = Node(synthetic_public_key.to_clvm(allocator).into_gen()?)
         .sha256tree(allocator);
-    curry_and_treehash(allocator, &quoted_mod_hash, &[public_key_hash])
+    Ok(curry_and_treehash(allocator, &quoted_mod_hash, &[public_key_hash]))
 }
 
 pub fn puzzle_for_pk(allocator: &mut AllocEncoder, public_key: &PublicKey) -> Result<Puzzle, types::Error> {
     let standard_puzzle = get_standard_coin_puzzle(allocator)?;
-    let synthetic_public_key = calculate_synthetic_public_key(&public_key, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
+    let synthetic_public_key = calculate_synthetic_public_key(&public_key, &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone()))?;
     Ok(puzzle_for_synthetic_public_key(allocator, &standard_puzzle, &synthetic_public_key)?)
 }
 
 pub fn puzzle_hash_for_pk(allocator: &mut AllocEncoder, public_key: &PublicKey) -> Result<PuzzleHash, types::Error> {
-    let synthetic_public_key = calculate_synthetic_public_key(&public_key, &DEFAULT_HIDDEN_PUZZLE_HASH)?;
+    let synthetic_public_key = calculate_synthetic_public_key(&public_key, &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone()))?;
     Ok(puzzle_hash_for_synthetic_public_key(allocator, &synthetic_public_key)?)
 }
 
