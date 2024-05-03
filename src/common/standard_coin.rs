@@ -311,6 +311,7 @@ pub fn standard_solution_partial(
                     private_key, &pubkey, &data
                 ));
             }
+            _ => { }
         }
     }
     if let Some(sig) = aggregated_signature {
