@@ -1,4 +1,5 @@
-use clvm_traits::ToClvm;
+use clvm_traits::{ToClvm, clvm_curried_args};
+use clvm_utils::CurriedProgram;
 
 use rand_chacha::ChaCha8Rng;
 use rand::{Rng, SeedableRng};
@@ -6,9 +7,9 @@ use rand::{Rng, SeedableRng};
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::{DefaultProgramRunner, TRunProgram};
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
-use crate::common::constants::DEFAULT_HIDDEN_PUZZLE_HASH;
-use crate::common::standard_coin::{puzzle_for_pk, hex_to_sexp, private_to_public_key, unsafe_sign_partial, get_standard_coin_puzzle, partial_signer, puzzle_hash_for_pk, calculate_synthetic_public_key, standard_solution};
-use crate::common::types::{PublicKey, Sha256tree, PrivateKey, AllocEncoder, Aggsig, PuzzleHash, Node, ToQuotedProgram};
+use crate::common::constants::{DEFAULT_HIDDEN_PUZZLE_HASH, ONE, TWO};
+use crate::common::standard_coin::{puzzle_for_pk, hex_to_sexp, private_to_public_key, unsafe_sign_partial, get_standard_coin_puzzle, partial_signer, puzzle_hash_for_pk, calculate_synthetic_public_key, standard_solution, curry_and_treehash, calculate_hash_of_quoted_mod_hash};
+use crate::common::types::{PublicKey, Sha256tree, PrivateKey, AllocEncoder, Aggsig, PuzzleHash, Node, ToQuotedProgram, Sha256Input};
 use crate::tests::constants::{EXPECTED_PUZZLE_HEX, TEST_PUBLIC_KEY_BYTES, KEY_PAIR_PUBLIC, KEY_PAIR_PRIVATE, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, STANDARD_PUZZLE_HASH, KEY_PAIR_SYNTHETIC_PUBLIC_KEY};
 
 #[test]
@@ -74,12 +75,74 @@ fn test_standard_puzzle_form() {
 fn test_calculate_synthetic_public_key() {
     let public_key = PublicKey::from_bytes(KEY_PAIR_PUBLIC.clone()).expect("should work");
     let synthetic_public_key = PublicKey::from_bytes(KEY_PAIR_SYNTHETIC_PUBLIC_KEY.clone()).expect("should work");
-    let hidden_puzzle_hash = DEFAULT_HIDDEN_PUZZLE_HASH.clone();
+    let hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
     assert_eq!(
         calculate_synthetic_public_key(&public_key, &hidden_puzzle_hash).expect("should work"),
         synthetic_public_key
     );
 }
+
+#[test]
+fn test_curry_and_treehash() {
+    let mut allocator = AllocEncoder::new();
+
+    let from_hasher = Sha256Input::Array(vec![
+        Sha256Input::Bytes(&TWO),
+        Sha256Input::Hashed(vec![
+            Sha256Input::Bytes(&ONE),
+            Sha256Input::Bytes(&ONE)
+        ]),
+        Sha256Input::Hashed(vec![
+            Sha256Input::Bytes(&TWO),
+            Sha256Input::Hashed(vec![
+                Sha256Input::Bytes(&ONE),
+                Sha256Input::Bytes(&TWO),
+            ]),
+            Sha256Input::Hashed(vec![
+                Sha256Input::Bytes(&TWO),
+                Sha256Input::Hashed(vec![
+                    Sha256Input::Bytes(&ONE),
+                    Sha256Input::Bytes(&[3]),
+                ]),
+                Sha256Input::Hashed(vec![
+                    Sha256Input::Bytes(&ONE)
+                ])
+            ])
+        ])
+    ]).hash();
+
+    let program = (1, (2, (3, ()))).to_clvm(&mut allocator).expect("should work");
+    let program_hash = Node(program).sha256tree(&mut allocator);
+
+    assert_eq!(PuzzleHash::from_hash(from_hasher), program_hash);
+
+    let curried_program = CurriedProgram {
+        program: Node(program),
+        args: clvm_curried_args!("test1", "test2")
+    }.to_clvm(&mut allocator).expect("should work");
+    let curried_program_hash = Node(curried_program).sha256tree(&mut allocator);
+
+    let quoted_program = program.to_quoted_program(&mut allocator).expect("should quote");
+    let quoted_program_hash = quoted_program.sha256tree(&mut allocator);
+    let quoted_mod_hash = calculate_hash_of_quoted_mod_hash(
+        &mut allocator,
+        &program_hash
+    );
+    assert_eq!(PuzzleHash::from_hash(quoted_mod_hash), quoted_program_hash);
+
+    let arg1 = "test1".to_clvm(&mut allocator).expect("should cvt");
+    let arg1_hash = Node(arg1).sha256tree(&mut allocator);
+    let arg2 = "test2".to_clvm(&mut allocator).expect("should cvt");
+    let arg2_hash = Node(arg2).sha256tree(&mut allocator);
+
+    let pre_hashed = curry_and_treehash(
+        &mut allocator,
+        &quoted_program_hash,
+        &[arg1_hash, arg2_hash]
+    );
+    assert_eq!(curried_program_hash, pre_hashed);
+}
+
 
 #[test]
 // From: https://github.com/richardkiss/chialisp_stdlib/blob/bram-api/tests/test_signing.py
@@ -95,7 +158,7 @@ fn test_standard_puzzle_solution_maker() {
     let mut allocator = AllocEncoder::new();
     let private_key = PrivateKey::from_bytes(&KEY_PAIR_PRIVATE.clone()).expect("should work");
     let public_key = PublicKey::from_bytes(KEY_PAIR_PUBLIC.clone()).expect("should work");
-    let synthetic_public_key = calculate_synthetic_public_key(&public_key, &DEFAULT_HIDDEN_PUZZLE_HASH).expect("should compute");
+    let synthetic_public_key = calculate_synthetic_public_key(&public_key, &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone())).expect("should compute");
     let puzzle = puzzle_for_pk(&mut allocator, &public_key).expect("should work");
     let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &public_key).expect("should work");
     let conditions = ((51, (puzzle_hash.clone(), (99, ()))), ()).to_clvm(&mut allocator).expect("should work");

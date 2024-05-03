@@ -7,7 +7,7 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::types::{Amount, CoinID, Sha256tree, PrivateKey, AllocEncoder, Node, Hash, PuzzleHash, PublicKey, Puzzle, Error, Aggsig};
-use crate::common::standard_coin::{private_to_public_key, calculate_synthetic_public_key, puzzle_hash_for_pk};
+use crate::common::standard_coin::{private_to_public_key, calculate_synthetic_public_key, puzzle_hash_for_pk, puzzle_for_pk};
 use crate::channel_handler::handler::ChannelHandler;
 use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, ChannelHandlerInitiationResult, read_unroll_metapuzzle, read_unroll_puzzle};
 
@@ -23,15 +23,18 @@ struct ChannelHandlerParty {
 impl ChannelHandlerParty {
     fn new<R: Rng>(allocator: &mut AllocEncoder, rng: &mut R, unroll_metapuzzle: Puzzle, unroll_puzzle: Puzzle, contribution: Amount) -> ChannelHandlerParty {
         let ch = ChannelHandler::construct_with_rng(rng);
-        let referee = Puzzle::from_nodeptr(allocator.allocator().one());
+        let ref_key = private_to_public_key(&ch.referee_private_key());
+        eprintln!("ref_key {ref_key:?}");
+        let referee = puzzle_for_pk(allocator, &ref_key).expect("should work");
         let ref_puzzle_hash = referee.sha256tree(allocator);
+        eprintln!("ref_hash {ref_puzzle_hash:?}");
         ChannelHandlerParty {
             ch,
             unroll_metapuzzle,
             unroll_puzzle,
+            contribution,
             referee,
-            ref_puzzle_hash,
-            contribution
+            ref_puzzle_hash
         }
     }
 }
@@ -80,6 +83,7 @@ impl ChannelHandlerGame {
             my_contribution: self.player(0).contribution.clone(),
             their_contribution: self.player(1).contribution.clone()
         };
+        eprintln!("initiate 1");
         let initiation_result1 = self.initiate(env, 0, &chi_data1)?;
         let chi_data2 = ChannelHandlerInitiationData {
             launcher_coin_id: launcher_coin.clone(),
@@ -90,6 +94,7 @@ impl ChannelHandlerGame {
             my_contribution: self.player(1).contribution.clone(),
             their_contribution: self.player(0).contribution.clone()
         };
+        eprintln!("initiate 2");
         let initiation_result2 = self.initiate(env, 1, &chi_data2)?;
         Ok([initiation_result1, initiation_result2])
     }

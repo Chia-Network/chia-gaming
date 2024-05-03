@@ -17,6 +17,8 @@ chia-bls = "0.7.0"
 clvm-utils = "0.7.0"
 lazy_static = "1.4.0"
 ff = { version = "0.13.0", features = ["derive"] }
+sha2 = "0.10.8"
+
 bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 
 [lib]
