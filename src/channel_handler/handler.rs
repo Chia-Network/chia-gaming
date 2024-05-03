@@ -3,11 +3,10 @@ use rand::prelude::*;
 use clvmr::allocator::{Allocator, NodePtr};
 use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node, TransactionBundle, SpendRewardResult, ToQuotedProgram, PrivateKey};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial, puzzle_for_pk, agg_sig_me_message};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial, puzzle_for_pk, agg_sig_me_message, partial_signer};
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, CoinSpentResult};
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -161,7 +160,6 @@ impl ChannelHandler {
         }
 
         let result = (result_coins).to_clvm(env.allocator).into_gen()?;
-        eprintln!("unroll {} conditions {}", self.have_potato, disassemble(env.allocator.allocator(), result, None));
         Ok(result)
     }
 
@@ -220,7 +218,6 @@ impl ChannelHandler {
 
     fn get_default_conditions_and_hash_for_startup(&self, env: &mut ChannelHandlerEnv) -> Result<(NodePtr, PuzzleHash), Error> {
         let default_conditions = self.get_unroll_coin_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
-        eprintln!("default_conditions {}", disassemble(env.allocator.allocator(), default_conditions, None));
         let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         Ok((default_conditions, default_conditions_hash))
     }
@@ -237,7 +234,6 @@ impl ChannelHandler {
         }
 
         self.have_potato = initiation.we_start_with_potato;
-        eprintln!("have potato {}", self.have_potato);
         self.started_with_potato = self.have_potato;
         self.their_channel_coin_public_key = initiation.their_channel_pubkey.clone();
         self.their_unroll_coin_public_key = initiation.their_unroll_pubkey.clone();
@@ -293,12 +289,14 @@ impl ChannelHandler {
         let create_unroll_coin_conditions =
             ((CREATE_COIN, (curried_unroll_puzzle_hash, (self.channel_coin_amount.clone(), ()))), ()).to_clvm(env.allocator).into_gen()?;
         let quoted_create_unroll_coin_conditions = create_unroll_coin_conditions.to_quoted_program(env.allocator)?;
-        eprintln!("create_unroll_coin_conditions {}", disassemble(env.allocator.allocator(), quoted_create_unroll_coin_conditions.to_nodeptr(), None));
         let create_unroll_coin_conditions_hash = quoted_create_unroll_coin_conditions.sha256tree(env.allocator);
 
-        let signature = self.private_keys.my_channel_coin_private_key.sign(&create_unroll_coin_conditions_hash.bytes());
-
-        eprintln!("hash_of_initial_channel_coin_solution {create_unroll_coin_conditions_hash:?}");
+        let signature =
+            partial_signer(
+                &self.private_keys.my_channel_coin_private_key,
+                &aggregate_public_key,
+                &create_unroll_coin_conditions_hash.bytes()
+            );
 
         self.channel_coin_spend = TransactionBundle {
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
@@ -313,21 +311,26 @@ impl ChannelHandler {
     }
 
     pub fn finish_handshake(&mut self, env: &mut ChannelHandlerEnv, their_initial_channel_hash_signature: &Aggsig) -> Result<(), Error> {
-        let aggregate_public_key =
-            self.get_aggregate_channel_public_key();
+        let aggregate_public_key = self.get_aggregate_channel_public_key();
+        let state_channel_coin =
+            if let Some(ssc) = self.state_channel_coin_string.as_ref() {
+                ssc.to_coin_id()
+            } else {
+                return Err(Error::StrErr("send_potato_clean_shutdown without state_channel_coin".to_string()));
+            };
 
-        eprintln!("aggregate public key {} {aggregate_public_key:?}", self.have_potato);
         let hash_of_initial_channel_coin_solution =
             Node(self.channel_coin_spend.solution).sha256tree(env.allocator);
 
-        eprintln!("hash_of_initial_channel_coin_solution {hash_of_initial_channel_coin_solution:?}");
+        eprintln!("our {} sig {:?}", self.started_with_potato, self.channel_coin_spend.signature);
+        eprintln!("their sig {:?}", their_initial_channel_hash_signature);
         let combined_signature =
             self.channel_coin_spend.signature.clone() +
             their_initial_channel_hash_signature.clone();
 
         if !combined_signature.verify(
             &aggregate_public_key,
-            &hash_of_initial_channel_coin_solution.bytes()
+            &hash_of_initial_channel_coin_solution.bytes(),
         ) {
             return Err(Error::StrErr("finish_handshake: Signature verify failed for other party's signature".to_string()));
         }
