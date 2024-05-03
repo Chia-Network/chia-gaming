@@ -11,25 +11,19 @@ use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandler
 
 struct ChannelHandlerParty {
     ch: ChannelHandler,
-    unroll_metapuzzle: Puzzle,
-    unroll_puzzle: Puzzle,
     referee: Puzzle,
     ref_puzzle_hash: PuzzleHash,
     contribution: Amount,
 }
 
 impl ChannelHandlerParty {
-    fn new<R: Rng>(allocator: &mut AllocEncoder, rng: &mut R, unroll_metapuzzle: Puzzle, unroll_puzzle: Puzzle, contribution: Amount) -> ChannelHandlerParty {
+    fn new<R: Rng>(allocator: &mut AllocEncoder, rng: &mut R, contribution: Amount) -> ChannelHandlerParty {
         let ch = ChannelHandler::construct_with_rng(rng);
         let ref_key = private_to_public_key(&ch.referee_private_key());
-        eprintln!("ref_key {ref_key:?}");
         let referee = puzzle_for_pk(allocator, &ref_key).expect("should work");
         let ref_puzzle_hash = referee.sha256tree(allocator);
-        eprintln!("ref_hash {ref_puzzle_hash:?}");
         ChannelHandlerParty {
             ch,
-            unroll_metapuzzle,
-            unroll_puzzle,
             contribution,
             referee,
             ref_puzzle_hash
@@ -46,15 +40,11 @@ impl ChannelHandlerGame {
         let player1 = ChannelHandlerParty::new(
             &mut env.allocator,
             rng,
-            env.unroll_metapuzzle.clone(),
-            env.unroll_puzzle.clone(),
             contributions[0].clone()
         );
         let player2 = ChannelHandlerParty::new(
             &mut env.allocator,
             rng,
-            env.unroll_metapuzzle.clone(),
-            env.unroll_puzzle.clone(),
             contributions[1].clone()
         );
 
@@ -83,6 +73,7 @@ impl ChannelHandlerGame {
         };
         eprintln!("initiate 1");
         let initiation_result1 = self.initiate(env, 0, &chi_data1)?;
+
         let chi_data2 = ChannelHandlerInitiationData {
             launcher_coin_id: launcher_coin.clone(),
             we_start_with_potato: true,
@@ -94,6 +85,7 @@ impl ChannelHandlerGame {
         };
         eprintln!("initiate 2");
         let initiation_result2 = self.initiate(env, 1, &chi_data2)?;
+
         Ok([initiation_result1, initiation_result2])
     }
 
