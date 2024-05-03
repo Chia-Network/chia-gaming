@@ -1,13 +1,11 @@
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use clvmr::allocator::NodePtr;
 use clvm_traits::ToClvm;
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::types::{Amount, CoinID, Sha256tree, PrivateKey, AllocEncoder, Node, Hash, PuzzleHash, PublicKey, Puzzle, Error, Aggsig};
-use crate::common::standard_coin::{private_to_public_key, calculate_synthetic_public_key, puzzle_hash_for_pk, puzzle_for_pk};
+use crate::common::types::{Amount, CoinID, Sha256tree, AllocEncoder, Hash, PuzzleHash, Puzzle, Error, Aggsig};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, puzzle_for_pk};
 use crate::channel_handler::handler::ChannelHandler;
 use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, ChannelHandlerInitiationResult, read_unroll_metapuzzle, read_unroll_puzzle};
 
@@ -127,8 +125,8 @@ fn test_smoke_can_initiate_channel_handler() {
     let launcher_coin = CoinID::default();
     let init_results = game.handshake(&mut env, &launcher_coin).expect("should work");
 
-    let finish_hs_result1 = game.finish_handshake(&mut env, 1, &init_results[0].my_initial_channel_half_signature_peer).expect("should finish handshake");
-    let finish_hs_result2 = game.finish_handshake(&mut env, 0, &init_results[1].my_initial_channel_half_signature_peer).expect("should finish handshake");
+    let _finish_hs_result1 = game.finish_handshake(&mut env, 1, &init_results[0].my_initial_channel_half_signature_peer).expect("should finish handshake");
+    let _finish_hs_result2 = game.finish_handshake(&mut env, 0, &init_results[1].my_initial_channel_half_signature_peer).expect("should finish handshake");
 
     // Set up for the spend.
     let shutdown_spend_target = puzzle_hash_for_pk(env.allocator, &game.player(1).ch.clean_shutdown_public_key()).expect("should give");
@@ -138,7 +136,7 @@ fn test_smoke_can_initiate_channel_handler() {
         &mut env,
         conditions
     ).expect("should give transaction");
-    let counter_shutdown = game.player(0).ch.received_potato_clean_shutdown(
+    let _counter_shutdown = game.player(0).ch.received_potato_clean_shutdown(
         &mut env,
         &shutdown_transaction.signature,
         conditions

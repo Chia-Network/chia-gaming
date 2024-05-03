@@ -124,10 +124,7 @@ fn test_curry_and_treehash() {
 
     let quoted_program = program.to_quoted_program(&mut allocator).expect("should quote");
     let quoted_program_hash = quoted_program.sha256tree(&mut allocator);
-    let quoted_mod_hash = calculate_hash_of_quoted_mod_hash(
-        &mut allocator,
-        &program_hash
-    );
+    let quoted_mod_hash = calculate_hash_of_quoted_mod_hash(&program_hash);
     assert_eq!(PuzzleHash::from_hash(quoted_mod_hash), quoted_program_hash);
 
     let arg1 = "test1".to_clvm(&mut allocator).expect("should cvt");
@@ -136,7 +133,6 @@ fn test_curry_and_treehash() {
     let arg2_hash = Node(arg2).sha256tree(&mut allocator);
 
     let pre_hashed = curry_and_treehash(
-        &mut allocator,
         &quoted_program_hash,
         &[arg1_hash, arg2_hash]
     );

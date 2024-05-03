@@ -8,7 +8,7 @@ use clvm_traits::{ToClvm, clvm_curried_args};
 
 use clvmr::allocator::NodePtr;
 
-use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, BytesFromType, Stream, UnvalidatedBytesFromType};
+use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, Stream, UnvalidatedBytesFromType};
 use clvm_tools_rs::classic::clvm::serialize::{sexp_from_stream, SimpleCreateCLVMObject};
 
 use clvm_utils::CurriedProgram;
@@ -103,7 +103,7 @@ fn hash_of_consed_parameter_hash(environment: &Hash, parameter: &Hash) -> Hash {
     ]).hash()
 }
 
-pub fn curry_and_treehash(allocator: &mut AllocEncoder, hash_of_quoted_mod_hash: &PuzzleHash, hashed_arguments: &[PuzzleHash]) -> PuzzleHash {
+pub fn curry_and_treehash(hash_of_quoted_mod_hash: &PuzzleHash, hashed_arguments: &[PuzzleHash]) -> PuzzleHash {
     let mut env = Sha256Input::Bytes(&[1,1]).hash();
 
     for arg in hashed_arguments.iter().rev() {
@@ -130,7 +130,7 @@ pub fn curry_and_treehash(allocator: &mut AllocEncoder, hash_of_quoted_mod_hash:
     ]).hash())
 }
 
-pub fn calculate_hash_of_quoted_mod_hash(allocator: &mut AllocEncoder, mod_hash: &PuzzleHash) -> Hash {
+pub fn calculate_hash_of_quoted_mod_hash(mod_hash: &PuzzleHash) -> Hash {
     Sha256Input::Array(vec![
         Sha256Input::Bytes(&TWO),
         Sha256Input::Hash(&Q_KW_TREEHASH),
@@ -139,10 +139,10 @@ pub fn calculate_hash_of_quoted_mod_hash(allocator: &mut AllocEncoder, mod_hash:
 }
 
 pub fn puzzle_hash_for_synthetic_public_key(allocator: &mut AllocEncoder, synthetic_public_key: &PublicKey) -> Result<PuzzleHash, types::Error> {
-    let quoted_mod_hash = PuzzleHash::from_hash(calculate_hash_of_quoted_mod_hash(allocator, &PuzzleHash::from_bytes(DEFAULT_PUZZLE_HASH.clone())));
+    let quoted_mod_hash = PuzzleHash::from_hash(calculate_hash_of_quoted_mod_hash(&PuzzleHash::from_bytes(DEFAULT_PUZZLE_HASH.clone())));
     let public_key_hash = Node(synthetic_public_key.to_clvm(allocator).into_gen()?)
         .sha256tree(allocator);
-    Ok(curry_and_treehash(allocator, &quoted_mod_hash, &[public_key_hash]))
+    Ok(curry_and_treehash(&quoted_mod_hash, &[public_key_hash]))
 }
 
 pub fn puzzle_for_pk(allocator: &mut AllocEncoder, public_key: &PublicKey) -> Result<Puzzle, types::Error> {

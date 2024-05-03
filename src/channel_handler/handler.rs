@@ -6,8 +6,8 @@ use clvm_utils::CurriedProgram;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::common::constants::{CREATE_COIN, REM};
-use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node, SpentResult, TransactionBundle, SpendRewardResult, Program, ToQuotedProgram, PrivateKey};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial, solution_for_conditions, puzzle_for_pk, agg_sig_me_message};
+use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node, TransactionBundle, SpendRewardResult, ToQuotedProgram, PrivateKey};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial, puzzle_for_pk, agg_sig_me_message};
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, CoinSpentResult};
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -204,7 +204,7 @@ impl ChannelHandler {
         Ok((conditions.clone(), to_spend_unroll_sig))
     }
 
-    pub fn state_channel_unroll_signature(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<UnrollCoinSignatures, Error> {
+    pub fn state_channel_unroll_signature(&self, env: &mut ChannelHandlerEnv, _conditions: NodePtr) -> Result<UnrollCoinSignatures, Error> {
         let (_, to_create_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env)?;
         let (_, to_spend_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env)?;
 
@@ -278,7 +278,7 @@ impl ChannelHandler {
         // The seq number is zero.
         // There are no game coins and a balance for both sides.
 
-        let (default_conditions, default_conditions_hash) =
+        let (_, default_conditions_hash) =
             self.get_default_conditions_and_hash_for_startup(env)?;
 
         let shared_puzzle_hash = puzzle_hash_for_pk(
@@ -318,12 +318,16 @@ impl ChannelHandler {
     pub fn finish_handshake(&mut self, env: &mut ChannelHandlerEnv, their_initial_channel_hash_signature: &Aggsig) -> Result<(), Error> {
         let aggregate_public_key =
             self.get_aggregate_channel_public_key();
+
+        eprintln!("aggregate public key {} {aggregate_public_key:?}", self.have_potato);
         let hash_of_initial_channel_coin_solution =
             Node(self.channel_coin_spend.solution).sha256tree(env.allocator);
+
         eprintln!("hash_of_initial_channel_coin_solution {hash_of_initial_channel_coin_solution:?}");
         let combined_signature =
             self.channel_coin_spend.signature.clone() +
             their_initial_channel_hash_signature.clone();
+
         if !combined_signature.verify(
             &aggregate_public_key,
             &hash_of_initial_channel_coin_solution.bytes()
@@ -335,7 +339,7 @@ impl ChannelHandler {
         Ok(())
     }
 
-    pub fn send_empty_potato(&mut self, env: &mut ChannelHandlerEnv) -> PotatoSignatures {
+    pub fn send_empty_potato(&mut self, _env: &mut ChannelHandlerEnv) -> PotatoSignatures {
         todo!();
     }
 
@@ -429,6 +433,7 @@ impl ChannelHandler {
             &state_channel_coin,
             &env.agg_sig_me_additional_data
         );
+
         if !full_signature.verify(&aggregate_public_key, &message_to_verify) {
             return Err(Error::StrErr("received_potato_clean_shutdown full signature didn't verify".to_string()));
         }
@@ -439,7 +444,7 @@ impl ChannelHandler {
         })
     }
 
-    pub fn get_channel_coin_spend(&self, env: &mut ChannelHandlerEnv) -> TransactionBundle {
+    pub fn get_channel_coin_spend(&self, _env: &mut ChannelHandlerEnv) -> TransactionBundle {
         assert!(self.have_potato);
         todo!();
     }
