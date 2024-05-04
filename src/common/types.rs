@@ -227,7 +227,7 @@ impl ToClvm<NodePtr> for Aggsig {
 }
 
 /// Game ID
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, Eq, PartialEq)]
 pub struct GameID(Vec<u8>);
 
 impl GameID {
@@ -633,6 +633,13 @@ pub struct TransactionBundle {
     pub solution: NodePtr,
     pub signature: Aggsig
 }
+
+#[derive(Clone)]
+pub struct SpecificTransactionBundle {
+    pub coin: CoinString,
+    pub bundle: TransactionBundle,
+}
+
 
 impl Default for TransactionBundle {
     fn default() -> Self {

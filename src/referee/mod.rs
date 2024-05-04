@@ -34,6 +34,8 @@ pub enum TheirTurnCoinSpentResult {
 }
 
 pub struct RefereeMaker {
+    referee_puzzle_hash: PuzzleHash,
+    amount: Amount,
 }
 
 impl RefereeMaker {
@@ -41,8 +43,12 @@ impl RefereeMaker {
         todo!();
     }
 
-    pub fn get_initial_puzzle_hash(&self) -> PuzzleHash {
-        todo!();
+    pub fn get_amount(&self) -> Amount {
+        self.amount.clone()
+    }
+
+    pub fn get_current_puzzle_hash(&self) -> PuzzleHash {
+        self.referee_puzzle_hash.clone()
     }
 
     pub fn my_turn_make_move(&mut self, _allocator: &mut AllocEncoder, _readable_move: &NodePtr) -> RefereeMakerMoveResult {

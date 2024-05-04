@@ -4,7 +4,7 @@ use clvmr::allocator::NodePtr;
 use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 
-use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, GameHandler, Timeout, Hash, CoinID, AllocEncoder, IntoErr};
+use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, GameHandler, Timeout, Hash, CoinID, AllocEncoder, IntoErr, SpecificTransactionBundle, TransactionBundle};
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::referee::RefereeMaker;
 
@@ -74,17 +74,44 @@ pub struct MoveResult {
 
 pub struct OnChainGameCoin<'a> {
     pub game_id_up: GameID,
-    pub coin_string_up: CoinString,
-    pub referee_up: &'a mut RefereeMaker
+    pub coin_string_up: Option<CoinString>,
+    pub referee_up: &'a RefereeMaker
+}
+
+#[derive(Clone)]
+pub struct CoinSpentMoveUp {
+    pub game_id: GameID,
+    pub spend_before_game_coin: SpecificTransactionBundle,
+    pub after_update_game_coin: CoinString
+}
+
+#[derive(Clone)]
+pub struct CoinSpentAccept {
+    pub game_id: GameID,
+    pub spend: SpecificTransactionBundle,
+    pub reward_coin: CoinString,
+}
+
+// Disposition
+#[derive(Clone)]
+pub enum CoinSpentDisposition {
+    CancelledUX(GameID),
+    Move(CoinSpentMoveUp),
+    Accept(CoinSpentAccept),
+}
+
+pub struct DispositionResult {
+    pub skip_game: Option<GameID>,
+    pub skip_coin_id: Option<GameID>,
+    pub contributed_adjusted: Amount,
+    pub disposition: CoinSpentDisposition,
 }
 
 pub struct CoinSpentResult<'a> {
     pub my_clean_reward_coin_string_up: CoinString,
     // New coins that now exist.
     pub new_game_coins_on_chain: Vec<OnChainGameCoin<'a>>,
-    pub game_id_cancelled_ux: NodePtr,
-    pub game_id_to_move_up: GameID,
-    pub game_id_of_accept_up: GameID
+    pub disposition: Option<CoinSpentDisposition>,
 }
 
 pub struct UnrollCoinSignatures {
@@ -125,4 +152,29 @@ impl<'a> ChannelHandlerEnv<'a> {
         let nodeptr = curried_program.to_clvm(self.allocator).into_gen()?;
         Ok(Puzzle::from_nodeptr(nodeptr))
     }
+}
+
+pub struct LiveGame {
+    pub game_id: GameID,
+    pub referee_maker: Box<RefereeMaker>,
+}
+
+pub struct PotatoAcceptCachedData {
+    pub game_id: GameID,
+    pub transaction: TransactionBundle,
+    pub at_stake_amount: Amount,
+    pub our_share_amount: Amount,
+}
+
+pub struct PotatoMoveCachedData {
+    pub game_id: GameID,
+    pub transaction: TransactionBundle,
+    pub puzzle_hash: PuzzleHash,
+    pub amount: Amount,
+}
+
+pub enum CachedPotatoRegenerateLastHop {
+    PotatoCreatedGame(GameID, Amount),
+    PotatoAccept(PotatoAcceptCachedData),
+    PotatoMoveHappening(PotatoMoveCachedData)
 }
