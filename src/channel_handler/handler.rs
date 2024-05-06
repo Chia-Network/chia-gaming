@@ -169,6 +169,7 @@ impl ChannelHandler {
     pub fn get_unroll_coin_conditions(
         &self,
         env: &mut ChannelHandlerEnv,
+        state_number: usize,
         my_balance: &Amount,
         their_balance: &Amount,
         puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]
@@ -213,13 +214,13 @@ impl ChannelHandler {
         let result_coins_node = result_coins.to_clvm(env.allocator).into_gen()?;
         self.prepend_rem_conditions(
             env,
-            self.current_state_number,
+            state_number,
             result_coins_node
         )
     }
 
-    pub fn create_conditions_and_signature_of_channel_coin(&self, env: &mut ChannelHandlerEnv) -> Result<(NodePtr, Aggsig), Error> {
-        let default_conditions = self.get_unroll_coin_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
+    pub fn create_conditions_and_signature_of_channel_coin(&self, env: &mut ChannelHandlerEnv, state_number: usize) -> Result<(NodePtr, Aggsig), Error> {
+        let default_conditions = self.get_unroll_coin_conditions(env, state_number, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
         let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         let unroll_coin_parent =
             if let Some(coin_string) = self.state_channel_coin_string.as_ref() {
@@ -235,7 +236,7 @@ impl ChannelHandler {
         let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
         let create_conditions_with_rem = self.prepend_rem_conditions(
             env,
-            self.current_state_number,
+            state_number,
             create_conditions_obj
         )?;
         let channel_coin_public_key = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
@@ -262,8 +263,8 @@ impl ChannelHandler {
     }
 
     pub fn state_channel_unroll_signature(&self, env: &mut ChannelHandlerEnv, _conditions: NodePtr) -> Result<UnrollCoinSignatures, Error> {
-        let (_, to_create_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env)?;
-        let (_, to_spend_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env)?;
+        let (_, to_create_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env, self.current_state_number)?;
+        let (_, to_spend_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env, self.current_state_number)?;
 
         Ok(UnrollCoinSignatures {
             to_create_unroll_coin: to_create_unroll_sig,
@@ -277,7 +278,7 @@ impl ChannelHandler {
     }
 
     fn get_default_conditions_and_hash_for_startup(&self, env: &mut ChannelHandlerEnv) -> Result<(NodePtr, PuzzleHash), Error> {
-        let default_conditions = self.get_unroll_coin_conditions(env, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
+        let default_conditions = self.get_unroll_coin_conditions(env, 0, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
         let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         Ok((default_conditions, default_conditions_hash))
     }
@@ -400,8 +401,47 @@ impl ChannelHandler {
         Ok(())
     }
 
-    pub fn send_empty_potato(&mut self, _env: &mut ChannelHandlerEnv) -> PotatoSignatures {
-        todo!();
+    pub fn send_empty_potato(&mut self, env: &mut ChannelHandlerEnv) -> Result<PotatoSignatures, Error> {
+        // We let them spend a state number 1 higher but nothing else changes.
+        let state_number_for_spend = self.current_state_number + 1;
+        let (channel_coin_conditions, channel_coin_signature) = self.create_conditions_and_signature_of_channel_coin(
+            env,
+            state_number_for_spend
+        )?;
+
+        let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> = self.get_new_game_coins_on_chain(
+            env,
+            None,
+            None,
+            None,
+        ).iter().filter_map(|ngc| {
+            ngc.coin_string_up.as_ref().and_then(|c| c.to_parts())
+        }).map(|(_, puzzle_hash, amount)| {
+            (puzzle_hash, amount)
+        }).collect();
+
+        let unroll_conditions = self.get_unroll_coin_conditions(
+            env,
+            state_number_for_spend,
+            &self.my_out_of_game_balance,
+            &self.their_out_of_game_balance,
+            &new_game_coins_on_chain,
+        )?;
+        let quoted_conditions = unroll_conditions.to_quoted_program(env.allocator)?;
+        let quoted_conditions_hash = quoted_conditions.sha256tree(env.allocator);
+        let unroll_public_key = private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
+        let unroll_aggregate_key =
+            unroll_public_key.clone() + self.their_unroll_coin_public_key.clone();
+        let unroll_signature = partial_signer(
+            &self.private_keys.my_unroll_coin_private_key,
+            &unroll_aggregate_key,
+            &quoted_conditions_hash.bytes()
+        );
+
+        Ok(PotatoSignatures {
+            my_channel_half_signature_peer: channel_coin_signature,
+            my_unroll_half_signature_peer: unroll_signature
+        })
     }
 
     pub fn received_empty_potato(
@@ -685,7 +725,7 @@ impl ChannelHandler {
                 // state.  (different because we're not using the conditions we
                 // have cached).
                 let (conditions, _) =
-                    self.create_conditions_and_signature_of_channel_coin(env)?;
+                    self.create_conditions_and_signature_of_channel_coin(env, self.current_state_number)?;
                 let conditions_hash = Node(conditions).sha256tree(env.allocator);
 
                 let curried_unroll_puzzle = self.make_curried_unroll_puzzle(
@@ -812,6 +852,39 @@ impl ChannelHandler {
         }
     }
 
+    pub fn get_new_game_coins_on_chain(
+        &self,
+        env: &mut ChannelHandlerEnv,
+        unroll_coin: Option<&CoinID>,
+        skip_game: Option<&GameID>,
+        skip_coin_id: Option<&GameID>,
+    ) -> Vec<OnChainGameCoin> {
+        // It's ok to not have a proper coin id here when we only want
+        // the puzzle hashes and amounts.
+        let parent_coin_id = unroll_coin.cloned().unwrap_or_default();
+
+        self.live_games.iter().filter(|game| {
+            skip_game != Some(&game.game_id)
+        }).map(|game| {
+            let coin =
+                if skip_coin_id == Some(&game.game_id) {
+                    None
+                } else {
+                    Some(CoinString::from_parts(
+                        &parent_coin_id,
+                        &game.referee_maker.get_current_puzzle_hash(),
+                        &game.referee_maker.get_amount()
+                    ))
+                };
+
+            OnChainGameCoin {
+                game_id_up: game.game_id.clone(),
+                coin_string_up: coin,
+                referee_up: game.referee_maker.borrow()
+            }
+        }).collect()
+    }
+
     // what our vanilla coin string is
     // return these triplets for all the active games
     //  (id of game, coin string that's now on chain for it and the referee maker
@@ -875,26 +948,12 @@ impl ChannelHandler {
             )?;
 
         // return list of triples of game_id, coin_id, referee maker pulling from a list of pairs of (id, ref maker)
-        let new_game_coins_on_chain = self.live_games.iter().filter(|game| {
-            skip_game.as_ref() != Some(&game.game_id)
-        }).map(|game| {
-            let coin =
-                if skip_coin_id.as_ref() == Some(&game.game_id) {
-                    None
-                } else {
-                    Some(CoinString::from_parts(
-                        &unroll_coin.to_coin_id(),
-                        &game.referee_maker.get_current_puzzle_hash(),
-                        &game.referee_maker.get_amount()
-                    ))
-                };
-
-            OnChainGameCoin {
-                game_id_up: game.game_id.clone(),
-                coin_string_up: coin,
-                referee_up: game.referee_maker.borrow()
-            }
-        }).collect();
+        let new_game_coins_on_chain = self.get_new_game_coins_on_chain(
+            env,
+            Some(&unroll_coin.to_coin_id()),
+            skip_game.as_ref(),
+            skip_coin_id.as_ref()
+        );
 
         // coin with = parent is the unroll coin id and whose puzzle hash is ref and amount is my vanilla amount.
         let referee_public_key = private_to_public_key(
