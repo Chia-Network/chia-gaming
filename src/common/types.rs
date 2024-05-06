@@ -27,6 +27,7 @@ use chia_bls::signature::{sign, verify};
 pub struct CoinID(Hash);
 
 impl CoinID {
+    pub fn new(h: Hash) -> CoinID { CoinID(h) }
     pub fn bytes<'a>(&'a self) -> &'a [u8] {
         self.0.bytes()
     }
@@ -51,6 +52,19 @@ impl CoinString {
         res.append(&mut puzzle_hash.bytes().to_vec());
         res.append(&mut allocator.allocator().atom(amount_clvm).to_vec());
         CoinString(res)
+    }
+
+    pub fn to_parts(&self) -> Option<(CoinID, PuzzleHash, Amount)> {
+        if self.0.len() < 64 {
+            return None;
+        }
+
+        let parent_id = CoinID::new(Hash::from_slice(&self.0[..32]));
+        let puzzle_hash = PuzzleHash::from_hash(Hash::from_slice(&self.0[32..64]));
+        let amount_bytes = &self.0[64..];
+        BigInt::from_bytes_be(Sign::Plus, amount_bytes).to_u64().map(|a| {
+            (parent_id, puzzle_hash, Amount::new(a))
+        })
     }
 
     pub fn to_coin_id(&self) -> CoinID {
