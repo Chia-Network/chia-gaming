@@ -7,9 +7,16 @@ use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 
 use crate::common::constants::{CREATE_COIN, REM};
-use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node, TransactionBundle, SpendRewardResult, ToQuotedProgram, PrivateKey, CoinCondition, usize_from_atom, Puzzle, SpecificTransactionBundle};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial, puzzle_for_pk, agg_sig_me_message, partial_signer};
+use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node, TransactionBundle, SpendRewardResult, ToQuotedProgram, PrivateKey, CoinCondition, usize_from_atom, Puzzle, SpecificTransactionBundle, CoinID};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial, puzzle_for_pk, agg_sig_me_message, partial_signer, standard_solution, sign_agg_sig_me};
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, CoinSpentResult, LiveGame, CachedPotatoRegenerateLastHop, DispositionResult, CoinSpentDisposition, CoinSpentAccept, CoinSpentMoveUp, OnChainGameCoin};
+
+pub struct CoinDataForReward {
+    coin_string: CoinString,
+    parent: CoinID,
+    puzzle_hash: PuzzleHash,
+    amount: Amount
+}
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -397,8 +404,47 @@ impl ChannelHandler {
         todo!();
     }
 
-    pub fn received_empty_potato(&mut self, _allocator: &mut Allocator, _signatures: &PotatoSignatures) -> Result<(), Error> {
+    pub fn received_empty_potato(
+        &mut self,
+        env: &mut ChannelHandlerEnv,
+        signatures: &PotatoSignatures
+    ) -> Result<(), Error> {
+        let aggregate_public_key = self.get_aggregate_channel_public_key();
+        let state_channel_coin =
+            if let Some(ssc) = self.state_channel_coin_string.as_ref() {
+                ssc.to_coin_id()
+            } else {
+                return Err(Error::StrErr("send_potato_clean_shutdown without state_channel_coin".to_string()));
+            };
+
+        // Update the channel coin spend?
         todo!();
+
+        // Check the signature of the channel coin spend.
+        let hash_of_channel_coin_solution =
+            Node(self.channel_coin_spend.solution).sha256tree(env.allocator);
+        let combined_channel_signature =
+            self.channel_coin_spend.signature.clone() +
+            signatures.my_channel_half_signature_peer.clone();
+
+        if !combined_channel_signature.verify(
+            &aggregate_public_key,
+            &hash_of_channel_coin_solution.bytes(),
+        ) {
+            return Err(Error::StrErr("finish_handshake: Signature verify failed for other party's signature".to_string()));
+        }
+
+        // Check the signature of the unroll coin spend.
+        todo!();
+
+        // We have the potato.
+        self.have_potato = true;
+        self.current_state_number += 1;
+
+        // Should nonce increase?
+        todo!();
+
+        Ok(())
     }
 
     pub fn send_potato_start_game(&mut self, _env: &mut ChannelHandlerEnv, my_contribution_this_game: Amount, their_contribution_this_game: Amount, start_info_list: &[GameStartInfo]) -> PotatoSignatures {
@@ -889,10 +935,76 @@ impl ChannelHandler {
     // hash as their puzzle hash.
     pub fn spend_reward_coins(
         &self,
-        _allocator: &mut Allocator,
-        _coins: &[CoinString],
-        _target_puzzle_hash: &PuzzleHash
-    ) -> SpendRewardResult {
-        todo!();
+        env: &mut ChannelHandlerEnv,
+        coins: &[CoinString],
+        target_puzzle_hash: &PuzzleHash
+    ) -> Result<SpendRewardResult, Error> {
+        let mut total_amount = Amount::default();
+        let mut exploded_coins = Vec::new();
+        let referee_pk = private_to_public_key(&self.referee_private_key());
+        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_pk)?;
+        let spend_coin_puzzle = puzzle_for_pk(env.allocator, &referee_pk)?;
+
+        for c in coins.iter() {
+            if let Some((parent, ph, amount)) = c.to_parts() {
+                assert_eq!(ph, referee_puzzle_hash);
+                total_amount += amount.clone();
+                exploded_coins.push(CoinDataForReward {
+                    coin_string: c.clone(),
+                    parent,
+                    puzzle_hash: ph,
+                    amount,
+                });
+            } else {
+                return Err(Error::StrErr("ill formed coin passed to spend coin rewards".to_string()));
+            }
+        }
+
+        let mut coins_with_solutions = Vec::default();
+
+        for (i, coin) in exploded_coins.iter().enumerate() {
+            let parent_id = coin.coin_string.to_coin_id();
+            let conditions =
+                if i == 0 {
+                    (CREATE_COIN,
+                     (parent_id.clone(),
+                      (total_amount.clone(), ())
+                     )
+                    ).to_clvm(env.allocator).into_gen()?
+                } else {
+                    ().to_clvm(env.allocator).into_gen()?
+                };
+
+            let quoted_program = conditions.to_quoted_program(env.allocator)?;
+            let quoted_program_hash = quoted_program.sha256tree(env.allocator);
+            let signature = sign_agg_sig_me(
+                &self.referee_private_key(),
+                &quoted_program_hash.bytes(),
+                &parent_id,
+                &env.agg_sig_me_additional_data
+            );
+
+            coins_with_solutions.push(TransactionBundle {
+                puzzle: spend_coin_puzzle.clone(),
+                solution: standard_solution(env.allocator, &self.referee_private_key(), conditions)?.0,
+                signature
+            });
+        }
+
+        let result_coin_parent =
+            if let Some(coin) = exploded_coins.first() {
+                coin.coin_string.clone()
+            } else {
+                return Err(Error::StrErr("no reward coins to spend".to_string()));
+            };
+
+        Ok(SpendRewardResult {
+            coins_with_solutions,
+            result_coin_string_up: CoinString::from_parts(
+                &result_coin_parent.to_coin_id(),
+                target_puzzle_hash,
+                &total_amount
+            )
+        })
     }
 }
