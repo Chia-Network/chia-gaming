@@ -178,6 +178,7 @@ fn test_smoke_can_start_game() {
     let game_start_potato_sigs = game.player(1).ch.send_potato_start_game(&mut env, our_share.clone(), their_share.clone(), &[GameStartInfo {
         game_id: GameID::new(vec![0]),
         game_handler: GameHandler::TheirTurnHandler(game_handler),
+        is_my_turn: true,
         timeout: timeout.clone(),
         initial_validation_puzzle,
         initial_validation_puzzle_hash,
