@@ -52,6 +52,7 @@ pub struct GameStartInfo {
     pub amount: Amount,
     pub game_handler: GameHandler,
     pub timeout: Timeout,
+    pub is_my_turn: bool,
     pub initial_validation_puzzle: NodePtr,
     pub initial_validation_puzzle_hash: PuzzleHash,
     pub initial_state: NodePtr,
@@ -95,15 +96,15 @@ pub struct CoinSpentAccept {
 // Disposition
 #[derive(Clone)]
 pub enum CoinSpentDisposition {
-    CancelledUX(GameID),
+    CancelledUX(Vec<GameID>),
     Move(CoinSpentMoveUp),
     Accept(CoinSpentAccept),
 }
 
 pub struct DispositionResult {
-    pub skip_game: Option<GameID>,
+    pub skip_game: Vec<GameID>,
     pub skip_coin_id: Option<GameID>,
-    pub contributed_adjusted: Amount,
+    pub our_contribution_adjustment: Amount,
     pub disposition: CoinSpentDisposition,
 }
 
@@ -174,7 +175,7 @@ pub struct PotatoMoveCachedData {
 }
 
 pub enum CachedPotatoRegenerateLastHop {
-    PotatoCreatedGame(GameID, Amount),
+    PotatoCreatedGame(Vec<GameID>, Amount, Amount),
     PotatoAccept(PotatoAcceptCachedData),
     PotatoMoveHappening(PotatoMoveCachedData)
 }

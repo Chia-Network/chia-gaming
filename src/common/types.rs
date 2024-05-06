@@ -1,5 +1,5 @@
 use std::io;
-use std::ops::{Add, AddAssign};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 use num_bigint::{BigInt, Sign};
 use num_traits::cast::ToPrimitive;
@@ -275,6 +275,21 @@ impl Add for Amount {
     }
 }
 
+impl SubAssign for Amount {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl Sub for Amount {
+    type Output = Amount;
+
+    fn sub(mut self, rhs: Self) -> Amount {
+        self -= rhs;
+        self
+    }
+}
+
 impl ToClvm<NodePtr> for Amount {
     fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
         self.0.to_clvm(encoder)
@@ -416,6 +431,7 @@ impl Default for Node {
 
 impl Node {
     pub fn new(n: NodePtr) -> Node { Node(n) }
+    pub fn to_nodeptr(&self) -> NodePtr { self.0 }
 }
 
 impl ToClvm<NodePtr> for Node {
