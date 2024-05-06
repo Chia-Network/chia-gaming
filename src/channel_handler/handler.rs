@@ -441,6 +441,8 @@ impl ChannelHandler {
             &quoted_conditions_hash.bytes()
         );
 
+        self.unroll_coin_spend_signature = unroll_signature.clone();
+
         Ok(PotatoSignatures {
             my_channel_half_signature_peer: channel_coin_signature,
             my_unroll_half_signature_peer: unroll_signature
@@ -496,8 +498,8 @@ impl ChannelHandler {
         Ok((curried_unroll_puzzle, unroll_puzzle_solution))
     }
 
-    pub fn received_empty_potato(
-        &mut self,
+    pub fn received_potato_verify_signatures(
+        &self,
         env: &mut ChannelHandlerEnv,
         signatures: &PotatoSignatures
     ) -> Result<(), Error> {
@@ -539,56 +541,34 @@ impl ChannelHandler {
             return Err(Error::StrErr("bad unroll signature in empty potato recv".to_string()));
         }
 
+        Ok(())
+    }
+
+    pub fn received_empty_potato(
+        &mut self,
+        env: &mut ChannelHandlerEnv,
+        signatures: &PotatoSignatures
+    ) -> Result<(), Error> {
+        self.received_potato_verify_signatures(env, signatures)?;
+
         // We have the potato.
         self.have_potato = true;
         self.current_state_number += 1;
         self.unroll_state_number = self.current_state_number;
 
-        let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> = self.get_new_game_coins_on_chain(
+        self.update_cached_unroll_state(
             env,
-            None,
-            None,
-            None
-        ).iter().filter_map(|ngc| {
-            ngc.coin_string_up.as_ref().and_then(|c| c.to_parts())
-        }).map(|(_, puzzle_hash, amount)| {
-            (puzzle_hash, amount)
-        }).collect();
-        self.live_conditions_for_unroll_coin_spend = Node(self.get_unroll_coin_conditions(
-            env,
-            self.current_state_number,
-            &self.my_out_of_game_balance,
-            &self.their_out_of_game_balance,
-            &new_game_coins_on_chain
-        )?);
-        let (unroll_solution, unroll_signature) = self.create_conditions_and_signature_to_spend_unroll_coin(
-            env,
-            self.live_conditions_for_unroll_coin_spend.to_nodeptr()
+            self.current_state_number
         )?;
-
-        self.unroll_coin_spend_signature = unroll_signature;
 
         Ok(())
     }
 
-    pub fn send_potato_start_game(
-        &mut self, env: &mut ChannelHandlerEnv,
-        my_contribution_this_game: Amount,
-        their_contribution_this_game: Amount,
+    pub fn add_games(
+        &mut self,
+        env: &mut ChannelHandlerEnv,
         start_info_list: &[GameStartInfo]
-    ) -> Result<PotatoSignatures, Error> {
-        let my_new_balance = self.my_out_of_game_balance.clone() - my_contribution_this_game.clone();
-        let their_new_balance = self.their_out_of_game_balance.clone() - their_contribution_this_game.clone();
-
-        // We let them spend a state number 1 higher but nothing else changes.
-        self.cached_last_action = Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
-            start_info_list.iter().map(|g| {
-                g.game_id.clone()
-            }).collect(),
-            my_contribution_this_game.clone(),
-            their_contribution_this_game.clone()
-        ));
-
+    ) -> Result<(), Error> {
         for g in start_info_list.iter() {
             let new_game_nonce = self.next_nonce_number;
             self.next_nonce_number += 1;
@@ -605,11 +585,54 @@ impl ChannelHandler {
             });
         }
 
+        Ok(())
+    }
+
+    pub fn send_potato_start_game(
+        &mut self,
+        env: &mut ChannelHandlerEnv,
+        my_contribution_this_game: Amount,
+        their_contribution_this_game: Amount,
+        start_info_list: &[GameStartInfo]
+    ) -> Result<PotatoSignatures, Error> {
+        let my_new_balance = self.my_out_of_game_balance.clone() - my_contribution_this_game.clone();
+        let their_new_balance = self.their_out_of_game_balance.clone() - their_contribution_this_game.clone();
+
+        // We let them spend a state number 1 higher but nothing else changes.
+        self.cached_last_action = Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
+            start_info_list.iter().map(|g| {
+                g.game_id.clone()
+            }).collect(),
+            my_contribution_this_game.clone(),
+            their_contribution_this_game.clone()
+        ));
+
+        self.add_games(env, start_info_list)?;
+
         self.update_cached_unroll_state(env, self.current_state_number)
     }
 
-    pub fn received_potato_start_game(&mut self, _allocator: &mut Allocator, _signatures: &PotatoSignatures, _start_info_list: &[GameStartInfo]) -> Result<(), Error> {
-        todo!();
+    pub fn received_potato_start_game(
+        &mut self,
+        env: &mut ChannelHandlerEnv,
+        signatures: &PotatoSignatures,
+        start_info_list: &[GameStartInfo]
+    ) -> Result<(), Error> {
+        self.received_potato_verify_signatures(env, signatures)?;
+
+        // We have the potato.
+        self.have_potato = true;
+        self.current_state_number += 1;
+        self.unroll_state_number = self.current_state_number;
+
+        self.add_games(env, start_info_list)?;
+
+        self.update_cached_unroll_state(
+            env,
+            self.current_state_number
+        )?;
+
+        Ok(())
     }
 
     pub fn send_potato_move(&mut self, _allocator: &mut Allocator, _game_id: &GameID, _reable_move: &ReadableMove) -> MoveResult {
