@@ -3,6 +3,9 @@ name = "chia_gaming"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+sim-tests = []
+
 [dependencies]
 clvm_tools_rs = "0.1.42"
 clvmr = { version = "0.3.0", features = ["pre-eval"] }
