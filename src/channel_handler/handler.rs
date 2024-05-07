@@ -630,6 +630,7 @@ impl ChannelHandler {
             their_contribution_this_game.clone()
         ));
 
+        self.have_potato = false;
         self.add_games(env, start_info_list)?;
 
         self.update_cached_unroll_state(env, self.current_state_number)
@@ -688,6 +689,7 @@ impl ChannelHandler {
         let puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
         let amount = referee_result.mover_share.clone();
 
+        self.have_potato = false;
         self.current_state_number += 1;
         // We let them spend a state number 1 higher but nothing else changes.
         self.cached_last_action = Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(PotatoMoveCachedData {
@@ -783,6 +785,7 @@ impl ChannelHandler {
         let amount = live_game.referee_maker.get_my_share(env.allocator);
         let at_stake = live_game.referee_maker.get_amount();
 
+        self.have_potato = false;
         self.cached_last_action =
             if amount == Amount::default() {
                 None
