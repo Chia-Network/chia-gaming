@@ -251,7 +251,7 @@ impl GameID {
 }
 
 /// Amount
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, Eq, PartialEq)]
 pub struct Amount(u64);
 
 impl Amount {

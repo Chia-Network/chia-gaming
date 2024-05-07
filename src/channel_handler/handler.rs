@@ -752,8 +752,18 @@ impl ChannelHandler {
         Ok((their_move_result.readable_move, their_move_result.message))
     }
 
-    pub fn received_message(&mut self, _allocator: &mut Allocator, _game_id: &GameID, _message: NodePtr) -> Result<ReadableUX, Error> {
-        todo!();
+    pub fn received_message(
+        &mut self,
+        env: &mut ChannelHandlerEnv,
+        game_id: &GameID,
+        message: NodePtr
+    ) -> Result<ReadableUX, Error> {
+        let game_idx = self.get_game_by_id(game_id)?;
+
+        self.live_games[game_idx].referee_maker.receive_readable(
+            env.allocator,
+            message
+        )
     }
 
     pub fn send_potato_accept(
@@ -773,13 +783,18 @@ impl ChannelHandler {
         let amount = live_game.referee_maker.get_my_share(env.allocator);
         let at_stake = live_game.referee_maker.get_amount();
 
-        self.cached_last_action = Some(CachedPotatoRegenerateLastHop::PotatoAccept(PotatoAcceptCachedData {
-            game_id: game_id.clone(),
-            puzzle_hash,
-            live_game,
-            at_stake_amount: at_stake,
-            our_share_amount: amount.clone(),
-        }));
+        self.cached_last_action =
+            if amount == Amount::default() {
+                None
+            } else {
+                Some(CachedPotatoRegenerateLastHop::PotatoAccept(PotatoAcceptCachedData {
+                    game_id: game_id.clone(),
+                    puzzle_hash,
+                    live_game,
+                    at_stake_amount: at_stake,
+                    our_share_amount: amount.clone(),
+                }))
+            };
 
         let signatures = self.update_cached_unroll_state(
             env,
@@ -795,7 +810,21 @@ impl ChannelHandler {
         signautures: &PotatoSignatures,
         game_id: &GameID
     ) -> Result<(), Error> {
-        todo!();
+        let game_idx = self.get_game_by_id(game_id)?;
+
+        self.live_games.remove(game_idx);
+
+        // We have the potato.
+        self.have_potato = true;
+        self.current_state_number += 1;
+        self.unroll_state_number = self.current_state_number;
+
+        self.update_cached_unroll_state(
+            env,
+            self.current_state_number
+        )?;
+
+        Ok(())
     }
 
     /// Uses the channel coin key to post standard format coin generation to the
@@ -883,10 +912,10 @@ impl ChannelHandler {
         self.channel_coin_spend.clone()
     }
 
-        // What a spend can bring:
-        // Either a game creation that got cancelled happens,
-        // move we did that needs to be replayed on chain.
-        // game folding that we need to replay on chain.
+    // What a spend can bring:
+    // Either a game creation that got cancelled happens,
+    // move we did that needs to be replayed on chain.
+    // game folding that we need to replay on chain.
     fn make_curried_unroll_puzzle(
         &self,
         env: &mut ChannelHandlerEnv,

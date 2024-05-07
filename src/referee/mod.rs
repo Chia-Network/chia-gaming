@@ -1,7 +1,7 @@
 use clvmr::allocator::NodePtr;
 use crate::common::types::{Aggsig, Amount, CoinString, PuzzleHash, Hash, Puzzle, Program, Timeout, PrivateKey, Error, AllocEncoder};
 use crate::common::types::TransactionBundle;
-use crate::channel_handler::types::{GameStartInfo, ReadableMove};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, ReadableUX};
 
 pub struct RefereeMakerMoveResult {
     pub puzzle_hash_for_unroll: PuzzleHash,
@@ -67,6 +67,14 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove
     ) -> Result<RefereeMakerMoveResult, Error> {
+        todo!();
+    }
+
+    pub fn receive_readable(
+        &self,
+        allocator: &mut AllocEncoder,
+        message: NodePtr
+    ) -> Result<ReadableUX, Error> {
         todo!();
     }
 
