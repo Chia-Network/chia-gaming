@@ -4,7 +4,8 @@ use clvmr::allocator::NodePtr;
 use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 
-use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, GameHandler, Timeout, Hash, CoinID, AllocEncoder, IntoErr, SpecificTransactionBundle, TransactionBundle};
+use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, Timeout, Hash, CoinID, AllocEncoder, IntoErr, SpecificTransactionBundle, TransactionBundle, Sha256tree};
+use crate::channel_handler::game_handler::GameHandler;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::referee::RefereeMaker;
 
@@ -61,8 +62,10 @@ pub struct GameStartInfo {
     pub initial_mover_share: Amount
 }
 
+#[derive(Clone)]
 pub struct ReadableMove(NodePtr);
 
+#[derive(Clone)]
 pub struct ReadableUX(NodePtr);
 
 pub struct MoveResult {
@@ -128,17 +131,33 @@ pub fn read_unroll_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error>
     read_hex_puzzle(allocator, "resources/unroll_puzzle_state_channel_unrolling.hex")
 }
 
-pub struct ChannelHandlerEnv<'a> {
+pub struct ChannelHandlerEnv<'a, R: Rng> {
     pub allocator: &'a mut AllocEncoder,
+    pub rng: &'a mut R,
     pub unroll_metapuzzle: Puzzle,
     pub unroll_puzzle: Puzzle,
+
+    pub referee_coin_puzzle: Puzzle,
+    pub referee_coin_puzzle_hash: PuzzleHash,
+
     pub agg_sig_me_additional_data: Hash,
 }
 
-impl<'a> ChannelHandlerEnv<'a> {
-    pub fn new(allocator: &'a mut AllocEncoder, unroll_metapuzzle: Puzzle, unroll_puzzle: Puzzle, agg_sig_me_additional_data: Hash) -> ChannelHandlerEnv {
+impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
+    pub fn new(
+        allocator: &'a mut AllocEncoder,
+        rng: &'a mut R,
+        unroll_metapuzzle: Puzzle,
+        unroll_puzzle: Puzzle,
+        referee_coin_puzzle: Puzzle,
+        agg_sig_me_additional_data: Hash
+    ) -> ChannelHandlerEnv<'a, R> {
+        let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
         ChannelHandlerEnv {
             allocator,
+            rng,
+            referee_coin_puzzle,
+            referee_coin_puzzle_hash,
             unroll_metapuzzle,
             unroll_puzzle,
             agg_sig_me_additional_data

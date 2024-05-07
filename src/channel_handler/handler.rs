@@ -136,20 +136,34 @@ impl ChannelHandler {
         self.my_out_of_game_balance.clone()
     }
 
-    pub fn prepend_state_number_rem_to_conditions(&self, env: &mut ChannelHandlerEnv, state_number: usize, conditions: NodePtr) -> Result<NodePtr, Error> {
+    pub fn prepend_state_number_rem_to_conditions<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        state_number: usize,
+        conditions: NodePtr
+    ) -> Result<NodePtr, Error> {
         // Add rem condition for the state number
         let rem_condition = (REM, (state_number, ()));
         (rem_condition, Node(conditions)).to_clvm(env.allocator).into_gen()
     }
 
-    pub fn prepend_default_conditions_hash(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<NodePtr, Error> {
+    pub fn prepend_default_conditions_hash<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        conditions: NodePtr
+    ) -> Result<NodePtr, Error> {
         let conditions_hash =
             Node(conditions).sha256tree(env.allocator);
         let default_hash_rem = (REM, (conditions_hash, ()));
         (default_hash_rem, Node(conditions)).to_clvm(env.allocator).into_gen()
     }
 
-    pub fn prepend_rem_conditions(&self, env: &mut ChannelHandlerEnv, state_number: usize, conditions: NodePtr) -> Result<NodePtr, Error> {
+    pub fn prepend_rem_conditions<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        state_number: usize,
+        conditions: NodePtr
+    ) -> Result<NodePtr, Error> {
         let with_default_conditions = self.prepend_default_conditions_hash(
             env,
             conditions
@@ -167,9 +181,9 @@ impl ChannelHandler {
     /// The order is important and the first two coins' order are determined by
     /// whether the potato was ours first.
     /// Needs rem of sequence number and the default conditions hash.
-    pub fn get_unroll_coin_conditions(
+    pub fn get_unroll_coin_conditions<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         state_number: usize,
         my_balance: &Amount,
         their_balance: &Amount,
@@ -220,7 +234,11 @@ impl ChannelHandler {
         )
     }
 
-    pub fn create_conditions_and_signature_of_channel_coin(&self, env: &mut ChannelHandlerEnv, state_number: usize) -> Result<(NodePtr, Aggsig), Error> {
+    pub fn create_conditions_and_signature_of_channel_coin<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        state_number: usize
+    ) -> Result<(NodePtr, Aggsig), Error> {
         let default_conditions = self.get_unroll_coin_conditions(env, state_number, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
         let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         let unroll_coin_parent =
@@ -252,7 +270,11 @@ impl ChannelHandler {
         )
     }
 
-    pub fn create_conditions_and_signature_to_spend_unroll_coin(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<(NodePtr, Aggsig), Error> {
+    pub fn create_conditions_and_signature_to_spend_unroll_coin<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        conditions: NodePtr
+    ) -> Result<(NodePtr, Aggsig), Error> {
         // Should make together two signatures.  One for the unroll coin and
         // one to spend the unroll coin.
         let unroll_private_key = &self.private_keys.my_unroll_coin_private_key;
@@ -263,7 +285,11 @@ impl ChannelHandler {
         Ok((conditions.clone(), to_spend_unroll_sig))
     }
 
-    pub fn state_channel_unroll_signature(&self, env: &mut ChannelHandlerEnv, _conditions: NodePtr) -> Result<UnrollCoinSignatures, Error> {
+    pub fn state_channel_unroll_signature<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        _conditions: NodePtr
+    ) -> Result<UnrollCoinSignatures, Error> {
         let (_, to_create_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env, self.current_state_number)?;
         let (_, to_spend_unroll_sig) = self.create_conditions_and_signature_of_channel_coin(env, self.current_state_number)?;
 
@@ -278,13 +304,20 @@ impl ChannelHandler {
         public_key + self.their_channel_coin_public_key.clone()
     }
 
-    fn get_default_conditions_and_hash_for_startup(&self, env: &mut ChannelHandlerEnv) -> Result<(NodePtr, PuzzleHash), Error> {
+    fn get_default_conditions_and_hash_for_startup<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>
+    ) -> Result<(NodePtr, PuzzleHash), Error> {
         let default_conditions = self.get_unroll_coin_conditions(env, 0, &self.my_out_of_game_balance, &self.their_out_of_game_balance, &[])?;
         let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         Ok((default_conditions, default_conditions_hash))
     }
 
-    pub fn initiate(&mut self, env: &mut ChannelHandlerEnv, initiation: &ChannelHandlerInitiationData) -> Result<ChannelHandlerInitiationResult, Error> {
+    pub fn initiate<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        initiation: &ChannelHandlerInitiationData
+    ) -> Result<ChannelHandlerInitiationResult, Error> {
         let our_channel_pubkey = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         let our_unroll_pubkey = private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
         if initiation.their_channel_pubkey == our_channel_pubkey {
@@ -373,7 +406,11 @@ impl ChannelHandler {
         })
     }
 
-    pub fn finish_handshake(&mut self, env: &mut ChannelHandlerEnv, their_initial_channel_hash_signature: &Aggsig) -> Result<(), Error> {
+    pub fn finish_handshake<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        their_initial_channel_hash_signature: &Aggsig
+    ) -> Result<(), Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let state_channel_coin =
             if let Some(ssc) = self.state_channel_coin_string.as_ref() {
@@ -402,9 +439,9 @@ impl ChannelHandler {
         Ok(())
     }
 
-    pub fn update_cached_unroll_state(
+    pub fn update_cached_unroll_state<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         state_number_for_spend: usize,
     ) -> Result<PotatoSignatures, Error> {
         let (channel_coin_conditions, channel_coin_signature) = self.create_conditions_and_signature_of_channel_coin(
@@ -449,7 +486,10 @@ impl ChannelHandler {
         })
     }
 
-    pub fn send_empty_potato(&mut self, env: &mut ChannelHandlerEnv) -> Result<PotatoSignatures, Error> {
+    pub fn send_empty_potato<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>
+    ) -> Result<PotatoSignatures, Error> {
         // We let them spend a state number 1 higher but nothing else changes.
         self.current_state_number += 1;
         self.cached_last_action = None;
@@ -457,9 +497,9 @@ impl ChannelHandler {
         self.update_cached_unroll_state(env, self.current_state_number)
     }
 
-    pub fn verify_channel_coin_from_peer_signatures(
+    pub fn verify_channel_coin_from_peer_signatures<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
     ) -> Result<(NodePtr, Aggsig, bool), Error> {
@@ -482,9 +522,9 @@ impl ChannelHandler {
         ))
     }
 
-    pub fn make_unroll_puzzle_solution(
+    pub fn make_unroll_puzzle_solution<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         conditions: NodePtr
     ) -> Result<(NodePtr, NodePtr), Error> {
         let conditions_hash = Node(conditions).sha256tree(env.allocator);
@@ -498,9 +538,9 @@ impl ChannelHandler {
         Ok((curried_unroll_puzzle, unroll_puzzle_solution))
     }
 
-    pub fn received_potato_verify_signatures(
+    pub fn received_potato_verify_signatures<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         signatures: &PotatoSignatures,
         state_number_for_spend: usize,
     ) -> Result<(), Error> {
@@ -563,9 +603,9 @@ impl ChannelHandler {
         Ok(())
     }
 
-    pub fn received_empty_potato(
+    pub fn received_empty_potato<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         signatures: &PotatoSignatures
     ) -> Result<(), Error> {
         self.received_potato_verify_signatures(
@@ -587,9 +627,9 @@ impl ChannelHandler {
         Ok(())
     }
 
-    pub fn add_games(
+    pub fn add_games<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         start_info_list: &[GameStartInfo]
     ) -> Result<(), Error> {
         for g in start_info_list.iter() {
@@ -600,20 +640,21 @@ impl ChannelHandler {
                 game_id: g.game_id.clone(),
                 referee_maker: Box::new(RefereeMaker::new(
                     env.allocator,
+                    env.referee_coin_puzzle_hash.clone(),
                     g,
                     &self.private_keys.my_referee_private_key,
                     &self.their_referee_puzzle_hash,
                     new_game_nonce
-                ))
+                )?)
             });
         }
 
         Ok(())
     }
 
-    pub fn send_potato_start_game(
+    pub fn send_potato_start_game<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         my_contribution_this_game: Amount,
         their_contribution_this_game: Amount,
         start_info_list: &[GameStartInfo]
@@ -636,9 +677,9 @@ impl ChannelHandler {
         self.update_cached_unroll_state(env, self.current_state_number)
     }
 
-    pub fn received_potato_start_game(
+    pub fn received_potato_start_game<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         signatures: &PotatoSignatures,
         start_info_list: &[GameStartInfo]
     ) -> Result<(), Error> {
@@ -672,9 +713,9 @@ impl ChannelHandler {
         })
     }
 
-    pub fn send_potato_move(
+    pub fn send_potato_move<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         readable_move: &ReadableMove
     ) -> Result<MoveResult, Error> {
@@ -682,6 +723,7 @@ impl ChannelHandler {
 
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
         let referee_result = referee_maker.my_turn_make_move(
+            env.rng,
             env.allocator,
             readable_move,
         )?;
@@ -712,9 +754,9 @@ impl ChannelHandler {
         })
     }
 
-    pub fn received_potato_move(
+    pub fn received_potato_move<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         move_result: &MoveResult,
     ) -> Result<(NodePtr, NodePtr), Error> {
@@ -754,9 +796,9 @@ impl ChannelHandler {
         Ok((their_move_result.readable_move, their_move_result.message))
     }
 
-    pub fn received_message(
+    pub fn received_message<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         message: NodePtr
     ) -> Result<ReadableUX, Error> {
@@ -768,9 +810,9 @@ impl ChannelHandler {
         )
     }
 
-    pub fn send_potato_accept(
+    pub fn send_potato_accept<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID
     ) -> Result<(PotatoSignatures, Amount), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
@@ -807,9 +849,9 @@ impl ChannelHandler {
         Ok((signatures, amount))
     }
 
-    pub fn received_potato_accept(
+    pub fn received_potato_accept<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         signautures: &PotatoSignatures,
         game_id: &GameID
     ) -> Result<(), Error> {
@@ -832,7 +874,11 @@ impl ChannelHandler {
 
     /// Uses the channel coin key to post standard format coin generation to the
     /// real blockchain via a TransactionBundle.
-    pub fn send_potato_clean_shutdown(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<TransactionBundle, Error> {
+    pub fn send_potato_clean_shutdown<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        conditions: NodePtr
+    ) -> Result<TransactionBundle, Error> {
         assert!(self.have_potato);
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let state_channel_coin =
@@ -858,9 +904,9 @@ impl ChannelHandler {
         })
     }
 
-    pub fn state_channel_coin_solution_and_signature(
+    pub fn state_channel_coin_solution_and_signature<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         conditions: NodePtr,
     ) -> Result<(CoinString, NodePtr, Aggsig), Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
@@ -884,9 +930,9 @@ impl ChannelHandler {
         Ok((state_channel_coin.clone(), solution, signature))
     }
 
-    pub fn received_potato_clean_shutdown(
+    pub fn received_potato_clean_shutdown<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr
     ) -> Result<TransactionBundle, Error> {
@@ -919,9 +965,9 @@ impl ChannelHandler {
     // Either a game creation that got cancelled happens,
     // move we did that needs to be replayed on chain.
     // game folding that we need to replay on chain.
-    fn make_curried_unroll_puzzle(
+    fn make_curried_unroll_puzzle<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         state: usize,
         default_conditions_hash: &PuzzleHash
     ) -> Result<NodePtr, Error> {
@@ -937,7 +983,11 @@ impl ChannelHandler {
         }.to_clvm(env.allocator).into_gen()
     }
 
-    fn break_out_conditions_for_spent_coin(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<Vec<Vec<u8>>, Error> {
+    fn break_out_conditions_for_spent_coin<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        conditions: NodePtr
+    ) -> Result<Vec<Vec<u8>>, Error> {
         // Figure out our state number vs the one given in conditions.
         let rem_conditions: Vec<Vec<u8>> = CoinCondition::from_nodeptr(env.allocator, conditions).iter().filter_map(|c| {
             if let CoinCondition::Rem(data) = c {
@@ -990,7 +1040,11 @@ impl ChannelHandler {
     ///
     /// Give a spend to do as well to start our part of the unroll given that
     /// the channel coin is spent.
-    pub fn channel_coin_spent(&self, env: &mut ChannelHandlerEnv, conditions: NodePtr) -> Result<(TransactionBundle, bool), Error> {
+    pub fn channel_coin_spent<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        conditions: NodePtr
+    ) -> Result<(TransactionBundle, bool), Error> {
         // prepend_rem_conditions(env, self.current_state_number, result_coins.to_clvm(env.allocator).into_gen()?)
         let rem_conditions = self.break_out_conditions_for_spent_coin(
             env,
@@ -1072,17 +1126,17 @@ impl ChannelHandler {
     // 5 move happening - outer thing needs to know that this thing is associated
     //    with a specific game.  will spend that game coin.  referee maker up to
     //    date after that.  aware of move relationship to game id.
-    fn update_cache_for_potato_send(
+    fn update_cache_for_potato_send<R: Rng>(
         &mut self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         cache_update: Option<CachedPotatoRegenerateLastHop>,
     ) {
         self.cached_last_action = cache_update;
     }
 
-    fn get_cached_disposition_for_spent_result(
+    fn get_cached_disposition_for_spent_result<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
         state_number: usize,
     ) -> Result<Option<DispositionResult>, Error> {
@@ -1168,9 +1222,9 @@ impl ChannelHandler {
         }
     }
 
-    pub fn get_new_game_coins_on_chain(
+    pub fn get_new_game_coins_on_chain<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         unroll_coin: Option<&CoinID>,
         skip_game: Option<&GameID>,
         skip_coin_id: Option<&GameID>,
@@ -1233,9 +1287,9 @@ impl ChannelHandler {
     // balances.
     //
     // If we have the potato at state 0 and they start an unroll, we don't
-    pub fn unroll_coin_spent<'a>(
+    pub fn unroll_coin_spent<'a, R: Rng>(
         &'a self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
         conditions: NodePtr
     ) -> Result<CoinSpentResult<'a>, Error> {
@@ -1310,9 +1364,9 @@ impl ChannelHandler {
     //
     // All coin strings coming in should have the referee pubkey's standard puzzle
     // hash as their puzzle hash.
-    pub fn spend_reward_coins(
+    pub fn spend_reward_coins<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv,
+        env: &mut ChannelHandlerEnv<R>,
         coins: &[CoinString],
         target_puzzle_hash: &PuzzleHash
     ) -> Result<SpendRewardResult, Error> {

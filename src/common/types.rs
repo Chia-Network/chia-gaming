@@ -119,13 +119,20 @@ impl PrivateKey {
     }
 }
 
-impl Distribution<PrivateKey> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PrivateKey {
+impl Distribution<Hash> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Hash {
         let mut pk = [0; 32];
         for i in 0..32 {
             pk[i] = rng.gen();
         }
-        PrivateKey(chia_bls::SecretKey::from_seed(&pk))
+        Hash::from_bytes(pk)
+    }
+}
+
+impl Distribution<PrivateKey> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PrivateKey {
+        let hash: Hash = rng.gen();
+        PrivateKey(chia_bls::SecretKey::from_seed(hash.bytes()))
     }
 }
 
@@ -501,17 +508,17 @@ impl Puzzle {
 }
 
 #[derive(Clone)]
-pub enum GameHandler {
-    MyTurnHandler(NodePtr),
-    TheirTurnHandler(NodePtr)
-}
-
-#[derive(Clone)]
 pub struct Timeout(u64);
 
 impl Timeout {
     pub fn new(t: u64) -> Self {
         Timeout(t)
+    }
+}
+
+impl ToClvm<NodePtr> for Timeout {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        self.0.to_clvm(encoder)
     }
 }
 

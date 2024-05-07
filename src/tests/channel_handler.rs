@@ -4,9 +4,10 @@ use rand_chacha::ChaCha8Rng;
 use clvm_traits::ToClvm;
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::types::{Amount, CoinID, Sha256tree, AllocEncoder, Hash, PuzzleHash, Puzzle, Error, Aggsig, Node, Timeout, GameID, GameHandler};
+use crate::common::types::{Amount, CoinID, Sha256tree, AllocEncoder, Hash, PuzzleHash, Puzzle, Error, Aggsig, Node, Timeout, GameID};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, puzzle_for_pk};
 use crate::channel_handler::handler::ChannelHandler;
+use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{ChannelHandlerInitiationData, ChannelHandlerEnv, ChannelHandlerInitiationResult, read_unroll_metapuzzle, read_unroll_puzzle, GameStartInfo};
 
 struct ChannelHandlerParty {
@@ -36,15 +37,18 @@ struct ChannelHandlerGame {
 }
 
 impl ChannelHandlerGame {
-    fn new<R: Rng>(env: &mut ChannelHandlerEnv, rng: &mut R, contributions: [Amount; 2]) -> ChannelHandlerGame {
+    fn new<R: Rng>(
+        env: &mut ChannelHandlerEnv<R>,
+        contributions: [Amount; 2]
+    ) -> ChannelHandlerGame {
         let player1 = ChannelHandlerParty::new(
             &mut env.allocator,
-            rng,
+            &mut env.rng,
             contributions[0].clone()
         );
         let player2 = ChannelHandlerParty::new(
             &mut env.allocator,
-            rng,
+            &mut env.rng,
             contributions[1].clone()
         );
 
@@ -57,11 +61,20 @@ impl ChannelHandlerGame {
         &mut self.players[who]
     }
 
-    fn initiate(&mut self, env: &mut ChannelHandlerEnv, who: usize, data: &ChannelHandlerInitiationData) -> Result<ChannelHandlerInitiationResult, Error> {
+    fn initiate<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        who: usize,
+        data: &ChannelHandlerInitiationData
+    ) -> Result<ChannelHandlerInitiationResult, Error> {
         self.players[who].ch.initiate(env, data)
     }
 
-    fn handshake(&mut self, env: &mut ChannelHandlerEnv, launcher_coin: &CoinID) -> Result<[ChannelHandlerInitiationResult; 2], Error> {
+    fn handshake<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        launcher_coin: &CoinID
+    ) -> Result<[ChannelHandlerInitiationResult; 2], Error> {
         let chi_data1 = ChannelHandlerInitiationData {
             launcher_coin_id: launcher_coin.clone(),
             we_start_with_potato: false,
@@ -89,26 +102,36 @@ impl ChannelHandlerGame {
         Ok([initiation_result1, initiation_result2])
     }
 
-    fn finish_handshake(&mut self, env: &mut ChannelHandlerEnv, who: usize, aggsig: &Aggsig) -> Result<(), Error> {
+    fn finish_handshake<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        who: usize,
+        aggsig: &Aggsig
+    ) -> Result<(), Error> {
         self.players[who].ch.finish_handshake(env, aggsig)
     }
 }
 
 #[test]
-fn test_smoke_can_initiate_channel_handler() {
+fn test_smoke_can_initiate_channel_handler<'a>() {
     let mut allocator = AllocEncoder::new();
+    let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
     let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+    // XXX
+    let ref_puz = Puzzle::from_nodeptr(allocator.allocator().null());
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
+        rng: &mut rng,
+        referee_coin_puzzle: ref_puz,
+        // XXX
+        referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
         unroll_metapuzzle,
         unroll_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone())
     };
-    let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let mut game = ChannelHandlerGame::new(
         &mut env,
-        &mut rng,
         [Amount::new(100), Amount::new(100)]
     );
 
@@ -138,18 +161,23 @@ fn test_smoke_can_initiate_channel_handler() {
 #[test]
 fn test_smoke_can_start_game() {
     let mut allocator = AllocEncoder::new();
+    let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
     let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+    // XXX
+    let ref_coin_puz = Puzzle::from_nodeptr(allocator.allocator().null());
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
+        rng: &mut rng,
+        referee_coin_puzzle: ref_coin_puz,
+        // XXX
+        referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
         unroll_metapuzzle,
         unroll_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone())
     };
-    let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let mut game = ChannelHandlerGame::new(
         &mut env,
-        &mut rng,
         [Amount::new(100), Amount::new(100)]
     );
 
