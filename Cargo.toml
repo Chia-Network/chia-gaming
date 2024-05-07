@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clvm_tools_rs = "0.1.41"
+clvm_tools_rs = "0.1.42"
 clvmr = { version = "0.3.0", features = ["pre-eval"] }
 serde_json = "1.0"
 rand = "0.8.5"
@@ -18,6 +18,10 @@ clvm-utils = "0.7.0"
 lazy_static = "1.4.0"
 ff = { version = "0.13.0", features = ["derive"] }
 sha2 = "0.10.8"
+indoc = "2.0.5"
+
+[dev-dependencies]
+pyo3 = { version = "0.20.0", features = ["auto-initialize"] }
 
 bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 
