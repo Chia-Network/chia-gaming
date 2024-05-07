@@ -162,14 +162,14 @@ pub struct LiveGame {
 
 pub struct PotatoAcceptCachedData {
     pub game_id: GameID,
-    pub transaction: TransactionBundle,
+    pub puzzle_hash: PuzzleHash,
+    pub live_game: LiveGame,
     pub at_stake_amount: Amount,
     pub our_share_amount: Amount,
 }
 
 pub struct PotatoMoveCachedData {
     pub game_id: GameID,
-    pub transaction: TransactionBundle,
     pub puzzle_hash: PuzzleHash,
     pub amount: Amount,
 }
