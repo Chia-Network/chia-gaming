@@ -187,6 +187,7 @@ pub fn signer(private_key: &PrivateKey, value: &[u8]) -> (PublicKey, Aggsig) {
     (public_key, sig)
 }
 
+// XXX Make one step conversions to puzzle hash and puzzle for private key.
 pub fn private_to_public_key(private_key: &types::PrivateKey) -> types::PublicKey {
     let sk = private_key.to_bls();
     PublicKey::from_bls(sk.public_key())
