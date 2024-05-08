@@ -759,7 +759,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         move_result: &MoveResult,
-    ) -> Result<(NodePtr, NodePtr), Error> {
+    ) -> Result<(NodePtr, Vec<u8>), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
@@ -800,7 +800,7 @@ impl ChannelHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
-        message: NodePtr
+        message: &[u8],
     ) -> Result<ReadableUX, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
@@ -1167,7 +1167,8 @@ impl ChannelHandler {
 
                 let (spend_transaction, reward_coin) = cached.live_game.referee_maker.get_transaction_for_move(
                     env.allocator,
-                    &game_coin
+                    &game_coin,
+                    &env.agg_sig_me_additional_data
                 )?;
 
                 Ok(Some(DispositionResult {
@@ -1201,7 +1202,8 @@ impl ChannelHandler {
 
                 let (spend_transaction, after_update_game_coin_string) = self.live_games[game_idx].referee_maker.get_transaction_for_move(
                     env.allocator,
-                    &game_coin
+                    &game_coin,
+                    &env.agg_sig_me_additional_data,
                 )?;
 
                 // Existing game coin is in the before state.

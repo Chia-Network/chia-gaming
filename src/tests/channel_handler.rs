@@ -3,7 +3,7 @@ use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::ToClvm;
 
-use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 use crate::common::types::{Amount, CoinID, Sha256tree, AllocEncoder, Hash, PuzzleHash, Puzzle, Error, Aggsig, Node, Timeout, GameID};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, puzzle_for_pk};
 use crate::channel_handler::handler::ChannelHandler;
@@ -192,7 +192,7 @@ fn test_smoke_can_start_game() {
     // Set up for the spend.
     let shutdown_spend_target = puzzle_hash_for_pk(env.allocator, &game.player(1).ch.clean_shutdown_public_key()).expect("should give");
     let amount_to_take = game.player(1).ch.clean_shutdown_amount();
-    let conditions = ((51, (shutdown_spend_target, (amount_to_take, ()))), ()).to_clvm(env.allocator).expect("should create conditions");
+    let conditions = ((CREATE_COIN, (shutdown_spend_target, (amount_to_take, ()))), ()).to_clvm(env.allocator).expect("should create conditions");
     let our_share = Amount::new(100);
     let their_share = Amount::new(100);
 
