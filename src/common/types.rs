@@ -606,7 +606,7 @@ pub enum CoinCondition {
     AggSigMe(PublicKey, Vec<u8>),
     AggSigUnsafe(PublicKey, Vec<u8>),
     CreateCoin(PuzzleHash),
-    Rem(Vec<u8>),
+    Rem(Vec<Vec<u8>>),
 }
 
 fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<CoinCondition> {
@@ -704,4 +704,9 @@ pub struct SpendRewardResult {
 pub fn usize_from_atom(a: &[u8]) -> Option<usize> {
     let bi = BigInt::from_bytes_be(Sign::Plus, a);
     bi.to_usize()
+}
+
+pub fn u64_from_atom(a: &[u8]) -> Option<u64> {
+    let bi = BigInt::from_bytes_be(Sign::Plus, a);
+    bi.to_u64()
 }
