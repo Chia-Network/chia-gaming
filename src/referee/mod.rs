@@ -126,6 +126,7 @@ struct RefereeMakerGameState {
 // Referee coin has two inner puzzles.
 // Throughout channel handler, the one that's ours is the standard format puzzle
 // to the pubkey of the referee private key (referred to in channel_handler).
+#[derive(Clone)]
 pub struct RefereeMaker {
     pub referee_coin_puzzle_hash: PuzzleHash,
     pub my_private_key: PrivateKey,

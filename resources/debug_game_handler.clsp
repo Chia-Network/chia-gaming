@@ -22,7 +22,13 @@
   )
 
 (defun get-move-share (new-move)
-  (substr new-move 1 (- (strlen new-move 1)))
+  (assign
+    len (strlen new-move)
+    (if (> len 1)
+      (substr new-move 1 (strlen new-move))
+      ()
+      )
+    )
   )
 
 (defun validation_program (validation-data)
@@ -51,7 +57,7 @@
     (c set_share set_cheated)
     100
     set_share
-    (curry MOD_HASH PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
+    (curry PUZZLE MOD_HASH PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
     ()
     )
    )
@@ -59,14 +65,15 @@
 
 (defun do_their_turn (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO amount last_state new_move new_validation_info_hash new_max_move_size new_mover_share)
   (assign
-   set_cheated (substr new_move 0 1)
+   set_cheated (+ (substr new_move 0 1))
 
    (if set_cheated
        (c 2 SLASH_INFO)
        (list
         0
         (c set_cheated (get-move-share new_move)) ;; readable move
-        (curry PUZZLE PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
+        (curry PUZZLE MOD_HASH PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
+        "message data"
         )
        )
    )
