@@ -1,6 +1,8 @@
 use rand::prelude::*;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use clvm_traits::{clvm_curried_args, ToClvm};
+use clvm_utils::CurriedProgram;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::assemble;
 
@@ -10,6 +12,28 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{GameStartInfo, ReadableMove};
 use crate::referee::RefereeMaker;
 
+fn make_debug_game_handler(
+    allocator: &mut AllocEncoder,
+    amount: &Amount,
+) -> GameHandler {
+    let debug_game_handler = read_hex_puzzle(
+        allocator,
+        "resources/debug_game_handler.hex"
+    ).expect("should be readable");
+    let game_handler_mod_hash = debug_game_handler.sha256tree(allocator);
+    let curried_game_handler = CurriedProgram {
+        program: debug_game_handler.clone(),
+        args: clvm_curried_args!(
+            game_handler_mod_hash,
+            debug_game_handler,
+            amount.clone(),
+            true,
+            ((), ()) // slash info
+        )
+    };
+    GameHandler::my_driver_from_nodeptr(curried_game_handler.to_clvm(allocator).expect("should curry"))
+}
+
 #[test]
 fn test_referee_smoke() {
     let seed: [u8; 32] = [0; 32];
@@ -18,20 +42,20 @@ fn test_referee_smoke() {
     let referee_coin_puzzle_hash: PuzzleHash = rng.gen();
     let private_key: PrivateKey = rng.gen();
     let their_puzzle_hash: PuzzleHash = rng.gen();
-    let debug_game_handler = read_hex_puzzle(
-        &mut allocator,
-        "resources/debug_game_handler.hex"
-    ).expect("should be readable");
     let nil = allocator.allocator().null();
     let val_hash = Node(nil).sha256tree(&mut allocator);
     let init_state = assemble(
         allocator.allocator(),
         "(0 . 0)"
     ).expect("should assemble");
+    let amount = Amount::new(100);
     let game_start_info = GameStartInfo {
         game_id: GameID::from_bytes(b"test"),
-        amount: Amount::new(100),
-        game_handler: GameHandler::my_driver_from_nodeptr(debug_game_handler.to_nodeptr()),
+        amount: amount.clone(),
+        game_handler: make_debug_game_handler(
+            &mut allocator,
+            &amount,
+        ),
         timeout: Timeout::new(1000),
         is_my_turn: true,
         initial_validation_puzzle: nil,
@@ -41,7 +65,6 @@ fn test_referee_smoke() {
         initial_max_move_size: 0,
         initial_mover_share: Amount::default()
     };
-    let mut allocator = AllocEncoder::new();
     let mut referee = RefereeMaker::new(
         &mut allocator,
         referee_coin_puzzle_hash,
@@ -50,7 +73,6 @@ fn test_referee_smoke() {
         &their_puzzle_hash,
         1
     ).expect("should construct");
-    referee.enable_debug_run(true);
     let readable_move =
         assemble(
             allocator.allocator(),

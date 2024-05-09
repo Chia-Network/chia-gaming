@@ -7,7 +7,7 @@ use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 
 use crate::common::constants::{CREATE_COIN, REM};
-use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, Hash, IntoErr, Sha256tree, Node, TransactionBundle, SpendRewardResult, ToQuotedProgram, PrivateKey, CoinCondition, usize_from_atom, Puzzle, SpecificTransactionBundle, CoinID};
+use crate::common::types::{Aggsig, Amount, CoinString, GameID, PuzzleHash, PublicKey, RefereeID, Error, IntoErr, Sha256tree, Node, TransactionBundle, SpendRewardResult, ToQuotedProgram, PrivateKey, CoinCondition, usize_from_atom, Puzzle, SpecificTransactionBundle, CoinID};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, aggregate_public_keys, standard_solution_partial, unsafe_sign_partial, puzzle_for_pk, agg_sig_me_message, partial_signer, standard_solution, sign_agg_sig_me};
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, UnrollCoinSignatures, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, PotatoSignatures, GameStartInfo, ReadableMove, MoveResult, ReadableUX, CoinSpentResult, LiveGame, CachedPotatoRegenerateLastHop, DispositionResult, CoinSpentDisposition, CoinSpentAccept, CoinSpentMoveUp, OnChainGameCoin, PotatoMoveCachedData, PotatoAcceptCachedData};
 use crate::referee::RefereeMaker;
@@ -492,7 +492,7 @@ impl ChannelHandler {
     ) -> Result<PotatoSignatures, Error> {
         // We let them spend a state number 1 higher but nothing else changes.
         self.current_state_number += 1;
-        self.cached_last_action = None;
+        self.update_cache_for_potato_send(None);
 
         self.update_cached_unroll_state(env, self.current_state_number)
     }
@@ -546,7 +546,7 @@ impl ChannelHandler {
     ) -> Result<(), Error> {
         let (conditions, _) = self.create_conditions_and_signature_of_channel_coin(
             env,
-            self.current_state_number
+            state_number_for_spend
         )?;
 
         // Verify the signature.
@@ -663,13 +663,15 @@ impl ChannelHandler {
         // let their_new_balance = self.their_out_of_game_balance.clone() - their_contribution_this_game.clone();
 
         // We let them spend a state number 1 higher but nothing else changes.
-        self.cached_last_action = Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
-            start_info_list.iter().map(|g| {
-                g.game_id.clone()
-            }).collect(),
-            my_contribution_this_game.clone(),
-            their_contribution_this_game.clone()
-        ));
+        self.update_cache_for_potato_send(
+            Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
+                start_info_list.iter().map(|g| {
+                    g.game_id.clone()
+                }).collect(),
+                my_contribution_this_game.clone(),
+                their_contribution_this_game.clone()
+            ))
+        );
 
         self.have_potato = false;
         self.add_games(env, start_info_list)?;
@@ -734,11 +736,13 @@ impl ChannelHandler {
         self.have_potato = false;
         self.current_state_number += 1;
         // We let them spend a state number 1 higher but nothing else changes.
-        self.cached_last_action = Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(PotatoMoveCachedData {
-            game_id: game_id.clone(),
-            puzzle_hash,
-            amount
-        }));
+        self.update_cache_for_potato_send(
+            Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(PotatoMoveCachedData {
+                game_id: game_id.clone(),
+                puzzle_hash,
+                amount
+            }))
+        );
 
         let signatures = self.update_cached_unroll_state(
             env,
@@ -828,7 +832,7 @@ impl ChannelHandler {
         let at_stake = live_game.referee_maker.get_amount();
 
         self.have_potato = false;
-        self.cached_last_action =
+        self.update_cache_for_potato_send(
             if amount == Amount::default() {
                 None
             } else {
@@ -839,7 +843,8 @@ impl ChannelHandler {
                     at_stake_amount: at_stake,
                     our_share_amount: amount.clone(),
                 }))
-            };
+            }
+        );
 
         let signatures = self.update_cached_unroll_state(
             env,
@@ -852,10 +857,12 @@ impl ChannelHandler {
     pub fn received_potato_accept<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        signautures: &PotatoSignatures,
+        _signautures: &PotatoSignatures,
         game_id: &GameID
     ) -> Result<(), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
+
+        // XXX We need to check the signatures
 
         self.live_games.remove(game_idx);
 
@@ -1058,7 +1065,7 @@ impl ChannelHandler {
                 return Err(Error::StrErr("Unconvertible state number".to_string()));
             };
 
-        let default_conditions_hash = Hash::from_slice(&rem_conditions[1]);
+        // let default_conditions_hash = Hash::from_slice(&rem_conditions[1]);
 
         let our_parity = self.unroll_state_number & 1;
         let their_parity = state_number & 1;
@@ -1126,9 +1133,8 @@ impl ChannelHandler {
     // 5 move happening - outer thing needs to know that this thing is associated
     //    with a specific game.  will spend that game coin.  referee maker up to
     //    date after that.  aware of move relationship to game id.
-    fn update_cache_for_potato_send<R: Rng>(
+    fn update_cache_for_potato_send(
         &mut self,
-        env: &mut ChannelHandlerEnv<R>,
         cache_update: Option<CachedPotatoRegenerateLastHop>,
     ) {
         self.cached_last_action = cache_update;

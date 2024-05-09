@@ -35,7 +35,7 @@ pub fn chia_dialect() -> ChiaDialect { ChiaDialect::new(NO_UNKNOWN_OPS) }
 //       (MAKE_MOVE moving_driver readable_info message) or
 //       (SLASH evidence aggsig)
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum GameHandler {
     MyTurnHandler(NodePtr),
     TheirTurnHandler(NodePtr)
@@ -61,6 +61,7 @@ fn get_my_turn_debug_flag(_: &MyTurnInputs) -> bool {
     false
 }
 
+#[derive(Debug)]
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub waiting_driver: GameHandler,
@@ -209,6 +210,8 @@ impl GameHandler {
                (inputs.entropy.clone(), ())))
             ).to_clvm(allocator).into_gen()?;
 
+        eprintln!("driver_args {}", disassemble(allocator.allocator(), driver_args, None));
+
         let run_result = run_code(
             allocator,
             self.get_my_turn_driver()?,
@@ -337,6 +340,7 @@ pub struct MessageInputs {
     pub mover_share: Amount
 }
 
+#[derive(Clone, Debug)]
 pub struct MessageHandler(pub NodePtr);
 
 impl MessageHandler {
