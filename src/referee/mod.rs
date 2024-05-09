@@ -141,6 +141,9 @@ pub struct RefereeMaker {
     pub is_my_turn: bool,
 
     pub message_handler: Option<MessageHandler>,
+
+    #[cfg(test)]
+    pub run_debug: bool,
 }
 
 impl RefereeMaker {
@@ -179,7 +182,14 @@ impl RefereeMaker {
             states: [state.clone(), state],
             is_my_turn: game_start_info.game_handler.is_my_turn(),
             message_handler: None,
+            #[cfg(test)]
+            run_debug: false
         })
+    }
+
+    #[cfg(test)]
+    pub fn enable_debug_run(&mut self, ena: bool) {
+        self.run_debug = ena;
     }
 
     fn current_state_mut(&mut self) -> &mut RefereeMakerGameState {
@@ -273,7 +283,9 @@ impl RefereeMaker {
                 last_state: state,
                 last_move: &move_data,
                 last_mover_share: mover_share,
-                entropy: new_entropy
+                entropy: new_entropy,
+                #[cfg(test)]
+                run_debug: self.run_debug
             }
         )?;
 
@@ -744,7 +756,9 @@ impl RefereeMaker {
                 new_move: their_move,
                 new_validation_info_hash: validation_info_hash.clone(),
                 new_max_move_size: max_move_size,
-                new_mover_share: mover_share.clone()
+                new_mover_share: mover_share.clone(),
+                #[cfg(test)]
+                run_debug: self.run_debug
             }
         )?;
 
@@ -1046,6 +1060,8 @@ impl RefereeMaker {
                         new_validation_info_hash: new_validation_info_hash.clone(),
                         new_max_move_size,
                         new_mover_share: new_mover_share.clone(),
+                        #[cfg(test)]
+                        run_debug: self.run_debug
                     }
                 )? {
                     TheirTurnResult::Slash(solution, sig) => {

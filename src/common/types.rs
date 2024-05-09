@@ -22,6 +22,9 @@ use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
 use chia_bls;
 use chia_bls::signature::{sign, verify};
 
+#[cfg(test)]
+use clvm_tools_rs::compiler::runtypes::RunFailure;
+
 /// CoinID
 #[derive(Default, Clone)]
 pub struct CoinID(Hash);
@@ -268,6 +271,10 @@ impl GameID {
     }
 }
 
+impl GameID {
+    pub fn from_bytes(s: &[u8]) -> GameID { GameID(s.to_vec()) }
+}
+
 /// Amount
 #[derive(Default, Clone, Debug, Eq, PartialEq)]
 pub struct Amount(u64);
@@ -414,6 +421,12 @@ impl PuzzleHash {
     }
 }
 
+impl Distribution<PuzzleHash> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PuzzleHash {
+        PuzzleHash::from_hash(rng.gen())
+    }
+}
+
 impl ToClvm<NodePtr> for PuzzleHash {
     fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
         encoder.encode_atom(&self.0.0)
@@ -513,6 +526,7 @@ impl ToClvm<NodePtr> for Puzzle {
 }
 
 impl Puzzle {
+    pub fn to_nodeptr(&self) -> NodePtr { self.0.to_nodeptr() }
     pub fn from_nodeptr(n: NodePtr) -> Puzzle {
         Puzzle(Program::from_nodeptr(n))
     }
@@ -569,6 +583,13 @@ pub trait ErrToError {
 impl ErrToError for EvalErr {
     fn into_gen(self) -> Error {
         Error::ClvmError(self)
+    }
+}
+
+#[cfg(test)]
+impl ErrToError for RunFailure {
+    fn into_gen(self) -> Error {
+        Error::StrErr(format!("{self:?}"))
     }
 }
 

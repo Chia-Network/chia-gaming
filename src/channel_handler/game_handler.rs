@@ -1,8 +1,15 @@
+use std::rc::Rc;
+use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
+use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
+
 use clvmr::allocator::NodePtr;
 use clvmr::{ChiaDialect, run_program};
 use clvmr::NO_UNKNOWN_OPS;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
+use clvm_tools_rs::compiler::clvm::{convert_to_clvm_rs, convert_from_clvm_rs, run};
+use clvm_tools_rs::compiler::comptypes::CompilerOpts;
+use clvm_tools_rs::compiler::srcloc::Srcloc;
 use clvm_traits::ToClvm;
 
 use crate::common::types::{AllocEncoder, Amount, Error, Hash, Aggsig, usize_from_atom, u64_from_atom, Node, IntoErr, atom_from_clvm};
@@ -35,6 +42,17 @@ pub struct MyTurnInputs<'a> {
     pub last_move: &'a [u8],
     pub last_mover_share: Amount,
     pub entropy: Hash,
+    #[cfg(test)]
+    pub run_debug: bool
+}
+
+#[cfg(test)]
+fn get_my_turn_debug_flag(my_turn: &MyTurnInputs) -> bool {
+    my_turn.run_debug
+}
+#[cfg(not(test))]
+fn get_my_turn_debug_flag(_: &MyTurnInputs) -> bool {
+    false
 }
 
 pub struct MyTurnResult {
@@ -58,6 +76,81 @@ pub struct TheirTurnInputs<'a> {
     pub new_validation_info_hash: Hash,
     pub new_max_move_size: usize,
     pub new_mover_share: Amount,
+    #[cfg(test)]
+    pub run_debug: bool
+}
+
+#[cfg(test)]
+fn get_their_turn_debug_flag(their_turn: &TheirTurnInputs) -> bool {
+    their_turn.run_debug
+}
+#[cfg(not(test))]
+fn get_their_turn_debug_flag(_: &TheirTurnInputs) -> bool {
+    false
+}
+
+#[cfg(test)]
+fn run_code(
+    allocator: &mut AllocEncoder,
+    code: NodePtr,
+    env: NodePtr,
+    debug: bool
+) -> Result<NodePtr, Error> {
+    if debug {
+        let loc = Srcloc::start("game_handler");
+        let converted_code = convert_from_clvm_rs(
+            allocator.allocator(),
+            loc.clone(),
+            code
+        ).into_gen()?;
+
+        let converted_env = convert_from_clvm_rs(
+            allocator.allocator(),
+            loc,
+            env
+        ).into_gen()?;
+
+        let opts = Rc::new(DefaultCompilerOpts::new("game_handler"));
+
+        let result = run(
+            allocator.allocator(),
+            Rc::new(DefaultProgramRunner::new()),
+            opts.prim_map(),
+            converted_code,
+            converted_env,
+            None,
+            None
+        ).into_gen()?;
+
+        convert_to_clvm_rs(
+            allocator.allocator(),
+            result
+        ).into_gen()
+    } else {
+        run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            code,
+            env,
+            0,
+        ).into_gen().map(|r| r.1)
+    }
+}
+
+#[cfg(not(test))]
+fn run_code(
+    allocator: &mut AllocEncoder,
+    code: NodePtr,
+    env: NodePtr,
+    debug: bool
+) -> Result<NodePtr, Error> {
+    run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        code,
+        env,
+        0,
+    ).into_gen().map(|r| r.1)
 }
 
 pub enum TheirTurnResult {
@@ -110,15 +203,14 @@ impl GameHandler {
                (inputs.entropy.clone(), ())))
             ).to_clvm(allocator).into_gen()?;
 
-        let run_result = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
+        let run_result = run_code(
+            allocator,
             self.get_my_turn_driver()?,
             driver_args,
-            0,
-        ).into_gen()?.1;
+            get_my_turn_debug_flag(inputs)
+        )?;
 
-            let pl =
+        let pl =
             if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
                 pl
             } else {
@@ -188,13 +280,12 @@ impl GameHandler {
                  (inputs.new_mover_share.clone(), ())))))
             ).to_clvm(allocator).into_gen()?;
 
-        let run_result = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
+        let run_result = run_code(
+            allocator,
             self.get_their_turn_driver()?,
             driver_args,
-            0,
-        ).into_gen()?.1;
+            get_their_turn_debug_flag(inputs)
+        )?;
 
 
         let pl =

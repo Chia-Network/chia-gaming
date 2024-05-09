@@ -35,7 +35,9 @@ fn test_game_handler_their_move_slash() {
             new_move: &[],
             new_validation_info_hash: Hash::default(),
             new_max_move_size: 0,
-            new_mover_share: Amount::default()
+            new_mover_share: Amount::default(),
+            #[cfg(test)]
+            run_debug: true
         }
     ).expect("should run");
     if let TheirTurnResult::Slash(solution, aggsig) = result {
@@ -68,7 +70,9 @@ fn test_game_handler_their_make_move() {
             new_move: &[],
             new_validation_info_hash: Hash::default(),
             new_max_move_size: 0,
-            new_mover_share: Amount::default()
+            new_mover_share: Amount::default(),
+            #[cfg(test)]
+            run_debug: true
         }
     ).expect("should run");
     if let TheirTurnResult::MakeMove(game_handler, state, msg) = result {
@@ -99,7 +103,9 @@ fn test_game_handler_my_turn() {
             last_state: nil,
             last_move: &[],
             last_mover_share: Amount::default(),
-            entropy: Hash::default()
+            entropy: Hash::default(),
+            #[cfg(test)]
+            run_debug: true
         }
     ).expect("should run");
     assert_eq!(
