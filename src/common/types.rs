@@ -645,7 +645,7 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
             } else if *atoms[0] == CREATE_COIN_ATOM {
                 return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(Hash::from_slice(&atoms[1]))));
             } else if *atoms[0] == REM_ATOM {
-                return Some(CoinCondition::Rem(atoms[1].to_vec()));
+                return Some(CoinCondition::Rem(atoms.iter().map(|a| a.to_vec()).collect()))
             }
         }
     }

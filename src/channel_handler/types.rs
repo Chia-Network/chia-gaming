@@ -4,7 +4,7 @@ use clvmr::allocator::NodePtr;
 use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 
-use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, Timeout, Hash, CoinID, AllocEncoder, IntoErr, SpecificTransactionBundle, TransactionBundle, Sha256tree};
+use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, Timeout, Hash, CoinID, AllocEncoder, IntoErr, SpecificTransactionBundle, Sha256tree};
 use crate::channel_handler::game_handler::GameHandler;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::referee::RefereeMaker;
