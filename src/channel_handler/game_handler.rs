@@ -1,6 +1,6 @@
-use clvmr::allocator::{Allocator, NodePtr};
+use clvmr::allocator::NodePtr;
 
-use crate::common::types::{AllocEncoder, Amount, Error, Hash, PuzzleHash, Aggsig};
+use crate::common::types::{AllocEncoder, Amount, Error, Hash, Aggsig};
 use crate::channel_handler::types::{ReadableMove, ReadableUX};
 
 // How to call the clvm program in this object:

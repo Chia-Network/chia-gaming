@@ -2,7 +2,7 @@ use std::borrow::{Borrow, BorrowMut};
 
 use rand::prelude::*;
 
-use clvmr::allocator::{Allocator, NodePtr};
+use clvmr::allocator::NodePtr;
 use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 
@@ -659,7 +659,7 @@ impl ChannelHandler {
         their_contribution_this_game: Amount,
         start_info_list: &[GameStartInfo]
     ) -> Result<PotatoSignatures, Error> {
-        let my_new_balance = self.my_out_of_game_balance.clone() - my_contribution_this_game.clone();
+        // let my_new_balance = self.my_out_of_game_balance.clone() - my_contribution_this_game.clone();
         let their_new_balance = self.their_out_of_game_balance.clone() - their_contribution_this_game.clone();
 
         // We let them spend a state number 1 higher but nothing else changes.
@@ -991,7 +991,7 @@ impl ChannelHandler {
         // Figure out our state number vs the one given in conditions.
         let rem_conditions: Vec<Vec<u8>> = CoinCondition::from_nodeptr(env.allocator, conditions).iter().filter_map(|c| {
             if let CoinCondition::Rem(data) = c {
-                return Some(data.clone());
+                return data.first().cloned();
             }
 
             None
