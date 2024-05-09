@@ -5,7 +5,7 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_traits::ToClvm;
 
-use crate::common::types::{AllocEncoder, Amount, Error, Hash, Aggsig, usize_from_atom, u64_from_atom, Node, IntoErr};
+use crate::common::types::{AllocEncoder, Amount, Error, Hash, Aggsig, usize_from_atom, u64_from_atom, Node, IntoErr, atom_from_clvm};
 use crate::channel_handler::types::{ReadableMove, ReadableUX};
 
 pub fn chia_dialect() -> ChiaDialect { ChiaDialect::new(NO_UNKNOWN_OPS) }
@@ -126,20 +126,22 @@ impl GameHandler {
             };
 
         if pl.len() != 8 {
-            return Err(Error::StrErr("bad result from game driver: wrong length".to_string()));
+            return Err(Error::StrErr(format!("bad result from game driver: {}", disassemble(allocator.allocator(), run_result, None))));
         }
 
         let max_move_size =
-            if let Some(mm) = usize_from_atom(allocator.allocator().atom(pl[4])) {
+            if let Some(mm) = atom_from_clvm(allocator, pl[4]).and_then(|a| usize_from_atom(a)) {
                 mm
             } else {
                 return Err(Error::StrErr("bad max move size".to_string()));
             };
         let mover_share =
-            if let Some(ms) = u64_from_atom(allocator.allocator().atom(pl[5])) {
+            if let Some(ms) = atom_from_clvm(allocator, pl[5]).and_then(|a| u64_from_atom(a)) {
                 Amount::new(ms)
             } else {
-                return Err(Error::StrErr("bad share".to_string()));
+                return Err(Error::StrErr(
+                    format!("bad share {}", disassemble(allocator.allocator(), pl[5], None))
+                ));
             };
         let message_parser =
             if pl[7] == allocator.allocator().null() {
@@ -147,12 +149,24 @@ impl GameHandler {
             } else {
                 Some(MessageHandler::from_nodeptr(pl[7]))
             };
+        let validation_program_hash =
+            if let Some(h) = atom_from_clvm(allocator, pl[2]).map(|a| Hash::from_slice(a)) {
+                h
+            } else {
+                return Err(Error::StrErr("bad hash".to_string()));
+            };
+        let move_data =
+            if let Some(m) = atom_from_clvm(allocator, pl[0]).map(|a| a.to_vec()) {
+                m
+            } else {
+                return Err(Error::StrErr("bad move".to_string()));
+            };
 
         Ok(MyTurnResult {
             waiting_driver: GameHandler::their_driver_from_nodeptr(pl[6]),
-            move_data: allocator.allocator().atom(pl[0]).to_vec(),
+            move_data: move_data,
             validation_program: pl[1],
-            validation_program_hash: Hash::from_slice(allocator.allocator().atom(pl[2])),
+            validation_program_hash,
             state: pl[3],
             max_move_size,
             mover_share,

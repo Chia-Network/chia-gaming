@@ -721,3 +721,14 @@ pub fn u64_from_atom(a: &[u8]) -> Option<u64> {
     let bi = BigInt::from_bytes_be(Sign::Plus, a);
     bi.to_u64()
 }
+
+pub fn atom_from_clvm<'a>(
+    allocator: &'a mut AllocEncoder,
+    n: NodePtr
+) -> Option<&'a [u8]> {
+    if matches!(allocator.allocator().sexp(n), SExp::Atom) {
+        Some(allocator.allocator().atom(n))
+    } else {
+        None
+    }
+}
