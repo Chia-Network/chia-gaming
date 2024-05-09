@@ -289,6 +289,8 @@ impl RefereeMaker {
             }
         )?;
 
+        eprintln!("my turn result {result:?}");
+
         self.accept_this_move(
             &result.waiting_driver,
             &result.move_data,

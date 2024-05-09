@@ -29,7 +29,7 @@
   (assign
    cheated (substr (get-validation-move validation-data) 0 1)
    (if cheated
-       (x validation-data)
+       (x "validation program cheating" validation-data)
        ()
        )
    )
@@ -42,16 +42,16 @@
 
    (set_share . set_cheated) readable_new_move
 
-   new_validation_program_hash (x "fixme new_validation_program_hash")
+   new_validation_program_hash (shatree state "this is not right") ;; XXX just anything
 
    (list
-    (concat set_cheated set_share)
+    (concat (one-or-zero set_cheated) set_share)
     validation_program
     new_validation_program_hash
-    (c (one-or-zero set_share) set_cheated)
+    (c set_share set_cheated)
     100
     set_share
-    (curry PUZZLE PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
+    (curry MOD_HASH PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
     ()
     )
    )
@@ -75,7 +75,7 @@
 (export
  (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO . args)
  (if MY_TURN
-     (do_my_turn MOD_HASH PUZZLE AMOUNT &rest args)
-     (do_their_turn MOD_HASH PUZZLE AMOUNT &rest args)
+     (do_my_turn MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO &rest args)
+     (do_their_turn MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO &rest args)
      )
  )
