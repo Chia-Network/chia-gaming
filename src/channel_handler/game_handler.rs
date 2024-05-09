@@ -1,5 +1,8 @@
+#[cfg(test)]
 use std::rc::Rc;
+#[cfg(test)]
 use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
+#[cfg(test)]
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 
 use clvmr::allocator::NodePtr;
@@ -7,8 +10,11 @@ use clvmr::{ChiaDialect, run_program};
 use clvmr::NO_UNKNOWN_OPS;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
+#[cfg(test)]
 use clvm_tools_rs::compiler::clvm::{convert_to_clvm_rs, convert_from_clvm_rs, run};
+#[cfg(test)]
 use clvm_tools_rs::compiler::comptypes::CompilerOpts;
+#[cfg(test)]
 use clvm_tools_rs::compiler::srcloc::Srcloc;
 use clvm_traits::ToClvm;
 

@@ -1,5 +1,5 @@
 use clvmr::allocator::NodePtr;
-use clvmr::{ChiaDialect, NO_UNKNOWN_OPS, run_program};
+use clvmr::run_program;
 use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 use rand::Rng;

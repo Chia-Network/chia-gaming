@@ -412,12 +412,12 @@ impl ChannelHandler {
         their_initial_channel_hash_signature: &Aggsig
     ) -> Result<(), Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
-        let state_channel_coin =
-            if let Some(ssc) = self.state_channel_coin_string.as_ref() {
-                ssc.to_coin_id()
-            } else {
-                return Err(Error::StrErr("send_potato_clean_shutdown without state_channel_coin".to_string()));
-            };
+        // let state_channel_coin =
+        //     if let Some(ssc) = self.state_channel_coin_string.as_ref() {
+        //         ssc.to_coin_id()
+        //     } else {
+        //         return Err(Error::StrErr("send_potato_clean_shutdown without state_channel_coin".to_string()));
+        //     };
 
         let hash_of_initial_channel_coin_solution =
             Node(self.channel_coin_spend.solution).sha256tree(env.allocator);
@@ -444,7 +444,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         state_number_for_spend: usize,
     ) -> Result<PotatoSignatures, Error> {
-        let (channel_coin_conditions, channel_coin_signature) = self.create_conditions_and_signature_of_channel_coin(
+        let (_channel_coin_conditions, channel_coin_signature) = self.create_conditions_and_signature_of_channel_coin(
             env,
             state_number_for_spend
         )?;
@@ -504,7 +504,7 @@ impl ChannelHandler {
         conditions: NodePtr,
     ) -> Result<(NodePtr, Aggsig, bool), Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
-        let (state_channel_coin, solution, signature) =
+        let (state_channel_coin, _solution, signature) =
             self.state_channel_coin_solution_and_signature(env, conditions)?;
 
         let quoted_conditions = conditions.to_quoted_program(env.allocator)?;
@@ -550,7 +550,7 @@ impl ChannelHandler {
         )?;
 
         // Verify the signature.
-        let (state_channel_coin, solution, signature) =
+        let (_state_channel_coin, solution, _signature) =
             self.state_channel_coin_solution_and_signature(
                 env,
                 conditions
@@ -565,25 +565,25 @@ impl ChannelHandler {
         }
 
         // Check the signature of the unroll coin spend.
-        let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> = self.get_new_game_coins_on_chain(
-            env,
-            None,
-            None,
-            None
-        ).iter().filter_map(|ngc| {
-            ngc.coin_string_up.as_ref().and_then(|c| c.to_parts())
-        }).map(|(_, puzzle_hash, amount)| {
-            (puzzle_hash, amount)
-        }).collect();
+        // let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> = self.get_new_game_coins_on_chain(
+        //     env,
+        //     None,
+        //     None,
+        //     None
+        // ).iter().filter_map(|ngc| {
+        //     ngc.coin_string_up.as_ref().and_then(|c| c.to_parts())
+        // }).map(|(_, puzzle_hash, amount)| {
+        //     (puzzle_hash, amount)
+        // }).collect();
 
-        let unroll_conditions = self.get_unroll_coin_conditions(
-            env,
-            state_number_for_spend,
-            &self.my_out_of_game_balance,
-            &self.their_out_of_game_balance,
-            &new_game_coins_on_chain,
-        )?;
-        let (curried_unroll_puzzle, unroll_puzzle_solution) =
+        // let unroll_conditions = self.get_unroll_coin_conditions(
+        //     env,
+        //     state_number_for_spend,
+        //     &self.my_out_of_game_balance,
+        //     &self.their_out_of_game_balance,
+        //     &new_game_coins_on_chain,
+        // )?;
+        let (_curried_unroll_puzzle, unroll_puzzle_solution) =
             self.make_unroll_puzzle_solution(env, self.default_conditions_for_unroll_coin_spend.to_nodeptr())?;
         let quoted_unroll_puzzle_solution = unroll_puzzle_solution.to_quoted_program(env.allocator)?;
         let quoted_unroll_puzzle_solution_hash = quoted_unroll_puzzle_solution.sha256tree(env.allocator);
@@ -660,7 +660,7 @@ impl ChannelHandler {
         start_info_list: &[GameStartInfo]
     ) -> Result<PotatoSignatures, Error> {
         // let my_new_balance = self.my_out_of_game_balance.clone() - my_contribution_this_game.clone();
-        let their_new_balance = self.their_out_of_game_balance.clone() - their_contribution_this_game.clone();
+        // let their_new_balance = self.their_out_of_game_balance.clone() - their_contribution_this_game.clone();
 
         // We let them spend a state number 1 higher but nothing else changes.
         self.cached_last_action = Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
