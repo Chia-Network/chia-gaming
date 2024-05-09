@@ -72,6 +72,12 @@ impl GameHandler {
     pub fn my_driver_from_nodeptr(n: NodePtr) -> GameHandler {
         GameHandler::MyTurnHandler(n)
     }
+    pub fn to_nodeptr(&self) -> NodePtr {
+        match self {
+            GameHandler::MyTurnHandler(n) => *n,
+            GameHandler::TheirTurnHandler(n) => *n
+        }
+    }
     pub fn is_my_turn(&self) -> bool {
         matches!(self, GameHandler::MyTurnHandler(_))
     }
@@ -196,7 +202,7 @@ impl GameHandler {
             };
 
         if move_type == 0 {
-            if pl.len() != 5 {
+            if pl.len() != 4 {
                 return Err(Error::StrErr("bad length".to_string()));
             }
             Ok(TheirTurnResult::MakeMove(GameHandler::my_driver_from_nodeptr(pl[2]), pl[1], allocator.allocator().atom(pl[3]).to_vec()))
