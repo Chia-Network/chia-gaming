@@ -4,9 +4,9 @@ use rand_chacha::ChaCha8Rng;
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::assemble;
+use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 
-use crate::common::types::{GameID, Timeout, Amount, PuzzleHash, PrivateKey, AllocEncoder, Sha256tree, Node};
+use crate::common::types::{GameID, Timeout, Amount, PuzzleHash, PrivateKey, AllocEncoder, Sha256tree, Node, Aggsig, Error};
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{GameStartInfo, ReadableMove};
@@ -21,6 +21,7 @@ fn make_debug_game_handler(
         "resources/debug_game_handler.hex"
     ).expect("should be readable");
     let game_handler_mod_hash = debug_game_handler.sha256tree(allocator);
+    let aggsig = Aggsig::default();
     let curried_game_handler = CurriedProgram {
         program: debug_game_handler.clone(),
         args: clvm_curried_args!(
@@ -28,7 +29,7 @@ fn make_debug_game_handler(
             debug_game_handler,
             amount.clone(),
             true,
-            ((), ()) // slash info
+            ((), (aggsig, ())) // slash info
         )
     };
     GameHandler::my_driver_from_nodeptr(curried_game_handler.to_clvm(allocator).expect("should curry"))
@@ -84,4 +85,28 @@ fn test_referee_smoke() {
         &ReadableMove::from_nodeptr(readable_move)
     ).expect("should move");
     assert_eq!(my_move_result.move_made, &[0]);
+    let mut off_chain_slash_gives_error = referee.clone();
+    let their_move_result = off_chain_slash_gives_error.their_turn_move_off_chain(
+        &mut allocator,
+        &[1],
+        &my_move_result.validation_info_hash,
+        100,
+        &Amount::default()
+    );
+    if let Err(Error::StrErr(s)) = their_move_result {
+        assert!(s.contains("slash"));
+        assert!(s.contains("off chain"));
+    } else {
+        assert!(false);
+    }
+
+    let their_move_result = referee.their_turn_move_off_chain(
+        &mut allocator,
+        &[0],
+        &my_move_result.validation_info_hash,
+        100,
+        &Amount::default()
+    ).expect("should run");
+    assert_eq!(their_move_result.message, b"message data");
+    assert_eq!(disassemble(allocator.allocator(), their_move_result.readable_move, None), "(())");
 }

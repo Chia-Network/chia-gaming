@@ -16,7 +16,7 @@ use clvm_tools_rs::compiler::clvm::{convert_to_clvm_rs, convert_from_clvm_rs, ru
 use clvm_tools_rs::compiler::comptypes::CompilerOpts;
 #[cfg(test)]
 use clvm_tools_rs::compiler::srcloc::Srcloc;
-use clvm_traits::ToClvm;
+use clvm_traits::{ToClvm, ClvmEncoder};
 
 use crate::common::types::{AllocEncoder, Amount, Error, Hash, Aggsig, usize_from_atom, u64_from_atom, Node, IntoErr, atom_from_clvm};
 use crate::channel_handler::types::{ReadableMove, ReadableUX};
@@ -283,7 +283,7 @@ impl GameHandler {
         let driver_args =
             (inputs.amount.clone(),
              (Node(inputs.last_state.clone()),
-              (inputs.new_move.clone(),
+              (Node(allocator.encode_atom(inputs.new_move).into_gen()?),
                (inputs.new_validation_info_hash.clone(),
                 (inputs.new_max_move_size.clone(),
                  (inputs.new_mover_share.clone(), ())))))
@@ -317,12 +317,12 @@ impl GameHandler {
 
         if move_type == 0 {
             if pl.len() != 4 {
-                return Err(Error::StrErr("bad length".to_string()));
+                return Err(Error::StrErr(format!("bad length for move result {}", disassemble(allocator.allocator(), run_result, None))));
             }
             Ok(TheirTurnResult::MakeMove(GameHandler::my_driver_from_nodeptr(pl[2]), pl[1], allocator.allocator().atom(pl[3]).to_vec()))
         } else if move_type == 2 {
             if pl.len() != 3 {
-                return Err(Error::StrErr(format!("bad length {}", disassemble(allocator.allocator(), run_result, None))));
+                return Err(Error::StrErr(format!("bad length for slash {}", disassemble(allocator.allocator(), run_result, None))));
             }
             let sig_bytes = allocator.allocator().atom(pl[2]).to_vec();
             Ok(TheirTurnResult::Slash(pl[1], Aggsig::from_slice(&sig_bytes)?))
