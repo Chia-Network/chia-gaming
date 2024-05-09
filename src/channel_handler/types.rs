@@ -1,7 +1,7 @@
 use rand::prelude::*;
 use rand::distributions::Standard;
 use clvmr::allocator::NodePtr;
-use clvm_traits::{ToClvm, clvm_curried_args};
+use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 
 use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, Timeout, Hash, CoinID, AllocEncoder, IntoErr, SpecificTransactionBundle, Sha256tree};
@@ -64,6 +64,12 @@ pub struct GameStartInfo {
 
 #[derive(Clone)]
 pub struct ReadableMove(NodePtr);
+
+impl ToClvm<NodePtr> for ReadableMove {
+    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+        Ok(self.0)
+    }
+}
 
 #[derive(Clone)]
 pub struct ReadableUX(NodePtr);

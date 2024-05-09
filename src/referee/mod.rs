@@ -8,7 +8,7 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::types::{Aggsig, Amount, CoinString, PuzzleHash, Hash, Puzzle, Timeout, PrivateKey, Error, AllocEncoder, Node, Sha256Input, IntoErr, Sha256tree, SpecificTransactionBundle, CoinCondition, TransactionBundle, u64_from_atom, usize_from_atom};
 use crate::common::standard_coin::{curry_and_treehash, private_to_public_key, puzzle_hash_for_pk, sign_agg_sig_me, puzzle_for_pk, standard_solution};
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, ReadableUX};
-use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, MessageInputs, MessageHandler, TheirTurnInputs, TheirTurnResult};
+use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, MessageInputs, MessageHandler, TheirTurnInputs, TheirTurnResult, chia_dialect};
 
 pub const REM_CONDITION_FIELDS: usize = 4;
 
@@ -91,8 +91,6 @@ impl<'a> RefereePuzzleArgs<'a> {
         ].into_iter().map(|n| Node(n)).collect())
     }
 }
-
-fn chia_dialect() -> ChiaDialect { ChiaDialect::new(NO_UNKNOWN_OPS) }
 
 fn curry_referee_puzzle_hash(
     allocator: &mut AllocEncoder,

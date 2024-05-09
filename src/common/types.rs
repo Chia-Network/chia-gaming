@@ -207,6 +207,17 @@ impl Aggsig {
         Ok(Aggsig(chia_bls::Signature::from_bytes(&by).into_gen()?))
     }
 
+    pub fn from_slice(by: &[u8]) -> Result<Aggsig, Error> {
+        if by.len() != 96 {
+            return Err(Error::StrErr("bad aggsig length".to_string()));
+        }
+        let mut fixed: [u8; 96] = [0; 96];
+        for (i,b) in by.iter().enumerate() {
+            fixed[i % 96] = *b;
+        }
+        Aggsig::from_bytes(fixed)
+    }
+
     pub fn to_bls(&self) -> chia_bls::Signature {
         self.0.clone()
     }
