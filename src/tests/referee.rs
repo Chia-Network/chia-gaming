@@ -2,9 +2,9 @@ use rand::prelude::*;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
+use clvm_tools_rs::classic::clvm_tools::binutils::assemble;
 
-use crate::common::types::{GameID, Timeout, Amount, PuzzleHash, Hash, PrivateKey, AllocEncoder, Sha256tree, Node};
+use crate::common::types::{GameID, Timeout, Amount, PuzzleHash, PrivateKey, AllocEncoder, Sha256tree, Node};
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{GameStartInfo, ReadableMove};
