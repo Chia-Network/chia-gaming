@@ -65,6 +65,10 @@ pub struct GameStartInfo {
 #[derive(Clone)]
 pub struct ReadableMove(NodePtr);
 
+impl ReadableMove {
+    pub fn from_nodeptr(n: NodePtr) -> Self { ReadableMove(n) }
+}
+
 impl ToClvm<NodePtr> for ReadableMove {
     fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
