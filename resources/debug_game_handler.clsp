@@ -1,0 +1,79 @@
+;; Debug game handler
+(include *standard-cl-23*)
+
+(import std.curry)
+(import std.map)
+(import std.shatree)
+
+(defun get-validation-move
+    (MOVER_PUZZLE_HASH
+     WAITER_PUZZLE_HASH
+     TIMEOUT
+     AMOUNT
+     MOD_HASH
+     NONCE
+     MOVE
+     MAX_MOVE_SIZE
+     VALIDATION_INFO_HASH
+     MOVER_SHARE
+     PREVIOUS_VALIDATION_INFO_HASH
+     )
+  MOVE
+  )
+
+(defun get-move-share (new-move)
+  (substr new-move 1 (- (strlen new-move 1)))
+  )
+
+(defun validation_program (validation-data)
+  (assign
+   cheated (substr (get-validation-move validation-data) 0 1)
+   (if cheated
+       (x validation-data)
+       ()
+       )
+   )
+  )
+
+(defun do_my_turn (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO readable_new_move amount state entropy)
+  (assign
+
+   (set_share . set_cheated) readable_new_move
+
+   new_validation_program_hash (x "fixme new_validation_program_hash")
+
+   (list
+    (concat set_cheated set_share)
+    validation_program
+    new_validation_program_hash
+    (c set_share set_cheated)
+    100
+    set_share
+    (curry PUZZLE PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
+    ()
+    )
+   )
+  )
+
+(defun do_their_turn (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO amount last_state new_move new_validation_info_hash new_max_move_size new_mover_share)
+  (assign
+   set_cheated (substr new_move 0 1)
+
+   (if set_cheated
+       (c 2 SLASH_INFO)
+       (list
+        0
+        (c set_cheated (get-move-share new_move)) ;; readable move
+        (curry PUZZLE PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
+        )
+       )
+   )
+  )
+
+(export
+ (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO . args)
+ (if MY_TURN
+     (do_my_turn MOD_HASH PUZZLE AMOUNT &rest args)
+     (do_their_turn MOD_HASH PUZZLE AMOUNT &rest args)
+     )
+ )
