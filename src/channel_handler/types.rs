@@ -1,12 +1,15 @@
-use rand::prelude::*;
-use rand::distributions::Standard;
-use clvmr::allocator::NodePtr;
-use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError, clvm_curried_args};
+use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
+use clvmr::allocator::NodePtr;
+use rand::distributions::Standard;
+use rand::prelude::*;
 
-use crate::common::types::{Amount, CoinString, PrivateKey, PublicKey, Aggsig, GameID, Puzzle, PuzzleHash, Error, Timeout, Hash, CoinID, AllocEncoder, IntoErr, SpecificTransactionBundle, Sha256tree};
 use crate::channel_handler::game_handler::GameHandler;
 use crate::common::standard_coin::read_hex_puzzle;
+use crate::common::types::{
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, PrivateKey,
+    PublicKey, Puzzle, PuzzleHash, Sha256tree, SpecificTransactionBundle, Timeout,
+};
 use crate::referee::RefereeMaker;
 
 #[derive(Default)]
@@ -38,7 +41,7 @@ pub struct ChannelHandlerInitiationData {
 
 pub struct ChannelHandlerInitiationResult {
     pub channel_puzzle_hash_up: PuzzleHash,
-    pub my_initial_channel_half_signature_peer: Aggsig
+    pub my_initial_channel_half_signature_peer: Aggsig,
 }
 
 pub struct PotatoSignatures {
@@ -59,18 +62,23 @@ pub struct GameStartInfo {
     pub initial_state: NodePtr,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
-    pub initial_mover_share: Amount
+    pub initial_mover_share: Amount,
 }
 
 #[derive(Clone)]
 pub struct ReadableMove(NodePtr);
 
 impl ReadableMove {
-    pub fn from_nodeptr(n: NodePtr) -> Self { ReadableMove(n) }
+    pub fn from_nodeptr(n: NodePtr) -> Self {
+        ReadableMove(n)
+    }
 }
 
 impl ToClvm<NodePtr> for ReadableMove {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
     }
 }
@@ -83,20 +91,20 @@ pub struct MoveResult {
     pub move_peer: Vec<u8>,
     pub validation_info_hash_peer: Hash,
     pub max_move_size_peer: usize,
-    pub mover_share_peer: Amount
+    pub mover_share_peer: Amount,
 }
 
 pub struct OnChainGameCoin<'a> {
     pub game_id_up: GameID,
     pub coin_string_up: Option<CoinString>,
-    pub referee_up: &'a RefereeMaker
+    pub referee_up: &'a RefereeMaker,
 }
 
 #[derive(Clone)]
 pub struct CoinSpentMoveUp {
     pub game_id: GameID,
     pub spend_before_game_coin: SpecificTransactionBundle,
-    pub after_update_game_coin: CoinString
+    pub after_update_game_coin: CoinString,
 }
 
 #[derive(Clone)]
@@ -130,7 +138,7 @@ pub struct CoinSpentResult<'a> {
 
 pub struct UnrollCoinSignatures {
     pub to_create_unroll_coin: Aggsig,
-    pub to_spend_unroll_coin: Aggsig
+    pub to_spend_unroll_coin: Aggsig,
 }
 
 pub fn read_unroll_metapuzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
@@ -138,7 +146,10 @@ pub fn read_unroll_metapuzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Er
 }
 
 pub fn read_unroll_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
-    read_hex_puzzle(allocator, "resources/unroll_puzzle_state_channel_unrolling.hex")
+    read_hex_puzzle(
+        allocator,
+        "resources/unroll_puzzle_state_channel_unrolling.hex",
+    )
 }
 
 pub struct ChannelHandlerEnv<'a, R: Rng> {
@@ -160,7 +171,7 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
         unroll_metapuzzle: Puzzle,
         unroll_puzzle: Puzzle,
         referee_coin_puzzle: Puzzle,
-        agg_sig_me_additional_data: Hash
+        agg_sig_me_additional_data: Hash,
     ) -> ChannelHandlerEnv<'a, R> {
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
         ChannelHandlerEnv {
@@ -170,14 +181,22 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
             referee_coin_puzzle_hash,
             unroll_metapuzzle,
             unroll_puzzle,
-            agg_sig_me_additional_data
+            agg_sig_me_additional_data,
         }
     }
 
-    pub fn curried_unroll_puzzle(&mut self, old_seq_number: u64, default_conditions_hash: PuzzleHash) -> Result<Puzzle, Error> {
+    pub fn curried_unroll_puzzle(
+        &mut self,
+        old_seq_number: u64,
+        default_conditions_hash: PuzzleHash,
+    ) -> Result<Puzzle, Error> {
         let curried_program = CurriedProgram {
             program: self.unroll_puzzle.clone(),
-            args: clvm_curried_args!(self.unroll_metapuzzle.clone(), old_seq_number, default_conditions_hash)
+            args: clvm_curried_args!(
+                self.unroll_metapuzzle.clone(),
+                old_seq_number,
+                default_conditions_hash
+            ),
         };
         let nodeptr = curried_program.to_clvm(self.allocator).into_gen()?;
         Ok(Puzzle::from_nodeptr(nodeptr))
@@ -206,5 +225,5 @@ pub struct PotatoMoveCachedData {
 pub enum CachedPotatoRegenerateLastHop {
     PotatoCreatedGame(Vec<GameID>, Amount, Amount),
     PotatoAccept(PotatoAcceptCachedData),
-    PotatoMoveHappening(PotatoMoveCachedData)
+    PotatoMoveHappening(PotatoMoveCachedData),
 }

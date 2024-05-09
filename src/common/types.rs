@@ -4,23 +4,23 @@ use std::ops::{Add, AddAssign, Sub, SubAssign};
 use num_bigint::{BigInt, Sign};
 use num_traits::cast::ToPrimitive;
 
-use rand::prelude::*;
 use rand::distributions::Standard;
+use rand::prelude::*;
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 
-use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
+use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
 
-use crate::common::constants::{AGG_SIG_UNSAFE_ATOM, AGG_SIG_ME_ATOM, CREATE_COIN_ATOM, REM_ATOM};
+use crate::common::constants::{AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, CREATE_COIN_ATOM, REM_ATOM};
 
-use clvm_traits::{ToClvm, ClvmEncoder, ToClvmError};
 use chia_bls;
 use chia_bls::signature::{sign, verify};
+use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 
 #[cfg(test)]
 use clvm_tools_rs::compiler::runtypes::RunFailure;
@@ -30,14 +30,19 @@ use clvm_tools_rs::compiler::runtypes::RunFailure;
 pub struct CoinID(Hash);
 
 impl CoinID {
-    pub fn new(h: Hash) -> CoinID { CoinID(h) }
+    pub fn new(h: Hash) -> CoinID {
+        CoinID(h)
+    }
     pub fn bytes<'a>(&'a self) -> &'a [u8] {
         self.0.bytes()
     }
 }
 
 impl ToClvm<NodePtr> for CoinID {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         self.0.to_clvm(encoder)
     }
 }
@@ -65,9 +70,9 @@ impl CoinString {
         let parent_id = CoinID::new(Hash::from_slice(&self.0[..32]));
         let puzzle_hash = PuzzleHash::from_hash(Hash::from_slice(&self.0[32..64]));
         let amount_bytes = &self.0[64..];
-        BigInt::from_bytes_be(Sign::Plus, amount_bytes).to_u64().map(|a| {
-            (parent_id, puzzle_hash, Amount::new(a))
-        })
+        BigInt::from_bytes_be(Sign::Plus, amount_bytes)
+            .to_u64()
+            .map(|a| (parent_id, puzzle_hash, Amount::new(a)))
     }
 
     pub fn to_coin_id(&self) -> CoinID {
@@ -106,7 +111,9 @@ impl PrivateKey {
     }
 
     pub fn from_bytes(by: &[u8; 32]) -> Result<PrivateKey, Error> {
-        Ok(PrivateKey::from_bls(chia_bls::SecretKey::from_bytes(by).into_gen()?))
+        Ok(PrivateKey::from_bls(
+            chia_bls::SecretKey::from_bytes(by).into_gen()?,
+        ))
     }
 
     pub fn to_bls(&self) -> &chia_bls::SecretKey {
@@ -159,7 +166,9 @@ impl PublicKey {
     }
 
     pub fn from_bytes(bytes: [u8; 48]) -> Result<PublicKey, Error> {
-        Ok(PublicKey(chia_bls::PublicKey::from_bytes(&bytes).into_gen()?))
+        Ok(PublicKey(
+            chia_bls::PublicKey::from_bytes(&bytes).into_gen()?,
+        ))
     }
 }
 
@@ -179,7 +188,10 @@ impl Add for PublicKey {
 }
 
 impl ToClvm<NodePtr> for PublicKey {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         encoder.encode_atom(&self.0.to_bytes())
     }
 }
@@ -215,7 +227,7 @@ impl Aggsig {
             return Err(Error::StrErr("bad aggsig length".to_string()));
         }
         let mut fixed: [u8; 96] = [0; 96];
-        for (i,b) in by.iter().enumerate() {
+        for (i, b) in by.iter().enumerate() {
             fixed[i % 96] = *b;
         }
         Aggsig::from_bytes(fixed)
@@ -256,7 +268,10 @@ impl Add for Aggsig {
 }
 
 impl ToClvm<NodePtr> for Aggsig {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         encoder.encode_atom(&self.0.to_bytes())
     }
 }
@@ -272,7 +287,9 @@ impl GameID {
 }
 
 impl GameID {
-    pub fn from_bytes(s: &[u8]) -> GameID { GameID(s.to_vec()) }
+    pub fn from_bytes(s: &[u8]) -> GameID {
+        GameID(s.to_vec())
+    }
 }
 
 /// Amount
@@ -316,7 +333,10 @@ impl Sub for Amount {
 }
 
 impl ToClvm<NodePtr> for Amount {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         self.0.to_clvm(encoder)
     }
 }
@@ -337,7 +357,10 @@ impl Default for Hash {
 }
 
 impl ToClvm<NodePtr> for Hash {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         encoder.encode_atom(&self.0)
     }
 }
@@ -351,7 +374,7 @@ impl Hash {
     }
     pub fn from_slice(by: &[u8]) -> Hash {
         let mut fixed: [u8; 32] = [0; 32];
-        for (i,b) in by.iter().enumerate() {
+        for (i, b) in by.iter().enumerate() {
             fixed[i % 32] = *b;
         }
         Hash::from_bytes(fixed)
@@ -428,8 +451,11 @@ impl Distribution<PuzzleHash> for Standard {
 }
 
 impl ToClvm<NodePtr> for PuzzleHash {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
-        encoder.encode_atom(&self.0.0)
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
+        encoder.encode_atom(&self.0 .0)
     }
 }
 
@@ -447,7 +473,7 @@ pub enum Error {
     EncodeErr(ToClvmError),
     StrErr(String),
     BlsErr(chia_bls::Error),
-    Channel(String)
+    Channel(String),
 }
 
 #[derive(Clone, Debug)]
@@ -461,12 +487,19 @@ impl Default for Node {
 }
 
 impl Node {
-    pub fn new(n: NodePtr) -> Node { Node(n) }
-    pub fn to_nodeptr(&self) -> NodePtr { self.0 }
+    pub fn new(n: NodePtr) -> Node {
+        Node(n)
+    }
+    pub fn to_nodeptr(&self) -> NodePtr {
+        self.0
+    }
 }
 
 impl ToClvm<NodePtr> for Node {
-    fn to_clvm(&self, _encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        _encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
     }
 }
@@ -488,9 +521,15 @@ pub trait Sha256tree {
 
 impl<X: ToClvm<NodePtr>> Sha256tree for X {
     fn sha256tree(&self, allocator: &mut AllocEncoder) -> PuzzleHash {
-        let node = self.to_clvm(allocator).unwrap_or_else(|_| allocator.0.null());
+        let node = self
+            .to_clvm(allocator)
+            .unwrap_or_else(|_| allocator.0.null());
         let mut fixed: [u8; 32] = [0; 32];
-        for (i, b) in sha256tree(allocator.allocator(), node).data().iter().enumerate() {
+        for (i, b) in sha256tree(allocator.allocator(), node)
+            .data()
+            .iter()
+            .enumerate()
+        {
             fixed[i % 32] = *b;
         }
         PuzzleHash::from_bytes(fixed)
@@ -511,7 +550,10 @@ impl Program {
 }
 
 impl ToClvm<NodePtr> for Program {
-    fn to_clvm(&self, _encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        _encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
     }
 }
@@ -520,13 +562,18 @@ impl ToClvm<NodePtr> for Program {
 pub struct Puzzle(Program);
 
 impl ToClvm<NodePtr> for Puzzle {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         self.0.to_clvm(encoder)
     }
 }
 
 impl Puzzle {
-    pub fn to_nodeptr(&self) -> NodePtr { self.0.to_nodeptr() }
+    pub fn to_nodeptr(&self) -> NodePtr {
+        self.0.to_nodeptr()
+    }
     pub fn from_nodeptr(n: NodePtr) -> Puzzle {
         Puzzle(Program::from_nodeptr(n))
     }
@@ -542,7 +589,10 @@ impl Timeout {
 }
 
 impl ToClvm<NodePtr> for Timeout {
-    fn to_clvm(&self, encoder: &mut impl ClvmEncoder<Node = NodePtr>) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
         self.0.to_clvm(encoder)
     }
 }
@@ -563,18 +613,21 @@ impl ClvmEncoder for AllocEncoder {
     type Node = NodePtr;
 
     fn encode_atom(&mut self, bytes: &[u8]) -> Result<Self::Node, ToClvmError> {
-        self.0.new_atom(bytes).map_err(|e| ToClvmError::Custom(format!("{e:?}")))
+        self.0
+            .new_atom(bytes)
+            .map_err(|e| ToClvmError::Custom(format!("{e:?}")))
     }
 
     fn encode_pair(
         &mut self,
         first: Self::Node,
-        rest: Self::Node
+        rest: Self::Node,
     ) -> Result<Self::Node, ToClvmError> {
-        self.0.new_pair(first, rest).map_err(|e| ToClvmError::Custom(format!("{e:?}")))
+        self.0
+            .new_pair(first, rest)
+            .map_err(|e| ToClvmError::Custom(format!("{e:?}")))
     }
 }
-
 
 pub trait ErrToError {
     fn into_gen(self) -> Error;
@@ -627,7 +680,10 @@ pub trait IntoErr<X> {
     fn into_gen(self) -> Result<X, Error>;
 }
 
-impl<X, E> IntoErr<X> for Result<X, E> where E: ErrToError {
+impl<X, E> IntoErr<X> for Result<X, E>
+where
+    E: ErrToError,
+{
     fn into_gen(self) -> Result<X, Error> {
         self.map_err(|e| e.into_gen())
     }
@@ -642,30 +698,33 @@ pub enum CoinCondition {
 }
 
 fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<CoinCondition> {
-    let exploded =
-        if let Some(pl) = proper_list(allocator.allocator(), condition, true) {
-            pl
-        } else {
-            return None;
-        };
+    let exploded = if let Some(pl) = proper_list(allocator.allocator(), condition, true) {
+        pl
+    } else {
+        return None;
+    };
 
     let public_key_from_bytes = |b: &[u8]| -> Result<PublicKey, Error> {
         let mut fixed: [u8; 48] = [0; 48];
-        for (i,b) in b.iter().enumerate() {
+        for (i, b) in b.iter().enumerate() {
             fixed[i % 48] = *b;
         }
         PublicKey::from_bytes(fixed)
     };
     if exploded.len() > 2 {
         if matches!(
-            (allocator.allocator().sexp(exploded[0]),
-             allocator.allocator().sexp(exploded[1]),
-             allocator.allocator().sexp(exploded[2])
-            ), (SExp::Atom, SExp::Atom, SExp::Atom)
+            (
+                allocator.allocator().sexp(exploded[0]),
+                allocator.allocator().sexp(exploded[1]),
+                allocator.allocator().sexp(exploded[2])
+            ),
+            (SExp::Atom, SExp::Atom, SExp::Atom)
         ) {
-            let atoms: Vec<Vec<u8>> = exploded.iter().take(3).map(|a| {
-                allocator.allocator().atom(*a).to_vec()
-            }).collect();
+            let atoms: Vec<Vec<u8>> = exploded
+                .iter()
+                .take(3)
+                .map(|a| allocator.allocator().atom(*a).to_vec())
+                .collect();
             if *atoms[0] == AGG_SIG_UNSAFE_ATOM {
                 if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
                     return Some(CoinCondition::AggSigUnsafe(pk, atoms[2].to_vec()));
@@ -675,9 +734,13 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
                     return Some(CoinCondition::AggSigMe(pk, atoms[2].to_vec()));
                 }
             } else if *atoms[0] == CREATE_COIN_ATOM {
-                return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(Hash::from_slice(&atoms[1]))));
+                return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(
+                    Hash::from_slice(&atoms[1]),
+                )));
             } else if *atoms[0] == REM_ATOM {
-                return Some(CoinCondition::Rem(atoms.iter().map(|a| a.to_vec()).collect()))
+                return Some(CoinCondition::Rem(
+                    atoms.iter().map(|a| a.to_vec()).collect(),
+                ));
             }
         }
     }
@@ -689,7 +752,10 @@ impl CoinCondition {
     pub fn from_nodeptr(allocator: &mut AllocEncoder, conditions: NodePtr) -> Vec<CoinCondition> {
         // Ensure this borrow of allocator is finished for what's next.
         if let Some(exploded) = proper_list(allocator.allocator(), conditions, true) {
-            exploded.iter().flat_map(|cond| parse_condition(allocator, *cond)).collect()
+            exploded
+                .iter()
+                .flat_map(|cond| parse_condition(allocator, *cond))
+                .collect()
         } else {
             Vec::new()
         }
@@ -700,7 +766,7 @@ impl CoinCondition {
 pub struct TransactionBundle {
     pub puzzle: Puzzle,
     pub solution: NodePtr,
-    pub signature: Aggsig
+    pub signature: Aggsig,
 }
 
 #[derive(Clone)]
@@ -709,14 +775,13 @@ pub struct SpecificTransactionBundle {
     pub bundle: TransactionBundle,
 }
 
-
 impl Default for TransactionBundle {
     fn default() -> Self {
         let allocator = Allocator::new();
         TransactionBundle {
             puzzle: Puzzle::from_nodeptr(allocator.null()),
             solution: allocator.null(),
-            signature: Aggsig::default()
+            signature: Aggsig::default(),
         }
     }
 }
@@ -725,12 +790,12 @@ pub struct SpentResult {
     pub transaction_bundle: TransactionBundle,
     pub unroll_coin_string_up: CoinString,
     pub transaction_up: TransactionBundle,
-    pub whether_has_timeout_up: bool
+    pub whether_has_timeout_up: bool,
 }
 
 pub struct SpendRewardResult {
     pub coins_with_solutions: Vec<TransactionBundle>,
-    pub result_coin_string_up: CoinString
+    pub result_coin_string_up: CoinString,
 }
 
 pub fn usize_from_atom(a: &[u8]) -> Option<usize> {
@@ -743,10 +808,7 @@ pub fn u64_from_atom(a: &[u8]) -> Option<u64> {
     bi.to_u64()
 }
 
-pub fn atom_from_clvm<'a>(
-    allocator: &'a mut AllocEncoder,
-    n: NodePtr
-) -> Option<&'a [u8]> {
+pub fn atom_from_clvm<'a>(allocator: &'a mut AllocEncoder, n: NodePtr) -> Option<&'a [u8]> {
     if matches!(allocator.allocator().sexp(n), SExp::Atom) {
         Some(allocator.allocator().atom(n))
     } else {
