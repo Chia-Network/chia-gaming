@@ -1,6 +1,7 @@
 use clvmr::allocator::NodePtr;
 use clvmr::{ChiaDialect, run_program};
 use clvmr::NO_UNKNOWN_OPS;
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_traits::ToClvm;
 
@@ -106,7 +107,7 @@ impl GameHandler {
         let run_result = run_program(
             allocator.allocator(),
             &chia_dialect(),
-            self.get_their_turn_driver()?,
+            self.get_my_turn_driver()?,
             driver_args,
             0,
         ).into_gen()?.1;
@@ -170,7 +171,7 @@ impl GameHandler {
         let run_result = run_program(
             allocator.allocator(),
             &chia_dialect(),
-            self.get_my_turn_driver()?,
+            self.get_their_turn_driver()?,
             driver_args,
             0,
         ).into_gen()?.1;
@@ -195,12 +196,15 @@ impl GameHandler {
             };
 
         if move_type == 0 {
-            if pl.len() == 4 {
+            if pl.len() != 5 {
                 return Err(Error::StrErr("bad length".to_string()));
             }
             Ok(TheirTurnResult::MakeMove(GameHandler::my_driver_from_nodeptr(pl[2]), pl[1], allocator.allocator().atom(pl[3]).to_vec()))
         } else if move_type == 2 {
-            let sig_bytes = allocator.allocator().atom(pl[3]).to_vec();
+            if pl.len() != 3 {
+                return Err(Error::StrErr(format!("bad length {}", disassemble(allocator.allocator(), run_result, None))));
+            }
+            let sig_bytes = allocator.allocator().atom(pl[2]).to_vec();
             Ok(TheirTurnResult::Slash(pl[1], Aggsig::from_slice(&sig_bytes)?))
         } else {
             Err(Error::StrErr("unknown move result type".to_string()))
