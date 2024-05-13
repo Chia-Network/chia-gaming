@@ -78,7 +78,7 @@ fn test_referee_smoke() {
             &ReadableMove::from_nodeptr(readable_move),
         )
         .expect("should move");
-    assert_eq!(my_move_result.move_made, &[0]);
+    assert!(my_move_result.move_made.is_empty());
     let mut off_chain_slash_gives_error = referee.clone();
     let their_move_result = off_chain_slash_gives_error.their_turn_move_off_chain(
         &mut allocator,
