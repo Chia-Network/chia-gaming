@@ -196,7 +196,7 @@ impl RefereeMaker {
             my_private_key: my_private_key.clone(),
             timeout: game_start_info.timeout.clone(),
             amount: game_start_info.amount.clone(),
-            nonce: nonce,
+            nonce,
 
             states: [state.clone(), state],
             is_my_turn: game_start_info.game_handler.is_my_turn(),
@@ -484,7 +484,7 @@ impl RefereeMaker {
 
             (|current_state: &RefereeMakerGameState| {
                 match &current_state.game_handler {
-                    GameHandler::MyTurnHandler(h) => {
+                    GameHandler::MyTurnHandler(_h) => {
                         // It is my turn
                         if current_state.mover_share != Amount::default() {
                             // And we have a mover share.
@@ -493,7 +493,7 @@ impl RefereeMaker {
 
                         (true, Amount::default())
                     }
-                    GameHandler::TheirTurnHandler(h) => {
+                    GameHandler::TheirTurnHandler(_h) => {
                         // Their turn
                         if current_state.mover_share != amount {
                             // There is some left over.

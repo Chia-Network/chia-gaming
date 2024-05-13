@@ -515,7 +515,7 @@ impl ChannelHandler {
             self.create_conditions_and_signature_of_channel_coin(env, state_number_for_spend)?;
 
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> = self
-            .get_new_game_coins_on_chain(env, None, None, None)
+            .get_new_game_coins_on_chain(env, None, &[], None)
             .iter()
             .filter_map(|ngc| ngc.coin_string_up.as_ref().and_then(|c| c.to_parts()))
             .map(|(_, puzzle_hash, amount)| (puzzle_hash, amount))
@@ -1141,48 +1141,46 @@ impl ChannelHandler {
                 },
                 false,
             ))
-        } else {
-            if state_number == self.unroll_state_number {
-                // Timeout
-                let (curried_unroll_puzzle, unroll_puzzle_solution) = self
-                    .make_unroll_puzzle_solution(
-                        env,
-                        self.default_conditions_for_unroll_coin_spend.to_nodeptr(),
-                    )?;
-
-                Ok((
-                    TransactionBundle {
-                        puzzle: Puzzle::from_nodeptr(curried_unroll_puzzle),
-                        solution: unroll_puzzle_solution,
-                        signature: Aggsig::default(),
-                    },
-                    true,
-                ))
-            } else if state_number == self.current_state_number {
-                // Different timeout, construct the conditions based on the current
-                // state.  (different because we're not using the conditions we
-                // have cached).
-                let (conditions, _) = self.create_conditions_and_signature_of_channel_coin(
+        } else if state_number == self.unroll_state_number {
+            // Timeout
+            let (curried_unroll_puzzle, unroll_puzzle_solution) = self
+                .make_unroll_puzzle_solution(
                     env,
-                    self.current_state_number,
+                    self.default_conditions_for_unroll_coin_spend.to_nodeptr(),
                 )?;
-                let (curried_unroll_puzzle, unroll_puzzle_solution) =
-                    self.make_unroll_puzzle_solution(env, conditions)?;
 
-                Ok((
-                    TransactionBundle {
-                        puzzle: Puzzle::from_nodeptr(curried_unroll_puzzle),
-                        solution: unroll_puzzle_solution,
-                        signature: Aggsig::default(),
-                    },
-                    true,
-                ))
-            } else {
-                return Err(Error::StrErr(format!(
-                    "Unhandled relationship between state numbers {state_number} {}",
-                    self.unroll_state_number
-                )));
-            }
+            Ok((
+                TransactionBundle {
+                    puzzle: Puzzle::from_nodeptr(curried_unroll_puzzle),
+                    solution: unroll_puzzle_solution,
+                    signature: Aggsig::default(),
+                },
+                true,
+            ))
+        } else if state_number == self.current_state_number {
+            // Different timeout, construct the conditions based on the current
+            // state.  (different because we're not using the conditions we
+            // have cached).
+            let (conditions, _) = self.create_conditions_and_signature_of_channel_coin(
+                env,
+                self.current_state_number,
+            )?;
+            let (curried_unroll_puzzle, unroll_puzzle_solution) =
+                self.make_unroll_puzzle_solution(env, conditions)?;
+
+            Ok((
+                TransactionBundle {
+                    puzzle: Puzzle::from_nodeptr(curried_unroll_puzzle),
+                    solution: unroll_puzzle_solution,
+                    signature: Aggsig::default(),
+                },
+                true,
+            ))
+        } else {
+            Err(Error::StrErr(format!(
+                "Unhandled relationship between state numbers {state_number} {}",
+                self.unroll_state_number
+            )))
         }
     }
 
@@ -1221,7 +1219,7 @@ impl ChannelHandler {
             Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
                 ids,
                 our_contrib,
-                their_contrib,
+                _their_contrib,
             )) => {
                 // Add amount contributed to vanilla balance
                 // Skip game when generating result.
@@ -1307,9 +1305,9 @@ impl ChannelHandler {
 
     pub fn get_new_game_coins_on_chain<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        _env: &mut ChannelHandlerEnv<R>,
         unroll_coin: Option<&CoinID>,
-        skip_game: Option<&GameID>,
+        skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
     ) -> Vec<OnChainGameCoin> {
         // It's ok to not have a proper coin id here when we only want
@@ -1318,7 +1316,7 @@ impl ChannelHandler {
 
         self.live_games
             .iter()
-            .filter(|game| skip_game != Some(&game.game_id))
+            .filter(|game| !skip_game.contains(&game.game_id))
             .map(|game| {
                 let coin = if skip_coin_id == Some(&game.game_id) {
                     None
@@ -1385,13 +1383,6 @@ impl ChannelHandler {
             return Err(Error::StrErr("Unconvertible state number".to_string()));
         };
 
-        let our_parity = self.unroll_state_number & 1;
-        let their_parity = state_number & 1;
-
-        let mut skip_game = None;
-        let mut skip_coin_id = None;
-        let mut contributed_adjustment = Amount::default();
-
         let disposition =
             self.get_cached_disposition_for_spent_result(env, unroll_coin, state_number)?;
 
@@ -1399,8 +1390,8 @@ impl ChannelHandler {
         let new_game_coins_on_chain = self.get_new_game_coins_on_chain(
             env,
             Some(&unroll_coin.to_coin_id()),
-            skip_game.as_ref(),
-            skip_coin_id.as_ref(),
+            &disposition.as_ref().map(|d| d.skip_game.clone()).unwrap_or_default(),
+            disposition.as_ref().and_then(|d| d.skip_coin_id.as_ref()),
         );
 
         // coin with = parent is the unroll coin id and whose puzzle hash is ref and amount is my vanilla amount.
