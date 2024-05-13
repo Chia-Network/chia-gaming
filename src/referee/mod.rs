@@ -22,14 +22,19 @@ use crate::common::types::{
 
 pub const REM_CONDITION_FIELDS: usize = 4;
 
+#[derive(Debug, Clone)]
 pub struct RefereeMakerMoveResult {
     pub puzzle_hash_for_unroll: PuzzleHash,
     pub move_made: Vec<u8>,
+    /// sha256 of the concatenation of two hashes:
+    /// 1 - The next game handler program
+    /// 2 - The game state.
     pub validation_info_hash: Hash,
     pub max_move_size: usize,
     pub mover_share: Amount,
 }
 
+#[derive(Debug, Clone)]
 pub struct TheirTurnMoveResult {
     pub puzzle_hash_for_unroll: PuzzleHash,
     pub readable_move: NodePtr,

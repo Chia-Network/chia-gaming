@@ -22,11 +22,15 @@ fn make_debug_game_handler(allocator: &mut AllocEncoder, amount: &Amount) -> Gam
     let curried_game_handler = CurriedProgram {
         program: debug_game_handler.clone(),
         args: clvm_curried_args!(
-            game_handler_mod_hash,
-            debug_game_handler,
-            amount.clone(),
-            true,
-            ((), (aggsig, ())) // slash info
+            (game_handler_mod_hash,
+             (debug_game_handler,
+              (amount.clone(),
+               (true,
+                (((), (aggsig, ())), ()) // slash info
+               )
+              )
+             )
+            )
         ),
     };
     GameHandler::my_driver_from_nodeptr(
@@ -70,6 +74,7 @@ fn test_referee_smoke() {
         1,
     )
     .expect("should construct");
+    referee.enable_debug_run(true);
     let readable_move = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
     let my_move_result = referee
         .my_turn_make_move(
@@ -87,6 +92,7 @@ fn test_referee_smoke() {
         100,
         &Amount::default(),
     );
+    eprintln!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
         assert!(s.contains("slash"));
         assert!(s.contains("off chain"));

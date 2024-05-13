@@ -148,6 +148,7 @@ fn run_code(
         .map(|r| r.1)
 }
 
+#[derive(Debug, Clone)]
 pub enum TheirTurnResult {
     MakeMove(GameHandler, NodePtr, Vec<u8>),
     Slash(NodePtr, Aggsig),
