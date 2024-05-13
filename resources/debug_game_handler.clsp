@@ -1,9 +1,35 @@
 ;; Debug game handler
+;;
+;; The validation info hash result is the sha256 of the concatenation of two
+;; hashes.
+;;
+;; 1 - A program which aborts if the move is a cheat.
+;; 2 - The sha256tree of the program state.
+;;
+;; In the debug game, the whole state is described by the readable move data.
+
+;; Curried = MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO
+
 (include *standard-cl-23*)
 
 (import std.curry)
 (import std.map)
 (import std.shatree)
+
+(defun-inline curried_mod_hash (CURRIED) (f CURRIED))
+(defun-inline curried_puzzle (CURRIED) (f (r CURRIED)))
+(defun-inline curried_amount (CURRIED) (f (r (r CURRIED))))
+(defun-inline curried_my_turn (CURRIED) (f (r (r (r CURRIED)))))
+(defun-inline curried_slash_info (CURRIED) (f (r (r (r (r CURRIED))))))
+(defun-inline curried_other_turn (CURRIED)
+  (list
+    (curried_mod_hash CURRIED)
+    (curried_puzzle CURRIED)
+    (curried_amount CURRIED)
+    (not (curried_my_turn CURRIED))
+    (curried_slash_info CURRIED)
+    )
+  )
 
 (defun get-validation-move
     (MOVER_PUZZLE_HASH
@@ -27,7 +53,7 @@
 
 (defun validation_program (validation-data)
   (assign
-   cheated (substr (get-validation-move validation-data) 0 1)
+   cheated (logand (get-validation-move validation-data) 1)
    (if cheated
        (x "validation program cheating" validation-data)
        ()
@@ -35,36 +61,55 @@
    )
   )
 
-(defun do_my_turn (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO readable_new_move amount state entropy)
+(defun do_my_turn (CURRIED readable_new_move amount state entropy)
   (assign
 
+   ;; Readable move is a clvm structure that describes the move
+   ;; uncompressed.
    (set_share . set_cheated) readable_new_move
 
-   new_validation_program_hash (shatree state "this is not right") ;; XXX just anything
+   ;; Validation info
+   validation_info readable_new_move
+
+   state_hash (shatree state)
+   other_turn (curried_other_turn CURRIED)
+
+   program-hash
+     (curry_unhashed_args
+        (curried_mod_hash other_turn)
+        other_turn
+        )
+
+   new_state
+     (logior (logand 1 set_cheated) (ash set_share 1))
+
+   new_validation_program_hash
+     (sha256 program-hash (shatree new_state))
 
    (list
-    (logior (logand 1 set_cheated) (ash set_share 1))
+    new_state
     validation_program
     new_validation_program_hash
     (c set_share set_cheated)
     100
     set_share
-    (curry PUZZLE MOD_HASH PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
+    (curry (curried_puzzle CURRIED) other_turn)
     ()
     )
    )
   )
 
-(defun do_their_turn (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO amount last_state new_move new_validation_info_hash new_max_move_size new_mover_share)
+(defun do_their_turn (CURRIED amount last_state new_move new_validation_info_hash new_max_move_size new_mover_share)
   (assign
    set_cheated (logand new_move 1)
+   other_turn (curried_other_turn CURRIED)
 
    (if set_cheated
-       (c 2 SLASH_INFO)
+       (c 2 (curried_slash_info CURRIED))
        (list
         0
         (c set_cheated (get-move-share new_move)) ;; readable move
-        (curry PUZZLE MOD_HASH PUZZLE AMOUNT (not MY_TURN) SLASH_INFO)
+        (curry (curried_puzzle CURRIED) other_turn)
         "message data"
         )
        )
@@ -72,9 +117,9 @@
   )
 
 (export
- (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO . args)
- (if MY_TURN
-     (do_my_turn MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO &rest args)
-     (do_their_turn MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO &rest args)
+ (CURRIED . args)
+ (if (curried_my_turn CURRIED)
+     (do_my_turn CURRIED &rest args)
+     (do_their_turn CURRIED &rest args)
      )
  )
