@@ -77,7 +77,7 @@ impl ReadableMove {
 impl ToClvm<NodePtr> for ReadableMove {
     fn to_clvm(
         &self,
-        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+        _encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
     }

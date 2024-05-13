@@ -466,8 +466,8 @@ pub struct RefereeID(usize);
 /// Error type
 #[derive(Debug)]
 pub enum Error {
-    ClvmError(EvalErr),
-    IoError(io::Error),
+    ClvmErr(EvalErr),
+    IoErr(io::Error),
     BasicError,
     SyntaxErr(SyntaxErr),
     EncodeErr(ToClvmError),
@@ -635,7 +635,7 @@ pub trait ErrToError {
 
 impl ErrToError for EvalErr {
     fn into_gen(self) -> Error {
-        Error::ClvmError(self)
+        Error::ClvmErr(self)
     }
 }
 
@@ -654,7 +654,7 @@ impl ErrToError for SyntaxErr {
 
 impl ErrToError for io::Error {
     fn into_gen(self) -> Error {
-        Error::IoError(self)
+        Error::IoErr(self)
     }
 }
 
@@ -711,37 +711,35 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
         }
         PublicKey::from_bytes(fixed)
     };
-    if exploded.len() > 2 {
-        if matches!(
-            (
-                allocator.allocator().sexp(exploded[0]),
-                allocator.allocator().sexp(exploded[1]),
-                allocator.allocator().sexp(exploded[2])
-            ),
-            (SExp::Atom, SExp::Atom, SExp::Atom)
-        ) {
-            let atoms: Vec<Vec<u8>> = exploded
-                .iter()
-                .take(3)
-                .map(|a| allocator.allocator().atom(*a).to_vec())
-                .collect();
-            if *atoms[0] == AGG_SIG_UNSAFE_ATOM {
-                if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
-                    return Some(CoinCondition::AggSigUnsafe(pk, atoms[2].to_vec()));
-                }
-            } else if *atoms[0] == AGG_SIG_ME_ATOM {
-                if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
-                    return Some(CoinCondition::AggSigMe(pk, atoms[2].to_vec()));
-                }
-            } else if *atoms[0] == CREATE_COIN_ATOM {
-                return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(
-                    Hash::from_slice(&atoms[1]),
-                )));
-            } else if *atoms[0] == REM_ATOM {
-                return Some(CoinCondition::Rem(
-                    atoms.iter().map(|a| a.to_vec()).collect(),
-                ));
+    if exploded.len() > 2 && matches!(
+        (
+            allocator.allocator().sexp(exploded[0]),
+            allocator.allocator().sexp(exploded[1]),
+            allocator.allocator().sexp(exploded[2])
+        ),
+        (SExp::Atom, SExp::Atom, SExp::Atom)
+    ) {
+        let atoms: Vec<Vec<u8>> = exploded
+            .iter()
+            .take(3)
+            .map(|a| allocator.allocator().atom(*a).to_vec())
+            .collect();
+        if *atoms[0] == AGG_SIG_UNSAFE_ATOM {
+            if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
+                return Some(CoinCondition::AggSigUnsafe(pk, atoms[2].to_vec()));
             }
+        } else if *atoms[0] == AGG_SIG_ME_ATOM {
+            if let Ok(pk) = public_key_from_bytes(&atoms[1]) {
+                return Some(CoinCondition::AggSigMe(pk, atoms[2].to_vec()));
+            }
+        } else if *atoms[0] == CREATE_COIN_ATOM {
+            return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(
+                Hash::from_slice(&atoms[1]),
+            )));
+            } else if *atoms[0] == REM_ATOM {
+            return Some(CoinCondition::Rem(
+                atoms.iter().map(|a| a.to_vec()).collect(),
+            ));
         }
     }
 

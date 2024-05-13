@@ -141,7 +141,7 @@ fn run_code(
     allocator: &mut AllocEncoder,
     code: NodePtr,
     env: NodePtr,
-    debug: bool,
+    _debug: bool,
 ) -> Result<NodePtr, Error> {
     run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
         .into_gen()
@@ -269,7 +269,7 @@ impl GameHandler {
 
         Ok(MyTurnResult {
             waiting_driver: GameHandler::their_driver_from_nodeptr(pl[6]),
-            move_data: move_data,
+            move_data,
             validation_program: pl[1],
             validation_program_hash,
             state: pl[3],
@@ -378,8 +378,8 @@ impl MessageHandler {
     }
     pub fn run(
         &self,
-        allocator: &mut AllocEncoder,
-        inputs: &MessageInputs,
+        _allocator: &mut AllocEncoder,
+        _inputs: &MessageInputs,
     ) -> Result<ReadableUX, Error> {
         todo!();
     }

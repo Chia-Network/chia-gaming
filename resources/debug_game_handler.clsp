@@ -41,8 +41,6 @@
    )
   )
 
-(defun one-or-zero (X) (i X X 0x00))
-
 (defun do_my_turn (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO readable_new_move amount state entropy)
   (assign
 
@@ -51,7 +49,7 @@
    new_validation_program_hash (shatree state "this is not right") ;; XXX just anything
 
    (list
-    (concat (one-or-zero set_cheated) set_share)
+    (logior (logand 1 set_cheated) (ash set_share 1))
     validation_program
     new_validation_program_hash
     (c set_share set_cheated)
@@ -65,7 +63,7 @@
 
 (defun do_their_turn (MOD_HASH PUZZLE AMOUNT MY_TURN SLASH_INFO amount last_state new_move new_validation_info_hash new_max_move_size new_mover_share)
   (assign
-   set_cheated (+ (substr new_move 0 1))
+   set_cheated (logand new_move 1)
 
    (if set_cheated
        (c 2 SLASH_INFO)
