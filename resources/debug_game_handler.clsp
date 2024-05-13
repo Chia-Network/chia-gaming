@@ -22,13 +22,7 @@
   )
 
 (defun get-move-share (new-move)
-  (assign
-    len (strlen new-move)
-    (if (> len 1)
-      (substr new-move 1 (strlen new-move))
-      ()
-      )
-    )
+  (ash new_move -1)
   )
 
 (defun validation_program (validation-data)
