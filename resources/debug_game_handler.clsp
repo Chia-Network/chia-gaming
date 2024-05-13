@@ -22,7 +22,7 @@
   )
 
 (defun get-move-share (new-move)
-  (ash new_move -1)
+  (ash new-move -1)
   )
 
 (defun validation_program (validation-data)
