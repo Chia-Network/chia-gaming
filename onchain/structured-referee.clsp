@@ -1,3 +1,6 @@
+;;; This program should be the same as referee.clsp semantically but it's expressed
+;;; in what is hopefully a more readable style.
+
 (include *standard-cl-23*)
 (import std.assert)
 (import std.curry)
