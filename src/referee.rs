@@ -23,7 +23,7 @@ use crate::common::types::{
 pub const REM_CONDITION_FIELDS: usize = 4;
 
 #[derive(Debug, Clone)]
-pub struct RefereeMakerMoveResult {
+pub struct MyMoveWireData {
     pub puzzle_hash_for_unroll: PuzzleHash,
     pub move_made: Vec<u8>,
     /// sha256 of the concatenation of two hashes:
@@ -284,7 +284,7 @@ impl RefereeMaker {
         rng: &mut R,
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
-    ) -> Result<RefereeMakerMoveResult, Error> {
+    ) -> Result<MyMoveWireData, Error> {
         let new_entropy: Hash = rng.gen();
         let game_handler = {
             let current_state = self.current_state();
@@ -374,7 +374,7 @@ impl RefereeMaker {
         ])
         .hash();
 
-        Ok(RefereeMakerMoveResult {
+        Ok(MyMoveWireData {
             puzzle_hash_for_unroll: new_curried_referee_puzzle_hash,
             move_made: result.move_data.clone(),
             validation_info_hash,
