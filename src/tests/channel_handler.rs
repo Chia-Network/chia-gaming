@@ -4,7 +4,7 @@ use rand_chacha::ChaCha8Rng;
 use clvm_traits::ToClvm;
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::handler::ChannelHandler;
+use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, GameStartInfo,
