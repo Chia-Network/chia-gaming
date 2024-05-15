@@ -51,7 +51,7 @@
   (ash new-move -1)
   )
 
-(defun validation_program (validation-data)
+(defun validation_program (CURRIED validation-data)
   (assign
    cheated (logand (get-validation-move validation-data) 1)
    (if cheated
@@ -118,8 +118,16 @@
 
 (export
  (CURRIED . args)
- (if (curried_my_turn CURRIED)
-     (do_my_turn CURRIED &rest args)
-     (do_their_turn CURRIED &rest args)
-     )
+ (if
+  ;; Validation personality
+  (if (not (l (f args))) (= 1337 (f args)) ())
+  (validation_program CURRIED &rest (r args))
+
+  ;; My turn personality
+  (curried_my_turn CURRIED)
+  (do_my_turn CURRIED &rest args)
+
+  ;; Their turn personality
+  (do_their_turn CURRIED &rest args)
+  )
  )
