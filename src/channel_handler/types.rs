@@ -10,7 +10,7 @@ use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, PrivateKey,
     PublicKey, Puzzle, PuzzleHash, Sha256tree, SpecificTransactionBundle, Timeout,
 };
-use crate::referee::RefereeMaker;
+use crate::referee::{GameMoveDetails, RefereeMaker};
 
 #[derive(Default)]
 pub struct ChannelHandlerPrivateKeys {
@@ -88,10 +88,7 @@ pub struct ReadableUX(NodePtr);
 
 pub struct MoveResult {
     pub signatures: PotatoSignatures,
-    pub move_peer: Vec<u8>,
-    pub validation_info_hash_peer: Hash,
-    pub max_move_size_peer: usize,
-    pub mover_share_peer: Amount,
+    pub game_move: GameMoveDetails,
 }
 
 pub struct OnChainGameCoin<'a> {

@@ -5,6 +5,7 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::game_handler::{MyTurnInputs, TheirTurnInputs, TheirTurnResult};
 use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{Aggsig, AllocEncoder, Amount, Hash};
+use crate::referee::GameMoveDetails;
 
 #[test]
 fn test_game_handler_their_move_slash() {
@@ -33,10 +34,12 @@ fn test_game_handler_their_move_slash() {
                 last_state: nil,
                 last_move: &[],
                 last_mover_share: Amount::default(),
-                new_move: &[],
-                new_validation_info_hash: Hash::default(),
-                new_max_move_size: 0,
-                new_mover_share: Amount::default(),
+                new_move: GameMoveDetails {
+                    move_made: vec![],
+                    validation_info_hash: Hash::default(),
+                    max_move_size: 0,
+                    mover_share: Amount::default(),
+                },
                 #[cfg(test)]
                 run_debug: true,
             },
@@ -70,10 +73,12 @@ fn test_game_handler_their_make_move() {
                 last_state: nil,
                 last_move: &[],
                 last_mover_share: Amount::default(),
-                new_move: &[],
-                new_validation_info_hash: Hash::default(),
-                new_max_move_size: 0,
-                new_mover_share: Amount::default(),
+                new_move: GameMoveDetails {
+                    move_made: vec![],
+                    validation_info_hash: Hash::default(),
+                    max_move_size: 0,
+                    mover_share: Amount::default(),
+                },
                 #[cfg(test)]
                 run_debug: true,
             },
@@ -122,6 +127,6 @@ fn test_game_handler_my_turn() {
         ),
         "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000)"
     );
-    assert_eq!(result.move_data, &[1]);
+    assert_eq!(result.game_move.move_made, &[1]);
     assert_eq!(disassemble(allocator.allocator(), result.state, None), "4");
 }
