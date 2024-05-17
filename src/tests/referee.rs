@@ -22,7 +22,12 @@ struct DebugGamePrograms {
     their_turn_handler: GameHandler,
 }
 
-fn make_debug_game_handler(allocator: &mut AllocEncoder, amount: &Amount) -> DebugGamePrograms {
+fn make_debug_game_handler(
+    allocator: &mut AllocEncoder,
+    identity: &ChiaIdentity,
+    amount: &Amount,
+    timeout: &Timeout
+) -> DebugGamePrograms {
     let debug_game_handler =
         read_hex_puzzle(allocator, "resources/debug_game_handler.hex").expect("should be readable");
     let game_handler_mod_hash = debug_game_handler.sha256tree(allocator);
@@ -33,9 +38,13 @@ fn make_debug_game_handler(allocator: &mut AllocEncoder, amount: &Amount) -> Deb
             args: clvm_curried_args!(
                 (game_handler_mod_hash.clone(),
                  (debug_game_handler.clone(),
-                  (amount.clone(),
-                   (my_turn,
-                    (((), (aggsig, ())), ()) // slash info
+                  (timeout.clone(),
+                   (amount.clone(),
+                    (my_turn,
+                     (((), (aggsig, ())),
+                      (identity.puzzle_hash.clone(), ()) // slash info
+                     )
+                    )
                    )
                   )
                  )
@@ -90,8 +99,14 @@ fn test_referee_smoke() {
     let their_identity = ChiaIdentity::new(&mut allocator, their_private_key).expect("should generate");
 
     let amount = Amount::new(100);
+    let timeout = Timeout::new(1000);
 
-    let debug_game = make_debug_game_handler(&mut allocator, &amount);
+    let debug_game = make_debug_game_handler(
+        &mut allocator,
+        &my_identity,
+        &amount,
+        &timeout
+    );
     let init_state =
         assemble(
             allocator.allocator(),
@@ -106,12 +121,12 @@ fn test_referee_smoke() {
         game_id: GameID::from_bytes(b"test"),
         amount: amount.clone(),
         game_handler: debug_game.my_turn_handler,
-        timeout: Timeout::new(1000),
+        timeout: timeout.clone(),
         is_my_turn: true,
         initial_validation_puzzle: debug_game.my_validation_program,
         initial_validation_puzzle_hash: my_validation_program_hash,
         initial_state: init_state,
-        initial_move: vec![0, 0],
+        initial_move: vec![],
         initial_max_move_size: 0,
         initial_mover_share: Amount::default(),
     };
@@ -189,28 +204,25 @@ fn test_referee_smoke() {
 
     let mover_puzzle = my_identity.puzzle.clone();
 
-    /// The referee checks whether the coin we spend to is the puzzle hash of
-    /// the updated and fully curried on chain referee coin.  We compute it here
-    /// so that we can ensure that part passes.
-    // let target_referee_puzzle_hash =
-    //     their_referee.curry_referee_puzzle(
+    let validator_move_args = ValidatorMoveArgs {
+        game_move: my_move_wire_data.details.clone(),
+        mover_puzzle: my_identity.puzzle.to_program(),
+        solution: my_identity.standard_solution(
+            &mut allocator,
+            &[(my_identity.puzzle_hash.clone(), Amount::default())]
+        ).expect("should create")
+    };
 
-    // let validator_move_args = ValidatorMoveArgs {
-    //     new_move: &my_move_wire_data.move_made,
-    //     new_validation_info_hash: my_move_wire_data.validation_info_hash.clone(),
-    //     new_mover_share: my_move_wire_data.mover_share.clone(),
-    //     new_max_move_size: my_move_wire_data.max_move_size,
-    //     mover_puzzle: my_identity.puzzle.to_program(),
-    //     solution: my_identity.standard_solution(
-    //         allocator,
-    //         &[(my_identity.
-    // };
+    let validator_result = their_referee.run_validator_for_their_move(
+        &mut allocator,
+        &validator_move_args
+    ).expect("should run");
 
     assert!(!referee.is_my_turn);
     let their_move_result = referee
         .their_turn_move_off_chain(
             &mut allocator,
-            &my_move_wire_data.details
+            &my_move_wire_data.details,
         )
         .expect("should run");
     assert_eq!(their_move_result.message, b"message data");
