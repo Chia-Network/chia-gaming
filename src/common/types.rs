@@ -571,6 +571,9 @@ impl ToClvm<NodePtr> for Puzzle {
 }
 
 impl Puzzle {
+    pub fn to_program(&self) -> Program {
+        self.0.clone()
+    }
     pub fn to_nodeptr(&self) -> NodePtr {
         self.0.to_nodeptr()
     }

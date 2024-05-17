@@ -18,7 +18,7 @@ use crate::channel_handler::types::{
 };
 use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::standard_coin::{
-    agg_sig_me_message, aggregate_public_keys, partial_signer, private_to_public_key,
+    ChiaIdentity, agg_sig_me_message, aggregate_public_keys, partial_signer, private_to_public_key,
     puzzle_for_pk, puzzle_hash_for_pk, sign_agg_sig_me, standard_solution,
     standard_solution_partial, unsafe_sign_partial,
 };
@@ -704,13 +704,16 @@ impl ChannelHandler {
             let new_game_nonce = self.next_nonce_number;
             self.next_nonce_number += 1;
 
+            let referee_identity = ChiaIdentity::new(
+                &mut env.allocator,
+                self.private_keys.my_referee_private_key.clone()
+            )?;
             self.live_games.push(LiveGame {
                 game_id: g.game_id.clone(),
                 referee_maker: Box::new(RefereeMaker::new(
-                    env.allocator,
                     env.referee_coin_puzzle_hash.clone(),
                     g,
-                    &self.private_keys.my_referee_private_key,
+                    referee_identity,
                     &self.their_referee_puzzle_hash,
                     new_game_nonce,
                 )?),
@@ -788,7 +791,7 @@ impl ChannelHandler {
             referee_maker.my_turn_make_move(env.rng, env.allocator, readable_move)?;
 
         let puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
-        let amount = referee_result.mover_share.clone();
+        let amount = referee_result.details.mover_share.clone();
 
         self.have_potato = false;
         self.current_state_number += 1;
@@ -805,10 +808,7 @@ impl ChannelHandler {
 
         Ok(MoveResult {
             signatures,
-            validation_info_hash_peer: referee_result.validation_info_hash.clone(),
-            move_peer: referee_result.move_made.clone(),
-            mover_share_peer: referee_result.mover_share.clone(),
-            max_move_size_peer: referee_result.max_move_size,
+            game_move: referee_result.details.clone()
         })
     }
 
@@ -823,10 +823,7 @@ impl ChannelHandler {
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
         let their_move_result = referee_maker.their_turn_move_off_chain(
             env.allocator,
-            &move_result.move_peer,
-            &move_result.validation_info_hash_peer,
-            move_result.max_move_size_peer,
-            &move_result.mover_share_peer,
+            &move_result.game_move
         )?;
 
         self.received_potato_verify_signatures(

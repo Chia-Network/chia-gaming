@@ -23,6 +23,7 @@ use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
     IntoErr, Node,
 };
+use crate::referee::GameMoveDetails;
 
 pub fn chia_dialect() -> ChiaDialect {
     ChiaDialect::new(NO_UNKNOWN_OPS)
@@ -70,24 +71,23 @@ fn get_my_turn_debug_flag(_: &MyTurnInputs) -> bool {
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub waiting_driver: GameHandler,
-    pub move_data: Vec<u8>,
     pub validation_program: NodePtr,
-    pub validation_program_hash: Hash,
     pub state: NodePtr,
-    pub max_move_size: usize,
-    pub mover_share: Amount,
+    pub game_move: GameMoveDetails,
     pub message_parser: Option<MessageHandler>,
 }
 
 pub struct TheirTurnInputs<'a> {
     pub amount: Amount,
     pub last_state: NodePtr,
+
+    /// Only needs a couple things from last move.
     pub last_move: &'a [u8],
     pub last_mover_share: Amount,
-    pub new_move: &'a [u8],
-    pub new_validation_info_hash: Hash,
-    pub new_max_move_size: usize,
-    pub new_mover_share: Amount,
+
+    /// New move is a full move details.
+    pub new_move: GameMoveDetails,
+
     #[cfg(test)]
     pub run_debug: bool,
 }
@@ -270,12 +270,14 @@ impl GameHandler {
 
         Ok(MyTurnResult {
             waiting_driver: GameHandler::their_driver_from_nodeptr(pl[6]),
-            move_data,
             validation_program: pl[1],
-            validation_program_hash,
             state: pl[3],
-            max_move_size,
-            mover_share,
+            game_move: GameMoveDetails {
+                move_made: move_data,
+                validation_info_hash: validation_program_hash,
+                max_move_size,
+                mover_share,
+            },
             message_parser,
         })
     }
@@ -290,12 +292,12 @@ impl GameHandler {
             (
                 Node(inputs.last_state.clone()),
                 (
-                    Node(allocator.encode_atom(inputs.new_move).into_gen()?),
+                    Node(allocator.encode_atom(&inputs.new_move.move_made).into_gen()?),
                     (
-                        inputs.new_validation_info_hash.clone(),
+                        inputs.new_move.validation_info_hash.clone(),
                         (
-                            inputs.new_max_move_size.clone(),
-                            (inputs.new_mover_share.clone(), ()),
+                            inputs.new_move.max_move_size.clone(),
+                            (inputs.new_move.mover_share.clone(), ()),
                         ),
                     ),
                 ),

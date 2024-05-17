@@ -1,9 +1,9 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyNone, PyTuple};
+use pyo3::types::PyNone;
 
 use indoc::indoc;
 
-use crate::common::types::{ErrToError, Error, IntoErr};
+use crate::common::types::{ErrToError, Error};
 
 // Allow simulator from rust.
 struct Simulator {

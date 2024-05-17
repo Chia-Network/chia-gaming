@@ -9,11 +9,11 @@ use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{GameStartInfo, ReadableMove};
-use crate::common::standard_coin::{private_to_public_key, read_hex_puzzle, puzzle_hash_for_pk};
+use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::referee::RefereeMaker;
+use crate::referee::{RefereeMaker, ValidatorMoveArgs, GameMoveDetails};
 
 struct DebugGamePrograms {
     my_validation_program: NodePtr,
@@ -84,12 +84,10 @@ fn test_referee_smoke() {
 
     // Generate keys and puzzle hashes.
     let my_private_key: PrivateKey = rng.gen();
-    let my_public_key = private_to_public_key(&my_private_key);
-    let my_puzzle_hash = puzzle_hash_for_pk(&mut allocator, &my_public_key).expect("should have");
+    let my_identity = ChiaIdentity::new(&mut allocator, my_private_key).expect("should generate");
 
     let their_private_key: PrivateKey = rng.gen();
-    let their_public_key = private_to_public_key(&their_private_key);
-    let their_puzzle_hash: PuzzleHash = puzzle_hash_for_pk(&mut allocator, &their_public_key).expect("should have");
+    let their_identity = ChiaIdentity::new(&mut allocator, their_private_key).expect("should generate");
 
     let amount = Amount::new(100);
 
@@ -119,11 +117,10 @@ fn test_referee_smoke() {
     };
 
     let mut referee = RefereeMaker::new(
-        &mut allocator,
         referee_coin_puzzle_hash.clone(),
         &my_game_start_info,
-        &my_private_key,
-        &their_puzzle_hash,
+        my_identity.clone(),
+        &their_identity.puzzle_hash,
         1,
     )
     .expect("should construct");
@@ -146,11 +143,10 @@ fn test_referee_smoke() {
     };
 
     let mut their_referee = RefereeMaker::new(
-        &mut allocator,
         referee_coin_puzzle_hash,
         &their_game_start_info,
-        &their_private_key,
-        &my_puzzle_hash,
+        their_identity,
+        &my_identity.puzzle_hash,
         1,
     )
         .expect("should construct");
@@ -165,14 +161,16 @@ fn test_referee_smoke() {
         )
         .expect("should move");
 
-    assert!(my_move_wire_data.move_made.is_empty());
+    assert!(my_move_wire_data.details.move_made.is_empty());
     let mut off_chain_slash_gives_error = referee.clone();
     let their_move_result = off_chain_slash_gives_error.their_turn_move_off_chain(
         &mut allocator,
-        &[1],
-        &my_move_wire_data.validation_info_hash,
-        100,
-        &Amount::default(),
+        &GameMoveDetails {
+            move_made: vec![1],
+            validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
+            max_move_size: 100,
+            mover_share: Amount::default(),
+        },
     );
     eprintln!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
@@ -182,24 +180,37 @@ fn test_referee_smoke() {
         assert!(false);
     }
 
-    let their_move_wire_data = their_referee.their_turn_move_off_chain(
+    let their_move_local_update = their_referee.their_turn_move_off_chain(
         &mut allocator,
-        &my_move_wire_data.move_made,
-        &my_move_wire_data.validation_info_hash,
-        my_move_wire_data.max_move_size,
-        &my_move_wire_data.mover_share
+        &my_move_wire_data.details,
     ).expect("should move");
 
-    eprintln!("their_move_wire_data {their_move_wire_data:?}");
+    eprintln!("their_move_wire_data {their_move_local_update:?}");
+
+    let mover_puzzle = my_identity.puzzle.clone();
+
+    /// The referee checks whether the coin we spend to is the puzzle hash of
+    /// the updated and fully curried on chain referee coin.  We compute it here
+    /// so that we can ensure that part passes.
+    // let target_referee_puzzle_hash =
+    //     their_referee.curry_referee_puzzle(
+
+    // let validator_move_args = ValidatorMoveArgs {
+    //     new_move: &my_move_wire_data.move_made,
+    //     new_validation_info_hash: my_move_wire_data.validation_info_hash.clone(),
+    //     new_mover_share: my_move_wire_data.mover_share.clone(),
+    //     new_max_move_size: my_move_wire_data.max_move_size,
+    //     mover_puzzle: my_identity.puzzle.to_program(),
+    //     solution: my_identity.standard_solution(
+    //         allocator,
+    //         &[(my_identity.
+    // };
 
     assert!(!referee.is_my_turn);
     let their_move_result = referee
         .their_turn_move_off_chain(
             &mut allocator,
-            &[],
-            &my_move_wire_data.validation_info_hash,
-            100,
-            &Amount::default(),
+            &my_move_wire_data.details
         )
         .expect("should run");
     assert_eq!(their_move_result.message, b"message data");

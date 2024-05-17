@@ -12,16 +12,17 @@ use clvm_tools_rs::classic::clvm::__type_compatibility__::{
     Bytes, Stream, UnvalidatedBytesFromType,
 };
 use clvm_tools_rs::classic::clvm::serialize::{sexp_from_stream, SimpleCreateCLVMObject};
+use clvm_tools_rs::compiler::comptypes::map_m;
 
 use clvm_utils::CurriedProgram;
 
 use crate::common::constants::{
     A_KW, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE, Q_KW,
-    Q_KW_TREEHASH, TWO,
+    Q_KW_TREEHASH, TWO, CREATE_COIN
 };
 use crate::common::types;
 use crate::common::types::{
-    Aggsig, AllocEncoder, CoinCondition, CoinID, Hash, IntoErr, Node, PrivateKey, Program,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, Hash, IntoErr, Node, PrivateKey, Program,
     PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, ToQuotedProgram,
 };
 
@@ -387,5 +388,41 @@ pub fn standard_solution_partial(
         Err(types::Error::StrErr(
             "Failed to get a signature from the spend".to_string(),
         ))
+    }
+}
+
+#[derive(Clone)]
+pub struct ChiaIdentity {
+    pub private_key: PrivateKey,
+    pub public_key: PublicKey,
+    pub puzzle: Puzzle,
+    pub puzzle_hash: PuzzleHash
+}
+
+impl ChiaIdentity {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        private_key: PrivateKey
+    ) -> Result<Self, types::Error> {
+        let public_key = private_to_public_key(&private_key);
+        Ok(ChiaIdentity {
+            private_key,
+            puzzle: puzzle_for_pk(allocator, &public_key)?,
+            puzzle_hash: puzzle_hash_for_pk(allocator, &public_key)?,
+            public_key,
+        })
+    }
+
+    pub fn standard_solution(
+        &self,
+        allocator: &mut AllocEncoder,
+        targets: &[(PuzzleHash, Amount)]
+    ) -> Result<NodePtr, types::Error> {
+        let conditions: Vec<Node> =
+            map_m(|(ph, amt)| {
+                Ok(Node((CREATE_COIN, (ph.clone(), (amt.clone(), ()))).to_clvm(allocator).into_gen()?))
+            }, targets)?;
+        let conditions_converted = conditions.to_clvm(allocator).into_gen()?;
+        solution_for_conditions(allocator, conditions_converted)
     }
 }
