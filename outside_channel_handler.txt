@@ -1,0 +1,56 @@
+
+Outer layer responsible for negotiating stakes, games
+
+Constructor(whether_we_initiated, reward_puzzle_hash, my_stake, their_stake)
+
+Peer
+<- send_message (message)
+-> received_message (message)
+
+Wallet/Full Node
+<- request_launch_transaction (channel_puzzle_hash, amount)
+-> here_is_launch_transaction (launcher_coin_string, transaction_bundle)
+<- add_funds_to_transaction (contribution, announcer_coin_string, announcement)
+-> remaining_transaction_bundle (transaction_bundle)
+<- spend transaction and add fee (transation_bundle)
+<- register_coin (coin_string)
+-> coin_created (coin_string)
+-> coin_spent (coin_string, conditions)
+
+UX
+-> start_games (whether_I_initiated, [id, game type, amount, parameters, first_turn_me])
+-> move (id, readable)
+-> fold (id)
+-> shut_down ()
+<- opponent_moved (id, readable)
+<- game_message (id, readable)
+<- game_finished (id, my_share)
+<- game_cancelled (id)
+<- going_on_chain ()
+<- done_shutting_down ()
+
+Generic
+<- channel_established ()
+-> go_on_chain ()
+
+
+Messages
+
+Handshake
+A: launcher_coin_id, public_keys
+B: public_keys, partial_initial_unroll_signature
+C: partial_initial_unroll_signature, partial_launch_transaction_bundle
+D: launch_seen
+D-: fully_signed_launch_transaction_bundle [no potato]
+
+Potato
+send_potato_nil: unroll_signatures
+send_potato_start_game: [id, game_state_info], unroll_signatures
+send_potato_move: id, move, unroll_signatures
+send_potato_accept: id, unroll_signatures
+game_message: id, message
+request_potato: nil [no potato]
+
+Shutdown
+shut_down: partially_signed_clean_shutdown_bundle
+ack_shutdown: fully_signed_clean_shutdown_bundle [no potato]
