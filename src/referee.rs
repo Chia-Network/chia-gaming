@@ -649,46 +649,46 @@ impl RefereeMaker {
         agg_sig_me_additional_data: &Hash,
     ) -> Result<(TransactionBundle, CoinString), Error> {
         let puzzle_reveal = {
-            let previous_args = {
-                let previous_state = self.previous_state();
-                let puzzle_hash = curry_referee_puzzle_hash(
-                    allocator,
-                    &self.referee_coin_puzzle_hash,
-                    &RefereePuzzleArgs {
-                        // XXX check polarity
-                        mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
-                        waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-                        timeout: self.timeout.clone(),
-                        amount: self.amount.clone(),
-                        referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
-                        game_move: previous_state.game_move.clone(),
-                        nonce: self.nonce,
-                        previous_validation_info_hash: previous_state
-                            .previous_validation_program_hash
-                            .clone(),
-                    },
-                )?;
-                let inner_conditions =
-                    // XXX puzzle_reveal
-                    (CREATE_COIN, (puzzle_hash.clone(), (self.amount.clone(), ()))).to_clvm(allocator).into_gen()?;
-                let (solution, sig) =
-                    standard_solution(allocator, &self.my_identity.private_key, inner_conditions)?;
-                let args_list: Vec<Node> = [
-                    previous_state.game_move.move_made.to_clvm(allocator).into_gen()?,
-                    previous_state
-                        .game_move.validation_info_hash
-                        .to_clvm(allocator)
-                        .into_gen()?,
-                    previous_state.game_move.mover_share.to_clvm(allocator).into_gen()?,
-                    previous_state.game_move.max_move_size.to_clvm(allocator).into_gen()?,
-                    puzzle_hash.to_clvm(allocator).into_gen()?,
-                    solution,
-                ]
+            let previous_state = self.previous_state();
+            let puzzle_hash = curry_referee_puzzle_hash(
+                allocator,
+                &self.referee_coin_puzzle_hash,
+                &RefereePuzzleArgs {
+                    // XXX check polarity
+                    mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
+                    waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+                    timeout: self.timeout.clone(),
+                    amount: self.amount.clone(),
+                    referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
+                    game_move: previous_state.game_move.clone(),
+                    nonce: self.nonce,
+                    previous_validation_info_hash: previous_state
+                        .previous_validation_program_hash
+                        .clone(),
+                },
+            )?;
+
+            let inner_conditions =
+            // XXX puzzle_reveal
+                (CREATE_COIN, (puzzle_hash.clone(), (self.amount.clone(), ()))).to_clvm(allocator).into_gen()?;
+            let (solution, sig) =
+                standard_solution(allocator, &self.my_identity.private_key, inner_conditions)?;
+            let args_list: Vec<Node> = [
+                previous_state.game_move.move_made.to_clvm(allocator).into_gen()?,
+                previous_state
+                    .game_move.validation_info_hash
+                    .to_clvm(allocator)
+                    .into_gen()?,
+                previous_state.game_move.mover_share.to_clvm(allocator).into_gen()?,
+                previous_state.game_move.max_move_size.to_clvm(allocator).into_gen()?,
+                puzzle_hash.to_clvm(allocator).into_gen()?,
+                solution,
+            ]
                 .into_iter()
                 .map(|n| Node(n))
                 .collect();
-                args_list.to_clvm(allocator).into_gen()?
-            };
+
+            let previous_args = args_list.to_clvm(allocator).into_gen()?;
 
             if let Some((bundle, cs_out)) = self.get_transaction(
                 allocator,
@@ -850,6 +850,7 @@ impl RefereeMaker {
             )
         };
 
+        // Retrieve evidence from their turn handler.
         let result = handler.call_their_turn_driver(
             allocator,
             &TheirTurnInputs {
@@ -868,6 +869,30 @@ impl RefereeMaker {
 
         match result {
             TheirTurnResult::MakeMove(handler, readable_move, message) => {
+                // Mover puzzle turns the given solution into coin conditions
+                // that pay the game's amount to us.  It checks whether the
+                // originally curried mover puzzle hash is the sha256tree of the
+                // mover puzzle.
+                //
+                // This referee expects the mover puzzle to be a standard-like
+                // puzzle or at least take standard coin arguments including the
+                // list of conditions it produces itself.
+                //
+                // In case this succeeds, we'll direct the result to our mover
+                // puzzle, which sets our identity for the game and is a value-
+                // holding coin spendable by us.
+
+                // let validator_move_args = ValidatorMoveArgs {
+                //     game_move: details.clone(),
+                //     mover_puzzle: self.identity.puzzle.clone(),
+                //     solution: 
+                // };
+
+                // let validator_result = self.run_validator_for_their_move(
+                //     allocator,
+                //     validator_move_args
+                // );
+
                 // XXX check for slashing.
                 self.update_for_their_turn_move(
                     allocator,
@@ -907,12 +932,31 @@ impl RefereeMaker {
         }
     }
 
-    fn target_puzzle_hash_for_slash(
+    // It me.
+    fn target_puzzle_hash_for_slash(&self) -> PuzzleHash {
+        self.my_identity.puzzle_hash.clone()
+    }
+
+    fn slashing_coin_solution(
         &self,
         allocator: &mut AllocEncoder,
-    ) -> Result<PuzzleHash, Error> {
-        let target_inner_puzzle = puzzle_for_pk(allocator, &self.my_identity.public_key)?;
-        puzzle_hash_for_pk(allocator, &self.my_identity.public_key)
+        state: NodePtr,
+        validation_program: Puzzle,
+        slash_solution: NodePtr,
+        coin_solution_after_slash: NodePtr
+    ) -> Result<NodePtr, Error> {
+        (
+            Node(state.clone()),
+            (
+                validation_program.clone(),
+                (
+                    self.target_puzzle_hash_for_slash(),
+                    (Node(slash_solution), (Node(coin_solution_after_slash), ())),
+                ),
+            ),
+        )
+            .to_clvm(allocator)
+            .into_gen()
     }
 
     fn make_slash_for_their_turn(
@@ -938,23 +982,19 @@ impl RefereeMaker {
                 current_state.validation_program.clone(),
             )
         };
+
         let reward_amount = self.amount.clone() - current_mover_share;
         if reward_amount == Amount::default() {
             return Ok(TheirTurnCoinSpentResult::Slash(SlashOutcome::NoReward));
         }
 
-        let slashing_coin_solution = (
-            Node(state.clone()),
-            (
-                Node(validation_program.clone()),
-                (
-                    self.target_puzzle_hash_for_slash(allocator)?,
-                    (Node(slash_solution), (Node(solution), ())),
-                ),
-            ),
-        )
-            .to_clvm(allocator)
-            .into_gen()?;
+        let slashing_coin_solution = self.slashing_coin_solution(
+            allocator,
+            state,
+            Puzzle::from_nodeptr(validation_program),
+            slash_solution,
+            solution
+        )?;
 
         let coin_string_of_output_coin =
             CoinString::from_parts(&coin_string.to_coin_id(), &new_puzzle_hash, &reward_amount);
@@ -1069,7 +1109,7 @@ impl RefereeMaker {
         let slash_conditions = (
             CREATE_COIN,
             (
-                self.target_puzzle_hash_for_slash(allocator)?,
+                self.target_puzzle_hash_for_slash(),
                 (self.amount.clone(), ()),
             ),
         )
