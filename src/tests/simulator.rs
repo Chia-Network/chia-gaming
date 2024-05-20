@@ -11,7 +11,7 @@ use indoc::indoc;
 
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution;
-use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder};
+use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle};
 use crate::common::standard_coin::ChiaIdentity;
 
 // Allow simulator from rust.
@@ -23,6 +23,9 @@ struct Simulator {
     make_spend: PyObject,
     chia_rs_coin: PyObject,
     program: PyObject,
+    spend_bundle: PyObject,
+    g2_element: PyObject,
+    coin_as_list: PyObject
 }
 
 #[cfg(test)]
@@ -53,14 +56,16 @@ impl Simulator {
                import asyncio
                import chia.clvm.spend_sim
                from chia.types.coin_spend import make_spend
-               from chia_rs import Coin
+               from chia_rs import Coin, G2Element
                from chia.types.blockchain_format.program import Program
+               from chia.types.spend_bundle import SpendBundle
+               from chia.types.blockchain_format.coin import coin_as_list
 
                def start():
                    evloop = asyncio.new_event_loop()
                    sac_gen = chia.clvm.spend_sim.sim_and_client()
                    (sim, client) = evloop.run_until_complete(sac_gen.__aenter__())
-                   return (evloop, sim, client, sac_gen, make_spend, Coin, Program)
+                   return (evloop, sim, client, sac_gen, make_spend, Coin, Program, SpendBundle, G2Element, coin_as_list)
             "},
                 "tmod.py",
                 "tmod",
@@ -74,6 +79,9 @@ impl Simulator {
                 make_spend: evloop.get_item(4)?.extract()?,
                 chia_rs_coin: evloop.get_item(5)?.extract()?,
                 program: evloop.get_item(6)?.extract()?,
+                spend_bundle: evloop.get_item(7)?.extract()?,
+                g2_element: evloop.get_item(8)?.extract()?,
+                coin_as_list: evloop.get_item(9)?.extract()?,
             })
         })
         .expect("should work")
@@ -88,17 +96,60 @@ impl Simulator {
         Ok(res.into())
     }
 
-    pub fn farm_block(&self, private_key: &PrivateKey) {
+    fn async_client<ArgT>(&self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
+    where
+        ArgT: IntoPy<Py<PyTuple>>
+    {
+        let task = self.client.call_method1(py, name, args)?;
+        let res = self.evloop.call_method1(py, "run_until_complete", (task,))?;
+        Ok(res.into())
+    }
+
+    pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
         Python::with_gil(|py| -> PyResult<_> {
-            let private_key_bytes = PyBytes::new(py, &private_key.bytes());
-            self.async_call(py, "farm_block", (private_key_bytes,))?;
+            let puzzle_hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
+            self.async_call(py, "farm_block", (puzzle_hash_bytes,))?;
             Ok(())
         })
         .expect("should farm");
     }
 
-    pub fn get_my_coins(&self) -> PyResult<Vec<CoinString>> {
-        todo!();
+    pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
+        Python::with_gil(|py| -> PyResult<_> {
+            let hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
+            let coins = self.async_client(
+                py,
+                "get_coin_records_by_puzzle_hash",
+                (hash_bytes, false)
+            )?;
+            let items: Vec<PyObject> = coins.extract(py)?;
+            eprintln!("num coins {}", items.len());
+            let mut result_coins = Vec::new();
+            for i in items.iter() {
+                let coin_of_item: PyObject = i.getattr(py, "coin")?.extract(py)?;
+                let as_list: Vec<PyObject> = self.coin_as_list.call1(py, (coin_of_item,))?.extract(py)?;
+                let parent_coin_info: &PyBytes = as_list[0].downcast(py)?;
+                let parent_coin_info_slice: &[u8] = parent_coin_info.extract()?;
+                let puzzle_hash: &PyBytes = as_list[1].downcast(py)?;
+                let puzzle_hash_slice: &[u8] = puzzle_hash.extract()?;
+                let amount: u64 = as_list[2].extract(py)?;
+                let parent_coin_hash = Hash::from_slice(parent_coin_info_slice);
+                let puzzle_hash = Hash::from_slice(puzzle_hash_slice);
+                result_coins.push(CoinString::from_parts(
+                    &CoinID::new(parent_coin_hash),
+                    &PuzzleHash::from_hash(puzzle_hash),
+                    &Amount::new(amount)
+                ));
+            }
+            Ok(result_coins)
+        })
+    }
+
+    pub fn g2_element(&self, aggsig: &Aggsig) -> PyResult<PyObject> {
+        Python::with_gil(|py| -> PyResult<_> {
+            let bytes = PyBytes::new(py, &aggsig.bytes());
+            self.g2_element.call_method1(py, "from_bytes_unchecked", (bytes,))
+        })
     }
 
     pub fn make_coin(&self, coin_string: &CoinString) -> PyResult<PyObject> {
@@ -145,8 +196,43 @@ impl Simulator {
         self.make_spend.call1(py, (coin, puzzle_program, solution_program))
     }
 
-    pub fn perform_spend(&self, tx: &[SpecificTransactionBundle]) -> PyResult<()> {
-        todo!();
+    pub fn make_spend_bundle(
+        &self,
+        allocator: &mut AllocEncoder,
+        tx: &SpecificTransactionBundle
+    ) -> PyResult<PyObject> {
+        Python::with_gil(|py| {
+            let spend = self.make_coin_spend(
+                py,
+                allocator,
+                &tx.coin,
+                tx.bundle.puzzle.clone(),
+                tx.bundle.solution
+            )?;
+            let signature = self.g2_element(&tx.bundle.signature)?;
+            self.spend_bundle.call1(py, ([spend], signature))
+        })
+    }
+
+    pub fn push_tx(
+        &self,
+        allocator: &mut AllocEncoder,
+        tx: &SpecificTransactionBundle
+    ) -> PyResult<u32> {
+        let spend_bundle = self.make_spend_bundle(allocator, tx)?;
+        Python::with_gil(|py| {
+            eprintln!("spend_bundle {:?}", spend_bundle);
+            let spend_res: PyObject = self.async_client(
+                py,
+                "push_tx",
+                (spend_bundle,)
+            )?.extract(py)?;
+            eprintln!("spend_res {:?}", spend_res);
+            let (inclusion_status, err): (PyObject, PyObject) = spend_res.extract(py)?;
+            eprintln!("inclusion_status {inclusion_status}");
+            let status: u32 = inclusion_status.extract(py)?;
+            Ok(status)
+        })
     }
 }
 
@@ -157,21 +243,35 @@ fn test_sim() {
     let mut allocator = AllocEncoder::new();
     let s = Simulator::new();
     let private_key: PrivateKey = rng.gen();
-    s.farm_block(&private_key);
     let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
-    let conditions = (
+    s.farm_block(&identity.puzzle_hash);
+
+    let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
+    eprintln!("coins {coins:?}");
+
+    let (first_coin_parent, first_coin_ph, first_coin_amt) = coins[0].to_parts().unwrap();
+    assert_eq!(first_coin_ph, identity.puzzle_hash);
+
+    let conditions = [
         (CREATE_COIN,
          (identity.puzzle_hash.clone(),
           (Amount::new(1), ())
          )
-        ), ()
-    ).to_clvm(&mut allocator).expect("should create conditions");
+        ),
+        (CREATE_COIN,
+         (identity.puzzle_hash.clone(),
+          (first_coin_amt - Amount::new(1), ())
+         )
+        )
+    ].to_clvm(&mut allocator).expect("should create conditions");
+
     let (solution, signature) = standard_solution(
         &mut allocator,
         &private_key,
         conditions
     ).expect("should build");
-    let s =
+
+    let spend =
         Python::with_gil(|py| {
             s.make_coin_spend(
                 py,
@@ -181,5 +281,21 @@ fn test_sim() {
                 solution
             )
         }).expect("should get a spend");
-    eprintln!("spend {s:?}");
+
+    eprintln!("spend {spend:?}");
+
+    let specific = SpecificTransactionBundle {
+        coin: coins[0].clone(),
+        bundle: TransactionBundle {
+            puzzle: identity.puzzle.clone(),
+            solution,
+            signature,
+        }
+    };
+
+    let status = s.push_tx(&mut allocator, &specific).expect("should spend");
+
+    // Do at end
+    drop(s);
+    assert_ne!(status, 3);
 }
