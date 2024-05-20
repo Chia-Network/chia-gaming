@@ -50,7 +50,7 @@ impl ToClvm<NodePtr> for CoinID {
 }
 
 /// Coin String
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct CoinString(Vec<u8>);
 
 impl CoinString {
@@ -233,6 +233,10 @@ impl Aggsig {
             fixed[i % 96] = *b;
         }
         Aggsig::from_bytes(fixed)
+    }
+
+    pub fn bytes(&self) -> [u8; 96] {
+        self.0.to_bytes()
     }
 
     pub fn to_bls(&self) -> chia_bls::Signature {
