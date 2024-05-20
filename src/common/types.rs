@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 
+use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
+use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
@@ -493,6 +495,18 @@ impl Node {
     pub fn to_nodeptr(&self) -> NodePtr {
         self.0
     }
+    pub fn to_hex(
+        &self,
+        allocator: &mut AllocEncoder,
+    ) -> String {
+        let mut stream = Stream::new(None);
+        sexp_to_stream(
+            allocator.allocator(),
+            self.0,
+            &mut stream
+        );
+        stream.get_value().hex()
+    }
 }
 
 impl ToClvm<NodePtr> for Node {
@@ -547,6 +561,10 @@ impl Program {
     pub fn to_nodeptr(&self) -> NodePtr {
         self.0
     }
+
+    pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
+        Node(self.0).to_hex(allocator)
+    }
 }
 
 impl ToClvm<NodePtr> for Program {
@@ -579,6 +597,9 @@ impl Puzzle {
     }
     pub fn from_nodeptr(n: NodePtr) -> Puzzle {
         Puzzle(Program::from_nodeptr(n))
+    }
+    pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
+        self.0.to_hex(allocator)
     }
 }
 
