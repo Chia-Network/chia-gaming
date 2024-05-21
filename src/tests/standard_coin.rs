@@ -11,7 +11,7 @@ use crate::common::constants::{DEFAULT_HIDDEN_PUZZLE_HASH, ONE, TWO};
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, calculate_synthetic_public_key, curry_and_treehash,
     get_standard_coin_puzzle, hex_to_sexp, partial_signer, private_to_public_key, puzzle_for_pk,
-    puzzle_hash_for_pk, standard_solution, unsafe_sign_partial,
+    puzzle_hash_for_pk, standard_solution_unsafe, unsafe_sign_partial,
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Node, PrivateKey, PublicKey, PuzzleHash, Sha256Input, Sha256tree,
@@ -182,7 +182,11 @@ fn test_standard_puzzle_solution_maker() {
         (synthetic_public_key, (quoted_conditions_hash.clone(), ())),
     );
     let (solution, signature) =
-        standard_solution(&mut allocator, &mut &private_key, conditions).expect("should work");
+        standard_solution_unsafe(
+            &mut allocator,
+            &mut &private_key,
+            conditions
+        ).expect("should work");
     let expected_full_conditions = (expected_added_condition, Node(conditions))
         .to_clvm(&mut allocator)
         .expect("should work");

@@ -28,7 +28,7 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvm_tools_rs::compiler::runtypes::RunFailure;
 
 /// CoinID
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct CoinID(Hash);
 
 impl CoinID {
@@ -58,6 +58,9 @@ impl CoinString {
         let mut allocator = AllocEncoder::new();
         let amount_clvm = amount.to_clvm(&mut allocator).unwrap();
         let mut res = Vec::new();
+        eprintln!("parent {parent:?}");
+        eprintln!("puzzle_hash {puzzle_hash:?}");
+        eprintln!("amount {amount:?}");
         res.append(&mut parent.bytes().to_vec());
         res.append(&mut puzzle_hash.bytes().to_vec());
         res.append(&mut allocator.allocator().atom(amount_clvm).to_vec());
@@ -380,7 +383,7 @@ impl Hash {
     }
     pub fn from_slice(by: &[u8]) -> Hash {
         let mut fixed: [u8; 32] = [0; 32];
-        for (i, b) in by.iter().enumerate() {
+        for (i, b) in by.iter().enumerate().take(32) {
             fixed[i % 32] = *b;
         }
         Hash::from_bytes(fixed)

@@ -19,7 +19,7 @@ use crate::channel_handler::types::{
 use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::standard_coin::{
     ChiaIdentity, agg_sig_me_message, aggregate_public_keys, partial_signer, private_to_public_key,
-    puzzle_for_pk, puzzle_hash_for_pk, sign_agg_sig_me, standard_solution,
+    puzzle_for_pk, puzzle_hash_for_pk, sign_agg_sig_me, standard_solution_unsafe,
     standard_solution_partial, unsafe_sign_partial,
 };
 use crate::common::types::{
@@ -303,6 +303,7 @@ impl ChannelHandler {
             create_conditions_with_rem,
             &aggregated_key_for_unroll_create,
             &env.agg_sig_me_additional_data,
+            true
         )
     }
 
@@ -944,6 +945,7 @@ impl ChannelHandler {
             conditions,
             &aggregate_public_key,
             &env.agg_sig_me_additional_data,
+            true
         )?;
         Ok(TransactionBundle {
             solution,
@@ -973,6 +975,7 @@ impl ChannelHandler {
             conditions,
             &aggregate_public_key,
             &env.agg_sig_me_additional_data,
+            false
         )?;
 
         Ok((state_channel_coin.clone(), solution, signature))
@@ -1475,7 +1478,7 @@ impl ChannelHandler {
 
             coins_with_solutions.push(TransactionBundle {
                 puzzle: spend_coin_puzzle.clone(),
-                solution: standard_solution(
+                solution: standard_solution_unsafe(
                     env.allocator,
                     &self.referee_private_key(),
                     conditions,
