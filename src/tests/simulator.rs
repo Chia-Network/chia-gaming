@@ -1,6 +1,8 @@
 use clvmr::allocator::NodePtr;
 use clvm_traits::ToClvm;
 
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+
 use pyo3::prelude::*;
 use pyo3::types::{PyNone, PyBytes, PyTuple};
 use rand::prelude::*;
@@ -9,10 +11,9 @@ use rand_chacha::ChaCha8Rng;
 
 use indoc::indoc;
 
-use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::standard_solution;
-use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle};
-use crate::common::standard_coin::ChiaIdentity;
+use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
+use crate::common::standard_coin::{sign_agg_sig_me, standard_solution_partial, ChiaIdentity, calculate_synthetic_secret_key, private_to_public_key, calculate_synthetic_public_key, agg_sig_me_message};
+use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree};
 
 // Allow simulator from rust.
 struct Simulator {
@@ -127,6 +128,8 @@ impl Simulator {
             let mut result_coins = Vec::new();
             for i in items.iter() {
                 let coin_of_item: PyObject = i.getattr(py, "coin")?.extract(py)?;
+                let as_list_str: String = coin_of_item.call_method0(py, "__repr__")?.extract(py)?;
+                eprintln!("as_list_str {as_list_str}");
                 let as_list: Vec<PyObject> = self.coin_as_list.call1(py, (coin_of_item,))?.extract(py)?;
                 let parent_coin_info: &PyBytes = as_list[0].downcast(py)?;
                 let parent_coin_info_slice: &[u8] = parent_coin_info.extract()?;
@@ -231,6 +234,8 @@ impl Simulator {
             let (inclusion_status, err): (PyObject, PyObject) = spend_res.extract(py)?;
             eprintln!("inclusion_status {inclusion_status}");
             let status: u32 = inclusion_status.extract(py)?;
+            let e: String = err.call_method0(py, "__repr__")?.extract(py)?;
+            eprintln!("err {e:?}");
             Ok(status)
         })
     }
@@ -241,13 +246,16 @@ fn test_sim() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
+    let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
     let s = Simulator::new();
     let private_key: PrivateKey = rng.gen();
     let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
+    eprintln!("identity public key {:?}", identity.public_key);
     s.farm_block(&identity.puzzle_hash);
 
     let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
-    eprintln!("coins {coins:?}");
+    eprintln!("coin 0 {:?}", coins[0].to_parts());
+    eprintln!("coin 0 id {:?}", coins[0].to_coin_id());
 
     let (first_coin_parent, first_coin_ph, first_coin_amt) = coins[0].to_parts().unwrap();
     assert_eq!(first_coin_ph, identity.puzzle_hash);
@@ -258,38 +266,56 @@ fn test_sim() {
           (Amount::new(1), ())
          )
         ),
-        (CREATE_COIN,
-         (identity.puzzle_hash.clone(),
-          (first_coin_amt - Amount::new(1), ())
-         )
-        )
+        // (CREATE_COIN,
+        //  (identity.puzzle_hash.clone(),
+        //   (first_coin_amt - Amount::new(1), ())
+        //  )
+        // )
     ].to_clvm(&mut allocator).expect("should create conditions");
 
-    let (solution, signature) = standard_solution(
+    let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
+    let synthetic_secret_key = calculate_synthetic_secret_key(
+        &identity.private_key,
+        &default_hidden_puzzle_hash
+    ).expect("should be ok");
+    let synthetic_public_key = private_to_public_key(&synthetic_secret_key);
+    assert_eq!(
+        synthetic_public_key,
+        calculate_synthetic_public_key(
+            &identity.public_key,
+            &PuzzleHash::from_hash(default_hidden_puzzle_hash.clone())
+        ).expect("should be ok")
+    );
+    let (solution, signature1) = standard_solution_partial(
         &mut allocator,
-        &private_key,
-        conditions
+        &synthetic_secret_key,
+        &coins[0].to_coin_id(),
+        conditions,
+        &synthetic_public_key,
+        &agg_sig_me_additional_data,
+        false
     ).expect("should build");
 
-    let spend =
-        Python::with_gil(|py| {
-            s.make_coin_spend(
-                py,
-                &mut allocator,
-                &CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &Amount::default()),
-                identity.puzzle.clone(),
-                solution
-            )
-        }).expect("should get a spend");
+    let quoted_conds = conditions.to_quoted_program(&mut allocator).expect("should work");
+    let hashed_conds = quoted_conds.sha256tree(&mut allocator);
+    let agg_sig_me_message = agg_sig_me_message(
+        &hashed_conds.bytes(),
+        &coins[0].to_coin_id(),
+        &agg_sig_me_additional_data
+    );
+    eprintln!("our message {agg_sig_me_message:?}");
+    let signature2 = synthetic_secret_key.sign(&agg_sig_me_message);
+    assert_eq!(signature1, signature2);
 
-    eprintln!("spend {spend:?}");
+    eprintln!("our cond hash {hashed_conds:?}");
+    eprintln!("our signature {signature1:?}");
 
     let specific = SpecificTransactionBundle {
         coin: coins[0].clone(),
         bundle: TransactionBundle {
             puzzle: identity.puzzle.clone(),
             solution,
-            signature,
+            signature: signature1,
         }
     };
 

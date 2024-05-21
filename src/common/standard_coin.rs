@@ -7,7 +7,7 @@ use chia_bls;
 use clvm_traits::{clvm_curried_args, ToClvm};
 
 use clvmr::allocator::NodePtr;
-use clvm_tools_rs::util::number_from_u8;
+use clvm_tools_rs::util::{number_from_u8, u8_from_number};
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::{
     Bytes, Stream, UnvalidatedBytesFromType,
@@ -85,6 +85,23 @@ fn test_calculate_synthetic_offset() {
     let want_offset_bytes = [0x69, 0x51, 0x33, 0xf4, 0x61, 0x0a, 0x5e, 0x50, 0x7b, 0x2f, 0x24, 0x98, 0x22, 0x21, 0x91, 0xde, 0x54, 0x6e, 0xeb, 0x53, 0x90, 0x46, 0x34, 0x52, 0x74, 0x61, 0x39, 0x71, 0x4f, 0x05, 0x94, 0x65];
     let want_offset = number_from_u8(&want_offset_bytes);
     assert_eq!(offset, want_offset);
+}
+
+pub fn calculate_synthetic_secret_key(secret_key: &PrivateKey, hidden_puzzle_hash: &Hash) -> Result<PrivateKey, types::Error> {
+    let secret_exponent_bytes = secret_key.bytes();
+    let secret_exponent = number_from_u8(&secret_exponent_bytes);
+    let public_key = private_to_public_key(secret_key);
+    let synthetic_secret_offset = calculate_synthetic_offset(&public_key, &PuzzleHash::from_hash(hidden_puzzle_hash.clone()));
+    let synthetic_secret_exponent = (secret_exponent + synthetic_secret_offset) % group_order_int();
+    let private_key_bytes_right = u8_from_number(synthetic_secret_exponent);
+    let mut private_key_bytes: [u8; 32] = [0; 32];
+    for (i, b) in private_key_bytes_right.iter().enumerate() {
+        private_key_bytes[i + 32 - private_key_bytes.len()] = *b;
+    }
+    PrivateKey::from_bytes(&private_key_bytes)
+        .map(Ok)
+        .unwrap_or_else(|e| Err(format!("calculate_synthetic_public_key: {e:?}")))
+        .into_gen()
 }
 
 pub fn calculate_synthetic_public_key(
@@ -369,7 +386,7 @@ pub fn sign_agg_sig_me(
     signed
 }
 
-pub fn standard_solution(
+pub fn standard_solution_unsafe(
     allocator: &mut AllocEncoder,
     private_key: &PrivateKey,
     conditions: NodePtr,
@@ -384,10 +401,11 @@ pub fn standard_solution(
 pub fn standard_solution_partial(
     allocator: &mut AllocEncoder,
     private_key: &PrivateKey,
-    unroll_coin_parent: &CoinID,
+    parent_coin: &CoinID,
     conditions: NodePtr,
     aggregate_public_key: &PublicKey,
     agg_sig_me_additional_data: &Hash,
+    partial: bool,
 ) -> Result<(NodePtr, Aggsig), types::Error> {
     // Fairly certain i understand that because of the property that
     // (SK1 + SK2).sign((PK1 + PK2) || msg) ==
@@ -423,20 +441,24 @@ pub fn standard_solution_partial(
             CoinCondition::CreateCoin(_ph) => {
                 let agg_sig_me_message = agg_sig_me_message(
                     &quoted_conds_hash.bytes(),
-                    unroll_coin_parent,
+                    parent_coin,
                     agg_sig_me_additional_data,
                 );
                 eprintln!("public_key {aggregate_public_key:?} {agg_sig_me_message:?}");
                 add_signature(
                     &mut aggregated_signature,
-                    partial_signer(private_key, aggregate_public_key, &agg_sig_me_message),
+                    if partial {
+                        partial_signer(private_key, &aggregate_public_key, &agg_sig_me_message)
+                    } else {
+                        private_key.sign(&agg_sig_me_message)
+                    }
                 );
             }
             CoinCondition::AggSigMe(pubkey, data) => {
                 let mut message = pubkey.bytes().to_vec();
                 message.extend_from_slice(&data);
                 let agg_sig_me_message =
-                    agg_sig_me_message(&message, unroll_coin_parent, agg_sig_me_additional_data);
+                    agg_sig_me_message(&message, parent_coin, agg_sig_me_additional_data);
                 add_signature(
                     &mut aggregated_signature,
                     partial_signer(private_key, &pubkey, &agg_sig_me_message),

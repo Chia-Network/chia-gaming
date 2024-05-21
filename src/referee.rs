@@ -15,7 +15,7 @@ use crate::channel_handler::types::{GameStartInfo, ReadableMove, ReadableUX};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     curry_and_treehash, private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, sign_agg_sig_me,
-    standard_solution, ChiaIdentity,
+    standard_solution_unsafe, ChiaIdentity,
 };
 use crate::common::types::{
     u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error,
@@ -672,7 +672,7 @@ impl RefereeMaker {
             // XXX puzzle_reveal
                 (CREATE_COIN, (puzzle_hash.clone(), (self.amount.clone(), ()))).to_clvm(allocator).into_gen()?;
             let (solution, sig) =
-                standard_solution(allocator, &self.my_identity.private_key, inner_conditions)?;
+                standard_solution_unsafe(allocator, &self.my_identity.private_key, inner_conditions)?;
             let args_list: Vec<Node> = [
                 previous_state.game_move.move_made.to_clvm(allocator).into_gen()?,
                 previous_state
@@ -733,7 +733,11 @@ impl RefereeMaker {
                 .to_clvm(allocator)
                 .into_gen()?;
             let (solution, sig) =
-                standard_solution(allocator, &self.my_identity.private_key, inner_conditions)?;
+                standard_solution_unsafe(
+                    allocator,
+                    &self.my_identity.private_key,
+                    inner_conditions
+                )?;
             let args_list: Vec<Node> = [
                 current_state.game_move.move_made.to_clvm(allocator).into_gen()?,
                 current_state
@@ -1117,7 +1121,11 @@ impl RefereeMaker {
             .into_gen()?;
 
         let (slash_solution, slash_aggsig) =
-            standard_solution(allocator, &self.my_identity.private_key, slash_conditions)?;
+            standard_solution_unsafe(
+                allocator,
+                &self.my_identity.private_key,
+                slash_conditions
+            )?;
 
         let (state, validation_program) = {
             let current_state = self.current_state();
