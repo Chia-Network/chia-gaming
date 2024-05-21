@@ -15,14 +15,14 @@ use crate::common::types::{
 };
 use crate::referee::{RefereeMaker, ValidatorMoveArgs, GameMoveDetails};
 
-struct DebugGamePrograms {
-    my_validation_program: NodePtr,
-    their_validation_program: NodePtr,
-    my_turn_handler: GameHandler,
-    their_turn_handler: GameHandler,
+pub struct DebugGamePrograms {
+    pub my_validation_program: NodePtr,
+    pub their_validation_program: NodePtr,
+    pub my_turn_handler: GameHandler,
+    pub their_turn_handler: GameHandler,
 }
 
-fn make_debug_game_handler(
+pub fn make_debug_game_handler(
     allocator: &mut AllocEncoder,
     identity: &ChiaIdentity,
     amount: &Amount,
@@ -93,7 +93,7 @@ pub struct RefereeTest {
 }
 
 impl RefereeTest {
-    fn new(
+    pub fn new(
         allocator: &mut AllocEncoder,
 
         my_identity: ChiaIdentity,
@@ -205,7 +205,6 @@ fn test_referee_smoke() {
         &game_start_info,
     );
 
-    reftest.my_referee.enable_debug_run(true);
     let readable_move = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
     let my_move_wire_data = reftest.my_referee
         .my_turn_make_move(
