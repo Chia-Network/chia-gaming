@@ -486,7 +486,9 @@ pub fn standard_solution_partial(
 #[derive(Clone)]
 pub struct ChiaIdentity {
     pub private_key: PrivateKey,
+    pub synthetic_public_key: PublicKey,
     pub public_key: PublicKey,
+    pub synthetic_private_key: PrivateKey,
     pub puzzle: Puzzle,
     pub puzzle_hash: PuzzleHash
 }
@@ -496,15 +498,23 @@ impl ChiaIdentity {
         allocator: &mut AllocEncoder,
         private_key: PrivateKey
     ) -> Result<Self, types::Error> {
+        let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
+        let synthetic_private_key = calculate_synthetic_secret_key(
+            &private_key,
+            &default_hidden_puzzle_hash
+        )?;
         let public_key = private_to_public_key(&private_key);
+        let synthetic_public_key = private_to_public_key(&synthetic_private_key);
         let puzzle = puzzle_for_pk(allocator, &public_key)?;
         let puzzle_hash = puzzle_hash_for_pk(allocator, &public_key)?;
         assert_eq!(puzzle.sha256tree(allocator), puzzle_hash);
         Ok(ChiaIdentity {
             private_key,
+            synthetic_private_key,
             puzzle,
             puzzle_hash,
             public_key,
+            synthetic_public_key,
         })
     }
 
