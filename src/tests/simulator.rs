@@ -325,4 +325,5 @@ fn test_sim() {
 
 #[test]
 fn test_referee_can_slash_on_chain() {
+    
 }
