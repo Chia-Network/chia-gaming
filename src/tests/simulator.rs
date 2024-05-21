@@ -273,25 +273,12 @@ fn test_sim() {
         // )
     ].to_clvm(&mut allocator).expect("should create conditions");
 
-    let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
-    let synthetic_secret_key = calculate_synthetic_secret_key(
-        &identity.private_key,
-        &default_hidden_puzzle_hash
-    ).expect("should be ok");
-    let synthetic_public_key = private_to_public_key(&synthetic_secret_key);
-    assert_eq!(
-        synthetic_public_key,
-        calculate_synthetic_public_key(
-            &identity.public_key,
-            &PuzzleHash::from_hash(default_hidden_puzzle_hash.clone())
-        ).expect("should be ok")
-    );
     let (solution, signature1) = standard_solution_partial(
         &mut allocator,
-        &synthetic_secret_key,
+        &identity.synthetic_private_key,
         &coins[0].to_coin_id(),
         conditions,
-        &synthetic_public_key,
+        &identity.synthetic_public_key,
         &agg_sig_me_additional_data,
         false
     ).expect("should build");
@@ -304,7 +291,7 @@ fn test_sim() {
         &agg_sig_me_additional_data
     );
     eprintln!("our message {agg_sig_me_message:?}");
-    let signature2 = synthetic_secret_key.sign(&agg_sig_me_message);
+    let signature2 = identity.synthetic_private_key.sign(&agg_sig_me_message);
     assert_eq!(signature1, signature2);
 
     eprintln!("our cond hash {hashed_conds:?}");
