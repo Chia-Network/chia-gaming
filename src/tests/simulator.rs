@@ -1,7 +1,7 @@
 use clvmr::allocator::NodePtr;
 use clvm_traits::ToClvm;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 
 use pyo3::prelude::*;
 use pyo3::types::{PyNone, PyBytes, PyTuple};
@@ -13,7 +13,11 @@ use indoc::indoc;
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
 use crate::common::standard_coin::{sign_agg_sig_me, standard_solution_partial, ChiaIdentity, calculate_synthetic_secret_key, private_to_public_key, calculate_synthetic_public_key, agg_sig_me_message};
-use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree};
+use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID};
+
+use crate::channel_handler::types::GameStartInfo;
+
+use crate::tests::referee::{RefereeTest, make_debug_game_handler};
 
 // Allow simulator from rust.
 struct Simulator {
@@ -325,5 +329,59 @@ fn test_sim() {
 
 #[test]
 fn test_referee_can_slash_on_chain() {
-    
+    let seed: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed);
+    let mut allocator = AllocEncoder::new();
+
+    // Generate keys and puzzle hashes.
+    let my_private_key: PrivateKey = rng.gen();
+    let my_identity = ChiaIdentity::new(&mut allocator, my_private_key).expect("should generate");
+
+    let their_private_key: PrivateKey = rng.gen();
+    let their_identity = ChiaIdentity::new(&mut allocator, their_private_key).expect("should generate");
+
+    let amount = Amount::new(100);
+    let timeout = Timeout::new(1000);
+
+    let debug_game = make_debug_game_handler(
+        &mut allocator,
+        &my_identity,
+        &amount,
+        &timeout
+    );
+    let init_state =
+        assemble(
+            allocator.allocator(),
+            "(0 . 0)"
+        ).expect("should assemble");
+
+    let my_validation_program_hash =
+        Node(debug_game.my_validation_program).sha256tree(&mut allocator);
+
+    let amount = Amount::new(100);
+    let game_start_info = GameStartInfo {
+        game_id: GameID::from_bytes(b"test"),
+        amount: amount.clone(),
+        game_handler: debug_game.my_turn_handler,
+        timeout: timeout.clone(),
+        is_my_turn: true,
+        initial_validation_puzzle: debug_game.my_validation_program,
+        initial_validation_puzzle_hash: my_validation_program_hash,
+        initial_state: init_state,
+        initial_move: vec![],
+        initial_max_move_size: 0,
+        initial_mover_share: Amount::default(),
+    };
+
+    let their_validation_program_hash =
+        Node(debug_game.their_validation_program).sha256tree(&mut allocator);
+
+    let mut reftest = RefereeTest::new(
+        &mut allocator,
+        my_identity,
+        their_identity,
+        debug_game.their_turn_handler,
+        their_validation_program_hash,
+        &game_start_info,
+    );
 }
