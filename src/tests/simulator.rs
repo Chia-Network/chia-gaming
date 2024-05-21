@@ -322,3 +322,7 @@ fn test_sim() {
     let status = s.push_tx(&mut allocator, &specific).expect("should spend");
     assert_ne!(status, 3);
 }
+
+#[test]
+fn test_referee_can_slash_on_chain() {
+}
