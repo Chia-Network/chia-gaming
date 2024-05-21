@@ -975,7 +975,7 @@ impl ChannelHandler {
             conditions,
             &aggregate_public_key,
             &env.agg_sig_me_additional_data,
-            false
+            true
         )?;
 
         Ok((state_channel_coin.clone(), solution, signature))
