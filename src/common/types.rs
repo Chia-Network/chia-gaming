@@ -610,7 +610,7 @@ impl Puzzle {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Timeout(u64);
 
 impl Timeout {

@@ -51,6 +51,7 @@ pub struct PotatoSignatures {
     pub my_unroll_half_signature_peer: Aggsig,
 }
 
+#[derive(Debug, Clone)]
 pub struct GameStartInfo {
     pub game_id: GameID,
     pub amount: Amount,
