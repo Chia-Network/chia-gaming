@@ -7,6 +7,7 @@ use chia_bls;
 use clvm_traits::{clvm_curried_args, ToClvm};
 
 use clvmr::allocator::NodePtr;
+use clvm_tools_rs::util::number_from_u8;
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::{
     Bytes, Stream, UnvalidatedBytesFromType,
@@ -75,6 +76,17 @@ fn calculate_synthetic_offset(public_key: &PublicKey, hidden_puzzle_hash: &Puzzl
     BigInt::from_bytes_be(Sign::Plus, blob.bytes()) % group_order_int()
 }
 
+#[test]
+fn test_calculate_synthetic_offset() {
+    let pk_bytes: [u8; 48] = [0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00, 0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f, 0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b, 0xe2, 0xce, 0xdb];
+    let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
+    let default_hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
+    let offset = calculate_synthetic_offset(&pk, &default_hidden_puzzle_hash);
+    let want_offset_bytes = [0x69, 0x51, 0x33, 0xf4, 0x61, 0x0a, 0x5e, 0x50, 0x7b, 0x2f, 0x24, 0x98, 0x22, 0x21, 0x91, 0xde, 0x54, 0x6e, 0xeb, 0x53, 0x90, 0x46, 0x34, 0x52, 0x74, 0x61, 0x39, 0x71, 0x4f, 0x05, 0x94, 0x65];
+    let want_offset = number_from_u8(&want_offset_bytes);
+    assert_eq!(offset, want_offset);
+}
+
 pub fn calculate_synthetic_public_key(
     public_key: &PublicKey,
     hidden_puzzle_hash: &PuzzleHash,
@@ -91,6 +103,17 @@ pub fn calculate_synthetic_public_key(
         .into_gen()?;
     let public_of_synthetic = private_to_public_key(&synthetic_offset);
     Ok(public_key.clone() + public_of_synthetic)
+}
+
+#[test]
+fn test_calculate_synthetic_public_key() {
+    let pk_bytes: [u8; 48] = [0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00, 0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f, 0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b, 0xe2, 0xce, 0xdb];
+    let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
+    let default_hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
+    let spk = calculate_synthetic_public_key(&pk, &default_hidden_puzzle_hash).expect("should be ok");
+    let want_spk_bytes: [u8; 48] = [0x93, 0xbd, 0x85, 0x12, 0x8d, 0x0e, 0x9f, 0xbc, 0xfc, 0xa5, 0x47, 0xb9, 0x64, 0xbd, 0x31, 0x80, 0x77, 0x7c, 0x6f, 0xe9, 0xfa, 0xd8, 0x08, 0xdd, 0xa4, 0x15, 0xbb, 0x32, 0x88, 0x70, 0x22, 0x86, 0x47, 0x74, 0xb5, 0xff, 0x04, 0x45, 0x2b, 0x88, 0xbc, 0x98, 0x29, 0x40, 0x8f, 0xb7, 0xf8, 0x87];
+    let want_spk = PublicKey::from_bytes(want_spk_bytes).expect("should be ok");
+    assert_eq!(spk, want_spk);
 }
 
 pub fn puzzle_for_synthetic_public_key(
@@ -176,6 +199,29 @@ pub fn puzzle_hash_for_synthetic_public_key(
     Ok(curry_and_treehash(&quoted_mod_hash, &[public_key_hash]))
 }
 
+#[test]
+fn test_puzzle_for_synthetic_public_key() {
+    let mut allocator = AllocEncoder::new();
+    let expect_hex = "ff02ffff01ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080ffff04ffff01b0a3bbced33d27329da1e360ff4b0f00db1747eee8e66c0c0ae450f90b760f42972216c2ff027636aeeb5268bc2be2cedbff018080";
+    let expect_program = hex_to_sexp(&mut allocator, expect_hex.to_string()).expect("should be good hex");
+    let expect_hash = Node(expect_program).sha256tree(&mut allocator);
+
+    let pk_bytes: [u8; 48] = [0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00, 0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f, 0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b, 0xe2, 0xce, 0xdb];
+    let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
+
+    let standard_coin_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should read");
+    let puzzle_for_synthetic_public_key = puzzle_for_synthetic_public_key(
+        &mut allocator,
+        &standard_coin_puzzle,
+        &pk
+    ).expect("should work");
+    assert_eq!(puzzle_for_synthetic_public_key.sha256tree(&mut allocator), expect_hash);
+    assert_eq!(expect_hash, puzzle_hash_for_synthetic_public_key(
+        &mut allocator,
+        &pk
+    ).expect("should make"));
+}
+
 pub fn puzzle_for_pk(
     allocator: &mut AllocEncoder,
     public_key: &PublicKey,
@@ -204,6 +250,26 @@ pub fn puzzle_hash_for_pk(
         allocator,
         &synthetic_public_key,
     )?)
+}
+
+#[test]
+fn test_puzzle_for_pk() {
+    let mut allocator = AllocEncoder::new();
+
+    let pk_bytes: [u8; 48] = [0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00, 0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f, 0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b, 0xe2, 0xce, 0xdb];
+    let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
+
+    let want_puzzle_for_pk = "ff02ffff01ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080ffff04ffff01b093bd85128d0e9fbcfca547b964bd3180777c6fe9fad808dda415bb32887022864774b5ff04452b88bc9829408fb7f887ff018080";
+    let want_puzzle = hex_to_sexp(&mut allocator, want_puzzle_for_pk.to_string()).expect("should be ok hex");
+    let want_puzzle_hash = Node(want_puzzle).sha256tree(&mut allocator);
+
+    let got_puzzle = puzzle_for_pk(&mut allocator, &pk).expect("should be ok");
+    let got_puzzle_hash = got_puzzle.sha256tree(&mut allocator);
+
+    let predicted_puzzle_hash = puzzle_hash_for_pk(&mut allocator, &pk).expect("should be ok");
+
+    assert_eq!(want_puzzle_hash, got_puzzle_hash);
+    assert_eq!(got_puzzle_hash, predicted_puzzle_hash);
 }
 
 pub fn solution_for_delegated_puzzle(
@@ -296,7 +362,11 @@ pub fn sign_agg_sig_me(
     agg_sig_me_extra_data: &Hash,
 ) -> Aggsig {
     let message = agg_sig_me_message(raw_message, coin_id, agg_sig_me_extra_data);
-    secret_key.sign(&message)
+    eprintln!("sign message {message:?}");
+    let public_key = private_to_public_key(secret_key);
+    let signed = secret_key.sign(&message);
+    assert!(signed.verify(&public_key, &message));
+    signed
 }
 
 pub fn standard_solution(
@@ -405,10 +475,13 @@ impl ChiaIdentity {
         private_key: PrivateKey
     ) -> Result<Self, types::Error> {
         let public_key = private_to_public_key(&private_key);
+        let puzzle = puzzle_for_pk(allocator, &public_key)?;
+        let puzzle_hash = puzzle_hash_for_pk(allocator, &public_key)?;
+        assert_eq!(puzzle.sha256tree(allocator), puzzle_hash);
         Ok(ChiaIdentity {
             private_key,
-            puzzle: puzzle_for_pk(allocator, &public_key)?,
-            puzzle_hash: puzzle_hash_for_pk(allocator, &public_key)?,
+            puzzle,
+            puzzle_hash,
             public_key,
         })
     }
