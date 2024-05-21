@@ -42,6 +42,19 @@ impl Drop for Simulator {
             let none = PyNone::get(py);
             let exit_task = self.guard.call_method1(py, "__aexit__", (none, none, none))?;
             self.evloop.call_method1(py, "run_until_complete", (exit_task,))?;
+            self.evloop.call_method0(py, "stop");
+            self.evloop.call_method0(py, "close");
+
+            self.evloop = none.into();
+            self.sim = none.into();
+            self.client = none.into();
+            self.guard = none.into();
+            self.make_spend = none.into();
+            self.chia_rs_coin = none.into();
+            self.program = none.into();
+            self.spend_bundle = none.into();
+            self.g2_element = none.into();
+            self.coin_as_list = none.into();
             Ok(())
         })
         .expect("should shutdown");
@@ -307,8 +320,5 @@ fn test_sim() {
     };
 
     let status = s.push_tx(&mut allocator, &specific).expect("should spend");
-
-    // Do at end
-    drop(s);
     assert_ne!(status, 3);
 }
