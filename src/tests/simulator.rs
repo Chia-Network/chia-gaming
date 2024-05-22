@@ -429,7 +429,8 @@ fn test_referee_can_slash_on_chain() {
         bundle: timeout_transaction.bundle.clone()
     };
 
-    s.push_tx(&mut allocator, &specific).expect("should work");
+    let included = s.push_tx(&mut allocator, &specific).expect("should work");
+    assert_ne!(included, 3);
 
     todo!();
 }
