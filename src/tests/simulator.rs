@@ -15,8 +15,8 @@ use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, DEFAULT_
 use crate::common::standard_coin::{sign_agg_sig_me, standard_solution_partial, ChiaIdentity, calculate_synthetic_secret_key, private_to_public_key, calculate_synthetic_public_key, agg_sig_me_message};
 use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID};
 
-use crate::channel_handler::types::GameStartInfo;
-
+use crate::channel_handler::types::{GameStartInfo, ReadableMove};
+use crate::referee::GameMoveDetails;
 use crate::tests::referee::{RefereeTest, make_debug_game_handler};
 
 // Allow simulator from rust.
@@ -384,4 +384,26 @@ fn test_referee_can_slash_on_chain() {
         their_validation_program_hash,
         &game_start_info,
     );
+
+    let readable_move = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let my_move_wire_data = reftest.my_referee
+        .my_turn_make_move(
+            &mut rng,
+            &mut allocator,
+            &ReadableMove::from_nodeptr(readable_move),
+        )
+        .expect("should move");
+
+    assert!(my_move_wire_data.details.move_made.is_empty());
+    let mut off_chain_slash_gives_error = reftest.my_referee.clone();
+    let their_move_result = off_chain_slash_gives_error.their_turn_move_off_chain(
+        &mut allocator,
+        &GameMoveDetails {
+            move_made: vec![1],
+            validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
+            max_move_size: 100,
+            mover_share: Amount::default(),
+        },
+    );
+    eprintln!("their_move_result {their_move_result:?}");
 }

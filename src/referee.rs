@@ -11,7 +11,7 @@ use crate::channel_handler::game_handler::{
     chia_dialect, GameHandler, MessageHandler, MessageInputs, MyTurnInputs, TheirTurnInputs,
     TheirTurnResult,
 };
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, ReadableUX};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, ReadableUX, Evidence};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     curry_and_treehash, private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, sign_agg_sig_me,
@@ -221,6 +221,34 @@ struct RefereeMakerGameState {
 
     // Ensure we copy this when we update RefereeMaker::current_state
     pub previous_validation_program_hash: Hash,
+}
+
+struct OnChainRefereeMove {
+    // Details
+    detauls: GameMoveDetails,
+    mover_puzzle: Puzzle,
+    mover_coin_spend_solution: NodePtr,
+}
+
+struct OnChainRefereeSlash {
+    previous_state: NodePtr,
+    previous_validation_program: Program,
+    mover_coin_puzzle: Puzzle,
+    mover_coin_spend_solution: NodePtr,
+    slash_evidence: Evidence,
+}
+
+// onchain referee solution
+//
+// This represents the whole solution for the on chain referee.
+//
+// It is a solution itself, but the referee coin uses the mover puzzle as a
+// puzzle for a coin that represents the user's identity ... most likely a
+// standard puzzle.
+enum OnChainRefereeSolution {
+    Timeout,
+    Move(OnChainRefereeMove),
+    Slash(OnChainRefereeSlash)
 }
 
 // XXX break out state so we can have a previous state and easily swap them.
@@ -947,7 +975,7 @@ impl RefereeMaker {
         state: NodePtr,
         validation_program: Puzzle,
         slash_solution: NodePtr,
-        coin_solution_after_slash: NodePtr
+        evidence: Evidence
     ) -> Result<NodePtr, Error> {
         (
             Node(state.clone()),
@@ -955,7 +983,7 @@ impl RefereeMaker {
                 validation_program.clone(),
                 (
                     self.target_puzzle_hash_for_slash(),
-                    (Node(slash_solution), (Node(coin_solution_after_slash), ())),
+                    (Node(slash_solution), (Node(evidence.to_nodeptr()), ())),
                 ),
             ),
         )
@@ -970,7 +998,7 @@ impl RefereeMaker {
         new_puzzle: &Puzzle,
         new_puzzle_hash: &PuzzleHash,
         slash_solution: NodePtr,
-        solution: NodePtr,
+        evidence: Evidence,
         sig: &Aggsig,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         // Probably readable_info overlaps solution.
@@ -997,7 +1025,7 @@ impl RefereeMaker {
             state,
             Puzzle::from_nodeptr(validation_program),
             slash_solution,
-            solution
+            evidence
         )?;
 
         let coin_string_of_output_coin =
@@ -1171,7 +1199,8 @@ impl RefereeMaker {
             Node(state.clone()),
             (
                 Node(validation_program.clone()),
-                (new_puzzle_hash.clone(), (Node(slash_solution), (0, ()))),
+                // No evidence here.
+                (new_puzzle_hash.clone(), ((), (0, ()))),
             ),
         )
             .to_clvm(allocator)
@@ -1179,6 +1208,7 @@ impl RefereeMaker {
 
         // Ultimately each of these cases returns some kind of
         // TheirTurnCoinSpentResult.
+        let nil_evidence = Evidence::nil(allocator);
         match full_slash_result {
             Ok(_) => {
                 // result is NodePtr containing solution and aggsig.
@@ -1191,7 +1221,7 @@ impl RefereeMaker {
                     &new_puzzle,
                     &new_puzzle_hash,
                     full_slash_solution,
-                    slash_solution,
+                    nil_evidence,
                     &slash_aggsig,
                 )
             }
@@ -1216,15 +1246,17 @@ impl RefereeMaker {
                         run_debug: self.run_debug,
                     },
                 )? {
-                    TheirTurnResult::Slash(solution, sig) => self.make_slash_for_their_turn(
-                        allocator,
-                        coin_string,
-                        &new_puzzle,
-                        &new_puzzle_hash,
-                        full_slash_solution,
-                        solution,
-                        &(slash_aggsig + sig),
-                    ),
+                    TheirTurnResult::Slash(evidence, sig) => {
+                        self.make_slash_for_their_turn(
+                            allocator,
+                            coin_string,
+                            &new_puzzle,
+                            &new_puzzle_hash,
+                            full_slash_solution,
+                            evidence,
+                            &(slash_aggsig + sig),
+                        )
+                    }
                     TheirTurnResult::MakeMove(game_handler, readable_move, message) => {
                         // Otherwise accept move by updating our state
                         self.accept_this_move(
