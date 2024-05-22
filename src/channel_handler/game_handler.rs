@@ -18,7 +18,7 @@ use clvmr::allocator::NodePtr;
 use clvmr::NO_UNKNOWN_OPS;
 use clvmr::{run_program, ChiaDialect};
 
-use crate::channel_handler::types::{ReadableMove, ReadableUX};
+use crate::channel_handler::types::{ReadableMove, ReadableUX, Evidence};
 use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
     IntoErr, Node,
@@ -151,7 +151,7 @@ fn run_code(
 #[derive(Debug, Clone)]
 pub enum TheirTurnResult {
     MakeMove(GameHandler, NodePtr, Vec<u8>),
-    Slash(NodePtr, Aggsig),
+    Slash(Evidence, Aggsig),
 }
 
 impl GameHandler {
@@ -355,7 +355,7 @@ impl GameHandler {
             }
             let sig_bytes = allocator.allocator().atom(pl[2]).to_vec();
             Ok(TheirTurnResult::Slash(
-                pl[1],
+                Evidence::from_nodeptr(pl[1]),
                 Aggsig::from_slice(&sig_bytes)?,
             ))
         } else {

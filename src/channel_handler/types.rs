@@ -225,3 +225,29 @@ pub enum CachedPotatoRegenerateLastHop {
     PotatoAccept(PotatoAcceptCachedData),
     PotatoMoveHappening(PotatoMoveCachedData),
 }
+
+#[derive(Debug, Clone)]
+pub struct Evidence(NodePtr);
+
+impl Evidence {
+    pub fn from_nodeptr(n: NodePtr) -> Evidence {
+        Evidence(n)
+    }
+
+    pub fn nil(allocator: &mut AllocEncoder) -> Evidence {
+        Evidence(allocator.allocator().null())
+    }
+
+    pub fn to_nodeptr(&self) -> NodePtr {
+        self.0
+    }
+}
+
+impl ToClvm<NodePtr> for Evidence {
+    fn to_clvm(
+        &self,
+        _encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
+        Ok(self.0)
+    }
+}
