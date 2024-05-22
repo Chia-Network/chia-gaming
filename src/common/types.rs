@@ -557,7 +557,7 @@ impl<X: ToClvm<NodePtr>> Sha256tree for X {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Program(NodePtr);
 
 impl Program {

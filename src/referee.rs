@@ -1,4 +1,4 @@
-use clvm_traits::{clvm_curried_args, ToClvm, ClvmEncoder};
+use clvm_traits::{clvm_curried_args, ToClvm, ClvmEncoder, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
 use clvmr::run_program;
@@ -206,9 +206,16 @@ impl ValidatorMoveArgs {
     }
 }
 
+/// The pair of state and validation program is the source of the validation hash
+#[derive(Clone, Debug)]
+pub struct ValidationInfo {
+    pub state: NodePtr,
+    pub validation_program: Program,
+}
+
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct RefereeMakerGameState {
     pub state: NodePtr,
     pub validation_program: NodePtr,
@@ -218,24 +225,51 @@ struct RefereeMakerGameState {
     pub game_move: GameMoveDetails,
 
     pub previous_state: NodePtr,
-
-    // Ensure we copy this when we update RefereeMaker::current_state
     pub previous_validation_program_hash: Hash,
 }
 
-struct OnChainRefereeMove {
-    // Details
-    detauls: GameMoveDetails,
-    mover_puzzle: Puzzle,
+/// A puzzle for a coin that will be run inside the referee to generate
+/// conditions that are acted on to spend the referee coin.
+/// The referee knows the mover puzzle hash, so we've already decided what
+/// puzzle this is.  It is usually the standard coin puzzle from the user's
+/// ChiaIdentity.
+///
+/// This groups that with the solution.
+pub struct IdentityCoinAndSolution {
+    /// A puzzle for a coin that will be run inside the referee to generate
+    /// conditions that are acted on to spend the referee coin.
+    /// The referee knows the mover puzzle hash, so we've already decided what
+    /// puzzle this is.  It is usually the standard coin puzzle from the user's
+    /// ChiaIdentity.
+    mover_coin_puzzle: Puzzle,
+    /// A solution for the above puzzle that the onchain referee applies to
+    /// extract the puzzle output conditions.  The spend results in a re-formed
+    /// referee on chain.
     mover_coin_spend_solution: NodePtr,
 }
 
-struct OnChainRefereeSlash {
-    previous_state: NodePtr,
-    previous_validation_program: Program,
-    mover_coin_puzzle: Puzzle,
-    mover_coin_spend_solution: NodePtr,
-    slash_evidence: Evidence,
+/// Dynamic arguments passed to the on chain refere to apply a move
+pub struct OnChainRefereeMove {
+    /// From the wire protocol.
+    pub details: GameMoveDetails,
+    /// Coin puzzle and solution that are used to generate conditions for the
+    /// next generation of the on chain refere coin.
+    pub mover_coin: IdentityCoinAndSolution,
+}
+
+/// Dynamic arguments passed to the on chain refere to apply a slash
+pub struct OnChainRefereeSlash {
+    /// Since notionally we optimistically accept game updates at the referee
+    /// layer, "previous" here is the current state at the time the move arrived,
+    /// previous to the update that caused this slash.
+    pub previous_validation_info: ValidationInfo,
+
+    /// Coin puzzle and solution that are used to generate conditions for the
+    /// next generation of the on chain refere coin.
+    pub mover_coin: IdentityCoinAndSolution,
+
+    /// clvm data about the slash.
+    pub slash_evidence: Evidence,
 }
 
 // onchain referee solution
@@ -245,10 +279,44 @@ struct OnChainRefereeSlash {
 // It is a solution itself, but the referee coin uses the mover puzzle as a
 // puzzle for a coin that represents the user's identity ... most likely a
 // standard puzzle.
-enum OnChainRefereeSolution {
+pub enum OnChainRefereeSolution {
     Timeout,
     Move(OnChainRefereeMove),
     Slash(OnChainRefereeSlash)
+}
+
+impl ToClvm<NodePtr> for OnChainRefereeSolution {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
+        match self {
+            OnChainRefereeSolution::Timeout => encoder.encode_atom(&[]),
+            OnChainRefereeSolution::Move(refmove) => {
+                // Max move size is left off
+                (refmove.details.move_made.clone(),
+                 (refmove.details.validation_info_hash.clone(),
+                  (refmove.details.mover_share.clone(),
+                   (refmove.mover_coin.mover_coin_puzzle.clone(),
+                    (Node(refmove.mover_coin.mover_coin_spend_solution.clone()), ())
+                   )
+                  )
+                 )
+                ).to_clvm(encoder)
+            }
+            OnChainRefereeSolution::Slash(refslash) => {
+                (Node(refslash.previous_validation_info.state),
+                 (refslash.previous_validation_info.validation_program.clone(),
+                  (refslash.mover_coin.mover_coin_puzzle.clone(),
+                   (Node(refslash.mover_coin.mover_coin_spend_solution),
+                    (refslash.slash_evidence.clone(), ())
+                   )
+                  )
+                 )
+                ).to_clvm(encoder)
+            }
+        }
+    }
 }
 
 // XXX break out state so we can have a previous state and easily swap them.
