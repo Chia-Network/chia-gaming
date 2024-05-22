@@ -333,6 +333,19 @@ fn test_referee_can_slash_on_chain() {
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
 
+    let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
+
+    // Make simulator.
+    let s = Simulator::new();
+
+    let private_key: PrivateKey = rng.gen();
+    let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
+
+    s.farm_block(&identity.puzzle_hash);
+
+    let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
+    assert!(coins.len() > 0);
+
     // Generate keys and puzzle hashes.
     let my_private_key: PrivateKey = rng.gen();
     let my_identity = ChiaIdentity::new(&mut allocator, my_private_key).expect("should generate");
@@ -385,7 +398,9 @@ fn test_referee_can_slash_on_chain() {
         &game_start_info,
     );
 
-    let readable_move = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
+
     let my_move_wire_data = reftest.my_referee
         .my_turn_make_move(
             &mut rng,
@@ -394,16 +409,27 @@ fn test_referee_can_slash_on_chain() {
         )
         .expect("should move");
 
-    assert!(my_move_wire_data.details.move_made.is_empty());
-    let mut off_chain_slash_gives_error = reftest.my_referee.clone();
-    let their_move_result = off_chain_slash_gives_error.their_turn_move_off_chain(
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
+
+    let timeout_transaction = reftest.my_referee.get_transaction_for_timeout(
         &mut allocator,
-        &GameMoveDetails {
-            move_made: vec![1],
-            validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
-            max_move_size: 100,
-            mover_share: Amount::default(),
-        },
-    );
-    eprintln!("their_move_result {their_move_result:?}");
+        &coins[0],
+        &agg_sig_me_additional_data
+    ).expect("should work").unwrap();
+
+    eprintln!("timeout_transaction {timeout_transaction:?}");
+    eprintln!("referee puzzle curried {}", disassemble(
+        allocator.allocator(),
+        timeout_transaction.bundle.puzzle.to_nodeptr(),
+        None
+    ));
+
+    let specific = SpecificTransactionBundle {
+        coin: coins[0].clone(),
+        bundle: timeout_transaction.bundle.clone()
+    };
+
+    s.push_tx(&mut allocator, &specific).expect("should work");
+
+    todo!();
 }

@@ -712,6 +712,7 @@ impl ChannelHandler {
             self.live_games.push(LiveGame {
                 game_id: g.game_id.clone(),
                 referee_maker: Box::new(RefereeMaker::new(
+                    env.referee_coin_puzzle.clone(),
                     env.referee_coin_puzzle_hash.clone(),
                     g,
                     referee_identity,
@@ -1240,7 +1241,7 @@ impl ChannelHandler {
                     &cached.at_stake_amount,
                 );
 
-                let (spend_transaction, reward_coin) =
+                let spend_transaction =
                     cached.live_game.referee_maker.get_transaction_for_move(
                         env.allocator,
                         &game_coin,
@@ -1252,9 +1253,9 @@ impl ChannelHandler {
                         game_id: cached.game_id.clone(),
                         spend: SpecificTransactionBundle {
                             coin: unroll_coin.clone(),
-                            bundle: spend_transaction.clone(),
+                            bundle: spend_transaction.bundle.clone(),
                         },
-                        reward_coin,
+                        reward_coin: spend_transaction.reward_coin,
                     }),
                     skip_game: Vec::default(),
                     skip_coin_id: None,
@@ -1280,7 +1281,7 @@ impl ChannelHandler {
                     &cached.amount,
                 );
 
-                let (spend_transaction, after_update_game_coin_string) = self.live_games[game_idx]
+                let spend_transaction = self.live_games[game_idx]
                     .referee_maker
                     .get_transaction_for_move(
                         env.allocator,
@@ -1294,9 +1295,9 @@ impl ChannelHandler {
                         game_id: cached.game_id.clone(),
                         spend_before_game_coin: SpecificTransactionBundle {
                             coin: game_coin.clone(),
-                            bundle: spend_transaction,
+                            bundle: spend_transaction.bundle.clone(),
                         },
-                        after_update_game_coin: after_update_game_coin_string,
+                        after_update_game_coin: spend_transaction.reward_coin.clone(),
                     }),
                     skip_coin_id: Some(cached.game_id.clone()),
                     skip_game: Vec::default(),

@@ -583,7 +583,7 @@ impl ToClvm<NodePtr> for Program {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Puzzle(Program);
 
 impl ToClvm<NodePtr> for Puzzle {
@@ -791,14 +791,14 @@ impl CoinCondition {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TransactionBundle {
     pub puzzle: Puzzle,
     pub solution: NodePtr,
     pub signature: Aggsig,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SpecificTransactionBundle {
     pub coin: CoinString,
     pub bundle: TransactionBundle,
