@@ -599,21 +599,25 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         curried_args: &RefereePuzzleArgs,
     ) -> Result<Puzzle, Error> {
+        let curried_referee_arg_list: Vec<Node> = [
+            curried_args.mover_puzzle_hash.to_clvm(allocator).into_gen()?,
+            curried_args.waiter_puzzle_hash.to_clvm(allocator).into_gen()?,
+            curried_args.timeout.to_clvm(allocator).into_gen()?,
+            curried_args.amount.to_clvm(allocator).into_gen()?,
+            self.referee_coin_puzzle_hash.to_clvm(allocator).into_gen()?,
+            curried_args.nonce.to_clvm(allocator).into_gen()?,
+            curried_args.game_move.move_made.to_clvm(allocator).into_gen()?,
+            curried_args.game_move.max_move_size.to_clvm(allocator).into_gen()?,
+            curried_args.game_move.validation_info_hash.to_clvm(allocator).into_gen()?,
+            curried_args.game_move.mover_share.to_clvm(allocator).into_gen()?,
+            curried_args.previous_validation_info_hash.to_clvm(allocator).into_gen()?
+        ].into_iter().map(Node).collect();
+        let curried_referee_arg =
+            curried_referee_arg_list.to_clvm(allocator).into_gen()?;
+
         Ok(Puzzle::from_nodeptr(CurriedProgram {
             program: self.referee_coin_puzzle.clone(),
-            args: clvm_curried_args!(
-                curried_args.mover_puzzle_hash.clone(),
-                curried_args.waiter_puzzle_hash.clone(),
-                curried_args.timeout.clone(),
-                curried_args.amount.clone(),
-                &self.referee_coin_puzzle_hash,
-                curried_args.nonce,
-                curried_args.game_move.move_made.clone(),
-                curried_args.game_move.max_move_size,
-                curried_args.game_move.validation_info_hash.clone(),
-                curried_args.game_move.mover_share.clone(),
-                curried_args.previous_validation_info_hash.clone()
-            ),
+            args: clvm_curried_args!(Node(curried_referee_arg)),
         }
         .to_clvm(allocator)
         .into_gen()?))
