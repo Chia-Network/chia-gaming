@@ -7,229 +7,101 @@
 ; all sorting is done highest to lowest
 
 (import std.map)
-(import std.filtermap)
+(import std.filter)
 (import std.relops)
 (import std.truncate)
-(import std.partition)
-(import std.append)
-(import std.atomsort)
-(import onchain.calpoker.flatten_card)
-(import onchain.calpoker.onehandcalc exposing group_by_count_inner)
 
-(defun find_flush (suits)
-    (assign
-        ((count1 . suit1)) (group_by_count_clean (atomsort suits))
-        (* suit1 (>= count1 5))
+; returns (count inner_list)
+(defun prepend_count_inner (last_value last_count (@ mylist ((@ first (compare other)) . rest)))
+    (if (not mylist)
+        (li last_count 0)
+        (if (= compare last_value)
+            (assign 
+                (my_count inner_list) (prepend_count_inner last_value (+ 1 lastcount) rest)
+                (li my_count (c (c my_count first) inner_list))
+            )
+            (assign
+                (my_count inner_list) (prepend_count_inner compare 1 rest)
+                (li last_count (c (c my_count first) inner_list))
+            )
+        )
     )
 )
 
-(defun straight_high_inner (ranks last count)
-    (if (not ranks)
-        (if (logand (= last 2) (= count 4))
-            ; maybe ace to five
-            5
+(defun prepend_count (mylist)
+    (r prepend_count_inner (0 0 mylist))
+)
+
+(defun pull_indices_inner (my_index indices cards)
+    (if (not indices)
+        0
+        (= my_index (f indices))
+        (c (f cards) (pull_indices_inner (+ 1 index) (r indices) (r cards)))
+        (pull_indices_inner (+ 1 index) (r indices) (r cards))
+    )
+)
+
+(defun pull_indices (indices cards)
+    (pull_indices_inner 0 (sort deep< cards) cards)
+)
+
+(defun pull_out_straight (next_card (@ cards_with_indices ((first_rank first_suit first_index) . rest)))
+    (if (not card_with_indices)
+        0
+        (= next_card first_rank)
+        (c first_index (pull_out_straight (- next_card 1) rest))
+        (pull_out_straight (next_card) rest)
+    )
+)
+
+(defun find_straight_high (maybe_low high_card count_so_far (@ cards_with_indices ((first_rank))))
+    (if (= count_so_far 5)
+        high_card
+        (logand maybe_low (= count_so_far 4) (= high_card 5))
+        5
+        (not cards_with_indices)
+        0
+        (= first_rank (- high_card count_so_far))
+        (find_straight_high maybe_low high_card (+ 1 count_so_far) (r cards_with_indices))
+        (find_straight_high maybe_low high_card 0 (r cards_with_indices))
+    )
+)
+
+(defun straight_indices (@ cards_with_indices ((first_rank first_suit first_index)))
+    (assign high_card (find_straight_high (= first_rank 14) 0 0)
+        (if (not high_card)
             0
-        )
-        (if (= last (f ranks))
-            ; skip identical cards
-            (straight_high_inner (r ranks) last count)
-            ; if the partial straight continues
-            (if (= (f ranks) (- last 1))
-                (if (= count 4)
-                    ; found a straight, add 3 to last because next and last are included
-                    (+ last 3)
-                    ; keep looking for a straight with the count going up by one
-                    (straight_high_inner (r ranks) (f ranks) (+ count 1))
-                )
-                ; reset the count
-                (straight_high_inner (r ranks) (f ranks) 1)
-            )
+            (= high_card 5)
+            (c first_index (pull_out_straight 5 cards_with_indices))
+            (truncate 5 (pull_out_straight high_card cards_with_indices))
         )
     )
 )
 
-; returns the high card of a straight or 0 if there isn't any
-; ranks must be sorted in descending order
-(defun straight_high_extended (ranks)
-    (assign
-        high (straight_high_inner ranks 0 0)
-        (if (= high 5)
-            (* (= (f ranks) 14) 5)
-            high
-        )
-    )
-)
-
-(defun group_by_count_clean (items)
-    (map
-        unflatten_card
-        (atomsort (group_by_count_inner items (f items) 0))
-    )
-)
-
-(defun find_straight_flush_indices (flush_suit straight_flush_high (@ cards ((first_rank . first_suit) . remaining)))
-    (if (not cards)
+(defun pull_suit (suit (@ mylist (@ first (first_suit first_rank first_index)) . rest))
+    (if (not mylist)
         0
-        (assign
-            straight_to_ace_match
-                (logand
-                    (= straight_flush_high 5)
-                    (= first_rank 14)
-                )
-
-            rank_in_range
-                (logand
-                    (<= first_rank straight_flush_high)
-                    (> first_rank (- straight_flush_high 5))
-                )
-
-            hit
-                (logand
-                    (= first_suit flush_suit)
-                    (logior straight_to_ace_match rank_in_range)
-                )
-
-            (logior (lsh (find_straight_flush_indices flush_suit straight_flush_high remaining) 1) hit)
-        )
-    )
-)
-
-(defun flush_cards_with_index (flush_suit index (@ cards ((first_rank . first_suit))))
-    (if (not cards)
+        (!= suit first_suit)
         0
-        (if (= flush_suit first_suit)
-            (c (flatten_card (c first_rank index)) (flush_cards_with_index flush_suit (+ index 1) (r cards)))
-            (flush_cards_with_index flush_suit (+ index 1) (r cards))
-        )
+        (c (li first_rank first_suit index) (pull_suit rest))
     )
-)
-
-(defun find_flush_indices (flush_suit cards)
-    (assign
-        myfiltered (truncate 5 (atomsort (flush_cards_with_index flush_suit 0 cards)))
-        (to_bitfield (map (lambda (x) (logand x 15)) myfiltered))
-    )
-)
-
-(defun to_bitfield (includes)
-    (if (not includes)
-        0
-        (logior (lsh 1 (f includes)) (to_bitfield (r includes)))
-    )
-)
-
-(defun find_straight_includes (ranks with_index)
-    (if (all ranks with_index)
-        (if (= (f ranks) (lsh (f with_index) -4))
-            (c (logand 15 (f with_index)) (find_straight_includes (r ranks) (r with_index)))
-            (find_straight_includes ranks (r with_index))
-        )
-        0
-    )
-)
-
-(defun find_straight_indices (my_straight_high cards)
-    (assign
-        with_index (atomsort (ranks_with_indices 0 cards))
-        my_ranks
-            (if (= my_straight_high 5)
-                (list 14 5 4 3 2)
-                (list
-                    my_straight_high
-                    (- my_straight_high 1)
-                    (- my_straight_high 2)
-                    (- my_straight_high 3)
-                    (- my_straight_high 4)
-                )
-            )
-        (to_bitfield (find_straight_includes my_ranks with_index))
-    )
-)
-
-(defun ranks_with_indices (index cards)
-    (if (not cards)
-        0
-        (c (flatten_card (c (f (f cards)) index)) (ranks_with_indices (+ index 1) (r cards)))
-    )
-)
-
-(defun find_hand_indices ((@ numbered-cards ((number . card) . rest)))
-    (if numbered-cards
-        (logior (lsh 1 number) (find_hand_indices rest))
-        0
-    )
-)
-
-(defun number_cards (num cards)
-    (if cards
-        (c (c num (f cards)) (number_cards (+ num 1) (r cards)))
-        0
-    )
-)
-
-;; Sorts the cards by group size according to hand.
-;; Hand has pairs of count and rank.  We pull out cards based on their rank
-;; until each bucket is empty in hand and then give the remaining cards.
-(defun bucket_cards_by_frequency_groups (hand cards)
-    (if hand
-        (assign
-            (hand_freq . want_rank) (f hand)
-
-            (cards_with_rank . cards_without_rank) (partition (lambda ((& want_rank) (num . (rank . suit))) (= rank want_rank)) cards)
-
-            ;; We have the cards with this rank... go to the next wanted rank.
-            (append cards_with_rank (bucket_cards_by_frequency_groups (r hand) cards_without_rank))
-        )
-        cards
-    )
-)
-
-(defun normal_full_house (firstcount secondcount hand cards)
-    (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
 )
 
 (defun handcalc (cards)
-    (assign-lambda
-        first (lambda (x) (f x))
-        rest (lambda (x) (r x))
-        sorted_ranks (atomsort (map first cards))
-        hand (group_by_count_clean sorted_ranks)
-        ((firstcount . firstrank) (secondcount . secondrank)) hand
-        flush_suit (find_flush (map rest cards))
-        (if ;; Full house
-            (logand (= firstcount 3) (= secondcount 2))
-            (normal_full_house firstcount secondcount hand cards)
-
-            ;; Flush
-            flush_suit
-            (assign-lambda
-                flush_cards (filtermap (lambda ((& flush_suit) (@ thecard (rank . suit))) (if (= suit flush_suit) rank 0)) cards)
-                straight_flush_high (straight_high_extended (atomsort flush_cards))
-                (if straight_flush_high
-                    (find_straight_flush_indices flush_suit straight_flush_high cards)
-                    (if (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1)))
-                        (find_flush_indices flush_suit cards)
-                        (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
-                    )
-                )
-            )
-
-            ;; Else
-            (assign
-                my_straight_high (straight_high_extended sorted_ranks)
-                (if (all
-                        my_straight_high
-                        (logior
-                            (< firstcount 3)
-                            (logand (= firstcount 3) (= secondcount 1))
-                        )
-                    )
-
-                    (find_straight_indices my_straight_high cards)
-
-                    (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
-                )
+    (assign 
+        ranks_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li rank suit index))))
+        group_candidate (map (lamdda ((count rank suit index)) index) (truncate 5 (sort deep> (prepend_count ranks_first))))
+        straight_candidate (straight_indices ranks_first)
+        suits_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li suit rank index))))
+        (@ suits_grouped (first_count first_suit first_rank first_index)) (sort deep> (prepend_count suits_first))
+        (flush_candidate straight_flush_candidate) (if (< first_count 5) (li 0 0)
+            (li
+                (li (map (lambda ((count suit rank index)) index)) (truncate 5 suits_grouped))
+                (straight_indices (pull_suit suits_grouped first_suit))
             )
         )
+        candidates (filter echo (li group_candidate straight_candidate flush_candidate straight_flush_candidate))
+        (sort deep< (r (max deep> (map (lambda (indices) (li (onehandcalc (pull_indices indices cards)) indices))))))
     )
 )
+
