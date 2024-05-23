@@ -5,3 +5,4 @@ pub mod referee;
 #[cfg(feature = "sim-tests")]
 pub mod simulator;
 pub mod standard_coin;
+pub mod chialisp;
