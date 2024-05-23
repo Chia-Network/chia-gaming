@@ -13,3 +13,12 @@
         (qq (map-with-rest (unquote (f ARGS)) (unquote (f (r ARGS))) 0))
     )
 )
+
+(defun map_enumerate_inner (idx F LST)
+  (if LST
+      (c (a F (list (f LST) idx)) (map_enumerate_inner (+ 1 idx) F (r LST)))
+      ()
+      )
+  )
+
+(defun map_enumerate (F LST) (map_enumerate_inner 0 F LST))
