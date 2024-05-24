@@ -177,7 +177,7 @@ fn test_handcalc() {
             // ], "(5 4 () 1 2)"),
             (
                 "()",
-                [
+                vec![
                     (12, 1),
                     (11, 1),
                     (14, 1),
@@ -185,7 +185,7 @@ fn test_handcalc() {
                     (10, 1),
                     (9, 1)
                 ],
-                [
+                vec![
                     (12, 1),
                     (11, 1),
                     (14, 1),
@@ -193,13 +193,48 @@ fn test_handcalc() {
                     (10, 1),
                     (0, 1)
                 ]
+            ),
+            (
+                "()",
+                vec![
+                    (14, 1),
+                    (13, 1),
+                    (12, 1),
+                    (11, 1),
+                    (10, 1)
+                ],
+                vec![
+                    (14, 2),
+                    (13, 2),
+                    (12, 2),
+                    (11, 2),
+                    (10, 2)
+                ]
+            ),
+            (
+                "1",
+                vec![
+                    (14, 1), (13, 1), (12, 1), (11, 1), (10, 1)
+                ],
+                vec![
+                    (6, 1), (5, 1), (4, 1), (3, 1), (2, 1)
+                ]
+            ),
+            (
+                "()",
+                vec![
+                    (12, 1), (11, 1), (14, 1), (13, 1), (10, 1), (9, 1)
+                ],
+                vec![
+                    (14, 2), (11, 2), (10, 2), (13, 2), (12, 2)
+                ]
             )
         ];
 
     let program = read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
     let deep_compare = read_hex_puzzle(&mut allocator, "resources/deep_compare.hex").expect("should read");
 
-    let mut test_handcalc_with_example = |&(expected_relationship, ex_data_1, ex_data_2)| {
+    let mut test_handcalc_with_example = |(expected_relationship, ex_data_1, ex_data_2)| {
         let source_data_1 =
             ("handcalc",
              (ex_data_1, ())
@@ -222,6 +257,14 @@ fn test_handcalc() {
             source_data_2,
             0
         ).expect("should run").1;
+        eprintln!(
+            "result 1 {}",
+            disassemble(allocator.allocator(), result_1, None)
+        );
+        eprintln!(
+            "result 2 {}",
+            disassemble(allocator.allocator(), result_2, None)
+        );
         let deep_compare_args = [
             Node(result_1),
             Node(result_2)
@@ -239,7 +282,8 @@ fn test_handcalc() {
         );
     };
 
-    for test in examples.iter() {
+    for test in examples.into_iter() {
+        eprintln!("test {test:?}");
         test_handcalc_with_example(test);
     }
 }
