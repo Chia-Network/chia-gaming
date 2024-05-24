@@ -87,8 +87,8 @@
     )
 )
 
-(defun straight_indices (@ cards_with_indices ((first_rank first_suit first_index)))
-    (assign high_card (find_straight_high (= first_rank 14) 0 0)
+(defun straight_indices ((@ cards_with_indices ((first_rank first_suit first_index))))
+    (assign high_card (find_straight_high (= first_rank 14) 0 0 cards_with_indices)
         (if (not high_card)
             0
             (= high_card 5)
@@ -109,18 +109,21 @@
 
 (defun handcalc (cards)
     (assign
-        ranks_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li rank suit index))))
+        ranks_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li rank suit index)) cards))
+
         group_candidate (map (lambda ((count rank suit index)) index) (truncate 5 (sort deep> (prepend_count ranks_first))))
         straight_candidate (straight_indices ranks_first)
-        suits_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li suit rank index))))
-        (@ suits_grouped (first_count first_suit first_rank first_index)) (sort deep> (prepend_count suits_first))
+
+        suits_first (sort deep> (map_enumerate (lambda ((rank . suit) index) (li suit rank index)) cards))
+        (@ suits_grouped ((first_count first_suit first_rank first_index))) (sort deep> (prepend_count suits_first))
         (flush_candidate straight_flush_candidate) (if (< first_count 5) (li 0 0)
             (li
-                (li (map (lambda ((count suit rank index)) index) (truncate 5 suits_grouped)))
+                (map (lambda ((count suit rank index)) index) (truncate 5 suits_grouped))
                 (straight_indices (pull_suit first_suit suits_grouped))
             )
         )
+
         candidates (filtermap echo (li group_candidate straight_candidate flush_candidate straight_flush_candidate))
-        (sort deep< (r (max deep> (map (lambda ((& cards) indices) (li (onehandcalc (pull_indices indices cards)) indices)) candidates))))
+        (sort deep< (f (r (max deep> (map (lambda ((& cards) indices) (li (onehandcalc (pull_indices indices cards)) indices)) candidates)))))
     )
 )
