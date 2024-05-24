@@ -124,6 +124,8 @@
         )
 
         candidates (filtermap echo (li group_candidate straight_candidate flush_candidate straight_flush_candidate))
-        (sort deep< (f (r (max deep> (map (lambda ((& cards) indices) (li (onehandcalc (pull_indices indices cards)) indices)) candidates)))))
+        
+        (quality indices_from_onehandcalc) (max deep> (map (lambda ((& cards) indices) (li (onehandcalc (pull_indices indices cards)) indices)) candidates))
+        (list quality (sort deep< indices_from_onehandcalc))
     )
 )
