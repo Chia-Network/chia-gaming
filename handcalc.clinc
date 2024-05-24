@@ -6,6 +6,7 @@
 ; doesn't work for ten or more cards if there are multiple flushes
 ; all sorting is done highest to lowest
 
+(import std.append)
 (import std.echo)
 (import std.li)
 (import std.map)
@@ -70,19 +71,6 @@
         0
         (= first_rank (- high_card count_so_far))
         (find_straight_high maybe_low high_card (+ 1 count_so_far) (r cards_with_indices))
-        (find_straight_high maybe_low high_card 0 (r cards_with_indices))
-    )
-)
-
-(defun find_straight_high (maybe_low high_card count_so_far (@ cards_with_indices ((first_rank))))
-    (if (= count_so_far 5)
-        high_card
-        (all maybe_low (= count_so_far 4) (= high_card 5))
-        5
-        (not cards_with_indices)
-        0
-        (= first_rank (- high_card count_so_far))
-        (find_straight_high maybe_low high_card (+ 1 count_so_far) (r cards_with_indices))
         (find_straight_high maybe_low first_rank 1 (r cards_with_indices))
     )
 )
@@ -125,7 +113,7 @@
 
         candidates (filtermap echo (li group_candidate straight_candidate flush_candidate straight_flush_candidate))
         
-        (quality indices_from_onehandcalc) (max deep> (map (lambda ((& cards) indices) (li (onehandcalc (pull_indices indices cards)) indices)) candidates))
+        (quality indices_from_onehandcalc) (max deep< (map (lambda ((& cards) indices) (li (onehandcalc (pull_indices indices cards)) indices)) candidates))
         (list quality (sort deep< indices_from_onehandcalc))
     )
 )
