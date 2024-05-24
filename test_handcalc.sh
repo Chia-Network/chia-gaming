@@ -1,5 +1,4 @@
 #!/bin/sh
 
-time run -i . test_handcalc.clsp > test_handcalc.clvm && \
-    opc test_handcalc.clvm > test_handcalc.hex && \
-    cldb -y main.sym -p -x test_handcalc.hex 80
+time ../target/debug/run -i . resources/test_handcalc_micro.clsp && \
+    ../target/debug/cldb -y main.sym -p -x resources/test_handcalc_micro.hex "$(opc '("handcalc" ((12 . 1) (11 . 1) (14 . 1) (13 . 1) (10 . 1) (9 . 1)))')"
