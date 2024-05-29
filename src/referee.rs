@@ -20,7 +20,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error,
     Hash, IntoErr, Node, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
-    SpecificTransactionBundle, Timeout, TransactionBundle, Program,
+    SpecificTransactionBundle, Timeout, TransactionBundle, Program, ToQuotedProgram
 };
 
 pub const REM_CONDITION_FIELDS: usize = 4;
@@ -710,11 +710,12 @@ impl RefereeMaker {
                 )?;
 
                 let solution = args.to_clvm(allocator).into_gen()?;
-                let solution_hash = Node(solution).sha256tree(allocator);
+                let quoted_solution = solution.to_quoted_program(allocator)?;
+                let quoted_solution_hash = Node(solution).sha256tree(allocator);
 
                 let signature = sign_agg_sig_me(
                     &self.my_identity.private_key,
-                    &solution_hash.bytes(),
+                    &quoted_solution_hash.bytes(),
                     &coin_string.to_coin_id(),
                     agg_sig_me_additional_data,
                 );

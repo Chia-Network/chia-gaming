@@ -1,7 +1,8 @@
 use clvmr::allocator::NodePtr;
-use clvm_traits::ToClvm;
+use clvm_traits::{ToClvm, ToClvmError};
 
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
+use clvm_tools_rs::compiler::comptypes::map_m;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyNone, PyBytes, PyTuple};
@@ -13,7 +14,7 @@ use indoc::indoc;
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
 use crate::common::standard_coin::{sign_agg_sig_me, standard_solution_partial, ChiaIdentity, calculate_synthetic_secret_key, private_to_public_key, calculate_synthetic_public_key, agg_sig_me_message};
-use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID};
+use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID, IntoErr};
 
 use crate::channel_handler::types::{GameStartInfo, ReadableMove};
 use crate::referee::GameMoveDetails;
@@ -66,6 +67,72 @@ impl Drop for Simulator {
 }
 
 impl Simulator {
+    /// Given a coin in our inventory, spend the coin to the target puzzle hash.
+    pub fn spend_coin_to_puzzle_hash(
+        &self,
+        allocator: &mut AllocEncoder,
+        identity: &ChiaIdentity,
+        puzzle: &Puzzle,
+        coin: &CoinString,
+        target_coins: &[(PuzzleHash, Amount)],
+    ) -> Result<Vec<CoinString>, Error> {
+        let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
+        let (first_coin_parent, first_coin_ph, first_coin_amt) = coin.to_parts().unwrap();
+        assert_eq!(puzzle.sha256tree(allocator), first_coin_ph);
+
+        let conditions_vec = map_m(|(ph, amt): &(PuzzleHash, Amount)| -> Result<Node, Error> {
+            Ok(Node((CREATE_COIN, (ph.clone(), (amt.clone(), ())))
+                .to_clvm(allocator).into_gen()?))
+        }, target_coins)?;
+        let conditions = conditions_vec.to_clvm(allocator).into_gen()?;
+
+        let (solution, signature1) = standard_solution_partial(
+            allocator,
+            &identity.synthetic_private_key,
+            &coin.to_coin_id(),
+            conditions,
+            &identity.synthetic_public_key,
+            &agg_sig_me_additional_data,
+            false
+        ).expect("should build");
+
+        let quoted_conds = conditions.to_quoted_program(allocator).expect("should work");
+        let hashed_conds = quoted_conds.sha256tree(allocator);
+        let agg_sig_me_message = agg_sig_me_message(
+            &hashed_conds.bytes(),
+            &coin.to_coin_id(),
+            &agg_sig_me_additional_data
+        );
+        eprintln!("our message {agg_sig_me_message:?}");
+        let signature2 = identity.synthetic_private_key.sign(&agg_sig_me_message);
+        assert_eq!(signature1, signature2);
+
+        let specific = SpecificTransactionBundle {
+            coin: coin.clone(),
+            bundle: TransactionBundle {
+                puzzle: identity.puzzle.clone(),
+                solution,
+                signature: signature1,
+            }
+        };
+
+        let status = self.push_tx(
+            allocator,
+            &specific
+        ).expect("should spend");
+        if status == 3 {
+            return Err(Error::StrErr("failed to spend coin".to_string()));
+        }
+
+        Ok(target_coins.iter().map(|(ph, amt)| {
+            CoinString::from_parts(
+                &coin.to_coin_id(),
+                ph,
+                amt
+            )
+        }).collect())
+    }
+
     pub fn new() -> Self {
         Python::with_gil(|py| -> PyResult<_> {
             let module = PyModule::from_code(
@@ -263,7 +330,6 @@ fn test_sim() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
-    let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
     let s = Simulator::new();
     let private_key: PrivateKey = rng.gen();
     let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
@@ -274,57 +340,14 @@ fn test_sim() {
     eprintln!("coin 0 {:?}", coins[0].to_parts());
     eprintln!("coin 0 id {:?}", coins[0].to_coin_id());
 
-    let (first_coin_parent, first_coin_ph, first_coin_amt) = coins[0].to_parts().unwrap();
-    assert_eq!(first_coin_ph, identity.puzzle_hash);
-
-    let conditions = [
-        (CREATE_COIN,
-         (identity.puzzle_hash.clone(),
-          (Amount::new(1), ())
-         )
-        ),
-        // (CREATE_COIN,
-        //  (identity.puzzle_hash.clone(),
-        //   (first_coin_amt - Amount::new(1), ())
-        //  )
-        // )
-    ].to_clvm(&mut allocator).expect("should create conditions");
-
-    let (solution, signature1) = standard_solution_partial(
+    let (_, _, amt) = coins[0].to_parts().unwrap();
+    s.spend_coin_to_puzzle_hash(
         &mut allocator,
-        &identity.synthetic_private_key,
-        &coins[0].to_coin_id(),
-        conditions,
-        &identity.synthetic_public_key,
-        &agg_sig_me_additional_data,
-        false
-    ).expect("should build");
-
-    let quoted_conds = conditions.to_quoted_program(&mut allocator).expect("should work");
-    let hashed_conds = quoted_conds.sha256tree(&mut allocator);
-    let agg_sig_me_message = agg_sig_me_message(
-        &hashed_conds.bytes(),
-        &coins[0].to_coin_id(),
-        &agg_sig_me_additional_data
-    );
-    eprintln!("our message {agg_sig_me_message:?}");
-    let signature2 = identity.synthetic_private_key.sign(&agg_sig_me_message);
-    assert_eq!(signature1, signature2);
-
-    eprintln!("our cond hash {hashed_conds:?}");
-    eprintln!("our signature {signature1:?}");
-
-    let specific = SpecificTransactionBundle {
-        coin: coins[0].clone(),
-        bundle: TransactionBundle {
-            puzzle: identity.puzzle.clone(),
-            solution,
-            signature: signature1,
-        }
-    };
-
-    let status = s.push_tx(&mut allocator, &specific).expect("should spend");
-    assert_ne!(status, 3);
+        &identity,
+        &identity.puzzle,
+        &coins[0],
+        &[(identity.puzzle_hash.clone(), amt.clone())]
+    ).expect("should spend");
 }
 
 #[test]
@@ -335,16 +358,7 @@ fn test_referee_can_slash_on_chain() {
 
     let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
 
-    // Make simulator.
-    let s = Simulator::new();
-
     let private_key: PrivateKey = rng.gen();
-    let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
-
-    s.farm_block(&identity.puzzle_hash);
-
-    let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
-    assert!(coins.len() > 0);
 
     // Generate keys and puzzle hashes.
     let my_private_key: PrivateKey = rng.gen();
@@ -401,6 +415,29 @@ fn test_referee_can_slash_on_chain() {
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
+    let spend_to_referee = reftest.my_referee.curried_referee_puzzle_for_validator(
+        &mut allocator
+    ).expect("should work");
+    let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
+
+    // Make simulator and create referee coin.
+    let s = Simulator::new();
+    s.farm_block(&reftest.my_identity.puzzle_hash);
+
+    let coins = s.get_my_coins(
+        &reftest.my_identity.puzzle_hash
+    ).expect("got coins");
+    assert!(coins.len() > 0);
+
+    let (_, _, amt) = coins[0].to_parts().unwrap();
+    let referee_coin = s.spend_coin_to_puzzle_hash(
+        &mut allocator,
+        &reftest.my_identity,
+        &reftest.my_identity.puzzle,
+        &coins[0],
+        &[(referee_puzzle_hash.clone(), amt.clone())]
+    ).expect("should create referee coin");
+
     let my_move_wire_data = reftest.my_referee
         .my_turn_make_move(
             &mut rng,
@@ -410,7 +447,6 @@ fn test_referee_can_slash_on_chain() {
         .expect("should move");
 
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
-
     let timeout_transaction = reftest.my_referee.get_transaction_for_timeout(
         &mut allocator,
         &coins[0],
