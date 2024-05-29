@@ -66,6 +66,17 @@ impl Drop for Simulator {
     }
 }
 
+fn extract_code(e: &str) -> Option<u32> {
+    if e == "None" {
+        return None;
+    }
+
+    if let Some(p) = e.chars().position(|c| c == ':') {
+        return Some(e[(p+2)..(e.len()-2)].parse::<u32>().expect("should parse"));
+    }
+    todo!();
+}
+
 impl Simulator {
     /// Given a coin in our inventory, spend the coin to the target puzzle hash.
     pub fn spend_coin_to_puzzle_hash(
@@ -116,7 +127,7 @@ impl Simulator {
             }
         };
 
-        let status = self.push_tx(
+        let (status, _) = self.push_tx(
             allocator,
             &specific
         ).expect("should spend");
@@ -305,7 +316,7 @@ impl Simulator {
         &self,
         allocator: &mut AllocEncoder,
         tx: &SpecificTransactionBundle
-    ) -> PyResult<u32> {
+    ) -> PyResult<(u32, Option<u32>)> {
         let spend_bundle = self.make_spend_bundle(allocator, tx)?;
         Python::with_gil(|py| {
             eprintln!("spend_bundle {:?}", spend_bundle);
@@ -319,8 +330,7 @@ impl Simulator {
             eprintln!("inclusion_status {inclusion_status}");
             let status: u32 = inclusion_status.extract(py)?;
             let e: String = err.call_method0(py, "__repr__")?.extract(py)?;
-            eprintln!("err {e:?}");
-            Ok(status)
+            Ok((status, extract_code(&e)))
         })
     }
 }
@@ -368,7 +378,7 @@ fn test_referee_can_slash_on_chain() {
     let their_identity = ChiaIdentity::new(&mut allocator, their_private_key).expect("should generate");
 
     let amount = Amount::new(100);
-    let timeout = Timeout::new(1000);
+    let timeout = Timeout::new(10);
 
     let debug_game = make_debug_game_handler(
         &mut allocator,
@@ -415,11 +425,6 @@ fn test_referee_can_slash_on_chain() {
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
-    let spend_to_referee = reftest.my_referee.curried_referee_puzzle_for_validator(
-        &mut allocator
-    ).expect("should work");
-    let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
-
     // Make simulator and create referee coin.
     let s = Simulator::new();
     s.farm_block(&reftest.my_identity.puzzle_hash);
@@ -429,15 +434,6 @@ fn test_referee_can_slash_on_chain() {
     ).expect("got coins");
     assert!(coins.len() > 0);
 
-    let (_, _, amt) = coins[0].to_parts().unwrap();
-    let referee_coin = s.spend_coin_to_puzzle_hash(
-        &mut allocator,
-        &reftest.my_identity,
-        &reftest.my_identity.puzzle,
-        &coins[0],
-        &[(referee_puzzle_hash.clone(), amt.clone())]
-    ).expect("should create referee coin");
-
     let my_move_wire_data = reftest.my_referee
         .my_turn_make_move(
             &mut rng,
@@ -446,12 +442,46 @@ fn test_referee_can_slash_on_chain() {
         )
         .expect("should move");
 
+    let (_, _, amt) = coins[0].to_parts().unwrap();
+    let spend_to_referee = reftest.my_referee.curried_referee_puzzle_for_validator(
+        &mut allocator
+    ).expect("should work");
+    let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
+
+    let referee_coins = s.spend_coin_to_puzzle_hash(
+        &mut allocator,
+        &reftest.my_identity,
+        &reftest.my_identity.puzzle,
+        &coins[0],
+        &[(referee_puzzle_hash.clone(), amt.clone())]
+    ).expect("should create referee coin");
+
+    // Farm 20 blocks to get past the time limit.
+    for _ in 0..20 {
+        s.farm_block(&reftest.my_identity.puzzle_hash);
+    }
+
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
     let timeout_transaction = reftest.my_referee.get_transaction_for_timeout(
         &mut allocator,
-        &coins[0],
+        &referee_coins[0],
+        &spend_to_referee,
         &agg_sig_me_additional_data
     ).expect("should work").unwrap();
+
+    let disassembled_puzzle_in_transaction = disassemble(
+        allocator.allocator(),
+        timeout_transaction.bundle.puzzle.to_nodeptr(),
+        None
+    );
+    assert_eq!(
+        disassemble(
+            allocator.allocator(),
+            spend_to_referee.to_nodeptr(),
+            None
+        ),
+        disassembled_puzzle_in_transaction
+    );
 
     eprintln!("timeout_transaction {timeout_transaction:?}");
     eprintln!("referee puzzle curried {}", disassemble(
@@ -461,12 +491,10 @@ fn test_referee_can_slash_on_chain() {
     ));
 
     let specific = SpecificTransactionBundle {
-        coin: coins[0].clone(),
+        coin: referee_coins[0].clone(),
         bundle: timeout_transaction.bundle.clone()
     };
 
-    let included = s.push_tx(&mut allocator, &specific).expect("should work");
-    assert_ne!(included, 3);
-
-    todo!();
+    let (included, e) = s.push_tx(&mut allocator, &specific).expect("should work");
+    assert_eq!(included, 1);
 }
