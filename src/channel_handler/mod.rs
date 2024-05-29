@@ -1210,6 +1210,7 @@ impl ChannelHandler {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
+        spend_puzzle: &Puzzle,
         state_number: usize,
     ) -> Result<Option<DispositionResult>, Error> {
         if state_number == self.current_state_number {
@@ -1245,6 +1246,7 @@ impl ChannelHandler {
                     cached.live_game.referee_maker.get_transaction_for_move(
                         env.allocator,
                         &game_coin,
+                        spend_puzzle,
                         &env.agg_sig_me_additional_data,
                     )?;
 
@@ -1286,6 +1288,7 @@ impl ChannelHandler {
                     .get_transaction_for_move(
                         env.allocator,
                         &game_coin,
+                        spend_puzzle,
                         &env.agg_sig_me_additional_data,
                     )?;
 
@@ -1377,6 +1380,7 @@ impl ChannelHandler {
         &'a self,
         env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
+        spend_puzzle: &Puzzle,
         conditions: NodePtr,
     ) -> Result<CoinSpentResult<'a>, Error> {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
@@ -1388,7 +1392,12 @@ impl ChannelHandler {
         };
 
         let disposition =
-            self.get_cached_disposition_for_spent_result(env, unroll_coin, state_number)?;
+            self.get_cached_disposition_for_spent_result(
+                env,
+                unroll_coin,
+                spend_puzzle,
+                state_number
+            )?;
 
         // return list of triples of game_id, coin_id, referee maker pulling from a list of pairs of (id, ref maker)
         let new_game_coins_on_chain = self.get_new_game_coins_on_chain(

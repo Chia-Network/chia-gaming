@@ -664,8 +664,10 @@ impl RefereeMaker {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
+        puzzle: &Puzzle,
         always_produce_transaction: bool,
         previous_state: bool,
+        timeout_only: bool,
         args: &OnChainRefereeSolution,
         agg_sig_me_additional_data: &Hash,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
@@ -704,32 +706,29 @@ impl RefereeMaker {
         if always_produce_transaction || mover_share != Amount::default() {
             // XXX do this differently based on args.is_none()
             // because that is a move transaction with no reward.
-            let transaction_bundle = {
-                let puzzle = self.curried_referee_puzzle_for_validator(
-                    allocator,
-                )?;
+            let solution = args.to_clvm(allocator).into_gen()?;
+            let quoted_solution = solution.to_quoted_program(allocator)?;
+            let quoted_solution_hash = Node(solution).sha256tree(allocator);
 
-                let solution = args.to_clvm(allocator).into_gen()?;
-                let quoted_solution = solution.to_quoted_program(allocator)?;
-                let quoted_solution_hash = Node(solution).sha256tree(allocator);
-
-                let signature = sign_agg_sig_me(
+            let signature = if timeout_only {
+                Aggsig::default()
+            } else {
+                sign_agg_sig_me(
                     &self.my_identity.private_key,
                     &quoted_solution_hash.bytes(),
                     &coin_string.to_coin_id(),
                     agg_sig_me_additional_data,
-                );
-
-                TransactionBundle {
-                    puzzle,
-                    solution,
-                    signature,
-                }
+                )
             };
 
+            let transaction_bundle = TransactionBundle {
+                puzzle: puzzle.clone(),
+                solution,
+                signature,
+            };
             let output_coin_string = CoinString::from_parts(
                 &coin_string.to_coin_id(),
-                &self.my_identity.puzzle_hash,
+                &puzzle.sha256tree(allocator),
                 &mover_share,
             );
             return Ok(Some(RefereeOnChainTransaction {
@@ -749,13 +748,16 @@ impl RefereeMaker {
         &mut self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
+        puzzle: &Puzzle,
         agg_sig_me_additional_data: &Hash,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         self.get_transaction(
             allocator,
             coin_string,
+            puzzle,
             false,
             false,
+            true,
             &OnChainRefereeSolution::Timeout,
             agg_sig_me_additional_data,
         )
@@ -765,6 +767,7 @@ impl RefereeMaker {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
+        spend_puzzle: &Puzzle,
         agg_sig_me_additional_data: &Hash,
     ) -> Result<RefereeOnChainTransaction, Error> {
         let puzzle_reveal = {
@@ -804,8 +807,10 @@ impl RefereeMaker {
             if let Some(transaction) = self.get_transaction(
                 allocator,
                 coin_string,
+                spend_puzzle,
                 true,
                 true,
+                false,
                 &args_list,
                 agg_sig_me_additional_data,
             )? {
@@ -862,8 +867,10 @@ impl RefereeMaker {
         if let Some(transaction) = self.get_transaction(
             allocator,
             coin_string,
+            spend_puzzle,
             false,
             true,
+            false,
             &args,
             agg_sig_me_additional_data,
         )? {
