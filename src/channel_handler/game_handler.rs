@@ -18,7 +18,7 @@ use clvmr::allocator::NodePtr;
 use clvmr::NO_UNKNOWN_OPS;
 use clvmr::{run_program, ChiaDialect};
 
-use crate::channel_handler::types::{ReadableMove, ReadableUX, Evidence};
+use crate::channel_handler::types::{ReadableMove, ReadableUX, Evidence, ValidationProgram};
 use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
     IntoErr, Node,
@@ -71,7 +71,7 @@ fn get_my_turn_debug_flag(_: &MyTurnInputs) -> bool {
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub waiting_driver: GameHandler,
-    pub validation_program: NodePtr,
+    pub validation_program: ValidationProgram,
     pub state: NodePtr,
     pub game_move: GameMoveDetails,
     pub message_parser: Option<MessageHandler>,
@@ -270,7 +270,7 @@ impl GameHandler {
 
         Ok(MyTurnResult {
             waiting_driver: GameHandler::their_driver_from_nodeptr(pl[6]),
-            validation_program: pl[1],
+            validation_program: ValidationProgram::new(allocator, pl[1]),
             state: pl[3],
             game_move: GameMoveDetails {
                 move_made: move_data,

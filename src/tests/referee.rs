@@ -8,7 +8,7 @@ use clvmr::NodePtr;
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{GameStartInfo, ReadableMove};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, PuzzleHash, Sha256tree, Timeout, Puzzle, Hash
@@ -121,7 +121,6 @@ impl RefereeTest {
             is_my_turn: !game_start.is_my_turn,
             initial_mover_share: game_start.amount.clone() - game_start.initial_mover_share.clone(),
             game_handler: their_game_handler,
-            initial_validation_puzzle_hash: their_validation_info_hash,
             .. game_start.clone()
         };
 
@@ -177,9 +176,6 @@ fn test_referee_smoke() {
             "(0 . 0)"
         ).expect("should assemble");
 
-    let my_validation_program_hash =
-        Node(debug_game.my_validation_program).sha256tree(&mut allocator);
-
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {
         game_id: GameID::from_bytes(b"test"),
@@ -187,8 +183,10 @@ fn test_referee_smoke() {
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
         is_my_turn: true,
-        initial_validation_puzzle: debug_game.my_validation_program,
-        initial_validation_puzzle_hash: my_validation_program_hash,
+        initial_validation_program: ValidationProgram::new(
+            &mut allocator,
+            debug_game.my_validation_program,
+        ),
         initial_state: init_state,
         initial_move: vec![],
         initial_max_move_size: 0,
