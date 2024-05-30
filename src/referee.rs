@@ -763,6 +763,32 @@ impl RefereeMaker {
         )
     }
 
+    /// The move transaction works like this:
+    ///
+    /// The referee puzzle has the hash of the puzzle of another locking coin,
+    /// possibly the standard coin, and uses that to secure against another person
+    /// commanding it.  This isn't the be confused with the coin that serves as the
+    /// parent of the referee coin which is also assumed to be a standard puzzle
+    /// coin.
+    ///
+    /// The inner coin, assuming it is a standard coin, takes the puzzle reveal
+    /// for the above puzzle and the solution for that inner puzzle as the last two
+    /// arguments to the move case of how it's invoked.
+    ///
+    /// The output conditions to step it are therefore built into those conditions
+    /// which needs to include the puzzle hash of the target state of the referee
+    /// (their move, the state precipitated by our move set as the current game
+    /// state).
+    ///
+    /// We do the spend of the inner puzzle to that puzzle hash to progress the
+    /// referee coin.
+    ///
+    /// One consequence of this is that we must sign it with the synthetic private
+    /// key as the standard puzzle embeds a synthetic public key based on it.
+    ///
+    /// In all cases, we're spending a referee coin that already exists.  The use
+    /// of the mover coin here is purely to take advantage of its puzzle to provide
+    /// a signature requirement.
     pub fn get_transaction_for_move(
         &self,
         allocator: &mut AllocEncoder,
@@ -791,10 +817,9 @@ impl RefereeMaker {
             )?;
 
             let inner_conditions =
-            // XXX puzzle_reveal
                 (CREATE_COIN, (puzzle_hash.clone(), (self.amount.clone(), ()))).to_clvm(allocator).into_gen()?;
             let (solution, sig) =
-                standard_solution_unsafe(allocator, &self.my_identity.private_key, inner_conditions)?;
+                standard_solution_unsafe(allocator, &self.my_identity.synthetic_private_key, inner_conditions)?;
 
             let args_list = OnChainRefereeSolution::Move(OnChainRefereeMove {
                 details: previous_state.game_move.clone(),
