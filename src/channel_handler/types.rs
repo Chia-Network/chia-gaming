@@ -7,8 +7,8 @@ use rand::prelude::*;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, PrivateKey,
-    PublicKey, Puzzle, PuzzleHash, Sha256tree, SpecificTransactionBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
+    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -58,8 +58,7 @@ pub struct GameStartInfo {
     pub game_handler: GameHandler,
     pub timeout: Timeout,
     pub is_my_turn: bool,
-    pub initial_validation_puzzle: NodePtr,
-    pub initial_validation_puzzle_hash: PuzzleHash,
+    pub initial_validation_program: ValidationProgram,
     pub initial_state: NodePtr,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
@@ -249,5 +248,44 @@ impl ToClvm<NodePtr> for Evidence {
         _encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
+    }
+}
+
+/// Represents a validation program, as opposed to validation info or any of the
+/// other kinds of things that are related.
+///
+/// This can give a validation program hash or a validation info hash, given state.
+#[derive(Debug, Clone)]
+pub struct ValidationProgram {
+    validation_program: NodePtr,
+    validation_program_hash: Hash,
+}
+
+impl ValidationProgram {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        validation_program: NodePtr
+    ) -> Self {
+        ValidationProgram {
+            validation_program,
+            validation_program_hash: Node(validation_program).sha256tree(allocator).hash().clone()
+        }
+    }
+
+    pub fn to_nodeptr(&self) -> NodePtr { self.validation_program }
+
+    pub fn hash(&self) -> &Hash {
+        &self.validation_program_hash
+    }
+
+    pub fn validation_info_hash(
+        &self,
+        allocator: &mut AllocEncoder,
+        state: NodePtr
+    ) -> Hash {
+        Sha256Input::Array(vec![
+            Sha256Input::Hash(&self.validation_program_hash.clone()),
+            Sha256Input::Hash(Node(state).sha256tree(allocator).hash())
+        ]).hash()
     }
 }
