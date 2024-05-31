@@ -16,7 +16,7 @@ use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, DEFAULT_
 use crate::common::standard_coin::{sign_agg_sig_me, standard_solution_partial, ChiaIdentity, calculate_synthetic_secret_key, private_to_public_key, calculate_synthetic_public_key, agg_sig_me_message};
 use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID, IntoErr};
 
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram, ValidationInfo};
 use crate::referee::GameMoveDetails;
 use crate::tests::referee::{RefereeTest, make_debug_game_handler};
 
@@ -404,6 +404,10 @@ fn test_referee_can_slash_on_chain() {
             allocator.allocator(),
             "(0 . 0)"
         ).expect("should assemble");
+    let initial_validation_program = ValidationProgram::new(
+        &mut allocator,
+        debug_game.my_validation_program,
+    );
 
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {
@@ -412,11 +416,11 @@ fn test_referee_can_slash_on_chain() {
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
         is_my_turn: true,
-        initial_validation_program: ValidationProgram::new(
+        initial_validation: ValidationInfo::new(
             &mut allocator,
-            debug_game.my_validation_program,
+            initial_validation_program,
+            init_state
         ),
-        initial_state: init_state,
         initial_move: vec![],
         initial_max_move_size: 0,
         initial_mover_share: Amount::default(),
@@ -543,8 +547,10 @@ fn test_referee_can_move_on_chain() {
             "(0 . 0)"
         ).expect("should assemble");
 
-    let my_validation_program_hash =
-        Node(debug_game.my_validation_program).sha256tree(&mut allocator);
+    let my_validation_program = ValidationProgram::new(
+        &mut allocator,
+        debug_game.my_validation_program,
+    );
 
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {
@@ -553,11 +559,11 @@ fn test_referee_can_move_on_chain() {
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
         is_my_turn: true,
-        initial_validation_program: ValidationProgram::new(
+        initial_validation: ValidationInfo::new(
             &mut allocator,
-            debug_game.my_validation_program,
+            my_validation_program,
+            init_state,
         ),
-        initial_state: init_state,
         initial_move: vec![],
         initial_max_move_size: 0,
         initial_mover_share: Amount::default(),

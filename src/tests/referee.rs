@@ -8,7 +8,7 @@ use clvmr::NodePtr;
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram, ValidationInfo};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, PuzzleHash, Sha256tree, Timeout, Puzzle, Hash
@@ -175,6 +175,10 @@ fn test_referee_smoke() {
             allocator.allocator(),
             "(0 . 0)"
         ).expect("should assemble");
+    let initial_validation_program = ValidationProgram::new(
+        &mut allocator,
+        debug_game.my_validation_program,
+    );
 
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {
@@ -183,11 +187,11 @@ fn test_referee_smoke() {
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
         is_my_turn: true,
-        initial_validation_program: ValidationProgram::new(
+        initial_validation: ValidationInfo::new(
             &mut allocator,
-            debug_game.my_validation_program,
+            initial_validation_program,
+            init_state
         ),
-        initial_state: init_state,
         initial_move: vec![],
         initial_max_move_size: 0,
         initial_mover_share: Amount::default(),

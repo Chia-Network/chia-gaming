@@ -7,7 +7,7 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram
+    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, ValidationInfo
 };
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk};
@@ -246,6 +246,11 @@ fn test_smoke_can_start_game() {
         &mut env.allocator,
         initial_validation_puzzle
     );
+    let initial_validation = ValidationInfo::new(
+        env.allocator,
+        initial_validation_program,
+        initial_state,
+    );
 
     let timeout = Timeout::new(1337);
     let game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
@@ -257,8 +262,7 @@ fn test_smoke_can_start_game() {
             game_handler: GameHandler::TheirTurnHandler(game_handler),
             is_my_turn: true,
             timeout: timeout.clone(),
-            initial_validation_program,
-            initial_state,
+            initial_validation,
             initial_move: Vec::new(),
             initial_max_move_size: 1,
             initial_mover_share: our_share.clone(),

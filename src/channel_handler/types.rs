@@ -58,8 +58,7 @@ pub struct GameStartInfo {
     pub game_handler: GameHandler,
     pub timeout: Timeout,
     pub is_my_turn: bool,
-    pub initial_validation_program: ValidationProgram,
-    pub initial_state: NodePtr,
+    pub initial_validation: ValidationInfo,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
@@ -288,4 +287,31 @@ impl ValidationProgram {
             Sha256Input::Hash(Node(state).sha256tree(allocator).hash())
         ]).hash()
     }
+}
+
+/// The pair of state and validation program is the source of the validation hash
+#[derive(Clone, Debug)]
+pub struct ValidationInfo {
+    pub game_state: NodePtr,
+    pub validation_program: ValidationProgram,
+    pub hash: Hash,
+}
+
+impl ValidationInfo {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        validation_program: ValidationProgram,
+        game_state: NodePtr
+    ) -> Self {
+        let hash = Sha256Input::Array(vec![
+            Sha256Input::Hash(validation_program.hash()),
+            Sha256Input::Hash(&Node(game_state).sha256tree(allocator).hash()),
+        ]).hash();
+        ValidationInfo {
+            game_state,
+            validation_program,
+            hash
+        }
+    }
+    pub fn hash(&self) -> &Hash { &self.hash }
 }
