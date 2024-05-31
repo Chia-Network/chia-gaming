@@ -411,15 +411,15 @@ impl RefereeMaker {
         let my_referee_puzzle_hash = my_identity.puzzle_hash.clone();
 
         let state = RefereeMakerGameState {
-            state: game_start_info.initial_state.clone(),
-            validation_program: game_start_info.initial_validation_program.clone(),
-            previous_state: game_start_info.initial_state.clone(),
+            state: game_start_info.initial_validation.game_state.clone(),
+            validation_program: game_start_info.initial_validation.validation_program.clone(),
+            previous_state: game_start_info.initial_validation.game_state.clone(),
             previous_validation_program_hash: Hash::default(),
             game_handler: game_start_info.game_handler.clone(),
             game_move: GameMoveDetails {
                 // XXX calculate properly.
                 validation_info_hash: game_start_info
-                    .initial_validation_program
+                    .initial_validation.validation_program
                     .hash()
                     .clone(),
                 move_made: Vec::default(),
