@@ -106,18 +106,25 @@
         )
 
    new_state
-     (logior (logand 1 set_cheated) (ash set_share 1))
+     (c set_share set_cheated)
 
    new_validation_program_hash
      (sha256 program-hash (shatree new_state))
 
    (list
-    new_state
+    ;; Formatted move data
+    (logior (logand 1 set_cheated) (ash set_share 1))
+    ;; Validation program
     (curry validation_program CURRIED)
+    ;; Validation program hash
     new_validation_program_hash
-    (c set_share set_cheated)
+    ;; New state
+    new_state
+    ;; Max move size
     100
+    ;; Mover share
     set_share
+    ;; Their turn program
     (curry (curried_puzzle CURRIED) other_turn)
     ()
     )
@@ -127,14 +134,21 @@
 (defun do_their_turn ((CURRIED) amount last_state new_move new_validation_info_hash new_max_move_size new_mover_share)
   (assign
    set_cheated (logand new_move 1)
+   set_share (get-move-share new_move)
+
    other_turn (curried_other_turn CURRIED)
 
    (if set_cheated
        (c 2 (curried_slash_info CURRIED))
+       
        (list
+        ;; Move type ok move == 0
         0
-        (c set_cheated (get-move-share new_move)) ;; readable move
+        ;; new readable move
+        (c set_share set_cheated) ;; readable move
+        ;; new validation program
         (curry (curried_puzzle CURRIED) other_turn)
+        ;; output message
         "message data"
         )
        )

@@ -58,7 +58,8 @@ pub struct GameStartInfo {
     pub game_handler: GameHandler,
     pub timeout: Timeout,
     pub is_my_turn: bool,
-    pub initial_validation: ValidationInfo,
+    pub initial_validation_program: ValidationProgram,
+    pub initial_state: NodePtr,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
@@ -291,10 +292,17 @@ impl ValidationProgram {
 
 /// The pair of state and validation program is the source of the validation hash
 #[derive(Clone, Debug)]
-pub struct ValidationInfo {
-    pub game_state: NodePtr,
-    pub validation_program: ValidationProgram,
-    pub hash: Hash,
+pub enum ValidationInfo {
+    FromProgram {
+        game_state: NodePtr,
+        validation_program: ValidationProgram,
+        hash: Hash,
+    },
+    FromProgramHash {
+        game_state: NodePtr,
+        validation_program_hash: Hash,
+        hash: Hash,
+    }
 }
 
 impl ValidationInfo {
@@ -307,11 +315,35 @@ impl ValidationInfo {
             Sha256Input::Hash(validation_program.hash()),
             Sha256Input::Hash(&Node(game_state).sha256tree(allocator).hash()),
         ]).hash();
-        ValidationInfo {
+        ValidationInfo::FromProgram {
             game_state,
             validation_program,
             hash
         }
     }
-    pub fn hash(&self) -> &Hash { &self.hash }
+    pub fn new_from_validation_program_hash_and_state(
+        allocator: &mut AllocEncoder,
+        validation_program_hash: Hash,
+        game_state: NodePtr
+    ) -> Self {
+        let hash = Sha256Input::Array(vec![
+            Sha256Input::Hash(&validation_program_hash),
+            Sha256Input::Hash(&Node(game_state).sha256tree(allocator).hash()),
+        ]).hash();
+        ValidationInfo::FromProgramHash {
+            game_state,
+            validation_program_hash,
+            hash
+        }
+    }
+    pub fn game_state(&self) -> NodePtr {
+        match self {
+            ValidationInfo::FromProgramHash { game_state, .. } | ValidationInfo::FromProgram { game_state, .. } => *game_state
+        }
+    }
+    pub fn hash(&self) -> &Hash {
+        match self {
+            ValidationInfo::FromProgramHash { hash, .. } | ValidationInfo::FromProgram { hash, .. } => &hash
+        }
+    }
 }

@@ -712,6 +712,7 @@ impl ChannelHandler {
             self.live_games.push(LiveGame {
                 game_id: g.game_id.clone(),
                 referee_maker: Box::new(RefereeMaker::new(
+                    &mut env.allocator,
                     env.referee_coin_puzzle.clone(),
                     env.referee_coin_puzzle_hash.clone(),
                     g,
@@ -1377,7 +1378,6 @@ impl ChannelHandler {
         &'a self,
         env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
-        spend_puzzle: &Puzzle,
         conditions: NodePtr,
     ) -> Result<CoinSpentResult<'a>, Error> {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;

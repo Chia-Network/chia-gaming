@@ -221,6 +221,11 @@ impl GameHandler {
             get_my_turn_debug_flag(inputs),
         )?;
 
+        eprintln!(
+            "my turn driver result {}",
+            disassemble(allocator.allocator(), run_result, None)
+        );
+
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
         } else {
