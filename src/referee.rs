@@ -14,7 +14,7 @@ use crate::channel_handler::game_handler::{
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, ReadableUX, Evidence, ValidationProgram, ValidationInfo};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    curry_and_treehash, puzzle_for_pk,
+    curry_and_treehash, puzzle_for_pk, calculate_hash_of_quoted_mod_hash,
     standard_solution_unsafe, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
@@ -166,7 +166,7 @@ fn curry_referee_puzzle_hash(
     );
     assert_ne!(args.previous_validation_info_hash, Hash::default());
     Ok(curry_and_treehash(
-        referee_coin_puzzle_hash,
+        &PuzzleHash::from_hash(calculate_hash_of_quoted_mod_hash(referee_coin_puzzle_hash)),
         &[arg_hash]
     ))
 }
@@ -844,47 +844,70 @@ impl RefereeMaker {
                 self.current_state().previous_validation_program_hash.clone(),
                 self.current_state().state,
             );
+        let target_args = RefereePuzzleArgs {
+            mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
+            waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+            timeout: self.timeout.clone(),
+            amount: self.amount.clone(),
+            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
+            game_move: self.current_state().game_move.clone(),
+            nonce: self.nonce,
+            previous_validation_info_hash: validation_info_hash.hash().clone()
+        };
         let target_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
-            &RefereePuzzleArgs {
-                mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
-                waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-                timeout: self.timeout.clone(),
-                amount: self.amount.clone(),
-                referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
-                game_move: self.current_state().game_move.clone(),
-                nonce: self.nonce,
-                previous_validation_info_hash: validation_info_hash.hash().clone()
-            }
+            &target_args
         )?;
+        let target_referee_puzzle = curry_referee_puzzle(
+            allocator,
+            &self.referee_coin_puzzle,
+            &self.referee_coin_puzzle_hash,
+            &target_args
+        )?;
+        eprintln!(
+            "target_referee_puzzle {}",
+            disassemble(allocator.allocator(), target_referee_puzzle.to_nodeptr(), None)
+        );
+        assert_eq!(
+            target_referee_puzzle.sha256tree(allocator),
+            target_referee_puzzle_hash
+        );
 
         // Get the current state of the referee on chain.  This reflects the
         // current state at the time the move was made.
         let previous_state = self.previous_state();
-        let spend_puzzle = self.curried_referee_puzzle_for_validator(
-            allocator,
-            true
-        )?;
         // The current referee uses the previous state since we have already
         // taken the move.
         eprintln!("get_transaction_for_move: previous curry");
+        let existing_curry_args = RefereePuzzleArgs {
+            mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
+            timeout: self.timeout.clone(),
+            amount: self.amount.clone(),
+            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
+            game_move: self.previous_state().game_move.clone(),
+            nonce: self.nonce,
+            previous_validation_info_hash: self.current_state()
+                .previous_validation_program_hash
+                .clone(),
+        };
         let current_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
-            &RefereePuzzleArgs {
-                mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-                waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
-                timeout: self.timeout.clone(),
-                amount: self.amount.clone(),
-                referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
-                game_move: self.previous_state().game_move.clone(),
-                nonce: self.nonce,
-                previous_validation_info_hash: self.current_state()
-                    .previous_validation_program_hash
-                    .clone(),
-            },
+            &existing_curry_args,
         )?;
+        eprintln!("actual puzzle reveal");
+        let spend_puzzle = curry_referee_puzzle(
+            allocator,
+            &self.referee_coin_puzzle,
+            &self.referee_coin_puzzle_hash,
+            &existing_curry_args,
+        )?;
+        assert_eq!(
+            spend_puzzle.sha256tree(allocator),
+            current_referee_puzzle_hash
+        );
 
         let inner_conditions = [
             (CREATE_COIN, (target_referee_puzzle_hash.clone(), (self.amount.clone(), ())))
