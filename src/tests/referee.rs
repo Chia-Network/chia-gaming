@@ -11,7 +11,7 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram, ValidationInfo};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, PuzzleHash, Sha256tree, Timeout, Puzzle, Hash
+    Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, PuzzleHash, Sha256tree, Timeout, Puzzle
 };
 use crate::referee::{RefereeMaker, ValidatorMoveArgs, GameMoveDetails};
 
@@ -108,6 +108,7 @@ impl RefereeTest {
         let referee_coin_puzzle = read_hex_puzzle(allocator, "onchain/referee.hex").expect("should be readable");
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
         let my_referee = RefereeMaker::new(
+            allocator,
             referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash.clone(),
             &game_start,
@@ -125,6 +126,7 @@ impl RefereeTest {
         };
 
         let mut their_referee = RefereeMaker::new(
+            allocator,
             referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash.clone(),
             &their_game_start_info,
@@ -187,11 +189,8 @@ fn test_referee_smoke() {
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
         is_my_turn: true,
-        initial_validation: ValidationInfo::new(
-            &mut allocator,
-            initial_validation_program,
-            init_state
-        ),
+        initial_validation_program,
+        initial_state: init_state,
         initial_move: vec![],
         initial_max_move_size: 0,
         initial_mover_share: Amount::default(),
