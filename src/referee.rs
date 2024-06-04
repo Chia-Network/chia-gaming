@@ -694,7 +694,6 @@ impl RefereeMaker {
             amount: self.amount.clone(),
             referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             nonce: self.nonce,
-
             game_move: current_state.game_move.clone(),
             previous_validation_info_hash: current_state
                 .previous_validation_program_hash
@@ -1097,17 +1096,6 @@ impl RefereeMaker {
                 // In case this succeeds, we'll direct the result to our mover
                 // puzzle, which sets our identity for the game and is a value-
                 // holding coin spendable by us.
-
-                // let validator_move_args = ValidatorMoveArgs {
-                //     game_move: details.clone(),
-                //     mover_puzzle: self.identity.puzzle.clone(),
-                //     solution: 
-                // };
-
-                // let validator_result = self.run_validator_for_their_move(
-                //     allocator,
-                //     validator_move_args
-                // );
                 self.update_for_their_turn_move(
                     allocator,
                     handler,
