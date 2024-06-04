@@ -878,7 +878,7 @@ impl ChannelHandler {
         let puzzle_hash = live_game.referee_maker.get_current_puzzle_hash();
 
         self.current_state_number += 1;
-        let amount = live_game.referee_maker.get_my_share(env.allocator);
+        let amount = live_game.referee_maker.get_my_share();
         let at_stake = live_game.referee_maker.get_amount();
 
         self.have_potato = false;

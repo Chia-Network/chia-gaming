@@ -390,7 +390,7 @@ pub struct RefereeMaker {
     pub amount: Amount,
     pub nonce: usize,
 
-    pub states: [RefereeMakerGameState; 2],
+    states: [RefereeMakerGameState; 2],
     pub is_my_turn: bool,
 
     pub message_handler: Option<MessageHandler>,
@@ -598,16 +598,10 @@ impl RefereeMaker {
         //
         // Validation_info_hash is hashed together the state and the validation
         // puzzle.
-        let (
-            game_move,
-            previous_validation_info_hash,
-        ) = {
-            let current_state = self.current_state();
-            (
-                current_state.game_move.clone(),
-                current_state.previous_validation_program_hash.clone(),
-            )
-        };
+        let game_move = self.current_state().game_move.clone();
+        let previous_validation_info_hash = self.previous_validation_info_hash(
+            allocator
+        );
         let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
@@ -665,7 +659,7 @@ impl RefereeMaker {
         Ok(result)
     }
 
-    pub fn curried_referee_args_for_validator(
+    fn curried_referee_args_for_validator(
         &self,
         previous: bool
     ) -> RefereePuzzleArgs {
@@ -943,10 +937,6 @@ impl RefereeMaker {
         let inner_conditions = [
             (CREATE_COIN, (target_referee_puzzle_hash.clone(), (self.amount.clone(), ())))
         ].to_clvm(allocator).into_gen()?;
-        eprintln!(
-            "inner conditions (to inner copy of standard puzzle) {}",
-            disassemble(allocator.allocator(), inner_conditions, None)
-        );
 
         // Generalize this once the test is working.  Move out the assumption that
         // referee private key is my_identity.synthetic_private_key.
@@ -985,7 +975,7 @@ impl RefereeMaker {
         }
     }
 
-    pub fn get_my_share(&self, allocator: &mut AllocEncoder) -> Amount {
+    pub fn get_my_share(&self) -> Amount {
         let current_state = self.current_state();
         match &current_state.game_handler {
             GameHandler::MyTurnHandler(_) => current_state.game_move.mover_share.clone(),
@@ -997,25 +987,14 @@ impl RefereeMaker {
 
     fn update_for_their_turn_move(
         &mut self,
-        allocator: &mut AllocEncoder,
         handler: GameHandler,
-        readable_move: NodePtr,
         details: &GameMoveDetails,
-        message: &[u8]
     ) -> Result<(), Error> {
         let previous_state = self.current_state().state.clone();
         let previous_validation_info_hash = self.current_state().game_move.validation_info_hash.clone();
 
         // Update the turn
         self.is_my_turn = !self.is_my_turn;
-
-        let nonce = self.nonce;
-        let amount = self.amount.clone();
-        let timeout = self.timeout.clone();
-        let their_referee_puzzle_hash = self.their_referee_puzzle_hash.clone();
-        let referee_coin_puzzle_hash = self.referee_coin_puzzle_hash.clone();
-        let mover_puzzle_hash = self.my_identity.puzzle_hash.clone();
-        let referee_coin_puzzle_hash = self.referee_coin_puzzle_hash.clone();
 
         let current_state = self.current_state_mut();
 
@@ -1034,14 +1013,15 @@ impl RefereeMaker {
     ) -> Result<(), Error> {
         let validation_program_clvm = self.get_validation_program_clvm(false)?;
         let validator_move_converted = validator_move_args.to_nodeptr(allocator)?;
-        let ran_validator =
-            run_program(
-                allocator.allocator(),
-                &chia_dialect(),
-                validation_program_clvm,
-                validator_move_converted,
-                0
-            ).into_gen()?.1;
+        // Error means validation should not work.
+        // It should be handled later.
+        run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            validation_program_clvm,
+            validator_move_converted,
+            0
+        ).into_gen()?;
         Ok(())
     }
 
@@ -1097,11 +1077,8 @@ impl RefereeMaker {
                 // puzzle, which sets our identity for the game and is a value-
                 // holding coin spendable by us.
                 self.update_for_their_turn_move(
-                    allocator,
                     handler,
-                    readable_move,
                     &details,
-                    &message,
                 )?;
 
                 let puzzle_hash_for_unroll = curry_referee_puzzle_hash(
@@ -1128,7 +1105,8 @@ impl RefereeMaker {
                     message: message.clone(),
                 })
             }
-            TheirTurnResult::Slash(evidence, signature) => {
+            // Slash can't be used when we're off chain.
+            TheirTurnResult::Slash(_evidence, _signature) => {
                 Err(Error::StrErr("slash when off chain".to_string()))
             }
         }
@@ -1220,7 +1198,6 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
         conditions: &NodePtr,
-        agg_sig_me_additional_data: &Hash,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         // Read parameters off conditions
         let rem_condition = if let Some(CoinCondition::Rem(rem_condition)) =
@@ -1422,7 +1399,7 @@ impl RefereeMaker {
                             &(slash_aggsig + sig),
                         )
                     }
-                    TheirTurnResult::MakeMove(game_handler, readable_move, message) => {
+                    TheirTurnResult::MakeMove(game_handler, readable_move, _message) => {
                         // Otherwise accept move by updating our state
                         self.accept_this_move(
                             &game_handler,

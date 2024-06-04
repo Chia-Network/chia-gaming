@@ -7,7 +7,7 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, ValidationInfo
+    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram
 };
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk};
@@ -229,12 +229,6 @@ fn test_smoke_can_start_game() {
     )
     .expect("should give");
     let amount_to_take = game.player(1).ch.clean_shutdown_amount();
-    let conditions = (
-        (CREATE_COIN, (shutdown_spend_target, (amount_to_take, ()))),
-        (),
-    )
-        .to_clvm(env.allocator)
-        .expect("should create conditions");
     let our_share = Amount::new(100);
     let their_share = Amount::new(100);
 
