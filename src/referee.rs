@@ -556,10 +556,7 @@ impl RefereeMaker {
         readable_move: &ReadableMove,
     ) -> Result<GameMoveWireData, Error> {
         let new_entropy: Hash = rng.gen();
-        let game_handler = {
-            let current_state = self.current_state();
-            current_state.game_handler.clone()
-        };
+        let game_handler = self.current_state().game_handler.clone();
         let (state, move_data, mover_share) = {
             let previous_state = self.previous_state();
             (
