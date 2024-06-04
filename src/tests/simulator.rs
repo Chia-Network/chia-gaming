@@ -16,14 +16,14 @@ use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message};
 use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID, IntoErr};
 
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram, ValidationInfo};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
 use crate::tests::referee::{RefereeTest, make_debug_game_handler};
 
 #[derive(Debug, Clone)]
 struct IncludeTransactionResult {
-    code: u32,
-    e: Option<u32>,
-    diagnostic: String
+    pub code: u32,
+    pub e: Option<u32>,
+    pub diagnostic: String
 }
 
 // Allow simulator from rust.

@@ -8,7 +8,7 @@ use clvmr::NodePtr;
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram, ValidationInfo};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, PuzzleHash, Sha256tree, Timeout, Puzzle

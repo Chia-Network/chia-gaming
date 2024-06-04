@@ -496,9 +496,6 @@ impl Default for Node {
 }
 
 impl Node {
-    pub fn new(n: NodePtr) -> Node {
-        Node(n)
-    }
     pub fn to_nodeptr(&self) -> NodePtr {
         self.0
     }
