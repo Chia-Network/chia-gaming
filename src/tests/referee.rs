@@ -100,7 +100,6 @@ impl RefereeTest {
         their_identity: ChiaIdentity,
 
         their_game_handler: GameHandler,
-        their_validation_info_hash: PuzzleHash,
 
         game_start: &GameStartInfo
     ) -> RefereeTest {
@@ -204,7 +203,6 @@ fn test_referee_smoke() {
         my_identity,
         their_identity,
         debug_game.their_turn_handler,
-        their_validation_program_hash,
         &game_start_info,
     );
 
