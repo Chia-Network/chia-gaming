@@ -311,6 +311,9 @@ pub enum ValidationInfo {
         game_state: NodePtr,
         validation_program_hash: Hash,
         hash: Hash,
+    },
+    FromHash {
+        hash: Hash
     }
 }
 
@@ -330,6 +333,9 @@ impl ValidationInfo {
             hash
         }
     }
+    pub fn new_hash(hash: Hash) -> Self {
+        ValidationInfo::FromHash { hash }
+    }
     pub fn new_from_validation_program_hash_and_state(
         allocator: &mut AllocEncoder,
         validation_program_hash: Hash,
@@ -345,14 +351,9 @@ impl ValidationInfo {
             hash
         }
     }
-    pub fn game_state(&self) -> NodePtr {
-        match self {
-            ValidationInfo::FromProgramHash { game_state, .. } | ValidationInfo::FromProgram { game_state, .. } => *game_state
-        }
-    }
     pub fn hash(&self) -> &Hash {
         match self {
-            ValidationInfo::FromProgramHash { hash, .. } | ValidationInfo::FromProgram { hash, .. } => &hash
+            ValidationInfo::FromProgramHash { hash, .. } | ValidationInfo::FromProgram { hash, .. } | ValidationInfo::FromHash { hash } => &hash
         }
     }
 }
