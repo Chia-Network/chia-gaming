@@ -467,6 +467,34 @@ impl RefereeMaker {
         &self.states[(!self.is_my_turn) as usize]
     }
 
+    pub fn previous_validation_info_hash(
+        &self,
+        allocator: &mut AllocEncoder
+    ) -> Hash {
+        ValidationInfo::new(
+            allocator,
+            ValidationProgram::new_hash(self.current_state().previous_validation_program_hash.clone()),
+            self.current_state().previous_state
+        ).hash().clone()
+    }
+
+    pub fn get_validation_program_clvm(
+        &self,
+        previous: bool
+    ) -> Result<NodePtr, Error> {
+        let validation_program =
+            if previous {
+                &self.previous_state().validation_program
+            } else {
+                &self.current_state().validation_program
+            };
+        if let Some(vpc) = validation_program.to_nodeptr() {
+            Ok(vpc)
+        } else {
+            Err(Error::StrErr("no active validation program (their turn?)".to_string()))
+        }
+    }
+
     pub fn get_amount(&self) -> Amount {
         self.amount.clone()
     }
@@ -841,7 +869,7 @@ impl RefereeMaker {
         let validation_info_hash =
             ValidationInfo::new_from_validation_program_hash_and_state(
                 allocator,
-                self.current_state().previous_validation_program_hash.clone(),
+                ValidationProgram::new_hash(self.current_state().previous_validation_program_hash.clone()).hash().clone(),
                 self.current_state().state,
             );
         let target_args = RefereePuzzleArgs {
@@ -880,6 +908,10 @@ impl RefereeMaker {
         // The current referee uses the previous state since we have already
         // taken the move.
         eprintln!("get_transaction_for_move: previous curry");
+        assert_eq!(
+            self.previous_validation_info_hash(allocator),
+            self.previous_state().game_move.validation_info_hash
+        );
         let existing_curry_args = RefereePuzzleArgs {
             mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
@@ -888,9 +920,9 @@ impl RefereeMaker {
             referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             game_move: self.previous_state().game_move.clone(),
             nonce: self.nonce,
-            previous_validation_info_hash: self.current_state()
-                .previous_validation_program_hash
-                .clone(),
+            previous_validation_info_hash: self.previous_validation_info_hash(
+                allocator
+            ),
         };
         let current_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
@@ -912,6 +944,11 @@ impl RefereeMaker {
         let inner_conditions = [
             (CREATE_COIN, (target_referee_puzzle_hash.clone(), (self.amount.clone(), ())))
         ].to_clvm(allocator).into_gen()?;
+        eprintln!(
+            "inner conditions (to inner copy of standard puzzle) {}",
+            disassemble(allocator.allocator(), inner_conditions, None)
+        );
+
         // Generalize this once the test is working.  Move out the assumption that
         // referee private key is my_identity.synthetic_private_key.
         let (solution, sig) =
@@ -996,13 +1033,13 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         validator_move_args: &ValidatorMoveArgs
     ) -> Result<(), Error> {
-        let validation_program = self.current_state().validation_program.clone();
+        let validation_program_clvm = self.get_validation_program_clvm(false)?;
         let validator_move_converted = validator_move_args.to_nodeptr(allocator)?;
         let ran_validator =
             run_program(
                 allocator.allocator(),
                 &chia_dialect(),
-                validation_program.to_nodeptr(),
+                validation_program_clvm,
                 validator_move_converted,
                 0
             ).into_gen()?.1;
@@ -1118,14 +1155,14 @@ impl RefereeMaker {
         &self,
         allocator: &mut AllocEncoder,
         state: NodePtr,
-        validation_program: &ValidationProgram,
+        validation_program_clvm: NodePtr,
         slash_solution: NodePtr,
         evidence: Evidence
     ) -> Result<NodePtr, Error> {
         (
             Node(state.clone()),
             (
-                Node(validation_program.to_nodeptr()),
+                Node(validation_program_clvm),
                 (
                     self.target_puzzle_hash_for_slash(),
                     (Node(slash_solution), (Node(evidence.to_nodeptr()), ())),
@@ -1151,15 +1188,15 @@ impl RefereeMaker {
         // My reward coin string is the coin that we'll make
         // after the transaction below has been spent so its
         // parent is the coin id of that coin.
-        let (state, current_mover_share, validation_program) = {
+        let (state, current_mover_share) = {
             let current_state = self.current_state();
             (
                 current_state.state.clone(),
                 current_state.game_move.mover_share.clone(),
-                current_state.validation_program.clone(),
             )
         };
 
+        let validation_program_clvm = self.get_validation_program_clvm(true)?;
         let reward_amount = self.amount.clone() - current_mover_share;
         if reward_amount == Amount::default() {
             return Ok(TheirTurnCoinSpentResult::Slash(SlashOutcome::NoReward));
@@ -1168,7 +1205,7 @@ impl RefereeMaker {
         let slashing_coin_solution = self.slashing_coin_solution(
             allocator,
             state,
-            &validation_program,
+            validation_program_clvm,
             slash_solution,
             evidence
         )?;
@@ -1301,19 +1338,13 @@ impl RefereeMaker {
                 slash_conditions
             )?;
 
-        let (state, validation_program) = {
-            let current_state = self.current_state();
-            (
-                current_state.state.clone(),
-                current_state.validation_program.clone(),
-            )
-        };
-
+        let state = self.current_state().state;
+        let validation_program_clvm = self.get_validation_program_clvm(false)?;
         let full_slash_program = CurriedProgram {
-            program: Node(validation_program.to_nodeptr()),
+            program: Node(validation_program_clvm),
             args: clvm_curried_args!(
                 Node(state),
-                Node(validation_program.to_nodeptr()),
+                Node(validation_program_clvm),
                 my_inner_puzzle,
                 Node(slash_solution),
                 0
@@ -1344,7 +1375,7 @@ impl RefereeMaker {
         let full_slash_solution = (
             Node(state.clone()),
             (
-                Node(validation_program.to_nodeptr()),
+                Node(validation_program_clvm),
                 // No evidence here.
                 (new_puzzle_hash.clone(), ((), (0, ()))),
             ),

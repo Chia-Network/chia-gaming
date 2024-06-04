@@ -422,15 +422,11 @@ fn test_referee_can_slash_on_chain() {
         initial_mover_share: Amount::default(),
     };
 
-    let their_validation_program_hash =
-        Node(debug_game.their_validation_program).sha256tree(&mut allocator);
-
     let mut reftest = RefereeTest::new(
         &mut allocator,
         my_identity,
         their_identity,
         debug_game.their_turn_handler,
-        their_validation_program_hash,
         &game_start_info,
     );
 
@@ -569,7 +565,6 @@ fn test_referee_can_move_on_chain() {
         my_identity,
         their_identity,
         debug_game.their_turn_handler,
-        their_validation_program_hash,
         &game_start_info,
     );
 

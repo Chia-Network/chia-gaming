@@ -257,7 +257,7 @@ impl ToClvm<NodePtr> for Evidence {
 /// This can give a validation program hash or a validation info hash, given state.
 #[derive(Debug, Clone)]
 pub struct ValidationProgram {
-    validation_program: NodePtr,
+    validation_program: Option<NodePtr>,
     validation_program_hash: Hash,
 }
 
@@ -267,12 +267,21 @@ impl ValidationProgram {
         validation_program: NodePtr
     ) -> Self {
         ValidationProgram {
-            validation_program,
+            validation_program: Some(validation_program),
             validation_program_hash: Node(validation_program).sha256tree(allocator).hash().clone()
         }
     }
 
-    pub fn to_nodeptr(&self) -> NodePtr { self.validation_program }
+    pub fn new_hash(
+        validation_program_hash: Hash
+    ) -> Self {
+        ValidationProgram {
+            validation_program: None,
+            validation_program_hash,
+        }
+    }
+
+    pub fn to_nodeptr(&self) -> Option<NodePtr> { self.validation_program.clone() }
 
     pub fn hash(&self) -> &Hash {
         &self.validation_program_hash
