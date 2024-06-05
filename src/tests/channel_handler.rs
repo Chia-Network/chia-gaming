@@ -9,7 +9,7 @@ use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram
 };
-use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash,
@@ -249,7 +249,6 @@ fn test_smoke_can_start_game() {
         &[GameStartInfo {
             game_id: GameID::new(vec![0]),
             game_handler: GameHandler::TheirTurnHandler(game_handler),
-            is_my_turn: true,
             timeout: timeout.clone(),
             initial_validation_program,
             initial_state: initial_state,

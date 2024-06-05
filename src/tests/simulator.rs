@@ -414,7 +414,6 @@ fn test_referee_can_slash_on_chain() {
         amount: amount.clone(),
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
-        is_my_turn: true,
         initial_validation_program,
         initial_state: init_state,
         initial_move: vec![],
@@ -430,7 +429,6 @@ fn test_referee_can_slash_on_chain() {
         &game_start_info,
     );
 
-    let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
     // Make simulator and create referee coin.
@@ -442,6 +440,7 @@ fn test_referee_can_slash_on_chain() {
     ).expect("got coins");
     assert!(coins.len() > 0);
 
+    let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
     let my_move_wire_data = reftest.my_referee
         .my_turn_make_move(
             &mut rng,
@@ -450,10 +449,11 @@ fn test_referee_can_slash_on_chain() {
         )
         .expect("should move");
 
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
+
     let (_, _, amt) = coins[0].to_parts().unwrap();
     let spend_to_referee = reftest.my_referee.curried_referee_puzzle_for_validator(
         &mut allocator,
-        false,
     ).expect("should work");
     let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
 
@@ -549,7 +549,6 @@ fn test_referee_can_move_on_chain() {
         amount: amount.clone(),
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
-        is_my_turn: true,
         initial_validation_program: my_validation_program,
         initial_state: init_state,
         initial_move: vec![],
@@ -596,7 +595,6 @@ fn test_referee_can_move_on_chain() {
     eprintln!("state at start of referee object");
     let spend_to_referee = reftest.my_referee.curried_referee_puzzle_for_validator(
         &mut allocator,
-        true,
     ).expect("should work");
     let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
     eprintln!(
@@ -621,7 +619,6 @@ fn test_referee_can_move_on_chain() {
 
     let previous_spend_to_referee = reftest.my_referee.curried_referee_puzzle_for_validator(
         &mut allocator,
-        false,
     ).expect("should work");
 
     eprintln!("move_transaction {move_transaction:?}");

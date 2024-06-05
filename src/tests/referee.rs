@@ -107,7 +107,6 @@ impl RefereeTest {
         let referee_coin_puzzle = read_hex_puzzle(allocator, "onchain/referee.hex").expect("should be readable");
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
         let my_referee = RefereeMaker::new(
-            allocator,
             referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash.clone(),
             &game_start,
@@ -118,14 +117,12 @@ impl RefereeTest {
             .expect("should construct");
 
         let their_game_start_info = GameStartInfo {
-            is_my_turn: !game_start.is_my_turn,
             initial_mover_share: game_start.amount.clone() - game_start.initial_mover_share.clone(),
             game_handler: their_game_handler,
             .. game_start.clone()
         };
 
         let mut their_referee = RefereeMaker::new(
-            allocator,
             referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash.clone(),
             &their_game_start_info,
@@ -187,7 +184,6 @@ fn test_referee_smoke() {
         amount: amount.clone(),
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
-        is_my_turn: true,
         initial_validation_program,
         initial_state: init_state,
         initial_move: vec![],
@@ -257,7 +253,7 @@ fn test_referee_smoke() {
         &validator_move_args
     ).expect("should run");
 
-    assert!(!reftest.my_referee.is_my_turn);
+    assert!(reftest.my_referee.is_my_turn());
     let their_move_result = reftest.my_referee
         .their_turn_move_off_chain(
             &mut allocator,
@@ -269,5 +265,5 @@ fn test_referee_smoke() {
         disassemble(allocator.allocator(), their_move_result.readable_move, None),
         "(())"
     );
-    assert!(reftest.my_referee.is_my_turn);
+    assert!(!reftest.my_referee.is_my_turn());
 }
