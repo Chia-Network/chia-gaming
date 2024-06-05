@@ -13,7 +13,7 @@ use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, PuzzleHash, Sha256tree, Timeout, Puzzle
 };
-use crate::referee::{RefereeMaker, ValidatorMoveArgs, GameMoveDetails};
+use crate::referee::{RefereeMaker, ValidatorMoveArgs, GameMoveDetails, GameMoveStateInfo};
 
 pub struct DebugGamePrograms {
     pub my_validation_program: NodePtr,
@@ -211,15 +211,17 @@ fn test_referee_smoke() {
         )
         .expect("should move");
 
-    assert!(my_move_wire_data.details.move_made.is_empty());
+    assert!(my_move_wire_data.details.basic.move_made.is_empty());
     let mut off_chain_slash_gives_error = reftest.my_referee.clone();
     let their_move_result = off_chain_slash_gives_error.their_turn_move_off_chain(
         &mut allocator,
         &GameMoveDetails {
-            move_made: vec![1],
+            basic: GameMoveStateInfo {
+                move_made: vec![1],
+                max_move_size: 100,
+                mover_share: Amount::default(),
+            },
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
-            max_move_size: 100,
-            mover_share: Amount::default(),
         },
     );
     eprintln!("their move result {their_move_result:?}");

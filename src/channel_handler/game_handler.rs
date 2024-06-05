@@ -23,7 +23,7 @@ use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
     IntoErr, Node,
 };
-use crate::referee::GameMoveDetails;
+use crate::referee::{GameMoveStateInfo, GameMoveDetails};
 
 pub fn chia_dialect() -> ChiaDialect {
     ChiaDialect::new(NO_UNKNOWN_OPS)
@@ -281,14 +281,16 @@ impl GameHandler {
             validation_program_hash: validation_program_hash.clone(),
             state: pl[3],
             game_move: GameMoveDetails {
-                move_made: move_data,
+                basic: GameMoveStateInfo {
+                    move_made: move_data,
+                    max_move_size,
+                    mover_share,
+                },
                 validation_info_hash: ValidationInfo::new_from_validation_program_hash_and_state(
                     allocator,
                     validation_program_hash,
                     pl[3],
                 ).hash().clone(),
-                max_move_size,
-                mover_share,
             },
             message_parser,
         })
@@ -304,12 +306,12 @@ impl GameHandler {
             (
                 Node(inputs.last_state.clone()),
                 (
-                    Node(allocator.encode_atom(&inputs.new_move.move_made).into_gen()?),
+                    Node(allocator.encode_atom(&inputs.new_move.basic.move_made).into_gen()?),
                     (
                         inputs.new_move.validation_info_hash.clone(),
                         (
-                            inputs.new_move.max_move_size.clone(),
-                            (inputs.new_move.mover_share.clone(), ()),
+                            inputs.new_move.basic.max_move_size.clone(),
+                            (inputs.new_move.basic.mover_share.clone(), ()),
                         ),
                     ),
                 ),
