@@ -505,26 +505,6 @@ impl RefereeMaker {
         }
     }
 
-    pub fn get_their_turn_last_move_and_validation_info_hash(&self) -> Result<(GameMoveStateInfo, Option<Hash>), Error> {
-        match &self.state {
-            RefereeMakerGameState::Initial { initial_move, .. } => {
-                Err(Error::StrErr("initial move so there's no last move to retrieve".to_string()))
-            }
-            RefereeMakerGameState::AfterOurTurn { most_recent_their_move, their_previous_validation_info_hash, most_recent_our_move, .. } => {
-                Ok((
-                    most_recent_their_move.clone(),
-                    their_previous_validation_info_hash.clone()
-                ))
-            }
-            RefereeMakerGameState::AfterTheirTurn { most_recent_their_move, our_previous_validation_info_hash, .. } => {
-                Ok((
-                    most_recent_their_move.basic.clone(),
-                    our_previous_validation_info_hash.clone()
-                ))
-            }
-        }
-    }
-
     pub fn get_logically_previous_game_move(&self) -> Result<GameMoveStateInfo, Error> {
         match &self.state {
             RefereeMakerGameState::Initial { .. } => {
