@@ -793,7 +793,7 @@ impl ChannelHandler {
             referee_maker.my_turn_make_move(env.rng, env.allocator, readable_move)?;
 
         let puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
-        let amount = referee_result.details.mover_share.clone();
+        let amount = referee_result.details.basic.mover_share.clone();
 
         self.have_potato = false;
         self.current_state_number += 1;
