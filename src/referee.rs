@@ -166,7 +166,10 @@ fn curry_referee_puzzle_hash(
 ) -> Result<PuzzleHash, Error> {
     let args_to_curry: Vec<Node> = args.to_node_list(allocator, referee_coin_puzzle_hash)?;
     let combined_args = args_to_curry.to_clvm(allocator).into_gen()?;
+    eprintln!("combined_args {}", disassemble(allocator.allocator(), combined_args, None));
     let arg_hash = Node(combined_args).sha256tree(allocator);
+    let arg_hash_clvm = arg_hash.to_clvm(allocator).into_gen()?;
+    eprintln!("curried in puzzle arg_hash {}", disassemble(allocator.allocator(), arg_hash_clvm, None));
     eprintln!(
         "curry_referee_puzzle_hash {}",
         disassemble(allocator.allocator(), combined_args, None)
@@ -288,6 +291,7 @@ enum RefereeMakerGameState {
 /// ChiaIdentity.
 ///
 /// This groups that with the solution.
+#[derive(Debug, Clone)]
 pub struct IdentityCoinAndSolution {
     /// A puzzle for a coin that will be run inside the referee to generate
     /// conditions that are acted on to spend the referee coin.
@@ -305,6 +309,7 @@ pub struct IdentityCoinAndSolution {
 }
 
 /// Dynamic arguments passed to the on chain refere to apply a move
+#[derive(Debug, Clone)]
 pub struct OnChainRefereeMove {
     /// From the wire protocol.
     pub details: GameMoveDetails,
@@ -314,6 +319,7 @@ pub struct OnChainRefereeMove {
 }
 
 /// Dynamic arguments passed to the on chain refere to apply a slash
+#[derive(Debug, Clone)]
 pub struct OnChainRefereeSlash {
     /// The game state is used here
     pub previous_game_state: NodePtr,
@@ -338,6 +344,7 @@ pub struct OnChainRefereeSlash {
 /// It is a solution itself, but the referee coin uses the mover puzzle as a
 /// puzzle for a coin that represents the user's identity ... most likely a
 /// standard puzzle.
+#[derive(Debug, Clone)]
 pub enum OnChainRefereeSolution {
     Timeout,
     Move(OnChainRefereeMove),
@@ -492,7 +499,7 @@ impl RefereeMaker {
             RefereeMakerGameState::AfterOurTurn { most_recent_our_move, .. } => {
                 Ok(most_recent_our_move.clone())
             }
-            RefereeMakerGameState::AfterTheirTurn { most_recent_our_move, .. } => {
+            RefereeMakerGameState::AfterTheirTurn { .. } => {
                 todo!();
             }
         }
@@ -500,7 +507,7 @@ impl RefereeMaker {
 
     pub fn get_our_most_recent_validation_info_hash(&self) -> Option<Hash> {
         match &self.state {
-            RefereeMakerGameState::AfterOurTurn { their_previous_validation_info_hash, .. } => their_previous_validation_info_hash.clone(),
+            RefereeMakerGameState::AfterOurTurn { most_recent_our_move, .. } => Some(most_recent_our_move.validation_info_hash.clone()),
             _ => None
         }
     }
@@ -613,7 +620,7 @@ impl RefereeMaker {
         eprintln!("accept move {details:?}");
         let new_state =
             match &self.state {
-                RefereeMakerGameState::Initial { initial_validation_program, initial_state, initial_move, .. } => {
+                RefereeMakerGameState::Initial { initial_move, .. } => {
                     RefereeMakerGameState::AfterOurTurn {
                         game_handler: game_handler.clone(),
                         their_turn_game_handler: game_handler.clone(),
@@ -1005,11 +1012,49 @@ impl RefereeMaker {
         // game handler returned by consuming our move.  This is assumed to
         // have been done by consuming the move in a different method call.
 
+        // Get the current state of the referee on chain.  This reflects the
+        // current state at the time the move was made.
+        // The current referee uses the previous state since we have already
+        // taken the move.
+        //
+        eprintln!("get_transaction_for_move: previous curry");
+        let (their_most_recent_game_move, previous_validation_info_hash) =
+            self.get_their_move_and_validation_info_for_onchain_move()?;
+
+        let existing_curry_args = RefereePuzzleArgs {
+            mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
+            waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+            timeout: self.timeout.clone(),
+            amount: self.amount.clone(),
+            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
+            game_move: their_most_recent_game_move.clone(),
+            nonce: self.nonce,
+            previous_validation_info_hash
+        };
+        let current_referee_puzzle_hash = curry_referee_puzzle_hash(
+            allocator,
+            &self.referee_coin_puzzle_hash,
+            &existing_curry_args,
+        )?;
+        eprintln!("actual puzzle reveal");
+        let spend_puzzle = curry_referee_puzzle(
+            allocator,
+            &self.referee_coin_puzzle,
+            &self.referee_coin_puzzle_hash,
+            &existing_curry_args,
+        )?;
+
+        eprintln!("spend puzzle {}", disassemble(allocator.allocator(), spend_puzzle.to_nodeptr(), None));
+        assert_eq!(
+            spend_puzzle.sha256tree(allocator),
+            current_referee_puzzle_hash
+        );
+
         eprintln!("get_transaction_for_move: target curry");
         let game_move = self.get_our_most_recent_game_move()?;
         let target_args = RefereePuzzleArgs {
-            mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
-            waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+            mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
             referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
@@ -1035,42 +1080,6 @@ impl RefereeMaker {
         assert_eq!(
             target_referee_puzzle.sha256tree(allocator),
             target_referee_puzzle_hash
-        );
-
-        // Get the current state of the referee on chain.  This reflects the
-        // current state at the time the move was made.
-        // The current referee uses the previous state since we have already
-        // taken the move.
-        //
-        eprintln!("get_transaction_for_move: previous curry");
-        let (their_most_recent_game_move, previous_validation_info_hash) =
-            self.get_their_move_and_validation_info_for_onchain_move()?;
-
-        let existing_curry_args = RefereePuzzleArgs {
-            mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-            waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
-            timeout: self.timeout.clone(),
-            amount: self.amount.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
-            game_move: their_most_recent_game_move.clone(),
-            nonce: self.nonce,
-            previous_validation_info_hash
-        };
-        let current_referee_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &self.referee_coin_puzzle_hash,
-            &existing_curry_args,
-        )?;
-        eprintln!("actual puzzle reveal");
-        let spend_puzzle = curry_referee_puzzle(
-            allocator,
-            &self.referee_coin_puzzle,
-            &self.referee_coin_puzzle_hash,
-            &existing_curry_args,
-        )?;
-        assert_eq!(
-            spend_puzzle.sha256tree(allocator),
-            current_referee_puzzle_hash
         );
 
         let inner_conditions = [
