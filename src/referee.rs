@@ -556,13 +556,13 @@ impl RefereeMaker {
     pub fn get_their_move_and_validation_info_for_onchain_move(&self) -> Result<(GameMoveDetails, Option<Hash>), Error> {
         match &self.state {
             RefereeMakerGameState::Initial { .. } => {
-                todo!();
+                Err(Error::StrErr("we're on the initial move so there's no move to look back at".to_string()))
             }
-            RefereeMakerGameState::AfterOurTurn { .. } => {
-                todo!();
+            RefereeMakerGameState::AfterOurTurn { most_recent_our_move, their_previous_validation_info_hash, .. } => {
+                Ok((most_recent_our_move.clone(), their_previous_validation_info_hash.clone()))
             }
             RefereeMakerGameState::AfterTheirTurn { .. } => {
-                todo!();
+                Err(Error::StrErr("after their move, they can't do another move".to_string()))
             }
         }
     }
