@@ -712,7 +712,6 @@ impl ChannelHandler {
             self.live_games.push(LiveGame {
                 game_id: g.game_id.clone(),
                 referee_maker: Box::new(RefereeMaker::new(
-                    &mut env.allocator,
                     env.referee_coin_puzzle.clone(),
                     env.referee_coin_puzzle_hash.clone(),
                     g,
@@ -878,7 +877,7 @@ impl ChannelHandler {
         let puzzle_hash = live_game.referee_maker.get_current_puzzle_hash();
 
         self.current_state_number += 1;
-        let amount = live_game.referee_maker.get_my_share();
+        let amount = live_game.referee_maker.get_our_current_share();
         let at_stake = live_game.referee_maker.get_amount();
 
         self.have_potato = false;
