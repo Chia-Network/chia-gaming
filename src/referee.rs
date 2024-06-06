@@ -252,6 +252,8 @@ pub enum Validation {
     ValidationByStateHash(Hash)
 }
 
+
+
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
 #[derive(Clone, Debug)]
@@ -281,7 +283,7 @@ enum RefereeMakerGameState {
         most_recent_our_state_result: NodePtr,
         most_recent_our_move: GameMoveStateInfo,
         most_recent_their_move: GameMoveDetails,
-    }
+    },
 }
 
 /// A puzzle for a coin that will be run inside the referee to generate
@@ -421,6 +423,7 @@ pub struct RefereeMaker {
     pub timeout: Timeout,
     pub amount: Amount,
     pub nonce: usize,
+    pub finished: bool,
 
     state: RefereeMakerGameState,
 
@@ -453,6 +456,7 @@ impl RefereeMaker {
         Ok(RefereeMaker {
             referee_coin_puzzle,
             referee_coin_puzzle_hash,
+            finished: false,
 
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
             my_identity,
@@ -654,16 +658,26 @@ impl RefereeMaker {
     pub fn accept_their_move(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_handler: &GameHandler,
+        game_handler: Option<GameHandler>,
         details: &GameMoveDetails,
     ) -> Result<(), Error> {
         eprintln!("accept move {details:?}");
+
+        // An empty handler if the game ended.
+        let raw_game_handler =
+            if let Some(g) = game_handler.as_ref() {
+                g.clone()
+            } else {
+                let nil = allocator.encode_atom(&[]).into_gen()?;
+                GameHandler::MyTurnHandler(nil)
+            };
+
         let new_state =
             match &self.state {
                 RefereeMakerGameState::Initial { initial_validation_program, initial_state, initial_move, .. } => {
                     RefereeMakerGameState::AfterTheirTurn {
-                        game_handler: game_handler.clone(),
-                        our_turn_game_handler: game_handler.clone(),
+                        game_handler: raw_game_handler.clone(),
+                        our_turn_game_handler: raw_game_handler.clone(),
                         most_recent_our_state_result: *initial_state,
                         most_recent_our_validation_program: initial_validation_program.clone(),
                         most_recent_our_move: initial_move.clone(),
@@ -673,10 +687,10 @@ impl RefereeMaker {
                 }
                 RefereeMakerGameState::AfterOurTurn { most_recent_our_move, state, validation_program, .. } => {
                     RefereeMakerGameState::AfterTheirTurn {
-                        game_handler: game_handler.clone(),
+                        game_handler: raw_game_handler.clone(),
                         most_recent_our_state_result: *state,
                         most_recent_our_validation_program: validation_program.clone(),
-                        our_turn_game_handler: game_handler.clone(),
+                        our_turn_game_handler: raw_game_handler.clone(),
                         most_recent_our_move: most_recent_our_move.basic.clone(),
                         most_recent_their_move: details.clone(),
                         our_previous_validation_info_hash: Some(most_recent_our_move.validation_info_hash.clone()),
@@ -686,6 +700,10 @@ impl RefereeMaker {
                     return Err(Error::StrErr("accept their move when it's already past their turn".to_string()));
                 }
             };
+
+        if game_handler.is_none() {
+            self.finished = true;
+        }
 
         self.state = new_state;
         Ok(())
@@ -1177,55 +1195,67 @@ impl RefereeMaker {
             },
         )?;
 
-        match result {
-            TheirTurnResult::MakeMove(readable_move, handler, message) => {
-                // Mover puzzle turns the given solution into coin conditions
-                // that pay the game's amount to us.  It checks whether the
-                // originally curried mover puzzle hash is the sha256tree of the
-                // mover puzzle.
-                //
-                // This referee expects the mover puzzle to be a standard-like
-                // puzzle or at least take standard coin arguments including the
-                // list of conditions it produces itself.
-                //
-                // In case this succeeds, we'll direct the result to our mover
-                // puzzle, which sets our identity for the game and is a value-
-                // holding coin spendable by us.
-                self.accept_their_move(
-                    allocator,
-                    &handler,
-                    &details,
-                )?;
+        let (readable_move, message) =
+            match result {
+                TheirTurnResult::FinalMove(readable_move) => {
+                    self.accept_their_move(
+                        allocator,
+                        None,
+                        &details,
+                    )?;
 
-                let puzzle_hash_for_unroll = curry_referee_puzzle_hash(
-                    allocator,
-                    &self.referee_coin_puzzle_hash,
-                    &RefereePuzzleArgs {
-                        // XXX check polarity
-                        mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
-                        waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-                        timeout: self.timeout.clone(),
-                        amount: self.amount.clone(),
-                        referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
-                        game_move: details.clone(),
-                        nonce: self.nonce,
+                    (readable_move, vec![])
+                }
+                TheirTurnResult::MakeMove(readable_move, handler, message) => {
+                    // Mover puzzle turns the given solution into coin conditions
+                    // that pay the game's amount to us.  It checks whether the
+                    // originally curried mover puzzle hash is the sha256tree of the
+                    // mover puzzle.
+                    //
+                    // This referee expects the mover puzzle to be a standard-like
+                    // puzzle or at least take standard coin arguments including the
+                    // list of conditions it produces itself.
+                    //
+                    // In case this succeeds, we'll direct the result to our mover
+                    // puzzle, which sets our identity for the game and is a value-
+                    // holding coin spendable by us.
+                    self.accept_their_move(
+                        allocator,
+                        Some(handler),
+                        &details,
+                    )?;
 
-                        previous_validation_info_hash,
-                    },
-                )?;
+                    (readable_move, message)
+                }
+                // Slash can't be used when we're off chain.
+                TheirTurnResult::Slash(_evidence, _signature) => {
+                    return Err(Error::StrErr("slash when off chain".to_string()));
+                }
+            };
 
-                // Coin calculated off the new new state.
-                Ok(TheirTurnMoveResult {
-                    puzzle_hash_for_unroll,
-                    readable_move: readable_move.clone(),
-                    message: message.clone(),
-                })
-            }
-            // Slash can't be used when we're off chain.
-            TheirTurnResult::Slash(_evidence, _signature) => {
-                Err(Error::StrErr("slash when off chain".to_string()))
-            }
-        }
+        let puzzle_hash_for_unroll = curry_referee_puzzle_hash(
+            allocator,
+            &self.referee_coin_puzzle_hash,
+            &RefereePuzzleArgs {
+                // XXX check polarity
+                mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
+                waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+                timeout: self.timeout.clone(),
+                amount: self.amount.clone(),
+                referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
+                game_move: details.clone(),
+                nonce: self.nonce,
+
+                previous_validation_info_hash,
+            },
+        )?;
+
+        // Coin calculated off the new new state.
+        Ok(TheirTurnMoveResult {
+            puzzle_hash_for_unroll,
+            readable_move: readable_move.clone(),
+            message: message.clone(),
+        })
     }
 
     // It me.
@@ -1468,65 +1498,69 @@ impl RefereeMaker {
             }
             Err(_) => {
                 // Slash wasn't allowed.  Run the move handler.
-                match game_handler.call_their_turn_driver(
-                    allocator,
-                    &TheirTurnInputs {
-                        amount: self.amount.clone(),
-                        last_state: state,
-                        last_move: &self.get_our_most_recent_game_move()?.basic.move_made.clone(),
-                        last_mover_share: self.get_our_current_share(),
+                let (readable_move, game_handler) =
+                    match game_handler.call_their_turn_driver(
+                        allocator,
+                        &TheirTurnInputs {
+                            amount: self.amount.clone(),
+                            last_state: state,
+                            last_move: &self.get_our_most_recent_game_move()?.basic.move_made.clone(),
+                            last_mover_share: self.get_our_current_share(),
 
-                        new_move: GameMoveDetails {
-                            basic: GameMoveStateInfo {
-                                move_made: new_move.clone(),
-                                max_move_size: new_max_move_size,
-                                mover_share: new_mover_share.clone(),
-                            },
-                            validation_info_hash: new_validation_info_hash.clone(),
-                        },
-
-                        #[cfg(test)]
-                        run_debug: self.run_debug,
-                    },
-                )? {
-                    TheirTurnResult::Slash(evidence, sig) => {
-                        self.make_slash_for_their_turn(
-                            allocator,
-                            coin_string,
-                            &new_puzzle,
-                            &new_puzzle_hash,
-                            full_slash_solution,
-                            evidence,
-                            &(slash_aggsig + sig),
-                        )
-                    }
-                    TheirTurnResult::MakeMove(readable_move, game_handler, _message) => {
-                        // Otherwise accept move by updating our state
-                        self.accept_this_move(
-                            allocator,
-                            &game_handler,
-                            &validation_program,
-                            state,
-                            &GameMoveDetails {
+                            new_move: GameMoveDetails {
                                 basic: GameMoveStateInfo {
                                     move_made: new_move.clone(),
                                     max_move_size: new_max_move_size,
                                     mover_share: new_mover_share.clone(),
                                 },
                                 validation_info_hash: new_validation_info_hash.clone(),
-                            }
-                        )?;
+                            },
 
-                        Ok(TheirTurnCoinSpentResult::Moved {
-                            new_coin_string: CoinString::from_parts(
-                                &coin_string.to_coin_id(),
+                            #[cfg(test)]
+                            run_debug: self.run_debug,
+                        },
+                    )? {
+                        TheirTurnResult::Slash(evidence, sig) => {
+                            return self.make_slash_for_their_turn(
+                                allocator,
+                                coin_string,
+                                &new_puzzle,
                                 &new_puzzle_hash,
-                                &self.amount,
-                            ),
-                            readable: readable_move,
-                        })
+                                full_slash_solution,
+                                evidence,
+                                &(slash_aggsig + sig),
+                            );
+                        }
+                        TheirTurnResult::FinalMove(readable_move) => {
+                            (readable_move, None)
+                        }
+                        TheirTurnResult::MakeMove(readable_move, game_handler, _message) => {
+                            (readable_move, Some(game_handler))
+                        }
+                    };
+
+                // Otherwise accept move by updating our state
+                self.accept_their_move(
+                    allocator,
+                    game_handler,
+                    &GameMoveDetails {
+                        basic: GameMoveStateInfo {
+                            move_made: new_move.clone(),
+                            max_move_size: new_max_move_size,
+                            mover_share: new_mover_share.clone(),
+                        },
+                        validation_info_hash: new_validation_info_hash.clone(),
                     }
-                }
+                )?;
+
+                Ok(TheirTurnCoinSpentResult::Moved {
+                    new_coin_string: CoinString::from_parts(
+                        &coin_string.to_coin_id(),
+                        &new_puzzle_hash,
+                        &self.amount,
+                    ),
+                    readable: readable_move,
+                })
             }
         }
     }

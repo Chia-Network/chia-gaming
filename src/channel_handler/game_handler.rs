@@ -151,6 +151,7 @@ fn run_code(
 
 #[derive(Debug, Clone)]
 pub enum TheirTurnResult {
+    FinalMove(NodePtr),
     MakeMove(NodePtr, GameHandler, Vec<u8>),
     Slash(Evidence, Aggsig),
 }
@@ -349,17 +350,20 @@ impl GameHandler {
         };
 
         if move_type == 0 {
-            if pl.len() != 4 {
+            if pl.len() < 2 {
                 return Err(Error::StrErr(format!(
                     "bad length for move result {}",
                     disassemble(allocator.allocator(), run_result, None)
                 )));
+            } else if pl.len() < 3 {
+                Ok(TheirTurnResult::FinalMove(pl[1]))
+            } else {
+                Ok(TheirTurnResult::MakeMove(
+                    pl[1],
+                    GameHandler::my_driver_from_nodeptr(pl[2]),
+                    allocator.allocator().atom(pl[3]).to_vec(),
+                ))
             }
-            Ok(TheirTurnResult::MakeMove(
-                pl[1],
-                GameHandler::my_driver_from_nodeptr(pl[2]),
-                allocator.allocator().atom(pl[3]).to_vec(),
-            ))
         } else if move_type == 2 {
             if pl.len() != 3 {
                 return Err(Error::StrErr(format!(
