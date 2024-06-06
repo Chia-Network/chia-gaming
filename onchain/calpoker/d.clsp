@@ -4,6 +4,8 @@
 (import std.assert)
 (import std.shatree)
 (import std.popcount)
+(import std.and)
+(import std.if_any_fail)
 
 ; Alice challenging
 ; state is the cards for both players and alice's card pick commitment

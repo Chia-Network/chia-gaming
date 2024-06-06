@@ -3,8 +3,9 @@ use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::ToClvm;
 
-use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::ChannelHandler;
+use crate::channel_handler::game::Game;
+use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram
@@ -16,15 +17,15 @@ use crate::common::types::{
     Sha256tree, Timeout,
 };
 
-struct ChannelHandlerParty {
-    ch: ChannelHandler,
-    referee: Puzzle,
-    ref_puzzle_hash: PuzzleHash,
-    contribution: Amount,
+pub struct ChannelHandlerParty {
+    pub ch: ChannelHandler,
+    pub referee: Puzzle,
+    pub ref_puzzle_hash: PuzzleHash,
+    pub contribution: Amount,
 }
 
 impl ChannelHandlerParty {
-    fn new<R: Rng>(
+    pub fn new<R: Rng>(
         allocator: &mut AllocEncoder,
         rng: &mut R,
         contribution: Amount,
@@ -42,12 +43,12 @@ impl ChannelHandlerParty {
     }
 }
 
-struct ChannelHandlerGame {
-    players: [ChannelHandlerParty; 2],
+pub struct ChannelHandlerGame {
+    pub players: [ChannelHandlerParty; 2],
 }
 
 impl ChannelHandlerGame {
-    fn new<R: Rng>(
+    pub fn new<R: Rng>(
         env: &mut ChannelHandlerEnv<R>,
         contributions: [Amount; 2],
     ) -> ChannelHandlerGame {
@@ -61,11 +62,11 @@ impl ChannelHandlerGame {
         }
     }
 
-    fn player(&mut self, who: usize) -> &mut ChannelHandlerParty {
+    pub fn player(&mut self, who: usize) -> &mut ChannelHandlerParty {
         &mut self.players[who]
     }
 
-    fn initiate<R: Rng>(
+    pub fn initiate<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         who: usize,
@@ -74,7 +75,7 @@ impl ChannelHandlerGame {
         self.players[who].ch.initiate(env, data)
     }
 
-    fn handshake<R: Rng>(
+    pub fn handshake<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         launcher_coin: &CoinID,
@@ -106,7 +107,7 @@ impl ChannelHandlerGame {
         Ok([initiation_result1, initiation_result2])
     }
 
-    fn finish_handshake<R: Rng>(
+    pub fn finish_handshake<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         who: usize,
