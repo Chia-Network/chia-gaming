@@ -7,6 +7,8 @@
 (import std.assert)
 (import std.relops)
 (import std.popcount)
+(import std.if_any_fail)
+(import std.and)
 
 ; Bob challenging
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)

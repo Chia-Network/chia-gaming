@@ -81,10 +81,10 @@
 )
 
 (defun indices_to_bitfield_inner (mylist index)
-    (if not mylist
+    (if (not mylist)
         0
         (= (f mylist) index)
-        (| 1 (* 2 (indices_to_bitfield (r mylist) (+ index 1))))
+        (logior 1 (* 2 (indices_to_bitfield (r mylist) (+ index 1))))
         (* 2 (indices_to_bitfield mylist (+ index 1)))
     )
 )

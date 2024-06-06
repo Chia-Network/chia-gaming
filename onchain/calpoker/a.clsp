@@ -2,7 +2,8 @@
 
 (import onchain.calpoker.b exposing (program_hash as bhash))
 (import std.assert)
-
+(import std.and)
+(import std.if_any_fail)
 
 ; Bob challenging
 ; state is empty
