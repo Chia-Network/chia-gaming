@@ -1178,7 +1178,7 @@ impl RefereeMaker {
         )?;
 
         match result {
-            TheirTurnResult::MakeMove(handler, readable_move, message) => {
+            TheirTurnResult::MakeMove(readable_move, handler, message) => {
                 // Mover puzzle turns the given solution into coin conditions
                 // that pay the game's amount to us.  It checks whether the
                 // originally curried mover puzzle hash is the sha256tree of the
@@ -1500,7 +1500,7 @@ impl RefereeMaker {
                             &(slash_aggsig + sig),
                         )
                     }
-                    TheirTurnResult::MakeMove(game_handler, readable_move, _message) => {
+                    TheirTurnResult::MakeMove(readable_move, game_handler, _message) => {
                         // Otherwise accept move by updating our state
                         self.accept_this_move(
                             allocator,

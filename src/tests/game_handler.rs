@@ -88,7 +88,7 @@ fn test_game_handler_their_make_move() {
             },
         )
         .expect("should run");
-    if let TheirTurnResult::MakeMove(game_handler, state, msg) = result {
+    if let TheirTurnResult::MakeMove(state, game_handler, msg) = result {
         assert_eq!(msg, b"test");
         assert_eq!(disassemble(allocator.allocator(), state, None), "999");
         assert_eq!(disassemble(allocator.allocator(), game_handler.to_nodeptr(), None), "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000 () ())");

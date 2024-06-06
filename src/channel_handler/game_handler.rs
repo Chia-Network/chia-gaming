@@ -151,7 +151,7 @@ fn run_code(
 
 #[derive(Debug, Clone)]
 pub enum TheirTurnResult {
-    MakeMove(GameHandler, NodePtr, Vec<u8>),
+    MakeMove(NodePtr, GameHandler, Vec<u8>),
     Slash(Evidence, Aggsig),
 }
 
@@ -356,8 +356,8 @@ impl GameHandler {
                 )));
             }
             Ok(TheirTurnResult::MakeMove(
-                GameHandler::my_driver_from_nodeptr(pl[2]),
                 pl[1],
+                GameHandler::my_driver_from_nodeptr(pl[2]),
                 allocator.allocator().atom(pl[3]).to_vec(),
             ))
         } else if move_type == 2 {
