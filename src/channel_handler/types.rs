@@ -7,8 +7,8 @@ use rand::prelude::*;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, PrivateKey,
-    PublicKey, Puzzle, PuzzleHash, Sha256tree, SpecificTransactionBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
+    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -57,9 +57,7 @@ pub struct GameStartInfo {
     pub amount: Amount,
     pub game_handler: GameHandler,
     pub timeout: Timeout,
-    pub is_my_turn: bool,
-    pub initial_validation_puzzle: NodePtr,
-    pub initial_validation_puzzle_hash: PuzzleHash,
+    pub initial_validation_program: ValidationProgram,
     pub initial_state: NodePtr,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
@@ -249,5 +247,92 @@ impl ToClvm<NodePtr> for Evidence {
         _encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
+    }
+}
+
+/// Represents a validation program, as opposed to validation info or any of the
+/// other kinds of things that are related.
+///
+/// This can give a validation program hash or a validation info hash, given state.
+#[derive(Debug, Clone)]
+pub struct ValidationProgram {
+    validation_program: NodePtr,
+    validation_program_hash: Hash,
+}
+
+impl ValidationProgram {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        validation_program: NodePtr
+    ) -> Self {
+        ValidationProgram {
+            validation_program: validation_program,
+            validation_program_hash: Node(validation_program).sha256tree(allocator).hash().clone()
+        }
+    }
+
+    pub fn to_nodeptr(&self) -> NodePtr { self.validation_program.clone() }
+
+    pub fn hash(&self) -> &Hash {
+        &self.validation_program_hash
+    }
+}
+
+/// The pair of state and validation program is the source of the validation hash
+#[derive(Clone, Debug)]
+pub enum ValidationInfo {
+    FromProgram {
+        game_state: NodePtr,
+        validation_program: ValidationProgram,
+        hash: Hash,
+    },
+    FromProgramHash {
+        game_state: NodePtr,
+        validation_program_hash: Hash,
+        hash: Hash,
+    },
+    FromHash {
+        hash: Hash
+    }
+}
+
+impl ValidationInfo {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        validation_program: ValidationProgram,
+        game_state: NodePtr
+    ) -> Self {
+        let hash = Sha256Input::Array(vec![
+            Sha256Input::Hash(validation_program.hash()),
+            Sha256Input::Hash(&Node(game_state).sha256tree(allocator).hash()),
+        ]).hash();
+        ValidationInfo::FromProgram {
+            game_state,
+            validation_program,
+            hash
+        }
+    }
+    pub fn new_hash(hash: Hash) -> Self {
+        ValidationInfo::FromHash { hash }
+    }
+    pub fn new_from_validation_program_hash_and_state(
+        allocator: &mut AllocEncoder,
+        validation_program_hash: Hash,
+        game_state: NodePtr
+    ) -> Self {
+        let hash = Sha256Input::Array(vec![
+            Sha256Input::Hash(&validation_program_hash),
+            Sha256Input::Hash(&Node(game_state).sha256tree(allocator).hash()),
+        ]).hash();
+        ValidationInfo::FromProgramHash {
+            game_state,
+            validation_program_hash,
+            hash
+        }
+    }
+    pub fn hash(&self) -> &Hash {
+        match self {
+            ValidationInfo::FromProgramHash { hash, .. } | ValidationInfo::FromProgram { hash, .. } | ValidationInfo::FromHash { hash } => &hash
+        }
     }
 }

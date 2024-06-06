@@ -7,12 +7,12 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, GameStartInfo,
+    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram
 };
-use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, Error, GameID, Hash, Node, Puzzle, PuzzleHash,
+    Aggsig, AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
 
@@ -229,21 +229,17 @@ fn test_smoke_can_start_game() {
     )
     .expect("should give");
     let amount_to_take = game.player(1).ch.clean_shutdown_amount();
-    let conditions = (
-        (CREATE_COIN, (shutdown_spend_target, (amount_to_take, ()))),
-        (),
-    )
-        .to_clvm(env.allocator)
-        .expect("should create conditions");
     let our_share = Amount::new(100);
     let their_share = Amount::new(100);
 
     // Fake
     let game_handler = env.allocator.allocator().null();
     let initial_validation_puzzle = game_handler;
-    let initial_validation_puzzle_hash =
-        Node(initial_validation_puzzle).sha256tree(&mut env.allocator);
     let initial_state = env.allocator.allocator().null();
+    let initial_validation_program = ValidationProgram::new(
+        &mut env.allocator,
+        initial_validation_puzzle
+    );
 
     let timeout = Timeout::new(1337);
     let game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
@@ -253,11 +249,9 @@ fn test_smoke_can_start_game() {
         &[GameStartInfo {
             game_id: GameID::new(vec![0]),
             game_handler: GameHandler::TheirTurnHandler(game_handler),
-            is_my_turn: true,
             timeout: timeout.clone(),
-            initial_validation_puzzle,
-            initial_validation_puzzle_hash,
-            initial_state,
+            initial_validation_program,
+            initial_state: initial_state,
             initial_move: Vec::new(),
             initial_max_move_size: 1,
             initial_mover_share: our_share.clone(),

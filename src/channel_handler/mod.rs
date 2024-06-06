@@ -793,7 +793,7 @@ impl ChannelHandler {
             referee_maker.my_turn_make_move(env.rng, env.allocator, readable_move)?;
 
         let puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
-        let amount = referee_result.details.mover_share.clone();
+        let amount = referee_result.details.basic.mover_share.clone();
 
         self.have_potato = false;
         self.current_state_number += 1;
@@ -877,7 +877,7 @@ impl ChannelHandler {
         let puzzle_hash = live_game.referee_maker.get_current_puzzle_hash();
 
         self.current_state_number += 1;
-        let amount = live_game.referee_maker.get_my_share(env.allocator);
+        let amount = live_game.referee_maker.get_our_current_share();
         let at_stake = live_game.referee_maker.get_amount();
 
         self.have_potato = false;
@@ -1388,7 +1388,11 @@ impl ChannelHandler {
         };
 
         let disposition =
-            self.get_cached_disposition_for_spent_result(env, unroll_coin, state_number)?;
+            self.get_cached_disposition_for_spent_result(
+                env,
+                unroll_coin,
+                state_number
+            )?;
 
         // return list of triples of game_id, coin_id, referee maker pulling from a list of pairs of (id, ref maker)
         let new_game_coins_on_chain = self.get_new_game_coins_on_chain(

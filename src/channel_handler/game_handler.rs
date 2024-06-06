@@ -18,12 +18,12 @@ use clvmr::allocator::NodePtr;
 use clvmr::NO_UNKNOWN_OPS;
 use clvmr::{run_program, ChiaDialect};
 
-use crate::channel_handler::types::{ReadableMove, ReadableUX, Evidence};
+use crate::channel_handler::types::{ReadableMove, ReadableUX, Evidence, ValidationProgram, ValidationInfo};
 use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
     IntoErr, Node,
 };
-use crate::referee::GameMoveDetails;
+use crate::referee::{GameMoveStateInfo, GameMoveDetails};
 
 pub fn chia_dialect() -> ChiaDialect {
     ChiaDialect::new(NO_UNKNOWN_OPS)
@@ -71,7 +71,8 @@ fn get_my_turn_debug_flag(_: &MyTurnInputs) -> bool {
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub waiting_driver: GameHandler,
-    pub validation_program: NodePtr,
+    pub validation_program: ValidationProgram,
+    pub validation_program_hash: Hash,
     pub state: NodePtr,
     pub game_move: GameMoveDetails,
     pub message_parser: Option<MessageHandler>,
@@ -221,6 +222,11 @@ impl GameHandler {
             get_my_turn_debug_flag(inputs),
         )?;
 
+        eprintln!(
+            "my turn driver result {}",
+            disassemble(allocator.allocator(), run_result, None)
+        );
+
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
         } else {
@@ -268,15 +274,23 @@ impl GameHandler {
             return Err(Error::StrErr("bad move".to_string()));
         };
 
+        let validation_program = ValidationProgram::new(allocator, pl[1]);
         Ok(MyTurnResult {
             waiting_driver: GameHandler::their_driver_from_nodeptr(pl[6]),
-            validation_program: pl[1],
+            validation_program: validation_program,
+            validation_program_hash: validation_program_hash.clone(),
             state: pl[3],
             game_move: GameMoveDetails {
-                move_made: move_data,
-                validation_info_hash: validation_program_hash,
-                max_move_size,
-                mover_share,
+                basic: GameMoveStateInfo {
+                    move_made: move_data,
+                    max_move_size,
+                    mover_share,
+                },
+                validation_info_hash: ValidationInfo::new_from_validation_program_hash_and_state(
+                    allocator,
+                    validation_program_hash,
+                    pl[3],
+                ).hash().clone(),
             },
             message_parser,
         })
@@ -292,12 +306,12 @@ impl GameHandler {
             (
                 Node(inputs.last_state.clone()),
                 (
-                    Node(allocator.encode_atom(&inputs.new_move.move_made).into_gen()?),
+                    Node(allocator.encode_atom(&inputs.new_move.basic.move_made).into_gen()?),
                     (
                         inputs.new_move.validation_info_hash.clone(),
                         (
-                            inputs.new_move.max_move_size.clone(),
-                            (inputs.new_move.mover_share.clone(), ()),
+                            inputs.new_move.basic.max_move_size.clone(),
+                            (inputs.new_move.basic.mover_share.clone(), ()),
                         ),
                     ),
                 ),

@@ -1,5 +1,4 @@
 use clvmr::run_program;
-use clvmr::allocator::Allocator;
 use clvm_traits::ToClvm;
 
 use crate::common::types::{AllocEncoder, Node};

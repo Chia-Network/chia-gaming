@@ -8,12 +8,12 @@ use clvmr::NodePtr;
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{GameStartInfo, ReadableMove};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, PuzzleHash, Sha256tree, Timeout, Puzzle, Hash
+    Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, PuzzleHash, Sha256tree, Timeout, Puzzle
 };
-use crate::referee::{RefereeMaker, ValidatorMoveArgs, GameMoveDetails};
+use crate::referee::{RefereeMaker, ValidatorMoveArgs, GameMoveDetails, GameMoveStateInfo};
 
 pub struct DebugGamePrograms {
     pub my_validation_program: NodePtr,
@@ -100,7 +100,6 @@ impl RefereeTest {
         their_identity: ChiaIdentity,
 
         their_game_handler: GameHandler,
-        their_validation_info_hash: PuzzleHash,
 
         game_start: &GameStartInfo
     ) -> RefereeTest {
@@ -118,10 +117,8 @@ impl RefereeTest {
             .expect("should construct");
 
         let their_game_start_info = GameStartInfo {
-            is_my_turn: !game_start.is_my_turn,
             initial_mover_share: game_start.amount.clone() - game_start.initial_mover_share.clone(),
             game_handler: their_game_handler,
-            initial_validation_puzzle_hash: their_validation_info_hash,
             .. game_start.clone()
         };
 
@@ -176,9 +173,10 @@ fn test_referee_smoke() {
             allocator.allocator(),
             "(0 . 0)"
         ).expect("should assemble");
-
-    let my_validation_program_hash =
-        Node(debug_game.my_validation_program).sha256tree(&mut allocator);
+    let initial_validation_program = ValidationProgram::new(
+        &mut allocator,
+        debug_game.my_validation_program,
+    );
 
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {
@@ -186,9 +184,7 @@ fn test_referee_smoke() {
         amount: amount.clone(),
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
-        is_my_turn: true,
-        initial_validation_puzzle: debug_game.my_validation_program,
-        initial_validation_puzzle_hash: my_validation_program_hash,
+        initial_validation_program,
         initial_state: init_state,
         initial_move: vec![],
         initial_max_move_size: 0,
@@ -203,7 +199,6 @@ fn test_referee_smoke() {
         my_identity,
         their_identity,
         debug_game.their_turn_handler,
-        their_validation_program_hash,
         &game_start_info,
     );
 
@@ -216,15 +211,17 @@ fn test_referee_smoke() {
         )
         .expect("should move");
 
-    assert!(my_move_wire_data.details.move_made.is_empty());
+    assert!(my_move_wire_data.details.basic.move_made.is_empty());
     let mut off_chain_slash_gives_error = reftest.my_referee.clone();
     let their_move_result = off_chain_slash_gives_error.their_turn_move_off_chain(
         &mut allocator,
         &GameMoveDetails {
-            move_made: vec![1],
+            basic: GameMoveStateInfo {
+                move_made: vec![1],
+                max_move_size: 100,
+                mover_share: Amount::default(),
+            },
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
-            max_move_size: 100,
-            mover_share: Amount::default(),
         },
     );
     eprintln!("their move result {their_move_result:?}");
@@ -258,7 +255,7 @@ fn test_referee_smoke() {
         &validator_move_args
     ).expect("should run");
 
-    assert!(!reftest.my_referee.is_my_turn);
+    assert!(reftest.my_referee.is_my_turn());
     let their_move_result = reftest.my_referee
         .their_turn_move_off_chain(
             &mut allocator,
@@ -270,5 +267,5 @@ fn test_referee_smoke() {
         disassemble(allocator.allocator(), their_move_result.readable_move, None),
         "(())"
     );
-    assert!(reftest.my_referee.is_my_turn);
+    assert!(!reftest.my_referee.is_my_turn());
 }
