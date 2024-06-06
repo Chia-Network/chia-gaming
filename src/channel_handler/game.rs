@@ -4,8 +4,9 @@ use clvm_traits::ClvmEncoder;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
-use crate::common::types::{AllocEncoder, Amount, Error, Hash, IntoErr, atom_from_clvm, u64_from_atom, usize_from_atom};
+use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Timeout, atom_from_clvm, u64_from_atom, usize_from_atom};
 use crate::common::standard_coin::read_hex_puzzle;
+use crate::channel_handler::GameStartInfo;
 use crate::channel_handler::game_handler::{GameHandler, chia_dialect};
 use crate::channel_handler::types::ValidationProgram;
 
@@ -18,7 +19,7 @@ pub struct Game {
     pub initial_validation_program: ValidationProgram,
     pub initial_validation_program_hash: Hash,
     pub initial_state: NodePtr,
-    pub initial_mover_share_proportion: Amount,
+    pub initial_mover_share_proportion: usize,
 }
 
 impl Game {
@@ -60,7 +61,7 @@ impl Game {
                 return Err(Error::StrErr("not an atom for initial_validation_hash".to_string()));
             };
         let initial_state = template_list[7];
-        let initial_mover_share_proportion = Amount::new(atom_from_clvm(allocator, template_list[8]).and_then(|a| u64_from_atom(a)).expect("should be an atom"));
+        let initial_mover_share_proportion = atom_from_clvm(allocator, template_list[8]).and_then(|a| usize_from_atom(a)).expect("should be an atom");
         Ok(Game {
             initial_mover_handler,
             initial_waiter_handler,
@@ -72,5 +73,42 @@ impl Game {
             initial_state,
             initial_mover_share_proportion,
         })
+    }
+
+    /// Return a pair of GameStartInfo which can be used as the starts for two
+    /// players in a game.
+    pub fn symmetric_game_starts(
+        &self,
+        game_id: &GameID,
+        amount: &Amount,
+        timeout: &Timeout,
+    ) -> (GameStartInfo, GameStartInfo) {
+        let amount_as_u64: u64 = amount.clone().into();
+        let mover_share = Amount::new((amount_as_u64 * self.initial_mover_share_proportion as u64) / 100);
+        let waiter_share = amount.clone() - mover_share.clone();
+        (
+            GameStartInfo {
+                game_id: game_id.clone(),
+                amount: amount.clone(),
+                game_handler: self.initial_mover_handler.clone(),
+                timeout: timeout.clone(),
+                initial_validation_program: self.initial_validation_program.clone(),
+                initial_state: self.initial_state,
+                initial_move: vec![],
+                initial_max_move_size: self.initial_max_move_size,
+                initial_mover_share: mover_share,
+            },
+            GameStartInfo {
+                game_id: game_id.clone(),
+                amount: amount.clone(),
+                game_handler: self.initial_waiter_handler.clone(),
+                timeout: timeout.clone(),
+                initial_validation_program: self.initial_validation_program.clone(),
+                initial_state: self.initial_state,
+                initial_move: vec![],
+                initial_max_move_size: self.initial_max_move_size,
+                initial_mover_share: waiter_share,
+            }
+        )
     }
 }
