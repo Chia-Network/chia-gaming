@@ -615,7 +615,6 @@ impl RefereeMaker {
 
     pub fn accept_this_move(
         &mut self,
-        allocator: &mut AllocEncoder,
         game_handler: &GameHandler,
         validation_program: &ValidationProgram,
         state: NodePtr,
@@ -762,7 +761,6 @@ impl RefereeMaker {
         eprintln!("my turn result {result:?}");
 
         self.accept_this_move(
-            allocator,
             &result.waiting_driver,
             &result.validation_program,
             result.state.clone(),

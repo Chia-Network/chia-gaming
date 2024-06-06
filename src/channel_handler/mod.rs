@@ -1,3 +1,4 @@
+pub mod game;
 pub mod game_handler;
 pub mod types;
 
