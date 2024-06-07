@@ -13,12 +13,13 @@ use rand_chacha::ChaCha8Rng;
 use indoc::indoc;
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message};
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, read_hex_puzzle};
 use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID, IntoErr};
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::types::{ChannelHandlerEnv, GameStartInfo, ReadableMove, ValidationProgram};
-use crate::tests::channel_handler::ChannelHandlerGame;
+use crate::tests::channel_handler::{ChannelHandlerParty, ChannelHandlerGame};
+use crate::tests::game::new_channel_handler_game;
 use crate::tests::referee::{RefereeTest, make_debug_game_handler};
 
 #[derive(Debug, Clone)]
@@ -346,6 +347,84 @@ impl Simulator {
             )?.extract(py)?;
             to_spend_result(py, spend_res)
         })
+    }
+}
+
+pub enum GameAction {
+    // Do a timeout
+    Timeout(usize),
+    // Move (player, clvm readable move)
+    Move(usize, String),
+    // Go on chain
+    GoOnChain(usize)
+}
+
+pub struct SimulatorEnvironment<'a, R: Rng> {
+    pub env: ChannelHandlerEnv<'a, R>,
+    pub identities: [ChiaIdentity; 2],
+    pub parties: ChannelHandlerGame,
+    pub simulator: Simulator,
+}
+
+impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
+    pub fn new(
+        allocator: &'a mut AllocEncoder,
+        mut rng: &'a mut R,
+        seed: [u8; 32],
+        game: &Game,
+        contributions: &[Amount; 2]
+    ) -> Result<Self, Error> {
+
+        // Generate keys and puzzle hashes.
+        let my_private_key: PrivateKey = rng.gen();
+        let their_private_key: PrivateKey = rng.gen();
+
+        let identities = [
+            ChiaIdentity::new(allocator, my_private_key).expect("should generate"),
+            ChiaIdentity::new(allocator, their_private_key).expect("should generate")
+        ];
+
+        let referee_coin_puzzle = read_hex_puzzle(
+            allocator,
+            "onchain/referee.hex"
+        ).expect("should be readable");
+        let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
+        let unroll_puzzle = read_hex_puzzle(
+            allocator,
+            "resources/unroll_puzzle_state_channel_unrolling.hex").expect("should read"
+        );
+        let mut env = ChannelHandlerEnv {
+            allocator: allocator,
+            rng: rng,
+            referee_coin_puzzle,
+            referee_coin_puzzle_hash,
+            unroll_metapuzzle: identities[0].puzzle.clone(),
+            unroll_puzzle,
+            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
+        };
+
+        let simulator = Simulator::new();
+        let parties = new_channel_handler_game(
+            &simulator,
+            &mut env,
+            &game,
+            &identities,
+            contributions.clone(),
+        )?;
+
+        Ok(SimulatorEnvironment {
+            env,
+            identities,
+            parties,
+            simulator
+        })
+    }
+
+    pub fn play_game(
+        &mut self,
+        actions: &[GameAction],
+    ) -> Result<(), Error> {
+        todo!();
     }
 }
 

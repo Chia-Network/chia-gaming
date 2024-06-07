@@ -1,4 +1,3 @@
-pub mod calpoker;
 pub mod channel_handler;
 pub mod constants;
 pub mod game;
@@ -8,3 +7,5 @@ pub mod referee;
 pub mod simulator;
 pub mod standard_coin;
 pub mod chialisp;
+#[cfg(feature = "sim-tests")]
+pub mod calpoker;
