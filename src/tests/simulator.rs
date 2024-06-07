@@ -354,7 +354,7 @@ pub enum GameAction {
     // Do a timeout
     Timeout(usize),
     // Move (player, clvm readable move)
-    Move(usize, String),
+    Move(usize, NodePtr),
     // Go on chain
     GoOnChain(usize)
 }
