@@ -4,7 +4,7 @@ use crate::common::standard_coin::ChiaIdentity;
 use crate::channel_handler::game::Game;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerInitiationData};
 
-use crate::tests::channel_handler::{ChannelHandlerGame, ChannelHandlerParty};
+use crate::tests::channel_handler::ChannelHandlerGame;
 use crate::tests::simulator::Simulator;
 
 pub fn new_channel_handler_game<R: Rng>(
