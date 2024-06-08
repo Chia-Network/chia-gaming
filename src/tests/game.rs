@@ -1,5 +1,5 @@
 use rand::prelude::*;
-use crate::common::types::{Amount, CoinString, Error, IntoErr};
+use crate::common::types::{Amount, CoinString, Error, GameID, Hash, IntoErr, Timeout};
 use crate::common::standard_coin::ChiaIdentity;
 use crate::channel_handler::game::Game;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerInitiationData};
@@ -52,6 +52,28 @@ pub fn new_channel_handler_game<R: Rng>(
         my_contribution: contributions[1].clone(),
         their_contribution: contributions[0].clone(),
     })?;
+
+    let amount = contributions[0].clone() + contributions[1].clone();
+    let timeout = Timeout::new(10);
+
+    let game_id_data: Hash = env.rng.gen();
+    let game_id = GameID::new(game_id_data.bytes().to_vec());
+    let (our_game_start, their_game_start) = game.symmetric_game_starts(
+        &game_id,
+        &amount,
+        &timeout
+    );
+    let start_potato = party.player(0).ch.send_potato_start_game(
+        env,
+        contributions[0].clone(),
+        contributions[1].clone(),
+        &[our_game_start]
+    )?;
+    party.player(1).ch.received_potato_start_game(
+        env,
+        &start_potato,
+        &[their_game_start]
+    )?;
 
     Ok(party)
 }
