@@ -37,5 +37,6 @@ fn test_load_calpoker() {
     let moves = [
         GameAction::Move(0, alice_word_hash.to_clvm(simenv.env.allocator).expect("should convert")),
     ];
-    simenv.play_game(&moves);
+    let play_result = simenv.play_game(&moves);
+    todo!();
 }
