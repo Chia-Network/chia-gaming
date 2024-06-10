@@ -44,6 +44,7 @@ pub struct ChannelHandlerInitiationResult {
     pub my_initial_channel_half_signature_peer: Aggsig,
 }
 
+#[derive(Debug, Clone)]
 pub struct PotatoSignatures {
     // Half signed thing signing to the new state.
     pub my_channel_half_signature_peer: Aggsig,
