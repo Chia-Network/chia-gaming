@@ -723,6 +723,7 @@ impl ChannelHandler {
         )));
 
         self.have_potato = false;
+        self.current_state_number += 1;
         self.add_games(env, start_info_list)?;
 
         self.update_cached_unroll_state(env, self.current_state_number)
