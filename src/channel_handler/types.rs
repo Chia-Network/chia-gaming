@@ -5,7 +5,8 @@ use rand::distributions::Standard;
 use rand::prelude::*;
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::common::standard_coin::{read_hex_puzzle, standard_solution_partial};
+use crate::common::constants::{CREATE_COIN, REM};
+use crate::common::standard_coin::{read_hex_puzzle, puzzle_for_pk, puzzle_hash_for_pk, standard_solution_partial};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
     PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle,
@@ -375,10 +376,21 @@ pub struct ChannelCoinInfo {
     pub spend: TransactionBundle,
 }
 
+pub struct UnrollCoinConditionInputs<'a> {
+    pub ref_pubkey: &'a PublicKey,
+    pub their_referee_puzzle_hash: &'a PuzzleHash,
+    pub have_potato: bool,
+    pub state_number: usize,
+    pub my_balance: &'a Amount,
+    pub their_balance: &'a Amount,
+    pub puzzle_hashes_and_amounts: &'a [(PuzzleHash, Amount)],
+}
+
 /// Represents the unroll coin which will come to exist if the channel coin
 /// is spent.  This isolates how the unroll coin functions.
 #[derive(Default)]
 pub struct UnrollCoin {
+    pub started_with_potato: bool,
     // State number for unroll.
     // Always equal to or 1 less than the current state number.
     // Updated when potato arrives.
@@ -394,4 +406,151 @@ pub struct UnrollCoin {
     // Cached delta
     pub difference_between_state_numbers: i32,
     pub last_unroll_aggsig: Aggsig,
+}
+
+impl UnrollCoin {
+    pub fn prepend_state_number_rem_to_conditions<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        state_number: usize,
+        conditions: NodePtr,
+    ) -> Result<NodePtr, Error> {
+        // Add rem condition for the state number
+        let rem_condition = (REM, (state_number, ()));
+        (rem_condition, Node(conditions))
+            .to_clvm(env.allocator)
+            .into_gen()
+    }
+
+    pub fn prepend_default_conditions_hash<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        conditions: NodePtr,
+    ) -> Result<NodePtr, Error> {
+        let conditions_hash = Node(conditions).sha256tree(env.allocator);
+        let default_hash_rem = (REM, (conditions_hash, ()));
+        (default_hash_rem, Node(conditions))
+            .to_clvm(env.allocator)
+            .into_gen()
+    }
+
+    pub fn prepend_rem_conditions<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        state_number: usize,
+        conditions: NodePtr,
+    ) -> Result<NodePtr, Error> {
+        let with_default_conditions = self.prepend_default_conditions_hash(env, conditions)?;
+        self.prepend_state_number_rem_to_conditions(env, state_number, with_default_conditions)
+    }
+
+    /// What a spend can bring:
+    /// Either a game creation that got cancelled happens,
+    /// move we did that needs to be replayed on chain.
+    /// game folding that we need to replay on chain.
+    pub fn make_curried_unroll_puzzle<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        aggregate_public_key: &PublicKey,
+        state: usize,
+        default_conditions_hash: &PuzzleHash,
+    ) -> Result<NodePtr, Error> {
+        let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
+
+        CurriedProgram {
+            program: env.unroll_puzzle.clone(),
+            args: clvm_curried_args!(shared_puzzle_hash.clone(), state, default_conditions_hash),
+        }
+        .to_clvm(env.allocator)
+            .into_gen()
+    }
+
+    pub fn make_unroll_puzzle_solution<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        public_key: &PublicKey,
+        current_state_number: usize,
+        conditions: NodePtr,
+    ) -> Result<(NodePtr, NodePtr), Error> {
+        let conditions_hash = Node(conditions).sha256tree(env.allocator);
+        let curried_unroll_puzzle =
+            self.make_curried_unroll_puzzle(
+                env,
+                public_key,
+                current_state_number,
+                &conditions_hash
+            )?;
+        let unroll_inner_puzzle = env.unroll_metapuzzle.clone();
+        let unroll_puzzle_solution = (
+            unroll_inner_puzzle,
+            (self.live_conditions_for_unroll_coin_spend.clone(), ()),
+        )
+            .to_clvm(env.allocator)
+            .into_gen()?;
+        Ok((curried_unroll_puzzle, unroll_puzzle_solution))
+    }
+
+    /// Returns a list of create coin conditions which the unroll coin should do.
+    /// We don't care about the parent coin id since we're not constraining it.
+    ///
+    /// The order is important and the first two coins' order are determined by
+    /// whether the potato was ours first.
+    /// Needs rem of sequence number and the default conditions hash.
+    pub fn get_unroll_coin_conditions<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        inputs: &UnrollCoinConditionInputs
+    ) -> Result<NodePtr, Error> {
+        let their_first_coin = (
+            CREATE_COIN,
+            (
+                inputs.their_referee_puzzle_hash.clone(),
+                (inputs.their_balance.clone(), ()),
+            ),
+        );
+
+        eprintln!("{} ref_pubkey {:?}", inputs.have_potato, inputs.ref_pubkey);
+        let standard_puzzle_of_ref = puzzle_for_pk(env.allocator, &inputs.ref_pubkey)?;
+        let try_hash = standard_puzzle_of_ref.sha256tree(env.allocator);
+        eprintln!("{} try hash {try_hash:?}", inputs.have_potato);
+        let standard_puzzle_hash_of_ref = puzzle_hash_for_pk(env.allocator, &inputs.ref_pubkey)?;
+        eprintln!(
+            "{} our   ref ph {standard_puzzle_hash_of_ref:?}",
+            inputs.have_potato
+        );
+        eprintln!(
+            "{} their ref ph {:?}",
+            inputs.have_potato, inputs.their_referee_puzzle_hash
+        );
+
+        let our_first_coin = (
+            CREATE_COIN,
+            (standard_puzzle_hash_of_ref, (inputs.my_balance.clone(), ())),
+        );
+
+        eprintln!("started with potato: {}", self.started_with_potato);
+        let (start_coin_one, start_coin_two) = if self.started_with_potato {
+            (our_first_coin, their_first_coin)
+        } else {
+            (their_first_coin, our_first_coin)
+        };
+
+        let start_coin_one_clvm = start_coin_one.to_clvm(env.allocator).into_gen()?;
+        let start_coin_two_clvm = start_coin_two.to_clvm(env.allocator).into_gen()?;
+        let mut result_coins: Vec<Node> =
+            vec![Node(start_coin_one_clvm), Node(start_coin_two_clvm)];
+
+        // Signatures for the unroll puzzle are always unsafe.
+        // Signatures for the channel puzzle are always safe (std format).
+        // Meta puzzle for the unroll can't be standard.
+        for (ph, a) in inputs.puzzle_hashes_and_amounts.iter() {
+            let clvm_conditions = (CREATE_COIN, (ph.clone(), (a.clone(), ())))
+                .to_clvm(env.allocator)
+                .into_gen()?;
+            result_coins.push(Node(clvm_conditions));
+        }
+
+        let result_coins_node = result_coins.to_clvm(env.allocator).into_gen()?;
+        self.prepend_rem_conditions(env, inputs.state_number, result_coins_node)
+    }
 }
