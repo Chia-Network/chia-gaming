@@ -8,7 +8,7 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::common::standard_coin::{read_hex_puzzle, standard_solution_partial};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
-    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout,
+    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -365,4 +365,33 @@ impl ChannelCoin {
             true
         )
     }
+}
+
+#[derive(Default)]
+pub struct ChannelCoinInfo {
+    pub coin: Option<ChannelCoin>,
+    pub amount: Amount,
+    // Used in unrolling.
+    pub spend: TransactionBundle,
+}
+
+/// Represents the unroll coin which will come to exist if the channel coin
+/// is spent.  This isolates how the unroll coin functions.
+#[derive(Default)]
+pub struct UnrollCoin {
+    // State number for unroll.
+    // Always equal to or 1 less than the current state number.
+    // Updated when potato arrives.
+    pub unroll_state_number: usize,
+    // Default conditions for the unroll coin spend
+    pub default_conditions_for_unroll_coin_spend: Node,
+    // Cached conditions for the unroll spend
+    // Updated when potato arrives.
+    pub live_conditions_for_unroll_coin_spend: Node,
+    pub unroll_coin_spend_signature: Aggsig,
+    // Signature for the unroll coin spend.
+    // Updated when potato arrives.
+    // Cached delta
+    pub difference_between_state_numbers: i32,
+    pub last_unroll_aggsig: Aggsig,
 }
