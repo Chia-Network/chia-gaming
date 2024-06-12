@@ -5,7 +5,7 @@ use rand::distributions::Standard;
 use rand::prelude::*;
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::common::standard_coin::read_hex_puzzle;
+use crate::common::standard_coin::{read_hex_puzzle, standard_solution_partial};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
     PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout,
@@ -131,11 +131,6 @@ pub struct CoinSpentResult<'a> {
     // New coins that now exist.
     pub new_game_coins_on_chain: Vec<OnChainGameCoin<'a>>,
     pub disposition: Option<CoinSpentDisposition>,
-}
-
-pub struct UnrollCoinSignatures {
-    pub to_create_unroll_coin: Aggsig,
-    pub to_spend_unroll_coin: Aggsig,
 }
 
 pub fn read_unroll_metapuzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
@@ -335,5 +330,39 @@ impl ValidationInfo {
         match self {
             ValidationInfo::FromProgramHash { hash, .. } | ValidationInfo::FromProgram { hash, .. } | ValidationInfo::FromHash { hash } => &hash
         }
+    }
+}
+
+/// Describes all aspects of the channel coin spend.
+/// Allows the user to get the solution, conditions, quoted condition program
+/// and signature for the channel coin spend.
+pub struct ChannelCoin {
+    state_channel_coin: CoinString,
+}
+
+impl ChannelCoin {
+    pub fn new(state_channel_coin: CoinString) -> Self {
+        ChannelCoin { state_channel_coin }
+    }
+
+    pub fn coin_string(&self) -> &CoinString { &self.state_channel_coin }
+    pub fn to_coin_id(&self) -> CoinID { self.state_channel_coin.to_coin_id() }
+
+    pub fn get_solution_and_signature_from_conditions<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        private_key: &PrivateKey,
+        conditions: NodePtr,
+        aggregate_public_key: &PublicKey,
+    ) -> Result<(NodePtr, Aggsig), Error> {
+        standard_solution_partial(
+            env.allocator,
+            &private_key,
+            &self.state_channel_coin.to_coin_id(),
+            conditions,
+            &aggregate_public_key,
+            &env.agg_sig_me_additional_data,
+            true
+        )
     }
 }
