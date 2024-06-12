@@ -2,7 +2,7 @@ use rand::prelude::*;
 use crate::common::types::{Amount, CoinString, Error, GameID, Hash, IntoErr, Timeout};
 use crate::common::standard_coin::ChiaIdentity;
 use crate::channel_handler::game::Game;
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerInitiationData};
+use crate::channel_handler::types::ChannelHandlerEnv;
 
 use crate::tests::channel_handler::ChannelHandlerGame;
 use crate::tests::simulator::Simulator;

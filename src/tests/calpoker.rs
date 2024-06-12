@@ -3,13 +3,8 @@ use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::ToClvm;
 
-use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::types::{Amount, AllocEncoder, Error, Hash, PuzzleHash, PrivateKey, Sha256tree, Sha256Input};
-use crate::common::standard_coin::{ChiaIdentity, read_hex_puzzle};
+use crate::common::types::{Amount, AllocEncoder, Error, Sha256Input};
 use crate::channel_handler::game::Game;
-use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::tests::channel_handler::ChannelHandlerParty;
-use crate::tests::game::new_channel_handler_game;
 use crate::tests::simulator::{SimulatorEnvironment, GameAction};
 
 pub fn load_calpoker(allocator: &mut AllocEncoder) -> Result<Game, Error> {
@@ -27,7 +22,6 @@ fn test_load_calpoker() {
     let mut simenv = SimulatorEnvironment::new(
         &mut allocator,
         &mut rng,
-        seed,
         &calpoker,
         &contributions
     ).expect("should get a sim env");
