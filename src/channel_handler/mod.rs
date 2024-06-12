@@ -38,6 +38,14 @@ pub struct CoinDataForReward {
     amount: Amount,
 }
 
+#[derive(Default)]
+struct ChannelCoinInfo {
+    coin: Option<ChannelCoin>,
+    amount: Amount,
+    // Used in unrolling.
+    spend: TransactionBundle,
+}
+
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
 ///
@@ -75,10 +83,9 @@ pub struct ChannelHandler {
     their_channel_coin_public_key: PublicKey,
     their_unroll_coin_public_key: PublicKey,
     their_referee_puzzle_hash: PuzzleHash,
-    state_channel_coin: Option<ChannelCoin>,
+
     my_out_of_game_balance: Amount,
     their_out_of_game_balance: Amount,
-    channel_coin_amount: Amount,
     have_potato: bool,
 
     cached_last_action: Option<CachedPotatoRegenerateLastHop>,
@@ -90,15 +97,12 @@ pub struct ChannelHandler {
     // Increments per game started.
     next_nonce_number: usize,
 
-    // Used in unrolling.
-    channel_coin_spend: TransactionBundle,
+    state_channel: ChannelCoinInfo,
+
     // State number for unroll.
     // Always equal to or 1 less than the current state number.
     // Updated when potato arrives.
     unroll_state_number: usize,
-    // Sequence number of channel coin spend and unroll coin spend
-    // Updated when potato arrives.
-    channel_coin_spend_state_number: usize,
     // Default conditions for the unroll coin spend
     default_conditions_for_unroll_coin_spend: Node,
     // Cached conditions for the unroll spend
@@ -144,7 +148,7 @@ impl ChannelHandler {
     }
 
     pub fn state_channel_coin(&self) -> Result<&ChannelCoin, Error> {
-        if let Some(ssc) = self.state_channel_coin.as_ref() {
+        if let Some(ssc) = self.state_channel.coin.as_ref() {
             Ok(ssc)
         } else {
             Err(Error::StrErr(
@@ -288,7 +292,7 @@ impl ChannelHandler {
                 CREATE_COIN,
                 (
                     unroll_puzzle_hash.clone(),
-                    (self.channel_coin_amount.clone(), ()),
+                    (self.state_channel.amount.clone(), ()),
                 ),
             )
                 .to_clvm(env.allocator)
@@ -386,10 +390,10 @@ impl ChannelHandler {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let state_channel_coin_puzzle_hash =
             puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
-        self.state_channel_coin = Some(ChannelCoin::new(CoinString::from_parts(
+        self.state_channel.coin = Some(ChannelCoin::new(CoinString::from_parts(
             &initiation.launcher_coin_id,
             &state_channel_coin_puzzle_hash,
-            &self.channel_coin_amount,
+            &self.state_channel.amount,
         )));
 
         self.current_state_number = 1;
@@ -434,7 +438,7 @@ impl ChannelHandler {
                 CREATE_COIN,
                 (
                     curried_unroll_puzzle_hash,
-                    (self.channel_coin_amount.clone(), ()),
+                    (self.state_channel.amount.clone(), ()),
                 ),
             ),
             (),
@@ -452,7 +456,7 @@ impl ChannelHandler {
             &create_unroll_coin_conditions_hash.bytes(),
         );
 
-        self.channel_coin_spend = TransactionBundle {
+        self.state_channel.spend = TransactionBundle {
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
             solution: quoted_create_unroll_coin_conditions.to_nodeptr(),
             signature: signature.clone(),
@@ -478,14 +482,14 @@ impl ChannelHandler {
         //     };
 
         let hash_of_initial_channel_coin_solution =
-            Node(self.channel_coin_spend.solution).sha256tree(env.allocator);
+            Node(self.state_channel.spend.solution).sha256tree(env.allocator);
 
         eprintln!(
             "our {} sig {:?}",
-            self.started_with_potato, self.channel_coin_spend.signature
+            self.started_with_potato, self.state_channel.spend.signature
         );
         eprintln!("their sig {:?}", their_initial_channel_hash_signature);
-        let combined_signature = self.channel_coin_spend.signature.clone()
+        let combined_signature = self.state_channel.spend.signature.clone()
             + their_initial_channel_hash_signature.clone();
 
         if !combined_signature.verify(
@@ -497,7 +501,7 @@ impl ChannelHandler {
             ));
         }
 
-        self.channel_coin_spend.signature = combined_signature;
+        self.state_channel.spend.signature = combined_signature;
         Ok(())
     }
 
@@ -977,10 +981,6 @@ impl ChannelHandler {
             signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
-    }
-
-    pub fn make_channel_coin_spend(&self) -> TransactionBundle {
-        self.channel_coin_spend.clone()
     }
 
     // What a spend can bring:
