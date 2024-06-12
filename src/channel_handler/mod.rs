@@ -260,7 +260,7 @@ impl ChannelHandler {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         state_number: usize,
-    ) -> Result<(NodePtr, Aggsig), Error> {
+    ) -> Result<(NodePtr, NodePtr, Aggsig), Error> {
         let default_conditions = self.get_unroll_coin_conditions(
             env,
             state_number,
@@ -297,7 +297,8 @@ impl ChannelHandler {
             &channel_coin_public_key,
             &self.their_channel_coin_public_key,
         );
-        standard_solution_partial(
+
+        let (solution, signature) = standard_solution_partial(
             env.allocator,
             &self.private_keys.my_unroll_coin_private_key,
             &unroll_coin_parent,
@@ -305,7 +306,9 @@ impl ChannelHandler {
             &aggregated_key_for_unroll_create,
             &env.agg_sig_me_additional_data,
             true
-        )
+        )?;
+
+        Ok((create_conditions_with_rem, solution, signature))
     }
 
     pub fn create_conditions_and_signature_to_spend_unroll_coin<R: Rng>(
@@ -333,15 +336,20 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         _conditions: NodePtr,
     ) -> Result<UnrollCoinSignatures, Error> {
-        let (_, to_create_unroll_sig) =
+        let (_, _, to_create_unroll_sig) =
             self.create_conditions_and_signature_of_channel_coin(env, self.current_state_number)?;
-        let (_, to_spend_unroll_sig) =
+        let (_, _, to_spend_unroll_sig) =
             self.create_conditions_and_signature_of_channel_coin(env, self.current_state_number)?;
 
         Ok(UnrollCoinSignatures {
             to_create_unroll_coin: to_create_unroll_sig,
             to_spend_unroll_coin: to_spend_unroll_sig,
         })
+    }
+
+    fn get_aggregate_unroll_public_key(&self) -> PublicKey {
+        let public_key = private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
+        public_key + self.their_unroll_coin_public_key.clone()
     }
 
     fn get_aggregate_channel_public_key(&self) -> PublicKey {
@@ -516,7 +524,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         state_number_for_spend: usize,
     ) -> Result<PotatoSignatures, Error> {
-        let (_channel_coin_conditions, channel_coin_signature) =
+        let (_channel_coin_conditions, _, channel_coin_signature) =
             self.create_conditions_and_signature_of_channel_coin(env, state_number_for_spend)?;
 
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> = self
@@ -614,7 +622,7 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         state_number_for_spend: usize,
     ) -> Result<(), Error> {
-        let (conditions, _) =
+        let (conditions, _, _) =
             self.create_conditions_and_signature_of_channel_coin(env, state_number_for_spend)?;
 
         // Verify the signature.
@@ -625,7 +633,7 @@ impl ChannelHandler {
             .verify_channel_coin_from_peer_signatures(
                 env,
                 &signatures.my_channel_half_signature_peer,
-                solution,
+                conditions,
             )?
             .2
         {
@@ -1170,7 +1178,7 @@ impl ChannelHandler {
             // Different timeout, construct the conditions based on the current
             // state.  (different because we're not using the conditions we
             // have cached).
-            let (conditions, _) = self.create_conditions_and_signature_of_channel_coin(
+            let (conditions, _, _) = self.create_conditions_and_signature_of_channel_coin(
                 env,
                 self.current_state_number,
             )?;

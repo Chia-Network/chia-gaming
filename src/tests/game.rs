@@ -34,24 +34,22 @@ pub fn new_channel_handler_game<R: Rng>(
         get_sufficient_coins(1)?
     ];
 
-    party.initiate(env, 0, &ChannelHandlerInitiationData {
-        launcher_coin_id: player_coins[0][0].to_coin_id(),
-        we_start_with_potato: true,
-        their_channel_pubkey: identities[0].synthetic_public_key.clone(),
-        their_unroll_pubkey: identities[0].synthetic_public_key.clone(),
-        their_referee_puzzle_hash: env.referee_coin_puzzle_hash.clone(),
-        my_contribution: contributions[0].clone(),
-        their_contribution: contributions[1].clone(),
-    })?;
-    party.initiate(env, 1, &ChannelHandlerInitiationData {
-        launcher_coin_id: player_coins[1][0].to_coin_id(),
-        we_start_with_potato: false,
-        their_channel_pubkey: identities[1].synthetic_public_key.clone(),
-        their_unroll_pubkey: identities[1].synthetic_public_key.clone(),
-        their_referee_puzzle_hash: env.referee_coin_puzzle_hash.clone(),
-        my_contribution: contributions[1].clone(),
-        their_contribution: contributions[0].clone(),
-    })?;
+    let init_results = party.handshake(env, &player_coins[0][0].to_coin_id())?;
+
+    let _finish_hs_result1 = party
+        .finish_handshake(
+            env,
+            1,
+            &init_results[0].my_initial_channel_half_signature_peer,
+        )
+        .expect("should finish handshake");
+    let _finish_hs_result2 = party
+        .finish_handshake(
+            env,
+            0,
+            &init_results[1].my_initial_channel_half_signature_peer,
+        )
+        .expect("should finish handshake");
 
     let amount = contributions[0].clone() + contributions[1].clone();
     let timeout = Timeout::new(10);
@@ -69,6 +67,7 @@ pub fn new_channel_handler_game<R: Rng>(
         contributions[1].clone(),
         &[our_game_start]
     )?;
+
     party.player(1).ch.received_potato_start_game(
         env,
         &start_potato,
