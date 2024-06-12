@@ -391,14 +391,18 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
         let unroll_puzzle = read_hex_puzzle(
             allocator,
-            "resources/unroll_puzzle_state_channel_unrolling.hex").expect("should read"
-        );
+            "resources/unroll_puzzle_state_channel_unrolling.hex"
+        ).expect("should read");
+        let unroll_metapuzzle = read_hex_puzzle(
+            allocator,
+            "resources/unroll_meta_puzzle.hex"
+        ).expect("should read");
         let mut env = ChannelHandlerEnv {
             allocator: allocator,
             rng: rng,
             referee_coin_puzzle,
             referee_coin_puzzle_hash,
-            unroll_metapuzzle: identities[0].puzzle.clone(),
+            unroll_metapuzzle,
             unroll_puzzle,
             agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
         };

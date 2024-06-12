@@ -763,7 +763,11 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         start_info_list: &[GameStartInfo],
     ) -> Result<(), Error> {
-        self.received_potato_verify_signatures(env, signatures, self.current_state_number + 1)?;
+        self.received_potato_verify_signatures(
+            env,
+            signatures,
+            self.current_state_number + 1
+        )?;
 
         // We have the potato.
         self.have_potato = true;
