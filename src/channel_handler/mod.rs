@@ -212,18 +212,6 @@ impl ChannelHandler {
         public_key + self.their_channel_coin_public_key.clone()
     }
 
-    fn get_default_conditions_and_hash_for_startup<R: Rng>(
-        &self,
-        env: &mut ChannelHandlerEnv<R>,
-    ) -> Result<(NodePtr, PuzzleHash), Error> {
-        let default_conditions = self.unroll.compute_unroll_coin_conditions(
-            env,
-            &self.unroll_coin_condition_inputs(0, &[]),
-        )?;
-        let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
-        Ok((default_conditions, default_conditions_hash))
-    }
-
     fn setup_unroll_coin<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>
@@ -236,11 +224,7 @@ impl ChannelHandler {
         {
             self.unroll.setup_default_conditions(
                 env,
-                &referee_public_key,
-                &self.their_referee_puzzle_hash,
-                self.have_potato,
-                &self.my_out_of_game_balance,
-                &self.their_out_of_game_balance,
+                &self.unroll_coin_condition_inputs(0, &[])
             )?;
         }
         let inputs = self.unroll_coin_condition_inputs(0, &[]);
@@ -321,8 +305,9 @@ impl ChannelHandler {
         // We need a spend of the channel coin to sign.
         // The seq number is zero.
         // There are no game coins and a balance for both sides.
+        self.setup_unroll_coin(env)?;
 
-        let (_, default_conditions_hash) = self.get_default_conditions_and_hash_for_startup(env)?;
+        let default_conditions_hash = self.unroll.get_default_conditions_hash_for_startup()?;
 
         let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
         eprintln!("aggregate_public_key {aggregate_public_key:?}");
@@ -944,8 +929,6 @@ impl ChannelHandler {
         } else {
             return Err(Error::StrErr("Unconvertible state number".to_string()));
         };
-
-        // let default_conditions_hash = Hash::from_slice(&rem_conditions[1]);
 
         let our_parity = self.unroll.unroll_state_number & 1;
         let their_parity = state_number & 1;

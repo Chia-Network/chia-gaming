@@ -441,6 +441,14 @@ impl UnrollCoin {
         }
     }
 
+    pub fn get_default_conditions_hash_for_startup(&self) -> Result<PuzzleHash, Error> {
+        if let Some(r) = self.defaults.as_ref() {
+            Ok(r.hash.clone())
+        } else {
+            Err(Error::StrErr("no default setup".to_string()))
+        }
+    }
+
     pub fn prepend_state_number_rem_to_conditions<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
@@ -592,50 +600,12 @@ impl UnrollCoin {
     pub fn setup_default_conditions<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        ref_pubkey: &PublicKey,
-        their_referee_puzzle_hash: &PuzzleHash,
-        have_potato: bool,
-        my_balance: &Amount,
-        their_balance: &Amount,
+        inputs: &UnrollCoinConditionInputs,
     ) -> Result<(), Error> {
-        let their_first_coin = (
-            CREATE_COIN,
-            (
-                their_referee_puzzle_hash.clone(),
-                (their_balance.clone(), ()),
-            ),
-        );
-
-        eprintln!("{} ref_pubkey {:?}", have_potato, ref_pubkey);
-        let standard_puzzle_hash_of_ref = puzzle_hash_for_pk(env.allocator, &ref_pubkey)?;
-        eprintln!(
-            "{} our   ref ph {standard_puzzle_hash_of_ref:?}",
-            have_potato
-        );
-        eprintln!(
-            "{} their ref ph {:?}",
-            have_potato, their_referee_puzzle_hash
-        );
-
-        let our_first_coin = (
-            CREATE_COIN,
-            (standard_puzzle_hash_of_ref, (my_balance.clone(), ())),
-        );
-
-        eprintln!("started with potato: {}", self.started_with_potato);
-        let (start_coin_one, start_coin_two) = if self.started_with_potato {
-            (our_first_coin, their_first_coin)
-        } else {
-            (their_first_coin, our_first_coin)
-        };
-
-        let start_coin_one_clvm = start_coin_one.to_clvm(env.allocator).into_gen()?;
-        let start_coin_two_clvm = start_coin_two.to_clvm(env.allocator).into_gen()?;
-        let result_coins: Vec<Node> =
-            vec![Node(start_coin_one_clvm), Node(start_coin_two_clvm)];
-
-        let result_coins_node = result_coins.to_clvm(env.allocator).into_gen()?;
-        let conditions = self.prepend_rem_conditions(env, 0, result_coins_node)?;
+        let conditions = self.compute_unroll_coin_conditions(
+            env,
+            inputs,
+        )?;
         let hash = Node(conditions).sha256tree(env.allocator);
 
         self.defaults = Some(UnrollDefaults {
