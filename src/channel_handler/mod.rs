@@ -124,19 +124,19 @@ impl ChannelHandler {
         self.private_keys.my_referee_private_key.clone()
     }
 
-    pub fn unroll_coin_condition_inputs<'a>(
-        &'a self,
+    pub fn unroll_coin_condition_inputs(
+        &self,
         state_number: usize,
-        puzzle_hashes_and_amounts: &'a [(PuzzleHash, Amount)]
-    ) -> UnrollCoinConditionInputs<'a> {
+        puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]
+    ) -> UnrollCoinConditionInputs {
         UnrollCoinConditionInputs {
-            ref_pubkey: &self.my_referee_public_key,
-            their_referee_puzzle_hash: &self.their_referee_puzzle_hash,
+            ref_pubkey: self.my_referee_public_key.clone(),
+            their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             have_potato: self.have_potato,
             state_number,
-            my_balance: &self.my_out_of_game_balance,
-            their_balance: &self.their_out_of_game_balance,
-            puzzle_hashes_and_amounts,
+            my_balance: self.my_out_of_game_balance.clone(),
+            their_balance: self.their_out_of_game_balance.clone(),
+            puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
         }
     }
 
@@ -165,7 +165,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         state_number: usize,
     ) -> Result<(NodePtr, NodePtr, Aggsig), Error> {
-        let default_conditions = self.unroll.get_unroll_coin_conditions(
+        let default_conditions = self.unroll.compute_unroll_coin_conditions(
             env,
             &self.unroll_coin_condition_inputs(
                 state_number,
@@ -216,12 +216,45 @@ impl ChannelHandler {
         &self,
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<(NodePtr, PuzzleHash), Error> {
-        let default_conditions = self.unroll.get_unroll_coin_conditions(
+        let default_conditions = self.unroll.compute_unroll_coin_conditions(
             env,
             &self.unroll_coin_condition_inputs(0, &[]),
         )?;
         let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         Ok((default_conditions, default_conditions_hash))
+    }
+
+    fn setup_unroll_coin<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>
+    ) -> Result<(), Error> {
+        // Set the 'default conditions' and 'default conditions hash' needed for
+        // the unroll coin.
+        let referee_public_key = private_to_public_key(
+            &self.private_keys.my_referee_private_key
+        );
+        {
+            self.unroll.setup_default_conditions(
+                env,
+                &referee_public_key,
+                &self.their_referee_puzzle_hash,
+                self.have_potato,
+                &self.my_out_of_game_balance,
+                &self.their_out_of_game_balance,
+            )?;
+        }
+        let inputs = self.unroll_coin_condition_inputs(0, &[]);
+        {
+            self.unroll.update(
+                env,
+                &self.private_keys.my_unroll_coin_private_key,
+                &self.their_unroll_coin_public_key,
+                // XXX might need to mutate slightly.
+                &inputs
+            )?;
+        }
+
+        Ok(())
     }
 
     pub fn initiate<R: Rng>(
@@ -389,7 +422,7 @@ impl ChannelHandler {
             .map(|(_, puzzle_hash, amount)| (puzzle_hash, amount))
             .collect();
 
-        let unroll_conditions = self.unroll.get_unroll_coin_conditions(
+        let unroll_conditions = self.unroll.compute_unroll_coin_conditions(
             env,
             &self.unroll_coin_condition_inputs(
                 state_number_for_spend,
