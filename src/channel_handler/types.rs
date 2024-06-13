@@ -418,8 +418,6 @@ pub struct UnrollCoin {
     // Always equal to or 1 less than the current state number.
     // Updated when potato arrives.
     pub unroll_state_number: usize,
-    // Default conditions for the unroll coin spend
-    pub default_conditions_for_unroll_coin_spend: Node,
     // Cached conditions for the unroll spend
     // Updated when potato arrives.
     pub live_conditions_for_unroll_coin_spend: Node,
@@ -435,6 +433,14 @@ pub struct UnrollCoin {
 }
 
 impl UnrollCoin {
+    pub fn get_default_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
+        if let Some(r) = self.defaults.as_ref() {
+            Ok(r.conditions)
+        } else {
+            Err(Error::StrErr("no default setup".to_string()))
+        }
+    }
+
     pub fn prepend_state_number_rem_to_conditions<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
