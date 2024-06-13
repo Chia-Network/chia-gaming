@@ -426,7 +426,7 @@ impl UnrollCoin {
         }
     }
 
-    fn get_conditions_hash_for_unroll_puzzle(&self) -> Result<PuzzleHash, Error> {
+    pub fn get_conditions_hash_for_unroll_puzzle(&self) -> Result<PuzzleHash, Error> {
         if let Some(r) = self.outcome.as_ref() {
             Ok(r.hash.clone())
         } else {
@@ -526,7 +526,7 @@ impl UnrollCoin {
     /// The order is important and the first two coins' order are determined by
     /// whether the potato was ours first.
     /// Needs rem of sequence number and the default conditions hash.
-    pub fn compute_unroll_coin_conditions<R: Rng>(
+    fn compute_unroll_coin_conditions<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
         inputs: &UnrollCoinConditionInputs

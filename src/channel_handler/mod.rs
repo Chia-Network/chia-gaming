@@ -165,16 +165,11 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         state_number: usize,
     ) -> Result<(NodePtr, Aggsig), Error> {
-        let default_conditions = self.unroll.compute_unroll_coin_conditions(
-            env,
-            &self.unroll_coin_condition_inputs(
-                state_number,
-                &[]
-            )
-        )?;
-        let default_conditions_hash = Node(default_conditions).sha256tree(env.allocator);
         let unroll_coin_parent = self.state_channel_coin()?;
-        let unroll_puzzle = env.curried_unroll_puzzle(0, default_conditions_hash)?;
+        let unroll_puzzle = env.curried_unroll_puzzle(
+            0,
+            self.unroll.get_conditions_hash_for_unroll_puzzle()?,
+        )?;
         let unroll_puzzle_hash = unroll_puzzle.sha256tree(env.allocator);
         let create_conditions = vec![Node(
             (
@@ -210,27 +205,6 @@ impl ChannelHandler {
     fn get_aggregate_channel_public_key(&self) -> PublicKey {
         let public_key = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         public_key + self.their_channel_coin_public_key.clone()
-    }
-
-    fn setup_unroll_coin<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>
-    ) -> Result<(), Error> {
-        // Set the 'default conditions' and 'default conditions hash' needed for
-        // the unroll coin.
-        let referee_public_key = private_to_public_key(
-            &self.private_keys.my_referee_private_key
-        );
-        let inputs = self.unroll_coin_condition_inputs(0, &[]);
-        self.unroll.update(
-            env,
-            &self.private_keys.my_unroll_coin_private_key,
-            &self.their_unroll_coin_public_key,
-            // XXX might need to mutate slightly.
-            &inputs
-        )?;
-
-        Ok(())
     }
 
     pub fn initiate<R: Rng>(
@@ -297,7 +271,14 @@ impl ChannelHandler {
         // We need a spend of the channel coin to sign.
         // The seq number is zero.
         // There are no game coins and a balance for both sides.
-        self.setup_unroll_coin(env)?;
+        let inputs = self.unroll_coin_condition_inputs(0, &[]);
+        self.unroll.update(
+            env,
+            &self.private_keys.my_unroll_coin_private_key,
+            &self.their_unroll_coin_public_key,
+            // XXX might need to mutate slightly.
+            &inputs
+        )?;
 
         let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
         eprintln!("aggregate_public_key {aggregate_public_key:?}");
@@ -455,6 +436,38 @@ impl ChannelHandler {
         ))
     }
 
+    pub fn verify_unroll_coin_from_peer_signatures<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        signature: &Aggsig,
+        state_number_for_spend: usize,
+    ) -> Result<bool, Error> {
+        // Check the signature of the unroll coin spend.
+        let (_curried_unroll_puzzle, unroll_puzzle_solution) =
+            self.unroll.make_unroll_puzzle_solution(
+                env,
+                &self.get_aggregate_unroll_public_key(),
+                state_number_for_spend,
+            )?;
+
+        let quoted_unroll_puzzle_solution =
+            unroll_puzzle_solution.to_quoted_program(env.allocator)?;
+        let quoted_unroll_puzzle_solution_hash =
+            quoted_unroll_puzzle_solution.sha256tree(env.allocator);
+
+        let unroll_public_key =
+            private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
+        let aggregate_unroll_public_key =
+            unroll_public_key.clone() + self.their_unroll_coin_public_key.clone();
+        let aggregate_unroll_signature = signature.clone()
+            + self.unroll.get_unroll_coin_signature()?;
+
+        Ok(aggregate_unroll_signature.verify(
+            &aggregate_unroll_public_key,
+            &quoted_unroll_puzzle_solution_hash.bytes(),
+        ))
+    }
+
     pub fn received_potato_verify_signatures<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
@@ -481,28 +494,13 @@ impl ChannelHandler {
             ));
         }
 
-        // Check the signature of the unroll coin spend.
-        let (_curried_unroll_puzzle, unroll_puzzle_solution) =
-            self.unroll.make_unroll_puzzle_solution(
+        if !self
+            .verify_unroll_coin_from_peer_signatures(
                 env,
-                &self.get_aggregate_unroll_public_key(),
+                &signatures.my_unroll_half_signature_peer,
                 state_number_for_spend,
-            )?;
-        let quoted_unroll_puzzle_solution =
-            unroll_puzzle_solution.to_quoted_program(env.allocator)?;
-        let quoted_unroll_puzzle_solution_hash =
-            quoted_unroll_puzzle_solution.sha256tree(env.allocator);
-
-        let unroll_public_key =
-            private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
-        let aggregate_unroll_public_key =
-            unroll_public_key.clone() + self.their_unroll_coin_public_key.clone();
-        let aggregate_unroll_signature = signatures.my_unroll_half_signature_peer.clone()
-            + self.unroll.get_unroll_coin_signature()?;
-        if !aggregate_unroll_signature.verify(
-            &aggregate_unroll_public_key,
-            &quoted_unroll_puzzle_solution_hash.bytes(),
-        ) {
+            )?
+        {
             return Err(Error::StrErr(
                 "bad unroll signature verify".to_string(),
             ));
