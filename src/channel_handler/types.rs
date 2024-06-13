@@ -6,10 +6,10 @@ use rand::prelude::*;
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::common::constants::{CREATE_COIN, REM};
-use crate::common::standard_coin::{read_hex_puzzle, puzzle_for_pk, puzzle_hash_for_pk, standard_solution_partial};
+use crate::common::standard_coin::{read_hex_puzzle, private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, standard_solution_partial, partial_signer};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
-    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle,
+    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle, ToQuotedProgram
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -376,19 +376,42 @@ pub struct ChannelCoinInfo {
     pub spend: TransactionBundle,
 }
 
-pub struct UnrollCoinConditionInputs<'a> {
-    pub ref_pubkey: &'a PublicKey,
-    pub their_referee_puzzle_hash: &'a PuzzleHash,
+pub struct UnrollCoinConditionInputs {
+    pub ref_pubkey: PublicKey,
+    pub their_referee_puzzle_hash: PuzzleHash,
     pub have_potato: bool,
     pub state_number: usize,
-    pub my_balance: &'a Amount,
-    pub their_balance: &'a Amount,
-    pub puzzle_hashes_and_amounts: &'a [(PuzzleHash, Amount)],
+    pub my_balance: Amount,
+    pub their_balance: Amount,
+    pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
+}
+
+#[derive(Clone)]
+pub struct UnrollCoinOutcome {
+    pub conditions: NodePtr,
+    pub signature: Aggsig,
+}
+
+#[derive(Clone)]
+pub struct UnrollDefaults {
+    pub conditions: NodePtr,
+    pub hash: PuzzleHash,
 }
 
 /// Represents the unroll coin which will come to exist if the channel coin
 /// is spent.  This isolates how the unroll coin functions.
-#[derive(Default)]
+///
+/// Unroll takes these curried parameters:
+///
+/// - SHARED_PUZZLE_HASH
+/// - OLD_SEQUENCE_NUMBER
+/// - DEFAULT_CONDITIONS_HASH
+///
+/// The fully curried unroll program takes either
+/// - reveal
+/// or
+/// - meta_puzzle conditions since conditions are passed through metapuzzle.
+#[derive(Default, Clone)]
 pub struct UnrollCoin {
     pub started_with_potato: bool,
     // State number for unroll.
@@ -406,6 +429,9 @@ pub struct UnrollCoin {
     // Cached delta
     pub difference_between_state_numbers: i32,
     pub last_unroll_aggsig: Aggsig,
+
+    pub defaults: Option<UnrollDefaults>,
+    pub outcome: Option<UnrollCoinOutcome>,
 }
 
 impl UnrollCoin {
@@ -496,7 +522,7 @@ impl UnrollCoin {
     /// The order is important and the first two coins' order are determined by
     /// whether the potato was ours first.
     /// Needs rem of sequence number and the default conditions hash.
-    pub fn get_unroll_coin_conditions<R: Rng>(
+    pub fn compute_unroll_coin_conditions<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
         inputs: &UnrollCoinConditionInputs
@@ -552,5 +578,96 @@ impl UnrollCoin {
 
         let result_coins_node = result_coins.to_clvm(env.allocator).into_gen()?;
         self.prepend_rem_conditions(env, inputs.state_number, result_coins_node)
+    }
+
+    /// Set the conditions built into the unroll coin at t0.  The hash is
+    /// built into the curried program and the conditions themselves part of a
+    /// reveal when we don't provide the metapuzzle.
+    pub fn setup_default_conditions<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        ref_pubkey: &PublicKey,
+        their_referee_puzzle_hash: &PuzzleHash,
+        have_potato: bool,
+        my_balance: &Amount,
+        their_balance: &Amount,
+    ) -> Result<(), Error> {
+        let their_first_coin = (
+            CREATE_COIN,
+            (
+                their_referee_puzzle_hash.clone(),
+                (their_balance.clone(), ()),
+            ),
+        );
+
+        eprintln!("{} ref_pubkey {:?}", have_potato, ref_pubkey);
+        let standard_puzzle_hash_of_ref = puzzle_hash_for_pk(env.allocator, &ref_pubkey)?;
+        eprintln!(
+            "{} our   ref ph {standard_puzzle_hash_of_ref:?}",
+            have_potato
+        );
+        eprintln!(
+            "{} their ref ph {:?}",
+            have_potato, their_referee_puzzle_hash
+        );
+
+        let our_first_coin = (
+            CREATE_COIN,
+            (standard_puzzle_hash_of_ref, (my_balance.clone(), ())),
+        );
+
+        eprintln!("started with potato: {}", self.started_with_potato);
+        let (start_coin_one, start_coin_two) = if self.started_with_potato {
+            (our_first_coin, their_first_coin)
+        } else {
+            (their_first_coin, our_first_coin)
+        };
+
+        let start_coin_one_clvm = start_coin_one.to_clvm(env.allocator).into_gen()?;
+        let start_coin_two_clvm = start_coin_two.to_clvm(env.allocator).into_gen()?;
+        let result_coins: Vec<Node> =
+            vec![Node(start_coin_one_clvm), Node(start_coin_two_clvm)];
+
+        let result_coins_node = result_coins.to_clvm(env.allocator).into_gen()?;
+        let conditions = self.prepend_rem_conditions(env, 0, result_coins_node)?;
+        let hash = Node(conditions).sha256tree(env.allocator);
+
+        self.defaults = Some(UnrollDefaults {
+            conditions,
+            hash
+        });
+
+        Ok(())
+    }
+
+    /// Given new inputs, recompute the state of the unroll coin and store the
+    /// conditions and signature necessary for the channel coin to create it.
+    pub fn update<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        unroll_private_key: &PrivateKey,
+        their_unroll_coin_public_key: &PublicKey,
+        inputs: &UnrollCoinConditionInputs,
+    ) -> Result<Aggsig, Error> {
+        let unroll_conditions = self.compute_unroll_coin_conditions(
+            env,
+            inputs,
+        )?;
+        let quoted_conditions = unroll_conditions.to_quoted_program(env.allocator)?;
+        let quoted_conditions_hash = quoted_conditions.sha256tree(env.allocator);
+        let unroll_public_key = private_to_public_key(&unroll_private_key);
+        let unroll_aggregate_key =
+            unroll_public_key.clone() + their_unroll_coin_public_key.clone();
+        let unroll_signature = partial_signer(
+            &unroll_private_key,
+            &unroll_aggregate_key,
+            &quoted_conditions_hash.bytes(),
+        );
+        self.outcome = Some(UnrollCoinOutcome {
+            conditions: unroll_conditions,
+            signature: unroll_signature.clone()
+        });
+
+        Ok(unroll_signature)
     }
 }
