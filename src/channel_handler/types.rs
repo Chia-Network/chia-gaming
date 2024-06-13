@@ -426,7 +426,6 @@ pub struct UnrollCoin {
     // Updated when potato arrives.
     // Cached delta
     pub difference_between_state_numbers: i32,
-    pub last_unroll_aggsig: Aggsig,
 
     pub defaults: Option<UnrollDefaults>,
     pub outcome: Option<UnrollCoinOutcome>,
@@ -441,7 +440,7 @@ impl UnrollCoin {
         }
     }
 
-    pub fn get_default_conditions_hash_for_startup(&self) -> Result<PuzzleHash, Error> {
+    fn get_default_conditions_hash_for_startup(&self) -> Result<PuzzleHash, Error> {
         if let Some(r) = self.defaults.as_ref() {
             Ok(r.hash.clone())
         } else {
@@ -493,8 +492,8 @@ impl UnrollCoin {
         env: &mut ChannelHandlerEnv<R>,
         aggregate_public_key: &PublicKey,
         state: usize,
-        default_conditions_hash: &PuzzleHash,
     ) -> Result<NodePtr, Error> {
+        let default_conditions_hash = self.get_default_conditions_hash_for_startup()?;
         let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
 
         CurriedProgram {
@@ -510,15 +509,12 @@ impl UnrollCoin {
         env: &mut ChannelHandlerEnv<R>,
         public_key: &PublicKey,
         current_state_number: usize,
-        conditions: NodePtr,
     ) -> Result<(NodePtr, NodePtr), Error> {
-        let conditions_hash = Node(conditions).sha256tree(env.allocator);
         let curried_unroll_puzzle =
             self.make_curried_unroll_puzzle(
                 env,
                 public_key,
                 current_state_number,
-                &conditions_hash
             )?;
         let unroll_inner_puzzle = env.unroll_metapuzzle.clone();
         let unroll_puzzle_solution = (
