@@ -2,12 +2,13 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::ToClvm;
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram
+    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk};
@@ -258,4 +259,79 @@ fn test_smoke_can_start_game() {
             amount: our_share + their_share,
         }],
     );
+}
+
+#[test]
+fn test_unroll_can_verify_own_signature() {
+    let mut allocator = AllocEncoder::new();
+    let mut rng = ChaCha8Rng::from_seed([0; 32]);
+    let mut unroll_coin_1 = UnrollCoin {
+        started_with_potato: true,
+        .. UnrollCoin::default()
+    };
+
+    let mut unroll_coin_2 = UnrollCoin {
+        .. UnrollCoin::default()
+    };
+
+    let private_key_1 = rng.gen();
+    let private_key_2 = rng.gen();
+    let public_key_1 = private_to_public_key(&private_key_1);
+    let public_key_2 = private_to_public_key(&private_key_2);
+    let ref_puzzle_hash_1 = puzzle_hash_for_pk(&mut allocator, &public_key_1).expect("should work");
+    let ref_puzzle_hash_2 = puzzle_hash_for_pk(&mut allocator, &public_key_2).expect("should work");
+
+    let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
+    let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+    let ref_coin_puz = Puzzle::from_nodeptr(allocator.allocator().null());
+    let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
+    let mut env = ChannelHandlerEnv {
+        allocator: &mut allocator,
+        rng: &mut rng,
+        referee_coin_puzzle: ref_coin_puz,
+        referee_coin_puzzle_hash: ref_coin_ph.clone(),
+        unroll_metapuzzle,
+        unroll_puzzle,
+        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
+    };
+
+    let inputs_1 = UnrollCoinConditionInputs {
+        ref_pubkey: public_key_1.clone(),
+        their_referee_puzzle_hash: ref_puzzle_hash_2.clone(),
+        state_number: 0,
+        my_balance: Amount::new(0),
+        their_balance: Amount::new(100),
+        puzzle_hashes_and_amounts: vec![]
+    };
+
+    let sig1 = unroll_coin_1.update(
+        &mut env,
+        &private_key_1,
+        &public_key_2,
+        &inputs_1
+    ).expect("should work");
+
+    let inputs_2 = UnrollCoinConditionInputs {
+        ref_pubkey: public_key_2.clone(),
+        their_referee_puzzle_hash: ref_puzzle_hash_1.clone(),
+        my_balance: inputs_1.their_balance.clone(),
+        their_balance: inputs_1.my_balance.clone(),
+        .. inputs_1
+    };
+
+    let sig2 = unroll_coin_2.update(
+        &mut env,
+        &private_key_2,
+        &public_key_1,
+        &inputs_2
+    ).expect("should work");
+
+    let aggregate_unroll_public_key = public_key_1.clone() + public_key_2.clone();
+
+    assert!(unroll_coin_1.verify(
+        &mut env,
+        &aggregate_unroll_public_key,
+        &sig2,
+        0
+    ).expect("should verify"));
 }
