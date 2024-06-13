@@ -221,22 +221,18 @@ impl ChannelHandler {
         let referee_public_key = private_to_public_key(
             &self.private_keys.my_referee_private_key
         );
-        {
-            self.unroll.setup_default_conditions(
-                env,
-                &self.unroll_coin_condition_inputs(0, &[])
-            )?;
-        }
+        self.unroll.setup_default_conditions(
+            env,
+            &self.unroll_coin_condition_inputs(0, &[])
+        )?;
         let inputs = self.unroll_coin_condition_inputs(0, &[]);
-        {
-            self.unroll.update(
-                env,
-                &self.private_keys.my_unroll_coin_private_key,
-                &self.their_unroll_coin_public_key,
-                // XXX might need to mutate slightly.
-                &inputs
-            )?;
-        }
+        self.unroll.update(
+            env,
+            &self.private_keys.my_unroll_coin_private_key,
+            &self.their_unroll_coin_public_key,
+            // XXX might need to mutate slightly.
+            &inputs
+        )?;
 
         Ok(())
     }
@@ -307,17 +303,13 @@ impl ChannelHandler {
         // There are no game coins and a balance for both sides.
         self.setup_unroll_coin(env)?;
 
-        let default_conditions_hash = self.unroll.get_default_conditions_hash_for_startup()?;
-
         let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
         eprintln!("aggregate_public_key {aggregate_public_key:?}");
         eprintln!("shared_puzzle_hash {shared_puzzle_hash:?}");
-        eprintln!("default_conditions_hash {default_conditions_hash:?}");
         let curried_unroll_puzzle = self.unroll.make_curried_unroll_puzzle(
             env,
             &self.get_aggregate_unroll_public_key(),
             self.current_state_number,
-            &default_conditions_hash,
         )?;
         let curried_unroll_puzzle_hash = Node(curried_unroll_puzzle).sha256tree(env.allocator);
         let create_unroll_coin_conditions = (
@@ -509,7 +501,6 @@ impl ChannelHandler {
             env,
             &self.get_aggregate_unroll_public_key(),
             state_number_for_spend,
-            self.unroll.get_default_conditions_for_unroll_coin_spend()?,
         )?;
         let quoted_unroll_puzzle_solution =
             unroll_puzzle_solution.to_quoted_program(env.allocator)?;
@@ -953,7 +944,6 @@ impl ChannelHandler {
                     env,
                     &self.get_aggregate_unroll_public_key(),
                     state_number,
-                    self.unroll.get_default_conditions_for_unroll_coin_spend()?,
                 )?;
 
             Ok((
@@ -971,7 +961,6 @@ impl ChannelHandler {
                     env,
                     &self.get_aggregate_unroll_public_key(),
                     state_number,
-                    self.unroll.get_default_conditions_for_unroll_coin_spend()?,
                 )?;
 
             Ok((
@@ -986,16 +975,11 @@ impl ChannelHandler {
             // Different timeout, construct the conditions based on the current
             // state.  (different because we're not using the conditions we
             // have cached).
-            let (conditions, _, _) = self.create_conditions_and_signature_of_channel_coin(
-                env,
-                self.current_state_number,
-            )?;
             let (curried_unroll_puzzle, unroll_puzzle_solution) =
                 self.unroll.make_unroll_puzzle_solution(
                     env,
                     &self.get_aggregate_unroll_public_key(),
                     state_number,
-                    conditions
                 )?;
 
             Ok((
