@@ -15,7 +15,7 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, CoinSpentAccept,
     CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
     LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData, PotatoMoveCachedData,
-    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoin, UnrollCoinConditionInputs,
+    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoin, UnrollCoinConditionInputs, prepend_rem_conditions,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -129,10 +129,10 @@ impl ChannelHandler {
         state_number: usize,
         puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]
     ) -> UnrollCoinConditionInputs {
+        let my_referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
         UnrollCoinConditionInputs {
-            ref_pubkey: self.my_referee_public_key.clone(),
+            ref_pubkey: my_referee_public_key,
             their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-            have_potato: self.have_potato,
             state_number,
             my_balance: self.my_out_of_game_balance.clone(),
             their_balance: self.their_out_of_game_balance.clone(),
@@ -166,11 +166,12 @@ impl ChannelHandler {
         state_number: usize,
     ) -> Result<(NodePtr, Aggsig), Error> {
         let unroll_coin_parent = self.state_channel_coin()?;
-        let unroll_puzzle = env.curried_unroll_puzzle(
-            0,
-            self.unroll.get_conditions_hash_for_unroll_puzzle()?,
+        let unroll_puzzle = self.unroll.make_curried_unroll_puzzle(
+            env,
+            &self.get_aggregate_unroll_public_key(),
+            state_number
         )?;
-        let unroll_puzzle_hash = unroll_puzzle.sha256tree(env.allocator);
+        let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
         let create_conditions = vec![Node(
             (
                 CREATE_COIN,
@@ -184,7 +185,7 @@ impl ChannelHandler {
         )];
         let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
         let create_conditions_with_rem =
-            self.unroll.prepend_rem_conditions(env, state_number, create_conditions_obj)?;
+            prepend_rem_conditions(env, state_number, create_conditions_obj)?;
 
         let (_solution, signature) =
             unroll_coin_parent.get_solution_and_signature_from_conditions(
@@ -442,30 +443,12 @@ impl ChannelHandler {
         signature: &Aggsig,
         state_number_for_spend: usize,
     ) -> Result<bool, Error> {
-        // Check the signature of the unroll coin spend.
-        let (_curried_unroll_puzzle, unroll_puzzle_solution) =
-            self.unroll.make_unroll_puzzle_solution(
-                env,
-                &self.get_aggregate_unroll_public_key(),
-                state_number_for_spend,
-            )?;
-
-        let quoted_unroll_puzzle_solution =
-            unroll_puzzle_solution.to_quoted_program(env.allocator)?;
-        let quoted_unroll_puzzle_solution_hash =
-            quoted_unroll_puzzle_solution.sha256tree(env.allocator);
-
-        let unroll_public_key =
-            private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
-        let aggregate_unroll_public_key =
-            unroll_public_key.clone() + self.their_unroll_coin_public_key.clone();
-        let aggregate_unroll_signature = signature.clone()
-            + self.unroll.get_unroll_coin_signature()?;
-
-        Ok(aggregate_unroll_signature.verify(
-            &aggregate_unroll_public_key,
-            &quoted_unroll_puzzle_solution_hash.bytes(),
-        ))
+        self.unroll.verify(
+            env,
+            &self.get_aggregate_unroll_public_key(),
+            signature,
+            state_number_for_spend
+        )
     }
 
     pub fn received_potato_verify_signatures<R: Rng>(
@@ -923,7 +906,13 @@ impl ChannelHandler {
             // Should have a cached signature for unrolling
 
             // Full unroll puzzle reveal includes the curried info,
-            let (curried_unroll_puzzle, unroll_puzzle_solution) =
+            let curried_unroll_puzzle =
+                self.unroll.make_curried_unroll_puzzle(
+                    env,
+                    &self.get_aggregate_unroll_public_key(),
+                    state_number,
+                )?;
+            let unroll_puzzle_solution =
                 self.unroll.make_unroll_puzzle_solution(
                     env,
                     &self.get_aggregate_unroll_public_key(),
@@ -940,7 +929,13 @@ impl ChannelHandler {
             ))
         } else if state_number == self.unroll.unroll_state_number {
             // Timeout
-            let (curried_unroll_puzzle, unroll_puzzle_solution) =
+            let curried_unroll_puzzle =
+                self.unroll.make_curried_unroll_puzzle(
+                    env,
+                    &self.get_aggregate_unroll_public_key(),
+                    state_number,
+                )?;
+            let unroll_puzzle_solution =
                 self.unroll.make_unroll_puzzle_solution(
                     env,
                     &self.get_aggregate_unroll_public_key(),
@@ -959,7 +954,13 @@ impl ChannelHandler {
             // Different timeout, construct the conditions based on the current
             // state.  (different because we're not using the conditions we
             // have cached).
-            let (curried_unroll_puzzle, unroll_puzzle_solution) =
+            let curried_unroll_puzzle =
+                self.unroll.make_curried_unroll_puzzle(
+                    env,
+                    &self.get_aggregate_unroll_public_key(),
+                    state_number,
+                )?;
+            let unroll_puzzle_solution =
                 self.unroll.make_unroll_puzzle_solution(
                     env,
                     &self.get_aggregate_unroll_public_key(),
