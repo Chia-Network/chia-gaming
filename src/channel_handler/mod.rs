@@ -524,7 +524,7 @@ impl ChannelHandler {
             env,
             &self.get_aggregate_unroll_public_key(),
             state_number_for_spend,
-            self.unroll.default_conditions_for_unroll_coin_spend.to_nodeptr(),
+            self.unroll.get_default_conditions_for_unroll_coin_spend()?,
         )?;
         let quoted_unroll_puzzle_solution =
             unroll_puzzle_solution.to_quoted_program(env.allocator)?;
@@ -970,7 +970,7 @@ impl ChannelHandler {
                     env,
                     &self.get_aggregate_unroll_public_key(),
                     state_number,
-                    self.unroll.default_conditions_for_unroll_coin_spend.to_nodeptr(),
+                    self.unroll.get_default_conditions_for_unroll_coin_spend()?,
                 )?;
 
             Ok((
@@ -988,7 +988,7 @@ impl ChannelHandler {
                     env,
                     &self.get_aggregate_unroll_public_key(),
                     state_number,
-                    self.unroll.default_conditions_for_unroll_coin_spend.to_nodeptr(),
+                    self.unroll.get_default_conditions_for_unroll_coin_spend()?,
                 )?;
 
             Ok((
