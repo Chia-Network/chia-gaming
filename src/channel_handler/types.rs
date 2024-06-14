@@ -592,6 +592,15 @@ impl UnrollCoin {
             signature: unroll_signature.clone()
         });
 
+        eprintln!(
+            "UNROLL UPDATE {}",
+            disassemble(
+                env.allocator.allocator(),
+                unroll_conditions,
+                None
+            )
+        );
+
         Ok(unroll_signature)
     }
 
@@ -600,7 +609,6 @@ impl UnrollCoin {
         env: &mut ChannelHandlerEnv<R>,
         aggregate_unroll_public_key: &PublicKey,
         signature: &Aggsig,
-        state_number_for_spend: usize,
     ) -> Result<bool, Error> {
         // Check the signature of the unroll coin spend.
         let unroll_puzzle_solution = self.get_internal_conditions_for_unroll_coin_spend()?;
