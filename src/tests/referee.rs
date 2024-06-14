@@ -191,9 +191,6 @@ fn test_referee_smoke() {
         initial_mover_share: Amount::default(),
     };
 
-    let their_validation_program_hash =
-        Node(debug_game.their_validation_program).sha256tree(&mut allocator);
-
     let mut reftest = RefereeTest::new(
         &mut allocator,
         my_identity,
@@ -239,8 +236,6 @@ fn test_referee_smoke() {
 
     eprintln!("their_move_wire_data {their_move_local_update:?}");
 
-    let mover_puzzle = reftest.my_identity.puzzle.clone();
-
     let validator_move_args = ValidatorMoveArgs {
         game_move: my_move_wire_data.details.clone(),
         mover_puzzle: reftest.my_identity.puzzle.to_program(),
@@ -250,7 +245,7 @@ fn test_referee_smoke() {
         ).expect("should create")
     };
 
-    let validator_result = reftest.their_referee.run_validator_for_their_move(
+    let _validator_result = reftest.their_referee.run_validator_for_their_move(
         &mut allocator,
         &validator_move_args
     ).expect("should run");

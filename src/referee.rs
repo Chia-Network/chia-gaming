@@ -518,8 +518,15 @@ impl RefereeMaker {
 
     pub fn get_logically_previous_game_move(&self) -> Result<GameMoveStateInfo, Error> {
         match &self.state {
-            RefereeMakerGameState::Initial { .. } => {
-                Err(Error::StrErr("There is no move to recall from the initial state".to_string()))
+            RefereeMakerGameState::Initial { initial_move, .. } => {
+                if self.is_my_turn() {
+                    Ok(initial_move.clone())
+                } else {
+                    Ok(GameMoveStateInfo {
+                        mover_share: self.amount.clone() - initial_move.mover_share.clone(),
+                        .. initial_move.clone()
+                    })
+                }
             }
             RefereeMakerGameState::AfterOurTurn { most_recent_their_move, .. } => {
                 Ok(most_recent_their_move.clone())
@@ -607,15 +614,41 @@ impl RefereeMaker {
         self.amount.clone() - self.get_our_current_share()
     }
 
-    #[deprecated]
-    /// XXX implement properly according to how it's used in channel_handler.
-    pub fn get_current_puzzle_hash(&self) -> PuzzleHash {
-        self.my_identity.puzzle_hash.clone()
+    pub fn get_current_puzzle_hash(&self, allocator: &mut AllocEncoder) -> Result<PuzzleHash, Error> {
+        let applied_game_move = self.get_logically_previous_game_move()?;
+        let their_puzzle_hash =
+            if self.is_my_turn() {
+                self.their_referee_puzzle_hash.clone()
+            } else {
+                self.my_identity.puzzle_hash.clone()
+            };
+        let my_puzzle_hash =
+            if self.is_my_turn() {
+                self.my_identity.puzzle_hash.clone()
+            } else {
+                self.their_referee_puzzle_hash.clone()
+            };
+        curry_referee_puzzle_hash(
+            allocator,
+            &self.referee_coin_puzzle_hash,
+            &RefereePuzzleArgs {
+                mover_puzzle_hash: their_puzzle_hash,
+                waiter_puzzle_hash: my_puzzle_hash,
+                timeout: self.timeout.clone(),
+                amount: self.amount.clone(),
+                nonce: self.nonce,
+                referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
+                game_move: GameMoveDetails {
+                    basic: applied_game_move,
+                    validation_info_hash: Hash::default()
+                },
+                previous_validation_info_hash: self.get_our_most_recent_validation_info_hash()
+            },
+        )
     }
 
     pub fn accept_this_move(
         &mut self,
-        allocator: &mut AllocEncoder,
         game_handler: &GameHandler,
         validation_program: &ValidationProgram,
         state: NodePtr,
@@ -762,7 +795,6 @@ impl RefereeMaker {
         eprintln!("my turn result {result:?}");
 
         self.accept_this_move(
-            allocator,
             &result.waiting_driver,
             &result.validation_program,
             result.state.clone(),

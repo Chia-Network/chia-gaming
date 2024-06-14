@@ -13,21 +13,24 @@ use rand_chacha::ChaCha8Rng;
 use indoc::indoc;
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message};
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, read_hex_puzzle};
 use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID, IntoErr};
 
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::game::Game;
+use crate::channel_handler::types::{ChannelHandlerEnv, GameStartInfo, ReadableMove, ValidationProgram};
+use crate::tests::channel_handler::ChannelHandlerGame;
+use crate::tests::game::new_channel_handler_game;
 use crate::tests::referee::{RefereeTest, make_debug_game_handler};
 
 #[derive(Debug, Clone)]
-struct IncludeTransactionResult {
+pub struct IncludeTransactionResult {
     pub code: u32,
     pub e: Option<u32>,
     pub diagnostic: String
 }
 
 // Allow simulator from rust.
-struct Simulator {
+pub struct Simulator {
     evloop: PyObject,
     sim: PyObject,
     client: PyObject,
@@ -105,7 +108,7 @@ impl Simulator {
         target_coins: &[(PuzzleHash, Amount)],
     ) -> Result<Vec<CoinString>, Error> {
         let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
-        let (first_coin_parent, first_coin_ph, first_coin_amt) = coin.to_parts().unwrap();
+        let (_first_coin_parent, first_coin_ph, _first_coin_amt) = coin.to_parts().unwrap();
         assert_eq!(puzzle.sha256tree(allocator), first_coin_ph);
 
         let conditions_vec = map_m(|(ph, amt): &(PuzzleHash, Amount)| -> Result<Node, Error> {
@@ -347,6 +350,87 @@ impl Simulator {
     }
 }
 
+pub enum GameAction {
+    // Do a timeout
+    Timeout(usize),
+    // Move (player, clvm readable move)
+    Move(usize, NodePtr),
+    // Go on chain
+    GoOnChain(usize)
+}
+
+pub struct SimulatorEnvironment<'a, R: Rng> {
+    pub env: ChannelHandlerEnv<'a, R>,
+    pub identities: [ChiaIdentity; 2],
+    pub parties: ChannelHandlerGame,
+    pub simulator: Simulator,
+}
+
+impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
+    pub fn new(
+        allocator: &'a mut AllocEncoder,
+        rng: &'a mut R,
+        game: &Game,
+        contributions: &[Amount; 2]
+    ) -> Result<Self, Error> {
+
+        // Generate keys and puzzle hashes.
+        let my_private_key: PrivateKey = rng.gen();
+        let their_private_key: PrivateKey = rng.gen();
+
+        let identities = [
+            ChiaIdentity::new(allocator, my_private_key).expect("should generate"),
+            ChiaIdentity::new(allocator, their_private_key).expect("should generate")
+        ];
+
+        let referee_coin_puzzle = read_hex_puzzle(
+            allocator,
+            "onchain/referee.hex"
+        ).expect("should be readable");
+        let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
+        let unroll_puzzle = read_hex_puzzle(
+            allocator,
+            "resources/unroll_puzzle_state_channel_unrolling.hex"
+        ).expect("should read");
+        let unroll_metapuzzle = read_hex_puzzle(
+            allocator,
+            "resources/unroll_meta_puzzle.hex"
+        ).expect("should read");
+        let mut env = ChannelHandlerEnv {
+            allocator: allocator,
+            rng: rng,
+            referee_coin_puzzle,
+            referee_coin_puzzle_hash,
+            unroll_metapuzzle,
+            unroll_puzzle,
+            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
+        };
+
+        let simulator = Simulator::new();
+        let parties = new_channel_handler_game(
+            &simulator,
+            &mut env,
+            &game,
+            &identities,
+            contributions.clone(),
+        )?;
+
+        Ok(SimulatorEnvironment {
+            env,
+            identities,
+            parties,
+            simulator
+        })
+    }
+
+    pub fn play_game(
+        &mut self,
+        _actions: &[GameAction],
+    ) -> Result<(), Error> {
+        todo!();
+    }
+}
+
 #[test]
 fn test_sim() {
     let seed: [u8; 32] = [0; 32];
@@ -377,10 +461,6 @@ fn test_referee_can_slash_on_chain() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
-
-    let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
-
-    let private_key: PrivateKey = rng.gen();
 
     // Generate keys and puzzle hashes.
     let my_private_key: PrivateKey = rng.gen();
@@ -441,7 +521,7 @@ fn test_referee_can_slash_on_chain() {
     assert!(coins.len() > 0);
 
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
-    let my_move_wire_data = reftest.my_referee
+    let _my_move_wire_data = reftest.my_referee
         .my_turn_make_move(
             &mut rng,
             &mut allocator,
@@ -514,8 +594,6 @@ fn test_referee_can_move_on_chain() {
 
     let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
 
-    let private_key: PrivateKey = rng.gen();
-
     // Generate keys and puzzle hashes.
     let my_private_key: PrivateKey = rng.gen();
     let my_identity = ChiaIdentity::new(&mut allocator, my_private_key).expect("should generate");
@@ -556,7 +634,7 @@ fn test_referee_can_move_on_chain() {
         initial_mover_share: Amount::default(),
     };
 
-    let their_validation_program_hash =
+    let _their_validation_program_hash =
         Node(debug_game.their_validation_program).sha256tree(&mut allocator);
 
     let mut reftest = RefereeTest::new(
@@ -571,7 +649,7 @@ fn test_referee_can_move_on_chain() {
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
     // Make our first move.
-    let my_move_wire_data = reftest.my_referee
+    let _my_move_wire_data = reftest.my_referee
         .my_turn_make_move(
             &mut rng,
             &mut allocator,
@@ -615,10 +693,6 @@ fn test_referee_can_move_on_chain() {
         &mut allocator,
         &referee_coins[0],
         &agg_sig_me_additional_data
-    ).expect("should work");
-
-    let previous_spend_to_referee = reftest.my_referee.curried_referee_puzzle_for_validator(
-        &mut allocator,
     ).expect("should work");
 
     eprintln!("move_transaction {move_transaction:?}");

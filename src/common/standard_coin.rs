@@ -320,6 +320,7 @@ pub fn partial_signer(
 ) -> Aggsig {
     let mut message = final_public_key.bytes().to_vec();
     message.append(&mut value.to_vec());
+    eprintln!(">> message {message:?}");
     let mut sig = chia_bls::hash_to_g2(&message);
     sig.scalar_multiply(&private_key.bytes());
     Aggsig::from_bls(sig)

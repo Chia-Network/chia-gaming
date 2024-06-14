@@ -302,7 +302,7 @@ impl GameID {
 }
 
 /// Amount
-#[derive(Default, Clone, Debug, Eq, PartialEq)]
+#[derive(Default, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Amount(u64);
 
 impl Amount {
