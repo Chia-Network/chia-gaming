@@ -53,9 +53,17 @@ impl ChannelHandlerGame {
         contributions: [Amount; 2],
     ) -> ChannelHandlerGame {
         let player1 =
-            ChannelHandlerParty::new(&mut env.allocator, &mut env.rng, contributions[0].clone());
+            ChannelHandlerParty::new(
+                &mut env.allocator,
+                &mut env.rng,
+                contributions[0].clone()
+            );
         let player2 =
-            ChannelHandlerParty::new(&mut env.allocator, &mut env.rng, contributions[1].clone());
+            ChannelHandlerParty::new(
+                &mut env.allocator,
+                &mut env.rng,
+                contributions[1].clone()
+            );
 
         ChannelHandlerGame {
             players: [player1, player2],
@@ -332,6 +340,5 @@ fn test_unroll_can_verify_own_signature() {
         &mut env,
         &aggregate_unroll_public_key,
         &sig2,
-        0
     ).expect("should verify"));
 }
