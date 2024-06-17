@@ -47,7 +47,7 @@ pub struct ChannelHandlerInitiationResult {
     pub my_initial_channel_half_signature_peer: Aggsig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PotatoSignatures {
     // Half signed thing signing to the new state.
     pub my_channel_half_signature_peer: Aggsig,
@@ -204,6 +204,21 @@ pub enum CachedPotatoRegenerateLastHop {
     PotatoCreatedGame(Vec<GameID>, Amount, Amount),
     PotatoAccept(PotatoAcceptCachedData),
     PotatoMoveHappening(PotatoMoveCachedData),
+}
+
+pub struct ChannelCoinSpentResult {
+    pub transaction: TransactionBundle,
+    pub timeout: bool,
+    pub games_canceled: Vec<GameID>,
+}
+
+/// The channel handler can use these two items to produce a spend on chain.
+#[derive(Default)]
+pub struct ChannelHandlerUnrollSpendInfo {
+    /// Contains the half signature, puzzle and conditions needed to spend.
+    pub coin: UnrollCoin,
+    /// Contains the other half of the signature.
+    pub signatures: PotatoSignatures,
 }
 
 #[derive(Debug, Clone)]
@@ -400,11 +415,13 @@ pub struct UnrollCoin {
     // State number for unroll.
     // Always equal to or 1 less than the current state number.
     // Updated when potato arrives.
-    pub unroll_state_number: usize,
+    pub state_number: usize,
 
     pub outcome: Option<UnrollCoinOutcome>,
 }
 
+// XXX bram: this can be removed.
+#[deprecated]
 fn prepend_default_conditions_hash<R: Rng>(
     env: &mut ChannelHandlerEnv<R>,
     conditions: NodePtr,

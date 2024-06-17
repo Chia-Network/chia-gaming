@@ -17,6 +17,12 @@
 (import std.shatree)
 (import std.condition_codes)
 
+;; Entire list is one of two parameters.
+;; First one is the mod hash of the game handler.
+;; Should ensure that mod hash becomes a separate parameter.
+;;
+;; One is the mod hash of the referee.
+;; Other hash is the mod hash of the game handler.
 (defmac CURRIED ()
   (q . (@ CURRIED
           (MOD_HASH
