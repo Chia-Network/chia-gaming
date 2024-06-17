@@ -53,6 +53,7 @@ pub struct MyTurnInputs<'a> {
     pub last_state: NodePtr,
     pub last_move: &'a [u8],
     pub last_mover_share: Amount,
+    pub last_max_move_size: usize,
     pub entropy: Hash,
     #[cfg(test)]
     pub run_debug: bool,
@@ -204,7 +205,15 @@ impl GameHandler {
                 inputs.amount.clone(),
                 (
                     Node(inputs.last_state.clone()),
-                    (inputs.entropy.clone(), ()),
+                    (
+                        inputs.last_mover_share.clone(),
+                        (
+                            inputs.last_max_move_size.clone(),
+                            (
+                                inputs.entropy.clone(), ()
+                            ),
+                        ),
+                    ),
                 ),
             ),
         )

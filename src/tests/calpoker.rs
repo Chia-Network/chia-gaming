@@ -1,7 +1,7 @@
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::common::types::{Amount, AllocEncoder, Error, Sha256Input, GameID, Hash};
 use crate::channel_handler::game::Game;
@@ -30,7 +30,7 @@ fn test_load_calpoker() {
 }
 
 #[test]
-fn test_play_calpoker() {
+fn test_play_calpoker_happy_path() {
     let mut allocator = AllocEncoder::new();
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
@@ -48,8 +48,11 @@ fn test_play_calpoker() {
 
     let alice_word = b"0alice6789abcdef";
     let alice_word_hash = Sha256Input::Bytes(alice_word).hash();
+    let bob_word = b"0bob456789abcdef";
     let moves = [
         GameAction::Move(0, alice_word_hash.to_clvm(simenv.env.allocator).expect("should convert")),
+        GameAction::Move(1, simenv.env.allocator.encode_atom(bob_word).expect("should convert")),
     ];
-    let _play_result = simenv.play_game(&moves);
+    let play_result = simenv.play_game(&moves).expect("should succeed");
+    eprintln!("play_result {play_result:?}");
 }
