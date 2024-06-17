@@ -44,12 +44,14 @@ impl ChannelHandlerParty {
 }
 
 pub struct ChannelHandlerGame {
+    pub game_id: GameID,
     pub players: [ChannelHandlerParty; 2],
 }
 
 impl ChannelHandlerGame {
     pub fn new<R: Rng>(
         env: &mut ChannelHandlerEnv<R>,
+        game_id: GameID,
         contributions: [Amount; 2],
     ) -> ChannelHandlerGame {
         let player1 =
@@ -66,6 +68,7 @@ impl ChannelHandlerGame {
             );
 
         ChannelHandlerGame {
+            game_id,
             players: [player1, player2],
         }
     }
@@ -143,7 +146,13 @@ fn test_smoke_can_initiate_channel_handler<'a>() {
         unroll_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
     };
-    let mut game = ChannelHandlerGame::new(&mut env, [Amount::new(100), Amount::new(100)]);
+    let game_id_data: Hash = env.rng.gen();
+    let game_id = GameID::new(game_id_data.bytes().to_vec());
+    let mut game = ChannelHandlerGame::new(
+        &mut env,
+        game_id,
+        [Amount::new(100), Amount::new(100)]
+    );
 
     // This coin will be spent (virtually) into the channel coin which supports
     // half-signatures so that unroll can be initated by either party.
@@ -207,7 +216,13 @@ fn test_smoke_can_start_game() {
         unroll_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
     };
-    let mut game = ChannelHandlerGame::new(&mut env, [Amount::new(100), Amount::new(100)]);
+    let game_id_data: Hash = env.rng.gen();
+    let game_id = GameID::new(game_id_data.bytes().to_vec());
+    let mut game = ChannelHandlerGame::new(
+        &mut env,
+        game_id,
+        [Amount::new(100), Amount::new(100)]
+    );
 
     // This coin will be spent (virtually) into the channel coin which supports
     // half-signatures so that unroll can be initated by either party.
