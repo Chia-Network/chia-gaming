@@ -122,7 +122,7 @@ impl RefereeTest {
             .. game_start.clone()
         };
 
-        let mut their_referee = RefereeMaker::new(
+        let their_referee = RefereeMaker::new(
             referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash.clone(),
             &their_game_start_info,

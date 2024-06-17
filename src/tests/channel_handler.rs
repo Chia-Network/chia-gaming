@@ -232,12 +232,6 @@ fn test_smoke_can_start_game() {
         .expect("should finish handshake");
 
     // Set up for the spend.
-    let shutdown_spend_target = puzzle_hash_for_pk(
-        env.allocator,
-        &game.player(1).ch.clean_shutdown_public_key(),
-    )
-    .expect("should give");
-    let amount_to_take = game.player(1).ch.clean_shutdown_amount();
     let our_share = Amount::new(100);
     let their_share = Amount::new(100);
 
@@ -251,7 +245,7 @@ fn test_smoke_can_start_game() {
     );
 
     let timeout = Timeout::new(1337);
-    let game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
+    let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
         &mut env,
         our_share.clone(),
         their_share.clone(),
@@ -312,7 +306,7 @@ fn test_unroll_can_verify_own_signature() {
         puzzle_hashes_and_amounts: vec![]
     };
 
-    let sig1 = unroll_coin_1.update(
+    let _sig1 = unroll_coin_1.update(
         &mut env,
         &private_key_1,
         &public_key_2,
