@@ -350,6 +350,7 @@ impl Simulator {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum GameAction {
     // Do a timeout
     Timeout(usize),
@@ -423,11 +424,45 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         })
     }
 
+    pub fn perform_action(
+        &mut self,
+        action: &GameAction,
+    ) -> Result<(), Error> {
+        eprintln!("play move {action:?}");
+        match action {
+            GameAction::Move(player, readable) => {
+                let game_id = self.parties.game_id.clone();
+                let move_result =
+                    self.parties.player(*player).ch.send_potato_move(
+                        &mut self.env,
+                        &game_id,
+                        &ReadableMove::from_nodeptr(*readable)
+                    )?;
+                // XXX allow verification of ui result and message.
+                let (_ui_result, _message) =
+                    self.parties.player(player ^ 1).ch.received_potato_move(
+                        &mut self.env,
+                        &game_id,
+                        &move_result
+                    )?;
+            }
+            _ => {
+                todo!();
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn play_game(
         &mut self,
-        _actions: &[GameAction],
+        actions: &[GameAction],
     ) -> Result<(), Error> {
-        todo!();
+        for a in actions.iter() {
+            self.perform_action(a)?;
+        }
+
+        Ok(())
     }
 }
 

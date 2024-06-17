@@ -11,6 +11,7 @@ use crate::channel_handler::game_handler::{GameHandler, chia_dialect};
 use crate::channel_handler::types::ValidationProgram;
 
 pub struct Game {
+    pub id: GameID,
     pub initial_mover_handler: GameHandler,
     pub initial_waiter_handler: GameHandler,
     pub whether_paired: bool,
@@ -23,7 +24,7 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(allocator: &mut AllocEncoder, game_hex_file: &str) -> Result<Game, Error> {
+    pub fn new(allocator: &mut AllocEncoder, game_id: GameID, game_hex_file: &str) -> Result<Game, Error> {
         let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
         let nil = allocator.encode_atom(&[]).into_gen()?;
         let template_clvm =
@@ -63,6 +64,7 @@ impl Game {
         let initial_state = template_list[7];
         let initial_mover_share_proportion = atom_from_clvm(allocator, template_list[8]).and_then(|a| usize_from_atom(a)).expect("should be an atom");
         Ok(Game {
+            id: game_id,
             initial_mover_handler,
             initial_waiter_handler,
             whether_paired,

@@ -1,5 +1,5 @@
 use rand::prelude::*;
-use crate::common::types::{Amount, CoinString, Error, GameID, Hash, IntoErr, Timeout};
+use crate::common::types::{Amount, CoinString, Error, IntoErr, Timeout};
 use crate::common::standard_coin::ChiaIdentity;
 use crate::channel_handler::game::Game;
 use crate::channel_handler::types::ChannelHandlerEnv;
@@ -14,7 +14,11 @@ pub fn new_channel_handler_game<R: Rng>(
     identities: &[ChiaIdentity; 2],
     contributions: [Amount; 2],
 ) -> Result<ChannelHandlerGame, Error> {
-    let mut party = ChannelHandlerGame::new(env, contributions.clone());
+    let mut party = ChannelHandlerGame::new(
+        env,
+        game.id.clone(),
+        contributions.clone()
+    );
 
     // Get at least one coin for the first identity
     simulator.farm_block(&identities[0].puzzle_hash);
@@ -54,10 +58,8 @@ pub fn new_channel_handler_game<R: Rng>(
     let amount = contributions[0].clone() + contributions[1].clone();
     let timeout = Timeout::new(10);
 
-    let game_id_data: Hash = env.rng.gen();
-    let game_id = GameID::new(game_id_data.bytes().to_vec());
     let (our_game_start, their_game_start) = game.symmetric_game_starts(
-        &game_id,
+        &game.id,
         &amount,
         &timeout
     );
