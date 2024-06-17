@@ -92,7 +92,7 @@
    )
   )
 
-(defun do_my_turn ((CURRIED) readable_new_move amount state entropy)
+(defun do_my_turn ((CURRIED) readable_new_move amount state split max_move entropy)
   (assign
 
    ;; Readable move is a clvm structure that describes the move

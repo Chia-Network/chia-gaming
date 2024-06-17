@@ -117,6 +117,7 @@ fn test_game_handler_my_turn() {
                 last_state: nil,
                 last_move: &[],
                 last_mover_share: Amount::default(),
+                last_max_move_size: 100,
                 entropy: Hash::default(),
                 #[cfg(test)]
                 run_debug: true,
@@ -129,7 +130,7 @@ fn test_game_handler_my_turn() {
             result.waiting_driver.to_nodeptr(),
             None
         ),
-        "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000)"
+        "(1337 () () () () 100 0x0000000000000000000000000000000000000000000000000000000000000000)"
     );
     assert_eq!(result.game_move.basic.move_made, &[1]);
     assert_eq!(disassemble(allocator.allocator(), result.state, None), "4");

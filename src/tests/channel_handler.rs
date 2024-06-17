@@ -2,7 +2,6 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::ToClvm;
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::game_handler::GameHandler;

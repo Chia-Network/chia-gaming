@@ -754,6 +754,7 @@ impl RefereeMaker {
             state,
             move_data,
             mover_share,
+            max_move_size,
             previous_validation_info_hash
         ) =
             match &self.state {
@@ -762,6 +763,7 @@ impl RefereeMaker {
                         initial_state,
                         initial_move.move_made.clone(),
                         initial_move.mover_share.clone(),
+                        initial_move.max_move_size.clone(),
                         None
                     )
                 },
@@ -773,6 +775,7 @@ impl RefereeMaker {
                         most_recent_our_state_result,
                         most_recent_their_move.basic.move_made.clone(),
                         self.amount.clone() - most_recent_their_move.basic.mover_share.clone(),
+                        most_recent_their_move.basic.max_move_size,
                         our_previous_validation_info_hash.clone()
                     )
                 }
@@ -786,6 +789,7 @@ impl RefereeMaker {
                 last_state: *state,
                 last_move: &move_data,
                 last_mover_share: mover_share,
+                last_max_move_size: max_move_size,
                 entropy: new_entropy,
                 #[cfg(test)]
                 run_debug: self.run_debug,
