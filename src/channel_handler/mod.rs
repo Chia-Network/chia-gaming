@@ -8,14 +8,13 @@ use rand::prelude::*;
 
 use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo, CoinSpentAccept,
     CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
     LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData, PotatoMoveCachedData,
-    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoin, UnrollCoinConditionInputs, prepend_rem_conditions,
+    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, prepend_rem_conditions,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -353,13 +352,6 @@ impl ChannelHandler {
         their_initial_channel_hash_signature: &Aggsig,
     ) -> Result<(), Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
-        // let state_channel_coin =
-        //     if let Some(ssc) = self.state_channel_coin_string.as_ref() {
-        //         ssc.to_coin_id()
-        //     } else {
-        //         return Err(Error::StrErr("send_potato_clean_shutdown without state_channel_coin".to_string()));
-        //     };
-
         let hash_of_initial_channel_coin_solution =
             Node(self.state_channel.spend.solution).sha256tree(env.allocator);
 
@@ -1064,7 +1056,6 @@ impl ChannelHandler {
             let unroll_puzzle_solution =
                 self.unroll.coin.make_unroll_puzzle_solution(
                     env,
-                    &self.get_aggregate_unroll_public_key(),
                     state_number,
                 )?;
 
@@ -1089,7 +1080,6 @@ impl ChannelHandler {
             let unroll_puzzle_solution =
                 self.unroll.coin.make_unroll_puzzle_solution(
                     env,
-                    &self.get_aggregate_unroll_public_key(),
                     state_number,
                 )?;
 
@@ -1115,7 +1105,6 @@ impl ChannelHandler {
             let unroll_puzzle_solution =
                 self.unroll.coin.make_unroll_puzzle_solution(
                     env,
-                    &self.get_aggregate_unroll_public_key(),
                     state_number,
                 )?;
 

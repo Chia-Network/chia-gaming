@@ -8,10 +8,10 @@ use rand::prelude::*;
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::common::constants::{CREATE_COIN, REM};
-use crate::common::standard_coin::{read_hex_puzzle, private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, standard_solution_partial, unsafe_sign_partial};
+use crate::common::standard_coin::{read_hex_puzzle, private_to_public_key, puzzle_hash_for_pk, standard_solution_partial, unsafe_sign_partial};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
-    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle, ToQuotedProgram
+    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -510,7 +510,6 @@ impl UnrollCoin {
     pub fn make_unroll_puzzle_solution<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
-        public_key: &PublicKey,
         current_state_number: usize,
     ) -> Result<NodePtr, Error> {
         let unroll_inner_puzzle = env.unroll_metapuzzle.clone();

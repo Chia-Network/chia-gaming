@@ -19,7 +19,7 @@ fn test_load_calpoker() {
     let calpoker = load_calpoker(&mut allocator).expect("should load");
     let contributions = [Amount::new(100), Amount::new(100)];
 
-    let mut simenv = SimulatorEnvironment::new(
+    let _simenv = SimulatorEnvironment::new(
         &mut allocator,
         &mut rng,
         &calpoker,
