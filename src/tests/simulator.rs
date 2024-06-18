@@ -1,5 +1,5 @@
 use clvmr::allocator::NodePtr;
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 use clvm_tools_rs::compiler::comptypes::map_m;
@@ -355,7 +355,7 @@ pub enum GameAction {
     // Do a timeout
     Timeout(usize),
     // Move (player, clvm readable move)
-    Move(usize, NodePtr),
+    Move(usize, Vec<u8>),
     // Go on chain
     GoOnChain(usize)
 }
@@ -436,12 +436,13 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         eprintln!("play move {action:?}");
         match action {
             GameAction::Move(player, readable) => {
+                let readable_node = self.env.allocator.encode_atom(readable).into_gen()?;
                 let game_id = self.parties.game_id.clone();
                 let move_result =
                     self.parties.player(*player).ch.send_potato_move(
                         &mut self.env,
                         &game_id,
-                        &ReadableMove::from_nodeptr(*readable)
+                        &ReadableMove::from_nodeptr(readable_node)
                     )?;
                 // XXX allow verification of ui result and message.
                 let (ui_result, message) =
