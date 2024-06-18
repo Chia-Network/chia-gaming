@@ -2,7 +2,7 @@ pub mod game;
 pub mod game_handler;
 pub mod types;
 
-use std::borrow::{Borrow, BorrowMut};
+use std::borrow::BorrowMut;
 
 use rand::prelude::*;
 
@@ -376,9 +376,8 @@ impl ChannelHandler {
         Ok(())
     }
 
-    pub fn compute_game_coin_unroll_data<'a, R: Rng>(
+    pub fn compute_game_coin_unroll_data<'a>(
         &'a self,
-        env: &mut ChannelHandlerEnv<R>,
         unroll_coin: Option<&CoinID>,
         skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
@@ -398,7 +397,7 @@ impl ChannelHandler {
             } else {
                 Some(CoinString::from_parts(
                     &parent_coin_id,
-                    &game.referee_maker.get_current_puzzle_hash(env.allocator)?,
+                    &game.last_referee_puzzle_hash,
                     &game.referee_maker.get_amount(),
                 ))
             };
@@ -406,22 +405,19 @@ impl ChannelHandler {
             result.push(OnChainGameCoin {
                 game_id_up: game.game_id.clone(),
                 coin_string_up: coin,
-                referee_up: game.referee_maker.borrow(),
             });
         }
 
         Ok(result)
     }
 
-    pub fn compute_unroll_data_for_games<R: Rng>(
+    pub fn compute_unroll_data_for_games(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
         skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
         games: &[LiveGame]
     ) -> Result<Vec<(PuzzleHash, Amount)>, Error> {
         Ok(self.compute_game_coin_unroll_data(
-            env,
             None,
             skip_game,
             skip_coin_id,
@@ -442,7 +438,9 @@ impl ChannelHandler {
             self.create_conditions_and_signature_of_channel_coin(env, state_number_for_spend)?;
 
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> = self.
-            compute_unroll_data_for_games(env, &[], None, &self.live_games)?;
+            compute_unroll_data_for_games(&[], None, &self.live_games)?;
+
+        eprintln!("new_game_coins_on_chain {new_game_coins_on_chain:?}");
 
         // Timeout for unroll if we never get an update.
         self.timeout = Some(ChannelHandlerUnrollSpendInfo {
@@ -568,7 +566,6 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
     ) -> Result<(), Error> {
         let unroll_data = self.compute_unroll_data_for_games(
-            env,
             &[],
             None,
             &self.live_games
@@ -607,16 +604,19 @@ impl ChannelHandler {
                 self.private_keys.my_referee_private_key.clone()
             )?;
 
+            let (referee_maker, puzzle_hash) = RefereeMaker::new(
+                &mut env.allocator,
+                env.referee_coin_puzzle.clone(),
+                env.referee_coin_puzzle_hash.clone(),
+                g,
+                referee_identity,
+                &self.their_referee_puzzle_hash,
+                new_game_nonce,
+            )?;
             res.push(LiveGame {
                 game_id: g.game_id.clone(),
-                referee_maker: Box::new(RefereeMaker::new(
-                    env.referee_coin_puzzle.clone(),
-                    env.referee_coin_puzzle_hash.clone(),
-                    g,
-                    referee_identity,
-                    &self.their_referee_puzzle_hash,
-                    new_game_nonce,
-                )?),
+                last_referee_puzzle_hash: puzzle_hash,
+                referee_maker: Box::new(referee_maker),
             });
         }
 
@@ -657,17 +657,16 @@ impl ChannelHandler {
     ) -> Result<(), Error> {
         eprintln!("received_potato_start_game: our state is {}, unroll state is {}", self.current_state_number, self.unroll.coin.state_number);
         let mut new_games = self.add_games(env, start_info_list)?;
-        let try_unroll = self.unroll.coin.clone();
 
         // Make a list of all game outputs in order.
         let mut unroll_data_for_all_games =
             self.compute_unroll_data_for_games(
-                env, &[], None, &self.live_games
+                &[], None, &self.live_games
             )?;
         eprintln!("start with {} games", unroll_data_for_all_games.len());
         unroll_data_for_all_games.append(
             &mut self.compute_unroll_data_for_games(
-                env, &[], None, &new_games
+                &[], None, &new_games
             )?
         );
 
@@ -723,8 +722,10 @@ impl ChannelHandler {
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
         let referee_result =
             referee_maker.my_turn_make_move(env.rng, env.allocator, readable_move)?;
+        eprintln!("move_result {referee_result:?}");
+        self.live_games[game_idx].last_referee_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
 
-        let puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
+        let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
 
         self.have_potato = false;
@@ -760,12 +761,14 @@ impl ChannelHandler {
             &move_result.game_move
         )?;
 
+        eprintln!("their_move_result {their_move_result:?}");
+
         let unroll_data = self.compute_unroll_data_for_games(
-            env,
             &[],
             None,
             &self.live_games,
         )?;
+
         self.received_potato_verify_signatures(
             env,
             &move_result.signatures,
@@ -815,9 +818,6 @@ impl ChannelHandler {
         // function.
         let live_game = self.live_games.remove(game_idx);
 
-        let puzzle_hash =
-            live_game.referee_maker.get_current_puzzle_hash(env.allocator)?;
-
         self.current_state_number += 1;
         let amount = live_game.referee_maker.get_our_current_share();
         let at_stake = live_game.referee_maker.get_amount();
@@ -829,7 +829,7 @@ impl ChannelHandler {
             Some(CachedPotatoRegenerateLastHop::PotatoAccept(
                 PotatoAcceptCachedData {
                     game_id: game_id.clone(),
-                    puzzle_hash,
+                    puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
                     live_game,
                     at_stake_amount: at_stake,
                     our_share_amount: amount.clone(),
@@ -851,7 +851,6 @@ impl ChannelHandler {
         let game_idx = self.get_game_by_id(game_id)?;
 
         let unroll_data = self.compute_unroll_data_for_games(
-            env,
             // Skip the removed game.
             &[game_id.clone()],
             None,
@@ -1056,7 +1055,6 @@ impl ChannelHandler {
             let unroll_puzzle_solution =
                 self.unroll.coin.make_unroll_puzzle_solution(
                     env,
-                    state_number,
                 )?;
 
             Ok(ChannelCoinSpentResult {
@@ -1080,7 +1078,6 @@ impl ChannelHandler {
             let unroll_puzzle_solution =
                 self.unroll.coin.make_unroll_puzzle_solution(
                     env,
-                    state_number,
                 )?;
 
             Ok(ChannelCoinSpentResult {
@@ -1105,7 +1102,6 @@ impl ChannelHandler {
             let unroll_puzzle_solution =
                 self.unroll.coin.make_unroll_puzzle_solution(
                     env,
-                    state_number,
                 )?;
 
             Ok(ChannelCoinSpentResult {
@@ -1244,15 +1240,13 @@ impl ChannelHandler {
         }
     }
 
-    pub fn get_new_game_coins_on_chain<R: Rng>(
+    pub fn get_new_game_coins_on_chain(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
         unroll_coin: Option<&CoinID>,
         skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
     ) -> Result<Vec<OnChainGameCoin>, Error> {
         self.compute_game_coin_unroll_data(
-            env,
             unroll_coin,
             skip_game,
             skip_coin_id,
@@ -1297,7 +1291,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
         conditions: NodePtr,
-    ) -> Result<CoinSpentResult<'a>, Error> {
+    ) -> Result<CoinSpentResult, Error> {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
 
         let state_number = if let Some(state_number) = usize_from_atom(&rem_conditions[0]) {
@@ -1315,7 +1309,6 @@ impl ChannelHandler {
 
         // return list of triples of game_id, coin_id, referee maker pulling from a list of pairs of (id, ref maker)
         let new_game_coins_on_chain = self.get_new_game_coins_on_chain(
-            env,
             Some(&unroll_coin.to_coin_id()),
             &disposition.as_ref().map(|d| d.skip_game.clone()).unwrap_or_default(),
             disposition.as_ref().and_then(|d| d.skip_coin_id.as_ref()),

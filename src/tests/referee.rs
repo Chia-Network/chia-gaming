@@ -106,7 +106,8 @@ impl RefereeTest {
         // Load up the real referee coin.
         let referee_coin_puzzle = read_hex_puzzle(allocator, "onchain/referee.hex").expect("should be readable");
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
-        let my_referee = RefereeMaker::new(
+        let (my_referee, _) = RefereeMaker::new(
+            allocator,
             referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash.clone(),
             &game_start,
@@ -122,7 +123,8 @@ impl RefereeTest {
             .. game_start.clone()
         };
 
-        let their_referee = RefereeMaker::new(
+        let (their_referee, _) = RefereeMaker::new(
+            allocator,
             referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash.clone(),
             &their_game_start_info,
