@@ -320,7 +320,6 @@ pub fn partial_signer(
 ) -> Aggsig {
     let mut message = final_public_key.bytes().to_vec();
     message.append(&mut value.to_vec());
-    eprintln!(">> message {message:?}");
     let mut sig = chia_bls::hash_to_g2(&message);
     sig.scalar_multiply(&private_key.bytes());
     Aggsig::from_bls(sig)
@@ -380,7 +379,6 @@ pub fn sign_agg_sig_me(
     agg_sig_me_extra_data: &Hash,
 ) -> Aggsig {
     let message = agg_sig_me_message(raw_message, coin_id, agg_sig_me_extra_data);
-    eprintln!("sign message {message:?}");
     let public_key = private_to_public_key(secret_key);
     let signed = secret_key.sign(&message);
     assert!(signed.verify(&public_key, &message));
@@ -445,7 +443,6 @@ pub fn standard_solution_partial(
                     parent_coin,
                     agg_sig_me_additional_data,
                 );
-                eprintln!("public_key {aggregate_public_key:?} {agg_sig_me_message:?}");
                 add_signature(
                     &mut aggregated_signature,
                     if partial {

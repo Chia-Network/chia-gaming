@@ -58,9 +58,6 @@ impl CoinString {
         let mut allocator = AllocEncoder::new();
         let amount_clvm = amount.to_clvm(&mut allocator).unwrap();
         let mut res = Vec::new();
-        eprintln!("parent {parent:?}");
-        eprintln!("puzzle_hash {puzzle_hash:?}");
-        eprintln!("amount {amount:?}");
         res.append(&mut parent.bytes().to_vec());
         res.append(&mut puzzle_hash.bytes().to_vec());
         res.append(&mut allocator.allocator().atom(amount_clvm).to_vec());
