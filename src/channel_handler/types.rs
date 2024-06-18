@@ -94,10 +94,9 @@ pub struct MoveResult {
     pub game_move: GameMoveDetails,
 }
 
-pub struct OnChainGameCoin<'a> {
+pub struct OnChainGameCoin {
     pub game_id_up: GameID,
     pub coin_string_up: Option<CoinString>,
-    pub referee_up: &'a RefereeMaker,
 }
 
 #[derive(Clone)]
@@ -129,10 +128,10 @@ pub struct DispositionResult {
     pub disposition: CoinSpentDisposition,
 }
 
-pub struct CoinSpentResult<'a> {
+pub struct CoinSpentResult {
     pub my_clean_reward_coin_string_up: CoinString,
     // New coins that now exist.
-    pub new_game_coins_on_chain: Vec<OnChainGameCoin<'a>>,
+    pub new_game_coins_on_chain: Vec<OnChainGameCoin>,
     pub disposition: Option<CoinSpentDisposition>,
 }
 
@@ -183,6 +182,7 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
 
 pub struct LiveGame {
     pub game_id: GameID,
+    pub last_referee_puzzle_hash: PuzzleHash,
     pub referee_maker: Box<RefereeMaker>,
 }
 
@@ -510,7 +510,6 @@ impl UnrollCoin {
     pub fn make_unroll_puzzle_solution<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
-        current_state_number: usize,
     ) -> Result<NodePtr, Error> {
         let unroll_inner_puzzle = env.unroll_metapuzzle.clone();
         let unroll_puzzle_solution = (
@@ -587,11 +586,6 @@ impl UnrollCoin {
             inputs,
         )?;
         let external_conditions = prepend_default_conditions_hash(env, unroll_conditions)?;
-        let d = disassemble(
-            env.allocator.allocator(),
-            unroll_conditions,
-            None
-        );
         let conditions_hash = Node(unroll_conditions).sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(&unroll_private_key);
         let unroll_aggregate_key =
@@ -634,7 +628,7 @@ impl UnrollCoin {
         let aggregate_unroll_signature = signature.clone()
             + self.get_unroll_coin_signature()?;
 
-        let mut message = unroll_puzzle_solution_hash.bytes().to_vec();
+        let message = unroll_puzzle_solution_hash.bytes().to_vec();
 
         Ok(aggregate_unroll_signature.verify(
             &aggregate_unroll_public_key,
