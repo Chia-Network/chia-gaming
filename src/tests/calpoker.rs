@@ -56,3 +56,17 @@ fn test_play_calpoker_happy_path() {
     let play_result = simenv.play_game(&moves).expect("should succeed");
     eprintln!("play_result {play_result:?}");
 }
+
+// Bram: slashing tests
+//
+// I think this is a decent list of slashing tests: Alice attempts to give
+// herself too much with honest cards and Bob successfully slashes with honest
+// cards. Alice attempts to give herself too much with bad cards and Bob
+// successfully slashes with honest cards. Alice gives herself an honest amount
+// and Bob fails to slash with honest cards. Alice gives herself an honest
+// amount and Bob fails to slash with bad cards. That's four tests which should
+// be run each with the Alice wins, Bob wins, and tie scenarios with the caveat
+// that Alice can't 'cheat' when she's already supposed to win everything and
+// Bob can't cheat when he's supposed to win everything. We can fuzz to find the
+// three hands then inspect manually to sanity check the hand evals and find bad
+// cards
