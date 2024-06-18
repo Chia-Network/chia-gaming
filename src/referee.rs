@@ -1291,8 +1291,8 @@ impl RefereeMaker {
             allocator,
             &self.referee_coin_puzzle_hash,
             &RefereePuzzleArgs {
-                mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-                waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
+                mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
+                waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
                 timeout: self.timeout.clone(),
                 amount: self.amount.clone(),
                 referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),

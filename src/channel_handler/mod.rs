@@ -760,6 +760,7 @@ impl ChannelHandler {
             env.allocator,
             &move_result.game_move
         )?;
+        self.live_games[game_idx].last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
 
         eprintln!("their_move_result {their_move_result:?}");
 
