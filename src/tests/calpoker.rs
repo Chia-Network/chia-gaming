@@ -50,8 +50,8 @@ fn test_play_calpoker_happy_path() {
     let alice_word_hash = Sha256Input::Bytes(alice_word).hash();
     let bob_word = b"0bob456789abcdef";
     let moves = [
-        GameAction::Move(0, alice_word_hash.to_clvm(simenv.env.allocator).expect("should convert")),
-        GameAction::Move(1, simenv.env.allocator.encode_atom(bob_word).expect("should convert")),
+        GameAction::Move(0, alice_word_hash.bytes().to_vec()),
+        GameAction::Move(1, bob_word.to_vec()),
     ];
     let play_result = simenv.play_game(&moves).expect("should succeed");
     eprintln!("play_result {play_result:?}");
