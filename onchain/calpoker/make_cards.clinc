@@ -4,7 +4,7 @@
     (assign
         (handa newrandomness) (choose 52 8 randomness)
         (handb newrandomness2) (choose (- 52 8) 8 newrandomness)
-        (list handa (mergeover handa handb))
+        (list handa (mergeover handa handb 0))
     )
 )
 
@@ -12,7 +12,7 @@
 ; returns (cards newvals) cards are always in sorted order
 (defun choose (numcards numchoose randomness)
     (if (= numchoose 1)
-        (assign (newrandomness card) (divmod randomness numcards)
+        (assign (newrandomness . card) (divmod randomness numcards)
             (list (list card) newrandomness)
         )
         (assign 
