@@ -1,5 +1,5 @@
 use clvmr::allocator::NodePtr;
-use clvm_traits::{ClvmEncoder, ToClvm};
+use clvm_traits::ToClvm;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 use clvm_tools_rs::compiler::comptypes::map_m;
