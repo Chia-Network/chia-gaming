@@ -508,7 +508,7 @@ impl RefereeMaker {
                 state,
                 message_handler: None,
                 #[cfg(test)]
-                run_debug: false,
+                run_debug: true,
             },
             puzzle_hash
         ))
@@ -741,16 +741,14 @@ impl RefereeMaker {
         let new_entropy: Hash = rng.gen();
         let game_handler = self.get_game_handler();
         let (
-            state,
             move_data,
             mover_share,
             max_move_size,
             previous_validation_info_hash
         ) =
             match &self.state {
-                RefereeMakerGameState::Initial { initial_state, initial_move, .. } => {
+                RefereeMakerGameState::Initial { initial_move, .. } => {
                     (
-                        initial_state,
                         initial_move.move_made.clone(),
                         initial_move.mover_share.clone(),
                         initial_move.max_move_size.clone(),
@@ -760,9 +758,8 @@ impl RefereeMaker {
                 RefereeMakerGameState::AfterOurTurn { .. } => {
                     return Err(Error::StrErr("trying to make our turn after our turn".to_string()));
                 }
-                RefereeMakerGameState::AfterTheirTurn { most_recent_our_state_result, most_recent_their_move, our_previous_validation_info_hash, .. } => {
+                RefereeMakerGameState::AfterTheirTurn { most_recent_their_move, .. } => {
                     (
-                        most_recent_our_state_result,
                         most_recent_their_move.basic.move_made.clone(),
                         self.amount.clone() - most_recent_their_move.basic.mover_share.clone(),
                         most_recent_their_move.basic.max_move_size,
@@ -778,7 +775,6 @@ impl RefereeMaker {
             &MyTurnInputs {
                 readable_new_move: readable_move.clone(),
                 amount: self.amount.clone(),
-                last_state: *state,
                 last_move: &move_data,
                 last_mover_share: mover_share,
                 last_max_move_size: max_move_size,

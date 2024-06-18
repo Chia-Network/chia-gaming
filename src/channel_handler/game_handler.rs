@@ -50,7 +50,6 @@ pub enum GameHandler {
 pub struct MyTurnInputs<'a> {
     pub readable_new_move: ReadableMove,
     pub amount: Amount,
-    pub last_state: NodePtr,
     pub last_move: &'a [u8],
     pub last_mover_share: Amount,
     pub last_max_move_size: usize,
@@ -204,14 +203,11 @@ impl GameHandler {
             (
                 inputs.amount.clone(),
                 (
-                    Node(inputs.last_state.clone()),
+                    inputs.last_mover_share.clone(),
                     (
-                        inputs.last_mover_share.clone(),
+                        inputs.last_max_move_size.clone(),
                         (
-                            inputs.last_max_move_size.clone(),
-                            (
-                                inputs.entropy.clone(), ()
-                            ),
+                            inputs.entropy.clone(), ()
                         ),
                     ),
                 ),
