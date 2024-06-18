@@ -508,7 +508,7 @@ impl RefereeMaker {
                 state,
                 message_handler: None,
                 #[cfg(test)]
-                run_debug: true,
+                run_debug: false,
             },
             puzzle_hash
         ))
@@ -556,27 +556,6 @@ impl RefereeMaker {
         match &self.state {
             RefereeMakerGameState::AfterOurTurn { most_recent_our_move, .. } => Some(most_recent_our_move.validation_info_hash.clone()),
             _ => None
-        }
-    }
-
-    pub fn get_logically_previous_game_move(&self) -> Result<GameMoveStateInfo, Error> {
-        match &self.state {
-            RefereeMakerGameState::Initial { initial_move, .. } => {
-                if self.is_my_turn() {
-                    Ok(initial_move.clone())
-                } else {
-                    Ok(GameMoveStateInfo {
-                        mover_share: self.amount.clone() - initial_move.mover_share.clone(),
-                        .. initial_move.clone()
-                    })
-                }
-            }
-            RefereeMakerGameState::AfterOurTurn { most_recent_their_move, .. } => {
-                Ok(most_recent_their_move.clone())
-            }
-            RefereeMakerGameState::AfterTheirTurn { most_recent_our_move, .. } => {
-                Ok(most_recent_our_move.clone())
-            }
         }
     }
 
@@ -787,10 +766,12 @@ impl RefereeMaker {
                         most_recent_their_move.basic.move_made.clone(),
                         self.amount.clone() - most_recent_their_move.basic.mover_share.clone(),
                         most_recent_their_move.basic.max_move_size,
-                        our_previous_validation_info_hash.clone()
+                        Some(most_recent_their_move.validation_info_hash.clone())
                     )
                 }
             };
+
+        eprintln!("my turn: previous_validation_info_hash {previous_validation_info_hash:?}");
 
         let result = game_handler.call_my_turn_driver(
             allocator,
@@ -1228,9 +1209,7 @@ impl RefereeMaker {
             }
         };
 
-        assert_ne!(previous_validation_info_hash, Some(Hash::default()));
-
-        eprintln!("previous_validation_info_hash for their turn move off chain {previous_validation_info_hash:?}");
+        eprintln!("their turn: previous_validation_info_hash {previous_validation_info_hash:?}");
 
         // Retrieve evidence from their turn handler.
         let result = handler.call_their_turn_driver(
