@@ -789,6 +789,14 @@ impl RefereeMaker {
         )?;
 
         eprintln!("my turn result {result:?}");
+        eprintln!(
+            "new state {}",
+            disassemble(
+                allocator.allocator(),
+                result.state,
+                None
+            )
+        );
 
         self.accept_this_move(
             &result.waiting_driver,

@@ -47,11 +47,16 @@ fn test_play_calpoker_happy_path() {
     ).expect("should get a sim env");
 
     let alice_word = b"0alice6789abcdef";
-    let alice_word_hash = Sha256Input::Bytes(alice_word).hash();
-    let bob_word = b"0bob456789abcdef";
+    let alice_word_hash = Sha256Input::Bytes(alice_word).hash().to_clvm(simenv.env.allocator).expect("should work");
+    let bob_word = simenv.env.allocator.encode_atom(b"0bob456789abcdef").expect("should work");
+    let alice_picks = simenv.env.allocator.encode_atom(&[0,1,2,3]).expect("should work");
+
     let moves = [
-        GameAction::Move(0, alice_word_hash.bytes().to_vec()),
-        GameAction::Move(1, bob_word.to_vec()),
+        GameAction::Move(0, alice_word_hash),
+        GameAction::Move(1, bob_word),
+        // Alice's reaveal of her card generating seed and her commit to which
+        // cards she's picking.
+        // GameAction::Move(0, alice_picks),
     ];
     let play_result = simenv.play_game(&moves).expect("should succeed");
     eprintln!("play_result {play_result:?}");
