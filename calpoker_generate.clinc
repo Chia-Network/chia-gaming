@@ -125,7 +125,7 @@
 
 ; state is alice_commit
 ; move is bob_seed
-(defun calpoker_bob_driver_b (local_move amount alice_commit split max_move_size entropy)
+(defun calpoker_bob_driver_b (@ args (local_move amount alice_commit split max_move_size entropy))
     (assign
         seed (substr entropy 0 16)
         (list

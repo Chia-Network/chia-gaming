@@ -1,12 +1,21 @@
+use std::rc::Rc;
+
 use clvmr::run_program;
 use clvm_traits::ToClvm;
 
-use crate::common::types::{AllocEncoder, Node};
+use crate::common::types::{AllocEncoder, Node, Sha256Input};
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::channel_handler::game_handler::chia_dialect;
 
 use clvm_tools_rs::classic::clvm::sexp::first;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+
+use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
+
+use clvm_tools_rs::compiler::clvm::{convert_from_clvm_rs, run};
+use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
+use clvm_tools_rs::compiler::comptypes::CompilerOpts;
+use clvm_tools_rs::compiler::srcloc::Srcloc;
 
 #[test]
 fn test_prepend_count() {
@@ -35,6 +44,62 @@ fn test_prepend_count() {
         disassemble(allocator.allocator(), result, None),
         "((a 6 2) (a 6 3) (i 5 3) (i 5 4) (i 5 1) (q 2 1) (q 3 1))"
     );
+}
+
+#[test]
+fn test_make_cards() {
+    let mut allocator = AllocEncoder::new();
+    let loc = Srcloc::start("game_handler");
+    let opts = Rc::new(DefaultCompilerOpts::new("game_handler"));
+
+    let program = read_hex_puzzle(&mut allocator, "resources/test_make_cards.hex").expect("should read").to_nodeptr();
+    let converted_program = convert_from_clvm_rs(allocator.allocator(), loc.clone(), program).expect("should work");
+    let source_data =
+        [Sha256Input::Bytes(b"test").hash()]
+        .to_clvm(&mut allocator).expect("should build");
+    let converted_source = convert_from_clvm_rs(allocator.allocator(), loc.clone(), source_data).expect("should work");
+    let runner = Rc::new(DefaultProgramRunner::new());
+    let result = run(
+        allocator.allocator(),
+        Rc::new(DefaultProgramRunner::new()),
+        opts.prim_map(),
+        converted_program,
+        converted_source,
+        None,
+        None,
+    ).expect("should run");
+    assert_eq!(
+        result.to_string(),
+        "((5 22 23 25 27 31 32 35) (() 6 7 20 44 45 47 51))"
+    );
+}
+
+#[test]
+fn test_mergein() {
+    let mut allocator = AllocEncoder::new();
+    let tests = vec![
+        ([vec![1,2,9], vec![], vec![]],
+         "(q 2 9)"
+        ),
+        ([vec![1,2,9], vec![3], vec![]],
+         "(q 2 5 9)"
+        )
+    ];
+    let program = read_hex_puzzle(&mut allocator, "resources/test_mergein.hex").expect("should read");
+    for t in tests.iter() {
+        let clvm_arg = t.0.to_clvm(&mut allocator).expect("should build");
+        let result = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            program.to_nodeptr(),
+            clvm_arg,
+            0
+        ).expect("should run").1;
+        assert_eq!(
+            disassemble(allocator.allocator(), result, None),
+            t.1
+        );
+    }
 }
 
 #[test]
