@@ -251,6 +251,30 @@ fn test_handcalc() {
             ),
             (
                 "()",
+                vec!["test from calpoker smoke test 1"],
+                vec![
+                    (12, 2),
+                    (10, 1),
+                    (4, 3),
+                    (2, 1),
+                    (7, 4),
+                    (6, 3),
+                    (4, 2),
+                    (2, 3)
+                ],
+                vec![
+                    (12, 2),
+                    (10, 1),
+                    (4, 3),
+                    (2, 1),
+                    (7, 4),
+                    (6, 3),
+                    (4, 2),
+                    (2, 3)
+                ],
+            ),
+            (
+                "()",
                 vec![ "straight flushes of different suits tie",
                    "A1 K1 Q1 J1 T1 = A2 K2 Q2 J2 T2"
                 ],

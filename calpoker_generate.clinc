@@ -84,8 +84,8 @@
     (if (not mylist)
         0
         (= (f mylist) index)
-        (logior 1 (* 2 (indices_to_bitfield (r mylist) (+ index 1))))
-        (* 2 (indices_to_bitfield mylist (+ index 1)))
+        (logior 1 (* 2 (indices_to_bitfield_inner (r mylist) (+ index 1))))
+        (* 2 (indices_to_bitfield_inner mylist (+ index 1)))
     )
 )
 
@@ -93,24 +93,27 @@
     (indices_to_bitfield_inner mylist 0)
 )
 
+; We have composed cards as sublists but need them as pairs.
+(defun card_list_to_pair ((rank suit)) (c rank suit))
+
 ; state is the cards for both players and alice's card pick commitment
 ; move is Bob's picks
 ; should immediately respond with a move revealing picks and selecting best cards and final split
-(defun calpoker_alice_driver_d (MY_SALT MY_PICKS amount 
-            (@ state (cards my_commit)) move validation_program_hash max_move_size split)
+(defun calpoker_alice_driver_d (@ args (MY_SALT MY_PICKS amount
+            (@ state (cards my_commit)) move validation_program_hash max_move_size split))
     (assign
-        (my_cards_me my_cards_bob) (split_cards (f cards) MY_PICKS)
-        (bob_cards_bob bob_cards_me) (split_cards (r cards) move)
+        (my_cards_me my_cards_bob) (split_cards MY_PICKS (f cards))
+        (bob_cards_bob bob_cards_me) (split_cards move (f (r cards)))
         my_all_cards (map make_card (append my_cards_me bob_cards_me))
         bob_all_cards (map make_card (append bob_cards_bob my_cards_bob))
-        (my_hand_value my_picks) (handcalc my_all_cards)
-        (bob_hand_value bob_picks) (handcalc bob_all_cards)
+        (my_hand_value my_picks) (handcalc (map card_list_to_pair my_all_cards))
+        (bob_hand_value bob_picks) (handcalc (map card_list_to_pair bob_all_cards))
         win_result (list_compare my_hand_value bob_hand_value)
         split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
         (list MAKE_MOVE
             (list move (indices_to_bitfield my_picks) (indices_to_bitfield bob_picks)
                 my_hand_value bob_hand_value win_result)
-            (lambda (& MY_SALT MY_PICKS split) (list (concat MY_SALT MY_PICKS) 0 0 0 0 split 0 0) 
+            (lambda (& MY_SALT MY_PICKS split) (list (concat MY_SALT MY_PICKS) 0 0 0 0 split 0 0)
             0
             )
         )
