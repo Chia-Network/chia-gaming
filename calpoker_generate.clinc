@@ -99,8 +99,8 @@
 ; state is the cards for both players and alice's card pick commitment
 ; move is Bob's picks
 ; should immediately respond with a move revealing picks and selecting best cards and final split
-(defun calpoker_alice_driver_d (@ args (MY_SALT MY_PICKS amount
-            (@ state (cards my_commit)) move validation_program_hash max_move_size split))
+(defun calpoker_alice_driver_d (MY_SALT MY_PICKS amount
+            (@ state (cards my_commit)) move validation_program_hash max_move_size split)
     (assign
         (my_cards_me my_cards_bob) (split_cards MY_PICKS (f cards))
         (bob_cards_bob bob_cards_me) (split_cards move (f (r cards)))
@@ -113,7 +113,7 @@
         (list MAKE_MOVE
             (list move (indices_to_bitfield my_picks) (indices_to_bitfield bob_picks)
                 my_hand_value bob_hand_value win_result)
-            (lambda (& MY_SALT MY_PICKS split) (list (concat MY_SALT MY_PICKS) 0 0 0 0 split 0 0)
+            (lambda ((& MY_SALT MY_PICKS split)) (list (concat MY_SALT MY_PICKS) 0 0 0 0 split 0 0)
             0
             )
         )
@@ -156,14 +156,14 @@
 ; expecting a message revealing Alice's seed which results in local display once verified
 (defun calpoker_bob_driver_c (BOB_SEED amount state move validation_program_hash max_move_size split)
     (assign
-        bob_cards
-        (make_cards_readable
-         (sha256 (substr move 0 16) BOB_SEED amount))
+        (alice_cards bob_cards)
+        (make_cards (sha256 (substr move 0 16) BOB_SEED amount))
 
-        alice_cards (make_cards (sha256 (substr move 0 16) BOB_SEED amount))
+        readable_bob_cards
+        (make_readable_card_descriptions bob_cards)
 
         (list MAKE_MOVE
-            bob_cards
+            readable_bob_cards
             (curry calpoker_bob_driver_d
                    alice_cards
                    bob_cards
@@ -206,9 +206,9 @@
 (defun calpoker_bob_driver_e (amount (@ state (bob_selects (alice_cards bob_cards) alice_commit_2)) move
         validation_program_hash max_move_size split)
     (assign
-        alice_selects (substr move 16 17)
-        (alice_cards_alice alice_cards_bob) (split_cards alice_cards alice_selects)
-        (bob_cards_bob bob_cards_alice) (split_cards bob_cards bob_selects)
+        alice_selects (substr move 16 (strlen move))
+        (alice_cards_alice alice_cards_bob) (split_cards alice_selects alice_cards)
+        (bob_cards_bob bob_cards_alice) (split_cards bob_selects bob_cards)
         alice_all_cards (map make_card (append alice_cards_alice bob_cards_alice))
         bob_all_cards (map make_card (append bob_cards_bob alice_cards_bob))
         (alice_hand_value alice_picks) (handcalc (map card_list_to_pair alice_all_cards))
@@ -231,6 +231,8 @@
         (list (map make_card_readable cardsa) (map make_card_readable cardsb))
     )
 )
+
+(defun make_readable_card_descriptions (cards) (map make_card_readable cards))
 
 (defun make_card_readable (val)
     (assign
