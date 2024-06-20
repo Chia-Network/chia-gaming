@@ -49,7 +49,7 @@
 ; immediately sends a message giving Alice's seed
 (defun calpoker_alice_driver_b (PREIMAGE IMAGE amount state_unused move validation_info_hash max_move_size split)
     (list MAKE_MOVE (make_cards_readable (sha256 PREIMAGE move amount))
-            (curry calpoker_alice_driver_c PREIMAGE IMAGE move) PREIMAGE)
+            (curry calpoker_alice_driver_c PREIMAGE move) PREIMAGE)
 )
 
 (defun bitify (mylist)
@@ -61,14 +61,14 @@
 
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
-(defun calpoker_alice_driver_c (PREIMAGE ALICE_COMMIT BOB_SEED local_move amount split max_move_size entropy)
+(defun calpoker_alice_driver_c (PREIMAGE BOB_SEED local_move amount split max_move_size entropy)
     (assign
         cards (make_cards (sha256 PREIMAGE BOB_SEED amount))
         my_picks (bitify local_move)
         salt (substr entropy 0 16)
-        new_commit (concat salt my_picks)
+        new_commit (sha256 (concat salt my_picks))
         (list
-            new_commit
+            (concat PREIMAGE new_commit)
             pokerd
             pokerd_hash
             (list cards new_commit)
@@ -138,7 +138,7 @@
             ALICE_COMMIT
             48
             0
-            (curry calpoker_bob_driver_c ALICE_COMMIT seed)
+            (curry calpoker_bob_driver_c seed)
             parse_message
         )
     )
@@ -154,7 +154,7 @@
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 ; expecting a message revealing Alice's seed which results in local display once verified
-(defun calpoker_bob_driver_c (ALICE_COMMIT BOB_SEED amount state move validation_program_hash max_move_size split)
+(defun calpoker_bob_driver_c (BOB_SEED amount state move validation_program_hash max_move_size split)
     (assign
         bob_cards
         (make_cards_readable
@@ -203,7 +203,7 @@
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_picks
 ; either fraud proves or accepts split
-(defun calpoker_bob_driver_e (amount (@ state (bob_selects (alice_cards bob_cards) alice_commit_2)) move 
+(defun calpoker_bob_driver_e (amount (@ state (bob_selects (alice_cards bob_cards) alice_commit_2)) move
         validation_program_hash max_move_size split)
     (assign
         alice_selects (substr move 16 17)
@@ -211,8 +211,8 @@
         (bob_cards_bob bob_cards_alice) (split_cards bob_cards bob_selects)
         alice_all_cards (map make_card (append alice_cards_alice bob_cards_alice))
         bob_all_cards (map make_card (append bob_cards_bob alice_cards_bob))
-        (alice_hand_value alice_picks) (handcalc alice_all_cards)
-        (bob_hand_value bob_picks) (handcalc bob_all_cards)
+        (alice_hand_value alice_picks) (handcalc (map card_list_to_pair alice_all_cards))
+        (bob_hand_value bob_picks) (handcalc (map card_list_to_pair bob_all_cards))
         win_result (list_compare alice_hand_value bob_hand_value)
         correct_split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
         (if (!= split correct_split)
