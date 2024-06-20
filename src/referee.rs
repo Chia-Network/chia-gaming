@@ -508,7 +508,7 @@ impl RefereeMaker {
                 state,
                 message_handler: None,
                 #[cfg(test)]
-                run_debug: false,
+                run_debug: true,
             },
             puzzle_hash
         ))
