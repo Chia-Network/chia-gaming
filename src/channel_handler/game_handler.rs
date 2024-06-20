@@ -363,10 +363,16 @@ impl GameHandler {
             } else if pl.len() < 3 {
                 Ok(TheirTurnResult::FinalMove(pl[1]))
             } else {
+                let message_data =
+                    if pl.len() == 4 {
+                        allocator.allocator().atom(pl[3]).to_vec()
+                    } else {
+                        vec![]
+                    };
                 Ok(TheirTurnResult::MakeMove(
                     pl[1],
                     GameHandler::my_driver_from_nodeptr(pl[2]),
-                    allocator.allocator().atom(pl[3]).to_vec(),
+                    message_data
                 ))
             }
         } else if move_type == 2 {
