@@ -59,6 +59,7 @@ fn test_play_calpoker_happy_path() {
         // cards she's picking.
         GameAction::Move(0, alice_picks),
         GameAction::Move(1, bob_picks),
+        // Move is a declared split.
     ];
     let play_result = simenv.play_game(&moves).expect("should succeed");
     eprintln!("play_result {play_result:?}");
