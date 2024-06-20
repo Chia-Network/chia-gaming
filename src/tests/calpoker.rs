@@ -51,7 +51,7 @@ fn test_play_calpoker_happy_path() {
     let bob_word = simenv.env.allocator.encode_atom(b"0bob456789abcdef").expect("should work");
     let alice_picks = [0,1,0,1,0,1,0,1].to_clvm(simenv.env.allocator).expect("should work");
     let bob_picks = [1,0,1,0,1,0,1,0].to_clvm(simenv.env.allocator).expect("should work");
-    let alice_win_move = 100.to_clvm(simenv.env.allocator).expect("should work");
+    let alice_win_move = ().to_clvm(simenv.env.allocator).expect("should work");
 
     let moves = [
         GameAction::Move(0, alice_word_hash),
@@ -80,3 +80,5 @@ fn test_play_calpoker_happy_path() {
 // Bob can't cheat when he's supposed to win everything. We can fuzz to find the
 // three hands then inspect manually to sanity check the hand evals and find bad
 // cards
+//
+// Test that we can't move off chain when validation puzzle hash is nil.
