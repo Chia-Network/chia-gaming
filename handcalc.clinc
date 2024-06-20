@@ -1,8 +1,8 @@
 
 ; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
 ; suits are 1-4 with no particular labelling
-; takes a list of cards (rank . suit) and returns a bitfield of 
-; which cards to include to make the best possible hand
+; takes a list of cards (rank . suit) and returns 
+; (hand_quality indices_of_best_cards) with indices_best_cards in low to high order
 ; doesn't work for ten or more cards if there are multiple flushes
 ; all sorting is done highest to lowest
 
