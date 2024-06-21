@@ -761,9 +761,23 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
             return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(
                 Hash::from_slice(&atoms[1]),
             )));
-            } else if *atoms[0] == REM_ATOM {
+        } else {
+            return None;
+        }
+    } else if exploded.len() > 1 && matches!(
+        (
+            allocator.allocator().sexp(exploded[0]),
+            allocator.allocator().sexp(exploded[1])
+        ),
+        (SExp::Atom, SExp::Atom)
+    ) {
+        let atoms: Vec<Vec<u8>> = exploded
+            .iter()
+            .map(|a| allocator.allocator().atom(*a).to_vec())
+            .collect();
+        if *atoms[0] == REM_ATOM {
             return Some(CoinCondition::Rem(
-                atoms.iter().map(|a| a.to_vec()).collect(),
+                atoms.iter().skip(1).map(|a| a.to_vec()).collect(),
             ));
         }
     }

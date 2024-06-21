@@ -13,7 +13,7 @@ pub fn new_channel_handler_game<R: Rng>(
     game: &Game,
     identities: &[ChiaIdentity; 2],
     contributions: [Amount; 2],
-) -> Result<ChannelHandlerGame, Error> {
+) -> Result<(ChannelHandlerGame, [CoinString; 2]), Error> {
     let mut party = ChannelHandlerGame::new(
         env,
         game.id.clone(),
@@ -76,5 +76,5 @@ pub fn new_channel_handler_game<R: Rng>(
         &[their_game_start]
     )?;
 
-    Ok(party)
+    Ok((party, [player_coins[0][0].clone(), player_coins[1][0].clone()]))
 }

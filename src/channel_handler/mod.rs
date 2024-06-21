@@ -458,6 +458,7 @@ impl ChannelHandler {
                 &new_game_coins_on_chain
             )
         )?;
+        self.unroll.coin.state_number = state_number_for_spend;
 
         Ok(PotatoSignatures {
             my_channel_half_signature_peer: channel_coin_signature,
@@ -956,7 +957,9 @@ impl ChannelHandler {
         conditions: NodePtr,
     ) -> Result<Vec<Vec<u8>>, Error> {
         // Figure out our state number vs the one given in conditions.
-        let rem_conditions: Vec<Vec<u8>> = CoinCondition::from_nodeptr(env.allocator, conditions)
+        let all_conditions = CoinCondition::from_nodeptr(env.allocator, conditions);
+        eprintln!("all_conditions {all_conditions:?}");
+        let rem_conditions: Vec<Vec<u8>> = all_conditions
             .iter()
             .filter_map(|c| {
                 if let CoinCondition::Rem(data) = c {
@@ -967,7 +970,7 @@ impl ChannelHandler {
             })
             .collect();
 
-        if rem_conditions.len() < 2 {
+        if rem_conditions.len() < 1 {
             return Err(Error::StrErr(
                 "Wrong number of rems in conditions".to_string(),
             ));
@@ -1020,7 +1023,6 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         conditions: NodePtr,
     ) -> Result<ChannelCoinSpentResult, Error> {
-        // prepend_rem_conditions(env, self.current_state_number, result_coins.to_clvm(env.allocator).into_gen()?)
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
 
         let state_number = if let Some(state_number) = usize_from_atom(&rem_conditions[0]) {
@@ -1033,7 +1035,7 @@ impl ChannelHandler {
         let their_parity = state_number & 1;
 
         if state_number > self.unroll.coin.state_number {
-            return Err(Error::StrErr("Reply from the future".to_string()));
+            return Err(Error::StrErr(format!("Reply from the future onchain {} (me {}) vs {}", state_number, self.current_state_number, self.unroll.coin.state_number)));
         } else if state_number < self.unroll.coin.state_number {
             if our_parity == their_parity {
                 return Err(Error::StrErr(
@@ -1420,5 +1422,30 @@ impl ChannelHandler {
                 &total_amount,
             ),
         })
+    }
+
+    // Inititate a simple on chain spend.
+    //
+    // Currently used for testing but might be used elsewhere.
+    #[cfg(test)]
+    pub fn get_unroll_target<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<(usize, PuzzleHash, Amount, Amount), Error> {
+        let amount = self.my_out_of_game_balance.clone() +
+            self.their_out_of_game_balance.clone();
+        let curried_unroll_puzzle =
+            self.unroll.coin.make_curried_unroll_puzzle(
+                env,
+                &self.get_aggregate_unroll_public_key(),
+                self.current_state_number,
+            )?;
+
+        Ok((
+            self.current_state_number,
+            Node(curried_unroll_puzzle).sha256tree(&mut env.allocator),
+            self.my_out_of_game_balance.clone(),
+            self.their_out_of_game_balance.clone()
+        ))
     }
 }
