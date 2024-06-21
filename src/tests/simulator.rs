@@ -385,16 +385,18 @@ impl Simulator {
                 return Err(Error::StrErr("failed to parse coin string".to_string()));
             };
 
+        let change_amt = amt.clone() - target_amt.clone();
         let first_coin = CoinString::from_parts(
-            &parent,
+            &source_coin.to_coin_id(),
             &identity_target.puzzle_hash,
             &target_amt
         );
         let second_coin = CoinString::from_parts(
-            &parent,
+            &source_coin.to_coin_id(),
             &identity_source.puzzle_hash,
-            &amt
+            &change_amt
         );
+
         let conditions =
             ((CREATE_COIN,
               (identity_target.puzzle_hash.clone(),
@@ -403,7 +405,7 @@ impl Simulator {
             ),
              ((CREATE_COIN,
                (identity_source.puzzle_hash.clone(),
-                ((amt.clone() - target_amt.clone()), ()),
+                (change_amt, ()),
                )
              ), ())
             ).to_clvm(allocator).into_gen()?;
@@ -414,7 +416,7 @@ impl Simulator {
             &identity_source.synthetic_private_key,
             &quoted_conditions_hash.bytes(),
             &source_coin.to_coin_id(),
-            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone())
+            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA)
         );
         let tx = SpecificTransactionBundle {
             bundle: TransactionBundle {
@@ -508,9 +510,11 @@ pub enum GameAction {
 
 #[derive(Debug, Clone)]
 pub enum GameActionResult {
-    MoveResult(NodePtr, Vec<u8>)
+    MoveResult(NodePtr, Vec<u8>),
+    MoveToOnChain,
 }
 
+#[derive(Debug, Clone)]
 pub enum OnChainState {
     OffChain([CoinString; 2]),
     OnChain(CoinString),
@@ -518,6 +522,7 @@ pub enum OnChainState {
 
 pub struct SimulatorEnvironment<'a, R: Rng> {
     pub env: ChannelHandlerEnv<'a, R>,
+    pub on_chain: OnChainState,
     pub identities: [ChiaIdentity; 2],
     pub parties: ChannelHandlerGame,
     pub simulator: Simulator,
@@ -564,7 +569,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         };
 
         let simulator = Simulator::new();
-        let parties = new_channel_handler_game(
+        let (parties, coins) = new_channel_handler_game(
             &simulator,
             &mut env,
             &game,
@@ -576,6 +581,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             env,
             identities,
             parties,
+            on_chain: OnChainState::OffChain(coins),
             simulator
         })
     }
@@ -583,14 +589,86 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     // Create a channel coin from the users' input coins giving the new CoinString
     // and the state number.  The result is the coin string of the new coin and
     fn create_and_spend_channel_coin(
-        &self,
+        &mut self,
         coins: &[CoinString; 2],
         state_number: usize,
         unroll_coin_puzzle_hash: &PuzzleHash,
         my_amount: Amount,
         their_amount: Amount,
     ) -> Result<(NodePtr, CoinString), Error> {
-        todo!();
+        // Spend coin1 to person 0 creating their_amount and change (u1).
+        let (u1, _) = self.simulator.transfer_coin_amount(
+            self.env.allocator,
+            &self.identities[0],
+            &self.identities[1],
+            &coins[1],
+            their_amount.clone()
+        )?;
+        self.simulator.farm_block(&self.identities[0].puzzle_hash);
+
+        // Spend coin0 to person 0 creating my_amount and change (u0).
+        let (u2, _) = self.simulator.transfer_coin_amount(
+            self.env.allocator,
+            &self.identities[0],
+            &self.identities[0],
+            &coins[0],
+            my_amount.clone()
+        )?;
+        self.simulator.farm_block(&self.identities[0].puzzle_hash);
+
+        // Combine u1 and u0 into a single person 0 coin (state_channel).
+        let state_channel = self.simulator.combine_coins(
+            self.env.allocator,
+            &self.identities[0],
+            &self.identities[0].puzzle_hash,
+            &[u1, u2],
+        )?;
+        self.simulator.farm_block(&self.identities[0].puzzle_hash);
+
+        let target_amount = my_amount.clone() + their_amount.clone();
+        let target_conditions =
+            ((REM, (state_number, ())),
+             ((CREATE_COIN,
+               (unroll_coin_puzzle_hash.clone(),
+                (target_amount.clone(), ())
+               )
+             ), ()
+             )
+            ).to_clvm(self.env.allocator).into_gen()?;
+
+        let quoted_conds = target_conditions.to_quoted_program(&mut self.env.allocator)?;
+        let quoted_conds_hash = quoted_conds.sha256tree(&mut self.env.allocator);
+        let signature = sign_agg_sig_me(
+            &self.identities[0].synthetic_private_key,
+            &quoted_conds_hash.bytes(),
+            &state_channel.to_coin_id(),
+            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA)
+        );
+        let state_channel_solution = solution_for_conditions(
+            self.env.allocator,
+            target_conditions
+        )?;
+
+        let included = self.simulator.push_tx(
+            self.env.allocator,
+            &[SpecificTransactionBundle {
+                bundle: TransactionBundle {
+                    puzzle: self.identities[0].puzzle.clone(),
+                    solution: state_channel_solution,
+                    signature,
+                },
+                coin: state_channel.clone()
+            }]
+        ).into_gen()?;
+        if included.code != 1 {
+            return Err(Error::StrErr("failed to create combined coin with unroll target".to_string()));
+        }
+
+        Ok((target_conditions, CoinString::from_parts(
+            &state_channel.to_coin_id(),
+            &unroll_coin_puzzle_hash,
+            &target_amount
+        )))
     }
 
     pub fn perform_action(
@@ -618,7 +696,46 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 Ok(GameActionResult::MoveResult(ui_result, message))
             }
             GameAction::GoOnChain(player) => {
-                todo!();
+                let (state_number, unroll_target, my_amount, their_amount) =
+                    self.parties.player(*player).ch.get_unroll_target(
+                    &mut self.env,
+                )?;
+                let (channel_coin_conditions, unroll_coin) =
+                    match self.on_chain.clone() {
+                        OnChainState::OffChain(coins) => {
+                            self.create_and_spend_channel_coin(
+                                &coins,
+                                state_number,
+                                &unroll_target,
+                                my_amount,
+                                their_amount,
+                            )?
+                        }
+                        _ => {
+                            return Err(Error::StrErr("go on chain when on chain".to_string()));
+                        }
+                    };
+
+                eprintln!(
+                    "channel coin conditions {}",
+                    disassemble(
+                        self.env.allocator.allocator(),
+                        channel_coin_conditions,
+                        None
+                    )
+                );
+
+                let channel_spent_result_1 = self.parties.player(*player).ch.channel_coin_spent(
+                    &mut self.env,
+                    channel_coin_conditions
+                )?;
+                let channel_spent_result_2 = self.parties.player(*player ^ 1).ch.channel_coin_spent(
+                    &mut self.env,
+                    channel_coin_conditions
+                )?;
+
+                self.on_chain = OnChainState::OnChain(unroll_coin);
+                Ok(GameActionResult::MoveToOnChain)
             }
             _ => {
                 todo!();

@@ -5,7 +5,7 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::common::types::{Amount, AllocEncoder, Error, Sha256Input, GameID, Hash};
 use crate::channel_handler::game::Game;
-use crate::tests::simulator::{SimulatorEnvironment, GameAction};
+use crate::tests::simulator::{SimulatorEnvironment, GameAction, GameActionResult};
 
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
     Game::new(allocator, game_id, "resources/calpoker_include_calpoker_template.hex")
@@ -29,29 +29,36 @@ fn test_load_calpoker() {
     ).expect("should get a sim env");
 }
 
-#[test]
-fn test_play_calpoker_happy_path() {
-    let mut allocator = AllocEncoder::new();
+fn run_calpoker_play_test(
+    allocator: &mut AllocEncoder,
+    moves: &[GameAction]
+) -> Result<Vec<GameActionResult>, Error> {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let game_id_data: Hash = rng.gen();
     let game_id = GameID::new(game_id_data.bytes().to_vec());
-    let calpoker = load_calpoker(&mut allocator, game_id).expect("should load");
+    let calpoker = load_calpoker(allocator, game_id).expect("should load");
     let contributions = [Amount::new(100), Amount::new(100)];
 
     let mut simenv = SimulatorEnvironment::new(
-        &mut allocator,
+        allocator,
         &mut rng,
         &calpoker,
         &contributions
     ).expect("should get a sim env");
 
+    simenv.play_game(moves)
+}
+
+#[test]
+fn test_play_calpoker_happy_path() {
+    let mut allocator = AllocEncoder::new();
     let alice_word = b"0alice6789abcdef";
-    let alice_word_hash = Sha256Input::Bytes(alice_word).hash().to_clvm(simenv.env.allocator).expect("should work");
-    let bob_word = simenv.env.allocator.encode_atom(b"0bob456789abcdef").expect("should work");
-    let alice_picks = [0,1,0,1,0,1,0,1].to_clvm(simenv.env.allocator).expect("should work");
-    let bob_picks = [1,0,1,0,1,0,1,0].to_clvm(simenv.env.allocator).expect("should work");
-    let alice_win_move = ().to_clvm(simenv.env.allocator).expect("should work");
+    let alice_word_hash = Sha256Input::Bytes(alice_word).hash().to_clvm(&mut allocator).expect("should work");
+    let bob_word = allocator.encode_atom(b"0bob456789abcdef").expect("should work");
+    let alice_picks = [0,1,0,1,0,1,0,1].to_clvm(&mut allocator).expect("should work");
+    let bob_picks = [1,0,1,0,1,0,1,0].to_clvm(&mut allocator).expect("should work");
+    let alice_win_move = ().to_clvm(&mut allocator).expect("should work");
 
     let moves = [
         GameAction::Move(0, alice_word_hash),
@@ -63,8 +70,16 @@ fn test_play_calpoker_happy_path() {
         // Move is a declared split.
         GameAction::Move(0, alice_win_move),
     ];
-    let play_result = simenv.play_game(&moves).expect("should succeed");
-    eprintln!("play_result {play_result:?}");
+
+    let test1 = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+    eprintln!("play_result {test1:?}");
+
+    // Make a prototype go on chain scenario by starting with move 1.
+    let mut use_moves: Vec<GameAction> = moves.iter().take(1).cloned().collect();
+    use_moves.push(GameAction::GoOnChain(false as usize));
+    use_moves.append(&mut moves.iter().skip(1).cloned().collect());
+    let test2 = run_calpoker_play_test(&mut allocator, &use_moves).expect("should work");
+    eprintln!("play_result {test2:?}");
 }
 
 // Bram: slashing tests
