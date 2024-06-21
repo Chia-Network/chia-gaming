@@ -1,19 +1,20 @@
 use clvmr::allocator::NodePtr;
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 use clvm_tools_rs::compiler::comptypes::map_m;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyNone, PyBytes, PyTuple};
+use pyo3::exceptions::PyIndexError;
 use rand::prelude::*;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use indoc::indoc;
 
-use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, read_hex_puzzle};
+use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, REM};
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, read_hex_puzzle, solution_for_conditions, sign_agg_sig_me};
 use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID, IntoErr};
 
 use crate::channel_handler::game::Game;
@@ -149,7 +150,7 @@ impl Simulator {
 
         let status = self.push_tx(
             allocator,
-            &specific
+            &[specific]
         ).expect("should spend");
         if status.code == 3 {
             return Err(Error::StrErr("failed to spend coin".to_string()));
@@ -317,27 +318,45 @@ impl Simulator {
     pub fn make_spend_bundle(
         &self,
         allocator: &mut AllocEncoder,
-        tx: &SpecificTransactionBundle
+        txs: &[SpecificTransactionBundle]
     ) -> PyResult<PyObject> {
         Python::with_gil(|py| {
-            let spend = self.make_coin_spend(
-                py,
-                allocator,
-                &tx.coin,
-                tx.bundle.puzzle.clone(),
-                tx.bundle.solution
-            )?;
-            let signature = self.g2_element(&tx.bundle.signature)?;
-            self.spend_bundle.call1(py, ([spend], signature))
+            let mut spends = Vec::new();
+            if txs.is_empty() {
+                return Err(
+                    PyErr::from_value(
+                        PyIndexError::new_err(
+                            "some type error"
+                        ).value(py).clone().into()
+                    )
+                );
+            }
+
+            let mut signature = txs[0].bundle.signature.clone();
+            for (i, tx) in txs.iter().enumerate() {
+                let spend = self.make_coin_spend(
+                    py,
+                    allocator,
+                    &tx.coin,
+                    tx.bundle.puzzle.clone(),
+                    tx.bundle.solution
+                )?;
+                spends.push(spend);
+                if i > 0 {
+                    signature += tx.bundle.signature.clone();
+                }
+            }
+            let py_signature = self.g2_element(&signature)?;
+            self.spend_bundle.call1(py, (spends, py_signature))
         })
     }
 
     pub fn push_tx(
         &self,
         allocator: &mut AllocEncoder,
-        tx: &SpecificTransactionBundle
+        txs: &[SpecificTransactionBundle]
     ) -> PyResult<IncludeTransactionResult> {
-        let spend_bundle = self.make_spend_bundle(allocator, tx)?;
+        let spend_bundle = self.make_spend_bundle(allocator, txs)?;
         Python::with_gil(|py| {
             eprintln!("spend_bundle {:?}", spend_bundle);
             let spend_res: PyObject = self.async_client(
@@ -347,6 +366,133 @@ impl Simulator {
             )?.extract(py)?;
             to_spend_result(py, spend_res)
         })
+    }
+
+    /// Create a coin belonging to identity_target which currently belongs
+    /// to identity_source.  Return change to identity_source.
+    pub fn transfer_coin_amount(
+        &self,
+        allocator: &mut AllocEncoder,
+        identity_target: &ChiaIdentity,
+        identity_source: &ChiaIdentity,
+        source_coin: &CoinString,
+        target_amt: Amount,
+    ) -> Result<(CoinString, CoinString), Error> {
+        let (parent, _, amt) =
+            if let Some(p) = source_coin.to_parts() {
+                p
+            } else {
+                return Err(Error::StrErr("failed to parse coin string".to_string()));
+            };
+
+        let first_coin = CoinString::from_parts(
+            &parent,
+            &identity_target.puzzle_hash,
+            &target_amt
+        );
+        let second_coin = CoinString::from_parts(
+            &parent,
+            &identity_source.puzzle_hash,
+            &amt
+        );
+        let conditions =
+            ((CREATE_COIN,
+              (identity_target.puzzle_hash.clone(),
+               (target_amt.clone(), ()),
+              )
+            ),
+             ((CREATE_COIN,
+               (identity_source.puzzle_hash.clone(),
+                ((amt.clone() - target_amt.clone()), ()),
+               )
+             ), ())
+            ).to_clvm(allocator).into_gen()?;
+        let quoted_conditions = conditions.to_quoted_program(allocator)?;
+        let quoted_conditions_hash = quoted_conditions.sha256tree(allocator);
+        let standard_solution = solution_for_conditions(allocator, conditions)?;
+        let signature = sign_agg_sig_me(
+            &identity_source.synthetic_private_key,
+            &quoted_conditions_hash.bytes(),
+            &source_coin.to_coin_id(),
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone())
+        );
+        let tx = SpecificTransactionBundle {
+            bundle: TransactionBundle {
+                puzzle: identity_source.puzzle.clone(),
+                solution: standard_solution,
+                signature,
+            },
+            coin: source_coin.clone(),
+        };
+        let included = self.push_tx(allocator, &[tx]).into_gen()?;
+        if included.code != 1 {
+            return Err(Error::StrErr(format!("failed to spend: {included:?}")));
+        }
+        Ok((first_coin, second_coin))
+    }
+
+    /// Combine coins, spending to a specific puzzle hash
+    pub fn combine_coins(
+        &self,
+        allocator: &mut AllocEncoder,
+        owner: &ChiaIdentity,
+        target_ph: &PuzzleHash,
+        coins: &[CoinString],
+    ) -> Result<CoinString, Error> {
+        let mut amount = Amount::default();
+        let mut spends = Vec::new();
+        let nil = allocator.encode_atom(&[]).into_gen()?;
+
+        if coins.is_empty() {
+            return Err(Error::StrErr("no coins".to_string()));
+        }
+
+        for (i, c) in coins.iter().enumerate() {
+            let (_, _, amt) =
+                if let Some(p) = c.to_parts() {
+                    p
+                } else {
+                    return Err(Error::StrErr("improper coin string".to_string()));
+                };
+            amount += amt.clone();
+            let conditions =
+                if i == coins.len()-1 {
+                    ((CREATE_COIN,
+                      (target_ph.clone(),
+                       (amount.clone(), ())
+                      )
+                    ), ()).to_clvm(allocator).into_gen()?
+                } else {
+                    nil
+                };
+            let solution = solution_for_conditions(
+                allocator,
+                conditions
+            )?;
+            let quoted_conditions = conditions.to_quoted_program(allocator)?;
+            let quoted_conditions_hash = quoted_conditions.sha256tree(allocator);
+            let signature = sign_agg_sig_me(
+                &owner.synthetic_private_key,
+                &quoted_conditions_hash.bytes(),
+                &c.to_coin_id(),
+                &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA)
+            );
+            spends.push(SpecificTransactionBundle {
+                bundle: TransactionBundle {
+                    puzzle: owner.puzzle.clone(),
+                    solution,
+                    signature
+                },
+                coin: c.clone()
+            });
+        }
+
+        let included = self.push_tx(allocator, &spends).into_gen()?;
+        if included.code != 1 {
+            return Err(Error::StrErr(format!("failed to spend: {included:?}")));
+        }
+
+        Ok(CoinString::from_parts(&coins[coins.len()-1].to_coin_id(), &owner.puzzle_hash, &amount))
     }
 }
 
@@ -365,8 +511,14 @@ pub enum GameActionResult {
     MoveResult(NodePtr, Vec<u8>)
 }
 
+pub enum OnChainState {
+    OffChain([CoinString; 2]),
+    OnChain(CoinString),
+}
+
 pub struct SimulatorEnvironment<'a, R: Rng> {
     pub env: ChannelHandlerEnv<'a, R>,
+    pub on_chain: OnChainState,
     pub identities: [ChiaIdentity; 2],
     pub parties: ChannelHandlerGame,
     pub simulator: Simulator,
@@ -413,7 +565,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         };
 
         let simulator = Simulator::new();
-        let parties = new_channel_handler_game(
+        let (parties, coins) = new_channel_handler_game(
             &simulator,
             &mut env,
             &game,
@@ -425,8 +577,22 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             env,
             identities,
             parties,
+            on_chain: OnChainState::OffChain(coins),
             simulator
         })
+    }
+
+    // Create a channel coin from the users' input coins giving the new CoinString
+    // and the state number.  The result is the coin string of the new coin and
+    fn create_and_spend_channel_coin(
+        &self,
+        coins: &[CoinString; 2],
+        state_number: usize,
+        unroll_coin_puzzle_hash: &PuzzleHash,
+        my_amount: Amount,
+        their_amount: Amount,
+    ) -> Result<(NodePtr, CoinString), Error> {
+        todo!();
     }
 
     pub fn perform_action(
@@ -452,6 +618,39 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     )?;
 
                 Ok(GameActionResult::MoveResult(ui_result, message))
+            }
+            GameAction::GoOnChain(player) => {
+                let (state_number, unroll_target, my_amount, their_amount) =
+                    self.parties.player(*player).ch.get_unroll_target(
+                    &mut self.env,
+                )?;
+                let (channel_coin_conditions, unroll_coin) =
+                    match &self.on_chain {
+                        OnChainState::OffChain(coins) => {
+                            self.create_and_spend_channel_coin(
+                                coins,
+                                state_number,
+                                &unroll_target,
+                                my_amount,
+                                their_amount,
+                            )?
+                        }
+                        _ => {
+                            return Err(Error::StrErr("go on chain when on chain".to_string()));
+                        }
+                    };
+
+                let channel_spent_result_1 = self.parties.player(*player).ch.channel_coin_spent(
+                    &mut self.env,
+                    channel_coin_conditions
+                )?;
+                let channel_spent_result_2 = self.parties.player(*player ^ 1).ch.channel_coin_spent(
+                    &mut self.env,
+                    channel_coin_conditions
+                )?;
+
+                self.on_chain = OnChainState::OnChain(unroll_coin);
+                todo!();
             }
             _ => {
                 todo!();
@@ -495,6 +694,69 @@ fn test_sim() {
         &coins[0],
         &[(identity.puzzle_hash.clone(), amt.clone())]
     ).expect("should spend");
+}
+
+#[test]
+fn test_simulator_transfer_coin() {
+    let seed: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed);
+    let mut allocator = AllocEncoder::new();
+    let s = Simulator::new();
+    let private_key: PrivateKey = rng.gen();
+    let identity1 = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
+    let pk2: PrivateKey = rng.gen();
+    let identity2 = ChiaIdentity::new(&mut allocator, pk2.clone()).expect("should create");
+
+    s.farm_block(&identity1.puzzle_hash);
+
+    let coins1 = s.get_my_coins(&identity1.puzzle_hash).expect("got coins");
+    let coins2_empty = s.get_my_coins(&identity2.puzzle_hash).expect("got coin list");
+
+    assert!(coins2_empty.is_empty());
+    s.transfer_coin_amount(
+        &mut allocator,
+        &identity2,
+        &identity1,
+        &coins1[0],
+        Amount::new(100)
+    ).expect("should transfer");
+
+    s.farm_block(&identity1.puzzle_hash);
+    let coins2 = s.get_my_coins(&identity2.puzzle_hash).expect("got coins");
+    assert_eq!(coins2.len(), 1);
+}
+
+#[test]
+fn test_simulator_combine_coins() {
+    let seed: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed);
+    let mut allocator = AllocEncoder::new();
+    let s = Simulator::new();
+    let private_key: PrivateKey = rng.gen();
+    let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
+
+    s.farm_block(&identity.puzzle_hash);
+
+    let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
+
+    s.combine_coins(
+        &mut allocator,
+        &identity,
+        &identity.puzzle_hash,
+        &coins
+    ).expect("should transfer");
+
+    let pk2: PrivateKey = rng.gen();
+    let identity2 = ChiaIdentity::new(&mut allocator, pk2.clone()).expect("should create");
+    s.farm_block(&identity2.puzzle_hash);
+    let one_coin = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
+
+    let (_, _, a1) = coins[0].to_parts().expect("should parse");
+    let (_, _, a2) = coins[1].to_parts().expect("should parse");
+    let (_, _, amt) = one_coin[0].to_parts().expect("should parse");
+
+    assert_eq!(one_coin.len(), coins.len() - 1);
+    assert_eq!(a1 + a2, amt);
 }
 
 #[test]
@@ -623,7 +885,7 @@ fn test_referee_can_slash_on_chain() {
         bundle: timeout_transaction.bundle.clone()
     };
 
-    let included = s.push_tx(&mut allocator, &specific).expect("should work");
+    let included = s.push_tx(&mut allocator, &[specific]).expect("should work");
     assert_eq!(included.code, 1);
 }
 
@@ -742,7 +1004,7 @@ fn test_referee_can_move_on_chain() {
         bundle: move_transaction.bundle.clone()
     };
 
-    let included = s.push_tx(&mut allocator, &specific).expect("should work");
+    let included = s.push_tx(&mut allocator, &[specific]).expect("should work");
     eprintln!("included {included:?}");
     assert_eq!(included.code, 1);
 }
