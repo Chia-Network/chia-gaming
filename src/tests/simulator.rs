@@ -518,7 +518,6 @@ pub enum OnChainState {
 
 pub struct SimulatorEnvironment<'a, R: Rng> {
     pub env: ChannelHandlerEnv<'a, R>,
-    pub on_chain: OnChainState,
     pub identities: [ChiaIdentity; 2],
     pub parties: ChannelHandlerGame,
     pub simulator: Simulator,
@@ -565,7 +564,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         };
 
         let simulator = Simulator::new();
-        let (parties, coins) = new_channel_handler_game(
+        let parties = new_channel_handler_game(
             &simulator,
             &mut env,
             &game,
@@ -577,7 +576,6 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             env,
             identities,
             parties,
-            on_chain: OnChainState::OffChain(coins),
             simulator
         })
     }
@@ -620,36 +618,6 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 Ok(GameActionResult::MoveResult(ui_result, message))
             }
             GameAction::GoOnChain(player) => {
-                let (state_number, unroll_target, my_amount, their_amount) =
-                    self.parties.player(*player).ch.get_unroll_target(
-                    &mut self.env,
-                )?;
-                let (channel_coin_conditions, unroll_coin) =
-                    match &self.on_chain {
-                        OnChainState::OffChain(coins) => {
-                            self.create_and_spend_channel_coin(
-                                coins,
-                                state_number,
-                                &unroll_target,
-                                my_amount,
-                                their_amount,
-                            )?
-                        }
-                        _ => {
-                            return Err(Error::StrErr("go on chain when on chain".to_string()));
-                        }
-                    };
-
-                let channel_spent_result_1 = self.parties.player(*player).ch.channel_coin_spent(
-                    &mut self.env,
-                    channel_coin_conditions
-                )?;
-                let channel_spent_result_2 = self.parties.player(*player ^ 1).ch.channel_coin_spent(
-                    &mut self.env,
-                    channel_coin_conditions
-                )?;
-
-                self.on_chain = OnChainState::OnChain(unroll_coin);
                 todo!();
             }
             _ => {
