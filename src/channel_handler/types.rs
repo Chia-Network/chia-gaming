@@ -206,6 +206,7 @@ pub enum CachedPotatoRegenerateLastHop {
     PotatoMoveHappening(PotatoMoveCachedData),
 }
 
+#[derive(Clone, Debug)]
 pub struct ChannelCoinSpentResult {
     pub transaction: TransactionBundle,
     pub timeout: bool,
@@ -420,19 +421,6 @@ pub struct UnrollCoin {
     pub outcome: Option<UnrollCoinOutcome>,
 }
 
-// XXX bram: this can be removed.
-#[deprecated]
-fn prepend_default_conditions_hash<R: Rng>(
-    env: &mut ChannelHandlerEnv<R>,
-    conditions: NodePtr,
-) -> Result<NodePtr, Error> {
-    let conditions_hash = Node(conditions).sha256tree(env.allocator);
-    let default_hash_rem = (REM, (conditions_hash, ()));
-    (default_hash_rem, Node(conditions))
-        .to_clvm(env.allocator)
-        .into_gen()
-}
-
 fn prepend_state_number_rem_to_conditions<R: Rng>(
     env: &mut ChannelHandlerEnv<R>,
     state_number: usize,
@@ -510,10 +498,18 @@ impl UnrollCoin {
     pub fn make_unroll_puzzle_solution<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
+        aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
-        let unroll_inner_puzzle = env.unroll_metapuzzle.clone();
+        let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
+        let unroll_inner_puzzle =
+            CurriedProgram {
+                program: env.unroll_metapuzzle.clone(),
+                args: clvm_curried_args!(shared_puzzle_hash)
+            }.to_clvm(env.allocator)
+            .into_gen()?;
+
         let unroll_puzzle_solution = (
-            unroll_inner_puzzle,
+            Node(unroll_inner_puzzle),
             (Node(self.get_conditions_for_unroll_coin_spend()?), ()),
         )
             .to_clvm(env.allocator)
@@ -585,7 +581,6 @@ impl UnrollCoin {
             env,
             inputs,
         )?;
-        let external_conditions = prepend_default_conditions_hash(env, unroll_conditions)?;
         let conditions_hash = Node(unroll_conditions).sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(&unroll_private_key);
         let unroll_aggregate_key =
@@ -596,7 +591,7 @@ impl UnrollCoin {
             &conditions_hash.bytes(),
         );
         self.outcome = Some(UnrollCoinOutcome {
-            conditions: external_conditions,
+            conditions: unroll_conditions,
             conditions_without_hash: unroll_conditions,
             hash: conditions_hash,
             signature: unroll_signature.clone()

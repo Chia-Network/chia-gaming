@@ -137,7 +137,11 @@ impl ChannelHandler {
         self.private_keys.my_referee_private_key.clone()
     }
 
-    pub fn unroll_coin_condition_inputs(
+    pub fn get_state_number(&self) -> usize {
+        self.current_state_number
+    }
+
+    fn unroll_coin_condition_inputs(
         &self,
         state_number: usize,
         puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]
@@ -376,7 +380,7 @@ impl ChannelHandler {
         Ok(())
     }
 
-    pub fn compute_game_coin_unroll_data<'a>(
+    fn compute_game_coin_unroll_data<'a>(
         &'a self,
         unroll_coin: Option<&CoinID>,
         skip_game: &[GameID],
@@ -979,6 +983,41 @@ impl ChannelHandler {
         Ok(rem_conditions)
     }
 
+    pub fn get_unroll_coin_transaction<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        state_number: usize,
+    ) -> Result<ChannelCoinSpentResult, Error> {
+        // Superceding state no timeout
+        // Provide a reveal of the unroll puzzle.
+        // Provide last unroll conditions
+        // Should have a cached signature for unrolling
+
+        // Full unroll puzzle reveal includes the curried info,
+        let curried_unroll_puzzle =
+            self.unroll.coin.make_curried_unroll_puzzle(
+                env,
+                &self.get_aggregate_unroll_public_key(),
+                state_number,
+            )?;
+        let unroll_puzzle_solution =
+            self.unroll.coin.make_unroll_puzzle_solution(
+                env,
+                &self.get_aggregate_unroll_public_key(),
+            )?;
+
+        Ok(ChannelCoinSpentResult {
+            transaction: TransactionBundle {
+                puzzle: Puzzle::from_nodeptr(curried_unroll_puzzle),
+                solution: unroll_puzzle_solution,
+                signature: self.unroll.coin.get_unroll_coin_signature()? +
+                    self.unroll.signatures.my_unroll_half_signature_peer.clone(),
+            },
+            timeout: false,
+            games_canceled: self.get_just_created_games()
+        })
+    }
+
     /// Ensure that we include the last state sequence number in a memo so we can
     /// possibly supercede an earlier unroll.
     ///
@@ -1043,33 +1082,7 @@ impl ChannelHandler {
                 ));
             }
 
-            // Superceding state no timeout
-            // Provide a reveal of the unroll puzzle.
-            // Provide last unroll conditions
-            // Should have a cached signature for unrolling
-
-            // Full unroll puzzle reveal includes the curried info,
-            let curried_unroll_puzzle =
-                self.unroll.coin.make_curried_unroll_puzzle(
-                    env,
-                    &self.get_aggregate_unroll_public_key(),
-                    state_number,
-                )?;
-            let unroll_puzzle_solution =
-                self.unroll.coin.make_unroll_puzzle_solution(
-                    env,
-                )?;
-
-            Ok(ChannelCoinSpentResult {
-                transaction: TransactionBundle {
-                    puzzle: Puzzle::from_nodeptr(curried_unroll_puzzle),
-                    solution: unroll_puzzle_solution,
-                    signature: self.unroll.coin.get_unroll_coin_signature()? +
-                        self.unroll.signatures.my_unroll_half_signature_peer.clone(),
-                },
-                timeout: false,
-                games_canceled: self.get_just_created_games()
-            })
+            self.get_unroll_coin_transaction(env, state_number)
         } else if state_number == self.unroll.coin.state_number {
             // Timeout
             let curried_unroll_puzzle =
@@ -1081,6 +1094,7 @@ impl ChannelHandler {
             let unroll_puzzle_solution =
                 self.unroll.coin.make_unroll_puzzle_solution(
                     env,
+                    &self.get_aggregate_unroll_public_key(),
                 )?;
 
             Ok(ChannelCoinSpentResult {
@@ -1105,6 +1119,7 @@ impl ChannelHandler {
             let unroll_puzzle_solution =
                 self.unroll.coin.make_unroll_puzzle_solution(
                     env,
+                    &self.get_aggregate_unroll_public_key(),
                 )?;
 
             Ok(ChannelCoinSpentResult {
