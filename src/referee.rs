@@ -124,7 +124,6 @@ struct RefereePuzzleArgs {
     waiter_puzzle_hash: PuzzleHash,
     timeout: Timeout,
     amount: Amount,
-    referee_coin_puzzle_hash: PuzzleHash,
     nonce: usize,
     game_move: GameMoveDetails,
     previous_validation_info_hash: Option<Hash>,
@@ -476,7 +475,6 @@ impl RefereeMaker {
                 timeout: game_start_info.timeout.clone(),
                 amount: game_start_info.amount.clone(),
                 nonce: nonce,
-                referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
                 game_move: GameMoveDetails {
                     basic: GameMoveStateInfo {
                         mover_share:
@@ -817,7 +815,6 @@ impl RefereeMaker {
                 timeout: self.timeout.clone(),
                 amount: self.amount.clone(),
                 nonce: self.nonce,
-                referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
                 game_move: result.game_move.clone(),
                 previous_validation_info_hash
             },
@@ -920,7 +917,6 @@ impl RefereeMaker {
             },
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             nonce: self.nonce,
             game_move: GameMoveDetails {
                 basic: game_move,
@@ -1077,7 +1073,6 @@ impl RefereeMaker {
             waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             game_move: their_most_recent_game_move.clone(),
             nonce: self.nonce,
             previous_validation_info_hash
@@ -1108,7 +1103,6 @@ impl RefereeMaker {
             waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             game_move,
             nonce: self.nonce,
             previous_validation_info_hash: self.get_our_most_recent_validation_info_hash(),
@@ -1278,7 +1272,6 @@ impl RefereeMaker {
                 waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
                 timeout: self.timeout.clone(),
                 amount: self.amount.clone(),
-                referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
                 game_move: details.clone(),
                 nonce: self.nonce,
 
@@ -1437,7 +1430,6 @@ impl RefereeMaker {
             waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             nonce: self.nonce,
             game_move: GameMoveDetails {
                 basic: GameMoveStateInfo {

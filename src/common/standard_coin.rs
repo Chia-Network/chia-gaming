@@ -27,6 +27,7 @@ use crate::common::types::{
     PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, ToQuotedProgram,
 };
 
+#[cfg(test)]
 pub fn shatree_atom_cant_fail(by: &[u8]) -> PuzzleHash {
     let mut allocator = AllocEncoder::new();
     let atom = allocator.allocator().new_atom(by).unwrap();
@@ -59,10 +60,6 @@ pub fn get_standard_coin_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, 
         allocator,
         "resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex",
     )
-}
-
-pub fn get_default_hidden_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, types::Error> {
-    read_hex_puzzle(allocator, "resources/default_hidden_puzzle.hex")
 }
 
 fn group_order_int() -> BigInt {
