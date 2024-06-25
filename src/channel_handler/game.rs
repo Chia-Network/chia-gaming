@@ -82,9 +82,11 @@ impl Game {
     pub fn symmetric_game_starts(
         &self,
         game_id: &GameID,
-        amount: &Amount,
+        our_contribution: &Amount,
+        their_contribution: &Amount,
         timeout: &Timeout,
     ) -> (GameStartInfo, GameStartInfo) {
+        let amount = our_contribution.clone() + their_contribution.clone();
         let amount_as_u64: u64 = amount.clone().into();
         let mover_share = Amount::new((amount_as_u64 * self.initial_mover_share_proportion as u64) / 100);
         let waiter_share = amount.clone() - mover_share.clone();
@@ -94,6 +96,8 @@ impl Game {
                 amount: amount.clone(),
                 game_handler: self.initial_mover_handler.clone(),
                 timeout: timeout.clone(),
+                my_contribution_this_game: our_contribution.clone(),
+                their_contribution_this_game: their_contribution.clone(),
                 initial_validation_program: self.initial_validation_program.clone(),
                 initial_state: self.initial_state,
                 initial_move: vec![],
@@ -105,6 +109,8 @@ impl Game {
                 amount: amount.clone(),
                 game_handler: self.initial_waiter_handler.clone(),
                 timeout: timeout.clone(),
+                my_contribution_this_game: their_contribution.clone(),
+                their_contribution_this_game: our_contribution.clone(),
                 initial_validation_program: self.initial_validation_program.clone(),
                 initial_state: self.initial_state,
                 initial_move: vec![],

@@ -86,6 +86,10 @@ pub struct ChannelHandler {
 
     my_out_of_game_balance: Amount,
     their_out_of_game_balance: Amount,
+
+    my_allocated_balance: Amount,
+    their_allocated_balance: Amount,
+
     have_potato: bool,
 
     cached_last_action: Option<CachedPotatoRegenerateLastHop>,
@@ -151,8 +155,12 @@ impl ChannelHandler {
             ref_pubkey: my_referee_public_key,
             their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             state_number,
-            my_balance: self.my_out_of_game_balance.clone(),
-            their_balance: self.their_out_of_game_balance.clone(),
+            my_balance:
+            self.my_out_of_game_balance.clone() -
+                self.my_allocated_balance.clone(),
+            their_balance:
+            self.their_out_of_game_balance.clone() -
+                self.their_allocated_balance.clone(),
             puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
         }
     }
@@ -622,24 +630,44 @@ impl ChannelHandler {
                 game_id: g.game_id.clone(),
                 last_referee_puzzle_hash: puzzle_hash,
                 referee_maker: Box::new(referee_maker),
+                my_contribution: g.my_contribution_this_game.clone(),
+                their_contribution: g.their_contribution_this_game.clone(),
             });
         }
 
         Ok(res)
     }
 
+    fn start_game_contributions(
+        &mut self,
+        start_info_list: &[GameStartInfo]
+    ) -> (Amount, Amount) {
+        let mut my_full_contribution = Amount::default();
+        let mut their_full_contribution = Amount::default();
+
+        for start in start_info_list.iter() {
+            my_full_contribution += start.my_contribution_this_game.clone();
+            their_full_contribution += start.their_contribution_this_game.clone();
+        }
+
+        (my_full_contribution, their_full_contribution)
+    }
+
     pub fn send_potato_start_game<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        my_contribution_this_game: Amount,
-        their_contribution_this_game: Amount,
         start_info_list: &[GameStartInfo],
     ) -> Result<PotatoSignatures, Error> {
+        let (my_full_contribution, their_full_contribution) =
+            self.start_game_contributions(start_info_list);
+
+        eprintln!("send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}");
+
         // We let them spend a state number 1 higher but nothing else changes.
         self.update_cache_for_potato_send(Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
             start_info_list.iter().map(|g| g.game_id.clone()).collect(),
-            my_contribution_this_game.clone(),
-            their_contribution_this_game.clone(),
+            my_full_contribution.clone(),
+            their_full_contribution.clone(),
         )));
 
         eprintln!("send: started with potato: {}", self.unroll.coin.started_with_potato);
@@ -650,6 +678,9 @@ impl ChannelHandler {
         let mut new_games = self.add_games(env, start_info_list)?;
         self.live_games.append(&mut new_games);
         eprintln!("after adding games: {} games", self.live_games.len());
+
+        self.my_allocated_balance += my_full_contribution;
+        self.their_allocated_balance += their_full_contribution;
 
         self.update_cached_unroll_state(env, self.current_state_number)
     }
@@ -662,6 +693,14 @@ impl ChannelHandler {
     ) -> Result<(), Error> {
         eprintln!("received_potato_start_game: our state is {}, unroll state is {}", self.current_state_number, self.unroll.coin.state_number);
         let mut new_games = self.add_games(env, start_info_list)?;
+
+        let (my_full_contribution, their_full_contribution) =
+            self.start_game_contributions(start_info_list);
+
+        eprintln!("recv potato start game: me {my_full_contribution:?} then {their_full_contribution:?}");
+
+        self.my_allocated_balance += my_full_contribution;
+        self.their_allocated_balance += their_full_contribution;
 
         // Make a list of all game outputs in order.
         let mut unroll_data_for_all_games =
@@ -823,6 +862,8 @@ impl ChannelHandler {
         // referee maker is removed and will be destroyed when we leave this
         // function.
         let live_game = self.live_games.remove(game_idx);
+        self.my_allocated_balance -= live_game.my_contribution.clone();
+        self.their_allocated_balance -= live_game.their_contribution.clone();
 
         self.current_state_number += 1;
         let amount = live_game.referee_maker.get_our_current_share();
@@ -855,6 +896,9 @@ impl ChannelHandler {
         game_id: &GameID,
     ) -> Result<(), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
+        let live_game = self.live_games.remove(game_idx);
+        self.my_allocated_balance -= live_game.my_contribution.clone();
+        self.their_allocated_balance -= live_game.their_contribution.clone();
 
         let unroll_data = self.compute_unroll_data_for_games(
             // Skip the removed game.
@@ -1447,8 +1491,6 @@ impl ChannelHandler {
         &self,
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<(usize, PuzzleHash, Amount, Amount), Error> {
-        let amount = self.my_out_of_game_balance.clone() +
-            self.their_out_of_game_balance.clone();
         let curried_unroll_puzzle =
             self.unroll.coin.make_curried_unroll_puzzle(
                 env,

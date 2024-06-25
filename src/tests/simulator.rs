@@ -1,8 +1,14 @@
+use std::rc::Rc;
+
 use clvmr::allocator::NodePtr;
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
-use clvm_tools_rs::compiler::comptypes::map_m;
+use clvm_tools_rs::classic::clvm_tools::stages::stage_0::{DefaultProgramRunner, TRunProgram};
+use clvm_tools_rs::compiler::clvm::{convert_from_clvm_rs, run};
+use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
+use clvm_tools_rs::compiler::comptypes::{CompilerOpts, map_m};
+use clvm_tools_rs::compiler::srcloc::Srcloc;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyNone, PyBytes, PyTuple};
@@ -84,7 +90,8 @@ fn extract_code(e: &str) -> Option<u32> {
     if let Some(p) = e.chars().position(|c| c == ':') {
         return Some(e[(p+2)..(e.len()-1)].parse::<u32>().expect("should parse"));
     }
-    todo!();
+
+    panic!("could not parse code");
 }
 
 fn to_spend_result(py: Python<'_>, spend_res: PyObject) -> PyResult<IncludeTransactionResult> {
@@ -276,7 +283,7 @@ impl Simulator {
             if let Some(parts) = coin_string.to_parts() {
                 parts
             } else {
-                todo!();
+                panic!("coin string didn't parse");
             };
 
         Python::with_gil(|py| -> PyResult<_> {
@@ -327,7 +334,7 @@ impl Simulator {
                     PyErr::from_value(
                         PyIndexError::new_err(
                             "some type error"
-                        ).value(py).clone().into()
+                        ).value(py).into()
                     )
                 );
             }
@@ -378,7 +385,7 @@ impl Simulator {
         source_coin: &CoinString,
         target_amt: Amount,
     ) -> Result<(CoinString, CoinString), Error> {
-        let (parent, _, amt) =
+        let (_parent, _, amt) =
             if let Some(p) = source_coin.to_parts() {
                 p
             } else {
@@ -500,11 +507,13 @@ impl Simulator {
 
 #[derive(Debug, Clone)]
 pub enum GameAction {
-    // Do a timeout
+    /// Do a timeout
     Timeout(usize),
-    // Move (player, clvm readable move)
+    /// Move (player, clvm readable move)
     Move(usize, NodePtr),
-    // Go on chain
+    /// Fake move:
+    FakeMove(usize, NodePtr, Vec<u8>),
+    /// Go on chain
     GoOnChain(usize)
 }
 
@@ -517,7 +526,7 @@ pub enum GameActionResult {
 #[derive(Debug, Clone)]
 pub enum OnChainState {
     OffChain([CoinString; 2]),
-    OnChain(CoinString),
+    OnChain(Vec<CoinString>),
 }
 
 pub struct SimulatorEnvironment<'a, R: Rng> {
@@ -671,6 +680,98 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         )))
     }
 
+    fn do_off_chain_move(&mut self, player: usize, readable: NodePtr) -> Result<GameActionResult, Error> {
+        let game_id = self.parties.game_id.clone();
+        let move_result =
+            self.parties.player(player).ch.send_potato_move(
+                &mut self.env,
+                &game_id,
+                &ReadableMove::from_nodeptr(readable)
+            )?;
+        // XXX allow verification of ui result and message.
+        let (ui_result, message) =
+            self.parties.player(player ^ 1).ch.received_potato_move(
+                &mut self.env,
+                &game_id,
+                &move_result
+            )?;
+
+        Ok(GameActionResult::MoveResult(ui_result, message))
+    }
+
+    fn do_unroll_spend_to_games(
+        &mut self,
+        player: usize,
+        player_state: usize,
+        unroll_coin: CoinString
+    ) -> Result<Vec<CoinString>, Error> {
+        let player_ch = &mut self.parties.player(player).ch;
+        let pre_unroll_data =
+            player_ch.get_unroll_coin_transaction(
+                &mut self.env,
+                player_state,
+            )?;
+
+        let srcloc = Srcloc::start("*unroll*");
+        let runner: Rc<dyn TRunProgram> = Rc::new(DefaultProgramRunner::new());
+        let opts: Rc<dyn CompilerOpts> = Rc::new(DefaultCompilerOpts::new("*unroll*"));
+
+        let program = convert_from_clvm_rs(
+            self.env.allocator.allocator(),
+            srcloc.clone(),
+            pre_unroll_data.transaction.puzzle.to_nodeptr()
+        ).into_gen()?;
+        let args = convert_from_clvm_rs(
+            self.env.allocator.allocator(),
+            srcloc.clone(),
+            pre_unroll_data.transaction.solution
+        ).into_gen()?;
+
+        let puzzle_result = run(
+            self.env.allocator.allocator(),
+            runner,
+            opts.prim_map(),
+            program,
+            args,
+            None,
+            None,
+        ).into_gen()?;
+        eprintln!("puzzle_result: {puzzle_result}");
+
+        let included = self.simulator.push_tx(
+            self.env.allocator,
+            &[SpecificTransactionBundle {
+                bundle: pre_unroll_data.transaction.clone(),
+                coin: unroll_coin
+            }]
+        ).into_gen()?;
+        if included.code != 1 {
+            return Err(Error::StrErr(format!("could not spend unroll coin for move: {included:?}")));
+        }
+
+        todo!();
+    }
+
+    fn do_on_chain_move(&mut self, player: usize, readable: NodePtr, game_coins: &[CoinString]) -> Result<GameActionResult, Error> {
+        let game_id = self.parties.game_id.clone();
+        let player_ch = &mut self.parties.player(player).ch;
+        let move_result =
+            player_ch.send_potato_move(
+                &mut self.env,
+                &game_id,
+                &ReadableMove::from_nodeptr(readable)
+            )?;
+        let player_state = player_ch.get_state_number();
+        let post_unroll_data =
+            player_ch.get_unroll_coin_transaction(
+                &mut self.env,
+                player_state,
+            )?;
+        eprintln!("post_unroll_data {post_unroll_data:?}");
+
+        todo!();
+    }
+
     pub fn perform_action(
         &mut self,
         action: &GameAction,
@@ -678,22 +779,15 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         eprintln!("play move {action:?}");
         match action {
             GameAction::Move(player, readable) => {
-                let game_id = self.parties.game_id.clone();
-                let move_result =
-                    self.parties.player(*player).ch.send_potato_move(
-                        &mut self.env,
-                        &game_id,
-                        &ReadableMove::from_nodeptr(*readable)
-                    )?;
-                // XXX allow verification of ui result and message.
-                let (ui_result, message) =
-                    self.parties.player(player ^ 1).ch.received_potato_move(
-                        &mut self.env,
-                        &game_id,
-                        &move_result
-                    )?;
-
-                Ok(GameActionResult::MoveResult(ui_result, message))
+                match &self.on_chain {
+                    OnChainState::OffChain(coins) => {
+                        self.do_off_chain_move(*player, *readable)
+                    }
+                    OnChainState::OnChain(games) => {
+                        // Multiple borrow.
+                        self.do_on_chain_move(*player, *readable, &games.clone())
+                    }
+                }
             }
             GameAction::GoOnChain(player) => {
                 let (state_number, unroll_target, my_amount, their_amount) =
@@ -716,6 +810,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                         }
                     };
 
+                let game_coins = self.do_unroll_spend_to_games(
+                    *player,
+                    state_number,
+                    unroll_coin
+                )?;
+
                 eprintln!(
                     "channel coin conditions {}",
                     disassemble(
@@ -734,7 +834,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     channel_coin_conditions
                 )?;
 
-                self.on_chain = OnChainState::OnChain(unroll_coin);
+                self.on_chain = OnChainState::OnChain(game_coins);
                 Ok(GameActionResult::MoveToOnChain)
             }
             _ => {
@@ -882,6 +982,8 @@ fn test_referee_can_slash_on_chain() {
         amount: amount.clone(),
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
+        my_contribution_this_game: Amount::new(50),
+        their_contribution_this_game: Amount::new(50),
         initial_validation_program,
         initial_state: init_state,
         initial_move: vec![],
@@ -1015,6 +1117,8 @@ fn test_referee_can_move_on_chain() {
         amount: amount.clone(),
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
+        my_contribution_this_game: Amount::new(50),
+        their_contribution_this_game: Amount::new(50),
         initial_validation_program: my_validation_program,
         initial_state: init_state,
         initial_move: vec![],

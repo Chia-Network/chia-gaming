@@ -18,6 +18,7 @@ use crate::common::types::{
 
 pub struct ChannelHandlerParty {
     pub ch: ChannelHandler,
+    #[cfg(test)]
     pub referee: Puzzle,
     pub ref_puzzle_hash: PuzzleHash,
     pub contribution: Amount,
@@ -261,12 +262,12 @@ fn test_smoke_can_start_game() {
     let timeout = Timeout::new(1337);
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
         &mut env,
-        our_share.clone(),
-        their_share.clone(),
         &[GameStartInfo {
             game_id: GameID::new(vec![0]),
             game_handler: GameHandler::TheirTurnHandler(game_handler),
             timeout: timeout.clone(),
+            my_contribution_this_game: our_share.clone(),
+            their_contribution_this_game: their_share.clone(),
             initial_validation_program,
             initial_state: initial_state,
             initial_move: Vec::new(),
