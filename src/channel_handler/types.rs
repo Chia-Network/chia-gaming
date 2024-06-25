@@ -61,11 +61,21 @@ pub struct GameStartInfo {
     pub amount: Amount,
     pub game_handler: GameHandler,
     pub timeout: Timeout,
+
+    pub my_contribution_this_game: Amount,
+    pub their_contribution_this_game: Amount,
+
     pub initial_validation_program: ValidationProgram,
     pub initial_state: NodePtr,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
+}
+
+impl GameStartInfo {
+    pub fn is_my_turn(&self) -> bool {
+        matches!(self.game_handler, GameHandler::MyTurnHandler(_))
+    }
 }
 
 #[derive(Clone)]
@@ -184,6 +194,8 @@ pub struct LiveGame {
     pub game_id: GameID,
     pub last_referee_puzzle_hash: PuzzleHash,
     pub referee_maker: Box<RefereeMaker>,
+    pub my_contribution: Amount,
+    pub their_contribution: Amount,
 }
 
 pub struct PotatoAcceptCachedData {
@@ -485,11 +497,16 @@ impl UnrollCoin {
         state: usize,
     ) -> Result<NodePtr, Error> {
         let conditions_hash = self.get_conditions_hash_for_unroll_puzzle()?;
-        let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
+        let shared_puzzle =
+            CurriedProgram {
+                program: env.unroll_metapuzzle.clone(),
+                args: clvm_curried_args!(aggregate_public_key.clone())
+            }.to_clvm(env.allocator).into_gen()?;
+        let shared_puzzle_hash = Node(shared_puzzle).sha256tree(env.allocator);
 
         CurriedProgram {
             program: env.unroll_puzzle.clone(),
-            args: clvm_curried_args!(shared_puzzle_hash.clone(), state, conditions_hash),
+            args: clvm_curried_args!(shared_puzzle_hash, state, conditions_hash),
         }
         .to_clvm(env.allocator)
             .into_gen()
@@ -500,11 +517,10 @@ impl UnrollCoin {
         env: &mut ChannelHandlerEnv<R>,
         aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
-        let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
         let unroll_inner_puzzle =
             CurriedProgram {
                 program: env.unroll_metapuzzle.clone(),
-                args: clvm_curried_args!(shared_puzzle_hash)
+                args: clvm_curried_args!(aggregate_public_key.clone()),
             }.to_clvm(env.allocator)
             .into_gen()?;
 

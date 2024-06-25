@@ -342,6 +342,7 @@ pub fn aggregate_public_keys(pk1: &PublicKey, pk2: &PublicKey) -> types::PublicK
     result
 }
 
+#[cfg(test)]
 pub fn aggregate_signatures(as1: &Aggsig, as2: &Aggsig) -> types::Aggsig {
     as1.aggregate(as2)
 }

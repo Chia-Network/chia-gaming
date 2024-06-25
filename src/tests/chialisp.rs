@@ -58,7 +58,6 @@ fn test_make_cards() {
         [Sha256Input::Bytes(b"test").hash()]
         .to_clvm(&mut allocator).expect("should build");
     let converted_source = convert_from_clvm_rs(allocator.allocator(), loc.clone(), source_data).expect("should work");
-    let runner = Rc::new(DefaultProgramRunner::new());
     let result = run(
         allocator.allocator(),
         Rc::new(DefaultProgramRunner::new()),

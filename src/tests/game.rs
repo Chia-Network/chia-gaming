@@ -60,13 +60,12 @@ pub fn new_channel_handler_game<R: Rng>(
 
     let (our_game_start, their_game_start) = game.symmetric_game_starts(
         &game.id,
-        &amount,
+        &contributions[0].clone(),
+        &contributions[1].clone(),
         &timeout
     );
     let start_potato = party.player(0).ch.send_potato_start_game(
         env,
-        contributions[0].clone(),
-        contributions[1].clone(),
         &[our_game_start]
     )?;
 

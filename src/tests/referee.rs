@@ -186,6 +186,8 @@ fn test_referee_smoke() {
         amount: amount.clone(),
         game_handler: debug_game.my_turn_handler,
         timeout: timeout.clone(),
+        my_contribution_this_game: Amount::new(50),
+        their_contribution_this_game: Amount::new(50),
         initial_validation_program,
         initial_state: init_state,
         initial_move: vec![],

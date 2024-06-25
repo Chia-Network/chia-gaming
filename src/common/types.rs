@@ -306,6 +306,10 @@ impl Amount {
     pub fn new(amt: u64) -> Amount {
         Amount(amt)
     }
+
+    pub fn half(&self) -> Amount {
+        Amount::new(self.0 / 2)
+    }
 }
 
 impl AddAssign for Amount {
