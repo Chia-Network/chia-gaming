@@ -447,7 +447,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
-    ) -> Result<(NodePtr, Aggsig, bool), Error> {
+    ) -> Result<BrokenOutCoinSpendInfo, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let state_channel_coin = self.state_channel_coin()?;
         let spend = self.state_channel_coin()?;
@@ -468,11 +468,11 @@ impl ChannelHandler {
             &env.agg_sig_me_additional_data,
         );
 
-        Ok((
-            channel_coin_spend.solution,
-            channel_coin_spend.signature,
-            full_signature.verify(&aggregate_public_key, &message_to_verify),
-        ))
+        if full_signature.verify(&aggregate_public_key, &message_to_verify) {
+            Ok(channel_coin_spend)
+        } else {
+            Err(Error::StrErr("failed to verify signature".to_string()))
+        }
     }
 
     pub fn received_potato_verify_signatures<R: Rng>(
@@ -507,18 +507,12 @@ impl ChannelHandler {
                 env,
                 &test_unroll,
             )?;
-        if !self
+        self
             .verify_channel_coin_from_peer_signatures(
                 env,
                 &signatures.my_channel_half_signature_peer,
                 channel_coin_spend.conditions,
-            )?
-            .2
-        {
-            return Err(Error::StrErr(
-                "bad channel verify".to_string(),
-            ));
-        }
+            )?;
 
         self.timeout = None;
         self.unroll = ChannelHandlerUnrollSpendInfo {
@@ -932,21 +926,15 @@ impl ChannelHandler {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
 
         assert!(!self.have_potato);
-        let (solution, signature, verified) = self.verify_channel_coin_from_peer_signatures(
+        let channel_spend = self.verify_channel_coin_from_peer_signatures(
             env,
             &their_channel_half_signature,
             conditions,
         )?;
 
-        if !verified {
-            return Err(Error::StrErr(
-                "received_potato_clean_shutdown full signature didn't verify".to_string(),
-            ));
-        }
-
         Ok(TransactionBundle {
-            solution,
-            signature,
+            solution: channel_spend.solution,
+            signature: channel_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
     }
