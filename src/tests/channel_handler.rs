@@ -7,13 +7,13 @@ use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs, HandshakeResult,
+    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs, HandshakeResult, ChannelCoinSpendInfo,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash,
-    Sha256tree, Timeout,
+    Sha256tree, Timeout, TransactionBundle,
 };
 
 pub struct ChannelHandlerParty {
@@ -43,9 +43,15 @@ impl ChannelHandlerParty {
     }
 }
 
+enum ChannelCoinInfo {
+    PostHandshake(HandshakeResult),
+    Running(Puzzle, ChannelCoinSpendInfo),
+}
+
 pub struct ChannelHandlerGame {
     pub game_id: GameID,
     pub players: [ChannelHandlerParty; 2],
+    pub handshake_result: Option<ChannelCoinInfo>
 }
 
 impl ChannelHandlerGame {
@@ -70,6 +76,7 @@ impl ChannelHandlerGame {
         ChannelHandlerGame {
             game_id,
             players: [player1, player2],
+            handshake_result: None,
         }
     }
 
@@ -123,8 +130,49 @@ impl ChannelHandlerGame {
         env: &mut ChannelHandlerEnv<R>,
         who: usize,
         aggsig: &Aggsig,
-    ) -> Result<HandshakeResult, Error> {
-        self.players[who].ch.finish_handshake(env, aggsig)
+    ) -> Result<(), Error> {
+        let handshake_result = self.players[who].ch.finish_handshake(env, aggsig)?;
+        match &self.handshake_result {
+            Some(ChannelCoinInfo::PostHandshake(h)) => {
+                let full_sig = h.half_aggsig.clone() +
+                    handshake_result.half_aggsig.clone();
+                self.handshake_result =
+                    Some(ChannelCoinInfo::Running(
+                        h.channel_puzzle_reveal.clone(),
+                        ChannelCoinSpendInfo {
+                            solution: handshake_result.solution,
+                            aggsig: full_sig
+                        }
+                    ));
+            }
+            Some(_) => { }
+            None => {
+                self.handshake_result =
+                    Some(ChannelCoinInfo::PostHandshake(handshake_result));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn update_channel_coin_after_receive(&mut self, spend: &ChannelCoinSpendInfo) -> Result<(), Error> {
+        if let Some(ChannelCoinInfo::Running(puzzle, _s)) = &self.handshake_result {
+            self.handshake_result = Some(ChannelCoinInfo::Running(puzzle.clone(), spend.clone()));
+            return Ok(());
+        }
+
+        Err(Error::StrErr("not fully running".to_string()))
+    }
+
+    pub fn get_channel_coin_spend(&self) -> Result<TransactionBundle, Error> {
+        if let Some(ChannelCoinInfo::Running(puzzle, spend)) = &self.handshake_result {
+            return Ok(TransactionBundle {
+                puzzle: puzzle.clone(),
+                solution: spend.solution.clone(),
+                signature: spend.aggsig.clone()
+            });
+        }
+
+        Err(Error::StrErr("get channel handler spend when not able to unroll".to_string()))
     }
 }
 
