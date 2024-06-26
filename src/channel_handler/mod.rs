@@ -14,7 +14,7 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo, CoinSpentAccept,
     CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
     LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData, PotatoMoveCachedData,
-    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, prepend_rem_conditions,
+    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, prepend_rem_conditions, UnrollCoin,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -196,13 +196,13 @@ impl ChannelHandler {
     pub fn create_conditions_and_signature_of_channel_coin<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
-        state_number: usize,
+        unroll_coin: &UnrollCoin,
     ) -> Result<(NodePtr, Aggsig), Error> {
         let unroll_coin_parent = self.state_channel_coin()?;
-        let unroll_puzzle = self.unroll.coin.make_curried_unroll_puzzle(
+        let unroll_puzzle = unroll_coin.make_curried_unroll_puzzle(
             env,
             &self.get_aggregate_unroll_public_key(),
-            state_number
+            unroll_coin.state_number
         )?;
         let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
         let create_conditions = vec![Node(
@@ -218,7 +218,7 @@ impl ChannelHandler {
         )];
         let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
         let create_conditions_with_rem =
-            prepend_rem_conditions(env, state_number, create_conditions_obj)?;
+            prepend_rem_conditions(env, unroll_coin.state_number, create_conditions_obj)?;
 
         let (_solution, signature) =
             unroll_coin_parent.get_solution_and_signature_from_conditions(
@@ -446,9 +446,6 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         state_number_for_spend: usize,
     ) -> Result<PotatoSignatures, Error> {
-        let (_channel_coin_conditions, channel_coin_signature) =
-            self.create_conditions_and_signature_of_channel_coin(env, state_number_for_spend)?;
-
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> = self.
             compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
@@ -470,7 +467,9 @@ impl ChannelHandler {
                 &new_game_coins_on_chain
             )
         )?;
-        self.unroll.coin.state_number = state_number_for_spend;
+
+        let (_channel_coin_conditions, channel_coin_signature) =
+            self.create_conditions_and_signature_of_channel_coin(env, &self.unroll.coin)?;
 
         Ok(PotatoSignatures {
             my_channel_half_signature_peer: channel_coin_signature,
@@ -528,22 +527,6 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<(), Error> {
-        // State coin section
-        let (conditions, _) =
-            self.create_conditions_and_signature_of_channel_coin(env, inputs.state_number)?;
-        if !self
-            .verify_channel_coin_from_peer_signatures(
-                env,
-                &signatures.my_channel_half_signature_peer,
-                conditions,
-            )?
-            .2
-        {
-            return Err(Error::StrErr(
-                "bad channel verify".to_string(),
-            ));
-        }
-
         // Unroll coin section.
         let mut test_unroll = self.unroll.coin.clone();
         test_unroll.update(
@@ -561,6 +544,25 @@ impl ChannelHandler {
         )? {
             return Err(Error::StrErr(
                 "bad unroll signature verify".to_string(),
+            ));
+        }
+
+        // State coin section
+        let (conditions, _) =
+            self.create_conditions_and_signature_of_channel_coin(
+                env,
+                &test_unroll,
+            )?;
+        if !self
+            .verify_channel_coin_from_peer_signatures(
+                env,
+                &signatures.my_channel_half_signature_peer,
+                conditions,
+            )?
+            .2
+        {
+            return Err(Error::StrErr(
+                "bad channel verify".to_string(),
             ));
         }
 
@@ -595,7 +597,6 @@ impl ChannelHandler {
         // We have the potato.
         self.have_potato = true;
         self.current_state_number += 1;
-        self.unroll.coin.state_number = self.current_state_number;
 
         self.update_cached_unroll_state(env, self.current_state_number)?;
 
@@ -734,7 +735,6 @@ impl ChannelHandler {
         // We have the potato.
         self.have_potato = true;
         self.current_state_number += 1;
-        self.unroll.coin.state_number = self.current_state_number;
 
         self.live_games.append(&mut new_games);
 
@@ -826,7 +826,6 @@ impl ChannelHandler {
         // We have the potato.
         self.have_potato = true;
         self.current_state_number += 1;
-        self.unroll.coin.state_number = self.current_state_number;
 
         // Needs to know their puzzle_hash_for_unroll so we can keep it to do
         // the unroll spend.
@@ -921,7 +920,6 @@ impl ChannelHandler {
         // We have the potato.
         self.have_potato = true;
         self.current_state_number += 1;
-        self.unroll.coin.state_number = self.current_state_number;
         self.update_cached_unroll_state(env, self.current_state_number)?;
 
         Ok(())

@@ -606,6 +606,7 @@ impl UnrollCoin {
             &unroll_aggregate_key,
             &conditions_hash.bytes(),
         );
+        self.state_number = inputs.state_number;
         self.outcome = Some(UnrollCoinOutcome {
             conditions: unroll_conditions,
             conditions_without_hash: unroll_conditions,
