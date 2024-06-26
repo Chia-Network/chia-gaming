@@ -14,7 +14,7 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo, CoinSpentAccept,
     CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
     LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData, PotatoMoveCachedData,
-    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, UnrollCoin
+    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, UnrollCoin, HandshakeResult,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -317,7 +317,7 @@ impl ChannelHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         their_initial_channel_hash_signature: &Aggsig,
-    ) -> Result<(), Error> {
+    ) -> Result<HandshakeResult, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let channel_coin_spend =
             self.create_conditions_and_signature_of_channel_coin(
@@ -339,7 +339,14 @@ impl ChannelHandler {
         }
 
         self.state_channel.spend.signature = combined_signature;
-        Ok(())
+        Ok(HandshakeResult {
+            channel_puzzle_reveal: puzzle_for_pk(
+                env.allocator,
+                &aggregate_public_key
+            )?,
+            half_aggsig: channel_coin_spend.signature,
+            solution: channel_coin_spend.solution,
+        })
     }
 
     fn compute_game_coin_unroll_data<'a>(
