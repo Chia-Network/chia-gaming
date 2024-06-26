@@ -225,6 +225,18 @@ pub struct ChannelCoinSpentResult {
     pub games_canceled: Vec<GameID>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ChannelCoinSpendInfo {
+    pub solution: NodePtr,
+    pub aggsig: Aggsig
+}
+
+pub struct HandshakeResult {
+    pub channel_puzzle_reveal: Puzzle,
+    pub solution: NodePtr,
+    pub half_aggsig: Aggsig
+}
+
 /// The channel handler can use these two items to produce a spend on chain.
 #[derive(Default)]
 pub struct ChannelHandlerUnrollSpendInfo {

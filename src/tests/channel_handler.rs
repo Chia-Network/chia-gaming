@@ -7,7 +7,7 @@ use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs,
+    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs, HandshakeResult,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk};
@@ -123,7 +123,7 @@ impl ChannelHandlerGame {
         env: &mut ChannelHandlerEnv<R>,
         who: usize,
         aggsig: &Aggsig,
-    ) -> Result<(), Error> {
+    ) -> Result<HandshakeResult, Error> {
         self.players[who].ch.finish_handshake(env, aggsig)
     }
 }
