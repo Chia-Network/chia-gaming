@@ -11,7 +11,7 @@ use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::standard_coin::{read_hex_puzzle, private_to_public_key, puzzle_hash_for_pk, standard_solution_partial, unsafe_sign_partial};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
-    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle
+    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle, BrokenOutCoinSpendInfo,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -368,7 +368,7 @@ impl ChannelCoin {
         private_key: &PrivateKey,
         conditions: NodePtr,
         aggregate_public_key: &PublicKey,
-    ) -> Result<(NodePtr, Aggsig), Error> {
+    ) -> Result<BrokenOutCoinSpendInfo, Error> {
         standard_solution_partial(
             env.allocator,
             &private_key,

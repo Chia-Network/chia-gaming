@@ -14,7 +14,7 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo, CoinSpentAccept,
     CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
     LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData, PotatoMoveCachedData,
-    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, prepend_rem_conditions, UnrollCoin,
+    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, prepend_rem_conditions, UnrollCoin
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -24,7 +24,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, CoinCondition, CoinID, CoinString, Error, GameID, IntoErr,
     Node, PrivateKey, PublicKey, Puzzle, PuzzleHash, RefereeID, Sha256tree,
-    SpecificTransactionBundle, SpendRewardResult, ToQuotedProgram, TransactionBundle,
+    SpecificTransactionBundle, SpendRewardResult, ToQuotedProgram, TransactionBundle, BrokenOutCoinSpendInfo,
 };
 use crate::referee::RefereeMaker;
 
@@ -197,7 +197,7 @@ impl ChannelHandler {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &UnrollCoin,
-    ) -> Result<(NodePtr, Aggsig), Error> {
+    ) -> Result<BrokenOutCoinSpendInfo, Error> {
         let unroll_coin_parent = self.state_channel_coin()?;
         let unroll_puzzle = unroll_coin.make_curried_unroll_puzzle(
             env,
@@ -220,15 +220,12 @@ impl ChannelHandler {
         let create_conditions_with_rem =
             prepend_rem_conditions(env, unroll_coin.state_number, create_conditions_obj)?;
 
-        let (_solution, signature) =
-            unroll_coin_parent.get_solution_and_signature_from_conditions(
-                env,
-                &self.private_keys.my_channel_coin_private_key,
-                create_conditions_with_rem,
-                &self.get_aggregate_channel_public_key()
-            )?;
-
-        Ok((create_conditions_with_rem, signature))
+        unroll_coin_parent.get_solution_and_signature_from_conditions(
+            env,
+            &self.private_keys.my_channel_coin_private_key,
+            create_conditions_with_rem,
+            &self.get_aggregate_channel_public_key()
+        )
     }
 
     fn get_aggregate_unroll_public_key(&self) -> PublicKey {
@@ -468,11 +465,11 @@ impl ChannelHandler {
             )
         )?;
 
-        let (_channel_coin_conditions, channel_coin_signature) =
+        let channel_coin_spend =
             self.create_conditions_and_signature_of_channel_coin(env, &self.unroll.coin)?;
 
         Ok(PotatoSignatures {
-            my_channel_half_signature_peer: channel_coin_signature,
+            my_channel_half_signature_peer: channel_coin_spend.signature,
             my_unroll_half_signature_peer: self.unroll.coin.get_unroll_coin_signature()?
         })
     }
@@ -497,7 +494,7 @@ impl ChannelHandler {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let state_channel_coin = self.state_channel_coin()?;
         let spend = self.state_channel_coin()?;
-        let (solution, signature) =
+        let channel_coin_spend =
             spend.get_solution_and_signature_from_conditions(
                 env,
                 &self.private_keys.my_channel_coin_private_key,
@@ -507,7 +504,7 @@ impl ChannelHandler {
 
         let quoted_conditions = conditions.to_quoted_program(env.allocator)?;
         let quoted_conditions_hash = quoted_conditions.sha256tree(env.allocator);
-        let full_signature = signature.aggregate(their_channel_half_signature);
+        let full_signature = channel_coin_spend.signature.aggregate(their_channel_half_signature);
         let message_to_verify = agg_sig_me_message(
             &quoted_conditions_hash.bytes(),
             &state_channel_coin.to_coin_id(),
@@ -515,8 +512,8 @@ impl ChannelHandler {
         );
 
         Ok((
-            solution,
-            signature,
+            channel_coin_spend.solution,
+            channel_coin_spend.signature,
             full_signature.verify(&aggregate_public_key, &message_to_verify),
         ))
     }
@@ -548,7 +545,7 @@ impl ChannelHandler {
         }
 
         // State coin section
-        let (conditions, _) =
+        let channel_coin_spend =
             self.create_conditions_and_signature_of_channel_coin(
                 env,
                 &test_unroll,
@@ -557,7 +554,7 @@ impl ChannelHandler {
             .verify_channel_coin_from_peer_signatures(
                 env,
                 &signatures.my_channel_half_signature_peer,
-                conditions,
+                channel_coin_spend.conditions,
             )?
             .2
         {
@@ -936,7 +933,7 @@ impl ChannelHandler {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin()?;
 
-        let (solution, signature) =
+        let channel_coin_spend =
             spend.get_solution_and_signature_from_conditions(
                 env,
                 &self.private_keys.my_channel_coin_private_key,
@@ -945,8 +942,8 @@ impl ChannelHandler {
             )?;
 
         Ok(TransactionBundle {
-            solution,
-            signature,
+            solution: channel_coin_spend.solution,
+            signature: channel_coin_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
     }
@@ -958,7 +955,7 @@ impl ChannelHandler {
     ) -> Result<(NodePtr, Aggsig), Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin()?;
-        let (solution, signature) =
+        let channel_coin_spend =
             spend.get_solution_and_signature_from_conditions(
                 env,
                 &self.private_keys.my_channel_coin_private_key,
@@ -966,7 +963,7 @@ impl ChannelHandler {
                 &aggregate_public_key
             )?;
 
-        Ok((solution, signature))
+        Ok((channel_coin_spend.solution, channel_coin_spend.signature))
     }
 
     pub fn received_potato_clean_shutdown<R: Rng>(
@@ -1460,7 +1457,7 @@ impl ChannelHandler {
                     &self.referee_private_key(),
                     conditions,
                 )?
-                .0,
+                .solution,
                 signature,
             });
         }

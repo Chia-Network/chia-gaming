@@ -24,7 +24,7 @@ use crate::common::constants::{
 use crate::common::types;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, Hash, IntoErr, Node, PrivateKey, Program,
-    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, ToQuotedProgram,
+    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, ToQuotedProgram, BrokenOutCoinSpendInfo,
 };
 
 #[cfg(test)]
@@ -336,12 +336,6 @@ pub fn private_to_public_key(private_key: &types::PrivateKey) -> types::PublicKe
     PublicKey::from_bls(sk.public_key())
 }
 
-pub fn aggregate_public_keys(pk1: &PublicKey, pk2: &PublicKey) -> types::PublicKey {
-    let mut result = pk1.clone();
-    result += pk2.clone();
-    result
-}
-
 #[cfg(test)]
 pub fn aggregate_signatures(as1: &Aggsig, as2: &Aggsig) -> types::Aggsig {
     as1.aggregate(as2)
@@ -387,12 +381,18 @@ pub fn standard_solution_unsafe(
     allocator: &mut AllocEncoder,
     private_key: &PrivateKey,
     conditions: NodePtr,
-) -> Result<(NodePtr, Aggsig), types::Error> {
+) -> Result<BrokenOutCoinSpendInfo, types::Error> {
     let quoted_conds = conditions.to_quoted_program(allocator)?;
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
-    let (_, sig) = signer(private_key, &quoted_conds_hash.bytes());
-    Ok((solution, sig))
+    let message = quoted_conds_hash.bytes().to_vec();
+    let (_, sig) = signer(private_key, &message);
+    Ok(BrokenOutCoinSpendInfo {
+        solution,
+        conditions,
+        message,
+        signature: sig
+    })
 }
 
 pub fn standard_solution_partial(
@@ -403,7 +403,7 @@ pub fn standard_solution_partial(
     aggregate_public_key: &PublicKey,
     agg_sig_me_additional_data: &Hash,
     partial: bool,
-) -> Result<(NodePtr, Aggsig), types::Error> {
+) -> Result<BrokenOutCoinSpendInfo, types::Error> {
     // Fairly certain i understand that because of the property that
     // (SK1 + SK2).sign((PK1 + PK2) || msg) ==
     //   (SK1.sign(PK1 || msg) + SK2.sign(PK2 || msg))
@@ -417,6 +417,11 @@ pub fn standard_solution_partial(
     let quoted_conds = conditions.to_quoted_program(allocator)?;
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
+    let coin_agg_sig_me_message = agg_sig_me_message(
+        &quoted_conds_hash.bytes(),
+        parent_coin,
+        agg_sig_me_additional_data,
+    );
 
     let mut aggregated_signature: Option<Aggsig> = None;
 
@@ -435,29 +440,36 @@ pub fn standard_solution_partial(
     let conds = CoinCondition::from_nodeptr(allocator, conditions);
     for cond in conds.iter() {
         match cond {
-            CoinCondition::CreateCoin(_ph) => {
-                let agg_sig_me_message = agg_sig_me_message(
-                    &quoted_conds_hash.bytes(),
-                    parent_coin,
-                    agg_sig_me_additional_data,
-                );
+            CoinCondition::CreateCoin(_) => {
                 add_signature(
                     &mut aggregated_signature,
                     if partial {
-                        partial_signer(private_key, &aggregate_public_key, &agg_sig_me_message)
+                        partial_signer(
+                            private_key,
+                            &aggregate_public_key,
+                            &coin_agg_sig_me_message
+                        )
                     } else {
-                        private_key.sign(&agg_sig_me_message)
+                        private_key.sign(&coin_agg_sig_me_message)
                     }
                 );
             }
             CoinCondition::AggSigMe(pubkey, data) => {
                 let mut message = pubkey.bytes().to_vec();
                 message.extend_from_slice(&data);
-                let agg_sig_me_message =
-                    agg_sig_me_message(&message, parent_coin, agg_sig_me_additional_data);
+                let extra_agg_sig_me_message =
+                    agg_sig_me_message(
+                        &message,
+                        parent_coin,
+                        agg_sig_me_additional_data
+                    );
                 add_signature(
                     &mut aggregated_signature,
-                    partial_signer(private_key, &pubkey, &agg_sig_me_message),
+                    partial_signer(
+                        private_key,
+                        &pubkey,
+                        &extra_agg_sig_me_message
+                    ),
                 );
             }
             CoinCondition::AggSigUnsafe(pubkey, data) => {
@@ -470,8 +482,13 @@ pub fn standard_solution_partial(
             _ => {}
         }
     }
-    if let Some(sig) = aggregated_signature {
-        Ok((solution, sig))
+    if let Some(signature) = aggregated_signature {
+        Ok(BrokenOutCoinSpendInfo {
+            solution,
+            signature,
+            conditions,
+            message: coin_agg_sig_me_message
+        })
     } else {
         Err(types::Error::StrErr(
             "Failed to get a signature from the spend".to_string(),

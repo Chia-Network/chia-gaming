@@ -856,3 +856,11 @@ pub fn atom_from_clvm<'a>(allocator: &'a mut AllocEncoder, n: NodePtr) -> Option
         None
     }
 }
+
+/// Maximum information about a coin spend.  Everything one might need downstream.
+pub struct BrokenOutCoinSpendInfo {
+    pub solution: NodePtr,
+    pub conditions: NodePtr,
+    pub message: Vec<u8>,
+    pub signature: Aggsig,
+}

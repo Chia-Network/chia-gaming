@@ -125,7 +125,7 @@ impl Simulator {
         }, target_coins)?;
         let conditions = conditions_vec.to_clvm(allocator).into_gen()?;
 
-        let (solution, signature1) = standard_solution_partial(
+        let coin_spend_info = standard_solution_partial(
             allocator,
             &identity.synthetic_private_key,
             &coin.to_coin_id(),
@@ -144,14 +144,14 @@ impl Simulator {
         );
         eprintln!("our message {agg_sig_me_message:?}");
         let signature2 = identity.synthetic_private_key.sign(&agg_sig_me_message);
-        assert_eq!(signature1, signature2);
+        assert_eq!(coin_spend_info.signature, signature2);
 
         let specific = SpecificTransactionBundle {
             coin: coin.clone(),
             bundle: TransactionBundle {
                 puzzle: identity.puzzle.clone(),
-                solution,
-                signature: signature1,
+                solution: coin_spend_info.solution,
+                signature: coin_spend_info.signature,
             }
         };
 

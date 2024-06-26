@@ -181,27 +181,27 @@ fn test_standard_puzzle_solution_maker() {
         50,
         (synthetic_public_key, (quoted_conditions_hash.clone(), ())),
     );
-    let (solution, signature) =
+    let spend_info =
         standard_solution_unsafe(
             &mut allocator,
             &mut &private_key,
             conditions
         ).expect("should work");
-    let expected_full_conditions = (expected_added_condition, Node(conditions))
+    let expected_full_conditions = (expected_added_condition, Node(spend_info.conditions))
         .to_clvm(&mut allocator)
         .expect("should work");
     eprintln!(
         "solution {}",
-        disassemble(allocator.allocator(), solution, None)
+        disassemble(allocator.allocator(), spend_info.solution, None)
     );
     let runner = DefaultProgramRunner::new();
     let puzzle_node = puzzle.to_clvm(&mut allocator).expect("should convert");
     let res = runner
-        .run_program(allocator.allocator(), puzzle_node, solution, None)
+        .run_program(allocator.allocator(), puzzle_node, spend_info.solution, None)
         .expect("should run");
     assert_eq!(
         disassemble(allocator.allocator(), res.1, None),
         disassemble(allocator.allocator(), expected_full_conditions, None)
     );
-    assert!(signature.verify(&public_key, &quoted_conditions_hash.bytes()));
+    assert!(spend_info.signature.verify(&public_key, &quoted_conditions_hash.bytes()));
 }

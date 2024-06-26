@@ -97,3 +97,18 @@ fn test_play_calpoker_happy_path() {
 // cards
 //
 // Test that we can't move off chain when validation puzzle hash is nil.
+//
+// Move without receive
+//
+// Also have to test forcing an out of date version on chain which requires some behavior which the code can't be prompted to do
+//
+// About game creation:
+//
+// give game parameters to factory.
+// start game info: parameters should be included here as well
+//
+// factory produces initial move, initial share etc.
+//
+// Pass parameters over the wire instead of outputs to game factory.
+//
+// Pass game handler its own mod hash.
