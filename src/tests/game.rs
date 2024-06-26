@@ -55,7 +55,6 @@ pub fn new_channel_handler_game<R: Rng>(
         )
         .expect("should finish handshake");
 
-    let amount = contributions[0].clone() + contributions[1].clone();
     let timeout = Timeout::new(10);
 
     let (our_game_start, their_game_start) = game.symmetric_game_starts(
