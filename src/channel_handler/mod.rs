@@ -295,44 +295,21 @@ impl ChannelHandler {
         let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
         eprintln!("aggregate_public_key {aggregate_public_key:?}");
         eprintln!("shared_puzzle_hash {shared_puzzle_hash:?}");
-        let curried_unroll_puzzle = self.unroll.coin.make_curried_unroll_puzzle(
-            env,
-            &self.get_aggregate_unroll_public_key(),
-            self.current_state_number,
-        )?;
-        let curried_unroll_puzzle_hash = Node(curried_unroll_puzzle).sha256tree(env.allocator);
-        let create_unroll_coin_conditions = (
-            (
-                CREATE_COIN,
-                (
-                    curried_unroll_puzzle_hash,
-                    (self.state_channel.amount.clone(), ()),
-                ),
-            ),
-            (),
-        )
-            .to_clvm(env.allocator)
-            .into_gen()?;
-        let quoted_create_unroll_coin_conditions =
-            create_unroll_coin_conditions.to_quoted_program(env.allocator)?;
-        let create_unroll_coin_conditions_hash =
-            quoted_create_unroll_coin_conditions.sha256tree(env.allocator);
-
-        let signature = partial_signer(
-            &self.private_keys.my_channel_coin_private_key,
-            &aggregate_public_key,
-            &create_unroll_coin_conditions_hash.bytes(),
-        );
+        let channel_coin_spend =
+            self.create_conditions_and_signature_of_channel_coin(
+                env,
+                &self.unroll.coin
+            )?;
 
         self.state_channel.spend = TransactionBundle {
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
-            solution: quoted_create_unroll_coin_conditions.to_nodeptr(),
-            signature: signature.clone(),
+            solution: channel_coin_spend.solution,
+            signature: channel_coin_spend.signature.clone(),
         };
 
         Ok(ChannelHandlerInitiationResult {
             channel_puzzle_hash_up: shared_puzzle_hash,
-            my_initial_channel_half_signature_peer: signature,
+            my_initial_channel_half_signature_peer: channel_coin_spend.signature,
         })
     }
 
@@ -342,20 +319,19 @@ impl ChannelHandler {
         their_initial_channel_hash_signature: &Aggsig,
     ) -> Result<(), Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
-        let hash_of_initial_channel_coin_solution =
-            Node(self.state_channel.spend.solution).sha256tree(env.allocator);
+        let channel_coin_spend =
+            self.create_conditions_and_signature_of_channel_coin(
+                env,
+                &self.unroll.coin
+            )?;
 
-        eprintln!(
-            "our {} sig {:?}",
-            self.unroll.coin.started_with_potato, self.state_channel.spend.signature
-        );
         eprintln!("their sig {:?}", their_initial_channel_hash_signature);
-        let combined_signature = self.state_channel.spend.signature.clone()
+        let combined_signature = channel_coin_spend.signature.clone()
             + their_initial_channel_hash_signature.clone();
 
         if !combined_signature.verify(
             &aggregate_public_key,
-            &hash_of_initial_channel_coin_solution.bytes(),
+            &channel_coin_spend.message
         ) {
             return Err(Error::StrErr(
                 "finish_handshake: Signature verify failed for other party's signature".to_string(),
