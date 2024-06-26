@@ -14,7 +14,7 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo, CoinSpentAccept,
     CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
     LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData, PotatoMoveCachedData,
-    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, prepend_rem_conditions, UnrollCoin
+    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, UnrollCoin
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -199,32 +199,13 @@ impl ChannelHandler {
         unroll_coin: &UnrollCoin,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         let unroll_coin_parent = self.state_channel_coin()?;
-        let unroll_puzzle = unroll_coin.make_curried_unroll_puzzle(
-            env,
-            &self.get_aggregate_unroll_public_key(),
-            unroll_coin.state_number
-        )?;
-        let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
-        let create_conditions = vec![Node(
-            (
-                CREATE_COIN,
-                (
-                    unroll_puzzle_hash.clone(),
-                    (self.state_channel.amount.clone(), ()),
-                ),
-            )
-                .to_clvm(env.allocator)
-                .into_gen()?,
-        )];
-        let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
-        let create_conditions_with_rem =
-            prepend_rem_conditions(env, unroll_coin.state_number, create_conditions_obj)?;
-
-        unroll_coin_parent.get_solution_and_signature_from_conditions(
+        unroll_coin_parent.get_solution_and_signature(
             env,
             &self.private_keys.my_channel_coin_private_key,
-            create_conditions_with_rem,
-            &self.get_aggregate_channel_public_key()
+            &self.get_aggregate_channel_public_key(),
+            &self.get_aggregate_unroll_public_key(),
+            &self.state_channel.amount,
+            unroll_coin
         )
     }
 
@@ -498,8 +479,8 @@ impl ChannelHandler {
             spend.get_solution_and_signature_from_conditions(
                 env,
                 &self.private_keys.my_channel_coin_private_key,
+                &aggregate_public_key,
                 conditions,
-                &aggregate_public_key
             )?;
 
         let quoted_conditions = conditions.to_quoted_program(env.allocator)?;
@@ -937,8 +918,8 @@ impl ChannelHandler {
             spend.get_solution_and_signature_from_conditions(
                 env,
                 &self.private_keys.my_channel_coin_private_key,
+                &aggregate_public_key,
                 conditions,
-                &aggregate_public_key
             )?;
 
         Ok(TransactionBundle {
@@ -959,8 +940,8 @@ impl ChannelHandler {
             spend.get_solution_and_signature_from_conditions(
                 env,
                 &self.private_keys.my_channel_coin_private_key,
+                &aggregate_public_key,
                 conditions,
-                &aggregate_public_key
             )?;
 
         Ok((channel_coin_spend.solution, channel_coin_spend.signature))

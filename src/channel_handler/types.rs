@@ -366,8 +366,8 @@ impl ChannelCoin {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         private_key: &PrivateKey,
-        conditions: NodePtr,
         aggregate_public_key: &PublicKey,
+        conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         standard_solution_partial(
             env.allocator,
@@ -377,6 +377,43 @@ impl ChannelCoin {
             &aggregate_public_key,
             &env.agg_sig_me_additional_data,
             true
+        )
+    }
+
+    pub fn get_solution_and_signature<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        private_key: &PrivateKey,
+        aggregate_channel_public_key: &PublicKey,
+        aggregate_unroll_public_key: &PublicKey,
+        amount: &Amount,
+        unroll_coin: &UnrollCoin,
+    ) -> Result<BrokenOutCoinSpendInfo, Error> {
+        let unroll_puzzle = unroll_coin.make_curried_unroll_puzzle(
+            env,
+            aggregate_unroll_public_key,
+            unroll_coin.state_number
+        )?;
+        let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
+        let create_conditions = vec![Node(
+            (
+                CREATE_COIN,
+                (
+                    unroll_puzzle_hash.clone(),
+                    (amount.clone(), ()),
+                ),
+            )
+                .to_clvm(env.allocator)
+                .into_gen()?,
+        )];
+        let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
+        let create_conditions_with_rem =
+            prepend_rem_conditions(env, unroll_coin.state_number, create_conditions_obj)?;
+        self.get_solution_and_signature_from_conditions(
+            env,
+            private_key,
+            aggregate_channel_public_key,
+            create_conditions_with_rem
         )
     }
 }
