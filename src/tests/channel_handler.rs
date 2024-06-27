@@ -7,13 +7,13 @@ use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs, HandshakeResult, ChannelCoinSpendInfo,
+    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs, ChannelCoinSpendInfo, HandshakeResult,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk};
+use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, get_standard_coin_puzzle};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash,
-    Sha256tree, Timeout, TransactionBundle,
+    Sha256tree, Timeout,
 };
 
 pub struct ChannelHandlerParty {
@@ -43,15 +43,10 @@ impl ChannelHandlerParty {
     }
 }
 
-enum ChannelCoinInfo {
-    PostHandshake(HandshakeResult),
-    Running(Puzzle, ChannelCoinSpendInfo),
-}
-
 pub struct ChannelHandlerGame {
     pub game_id: GameID,
     pub players: [ChannelHandlerParty; 2],
-    pub handshake_result: Option<ChannelCoinInfo>
+    pub handshake_result: Option<HandshakeResult>,
 }
 
 impl ChannelHandlerGame {
@@ -132,44 +127,22 @@ impl ChannelHandlerGame {
         aggsig: &Aggsig,
     ) -> Result<(), Error> {
         let handshake_result = self.players[who].ch.finish_handshake(env, aggsig)?;
-        match &self.handshake_result {
-            Some(ChannelCoinInfo::PostHandshake(h)) => {
-                let full_sig = h.half_aggsig.clone() +
-                    handshake_result.half_aggsig.clone();
-                self.handshake_result =
-                    Some(ChannelCoinInfo::Running(
-                        h.channel_puzzle_reveal.clone(),
-                        ChannelCoinSpendInfo {
-                            solution: handshake_result.solution,
-                            aggsig: full_sig
-                        }
-                    ));
-            }
-            Some(_) => { }
-            None => {
-                self.handshake_result =
-                    Some(ChannelCoinInfo::PostHandshake(handshake_result));
-            }
-        }
+        self.handshake_result = Some(handshake_result);
         Ok(())
     }
 
     pub fn update_channel_coin_after_receive(&mut self, spend: &ChannelCoinSpendInfo) -> Result<(), Error> {
-        if let Some(ChannelCoinInfo::Running(puzzle, _s)) = &self.handshake_result {
-            self.handshake_result = Some(ChannelCoinInfo::Running(puzzle.clone(), spend.clone()));
+        if let Some(r) = &mut self.handshake_result {
+            r.spend = spend.clone();
             return Ok(());
         }
 
         Err(Error::StrErr("not fully running".to_string()))
     }
 
-    pub fn get_channel_coin_spend(&self) -> Result<TransactionBundle, Error> {
-        if let Some(ChannelCoinInfo::Running(puzzle, spend)) = &self.handshake_result {
-            return Ok(TransactionBundle {
-                puzzle: puzzle.clone(),
-                solution: spend.solution.clone(),
-                signature: spend.aggsig.clone()
-            });
+    pub fn get_channel_coin_spend(&self) -> Result<HandshakeResult, Error> {
+        if let Some(r) = &self.handshake_result {
+            return Ok(r.clone());
         }
 
         Err(Error::StrErr("get channel handler spend when not able to unroll".to_string()))
@@ -184,6 +157,7 @@ fn test_smoke_can_initiate_channel_handler<'a>() {
     let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
     // XXX
     let ref_puz = Puzzle::from_nodeptr(allocator.allocator().null());
+    let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
@@ -192,6 +166,7 @@ fn test_smoke_can_initiate_channel_handler<'a>() {
         referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
         unroll_metapuzzle,
         unroll_puzzle,
+        standard_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
     };
     let game_id_data: Hash = env.rng.gen();
@@ -254,6 +229,7 @@ fn test_smoke_can_start_game() {
     let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
     // XXX
     let ref_coin_puz = Puzzle::from_nodeptr(allocator.allocator().null());
+    let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
@@ -262,6 +238,7 @@ fn test_smoke_can_start_game() {
         referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
         unroll_metapuzzle,
         unroll_puzzle,
+        standard_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
     };
     let game_id_data: Hash = env.rng.gen();
@@ -350,6 +327,7 @@ fn test_unroll_can_verify_own_signature() {
     let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
     let ref_coin_puz = Puzzle::from_nodeptr(allocator.allocator().null());
     let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
+    let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
@@ -357,6 +335,7 @@ fn test_unroll_can_verify_own_signature() {
         referee_coin_puzzle_hash: ref_coin_ph.clone(),
         unroll_metapuzzle,
         unroll_puzzle,
+        standard_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
     };
 

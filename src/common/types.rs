@@ -469,10 +469,6 @@ impl ToClvm<NodePtr> for PuzzleHash {
     }
 }
 
-/// Referee ID
-#[derive(Default, Clone)]
-pub struct RefereeID(usize);
-
 /// Error type
 #[derive(Debug)]
 pub enum Error {

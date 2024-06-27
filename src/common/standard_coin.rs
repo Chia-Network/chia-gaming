@@ -341,10 +341,6 @@ pub fn aggregate_signatures(as1: &Aggsig, as2: &Aggsig) -> types::Aggsig {
     as1.aggregate(as2)
 }
 
-pub fn unsafe_sign<Msg: AsRef<[u8]>>(sk: &PrivateKey, msg: Msg) -> Aggsig {
-    sk.sign(msg)
-}
-
 pub fn unsafe_sign_partial<Msg: AsRef<[u8]>>(sk: &PrivateKey, pk: &PublicKey, msg: Msg) -> Aggsig {
     let mut aug_msg = pk.bytes().to_vec();
     aug_msg.extend_from_slice(msg.as_ref());

@@ -19,8 +19,8 @@ use rand_chacha::ChaCha8Rng;
 
 use indoc::indoc;
 
-use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN, REM};
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, read_hex_puzzle, solution_for_conditions, sign_agg_sig_me};
+use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, read_hex_puzzle, solution_for_conditions, sign_agg_sig_me, puzzle_hash_for_pk, private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, get_standard_coin_puzzle};
 use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID, IntoErr};
 
 use crate::channel_handler::game::Game;
@@ -501,7 +501,7 @@ impl Simulator {
             return Err(Error::StrErr(format!("failed to spend: {included:?}")));
         }
 
-        Ok(CoinString::from_parts(&coins[coins.len()-1].to_coin_id(), &owner.puzzle_hash, &amount))
+        Ok(CoinString::from_parts(&coins[coins.len()-1].to_coin_id(), target_ph, &amount))
     }
 }
 
@@ -525,7 +525,7 @@ pub enum GameActionResult {
 
 #[derive(Debug, Clone)]
 pub enum OnChainState {
-    OffChain([CoinString; 2]),
+    OffChain(CoinString),
     OnChain(Vec<CoinString>),
 }
 
@@ -567,6 +567,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             allocator,
             "resources/unroll_meta_puzzle.hex"
         ).expect("should read");
+        let standard_puzzle = get_standard_coin_puzzle(allocator).expect("should load");
         let mut env = ChannelHandlerEnv {
             allocator: allocator,
             rng: rng,
@@ -574,11 +575,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             referee_coin_puzzle_hash,
             unroll_metapuzzle,
             unroll_puzzle,
+            standard_puzzle,
             agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
         };
 
         let simulator = Simulator::new();
-        let (parties, coins) = new_channel_handler_game(
+        let (mut parties, coin) = new_channel_handler_game(
             &simulator,
             &mut env,
             &game,
@@ -590,93 +592,87 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             env,
             identities,
             parties,
-            on_chain: OnChainState::OffChain(coins),
+            on_chain: OnChainState::OffChain(coin),
             simulator
         })
     }
 
     // Create a channel coin from the users' input coins giving the new CoinString
     // and the state number.  The result is the coin string of the new coin and
-    fn create_and_spend_channel_coin(
+    // conditions to use with the channel handler interface.
+    fn spend_channel_coin(
         &mut self,
-        coins: &[CoinString; 2],
-        state_number: usize,
+        state_channel: CoinString,
         unroll_coin_puzzle_hash: &PuzzleHash,
-        my_amount: Amount,
-        their_amount: Amount,
     ) -> Result<(NodePtr, CoinString), Error> {
-        // Spend coin1 to person 0 creating their_amount and change (u1).
-        let (u1, _) = self.simulator.transfer_coin_amount(
+        let cc_spend = self.parties.get_channel_coin_spend()?;
+        let cc_ph = cc_spend.channel_puzzle_reveal.sha256tree(self.env.allocator);
+        eprintln!("puzzle hash to spend state channel coin: {cc_ph:?}");
+        eprintln!("spend conditions {}",
+                  disassemble(self.env.allocator.allocator(), cc_spend.spend.conditions, None));
+
+        let private_key_1 =
+            self.parties.player(0).ch.channel_private_key();
+        let private_key_2 =
+            self.parties.player(1).ch.channel_private_key();
+        let aggregate_public_key1 = self.parties.player(0).ch.get_aggregate_channel_public_key();
+        let aggregate_public_key2 = self.parties.player(1).ch.get_aggregate_channel_public_key();
+        assert_eq!(aggregate_public_key1, aggregate_public_key2);
+
+        eprintln!("parent coin {:?}", state_channel.to_parts());
+        let spend1 = standard_solution_partial(
             self.env.allocator,
-            &self.identities[0],
-            &self.identities[1],
-            &coins[1],
-            their_amount.clone()
-        )?;
-        self.simulator.farm_block(&self.identities[0].puzzle_hash);
-
-        // Spend coin0 to person 0 creating my_amount and change (u0).
-        let (u2, _) = self.simulator.transfer_coin_amount(
-            self.env.allocator,
-            &self.identities[0],
-            &self.identities[0],
-            &coins[0],
-            my_amount.clone()
-        )?;
-        self.simulator.farm_block(&self.identities[0].puzzle_hash);
-
-        // Combine u1 and u0 into a single person 0 coin (state_channel).
-        let state_channel = self.simulator.combine_coins(
-            self.env.allocator,
-            &self.identities[0],
-            &self.identities[0].puzzle_hash,
-            &[u1, u2],
-        )?;
-        self.simulator.farm_block(&self.identities[0].puzzle_hash);
-
-        let target_amount = my_amount.clone() + their_amount.clone();
-        let target_conditions =
-            ((REM, (state_number, ())),
-             ((CREATE_COIN,
-               (unroll_coin_puzzle_hash.clone(),
-                (target_amount.clone(), ())
-               )
-             ), ()
-             )
-            ).to_clvm(self.env.allocator).into_gen()?;
-
-        let quoted_conds = target_conditions.to_quoted_program(&mut self.env.allocator)?;
-        let quoted_conds_hash = quoted_conds.sha256tree(&mut self.env.allocator);
-        let signature = sign_agg_sig_me(
-            &self.identities[0].synthetic_private_key,
-            &quoted_conds_hash.bytes(),
+            &private_key_1,
             &state_channel.to_coin_id(),
-            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA)
-        );
-        let state_channel_solution = solution_for_conditions(
-            self.env.allocator,
-            target_conditions
+            cc_spend.spend.conditions,
+            &aggregate_public_key1,
+            &self.env.agg_sig_me_additional_data,
+            true
         )?;
+        eprintln!("party1 predicted sig {:?}", spend1.signature);
+        let spend2 = standard_solution_partial(
+            self.env.allocator,
+            &private_key_2,
+            &state_channel.to_coin_id(),
+            cc_spend.spend.conditions,
+            &aggregate_public_key1,
+            &self.env.agg_sig_me_additional_data,
+            true
+        )?;
+        eprintln!("party2 predicted sig {:?}", spend2.signature);
+        let signature = spend1.signature.clone() + spend2.signature.clone();
+        let predicted_puzzle = puzzle_for_synthetic_public_key(
+            self.env.allocator,
+            &self.env.standard_puzzle,
+            &aggregate_public_key1,
+        )?;
+
+        assert_eq!(cc_ph, predicted_puzzle.sha256tree(self.env.allocator));
+        assert_eq!(signature, cc_spend.spend.aggsig);
+
+        let spend_of_channel_coin = SpecificTransactionBundle {
+            coin: state_channel.clone(),
+            bundle: TransactionBundle {
+                puzzle: cc_spend.channel_puzzle_reveal.clone(),
+                solution: cc_spend.spend.solution,
+                signature,
+            }
+        };
 
         let included = self.simulator.push_tx(
             self.env.allocator,
-            &[SpecificTransactionBundle {
-                bundle: TransactionBundle {
-                    puzzle: self.identities[0].puzzle.clone(),
-                    solution: state_channel_solution,
-                    signature,
-                },
-                coin: state_channel.clone()
-            }]
+            &[spend_of_channel_coin]
         ).into_gen()?;
         if included.code != 1 {
-            return Err(Error::StrErr("failed to create combined coin with unroll target".to_string()));
+            return Err(Error::StrErr(format!("failed to spend channel coin {included:?}")));
         }
 
-        Ok((target_conditions, CoinString::from_parts(
+        self.simulator.farm_block(&self.identities[0].puzzle_hash);
+
+        Ok((cc_spend.spend.conditions, CoinString::from_parts(
             &state_channel.to_coin_id(),
-            &unroll_coin_puzzle_hash,
-            &target_amount
+            &cc_ph,
+            &cc_spend.amount
         )))
     }
 
@@ -689,12 +685,13 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 &ReadableMove::from_nodeptr(readable)
             )?;
         // XXX allow verification of ui result and message.
-        let (ui_result, message) =
+        let (spend, ui_result, message) =
             self.parties.player(player ^ 1).ch.received_potato_move(
                 &mut self.env,
                 &game_id,
                 &move_result
             )?;
+        self.parties.update_channel_coin_after_receive(&spend)?;
 
         Ok(GameActionResult::MoveResult(ui_result, message))
     }
@@ -794,22 +791,31 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     self.parties.player(*player).ch.get_unroll_target(
                     &mut self.env,
                 )?;
-                let (channel_coin_conditions, unroll_coin) =
+                let state_channel_coin =
                     match self.on_chain.clone() {
-                        OnChainState::OffChain(coins) => {
-                            self.create_and_spend_channel_coin(
-                                &coins,
-                                state_number,
-                                &unroll_target,
-                                my_amount,
-                                their_amount,
-                            )?
+                        OnChainState::OffChain(coin) => {
+                            coin.clone()
                         }
                         _ => {
                             return Err(Error::StrErr("go on chain when on chain".to_string()));
                         }
                     };
 
+                let aggregate_public_key =
+                    private_to_public_key(&self.parties.player(0).ch.channel_private_key()) +
+                    private_to_public_key(&self.parties.player(1).ch.channel_private_key());
+                let spend_to_self_conditions = [
+                    (CREATE_COIN, (self.identities[0].puzzle_hash.clone(), (1, ())))
+                ].to_clvm(self.env.allocator).into_gen()?;
+
+                eprintln!(
+                    "going on chain: aggregate public key is: {aggregate_public_key:?}",
+                );
+                let (channel_coin_conditions, unroll_coin) =
+                    self.spend_channel_coin(
+                        state_channel_coin,
+                        &unroll_target,
+                    )?;
                 let game_coins = self.do_unroll_spend_to_games(
                     *player,
                     state_number,

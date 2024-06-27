@@ -8,7 +8,7 @@ use rand::prelude::*;
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::common::constants::{CREATE_COIN, REM};
-use crate::common::standard_coin::{read_hex_puzzle, private_to_public_key, puzzle_hash_for_pk, standard_solution_partial, unsafe_sign_partial};
+use crate::common::standard_coin::{read_hex_puzzle, private_to_public_key, puzzle_hash_for_pk, standard_solution_partial, unsafe_sign_partial, get_standard_coin_puzzle};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
     PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle, BrokenOutCoinSpendInfo,
@@ -165,6 +165,8 @@ pub struct ChannelHandlerEnv<'a, R: Rng> {
     pub referee_coin_puzzle: Puzzle,
     pub referee_coin_puzzle_hash: PuzzleHash,
 
+    pub standard_puzzle: Puzzle,
+
     pub agg_sig_me_additional_data: Hash,
 }
 
@@ -175,6 +177,7 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
         unroll_metapuzzle: Puzzle,
         unroll_puzzle: Puzzle,
         referee_coin_puzzle: Puzzle,
+        standard_puzzle: Puzzle,
         agg_sig_me_additional_data: Hash,
     ) -> ChannelHandlerEnv<'a, R> {
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
@@ -185,6 +188,7 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
             referee_coin_puzzle_hash,
             unroll_metapuzzle,
             unroll_puzzle,
+            standard_puzzle,
             agg_sig_me_additional_data,
         }
     }
@@ -228,13 +232,15 @@ pub struct ChannelCoinSpentResult {
 #[derive(Clone, Debug)]
 pub struct ChannelCoinSpendInfo {
     pub solution: NodePtr,
+    pub conditions: NodePtr,
     pub aggsig: Aggsig
 }
 
+#[derive(Clone)]
 pub struct HandshakeResult {
     pub channel_puzzle_reveal: Puzzle,
-    pub solution: NodePtr,
-    pub half_aggsig: Aggsig
+    pub amount: Amount,
+    pub spend: ChannelCoinSpendInfo,
 }
 
 /// The channel handler can use these two items to produce a spend on chain.
@@ -381,15 +387,23 @@ impl ChannelCoin {
         aggregate_public_key: &PublicKey,
         conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        standard_solution_partial(
-            env.allocator,
-            &private_key,
-            &self.state_channel_coin.to_coin_id(),
-            conditions,
-            &aggregate_public_key,
-            &env.agg_sig_me_additional_data,
-            true
-        )
+        eprintln!(
+            "STATE CONDITONS: {}",
+            disassemble(env.allocator.allocator(), conditions, None)
+        );
+        eprintln!("PARENT COIN {:?}", self.state_channel_coin.to_parts());
+        let spend =
+            standard_solution_partial(
+                env.allocator,
+                &private_key,
+                &self.state_channel_coin.to_coin_id(),
+                conditions,
+                &aggregate_public_key,
+                &env.agg_sig_me_additional_data,
+                true
+            )?;
+        eprintln!("SIGNATURE {:?}", spend.signature);
+        Ok(spend)
     }
 
     pub fn get_solution_and_signature<R: Rng>(
