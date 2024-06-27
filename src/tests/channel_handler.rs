@@ -7,17 +7,18 @@ use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs, ChannelCoinSpendInfo, HandshakeResult,
+    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs, ChannelCoinSpendInfo, HandshakeResult, ChannelHandlerPrivateKeys,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, get_standard_coin_puzzle};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash,
+    AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
 
 pub struct ChannelHandlerParty {
     pub ch: ChannelHandler,
+    pub init_data: ChannelHandlerInitiationResult,
     #[cfg(test)]
     pub referee: Puzzle,
     pub ref_puzzle_hash: PuzzleHash,
@@ -26,20 +27,22 @@ pub struct ChannelHandlerParty {
 
 impl ChannelHandlerParty {
     pub fn new<R: Rng>(
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        contribution: Amount,
-    ) -> ChannelHandlerParty {
-        let ch = ChannelHandler::construct_with_rng(rng);
-        let ref_key = private_to_public_key(&ch.referee_private_key());
-        let referee = puzzle_for_pk(allocator, &ref_key).expect("should work");
-        let ref_puzzle_hash = referee.sha256tree(allocator);
-        ChannelHandlerParty {
+        env: &mut ChannelHandlerEnv<R>,
+        private_keys: ChannelHandlerPrivateKeys,
+        referee: Puzzle,
+        ref_puzzle_hash: PuzzleHash,
+        data: &ChannelHandlerInitiationData,
+    ) -> Result<ChannelHandlerParty, Error> {
+        let (ch, init_data) = ChannelHandler::new(
+            env, private_keys, data
+        )?;
+        Ok(ChannelHandlerParty {
             ch,
-            contribution,
+            init_data,
+            contribution: data.my_contribution.clone(),
             referee,
             ref_puzzle_hash,
-        }
+        })
     }
 }
 
@@ -53,80 +56,66 @@ impl ChannelHandlerGame {
     pub fn new<R: Rng>(
         env: &mut ChannelHandlerEnv<R>,
         game_id: GameID,
-        contributions: [Amount; 2],
-    ) -> ChannelHandlerGame {
-        let player1 =
-            ChannelHandlerParty::new(
-                &mut env.allocator,
-                &mut env.rng,
-                contributions[0].clone()
-            );
-        let player2 =
-            ChannelHandlerParty::new(
-                &mut env.allocator,
-                &mut env.rng,
-                contributions[1].clone()
-            );
+        launcher_coin_id: &CoinID,
+        contributions: &[Amount; 2]
+    ) -> Result<ChannelHandlerGame, Error> {
+        let private_keys: [ChannelHandlerPrivateKeys; 2] = env.rng.gen();
 
-        ChannelHandlerGame {
+        let make_ref_info = |env: &mut ChannelHandlerEnv<R>, id: usize| -> Result<(Puzzle, PuzzleHash), Error> {
+            let ref_key = private_to_public_key(&private_keys[id].my_referee_private_key);
+            let referee = puzzle_for_pk(env.allocator, &ref_key)?;
+            let ref_puzzle_hash = referee.sha256tree(env.allocator);
+            Ok((referee, ref_puzzle_hash))
+        };
+
+        let ref1 = make_ref_info(env, 0)?;
+        let ref2 = make_ref_info(env, 1)?;
+        let referees = [ref1, ref2];
+
+        let make_party = |env: &mut ChannelHandlerEnv<R>, id: usize| -> Result<ChannelHandlerParty, Error> {
+            let data = ChannelHandlerInitiationData {
+                launcher_coin_id: launcher_coin_id.clone(),
+                we_start_with_potato: id == 1,
+                their_channel_pubkey: private_to_public_key(&private_keys[id ^ 1].my_channel_coin_private_key),
+                their_unroll_pubkey: private_to_public_key(&private_keys[id ^ 1].my_unroll_coin_private_key),
+                their_referee_puzzle_hash: referees[id ^ 1].1.clone(),
+                my_contribution: contributions[id].clone(),
+                their_contribution: contributions[id ^ 1].clone(),
+            };
+
+            ChannelHandlerParty::new(
+                env,
+                private_keys[id].clone(),
+                referees[id].0.clone(),
+                referees[id].1.clone(),
+                &data
+            )
+        };
+
+        let player1 = make_party(env, 0)?;
+        let player2 = make_party(env, 1)?;
+
+        Ok(ChannelHandlerGame {
             game_id,
             players: [player1, player2],
             handshake_result: None,
-        }
+        })
     }
 
     pub fn player(&mut self, who: usize) -> &mut ChannelHandlerParty {
         &mut self.players[who]
     }
 
-    pub fn initiate<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        who: usize,
-        data: &ChannelHandlerInitiationData,
-    ) -> Result<ChannelHandlerInitiationResult, Error> {
-        self.players[who].ch.initiate(env, data)
-    }
-
-    pub fn handshake<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        launcher_coin: &CoinID,
-    ) -> Result<[ChannelHandlerInitiationResult; 2], Error> {
-        let chi_data1 = ChannelHandlerInitiationData {
-            launcher_coin_id: launcher_coin.clone(),
-            we_start_with_potato: false,
-            their_channel_pubkey: private_to_public_key(&self.player(1).ch.channel_private_key()),
-            their_unroll_pubkey: private_to_public_key(&self.player(1).ch.unroll_private_key()),
-            their_referee_puzzle_hash: self.player(1).ref_puzzle_hash.clone(),
-            my_contribution: self.player(0).contribution.clone(),
-            their_contribution: self.player(1).contribution.clone(),
-        };
-        eprintln!("initiate 1");
-        let initiation_result1 = self.initiate(env, 0, &chi_data1)?;
-
-        let chi_data2 = ChannelHandlerInitiationData {
-            launcher_coin_id: launcher_coin.clone(),
-            we_start_with_potato: true,
-            their_channel_pubkey: private_to_public_key(&self.player(0).ch.channel_private_key()),
-            their_unroll_pubkey: private_to_public_key(&self.player(0).ch.unroll_private_key()),
-            their_referee_puzzle_hash: self.player(0).ref_puzzle_hash.clone(),
-            my_contribution: self.player(1).contribution.clone(),
-            their_contribution: self.player(0).contribution.clone(),
-        };
-        eprintln!("initiate 2");
-        let initiation_result2 = self.initiate(env, 1, &chi_data2)?;
-
-        Ok([initiation_result1, initiation_result2])
-    }
-
     pub fn finish_handshake<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         who: usize,
-        aggsig: &Aggsig,
     ) -> Result<(), Error> {
-        let handshake_result = self.players[who].ch.finish_handshake(env, aggsig)?;
+        let channel_coin_0_aggsig = self.players[who^1].init_data.my_initial_channel_half_signature_peer.clone();
+        let handshake_result = self.players[who].ch.finish_handshake(
+            env,
+            &channel_coin_0_aggsig,
+        )?;
         self.handshake_result = Some(handshake_result);
         Ok(())
     }
@@ -171,31 +160,27 @@ fn test_smoke_can_initiate_channel_handler<'a>() {
     };
     let game_id_data: Hash = env.rng.gen();
     let game_id = GameID::new(game_id_data.bytes().to_vec());
-    let mut game = ChannelHandlerGame::new(
-        &mut env,
-        game_id,
-        [Amount::new(100), Amount::new(100)]
-    );
-
     // This coin will be spent (virtually) into the channel coin which supports
     // half-signatures so that unroll can be initated by either party.
     let launcher_coin = CoinID::default();
-    let init_results = game
-        .handshake(&mut env, &launcher_coin)
-        .expect("should work");
+
+    let mut game = ChannelHandlerGame::new(
+        &mut env,
+        game_id,
+        &launcher_coin,
+        &[Amount::new(100), Amount::new(100)]
+    ).expect("should build");
 
     let _finish_hs_result1 = game
         .finish_handshake(
             &mut env,
             1,
-            &init_results[0].my_initial_channel_half_signature_peer,
         )
         .expect("should finish handshake");
     let _finish_hs_result2 = game
         .finish_handshake(
             &mut env,
             0,
-            &init_results[1].my_initial_channel_half_signature_peer,
         )
         .expect("should finish handshake");
 
@@ -243,31 +228,27 @@ fn test_smoke_can_start_game() {
     };
     let game_id_data: Hash = env.rng.gen();
     let game_id = GameID::new(game_id_data.bytes().to_vec());
-    let mut game = ChannelHandlerGame::new(
-        &mut env,
-        game_id,
-        [Amount::new(100), Amount::new(100)]
-    );
-
     // This coin will be spent (virtually) into the channel coin which supports
     // half-signatures so that unroll can be initated by either party.
     let launcher_coin = CoinID::default();
-    let init_results = game
-        .handshake(&mut env, &launcher_coin)
-        .expect("should work");
+    let mut game = ChannelHandlerGame::new(
+        &mut env,
+        game_id,
+        &launcher_coin,
+        &[Amount::new(100), Amount::new(100)]
+    ).expect("should work");
 
     let _finish_hs_result1 = game
         .finish_handshake(
             &mut env,
             1,
-            &init_results[0].my_initial_channel_half_signature_peer,
         )
         .expect("should finish handshake");
+
     let _finish_hs_result2 = game
         .finish_handshake(
             &mut env,
             0,
-            &init_results[1].my_initial_channel_half_signature_peer,
         )
         .expect("should finish handshake");
 

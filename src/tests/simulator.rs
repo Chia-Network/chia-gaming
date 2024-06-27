@@ -20,7 +20,7 @@ use rand_chacha::ChaCha8Rng;
 use indoc::indoc;
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, read_hex_puzzle, solution_for_conditions, sign_agg_sig_me, puzzle_hash_for_pk, private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, get_standard_coin_puzzle};
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, read_hex_puzzle, solution_for_conditions, sign_agg_sig_me, private_to_public_key, puzzle_for_synthetic_public_key, get_standard_coin_puzzle};
 use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, PrivateKey, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, Timeout, GameID, IntoErr};
 
 use crate::channel_handler::game::Game;
@@ -580,7 +580,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         };
 
         let simulator = Simulator::new();
-        let (mut parties, coin) = new_channel_handler_game(
+        let (parties, coin) = new_channel_handler_game(
             &simulator,
             &mut env,
             &game,
@@ -804,10 +804,6 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 let aggregate_public_key =
                     private_to_public_key(&self.parties.player(0).ch.channel_private_key()) +
                     private_to_public_key(&self.parties.player(1).ch.channel_private_key());
-                let spend_to_self_conditions = [
-                    (CREATE_COIN, (self.identities[0].puzzle_hash.clone(), (1, ())))
-                ].to_clvm(self.env.allocator).into_gen()?;
-
                 eprintln!(
                     "going on chain: aggregate public key is: {aggregate_public_key:?}",
                 );
