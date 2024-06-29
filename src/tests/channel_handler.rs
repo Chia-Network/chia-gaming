@@ -323,7 +323,6 @@ fn test_unroll_can_verify_own_signature() {
     let inputs_1 = UnrollCoinConditionInputs {
         ref_pubkey: public_key_1.clone(),
         their_referee_puzzle_hash: ref_puzzle_hash_2.clone(),
-        state_number: 0,
         my_balance: Amount::new(0),
         their_balance: Amount::new(100),
         puzzle_hashes_and_amounts: vec![]
