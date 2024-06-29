@@ -290,10 +290,12 @@ fn test_unroll_can_verify_own_signature() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let mut unroll_coin_1 = UnrollCoin {
         started_with_potato: true,
+        state_number: 1,
         .. UnrollCoin::default()
     };
 
     let mut unroll_coin_2 = UnrollCoin {
+        state_number: 1,
         .. UnrollCoin::default()
     };
 
