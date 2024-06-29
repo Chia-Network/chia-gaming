@@ -391,7 +391,6 @@ impl ChannelCoin {
             "STATE CONDITONS: {}",
             disassemble(env.allocator.allocator(), conditions, None)
         );
-        eprintln!("PARENT COIN {:?}", self.state_channel_coin.to_parts());
         let spend =
             standard_solution_partial(
                 env.allocator,
@@ -402,7 +401,6 @@ impl ChannelCoin {
                 &env.agg_sig_me_additional_data,
                 true
             )?;
-        eprintln!("SIGNATURE {:?}", spend.signature);
         Ok(spend)
     }
 
@@ -415,10 +413,10 @@ impl ChannelCoin {
         amount: &Amount,
         unroll_coin: &UnrollCoin,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
+        eprintln!("making solution for channel coin with unroll state {}", unroll_coin.state_number);
         let unroll_puzzle = unroll_coin.make_curried_unroll_puzzle(
             env,
             aggregate_unroll_public_key,
-            unroll_coin.state_number
         )?;
         let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
         let create_conditions = vec![Node(
@@ -454,7 +452,6 @@ pub struct ChannelCoinInfo {
 pub struct UnrollCoinConditionInputs {
     pub ref_pubkey: PublicKey,
     pub their_referee_puzzle_hash: PuzzleHash,
-    pub state_number: usize,
     pub my_balance: Amount,
     pub their_balance: Amount,
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
@@ -464,6 +461,7 @@ pub struct UnrollCoinConditionInputs {
 pub struct UnrollCoinOutcome {
     pub conditions: NodePtr,
     pub conditions_without_hash: NodePtr,
+    pub old_state_number: usize,
     pub hash: PuzzleHash,
     pub signature: Aggsig,
 }
@@ -524,6 +522,14 @@ impl UnrollCoin {
         }
     }
 
+    fn get_old_state_number(&self) -> Result<usize, Error> {
+        if let Some(r) = self.outcome.as_ref() {
+            Ok(r.old_state_number)
+        } else {
+            Err(Error::StrErr("no default setup".to_string()))
+        }
+    }
+
     pub fn get_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
         if let Some(r) = self.outcome.as_ref() {
             Ok(r.conditions)
@@ -556,7 +562,6 @@ impl UnrollCoin {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         aggregate_public_key: &PublicKey,
-        state: usize,
     ) -> Result<NodePtr, Error> {
         let conditions_hash = self.get_conditions_hash_for_unroll_puzzle()?;
         let shared_puzzle =
@@ -568,7 +573,7 @@ impl UnrollCoin {
 
         CurriedProgram {
             program: env.unroll_puzzle.clone(),
-            args: clvm_curried_args!(shared_puzzle_hash, state, conditions_hash),
+            args: clvm_curried_args!(shared_puzzle_hash, self.get_old_state_number()?, conditions_hash),
         }
         .to_clvm(env.allocator)
             .into_gen()
@@ -643,7 +648,7 @@ impl UnrollCoin {
         }
 
         let result_coins_node = result_coins.to_clvm(env.allocator).into_gen()?;
-        prepend_rem_conditions(env, inputs.state_number, result_coins_node)
+        prepend_rem_conditions(env, self.state_number, result_coins_node)
     }
 
     /// Given new inputs, recompute the state of the unroll coin and store the
@@ -663,19 +668,24 @@ impl UnrollCoin {
         let unroll_public_key = private_to_public_key(&unroll_private_key);
         let unroll_aggregate_key =
             unroll_public_key.clone() + their_unroll_coin_public_key.clone();
+        eprintln!("conditions {}",
+                  disassemble(env.allocator.allocator(), unroll_conditions, None));
+        eprintln!("conditions_hash {conditions_hash:?}");
         let unroll_signature = unsafe_sign_partial(
             &unroll_private_key,
             &unroll_aggregate_key,
-            &conditions_hash.bytes(),
+            &conditions_hash.bytes().to_vec(),
         );
-        self.state_number = inputs.state_number;
         self.outcome = Some(UnrollCoinOutcome {
             conditions: unroll_conditions,
             conditions_without_hash: unroll_conditions,
+            old_state_number: self.state_number - 1,
             hash: conditions_hash,
             signature: unroll_signature.clone()
         });
 
+        eprintln!("AGGREGATE PUBLIC KEY {:?}", unroll_aggregate_key);
+        eprintln!("SIGNATURE {} {:?}", self.started_with_potato, unroll_signature);
         eprintln!(
             "UNROLL UPDATE {}",
             disassemble(
@@ -702,11 +712,9 @@ impl UnrollCoin {
         let aggregate_unroll_signature = signature.clone()
             + self.get_unroll_coin_signature()?;
 
-        let message = unroll_puzzle_solution_hash.bytes().to_vec();
-
         Ok(aggregate_unroll_signature.verify(
             &aggregate_unroll_public_key,
-            &message
+            &unroll_puzzle_solution_hash.bytes(),
         ))
     }
 }

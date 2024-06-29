@@ -51,7 +51,6 @@ pub fn new_channel_handler_game<R: Rng>(
         &coins[0][0],
         contributions[0].clone()
     )?;
-
     simulator.farm_block(&identities[0].puzzle_hash);
 
     let mut party = ChannelHandlerGame::new(
@@ -79,7 +78,6 @@ pub fn new_channel_handler_game<R: Rng>(
         &[u1, u2]
     )?;
     eprintln!("actual state channel coin {:?}", state_channel_coin.to_parts());
-
     simulator.farm_block(&identities[0].puzzle_hash);
 
     party.finish_handshake(env, 1).expect("should finish handshake");
@@ -93,6 +91,15 @@ pub fn new_channel_handler_game<R: Rng>(
         &contributions[1].clone(),
         &timeout
     );
+
+    let sigs1 = party.player(0).ch.send_empty_potato(env)?;
+    let spend1 = party.player(1).ch.received_empty_potato(env, &sigs1)?;
+    party.update_channel_coin_after_receive(&spend1)?;
+
+    let sigs2 = party.player(1).ch.send_empty_potato(env)?;
+    let spend2 = party.player(0).ch.received_empty_potato(env, &sigs2)?;
+    party.update_channel_coin_after_receive(&spend2)?;
+
     let start_potato = party.player(0).ch.send_potato_start_game(
         env,
         &[our_game_start]

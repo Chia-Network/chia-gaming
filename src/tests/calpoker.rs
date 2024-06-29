@@ -76,8 +76,8 @@ fn test_play_calpoker_happy_path() {
 
     // Make a prototype go on chain scenario by starting with move 1.
     let mut use_moves: Vec<GameAction> = moves.iter().take(1).cloned().collect();
-    use_moves.push(GameAction::GoOnChain(false as usize));
-    use_moves.append(&mut moves.iter().skip(1).cloned().collect());
+    use_moves.push(GameAction::GoOnChain(true as usize));
+    // use_moves.append(&mut moves.iter().skip(1).cloned().collect());
     let test2 = run_calpoker_play_test(&mut allocator, &use_moves).expect("should work");
     eprintln!("play_result {test2:?}");
 }

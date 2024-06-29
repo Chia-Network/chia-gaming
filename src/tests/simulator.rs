@@ -671,7 +671,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
         Ok((cc_spend.spend.conditions, CoinString::from_parts(
             &state_channel.to_coin_id(),
-            &cc_ph,
+            unroll_coin_puzzle_hash,
             &cc_spend.amount
         )))
     }
@@ -704,10 +704,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     ) -> Result<Vec<CoinString>, Error> {
         let player_ch = &mut self.parties.player(player).ch;
         let pre_unroll_data =
-            player_ch.get_unroll_coin_transaction(
-                &mut self.env,
-                player_state,
-            )?;
+            player_ch.get_unroll_coin_transaction(&mut self.env)?;
 
         let srcloc = Srcloc::start("*unroll*");
         let runner: Rc<dyn TRunProgram> = Rc::new(DefaultProgramRunner::new());
@@ -723,7 +720,10 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             srcloc.clone(),
             pre_unroll_data.transaction.solution
         ).into_gen()?;
+        eprintln!("raw args {}", disassemble(self.env.allocator.allocator(), pre_unroll_data.transaction.solution, None));
 
+        eprintln!("unroll program {program}");
+        eprintln!("unroll args {args}");
         let puzzle_result = run(
             self.env.allocator.allocator(),
             runner,
@@ -735,6 +735,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         ).into_gen()?;
         eprintln!("puzzle_result: {puzzle_result}");
 
+        self.simulator.farm_block(&self.identities[0].puzzle_hash);
+
+        eprintln!("private key 1: {:?}", self.parties.player(0).ch.unroll_private_key());
+        eprintln!("private key 2: {:?}", self.parties.player(1).ch.unroll_private_key());
+        eprintln!("doing transaction");
         let included = self.simulator.push_tx(
             self.env.allocator,
             &[SpecificTransactionBundle {
@@ -758,14 +763,9 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 &game_id,
                 &ReadableMove::from_nodeptr(readable)
             )?;
-        let player_state = player_ch.get_state_number();
         let post_unroll_data =
-            player_ch.get_unroll_coin_transaction(
-                &mut self.env,
-                player_state,
-            )?;
+            player_ch.get_unroll_coin_transaction(&mut self.env)?;
         eprintln!("post_unroll_data {post_unroll_data:?}");
-
         todo!();
     }
 
@@ -812,6 +812,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                         state_channel_coin,
                         &unroll_target,
                     )?;
+                eprintln!("unroll_coin {unroll_coin:?}");
                 let game_coins = self.do_unroll_spend_to_games(
                     *player,
                     state_number,
