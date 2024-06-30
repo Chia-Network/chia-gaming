@@ -5,7 +5,7 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::common::types::{Amount, AllocEncoder, Error, Sha256Input, GameID, Hash};
 use crate::channel_handler::game::Game;
-use crate::tests::simulator::{SimulatorEnvironment, GameAction, GameActionResult};
+use crate::tests::simenv::{SimulatorEnvironment, GameAction, GameActionResult};
 
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
     Game::new(allocator, game_id, "resources/calpoker_include_calpoker_template.hex")
