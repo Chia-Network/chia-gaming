@@ -15,7 +15,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Node, PrivateKey, PublicKey, PuzzleHash, Sha256Input, Sha256tree,
-    ToQuotedProgram, Hash
+    ToQuotedProgram
 };
 use crate::tests::constants::{
     EXPECTED_PUZZLE_HEX, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, KEY_PAIR_PRIVATE, KEY_PAIR_PUBLIC,
