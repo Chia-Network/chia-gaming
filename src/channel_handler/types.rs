@@ -11,11 +11,11 @@ use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::standard_coin::{read_hex_puzzle, private_to_public_key, puzzle_hash_for_pk, standard_solution_partial, unsafe_sign_partial};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
-    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle
+    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle, BrokenOutCoinSpendInfo,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
-#[derive(Default)]
+#[derive(Clone)]
 pub struct ChannelHandlerPrivateKeys {
     pub my_channel_coin_private_key: PrivateKey,
     pub my_unroll_coin_private_key: PrivateKey,
@@ -61,11 +61,21 @@ pub struct GameStartInfo {
     pub amount: Amount,
     pub game_handler: GameHandler,
     pub timeout: Timeout,
+
+    pub my_contribution_this_game: Amount,
+    pub their_contribution_this_game: Amount,
+
     pub initial_validation_program: ValidationProgram,
     pub initial_state: NodePtr,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
+}
+
+impl GameStartInfo {
+    pub fn is_my_turn(&self) -> bool {
+        matches!(self.game_handler, GameHandler::MyTurnHandler(_))
+    }
 }
 
 #[derive(Clone)]
@@ -155,6 +165,8 @@ pub struct ChannelHandlerEnv<'a, R: Rng> {
     pub referee_coin_puzzle: Puzzle,
     pub referee_coin_puzzle_hash: PuzzleHash,
 
+    pub standard_puzzle: Puzzle,
+
     pub agg_sig_me_additional_data: Hash,
 }
 
@@ -165,6 +177,7 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
         unroll_metapuzzle: Puzzle,
         unroll_puzzle: Puzzle,
         referee_coin_puzzle: Puzzle,
+        standard_puzzle: Puzzle,
         agg_sig_me_additional_data: Hash,
     ) -> ChannelHandlerEnv<'a, R> {
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
@@ -175,6 +188,7 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
             referee_coin_puzzle_hash,
             unroll_metapuzzle,
             unroll_puzzle,
+            standard_puzzle,
             agg_sig_me_additional_data,
         }
     }
@@ -184,6 +198,8 @@ pub struct LiveGame {
     pub game_id: GameID,
     pub last_referee_puzzle_hash: PuzzleHash,
     pub referee_maker: Box<RefereeMaker>,
+    pub my_contribution: Amount,
+    pub their_contribution: Amount,
 }
 
 pub struct PotatoAcceptCachedData {
@@ -206,10 +222,25 @@ pub enum CachedPotatoRegenerateLastHop {
     PotatoMoveHappening(PotatoMoveCachedData),
 }
 
+#[derive(Clone, Debug)]
 pub struct ChannelCoinSpentResult {
     pub transaction: TransactionBundle,
     pub timeout: bool,
     pub games_canceled: Vec<GameID>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ChannelCoinSpendInfo {
+    pub solution: NodePtr,
+    pub conditions: NodePtr,
+    pub aggsig: Aggsig
+}
+
+#[derive(Clone)]
+pub struct HandshakeResult {
+    pub channel_puzzle_reveal: Puzzle,
+    pub amount: Amount,
+    pub spend: ChannelCoinSpendInfo,
 }
 
 /// The channel handler can use these two items to produce a spend on chain.
@@ -353,24 +384,66 @@ impl ChannelCoin {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         private_key: &PrivateKey,
-        conditions: NodePtr,
         aggregate_public_key: &PublicKey,
-    ) -> Result<(NodePtr, Aggsig), Error> {
-        standard_solution_partial(
-            env.allocator,
-            &private_key,
-            &self.state_channel_coin.to_coin_id(),
-            conditions,
-            &aggregate_public_key,
-            &env.agg_sig_me_additional_data,
-            true
+        conditions: NodePtr,
+    ) -> Result<BrokenOutCoinSpendInfo, Error> {
+        eprintln!(
+            "STATE CONDITONS: {}",
+            disassemble(env.allocator.allocator(), conditions, None)
+        );
+        let spend =
+            standard_solution_partial(
+                env.allocator,
+                &private_key,
+                &self.state_channel_coin.to_coin_id(),
+                conditions,
+                &aggregate_public_key,
+                &env.agg_sig_me_additional_data,
+                true
+            )?;
+        Ok(spend)
+    }
+
+    pub fn get_solution_and_signature<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        private_key: &PrivateKey,
+        aggregate_channel_public_key: &PublicKey,
+        aggregate_unroll_public_key: &PublicKey,
+        amount: &Amount,
+        unroll_coin: &UnrollCoin,
+    ) -> Result<BrokenOutCoinSpendInfo, Error> {
+        eprintln!("making solution for channel coin with unroll state {}", unroll_coin.state_number);
+        let unroll_puzzle = unroll_coin.make_curried_unroll_puzzle(
+            env,
+            aggregate_unroll_public_key,
+        )?;
+        let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
+        let create_conditions = vec![Node(
+            (
+                CREATE_COIN,
+                (
+                    unroll_puzzle_hash.clone(),
+                    (amount.clone(), ()),
+                ),
+            )
+                .to_clvm(env.allocator)
+                .into_gen()?,
+        )];
+        let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
+        let create_conditions_with_rem =
+            prepend_rem_conditions(env, unroll_coin.state_number, create_conditions_obj)?;
+        self.get_solution_and_signature_from_conditions(
+            env,
+            private_key,
+            aggregate_channel_public_key,
+            create_conditions_with_rem
         )
     }
 }
 
-#[derive(Default)]
 pub struct ChannelCoinInfo {
-    pub coin: Option<ChannelCoin>,
+    pub coin: ChannelCoin,
     pub amount: Amount,
     // Used in unrolling.
     pub spend: TransactionBundle,
@@ -379,7 +452,6 @@ pub struct ChannelCoinInfo {
 pub struct UnrollCoinConditionInputs {
     pub ref_pubkey: PublicKey,
     pub their_referee_puzzle_hash: PuzzleHash,
-    pub state_number: usize,
     pub my_balance: Amount,
     pub their_balance: Amount,
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
@@ -389,6 +461,7 @@ pub struct UnrollCoinConditionInputs {
 pub struct UnrollCoinOutcome {
     pub conditions: NodePtr,
     pub conditions_without_hash: NodePtr,
+    pub old_state_number: usize,
     pub hash: PuzzleHash,
     pub signature: Aggsig,
 }
@@ -420,19 +493,6 @@ pub struct UnrollCoin {
     pub outcome: Option<UnrollCoinOutcome>,
 }
 
-// XXX bram: this can be removed.
-#[deprecated]
-fn prepend_default_conditions_hash<R: Rng>(
-    env: &mut ChannelHandlerEnv<R>,
-    conditions: NodePtr,
-) -> Result<NodePtr, Error> {
-    let conditions_hash = Node(conditions).sha256tree(env.allocator);
-    let default_hash_rem = (REM, (conditions_hash, ()));
-    (default_hash_rem, Node(conditions))
-        .to_clvm(env.allocator)
-        .into_gen()
-}
-
 fn prepend_state_number_rem_to_conditions<R: Rng>(
     env: &mut ChannelHandlerEnv<R>,
     state_number: usize,
@@ -457,6 +517,14 @@ impl UnrollCoin {
     fn get_internal_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
         if let Some(r) = self.outcome.as_ref() {
             Ok(r.conditions_without_hash)
+        } else {
+            Err(Error::StrErr("no default setup".to_string()))
+        }
+    }
+
+    fn get_old_state_number(&self) -> Result<usize, Error> {
+        if let Some(r) = self.outcome.as_ref() {
+            Ok(r.old_state_number)
         } else {
             Err(Error::StrErr("no default setup".to_string()))
         }
@@ -494,14 +562,18 @@ impl UnrollCoin {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         aggregate_public_key: &PublicKey,
-        state: usize,
     ) -> Result<NodePtr, Error> {
         let conditions_hash = self.get_conditions_hash_for_unroll_puzzle()?;
-        let shared_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
+        let shared_puzzle =
+            CurriedProgram {
+                program: env.unroll_metapuzzle.clone(),
+                args: clvm_curried_args!(aggregate_public_key.clone())
+            }.to_clvm(env.allocator).into_gen()?;
+        let shared_puzzle_hash = Node(shared_puzzle).sha256tree(env.allocator);
 
         CurriedProgram {
             program: env.unroll_puzzle.clone(),
-            args: clvm_curried_args!(shared_puzzle_hash.clone(), state, conditions_hash),
+            args: clvm_curried_args!(shared_puzzle_hash, self.get_old_state_number()?, conditions_hash),
         }
         .to_clvm(env.allocator)
             .into_gen()
@@ -510,10 +582,17 @@ impl UnrollCoin {
     pub fn make_unroll_puzzle_solution<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
+        aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
-        let unroll_inner_puzzle = env.unroll_metapuzzle.clone();
+        let unroll_inner_puzzle =
+            CurriedProgram {
+                program: env.unroll_metapuzzle.clone(),
+                args: clvm_curried_args!(aggregate_public_key.clone()),
+            }.to_clvm(env.allocator)
+            .into_gen()?;
+
         let unroll_puzzle_solution = (
-            unroll_inner_puzzle,
+            Node(unroll_inner_puzzle),
             (Node(self.get_conditions_for_unroll_coin_spend()?), ()),
         )
             .to_clvm(env.allocator)
@@ -569,7 +648,7 @@ impl UnrollCoin {
         }
 
         let result_coins_node = result_coins.to_clvm(env.allocator).into_gen()?;
-        prepend_rem_conditions(env, inputs.state_number, result_coins_node)
+        prepend_rem_conditions(env, self.state_number, result_coins_node)
     }
 
     /// Given new inputs, recompute the state of the unroll coin and store the
@@ -585,23 +664,28 @@ impl UnrollCoin {
             env,
             inputs,
         )?;
-        let external_conditions = prepend_default_conditions_hash(env, unroll_conditions)?;
         let conditions_hash = Node(unroll_conditions).sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(&unroll_private_key);
         let unroll_aggregate_key =
             unroll_public_key.clone() + their_unroll_coin_public_key.clone();
+        eprintln!("conditions {}",
+                  disassemble(env.allocator.allocator(), unroll_conditions, None));
+        eprintln!("conditions_hash {conditions_hash:?}");
         let unroll_signature = unsafe_sign_partial(
             &unroll_private_key,
             &unroll_aggregate_key,
-            &conditions_hash.bytes(),
+            &conditions_hash.bytes().to_vec(),
         );
         self.outcome = Some(UnrollCoinOutcome {
-            conditions: external_conditions,
+            conditions: unroll_conditions,
             conditions_without_hash: unroll_conditions,
+            old_state_number: self.state_number - 1,
             hash: conditions_hash,
             signature: unroll_signature.clone()
         });
 
+        eprintln!("AGGREGATE PUBLIC KEY {:?}", unroll_aggregate_key);
+        eprintln!("SIGNATURE {} {:?}", self.started_with_potato, unroll_signature);
         eprintln!(
             "UNROLL UPDATE {}",
             disassemble(
@@ -628,11 +712,9 @@ impl UnrollCoin {
         let aggregate_unroll_signature = signature.clone()
             + self.get_unroll_coin_signature()?;
 
-        let message = unroll_puzzle_solution_hash.bytes().to_vec();
-
         Ok(aggregate_unroll_signature.verify(
             &aggregate_unroll_public_key,
-            &message
+            &unroll_puzzle_solution_hash.bytes(),
         ))
     }
 }

@@ -306,6 +306,10 @@ impl Amount {
     pub fn new(amt: u64) -> Amount {
         Amount(amt)
     }
+
+    pub fn half(&self) -> Amount {
+        Amount::new(self.0 / 2)
+    }
 }
 
 impl AddAssign for Amount {
@@ -465,10 +469,6 @@ impl ToClvm<NodePtr> for PuzzleHash {
     }
 }
 
-/// Referee ID
-#[derive(Default, Clone)]
-pub struct RefereeID(usize);
-
 /// Error type
 #[derive(Debug)]
 pub enum Error {
@@ -493,9 +493,6 @@ impl Default for Node {
 }
 
 impl Node {
-    pub fn to_nodeptr(&self) -> NodePtr {
-        self.0
-    }
     pub fn to_hex(
         &self,
         allocator: &mut AllocEncoder,
@@ -718,7 +715,7 @@ where
 pub enum CoinCondition {
     AggSigMe(PublicKey, Vec<u8>),
     AggSigUnsafe(PublicKey, Vec<u8>),
-    CreateCoin(PuzzleHash),
+    CreateCoin(PuzzleHash, Amount),
     Rem(Vec<Vec<u8>>),
 }
 
@@ -758,12 +755,31 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
                 return Some(CoinCondition::AggSigMe(pk, atoms[2].to_vec()));
             }
         } else if *atoms[0] == CREATE_COIN_ATOM {
-            return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(
-                Hash::from_slice(&atoms[1]),
-            )));
-            } else if *atoms[0] == REM_ATOM {
+            if let Some(amt) = u64_from_atom(&atoms[2]) {
+                return Some(CoinCondition::CreateCoin(
+                    PuzzleHash::from_hash(
+                        Hash::from_slice(&atoms[1]),
+                    ),
+                    Amount::new(amt)
+                ));
+            }
+        } else {
+            return None;
+        }
+    } else if exploded.len() > 1 && matches!(
+        (
+            allocator.allocator().sexp(exploded[0]),
+            allocator.allocator().sexp(exploded[1])
+        ),
+        (SExp::Atom, SExp::Atom)
+    ) {
+        let atoms: Vec<Vec<u8>> = exploded
+            .iter()
+            .map(|a| allocator.allocator().atom(*a).to_vec())
+            .collect();
+        if *atoms[0] == REM_ATOM {
             return Some(CoinCondition::Rem(
-                atoms.iter().map(|a| a.to_vec()).collect(),
+                atoms.iter().skip(1).map(|a| a.to_vec()).collect(),
             ));
         }
     }
@@ -837,4 +853,12 @@ pub fn atom_from_clvm<'a>(allocator: &'a mut AllocEncoder, n: NodePtr) -> Option
     } else {
         None
     }
+}
+
+/// Maximum information about a coin spend.  Everything one might need downstream.
+pub struct BrokenOutCoinSpendInfo {
+    pub solution: NodePtr,
+    pub conditions: NodePtr,
+    pub message: Vec<u8>,
+    pub signature: Aggsig,
 }

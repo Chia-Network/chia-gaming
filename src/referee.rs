@@ -124,7 +124,6 @@ struct RefereePuzzleArgs {
     waiter_puzzle_hash: PuzzleHash,
     timeout: Timeout,
     amount: Amount,
-    referee_coin_puzzle_hash: PuzzleHash,
     nonce: usize,
     game_move: GameMoveDetails,
     previous_validation_info_hash: Option<Hash>,
@@ -476,7 +475,6 @@ impl RefereeMaker {
                 timeout: game_start_info.timeout.clone(),
                 amount: game_start_info.amount.clone(),
                 nonce: nonce,
-                referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
                 game_move: GameMoveDetails {
                     basic: GameMoveStateInfo {
                         mover_share:
@@ -817,7 +815,6 @@ impl RefereeMaker {
                 timeout: self.timeout.clone(),
                 amount: self.amount.clone(),
                 nonce: self.nonce,
-                referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
                 game_move: result.game_move.clone(),
                 previous_validation_info_hash
             },
@@ -920,7 +917,6 @@ impl RefereeMaker {
             },
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             nonce: self.nonce,
             game_move: GameMoveDetails {
                 basic: game_move,
@@ -1077,7 +1073,6 @@ impl RefereeMaker {
             waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             game_move: their_most_recent_game_move.clone(),
             nonce: self.nonce,
             previous_validation_info_hash
@@ -1108,7 +1103,6 @@ impl RefereeMaker {
             waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             game_move,
             nonce: self.nonce,
             previous_validation_info_hash: self.get_our_most_recent_validation_info_hash(),
@@ -1139,7 +1133,7 @@ impl RefereeMaker {
 
         // Generalize this once the test is working.  Move out the assumption that
         // referee private key is my_identity.synthetic_private_key.
-        let (solution, sig) =
+        let referee_spend =
             standard_solution_partial(
                 allocator,
                 &self.my_identity.synthetic_private_key,
@@ -1154,8 +1148,8 @@ impl RefereeMaker {
             details: self.get_our_most_recent_game_move()?,
             mover_coin: IdentityCoinAndSolution {
                 mover_coin_puzzle: self.my_identity.puzzle.clone(),
-                mover_coin_spend_solution: solution,
-                mover_coin_spend_signature: sig
+                mover_coin_spend_solution: referee_spend.solution.clone(),
+                mover_coin_spend_signature: referee_spend.signature.clone()
             }
         });
 
@@ -1278,7 +1272,6 @@ impl RefereeMaker {
                 waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
                 timeout: self.timeout.clone(),
                 amount: self.amount.clone(),
-                referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
                 game_move: details.clone(),
                 nonce: self.nonce,
 
@@ -1437,7 +1430,6 @@ impl RefereeMaker {
             waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
             nonce: self.nonce,
             game_move: GameMoveDetails {
                 basic: GameMoveStateInfo {
@@ -1472,7 +1464,7 @@ impl RefereeMaker {
             .to_clvm(allocator)
             .into_gen()?;
 
-        let (slash_solution, slash_aggsig) =
+        let slash_spend =
             standard_solution_unsafe(
                 allocator,
                 &self.my_identity.private_key,
@@ -1486,7 +1478,7 @@ impl RefereeMaker {
                 Node(state),
                 Node(validation_program.to_nodeptr()),
                 my_inner_puzzle,
-                Node(slash_solution),
+                Node(slash_spend.solution),
                 0
             ),
         }
@@ -1530,7 +1522,7 @@ impl RefereeMaker {
                     &new_puzzle_hash,
                     full_slash_solution,
                     nil_evidence,
-                    &slash_aggsig,
+                    &slash_spend.signature,
                 )
             }
             Err(_) => {
@@ -1565,7 +1557,7 @@ impl RefereeMaker {
                                 &new_puzzle_hash,
                                 full_slash_solution,
                                 evidence,
-                                &(slash_aggsig + sig),
+                                &(slash_spend.signature + sig),
                             );
                         }
                         TheirTurnResult::FinalMove(readable_move) => {

@@ -5,6 +5,8 @@ pub mod game_handler;
 pub mod referee;
 #[cfg(feature = "sim-tests")]
 pub mod simulator;
+#[cfg(feature = "sim-tests")]
+pub mod simenv;
 pub mod standard_coin;
 pub mod chialisp;
 #[cfg(feature = "sim-tests")]

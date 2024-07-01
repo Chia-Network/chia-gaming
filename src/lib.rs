@@ -1,4 +1,4 @@
-mod channel_handler;
+pub mod channel_handler;
 mod common;
 mod referee;
 
