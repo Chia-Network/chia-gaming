@@ -862,7 +862,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         signatures: &PotatoSignatures,
         game_id: &GameID,
-    ) -> Result<(), Error> {
+    ) -> Result<ChannelCoinSpendInfo, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let live_game = self.live_games.remove(game_idx);
         self.my_allocated_balance -= live_game.my_contribution.clone();
@@ -883,7 +883,17 @@ impl ChannelHandler {
 
         self.live_games.remove(game_idx);
 
-        Ok(())
+        let spend = self.received_potato_verify_signatures(
+            env,
+            signatures,
+            &self.unroll_coin_condition_inputs(&unroll_data),
+        )?;
+
+        Ok(ChannelCoinSpendInfo {
+            aggsig: spend.signature,
+            solution: spend.solution,
+            conditions: spend.conditions,
+        })
     }
 
     /// Uses the channel coin key to post standard format coin generation to the
@@ -1079,9 +1089,9 @@ impl ChannelHandler {
         let our_parity = self.unroll.coin.state_number & 1;
         let their_parity = state_number & 1;
 
-        if state_number > self.unroll.coin.state_number {
+        if state_number > self.current_state_number {
             return Err(Error::StrErr(format!("Reply from the future onchain {} (me {}) vs {}", state_number, self.current_state_number, self.unroll.coin.state_number)));
-        } else if state_number < self.unroll.coin.state_number {
+        } else if state_number < self.current_state_number {
             if our_parity == their_parity {
                 return Err(Error::StrErr(
                     "We're superceding ourselves from the past?".to_string(),
@@ -1089,7 +1099,7 @@ impl ChannelHandler {
             }
 
             self.get_unroll_coin_transaction(env)
-        } else if state_number == self.unroll.coin.state_number {
+        } else if state_number == self.current_state_number {
             // Timeout
             let curried_unroll_puzzle =
                 self.unroll.coin.make_curried_unroll_puzzle(
