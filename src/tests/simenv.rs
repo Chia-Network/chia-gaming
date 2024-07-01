@@ -1,21 +1,15 @@
-use std::rc::Rc;
-
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use clvmr::NodePtr;
+use clvmr::{NodePtr, run_program};
 
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
-use clvm_tools_rs::compiler::srcloc::Srcloc;
-use clvm_tools_rs::classic::clvm_tools::stages::stage_0::{DefaultProgramRunner, TRunProgram};
-use clvm_tools_rs::compiler::clvm::{convert_from_clvm_rs, run};
-use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
-use clvm_tools_rs::compiler::comptypes::CompilerOpts;
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::types::{AllocEncoder, Amount, CoinString, Error, PrivateKey, PuzzleHash, Hash, SpecificTransactionBundle, TransactionBundle, Sha256tree, Timeout, IntoErr, Node, GameID};
+use crate::common::types::{AllocEncoder, Amount, CoinString, Error, PrivateKey, PuzzleHash, Hash, SpecificTransactionBundle, TransactionBundle, Sha256tree, Timeout, IntoErr, Node, GameID, CoinCondition};
 use crate::common::standard_coin::{ChiaIdentity, read_hex_puzzle, get_standard_coin_puzzle, standard_solution_partial, puzzle_for_synthetic_public_key, private_to_public_key};
 use crate::channel_handler::game::Game;
+use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove, ValidationProgram, GameStartInfo};
 use crate::tests::channel_handler::ChannelHandlerGame;
 use crate::tests::game::new_channel_handler_game;
@@ -223,34 +217,13 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let pre_unroll_data =
             player_ch.get_unroll_coin_transaction(&mut self.env)?;
 
-        let srcloc = Srcloc::start("*unroll*");
-        let runner: Rc<dyn TRunProgram> = Rc::new(DefaultProgramRunner::new());
-        let opts: Rc<dyn CompilerOpts> = Rc::new(DefaultCompilerOpts::new("*unroll*"));
-
-        let program = convert_from_clvm_rs(
+        let puzzle_result = run_program(
             self.env.allocator.allocator(),
-            srcloc.clone(),
-            pre_unroll_data.transaction.puzzle.to_nodeptr()
+            &chia_dialect(),
+            pre_unroll_data.transaction.puzzle.to_nodeptr(),
+            pre_unroll_data.transaction.solution,
+            0
         ).into_gen()?;
-        let args = convert_from_clvm_rs(
-            self.env.allocator.allocator(),
-            srcloc.clone(),
-            pre_unroll_data.transaction.solution
-        ).into_gen()?;
-        eprintln!("raw args {}", disassemble(self.env.allocator.allocator(), pre_unroll_data.transaction.solution, None));
-
-        eprintln!("unroll program {program}");
-        eprintln!("unroll args {args}");
-        let puzzle_result = run(
-            self.env.allocator.allocator(),
-            runner,
-            opts.prim_map(),
-            program,
-            args,
-            None,
-            None,
-        ).into_gen()?;
-        eprintln!("puzzle_result: {puzzle_result}");
 
         self.simulator.farm_block(&self.identities[0].puzzle_hash);
 
@@ -261,14 +234,25 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             self.env.allocator,
             &[SpecificTransactionBundle {
                 bundle: pre_unroll_data.transaction.clone(),
-                coin: unroll_coin
+                coin: unroll_coin.clone()
             }]
         ).into_gen()?;
         if included.code != 1 {
             return Err(Error::StrErr(format!("could not spend unroll coin for move: {included:?}")));
         }
 
-        todo!();
+        let condition_list = CoinCondition::from_nodeptr(
+            self.env.allocator,
+            puzzle_result.1
+        );
+
+        Ok(condition_list.iter().filter_map(|cond| {
+            if let CoinCondition::CreateCoin(ph, amt) = cond {
+                return Some(CoinString::from_parts(&unroll_coin.to_coin_id(), ph, amt));
+            }
+
+            None
+        }).collect())
     }
 
     fn do_on_chain_move(&mut self, player: usize, readable: NodePtr, game_coins: &[CoinString]) -> Result<GameActionResult, Error> {

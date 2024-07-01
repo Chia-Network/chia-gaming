@@ -436,7 +436,7 @@ pub fn standard_solution_partial(
     let conds = CoinCondition::from_nodeptr(allocator, conditions);
     for cond in conds.iter() {
         match cond {
-            CoinCondition::CreateCoin(_) => {
+            CoinCondition::CreateCoin(_,_) => {
                 add_signature(
                     &mut aggregated_signature,
                     if partial {

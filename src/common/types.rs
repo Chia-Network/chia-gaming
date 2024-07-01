@@ -718,7 +718,7 @@ where
 pub enum CoinCondition {
     AggSigMe(PublicKey, Vec<u8>),
     AggSigUnsafe(PublicKey, Vec<u8>),
-    CreateCoin(PuzzleHash),
+    CreateCoin(PuzzleHash, Amount),
     Rem(Vec<Vec<u8>>),
 }
 
@@ -758,9 +758,14 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
                 return Some(CoinCondition::AggSigMe(pk, atoms[2].to_vec()));
             }
         } else if *atoms[0] == CREATE_COIN_ATOM {
-            return Some(CoinCondition::CreateCoin(PuzzleHash::from_hash(
-                Hash::from_slice(&atoms[1]),
-            )));
+            if let Some(amt) = u64_from_atom(&atoms[2]) {
+                return Some(CoinCondition::CreateCoin(
+                    PuzzleHash::from_hash(
+                        Hash::from_slice(&atoms[1]),
+                    ),
+                    Amount::new(amt)
+                ));
+            }
         } else {
             return None;
         }
