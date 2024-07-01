@@ -27,13 +27,6 @@ use crate::common::types::{
     PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, ToQuotedProgram, BrokenOutCoinSpendInfo,
 };
 
-#[cfg(test)]
-pub fn shatree_atom_cant_fail(by: &[u8]) -> PuzzleHash {
-    let mut allocator = AllocEncoder::new();
-    let atom = allocator.allocator().new_atom(by).unwrap();
-    Node(atom).sha256tree(&mut allocator)
-}
-
 pub fn hex_to_sexp(
     allocator: &mut AllocEncoder,
     hex_data: String,
@@ -334,11 +327,6 @@ pub fn signer(private_key: &PrivateKey, value: &[u8]) -> (PublicKey, Aggsig) {
 pub fn private_to_public_key(private_key: &types::PrivateKey) -> types::PublicKey {
     let sk = private_key.to_bls();
     PublicKey::from_bls(sk.public_key())
-}
-
-#[cfg(test)]
-pub fn aggregate_signatures(as1: &Aggsig, as2: &Aggsig) -> types::Aggsig {
-    as1.aggregate(as2)
 }
 
 pub fn unsafe_sign_partial<Msg: AsRef<[u8]>>(sk: &PrivateKey, pk: &PublicKey, msg: Msg) -> Aggsig {

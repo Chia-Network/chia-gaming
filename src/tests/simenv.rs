@@ -20,17 +20,28 @@ use crate::tests::simulator::Simulator;
 pub enum GameAction {
     /// Do a timeout
     Timeout(usize),
-    /// Move (player, clvm readable move)
-    Move(usize, NodePtr),
-    /// Fake move:
+    /// Move (player, clvm readable move, was received)
+    Move(usize, NodePtr, bool),
+    /// Fake move, just calls receive on the indicated side.
     FakeMove(usize, NodePtr, Vec<u8>),
     /// Go on chain
     GoOnChain(usize)
 }
 
+impl GameAction {
+    pub fn lose(&self) -> GameAction {
+        if let GameAction::Move(p,m,r) = self {
+            return GameAction::Move(*p, *m, false);
+        }
+
+        self.clone()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum GameActionResult {
     MoveResult(NodePtr, Vec<u8>),
+    BrokenMove,
     MoveToOnChain,
 }
 
@@ -113,10 +124,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     // conditions to use with the channel handler interface.
     fn spend_channel_coin(
         &mut self,
+        player: usize,
         state_channel: CoinString,
         unroll_coin_puzzle_hash: &PuzzleHash,
     ) -> Result<(NodePtr, CoinString), Error> {
-        let cc_spend = self.parties.get_channel_coin_spend()?;
+        let cc_spend = self.parties.get_channel_coin_spend(player)?;
         let cc_ph = cc_spend.channel_puzzle_reveal.sha256tree(self.env.allocator);
         eprintln!("puzzle hash to spend state channel coin: {cc_ph:?}");
         eprintln!("spend conditions {}",
@@ -187,7 +199,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         )))
     }
 
-    fn do_off_chain_move(&mut self, player: usize, readable: NodePtr) -> Result<GameActionResult, Error> {
+    fn do_off_chain_move(
+        &mut self,
+        player: usize,
+        readable: NodePtr,
+        received: bool,
+    ) -> Result<GameActionResult, Error> {
         let game_id = self.parties.game_id.clone();
         let move_result =
             self.parties.player(player).ch.send_potato_move(
@@ -195,22 +212,25 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 &game_id,
                 &ReadableMove::from_nodeptr(readable)
             )?;
-        // XXX allow verification of ui result and message.
-        let (spend, ui_result, message) =
-            self.parties.player(player ^ 1).ch.received_potato_move(
-                &mut self.env,
-                &game_id,
-                &move_result
-            )?;
-        self.parties.update_channel_coin_after_receive(&spend)?;
 
-        Ok(GameActionResult::MoveResult(ui_result, message))
+        // XXX allow verification of ui result and message.
+        if received {
+            let (spend, ui_result, message) =
+                self.parties.player(player ^ 1).ch.received_potato_move(
+                    &mut self.env,
+                    &game_id,
+                    &move_result
+                )?;
+            self.parties.update_channel_coin_after_receive(player ^ 1, &spend)?;
+            Ok(GameActionResult::MoveResult(ui_result, message))
+        } else {
+            Ok(GameActionResult::BrokenMove)
+        }
     }
 
     fn do_unroll_spend_to_games(
         &mut self,
         player: usize,
-        player_state: usize,
         unroll_coin: CoinString
     ) -> Result<Vec<CoinString>, Error> {
         let player_ch = &mut self.parties.player(player).ch;
@@ -276,10 +296,10 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     ) -> Result<GameActionResult, Error> {
         eprintln!("play move {action:?}");
         match action {
-            GameAction::Move(player, readable) => {
+            GameAction::Move(player, readable, received) => {
                 match &self.on_chain {
                     OnChainState::OffChain(coins) => {
-                        self.do_off_chain_move(*player, *readable)
+                        self.do_off_chain_move(*player, *readable, *received)
                     }
                     OnChainState::OnChain(games) => {
                         // Multiple borrow.
@@ -292,6 +312,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     self.parties.player(*player).ch.get_unroll_target(
                     &mut self.env,
                 )?;
+                eprintln!("GO ON CHAIN: {state_number} {my_amount:?} {their_amount:?}");
                 let state_channel_coin =
                     match self.on_chain.clone() {
                         OnChainState::OffChain(coin) => {
@@ -308,15 +329,26 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 eprintln!(
                     "going on chain: aggregate public key is: {aggregate_public_key:?}",
                 );
+
                 let (channel_coin_conditions, unroll_coin) =
                     self.spend_channel_coin(
+                        *player,
                         state_channel_coin,
                         &unroll_target,
                     )?;
                 eprintln!("unroll_coin {unroll_coin:?}");
+
+                let channel_spent_result_1 = self.parties.player(*player).ch.channel_coin_spent(
+                    &mut self.env,
+                    channel_coin_conditions
+                )?;
+                let channel_spent_result_2 = self.parties.player(*player ^ 1).ch.channel_coin_spent(
+                    &mut self.env,
+                    channel_coin_conditions
+                )?;
+
                 let game_coins = self.do_unroll_spend_to_games(
                     *player,
-                    state_number,
                     unroll_coin
                 )?;
 
@@ -328,15 +360,6 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                         None
                     )
                 );
-
-                let channel_spent_result_1 = self.parties.player(*player).ch.channel_coin_spent(
-                    &mut self.env,
-                    channel_coin_conditions
-                )?;
-                let channel_spent_result_2 = self.parties.player(*player ^ 1).ch.channel_coin_spent(
-                    &mut self.env,
-                    channel_coin_conditions
-                )?;
 
                 self.on_chain = OnChainState::OnChain(game_coins);
                 Ok(GameActionResult::MoveToOnChain)

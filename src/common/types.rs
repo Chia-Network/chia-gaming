@@ -493,9 +493,6 @@ impl Default for Node {
 }
 
 impl Node {
-    pub fn to_nodeptr(&self) -> NodePtr {
-        self.0
-    }
     pub fn to_hex(
         &self,
         allocator: &mut AllocEncoder,

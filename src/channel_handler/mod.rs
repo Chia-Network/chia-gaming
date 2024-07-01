@@ -135,6 +135,14 @@ impl ChannelHandler {
         self.current_state_number
     }
 
+    pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
+        if let Some(t) = self.timeout.as_ref() {
+            &t
+        } else {
+            &self.unroll
+        }
+    }
+
     fn unroll_coin_condition_inputs(
         &self,
         puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]
@@ -995,13 +1003,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<ChannelCoinSpentResult, Error> {
         assert!(self.timeout.is_some());
-        let use_unroll =
-            if let Some(t) = self.timeout.as_ref() {
-                eprintln!("timeout state at {}", t.coin.state_number);
-                &t
-            } else {
-                &self.unroll
-            };
+        let use_unroll = self.get_finished_unroll_coin();
 
         eprintln!("channel handler at {}", self.current_state_number);
 
@@ -1079,15 +1081,17 @@ impl ChannelHandler {
         conditions: NodePtr,
     ) -> Result<ChannelCoinSpentResult, Error> {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
+        let full_coin = self.get_finished_unroll_coin();
 
-        let state_number = if let Some(state_number) = usize_from_atom(&rem_conditions[0]) {
-            state_number
-        } else {
-            return Err(Error::StrErr("Unconvertible state number".to_string()));
-        };
+        let state_number =
+            usize_from_atom(&rem_conditions[0]).ok_or_else(|| {
+                Error::StrErr("Unconvertible state number".to_string())
+            })?;
 
         let our_parity = self.unroll.coin.state_number & 1;
         let their_parity = state_number & 1;
+
+        eprintln!("CHANNEL COIN SPENT: my state {} coin state {} channel coin state {state_number}", self.current_state_number, full_coin.coin.state_number);
 
         if state_number > self.current_state_number {
             return Err(Error::StrErr(format!("Reply from the future onchain {} (me {}) vs {}", state_number, self.current_state_number, self.unroll.coin.state_number)));
@@ -1101,30 +1105,6 @@ impl ChannelHandler {
             self.get_unroll_coin_transaction(env)
         } else if state_number == self.current_state_number {
             // Timeout
-            let curried_unroll_puzzle =
-                self.unroll.coin.make_curried_unroll_puzzle(
-                    env,
-                    &self.get_aggregate_unroll_public_key(),
-                )?;
-            let unroll_puzzle_solution =
-                self.unroll.coin.make_unroll_puzzle_solution(
-                    env,
-                    &self.get_aggregate_unroll_public_key(),
-                )?;
-
-            Ok(ChannelCoinSpentResult {
-                transaction: TransactionBundle {
-                    puzzle: Puzzle::from_nodeptr(curried_unroll_puzzle),
-                    solution: unroll_puzzle_solution,
-                    signature: self.unroll.coin.get_unroll_coin_signature()?,
-                },
-                timeout: true,
-                games_canceled: self.get_just_created_games()
-            })
-        } else if state_number == self.current_state_number {
-            // Different timeout, construct the conditions based on the current
-            // state.  (different because we're not using the conditions we
-            // have cached).
             let curried_unroll_puzzle =
                 self.unroll.coin.make_curried_unroll_puzzle(
                     env,
@@ -1461,13 +1441,7 @@ impl ChannelHandler {
         &self,
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<(usize, PuzzleHash, Amount, Amount), Error> {
-        let use_unroll =
-            if let Some(t) = self.timeout.as_ref() {
-                t
-            } else {
-                &self.unroll
-            };
-
+        let use_unroll = self.get_finished_unroll_coin();
         let curried_unroll_puzzle =
             use_unroll.coin.make_curried_unroll_puzzle(
                 env,

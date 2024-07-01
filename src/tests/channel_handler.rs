@@ -49,7 +49,7 @@ impl ChannelHandlerParty {
 pub struct ChannelHandlerGame {
     pub game_id: GameID,
     pub players: [ChannelHandlerParty; 2],
-    pub handshake_result: Option<HandshakeResult>,
+    pub handshake_result: [Option<HandshakeResult>; 2]
 }
 
 impl ChannelHandlerGame {
@@ -98,7 +98,7 @@ impl ChannelHandlerGame {
         Ok(ChannelHandlerGame {
             game_id,
             players: [player1, player2],
-            handshake_result: None,
+            handshake_result: [None, None],
         })
     }
 
@@ -116,12 +116,14 @@ impl ChannelHandlerGame {
             env,
             &channel_coin_0_aggsig,
         )?;
-        self.handshake_result = Some(handshake_result);
+        self.handshake_result[0] = Some(handshake_result.clone());
+        self.handshake_result[1] = Some(handshake_result);
         Ok(())
     }
 
-    pub fn update_channel_coin_after_receive(&mut self, spend: &ChannelCoinSpendInfo) -> Result<(), Error> {
-        if let Some(r) = &mut self.handshake_result {
+    pub fn update_channel_coin_after_receive(&mut self, player: usize, spend: &ChannelCoinSpendInfo) -> Result<(), Error> {
+        if let Some(r) = &mut self.handshake_result[player] {
+            eprintln!("UPDATE CHANNEL COIN AFTER RECEIVE");
             r.spend = spend.clone();
             return Ok(());
         }
@@ -129,8 +131,8 @@ impl ChannelHandlerGame {
         Err(Error::StrErr("not fully running".to_string()))
     }
 
-    pub fn get_channel_coin_spend(&self) -> Result<HandshakeResult, Error> {
-        if let Some(r) = &self.handshake_result {
+    pub fn get_channel_coin_spend(&self, who: usize) -> Result<HandshakeResult, Error> {
+        if let Some(r) = &self.handshake_result[who] {
             return Ok(r.clone());
         }
 

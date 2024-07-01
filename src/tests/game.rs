@@ -94,11 +94,11 @@ pub fn new_channel_handler_game<R: Rng>(
 
     let sigs1 = party.player(0).ch.send_empty_potato(env)?;
     let spend1 = party.player(1).ch.received_empty_potato(env, &sigs1)?;
-    party.update_channel_coin_after_receive(&spend1)?;
+    party.update_channel_coin_after_receive(1, &spend1)?;
 
     let sigs2 = party.player(1).ch.send_empty_potato(env)?;
     let spend2 = party.player(0).ch.received_empty_potato(env, &sigs2)?;
-    party.update_channel_coin_after_receive(&spend2)?;
+    party.update_channel_coin_after_receive(0, &spend2)?;
 
     let start_potato = party.player(0).ch.send_potato_start_game(
         env,
@@ -110,7 +110,7 @@ pub fn new_channel_handler_game<R: Rng>(
         &start_potato,
         &[their_game_start]
     )?;
-    party.update_channel_coin_after_receive(&solidified_state)?;
+    party.update_channel_coin_after_receive(1, &solidified_state)?;
 
     Ok((party, state_channel_coin))
 }
