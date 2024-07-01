@@ -1,56 +1,67 @@
 
-Outer layer responsible for negotiating stakes, games
+Outer layer responsible for handling peer connection
 
-Constructor(whether_we_initiated, reward_puzzle_hash, my_stake, their_stake)
+Constructor(launcher_coin_string (nil if they initiate), my_reward_puzzle_hash, my_stake, their stake, 
+    {game_type: (factory_my_turn, factory_their_turn)})
+
+factory for my turn takes amount and parameters and returns 
+    (my_turn_game_handler, validation_info_hash, move, max_move_size, mover_share)
+factory for their turn takes amount and parameters and returns 
+    (their_turn_game_handler, validation_program, validation_program_hash, state, move, max_move_size, mover_share)
 
 Peer
 <- send_message (message)
 -> received_message (message)
 
-Wallet/Full Node
+Wallet/Full Node bootstrap
 <- request_launch_transaction (channel_puzzle_hash, amount)
 -> here_is_launch_transaction (launcher_coin_string, transaction_bundle)
 <- add_funds_to_transaction (contribution, announcer_coin_string, announcement)
 -> remaining_transaction_bundle (transaction_bundle)
 <- spend transaction and add fee (transation_bundle)
-<- register_coin (coin_string)
+-> transaction_complete ()
+
+Wallet/Full Node unroll
+<- spend transaction and add fee (transation_bundle)
+<- register_coin (coin_string, timeout)
 -> coin_created (coin_string)
 -> coin_spent (coin_string, conditions)
+-> coin_timeout_reached (coin_string)
 
 UX
--> start_games (whether_I_initiated, [id, game type, amount, parameters, first_turn_me])
+-> start_games (whether_I_initiated, [id, amount, game_type, first_turn_me, parameters])
+    This indicates that either this side should start the games in one potato pass or the 
+    other side to start the games when they send the potato. The other side is assumed to have 
+    gotten a similar notification before this side's potato passing.
+    It's assumed the outer layer makes sure that ids are agreed upon and not repeated.
 -> move (id, readable)
 -> fold (id)
--> shut_down ()
 <- opponent_moved (id, readable)
 <- game_message (id, readable)
 <- game_finished (id, my_share)
 <- game_cancelled (id)
-<- going_on_chain ()
-<- done_shutting_down ()
-
-Generic
-<- channel_established ()
--> go_on_chain ()
+-> shut_down()
+<- shutdown_complete()
+<- went_off_chain()
 
 
 Messages
 
 Handshake
-A: launcher_coin_id, public_keys
-B: public_keys, partial_initial_unroll_signature
-C: partial_initial_unroll_signature, partial_launch_transaction_bundle
-D: launch_seen
-D-: fully_signed_launch_transaction_bundle [no potato]
+A: launcher_coin_string, public_keys, reward_puzzle_hash
+B: public_keys, reward_puzzle_hash
+C: send potato state 0
+D: send potato state 1
+E: channel initiation offer
+F: channel initiation full transaction
 
 Potato
 send_potato_nil: unroll_signatures
-send_potato_start_game: [id, game_state_info], unroll_signatures
+send_potato_start_game: [id, game_type, whether_i_start, parameters], unroll_signatures
 send_potato_move: id, move, unroll_signatures
 send_potato_accept: id, unroll_signatures
 game_message: id, message
 request_potato: nil [no potato]
 
 Shutdown
-shut_down: partially_signed_clean_shutdown_bundle
-ack_shutdown: fully_signed_clean_shutdown_bundle [no potato]
+shut_down: clean_shutdown_spend_half_signature
