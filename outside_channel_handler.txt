@@ -1,48 +1,48 @@
 
 Outer layer responsible for handling peer connection
 
-Constructor(launcher_coin_string (nil if they initiate), my_reward_puzzle_hash, my_stake, their stake, 
-    {game_type: (factory_my_turn, factory_their_turn)})
+Constructor(launcher_coin_string (nil if they initiate), my_reward_puzzle_hash, my_stake, 
+    their stake, {game_type: game_factory})
 
-factory for my turn takes amount and parameters and returns 
-    (my_turn_game_handler, validation_info_hash, move, max_move_size, mover_share)
-factory for their turn takes amount and parameters and returns 
-    (their_turn_game_handler, validation_program, validation_program_hash, state, move, max_move_size, mover_share)
+game_factory takes amount and whether_I_initiated and parameters and returns 
+    (my_contribution, [game_info_my_turn], [game_info_their_turn])
+
+game_info_my_turn is
+    (id, my_turn_game_handler, validation_info_hash, move, max_move_size, mover_share)
+game_info_their_turn is
+    (id, their_turn_game_handler, validation_program, 
+    validation_program_hash, state, move, max_move_size, mover_share)
 
 Peer
 <- send_message (message)
 -> received_message (message)
 
 Wallet/Full Node bootstrap
-<- request_launch_transaction (channel_puzzle_hash, amount)
--> here_is_launch_transaction (launcher_coin_string, transaction_bundle)
-<- add_funds_to_transaction (contribution, announcer_coin_string, announcement)
--> remaining_transaction_bundle (transaction_bundle)
-<- spend transaction and add fee (transation_bundle)
--> transaction_complete ()
+<- channel_puzzle_hash (channel_puzzle_hash)
+-> channel_offer (transaction_bundle)
+<- received_channel_offer (transaction_bundle)
+-> channel_transaction_completion (transaction_bundle)
+<- received_channel_transaction_completion (transation_bundle)
 
 Wallet/Full Node unroll
 <- spend transaction and add fee (transation_bundle)
-<- register_coin (coin_string, timeout)
--> coin_created (coin_string)
--> coin_spent (coin_string, conditions)
--> coin_timeout_reached (coin_string)
+<- register_coin (coin_id, timeout)
+-> coin_created (coin_id)
+-> coin_spent (coin_id, conditions)
+-> coin_timeout_reached (coin_id)
 
 UX
--> start_games (whether_I_initiated, [id, amount, game_type, first_turn_me, parameters])
-    This indicates that either this side should start the games in one potato pass or the 
-    other side to start the games when they send the potato. The other side is assumed to have 
-    gotten a similar notification before this side's potato passing.
-    It's assumed the outer layer makes sure that ids are agreed upon and not repeated.
+-> start_games (whether_I_initiated, [game_type, first_turn_me, parameters])
+    returns [game_id]
 -> move (id, readable)
--> fold (id)
+-> accept (id)
 <- opponent_moved (id, readable)
 <- game_message (id, readable)
 <- game_finished (id, my_share)
 <- game_cancelled (id)
 -> shut_down()
-<- shutdown_complete()
-<- went_off_chain()
+<- shutdown_complete(reward_coin_string)
+<- going_on_chain()
 
 
 Messages
@@ -55,13 +55,12 @@ D: send potato state 1
 E: channel initiation offer
 F: channel initiation full transaction
 
-Potato
 send_potato_nil: unroll_signatures
-send_potato_start_game: [id, game_type, whether_i_start, parameters], unroll_signatures
+send_potato_start_game: unroll_signatures
+    The receiving side has to have been given warning of the other side initiating before this 
+    is received so it has the appropriate arguments. Those must happen in order and may be queued up.
 send_potato_move: id, move, unroll_signatures
 send_potato_accept: id, unroll_signatures
 game_message: id, message
-request_potato: nil [no potato]
-
-Shutdown
 shut_down: clean_shutdown_spend_half_signature
+request_potato: nil [no potato]
