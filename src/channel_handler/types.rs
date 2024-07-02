@@ -104,19 +104,20 @@ pub struct MoveResult {
     pub game_move: GameMoveDetails,
 }
 
+#[derive(Debug, Clone)]
 pub struct OnChainGameCoin {
     pub game_id_up: GameID,
     pub coin_string_up: Option<CoinString>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct CoinSpentMoveUp {
     pub game_id: GameID,
     pub spend_before_game_coin: SpecificTransactionBundle,
     pub after_update_game_coin: CoinString,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct CoinSpentAccept {
     pub game_id: GameID,
     pub spend: SpecificTransactionBundle,
@@ -124,7 +125,7 @@ pub struct CoinSpentAccept {
 }
 
 // Disposition
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum CoinSpentDisposition {
     CancelledUX(Vec<GameID>),
     Move(CoinSpentMoveUp),
@@ -138,6 +139,7 @@ pub struct DispositionResult {
     pub disposition: CoinSpentDisposition,
 }
 
+#[derive(Debug, Clone)]
 pub struct CoinSpentResult {
     pub my_clean_reward_coin_string_up: CoinString,
     // New coins that now exist.
