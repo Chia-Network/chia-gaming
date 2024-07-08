@@ -1,6 +1,6 @@
 use clvmr::allocator::NodePtr;
 use clvmr::run_program;
-use clvm_traits::ClvmEncoder;
+use clvm_traits::{ClvmEncoder, ToClvm};
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -27,11 +27,12 @@ impl Game {
     pub fn new(allocator: &mut AllocEncoder, game_id: GameID, game_hex_file: &str) -> Result<Game, Error> {
         let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
         let nil = allocator.encode_atom(&[]).into_gen()?;
+        let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
         let template_clvm =
             run_program(
                 allocator.allocator(),
                 &chia_dialect(),
-                poker_generator.to_nodeptr(),
+                poker_generator_clvm,
                 nil,
                 0
             ).into_gen()?.1;

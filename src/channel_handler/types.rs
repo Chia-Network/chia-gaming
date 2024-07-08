@@ -6,6 +6,8 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use rand::distributions::Standard;
 use rand::prelude::*;
 
+use serde::{Serialize, Deserialize};
+
 use crate::channel_handler::game_handler::GameHandler;
 use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::standard_coin::{read_hex_puzzle, private_to_public_key, puzzle_hash_for_pk, standard_solution_partial, unsafe_sign_partial};
@@ -47,7 +49,7 @@ pub struct ChannelHandlerInitiationResult {
     pub my_initial_channel_half_signature_peer: Aggsig,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PotatoSignatures {
     // Half signed thing signing to the new state.
     pub my_channel_half_signature_peer: Aggsig,

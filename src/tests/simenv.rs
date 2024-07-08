@@ -2,11 +2,12 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use clvmr::{NodePtr, run_program};
+use clvm_traits::ToClvm;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::types::{AllocEncoder, Amount, CoinString, Error, PrivateKey, PuzzleHash, Hash, SpecificTransactionBundle, TransactionBundle, Sha256tree, Timeout, IntoErr, Node, GameID, CoinCondition};
+use crate::common::types::{AllocEncoder, Amount, CoinString, Error, PrivateKey, PuzzleHash, Hash, SpecificTransactionBundle, TransactionBundle, Sha256tree, Timeout, IntoErr, Node, GameID, CoinCondition, Program};
 use crate::common::standard_coin::{ChiaIdentity, read_hex_puzzle, get_standard_coin_puzzle, standard_solution_partial, puzzle_for_synthetic_public_key, private_to_public_key};
 use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::chia_dialect;
@@ -177,7 +178,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             coin: state_channel.clone(),
             bundle: TransactionBundle {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
-                solution: cc_spend.spend.solution,
+                solution: Program::from_nodeptr(&mut self.env.allocator, cc_spend.spend.solution)?,
                 signature,
             }
         };
@@ -237,11 +238,14 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let pre_unroll_data =
             player_ch.get_unroll_coin_transaction(&mut self.env)?;
 
+        let run_puzzle = pre_unroll_data.transaction.puzzle.to_clvm(self.env.allocator).into_gen()?;
+        let run_args = pre_unroll_data.transaction.solution.to_clvm(self.env.allocator).into_gen()?;
+
         let puzzle_result = run_program(
             self.env.allocator.allocator(),
             &chia_dialect(),
-            pre_unroll_data.transaction.puzzle.to_nodeptr(),
-            pre_unroll_data.transaction.solution,
+            run_puzzle,
+            run_args,
             0
         ).into_gen()?;
 
@@ -573,24 +577,27 @@ fn test_referee_can_slash_on_chain() {
         &referee_coins[0],
     ).expect("should work").unwrap();
 
+    let timeout_transaction_puzzle = timeout_transaction.bundle.puzzle.to_clvm(&mut allocator).expect("should work");
     let disassembled_puzzle_in_transaction = disassemble(
         allocator.allocator(),
-        timeout_transaction.bundle.puzzle.to_nodeptr(),
+        timeout_transaction_puzzle,
         None
     );
+    let spend_to_referee_clvm = spend_to_referee.to_clvm(&mut allocator).expect("should work");
     assert_eq!(
         disassemble(
             allocator.allocator(),
-            spend_to_referee.to_nodeptr(),
+            spend_to_referee_clvm,
             None
         ),
         disassembled_puzzle_in_transaction
     );
 
     eprintln!("timeout_transaction {timeout_transaction:?}");
+    let puzzle_clvm = timeout_transaction.bundle.puzzle.to_clvm(&mut allocator).expect("should work");
     eprintln!("referee puzzle curried {}", disassemble(
         allocator.allocator(),
-        timeout_transaction.bundle.puzzle.to_nodeptr(),
+        puzzle_clvm,
         None
     ));
 
@@ -693,10 +700,11 @@ fn test_referee_can_move_on_chain() {
     let spend_to_referee = reftest.my_referee.curried_referee_puzzle_for_validator(
         &mut allocator,
     ).expect("should work");
+    let spend_to_referee_clvm = spend_to_referee.to_clvm(&mut allocator).expect("should work");
     let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
     eprintln!(
         "referee start state {}",
-        disassemble(allocator.allocator(), spend_to_referee.to_nodeptr(), None)
+        disassemble(allocator.allocator(), spend_to_referee_clvm, None)
     );
     let referee_coins = s.spend_coin_to_puzzle_hash(
         &mut allocator,

@@ -7,12 +7,13 @@ use chia_bls;
 use clvm_traits::{clvm_curried_args, ToClvm};
 
 use clvmr::allocator::NodePtr;
+use clvmr::serde::node_from_bytes;
+
 use clvm_tools_rs::util::{number_from_u8, u8_from_number};
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::{
     Bytes, Stream, UnvalidatedBytesFromType,
 };
-use clvm_tools_rs::classic::clvm::serialize::{sexp_from_stream, SimpleCreateCLVMObject};
 use clvm_tools_rs::compiler::comptypes::map_m;
 
 use clvm_utils::CurriedProgram;
@@ -31,21 +32,16 @@ pub fn hex_to_sexp(
     allocator: &mut AllocEncoder,
     hex_data: String,
 ) -> Result<NodePtr, types::Error> {
-    let mut hex_stream = Stream::new(Some(
+    let hex_stream = Stream::new(Some(
         Bytes::new_validated(Some(UnvalidatedBytesFromType::Hex(hex_data))).into_gen()?,
     ));
-    Ok(sexp_from_stream(
-        allocator.allocator(),
-        &mut hex_stream,
-        Box::new(SimpleCreateCLVMObject {}),
-    )
-    .map(|x| x.1)
-    .into_gen()?)
+    node_from_bytes(allocator.allocator(), &hex_stream.get_value().data()).into_gen()
 }
 
 pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, types::Error> {
     let hex_data = read_to_string(name).into_gen()?;
-    Ok(Puzzle::from_nodeptr(hex_to_sexp(allocator, hex_data)?))
+    let hex_sexp = hex_to_sexp(allocator, hex_data)?;
+    Puzzle::from_nodeptr(allocator, hex_sexp)
 }
 
 pub fn get_standard_coin_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, types::Error> {
@@ -133,7 +129,7 @@ pub fn puzzle_for_synthetic_public_key(
         args: clvm_curried_args!(synthetic_public_key.clone()),
     };
     let nodeptr = curried_program.to_clvm(allocator).into_gen()?;
-    Ok(Puzzle::from_nodeptr(nodeptr))
+    Puzzle::from_nodeptr(allocator, nodeptr)
 }
 
 fn hash_of_consed_parameter_hash(environment: &Hash, parameter: &Hash) -> Hash {

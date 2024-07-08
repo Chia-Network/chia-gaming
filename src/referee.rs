@@ -195,10 +195,11 @@ fn curry_referee_puzzle(
         "curry_referee_puzzle {}",
         disassemble(allocator.allocator(), combined_args, None)
     );
-    Ok(Puzzle::from_nodeptr(CurriedProgram {
+    let curried_program_nodeptr = CurriedProgram {
         program: referee_coin_puzzle,
         args: clvm_curried_args!(Node(combined_args)),
-    }.to_clvm(allocator).into_gen()?))
+    }.to_clvm(allocator).into_gen()?;
+    Puzzle::from_nodeptr(allocator, curried_program_nodeptr)
 }
 
 /// Type of arguments for validator move queries.
@@ -981,7 +982,7 @@ impl RefereeMaker {
             );
             let transaction_bundle = TransactionBundle {
                 puzzle: puzzle.clone(),
-                solution: transaction_solution,
+                solution: Program::from_nodeptr(allocator, transaction_solution)?,
                 signature,
             };
             let output_coin_string = CoinString::from_parts(
@@ -1090,7 +1091,8 @@ impl RefereeMaker {
             &existing_curry_args,
         )?;
 
-        eprintln!("spend puzzle {}", disassemble(allocator.allocator(), spend_puzzle.to_nodeptr(), None));
+        let spend_puzzle_nodeptr = spend_puzzle.to_clvm(allocator).into_gen()?;
+        eprintln!("spend puzzle {}", disassemble(allocator.allocator(), spend_puzzle_nodeptr, None));
         assert_eq!(
             spend_puzzle.sha256tree(allocator),
             current_referee_puzzle_hash
@@ -1118,9 +1120,10 @@ impl RefereeMaker {
             &self.referee_coin_puzzle_hash,
             &target_args
         )?;
+        let target_referee_puzzle_nodeptr = target_referee_puzzle.to_clvm(allocator).into_gen()?;
         eprintln!(
             "target_referee_puzzle {}",
-            disassemble(allocator.allocator(), target_referee_puzzle.to_nodeptr(), None)
+            disassemble(allocator.allocator(), target_referee_puzzle_nodeptr, None)
         );
         assert_eq!(
             target_referee_puzzle.sha256tree(allocator),
@@ -1355,7 +1358,7 @@ impl RefereeMaker {
                 coin: coin_string.clone(),
                 bundle: TransactionBundle {
                     puzzle: new_puzzle.clone(),
-                    solution: slashing_coin_solution,
+                    solution: Program::from_nodeptr(allocator, slashing_coin_solution)?,
                     signature: sig.clone(),
                 },
             },

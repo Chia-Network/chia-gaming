@@ -1,6 +1,9 @@
 use std::io;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::Visitor;
+
 use num_bigint::{BigInt, Sign};
 use num_traits::cast::ToPrimitive;
 
@@ -10,6 +13,7 @@ use rand::prelude::*;
 use sha2::{Digest, Sha256};
 
 use clvmr::allocator::{Allocator, NodePtr, SExp};
+use clvmr::serde::{node_from_bytes, node_to_bytes};
 use clvmr::reduction::EvalErr;
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
@@ -28,7 +32,7 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvm_tools_rs::compiler::runtypes::RunFailure;
 
 /// CoinID
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct CoinID(Hash);
 
 impl CoinID {
@@ -50,7 +54,7 @@ impl ToClvm<NodePtr> for CoinID {
 }
 
 /// Coin String
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct CoinString(Vec<u8>);
 
 impl CoinString {
@@ -148,6 +152,18 @@ impl Distribution<PrivateKey> for Standard {
     }
 }
 
+struct SerdeByteConsumer;
+
+impl<'de> Visitor<'de> for SerdeByteConsumer {
+    type Value = Vec<u8>;
+    fn expecting(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        fmt.write_str("expected bytes")
+    }
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E> {
+        Ok(v.to_vec())
+    }
+}
+
 /// Public key
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct PublicKey(chia_bls::PublicKey);
@@ -155,6 +171,31 @@ pub struct PublicKey(chia_bls::PublicKey);
 impl Default for PublicKey {
     fn default() -> Self {
         PublicKey(chia_bls::PublicKey::default())
+    }
+}
+
+impl Serialize for PublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer {
+        let bytes = self.bytes();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for PublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de> {
+        let b = SerdeByteConsumer;
+        let bytes = deserializer.deserialize_bytes(b);
+        let mut fixed_bytes: [u8; 48] = [0; 48];
+        for v in bytes.into_iter().take(1) {
+            for (i,b) in v.into_iter().enumerate() {
+                fixed_bytes[i] = b;
+            }
+        }
+        Ok(PublicKey::from_bytes(fixed_bytes).map_err(|e| serde::de::Error::custom(format!("couldn't make pubkey: {e:?}")))?)
     }
 }
 
@@ -171,6 +212,10 @@ impl PublicKey {
         Ok(PublicKey(
             chia_bls::PublicKey::from_bytes(&bytes).into_gen()?,
         ))
+    }
+
+    pub fn from_bls(pk: chia_bls::PublicKey) -> PublicKey {
+        PublicKey(pk)
     }
 }
 
@@ -198,12 +243,6 @@ impl ToClvm<NodePtr> for PublicKey {
     }
 }
 
-impl PublicKey {
-    pub fn from_bls(pk: chia_bls::PublicKey) -> PublicKey {
-        PublicKey(pk)
-    }
-}
-
 /// Aggsig
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Aggsig(chia_bls::Signature);
@@ -212,6 +251,31 @@ impl Default for Aggsig {
     // Revisit for empty aggsig.
     fn default() -> Self {
         Aggsig(chia_bls::Signature::default())
+    }
+}
+
+impl Serialize for Aggsig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer {
+        let bytes = self.bytes();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for Aggsig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de> {
+        let b = SerdeByteConsumer;
+        let bytes = deserializer.deserialize_bytes(b);
+        let mut fixed_bytes: [u8; 96] = [0; 96];
+        for v in bytes.into_iter().take(1) {
+            for (i,b) in v.into_iter().enumerate() {
+                fixed_bytes[i] = b;
+            }
+        }
+        Ok(Aggsig::from_bytes(fixed_bytes).map_err(|e| serde::de::Error::custom(format!("couldn't make aggsig: {e:?}")))?)
     }
 }
 
@@ -283,7 +347,7 @@ impl ToClvm<NodePtr> for Aggsig {
 }
 
 /// Game ID
-#[derive(Default, Clone, Debug, Eq, PartialEq)]
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GameID(Vec<u8>);
 
 impl GameID {
@@ -357,7 +421,7 @@ impl From<Amount> for u64 {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Hash([u8; 32]);
 
 impl Default for Hash {
@@ -436,7 +500,7 @@ impl<'a> Sha256Input<'a> {
 }
 
 /// Puzzle hash
-#[derive(Default, Clone, Eq, PartialEq, Debug)]
+#[derive(Default, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub struct PuzzleHash(Hash);
 
 impl PuzzleHash {
@@ -479,6 +543,7 @@ pub enum Error {
     EncodeErr(ToClvmError),
     StrErr(String),
     BlsErr(chia_bls::Error),
+    BsonError(bson::de::Error),
     Channel(String),
 }
 
@@ -523,7 +588,7 @@ pub trait ToQuotedProgram {
 impl ToQuotedProgram for NodePtr {
     fn to_quoted_program(&self, allocator: &mut AllocEncoder) -> Result<Program, Error> {
         let pair = allocator.0.new_pair(allocator.0.one(), *self).into_gen()?;
-        Ok(Program::from_nodeptr(pair))
+        Ok(Program::from_nodeptr(allocator, pair)?)
     }
 }
 
@@ -549,32 +614,71 @@ impl<X: ToClvm<NodePtr>> Sha256tree for X {
 }
 
 #[derive(Clone, Debug)]
-pub struct Program(NodePtr);
+pub struct Program(Vec<u8>);
 
 impl Program {
-    pub fn from_nodeptr(n: NodePtr) -> Program {
-        Program(n)
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Program, Error> {
+        let bytes = clvmr::serde::node_to_bytes(allocator.allocator(), n).into_gen()?;
+        Ok(Program(bytes))
     }
 
-    pub fn to_nodeptr(&self) -> NodePtr {
-        self.0
+    pub fn from_bytes(by: &[u8]) -> Program {
+        Program(by.to_vec())
     }
 
-    pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
-        Node(self.0).to_hex(allocator)
+    pub fn to_hex(&self) -> String {
+        hex::encode(&self.0)
+    }
+}
+
+impl Serialize for Program {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Program {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de> {
+        let b = SerdeByteConsumer;
+        let byte_data = deserializer.deserialize_bytes(b)?;
+        Ok(Program(byte_data))
+    }
+}
+
+fn clone_to_encoder(
+    encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    source_allocator: &Allocator,
+    node: NodePtr
+) -> Result<NodePtr, ToClvmError> {
+    match source_allocator.sexp(node) {
+        SExp::Atom => {
+            let buf = source_allocator.atom(node);
+            encoder.encode_atom(&buf)
+        }
+        SExp::Pair(a,b) => {
+            let ac = clone_to_encoder(encoder, source_allocator, a)?;
+            let bc = clone_to_encoder(encoder, source_allocator, b)?;
+            encoder.encode_pair(ac, bc)
+        }
     }
 }
 
 impl ToClvm<NodePtr> for Program {
     fn to_clvm(
         &self,
-        _encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
-        Ok(self.0)
+        let mut allocator = Allocator::new();
+        let result = node_from_bytes(&mut allocator, &self.0).map_err(|e| ToClvmError::Custom(format!("{e:?}")))?;
+        clone_to_encoder(encoder, &allocator, result)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Puzzle(Program);
 
 impl ToClvm<NodePtr> for Puzzle {
@@ -590,14 +694,15 @@ impl Puzzle {
     pub fn to_program(&self) -> Program {
         self.0.clone()
     }
-    pub fn to_nodeptr(&self) -> NodePtr {
-        self.0.to_nodeptr()
+    pub fn from_bytes(by: &[u8]) -> Puzzle {
+        Puzzle(Program::from_bytes(by))
     }
-    pub fn from_nodeptr(n: NodePtr) -> Puzzle {
-        Puzzle(Program::from_nodeptr(n))
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, node: NodePtr) -> Result<Puzzle, Error> {
+        let bytes = node_to_bytes(allocator.allocator(), node).into_gen()?;
+        Ok(Puzzle::from_bytes(&bytes))
     }
-    pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
-        self.0.to_hex(allocator)
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 }
 
@@ -695,6 +800,12 @@ impl ErrToError for chia_bls::Error {
 impl ErrToError for ToClvmError {
     fn into_gen(self) -> Error {
         Error::EncodeErr(self)
+    }
+}
+
+impl ErrToError for bson::de::Error {
+    fn into_gen(self) -> Error {
+        Error::BsonError(self)
     }
 }
 
@@ -801,10 +912,10 @@ impl CoinCondition {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionBundle {
     pub puzzle: Puzzle,
-    pub solution: NodePtr,
+    pub solution: Program,
     pub signature: Aggsig,
 }
 
@@ -816,10 +927,9 @@ pub struct SpecificTransactionBundle {
 
 impl Default for TransactionBundle {
     fn default() -> Self {
-        let allocator = Allocator::new();
         TransactionBundle {
-            puzzle: Puzzle::from_nodeptr(allocator.null()),
-            solution: allocator.null(),
+            puzzle: Puzzle::from_bytes(&[0x80]),
+            solution: Program::from_bytes(&[0x80]),
             signature: Aggsig::default(),
         }
     }

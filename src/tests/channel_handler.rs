@@ -13,7 +13,7 @@ use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, get_standard_coin_puzzle};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash,
-    Sha256tree, Timeout,
+    Sha256tree, Timeout, IntoErr, ErrToError
 };
 
 pub struct ChannelHandlerParty {
@@ -147,7 +147,8 @@ fn test_smoke_can_initiate_channel_handler<'a>() {
     let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
     let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
     // XXX
-    let ref_puz = Puzzle::from_nodeptr(allocator.allocator().null());
+    let nil = allocator.allocator().null();
+    let ref_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
     let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
@@ -215,7 +216,8 @@ fn test_smoke_can_start_game() {
     let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
     let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
     // XXX
-    let ref_coin_puz = Puzzle::from_nodeptr(allocator.allocator().null());
+    let nil = allocator.allocator().null();
+    let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
     let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
@@ -310,7 +312,8 @@ fn test_unroll_can_verify_own_signature() {
 
     let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
     let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
-    let ref_coin_puz = Puzzle::from_nodeptr(allocator.allocator().null());
+    let nil = allocator.allocator().null();
+    let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
     let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
     let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {

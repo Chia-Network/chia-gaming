@@ -23,6 +23,8 @@ Wallet/Full Node bootstrap
 <- received_channel_offer (transaction_bundle)
 -> channel_transaction_completion (transaction_bundle)
 <- received_channel_transaction_completion (transation_bundle)
+# No need to inform about channel creation failure so it should just drop
+# the peer object.
 
 Wallet/Full Node unroll
 <- spend transaction and add fee (transation_bundle)
