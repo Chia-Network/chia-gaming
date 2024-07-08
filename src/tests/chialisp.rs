@@ -33,10 +33,11 @@ fn test_prepend_count() {
          ], ())
         ).to_clvm(&mut allocator).expect("should build");
     let program = read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+    let program_clvm = program.to_clvm(&mut allocator).expect("should do");
     let result = run_program(
         allocator.allocator(),
         &chia_dialect(),
-        program.to_nodeptr(),
+        program_clvm,
         source_data,
         0
     ).expect("should run").1;
@@ -52,8 +53,9 @@ fn test_make_cards() {
     let loc = Srcloc::start("game_handler");
     let opts = Rc::new(DefaultCompilerOpts::new("game_handler"));
 
-    let program = read_hex_puzzle(&mut allocator, "resources/test_make_cards.hex").expect("should read").to_nodeptr();
-    let converted_program = convert_from_clvm_rs(allocator.allocator(), loc.clone(), program).expect("should work");
+    let program = read_hex_puzzle(&mut allocator, "resources/test_make_cards.hex").expect("should read");
+    let program_clvm = program.to_clvm(&mut allocator).expect("should do");
+    let converted_program = convert_from_clvm_rs(allocator.allocator(), loc.clone(), program_clvm).expect("should work");
     let source_data =
         [Sha256Input::Bytes(b"test").hash()]
         .to_clvm(&mut allocator).expect("should build");
@@ -85,12 +87,13 @@ fn test_mergein() {
         )
     ];
     let program = read_hex_puzzle(&mut allocator, "resources/test_mergein.hex").expect("should read");
+    let program_clvm = program.to_clvm(&mut allocator).expect("should do");
     for t in tests.iter() {
         let clvm_arg = t.0.to_clvm(&mut allocator).expect("should build");
         let result = run_program(
             allocator.allocator(),
             &chia_dialect(),
-            program.to_nodeptr(),
+            program_clvm,
             clvm_arg,
             0
         ).expect("should run").1;
@@ -118,10 +121,11 @@ fn test_pull_indices() {
           ], ()))
         ).to_clvm(&mut allocator).expect("should build");
     let program = read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+    let program_clvm = program.to_clvm(&mut allocator).expect("should do");
     let result = run_program(
         allocator.allocator(),
         &chia_dialect(),
-        program.to_nodeptr(),
+        program_clvm,
         source_data,
         0
     ).expect("should run").1;
@@ -146,10 +150,11 @@ fn test_pull_out_straight() {
           ], ()))
         ).to_clvm(&mut allocator).expect("should build");
     let program = read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+    let program_clvm = program.to_clvm(&mut allocator).expect("should do");
     let result = run_program(
         allocator.allocator(),
         &chia_dialect(),
-        program.to_nodeptr(),
+        program_clvm,
         source_data_ace,
         0
     ).expect("should run").1;
@@ -180,10 +185,11 @@ fn test_find_straight_high() {
          )
         ).to_clvm(&mut allocator).expect("should build");
     let program = read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+    let program_clvm = program.to_clvm(&mut allocator).expect("should work");
     let result = run_program(
         allocator.allocator(),
         &chia_dialect(),
-        program.to_nodeptr(),
+        program_clvm,
         source_data_ace,
         0
     ).expect("should run").1;
@@ -209,10 +215,11 @@ fn test_straight_indices() {
          ], ())
         ).to_clvm(&mut allocator).expect("should build");
     let program = read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+    let program_clvm = program.to_clvm(&mut allocator).expect("should work");
     let result = run_program(
         allocator.allocator(),
         &chia_dialect(),
-        program.to_nodeptr(),
+        program_clvm,
         source_data_ace,
         0
     ).expect("should run").1;
@@ -1155,17 +1162,18 @@ fn test_handcalc() {
             ("handcalc",
              (ex_data_2, ())
             ).to_clvm(&mut allocator).expect("should build");
+        let program_clvm = program.to_clvm(&mut allocator).expect("should do");
         let result_1 = run_program(
             allocator.allocator(),
             &chia_dialect(),
-            program.to_nodeptr(),
+            program_clvm,
             source_data_1,
             0
         ).expect("should run").1;
         let result_2 = run_program(
             allocator.allocator(),
             &chia_dialect(),
-            program.to_nodeptr(),
+            program_clvm,
             source_data_2,
             0
         ).expect("should run").1;
@@ -1182,10 +1190,11 @@ fn test_handcalc() {
             Node(first(allocator.allocator(), result_1).expect("ok")),
             Node(first(allocator.allocator(), result_2).expect("ok"))
         ].to_clvm(&mut allocator).expect("should build");
+        let deep_compare_program = deep_compare.to_clvm(&mut allocator).expect("should work");
         let compare_result = run_program(
             allocator.allocator(),
             &chia_dialect(),
-            deep_compare.to_nodeptr(),
+            deep_compare_program,
             deep_compare_args,
             0
         ).expect("should run").1;

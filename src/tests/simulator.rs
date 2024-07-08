@@ -11,7 +11,7 @@ use indoc::indoc;
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, solution_for_conditions, sign_agg_sig_me};
-use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, IntoErr};
+use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, IntoErr, Program};
 
 #[derive(Debug, Clone)]
 pub struct IncludeTransactionResult {
@@ -134,7 +134,7 @@ impl Simulator {
             coin: coin.clone(),
             bundle: TransactionBundle {
                 puzzle: identity.puzzle.clone(),
-                solution: coin_spend_info.solution,
+                solution: Program::from_nodeptr(allocator, coin_spend_info.solution)?,
                 signature: coin_spend_info.signature,
             }
         };
@@ -297,7 +297,7 @@ impl Simulator {
     ) -> PyResult<PyObject> {
         let coin = self.make_coin(parent_coin)?;
         eprintln!("coin = {coin:?}");
-        let puzzle_hex = puzzle_reveal.to_hex(allocator);
+        let puzzle_hex = puzzle_reveal.to_hex();
         let puzzle_program = self.hex_to_program(&puzzle_hex)?;
         eprintln!("puzzle_program = {puzzle_program:?}");
         let solution_hex = Node(solution).to_hex(allocator);
@@ -325,12 +325,13 @@ impl Simulator {
 
             let mut signature = txs[0].bundle.signature.clone();
             for (i, tx) in txs.iter().enumerate() {
+                let spend_args = tx.bundle.solution.to_clvm(allocator).map_err(|e| PyErr::from_value(PyIndexError::new_err(format!("{e:?}")).value(py).into()))?;
                 let spend = self.make_coin_spend(
                     py,
                     allocator,
                     &tx.coin,
                     tx.bundle.puzzle.clone(),
-                    tx.bundle.solution
+                    spend_args
                 )?;
                 spends.push(spend);
                 if i > 0 {
@@ -412,7 +413,7 @@ impl Simulator {
         let tx = SpecificTransactionBundle {
             bundle: TransactionBundle {
                 puzzle: identity_source.puzzle.clone(),
-                solution: standard_solution,
+                solution: Program::from_nodeptr(allocator, standard_solution)?,
                 signature,
             },
             coin: source_coin.clone(),
@@ -473,7 +474,7 @@ impl Simulator {
             spends.push(SpecificTransactionBundle {
                 bundle: TransactionBundle {
                     puzzle: owner.puzzle.clone(),
-                    solution,
+                    solution: Program::from_nodeptr(allocator, solution)?,
                     signature
                 },
                 coin: c.clone()

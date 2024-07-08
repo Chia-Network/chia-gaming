@@ -25,7 +25,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, CoinCondition, CoinID, CoinString, Error, GameID, IntoErr,
     PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256tree,
-    SpecificTransactionBundle, SpendRewardResult, ToQuotedProgram, TransactionBundle, BrokenOutCoinSpendInfo,
+    SpecificTransactionBundle, SpendRewardResult, ToQuotedProgram, TransactionBundle, BrokenOutCoinSpendInfo, Program
 };
 #[cfg(test)]
 use crate::common::types::Node;
@@ -199,7 +199,7 @@ impl ChannelHandler {
         )
     }
 
-    fn get_aggregate_unroll_public_key(&self) -> PublicKey {
+    pub fn get_aggregate_unroll_public_key(&self) -> PublicKey {
         let public_key = private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
         public_key + self.their_unroll_coin_public_key.clone()
     }
@@ -332,7 +332,7 @@ impl ChannelHandler {
                 &env.standard_puzzle,
                 &aggregate_public_key
             )?,
-            solution: channel_coin_spend.solution,
+            solution: Program::from_nodeptr(&mut env.allocator, channel_coin_spend.solution)?,
             signature: channel_coin_spend.signature.clone(),
         };
 
@@ -924,7 +924,7 @@ impl ChannelHandler {
             )?;
 
         Ok(TransactionBundle {
-            solution: channel_coin_spend.solution,
+            solution: Program::from_nodeptr(&mut env.allocator, channel_coin_spend.solution)?,
             signature: channel_coin_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
@@ -964,7 +964,7 @@ impl ChannelHandler {
         )?;
 
         Ok(TransactionBundle {
-            solution: channel_spend.solution,
+            solution: Program::from_nodeptr(&mut env.allocator, channel_spend.solution)?,
             signature: channel_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
@@ -1026,8 +1026,8 @@ impl ChannelHandler {
 
         Ok(ChannelCoinSpentResult {
             transaction: TransactionBundle {
-                puzzle: Puzzle::from_nodeptr(curried_unroll_puzzle),
-                solution: unroll_puzzle_solution,
+                puzzle: Puzzle::from_nodeptr(&mut env.allocator, curried_unroll_puzzle)?,
+                solution: Program::from_nodeptr(&mut env.allocator, unroll_puzzle_solution)?,
                 signature: use_unroll.coin.get_unroll_coin_signature()? +
                     use_unroll.signatures.my_unroll_half_signature_peer.clone(),
             },
@@ -1118,8 +1118,8 @@ impl ChannelHandler {
 
             Ok(ChannelCoinSpentResult {
                 transaction: TransactionBundle {
-                    puzzle: Puzzle::from_nodeptr(curried_unroll_puzzle),
-                    solution: unroll_puzzle_solution,
+                    puzzle: Puzzle::from_nodeptr(&mut env.allocator, curried_unroll_puzzle)?,
+                    solution: Program::from_nodeptr(&mut env.allocator, unroll_puzzle_solution)?,
                     signature: self.unroll.coin.get_unroll_coin_signature()?,
                 },
                 timeout: true,
@@ -1405,14 +1405,17 @@ impl ChannelHandler {
                 &env.agg_sig_me_additional_data,
             );
 
+            let standard_solution = standard_solution_unsafe(
+                &mut env.allocator,
+                &self.referee_private_key(),
+                conditions,
+            )?;
             coins_with_solutions.push(TransactionBundle {
                 puzzle: spend_coin_puzzle.clone(),
-                solution: standard_solution_unsafe(
-                    env.allocator,
-                    &self.referee_private_key(),
-                    conditions,
-                )?
-                .solution,
+                solution: Program::from_nodeptr(
+                    &mut env.allocator,
+                    standard_solution.solution
+                )?,
                 signature,
             });
         }
