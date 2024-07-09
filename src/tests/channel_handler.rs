@@ -10,10 +10,10 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs, ChannelCoinSpendInfo, HandshakeResult, ChannelHandlerPrivateKeys,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, get_standard_coin_puzzle};
+use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, get_standard_coin_puzzle, read_hex_puzzle};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash,
-    Sha256tree, Timeout, IntoErr, ErrToError
+    Sha256tree, Timeout
 };
 
 pub struct ChannelHandlerParty {
@@ -137,6 +137,33 @@ impl ChannelHandlerGame {
         }
 
         Err(Error::StrErr("get channel handler spend when not able to unroll".to_string()))
+    }
+}
+
+pub fn channel_handler_env<'a, R: Rng>(allocator: &'a mut AllocEncoder, rng: &'a mut R) -> ChannelHandlerEnv<'a, R> {
+    let referee_coin_puzzle = read_hex_puzzle(
+        allocator,
+        "onchain/referee.hex"
+    ).expect("should be readable");
+    let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
+    let unroll_puzzle = read_hex_puzzle(
+        allocator,
+        "resources/unroll_puzzle_state_channel_unrolling.hex"
+    ).expect("should read");
+    let unroll_metapuzzle = read_hex_puzzle(
+        allocator,
+        "resources/unroll_meta_puzzle.hex"
+    ).expect("should read");
+    let standard_puzzle = get_standard_coin_puzzle(allocator).expect("should load");
+    ChannelHandlerEnv {
+        allocator: allocator,
+        rng: rng,
+        referee_coin_puzzle,
+        referee_coin_puzzle_hash,
+        unroll_metapuzzle,
+        unroll_puzzle,
+        standard_puzzle,
+        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
     }
 }
 

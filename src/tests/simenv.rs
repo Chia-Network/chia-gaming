@@ -12,7 +12,7 @@ use crate::common::standard_coin::{ChiaIdentity, read_hex_puzzle, get_standard_c
 use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove, ValidationProgram, GameStartInfo};
-use crate::tests::channel_handler::ChannelHandlerGame;
+use crate::tests::channel_handler::{ChannelHandlerGame, channel_handler_env};
 use crate::tests::game::new_channel_handler_game;
 use crate::tests::referee::{make_debug_game_handler, RefereeTest};
 use crate::tests::simulator::Simulator;
@@ -77,31 +77,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             ChiaIdentity::new(allocator, their_private_key).expect("should generate")
         ];
 
-        let referee_coin_puzzle = read_hex_puzzle(
-            allocator,
-            "onchain/referee.hex"
-        ).expect("should be readable");
-        let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
-        let unroll_puzzle = read_hex_puzzle(
-            allocator,
-            "resources/unroll_puzzle_state_channel_unrolling.hex"
-        ).expect("should read");
-        let unroll_metapuzzle = read_hex_puzzle(
-            allocator,
-            "resources/unroll_meta_puzzle.hex"
-        ).expect("should read");
-        let standard_puzzle = get_standard_coin_puzzle(allocator).expect("should load");
-        let mut env = ChannelHandlerEnv {
-            allocator: allocator,
-            rng: rng,
-            referee_coin_puzzle,
-            referee_coin_puzzle_hash,
-            unroll_metapuzzle,
-            unroll_puzzle,
-            standard_puzzle,
-            agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
-        };
-
+        let mut env = channel_handler_env(allocator, rng);
         let simulator = Simulator::new();
         let (parties, coin) = new_channel_handler_game(
             &simulator,

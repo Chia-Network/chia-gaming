@@ -32,7 +32,7 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvm_tools_rs::compiler::runtypes::RunFailure;
 
 /// CoinID
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct CoinID(Hash);
 
 impl CoinID {
@@ -421,7 +421,7 @@ impl From<Amount> for u64 {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize, Hash)]
 pub struct Hash([u8; 32]);
 
 impl Default for Hash {
