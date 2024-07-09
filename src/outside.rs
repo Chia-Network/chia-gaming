@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use clvmr::NodePtr;
 
 use crate::common::types::{Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, Program, PuzzleHash, Timeout, TransactionBundle, PublicKey, IntoErr};
+use crate::common::standard_coin::private_to_public_key;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{ChannelHandlerEnv, PotatoSignatures, ReadableMove, ChannelHandlerPrivateKeys, ChannelHandlerInitiationData};
 use crate::channel_handler::ChannelHandler;
@@ -139,7 +140,6 @@ pub enum PeerMessage {
 }
 
 pub enum HandshakeState {
-    Start,
     StepA,
     StepB(HandshakeA),
     StepC {
@@ -166,11 +166,11 @@ pub enum HandshakeState {
     }
 }
 
-trait PacketSender {
+pub trait PacketSender {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error>;
 }
 
-struct PeerEnv<'a, G, WS, WB, PS, R>
+pub struct PeerEnv<'a, G, WS, WB, PS, R>
 where
     G: GameUI,
     WS: WalletSpendInterface,
@@ -203,7 +203,7 @@ where
 /// If there is more work left, also send a receive potato message at that time.
 ///
 /// Also do this when any queue becomes non-empty.
-struct Peer {
+pub struct Peer {
     have_potato: bool,
 
     handshake_state: HandshakeState,
@@ -243,6 +243,49 @@ struct Peer {
 ///
 /// once this object knows the channel puzzle hash they should register the coin.
 impl Peer {
+    pub fn new(
+        have_potato: bool,
+        private_keys: ChannelHandlerPrivateKeys,
+        my_contribution: Amount,
+        their_contribution: Amount,
+        reward_puzzle_hash: PuzzleHash,
+    ) -> Peer {
+        Peer {
+            have_potato,
+            handshake_state: HandshakeState::StepA,
+
+            their_start_queue: VecDeque::default(),
+            my_start_queue: VecDeque::default(),
+
+            channel_handler: None,
+
+            private_keys,
+            my_contribution,
+            their_contribution,
+            reward_puzzle_hash,
+        }
+    }
+
+    pub fn start<S: PacketSender>(
+        &self,
+        parent_coin: CoinString,
+        sender: &mut S
+    ) -> Result<(), Error> {
+        let channel_public_key =
+            private_to_public_key(&self.private_keys.my_channel_coin_private_key);
+        let unroll_public_key =
+            private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
+
+        sender.send_message(&PeerMessage::HandshakeA(HandshakeA {
+            parent: parent_coin,
+            channel_public_key,
+            unroll_public_key,
+            reward_puzzle_hash: self.reward_puzzle_hash.clone(),
+        }))?;
+
+        Ok(())
+    }
+
     pub fn received_message<G, WS, WB, PS, R: Rng>(
         &mut self,
         penv: &mut PeerEnv<G, WS, WB, PS, R>,
@@ -256,9 +299,6 @@ impl Peer {
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
         match &self.handshake_state {
-            HandshakeState::Start => {
-                todo!();
-            }
             HandshakeState::StepA => {
                 let msg: HandshakeA = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
                 // XXX Call the UX saying the channel coin has been created
@@ -310,6 +350,12 @@ impl Peer {
                 penv.packet_sender.send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
 
                 Ok(())
+            }
+            HandshakeState::StepC {
+                first_player_hs_info,
+                second_player_hs_info
+            } => {
+                todo!();
             }
             _ => {
                 todo!();
