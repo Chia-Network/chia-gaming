@@ -2,6 +2,7 @@ pub mod channel_handler;
 pub mod constants;
 pub mod game;
 pub mod game_handler;
+pub mod outside;
 pub mod referee;
 #[cfg(feature = "sim-tests")]
 pub mod simulator;
