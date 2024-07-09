@@ -119,7 +119,7 @@ fn test_peer_smoke() {
 
     let mut pipe_sender: [Pipe; 2] = Default::default();
 
-    let p1 = Peer::new(
+    let mut p1 = Peer::new(
         true,
         private_keys1,
         Amount::new(100),
@@ -153,6 +153,7 @@ fn test_peer_smoke() {
 
     let msg1 = pipe_sender[0].queue.pop_front().unwrap();
 
+
     {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
         let mut penv = PeerEnv {
@@ -163,4 +164,15 @@ fn test_peer_smoke() {
     }
 
     assert!(pipe_sender[1].queue.len() == 1);
+
+    let msg2 = pipe_sender[1].queue.pop_front().unwrap();
+
+    {
+        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let mut penv = PeerEnv {
+            env: &mut env,
+            system_interface: &mut pipe_sender[0]
+        };
+        p1.received_message(&mut penv, msg2).expect("should receive");
+    }
 }

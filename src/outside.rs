@@ -145,8 +145,10 @@ pub enum PeerMessage {
 }
 
 pub enum HandshakeState {
+    PreInit,
+    Waiting(CoinString),
     StepA,
-    StepB(HandshakeA),
+    StepB(HandshakeB),
     StepC {
         first_player_hs_info: HandshakeA,
         second_player_hs_info: HandshakeB
@@ -248,7 +250,12 @@ impl Peer {
     ) -> Peer {
         Peer {
             have_potato,
-            handshake_state: HandshakeState::StepA,
+            handshake_state:
+            if have_potato {
+                HandshakeState::PreInit
+            } else {
+                HandshakeState::StepA
+            },
 
             their_start_queue: VecDeque::default(),
             my_start_queue: VecDeque::default(),
@@ -263,7 +270,7 @@ impl Peer {
     }
 
     pub fn start<S: PacketSender>(
-        &self,
+        &mut self,
         parent_coin: CoinString,
         sender: &mut S
     ) -> Result<(), Error> {
@@ -271,6 +278,9 @@ impl Peer {
             private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         let unroll_public_key =
             private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
+
+        assert!(matches!(self.handshake_state, HandshakeState::PreInit));
+        self.handshake_state = HandshakeState::Waiting(parent_coin.clone());
 
         sender.send_message(&PeerMessage::HandshakeA(HandshakeA {
             parent: parent_coin,
@@ -292,6 +302,7 @@ impl Peer {
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
         match &self.handshake_state {
+            // Potato progression
             HandshakeState::StepA => {
                 let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
                 let msg =
@@ -351,12 +362,50 @@ impl Peer {
 
                 Ok(())
             }
+
             HandshakeState::StepC {
                 first_player_hs_info,
                 second_player_hs_info
             } => {
                 todo!();
             }
+
+            // Non potato progression
+            HandshakeState::Waiting(parent_coin) => {
+                let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let msg =
+                    if let PeerMessage::HandshakeB(msg) = msg_envelope {
+                        msg
+                    } else {
+                        return Err(Error::StrErr(format!("Expected handshake a message, got {msg_envelope:?}")));
+                    };
+
+                let init_data = ChannelHandlerInitiationData {
+                    launcher_coin_id: parent_coin.to_coin_id(),
+                    we_start_with_potato: false,
+                    their_channel_pubkey: msg.channel_public_key.clone(),
+                    their_unroll_pubkey: msg.unroll_public_key.clone(),
+                    their_referee_puzzle_hash: penv.env.referee_coin_puzzle_hash.clone(),
+                    my_contribution: self.my_contribution.clone(),
+                    their_contribution: self.their_contribution.clone(),
+                };
+                let (mut channel_handler, init_result) = ChannelHandler::new(
+                    &mut penv.env,
+                    self.private_keys.clone(),
+                    &init_data
+                )?;
+
+                let nil_sigs = channel_handler.send_empty_potato(penv.env)?;
+
+                self.channel_handler = Some(channel_handler);
+                self.handshake_state = HandshakeState::StepB(msg);
+
+                self.have_potato = false;
+                penv.system_interface.send_message(&PeerMessage::Nil(nil_sigs))?;
+
+                Ok(())
+            }
+
             _ => {
                 todo!();
             }
