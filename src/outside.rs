@@ -38,40 +38,46 @@ struct GameInfoTheirTurn {
     mover_share: Amount,
 }
 
-/// Bootstrap wallet receiver
-trait BootstrapWalletReceiver {
+/// Async interface for messaging out of the game layer toward the wallet.
+pub trait BootstrapTowardGame {
+    /// Tells the game layer that we received a partly signed channel offer.
     fn received_channel_offer(&mut self, bundle: &TransactionBundle) -> Result<(), Error>;
+    /// Tells the game layer that the fully signed transaction to make the
+    /// channel coin has come through.
     fn received_channel_transaction_completion(&mut self, bundle: &TransactionBundle) -> Result<(), Error>;
 }
 
-/// Async device for querying the wallet and the block chain at bootstrap time.
-trait WalletBootstrap {
-    /// Deliver the channel_puzzle_hash to the outer layer.
+/// Async interface implemented by Peer to receive notifications about wallet
+/// state.
+pub trait BootstrapTowardWallet {
+    /// Deliver the channel_puzzle_hash to the wallet.
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error>;
 
-    /// Out
-    fn channel_offer(&mut self) -> Result<TransactionBundle, Error>;
-
-    /// Out
-    fn channel_transaction_completion(&mut self) -> Result<TransactionBundle, Error>;
+    /// Gives a partly signed offer to the wallet bootstrap.
+    fn channel_offer(&mut self, bundle: &TransactionBundle) -> Result<(), Error>;
+    /// Gives the fully signed offer to the wallet bootstrap.
+    fn channel_transaction_completion(&mut self, bundle: &TransactionBundle) -> Result<(), Error>;
 }
 
 /// Spend wallet receiver
-trait SpendWalletReceiver {
+pub trait SpendWalletReceiver {
     fn coin_created(&mut self, coin_id: &CoinString) -> Result<(), Error>;
     fn coin_spent(&mut self, coin_id: &CoinString) -> Result<(), Error>;
     fn coin_timeout_reached(&mut self, coin_id: &CoinString) -> Result<(), Error>;
 }
 
 /// Unroll time wallet interface.
-trait WalletSpendInterface {
+pub trait WalletSpendInterface {
+    /// Enqueue an outbound transaction.
     fn spend_transaction_and_add_fee(&mut self, bundle: &TransactionBundle) -> Result<(), Error>;
+    /// Coin should report its lifecycle until it gets spent, then should be
+    /// de-registered.
     fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error>;
 }
 
 struct GameType(Vec<u8>);
 
-trait UIReceiver {
+pub trait ToLocalUI {
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
     fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;
@@ -81,7 +87,7 @@ trait UIReceiver {
     fn going_on_chain(&mut self) -> Result<(), Error>;
 }
 
-trait GameUI {
+trait FromLocalUI {
     /// Start games requires queueing so that we handle them one at a time only
     /// when the previous start game.
     ///
@@ -92,14 +98,13 @@ trait GameUI {
     /// General flow:
     ///
     /// Have queues of games we're starting and other side is starting.
-    ///
     fn start_games(&mut self, i_initiated: bool, games: &[(GameType, bool, NodePtr)]) -> Result<GameID, Error>;
     fn make_move(&mut self, id: GameID, readable: ReadableMove) -> Result<(), Error>;
     fn accept(&mut self, id: GameID) -> Result<(), Error>;
     fn shut_down(&mut self) -> Result<(), Error>;
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HandshakeA {
     parent: CoinString,
     channel_public_key: PublicKey,
@@ -107,7 +112,7 @@ pub struct HandshakeA {
     reward_puzzle_hash: PuzzleHash,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HandshakeB {
     channel_public_key: PublicKey,
     unroll_public_key: PublicKey,
@@ -115,7 +120,7 @@ pub struct HandshakeB {
     my_initial_channel_half_signature_peer: Aggsig,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum PeerMessage {
     // Fixed in order sequence
     HandshakeA(HandshakeA),
@@ -170,23 +175,14 @@ pub trait PacketSender {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error>;
 }
 
-pub struct PeerEnv<'a, G, WS, WB, PS, R>
+pub struct PeerEnv<'a, G, R>
 where
-    G: GameUI,
-    WS: WalletSpendInterface,
-    WB: WalletBootstrap,
-    PS: PacketSender,
+    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
     R: Rng
 {
-    env: ChannelHandlerEnv<'a, R>,
+    pub env: &'a mut ChannelHandlerEnv<'a, R>,
 
-    ui_holder: G,
-
-    wallet_spend_interface: WS,
-
-    wallet_bootstrap: WB,
-
-    packet_sender: PS
+    pub system_interface: &'a mut G,
 }
 
 /// Handle potato in flight when I request potato:
@@ -286,21 +282,25 @@ impl Peer {
         Ok(())
     }
 
-    pub fn received_message<G, WS, WB, PS, R: Rng>(
+    pub fn received_message<G, R: Rng>(
         &mut self,
-        penv: &mut PeerEnv<G, WS, WB, PS, R>,
+        penv: &mut PeerEnv<G, R>,
         msg: Vec<u8>
     ) -> Result<(), Error>
     where
-        G: GameUI,
-        WS: WalletSpendInterface,
-        WB: WalletBootstrap,
-        PS: PacketSender,
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
         match &self.handshake_state {
             HandshakeState::StepA => {
-                let msg: HandshakeA = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let msg =
+                    if let PeerMessage::HandshakeA(msg) = msg_envelope {
+                        msg
+                    } else {
+                        return Err(Error::StrErr(format!("Expected handshake a message, got {msg_envelope:?}")));
+                    };
+
                 // XXX Call the UX saying the channel coin has been created
                 // and play can happen.
                 // Register the channel coin in the bootstrap provider.
@@ -347,7 +347,7 @@ impl Peer {
 
                 // Factor out to one method.
                 self.have_potato = false;
-                penv.packet_sender.send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
+                penv.system_interface.send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
 
                 Ok(())
             }
