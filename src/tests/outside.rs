@@ -161,4 +161,6 @@ fn test_peer_smoke() {
         };
         p2.received_message(&mut penv, msg1).expect("should receive");
     }
+
+    assert!(pipe_sender[1].queue.len() == 1);
 }
