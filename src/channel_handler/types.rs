@@ -44,6 +44,7 @@ pub struct ChannelHandlerInitiationData {
     pub their_contribution: Amount,
 }
 
+#[derive(Clone)]
 pub struct ChannelHandlerInitiationResult {
     pub channel_puzzle_hash_up: PuzzleHash,
     pub my_initial_channel_half_signature_peer: Aggsig,
@@ -691,7 +692,8 @@ impl UnrollCoin {
         eprintln!("AGGREGATE PUBLIC KEY {:?}", unroll_aggregate_key);
         eprintln!("SIGNATURE {} {:?}", self.started_with_potato, unroll_signature);
         eprintln!(
-            "UNROLL UPDATE {}",
+            "UNROLL UPDATE {} {}",
+            self.started_with_potato,
             disassemble(
                 env.allocator.allocator(),
                 unroll_conditions,
