@@ -9,7 +9,7 @@ use crate::common::types::{AllocEncoder, Amount, CoinID, CoinString, Error, Priv
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::outside::{PacketSender, Peer, PeerMessage, WalletSpendInterface, BootstrapTowardWallet, ToLocalUI, PeerEnv};
 use crate::channel_handler::types::{ChannelHandlerPrivateKeys, ReadableMove, ChannelHandlerEnv};
-use crate::tests::channel_handler::channel_handler_env;
+use crate::channel_handler::runner::channel_handler_env;
 
 enum NotificationToLocalUI {
     OpponentMoved(GameID, ReadableMove),
