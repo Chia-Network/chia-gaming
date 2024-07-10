@@ -350,7 +350,7 @@ impl ChannelHandler {
     pub fn finish_handshake<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        their_initial_channel_hash_signature: &Aggsig,
+        their_initial_channel_half_signature: &Aggsig,
     ) -> Result<HandshakeResult, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
 
@@ -361,21 +361,11 @@ impl ChannelHandler {
                 &self.unroll.coin
             )?;
 
-        eprintln!("their sig {:?}", their_initial_channel_hash_signature);
+        eprintln!("their sig {:?}", their_initial_channel_half_signature);
         let combined_signature = channel_coin_spend.signature.clone()
-            + their_initial_channel_hash_signature.clone();
+            + their_initial_channel_half_signature.clone();
         eprintln!("combined signature {combined_signature:?}");
 
-        if !combined_signature.verify(
-            &aggregate_public_key,
-            &channel_coin_spend.message
-        ) {
-            return Err(Error::StrErr(
-                "finish_handshake: Signature verify failed for other party's signature".to_string(),
-            ));
-        }
-
-        self.state_channel.spend.signature = combined_signature.clone();
         let state_channel_puzzle = puzzle_for_synthetic_public_key(
             env.allocator,
             &env.standard_puzzle,
@@ -558,6 +548,12 @@ impl ChannelHandler {
                 &signatures.my_channel_half_signature_peer,
                 channel_coin_spend.conditions,
             )?;
+
+        // If state number is 0 and we're receiving the potato, then we don't
+        // verify, we do finish_handshake instead.
+        if self.current_state_number == 0 {
+            self.finish_handshake(env, &signatures.my_channel_half_signature_peer)?;
+        }
 
         self.current_state_number += 1;
         self.timeout = Some(ChannelHandlerUnrollSpendInfo {
