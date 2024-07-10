@@ -110,7 +110,6 @@ pub struct HandshakeA {
     channel_public_key: PublicKey,
     unroll_public_key: PublicKey,
     reward_puzzle_hash: PuzzleHash,
-    // XXX
     referee_puzzle_hash: PuzzleHash,
 }
 
@@ -119,9 +118,7 @@ pub struct HandshakeB {
     channel_public_key: PublicKey,
     unroll_public_key: PublicKey,
     reward_puzzle_hash: PuzzleHash,
-    // XXX
     referee_puzzle_hash: PuzzleHash,
-    my_initial_channel_half_signature_peer: Aggsig,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -129,9 +126,6 @@ pub enum PeerMessage {
     // Fixed in order sequence
     HandshakeA(HandshakeA),
     HandshakeB(HandshakeB),
-
-    // HandshakeC and HandshakeD are Nil messages.
-    HandshakeC(Aggsig, PotatoSignatures),
 
     /// Includes spend of launcher coin id.
     HandshakeE {
@@ -410,7 +404,6 @@ impl Peer {
                 let referee_puzzle_hash = puzzle_hash_for_pk(penv.env.allocator, &referee_public_key)?;
 
                 let our_handshake_data = HandshakeB {
-                    my_initial_channel_half_signature_peer: init_result.my_initial_channel_half_signature_peer.clone(),
                     channel_public_key,
                     unroll_public_key,
                     reward_puzzle_hash: self.reward_puzzle_hash.clone(),
@@ -433,15 +426,14 @@ impl Peer {
                 second_player_hs_info
             } => {
                 let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let (my_initial_channel_half_signature_peer, nil_msg) =
-                    if let PeerMessage::HandshakeC(my_initial_channel_half_signature_peer, nil_msg) = msg_envelope {
-                        (my_initial_channel_half_signature_peer, nil_msg)
+                let nil_msg =
+                    if let PeerMessage::Nil(nil_msg) = msg_envelope {
+                        nil_msg
                     } else {
                         return Err(Error::StrErr(format!("Expected handshake a message, got {msg_envelope:?}")));
                     };
 
                 let ch = self.channel_handler_mut()?;
-                ch.finish_handshake(penv.env, &my_initial_channel_half_signature_peer)?;
                 ch.received_empty_potato(penv.env, &nil_msg)?;
                 let nil_msg = ch.send_empty_potato(penv.env)?;
 
@@ -473,12 +465,6 @@ impl Peer {
                     &init_data
                 )?;
 
-                // Their initial half signature was in msg.
-                let hs_result = channel_handler.finish_handshake(
-                    penv.env,
-                    &msg.my_initial_channel_half_signature_peer
-                );
-
                 let nil_sigs = channel_handler.send_empty_potato(penv.env)?;
 
                 self.channel_handler = Some(channel_handler);
@@ -488,7 +474,7 @@ impl Peer {
                 };
 
                 self.have_potato = false;
-                penv.system_interface.send_message(&PeerMessage::HandshakeC(init_result.my_initial_channel_half_signature_peer, nil_sigs))?;
+                penv.system_interface.send_message(&PeerMessage::Nil(nil_sigs))?;
             }
 
             _ => {
