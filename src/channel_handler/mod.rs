@@ -234,6 +234,11 @@ impl ChannelHandler {
         let aggregate_public_key =
             our_channel_pubkey.clone() +
             initiation.their_channel_pubkey.clone();
+        eprintln!("construct channel handler {}", initiation.we_start_with_potato);
+        eprintln!("aggregate public key {aggregate_public_key:?}");
+        eprintln!("our unroll public key {our_unroll_pubkey:?}");
+        eprintln!("their unroll public key {:?}", initiation.their_unroll_pubkey);
+
         let state_channel_coin_puzzle_hash =
             puzzle_hash_for_synthetic_public_key(
                 env.allocator,
@@ -247,7 +252,6 @@ impl ChannelHandler {
             &state_channel_coin_puzzle_hash,
             &amount
         );
-        eprintln!("handshake: channel coin parent {:?}", channel_coin_parent.to_parts());
 
         let mut myself = ChannelHandler {
             my_referee_public_key: private_to_public_key(
@@ -349,6 +353,8 @@ impl ChannelHandler {
         their_initial_channel_hash_signature: &Aggsig,
     ) -> Result<HandshakeResult, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
+
+        eprintln!("finish_handshake");
         let channel_coin_spend =
             self.create_conditions_and_signature_of_channel_coin(
                 env,

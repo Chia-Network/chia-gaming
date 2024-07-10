@@ -112,60 +112,37 @@ fn test_peer_smoke() {
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
 
-    let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
-    let reward_private_key1: PrivateKey = rng.gen();
-    let reward_public_key1 = private_to_public_key(&reward_private_key1);
-    let reward_puzzle_hash1 = puzzle_hash_for_pk(&mut allocator, &reward_public_key1).expect("should work");
-
     let mut pipe_sender: [Pipe; 2] = Default::default();
 
-    let mut p1 = Peer::new(
-        true,
-        private_keys1,
-        Amount::new(100),
-        Amount::new(100),
-        reward_puzzle_hash1.clone(),
-    );
+    let new_peer = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, have_potato: bool| {
+        let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
+        let reward_private_key1: PrivateKey = rng.gen();
+        let reward_public_key1 = private_to_public_key(&reward_private_key1);
+        let reward_puzzle_hash1 = puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
 
-    let private_keys2: ChannelHandlerPrivateKeys = rng.gen();
-    let reward_private_key2: PrivateKey = rng.gen();
-    let reward_public_key2 = private_to_public_key(&reward_private_key2);
-    let reward_puzzle_hash2 = puzzle_hash_for_pk(&mut allocator, &reward_public_key2).expect("should work");
+        Peer::new(
+            have_potato,
+            private_keys1,
+            Amount::new(100),
+            Amount::new(100),
+            reward_puzzle_hash1.clone(),
+        )
+    };
 
-    let mut p2 = Peer::new(
-        false,
-        private_keys2,
-        Amount::new(100),
-        Amount::new(100),
-        reward_puzzle_hash2.clone(),
-    );
+    let parent_private_key: PrivateKey = rng.gen();
+    let parent_public_key = private_to_public_key(&parent_private_key);
+    let parent_puzzle_hash = puzzle_hash_for_pk(&mut allocator, &parent_public_key).expect("should work");
 
     let parent_coin_id = CoinID::default();
     let parent_coin = CoinString::from_parts(
         &parent_coin_id,
-        &reward_puzzle_hash1,
+        &parent_puzzle_hash,
         &Amount::new(200)
     );
 
-    p1.start(parent_coin, &mut pipe_sender[0]).expect("should work");
-    // We should have one outbound message.
-    assert!(pipe_sender[0].queue.len() == 1);
-
-    let msg1 = pipe_sender[0].queue.pop_front().unwrap();
-
-
-    {
-        let mut env = channel_handler_env(&mut allocator, &mut rng);
-        let mut penv = PeerEnv {
-            env: &mut env,
-            system_interface: &mut pipe_sender[1]
-        };
-        p2.received_message(&mut penv, msg1).expect("should receive");
-    }
-
-    assert!(pipe_sender[1].queue.len() == 1);
-
-    let msg2 = pipe_sender[1].queue.pop_front().unwrap();
+    let p1 = new_peer(&mut allocator, &mut rng, true);
+    let p2 = new_peer(&mut allocator, &mut rng, false);
+    let mut peers = [p1, p2];
 
     {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
@@ -173,6 +150,21 @@ fn test_peer_smoke() {
             env: &mut env,
             system_interface: &mut pipe_sender[0]
         };
-        p1.received_message(&mut penv, msg2).expect("should receive");
+        peers[0].start(&mut penv, parent_coin).expect("should work");
+    };
+
+    let mut run_move = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, who: usize| {
+        let msg = pipe_sender[who ^ 1].queue.pop_front().unwrap();
+
+        let mut env = channel_handler_env(allocator, rng);
+        let mut penv = PeerEnv {
+            env: &mut env,
+            system_interface: &mut pipe_sender[who]
+        };
+        peers[who].received_message(&mut penv, msg).expect("should receive");
+    };
+
+    for i in 1..=4 {
+        run_move(&mut allocator, &mut rng, i % 2);
     }
 }
