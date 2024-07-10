@@ -443,7 +443,9 @@ impl Peer {
                 let ch = self.channel_handler_mut()?;
                 ch.finish_handshake(penv.env, &my_initial_channel_half_signature_peer)?;
                 ch.received_empty_potato(penv.env, &nil_msg)?;
-                todo!();
+                let nil_msg = ch.send_empty_potato(penv.env)?;
+
+                penv.system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
             }
 
             // potato progression
