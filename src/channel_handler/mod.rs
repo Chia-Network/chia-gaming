@@ -1,5 +1,6 @@
 pub mod game;
 pub mod game_handler;
+pub mod runner;
 pub mod types;
 
 use std::borrow::BorrowMut;

@@ -12,7 +12,7 @@ use crate::common::standard_coin::{ChiaIdentity, read_hex_puzzle, get_standard_c
 use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove, ValidationProgram, GameStartInfo};
-use crate::tests::channel_handler::{ChannelHandlerGame, channel_handler_env};
+use crate::channel_handler::runner::{ChannelHandlerGame, channel_handler_env};
 use crate::tests::game::new_channel_handler_game;
 use crate::tests::referee::{make_debug_game_handler, RefereeTest};
 use crate::tests::simulator::Simulator;
