@@ -2,14 +2,13 @@ use std::fs;
 use std::sync::Mutex;
 
 use lazy_static::lazy_static;
-use salvo::prelude::*;
-use salvo::hyper::body::Bytes;
 use salvo::http::ResBody;
+use salvo::hyper::body::Bytes;
+use salvo::prelude::*;
 
 use chia_gaming::channel_handler::runner::ChannelHandlerParty;
 
-struct GameRunner {
-}
+struct GameRunner {}
 
 lazy_static! {
     static ref MUTEX: Mutex<GameRunner> = Mutex::new(GameRunner::new());
@@ -17,7 +16,7 @@ lazy_static! {
 
 impl GameRunner {
     fn new() -> Self {
-        GameRunner { }
+        GameRunner {}
     }
 
     fn index(&self) -> String {
@@ -31,7 +30,9 @@ impl GameRunner {
 
 fn get_file(name: &str, content_type: &str, response: &mut Response) -> Result<(), String> {
     let content = fs::read_to_string(name).map_err(|e| format!("{e:?}"))?;
-    response.add_header("Content-Type", content_type, true).map_err(|e| format!("{e:?}"))?;
+    response
+        .add_header("Content-Type", content_type, true)
+        .map_err(|e| format!("{e:?}"))?;
     response.replace_body(ResBody::Once(Bytes::from(content.as_bytes().to_vec())));
     Ok(())
 }
@@ -61,13 +62,11 @@ async fn start_game(req: &mut Request) -> Result<String, String> {
 async fn main() {
     tracing_subscriber::fmt().init();
 
-    let router = Router::new().get(index).push(
-        Router::with_path("start").post(start_game)
-    ).push(
-        Router::with_path("index.css").get(index_css)
-    ).push(
-        Router::with_path("index.js").get(index_js)
-    );
+    let router = Router::new()
+        .get(index)
+        .push(Router::with_path("start").post(start_game))
+        .push(Router::with_path("index.css").get(index_css))
+        .push(Router::with_path("index.js").get(index_js));
     let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
     Server::new(acceptor).serve(router).await;
 }

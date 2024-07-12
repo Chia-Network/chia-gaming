@@ -1,19 +1,23 @@
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use rand::distributions::Standard;
 use rand::prelude::*;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::common::constants::{CREATE_COIN, REM};
-use crate::common::standard_coin::{read_hex_puzzle, private_to_public_key, puzzle_hash_for_pk, standard_solution_partial, unsafe_sign_partial};
+use crate::common::standard_coin::{
+    private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle, standard_solution_partial,
+    unsafe_sign_partial,
+};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
-    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, SpecificTransactionBundle, Timeout, TransactionBundle, BrokenOutCoinSpendInfo,
+    Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID, CoinString, Error, GameID, Hash,
+    IntoErr, Node, PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
+    SpecificTransactionBundle, Timeout, TransactionBundle,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -238,7 +242,7 @@ pub struct ChannelCoinSpentResult {
 pub struct ChannelCoinSpendInfo {
     pub solution: NodePtr,
     pub conditions: NodePtr,
-    pub aggsig: Aggsig
+    pub aggsig: Aggsig,
 }
 
 #[derive(Clone)]
@@ -294,17 +298,19 @@ pub struct ValidationProgram {
 }
 
 impl ValidationProgram {
-    pub fn new(
-        allocator: &mut AllocEncoder,
-        validation_program: NodePtr
-    ) -> Self {
+    pub fn new(allocator: &mut AllocEncoder, validation_program: NodePtr) -> Self {
         ValidationProgram {
             validation_program: validation_program,
-            validation_program_hash: Node(validation_program).sha256tree(allocator).hash().clone()
+            validation_program_hash: Node(validation_program)
+                .sha256tree(allocator)
+                .hash()
+                .clone(),
         }
     }
 
-    pub fn to_nodeptr(&self) -> NodePtr { self.validation_program.clone() }
+    pub fn to_nodeptr(&self) -> NodePtr {
+        self.validation_program.clone()
+    }
 
     pub fn hash(&self) -> &Hash {
         &self.validation_program_hash
@@ -325,24 +331,25 @@ pub enum ValidationInfo {
         hash: Hash,
     },
     FromHash {
-        hash: Hash
-    }
+        hash: Hash,
+    },
 }
 
 impl ValidationInfo {
     pub fn new(
         allocator: &mut AllocEncoder,
         validation_program: ValidationProgram,
-        game_state: NodePtr
+        game_state: NodePtr,
     ) -> Self {
         let hash = Sha256Input::Array(vec![
             Sha256Input::Hash(validation_program.hash()),
             Sha256Input::Hash(&Node(game_state).sha256tree(allocator).hash()),
-        ]).hash();
+        ])
+        .hash();
         ValidationInfo::FromProgram {
             game_state,
             validation_program,
-            hash
+            hash,
         }
     }
     pub fn new_hash(hash: Hash) -> Self {
@@ -351,21 +358,24 @@ impl ValidationInfo {
     pub fn new_from_validation_program_hash_and_state(
         allocator: &mut AllocEncoder,
         validation_program_hash: Hash,
-        game_state: NodePtr
+        game_state: NodePtr,
     ) -> Self {
         let hash = Sha256Input::Array(vec![
             Sha256Input::Hash(&validation_program_hash),
             Sha256Input::Hash(&Node(game_state).sha256tree(allocator).hash()),
-        ]).hash();
+        ])
+        .hash();
         ValidationInfo::FromProgramHash {
             game_state,
             validation_program_hash,
-            hash
+            hash,
         }
     }
     pub fn hash(&self) -> &Hash {
         match self {
-            ValidationInfo::FromProgramHash { hash, .. } | ValidationInfo::FromProgram { hash, .. } | ValidationInfo::FromHash { hash } => &hash
+            ValidationInfo::FromProgramHash { hash, .. }
+            | ValidationInfo::FromProgram { hash, .. }
+            | ValidationInfo::FromHash { hash } => &hash,
         }
     }
 }
@@ -382,8 +392,12 @@ impl ChannelCoin {
         ChannelCoin { state_channel_coin }
     }
 
-    pub fn coin_string(&self) -> &CoinString { &self.state_channel_coin }
-    pub fn to_coin_id(&self) -> CoinID { self.state_channel_coin.to_coin_id() }
+    pub fn coin_string(&self) -> &CoinString {
+        &self.state_channel_coin
+    }
+    pub fn to_coin_id(&self) -> CoinID {
+        self.state_channel_coin.to_coin_id()
+    }
 
     pub fn get_solution_and_signature_from_conditions<R: Rng>(
         &self,
@@ -396,16 +410,15 @@ impl ChannelCoin {
             "STATE CONDITONS: {}",
             disassemble(env.allocator.allocator(), conditions, None)
         );
-        let spend =
-            standard_solution_partial(
-                env.allocator,
-                &private_key,
-                &self.state_channel_coin.to_coin_id(),
-                conditions,
-                &aggregate_public_key,
-                &env.agg_sig_me_additional_data,
-                true
-            )?;
+        let spend = standard_solution_partial(
+            env.allocator,
+            &private_key,
+            &self.state_channel_coin.to_coin_id(),
+            conditions,
+            &aggregate_public_key,
+            &env.agg_sig_me_additional_data,
+            true,
+        )?;
         Ok(spend)
     }
 
@@ -418,19 +431,17 @@ impl ChannelCoin {
         amount: &Amount,
         unroll_coin: &UnrollCoin,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        eprintln!("making solution for channel coin with unroll state {}", unroll_coin.state_number);
-        let unroll_puzzle = unroll_coin.make_curried_unroll_puzzle(
-            env,
-            aggregate_unroll_public_key,
-        )?;
+        eprintln!(
+            "making solution for channel coin with unroll state {}",
+            unroll_coin.state_number
+        );
+        let unroll_puzzle =
+            unroll_coin.make_curried_unroll_puzzle(env, aggregate_unroll_public_key)?;
         let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
         let create_conditions = vec![Node(
             (
                 CREATE_COIN,
-                (
-                    unroll_puzzle_hash.clone(),
-                    (amount.clone(), ()),
-                ),
+                (unroll_puzzle_hash.clone(), (amount.clone(), ())),
             )
                 .to_clvm(env.allocator)
                 .into_gen()?,
@@ -442,7 +453,7 @@ impl ChannelCoin {
             env,
             private_key,
             aggregate_channel_public_key,
-            create_conditions_with_rem
+            create_conditions_with_rem,
         )
     }
 }
@@ -569,19 +580,24 @@ impl UnrollCoin {
         aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
         let conditions_hash = self.get_conditions_hash_for_unroll_puzzle()?;
-        let shared_puzzle =
-            CurriedProgram {
-                program: env.unroll_metapuzzle.clone(),
-                args: clvm_curried_args!(aggregate_public_key.clone())
-            }.to_clvm(env.allocator).into_gen()?;
+        let shared_puzzle = CurriedProgram {
+            program: env.unroll_metapuzzle.clone(),
+            args: clvm_curried_args!(aggregate_public_key.clone()),
+        }
+        .to_clvm(env.allocator)
+        .into_gen()?;
         let shared_puzzle_hash = Node(shared_puzzle).sha256tree(env.allocator);
 
         CurriedProgram {
             program: env.unroll_puzzle.clone(),
-            args: clvm_curried_args!(shared_puzzle_hash, self.get_old_state_number()?, conditions_hash),
+            args: clvm_curried_args!(
+                shared_puzzle_hash,
+                self.get_old_state_number()?,
+                conditions_hash
+            ),
         }
         .to_clvm(env.allocator)
-            .into_gen()
+        .into_gen()
     }
 
     pub fn make_unroll_puzzle_solution<R: Rng>(
@@ -589,12 +605,12 @@ impl UnrollCoin {
         env: &mut ChannelHandlerEnv<R>,
         aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
-        let unroll_inner_puzzle =
-            CurriedProgram {
-                program: env.unroll_metapuzzle.clone(),
-                args: clvm_curried_args!(aggregate_public_key.clone()),
-            }.to_clvm(env.allocator)
-            .into_gen()?;
+        let unroll_inner_puzzle = CurriedProgram {
+            program: env.unroll_metapuzzle.clone(),
+            args: clvm_curried_args!(aggregate_public_key.clone()),
+        }
+        .to_clvm(env.allocator)
+        .into_gen()?;
 
         let unroll_puzzle_solution = (
             Node(unroll_inner_puzzle),
@@ -614,7 +630,7 @@ impl UnrollCoin {
     fn compute_unroll_coin_conditions<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
-        inputs: &UnrollCoinConditionInputs
+        inputs: &UnrollCoinConditionInputs,
     ) -> Result<NodePtr, Error> {
         let their_first_coin = (
             CREATE_COIN,
@@ -665,16 +681,14 @@ impl UnrollCoin {
         their_unroll_coin_public_key: &PublicKey,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<Aggsig, Error> {
-        let unroll_conditions = self.compute_unroll_coin_conditions(
-            env,
-            inputs,
-        )?;
+        let unroll_conditions = self.compute_unroll_coin_conditions(env, inputs)?;
         let conditions_hash = Node(unroll_conditions).sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(&unroll_private_key);
-        let unroll_aggregate_key =
-            unroll_public_key.clone() + their_unroll_coin_public_key.clone();
-        eprintln!("conditions {}",
-                  disassemble(env.allocator.allocator(), unroll_conditions, None));
+        let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
+        eprintln!(
+            "conditions {}",
+            disassemble(env.allocator.allocator(), unroll_conditions, None)
+        );
         eprintln!("conditions_hash {conditions_hash:?}");
         let unroll_signature = unsafe_sign_partial(
             &unroll_private_key,
@@ -686,19 +700,18 @@ impl UnrollCoin {
             conditions_without_hash: unroll_conditions,
             old_state_number: self.state_number - 1,
             hash: conditions_hash,
-            signature: unroll_signature.clone()
+            signature: unroll_signature.clone(),
         });
 
         eprintln!("AGGREGATE PUBLIC KEY {:?}", unroll_aggregate_key);
-        eprintln!("SIGNATURE {} {:?}", self.started_with_potato, unroll_signature);
+        eprintln!(
+            "SIGNATURE {} {:?}",
+            self.started_with_potato, unroll_signature
+        );
         eprintln!(
             "UNROLL UPDATE {} {}",
             self.started_with_potato,
-            disassemble(
-                env.allocator.allocator(),
-                unroll_conditions,
-                None
-            )
+            disassemble(env.allocator.allocator(), unroll_conditions, None)
         );
 
         Ok(unroll_signature)
@@ -712,11 +725,9 @@ impl UnrollCoin {
     ) -> Result<bool, Error> {
         // Check the signature of the unroll coin spend.
         let unroll_puzzle_solution = self.get_internal_conditions_for_unroll_coin_spend()?;
-        let unroll_puzzle_solution_hash =
-            Node(unroll_puzzle_solution).sha256tree(env.allocator);
+        let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
 
-        let aggregate_unroll_signature = signature.clone()
-            + self.get_unroll_coin_signature()?;
+        let aggregate_unroll_signature = signature.clone() + self.get_unroll_coin_signature()?;
 
         Ok(aggregate_unroll_signature.verify(
             &aggregate_unroll_public_key,

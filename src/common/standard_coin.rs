@@ -19,13 +19,14 @@ use clvm_tools_rs::compiler::comptypes::map_m;
 use clvm_utils::CurriedProgram;
 
 use crate::common::constants::{
-    A_KW, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE, Q_KW,
-    Q_KW_TREEHASH, TWO, CREATE_COIN
+    A_KW, CREATE_COIN, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE,
+    Q_KW, Q_KW_TREEHASH, TWO,
 };
 use crate::common::types;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, Hash, IntoErr, Node, PrivateKey, Program,
-    PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, ToQuotedProgram, BrokenOutCoinSpendInfo,
+    Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr,
+    Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
+    ToQuotedProgram,
 };
 
 pub fn hex_to_sexp(
@@ -64,20 +65,35 @@ fn calculate_synthetic_offset(public_key: &PublicKey, hidden_puzzle_hash: &Puzzl
 
 #[test]
 fn test_calculate_synthetic_offset() {
-    let pk_bytes: [u8; 48] = [0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00, 0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f, 0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b, 0xe2, 0xce, 0xdb];
+    let pk_bytes: [u8; 48] = [
+        0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00,
+        0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f,
+        0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b,
+        0xe2, 0xce, 0xdb,
+    ];
     let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
     let default_hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
     let offset = calculate_synthetic_offset(&pk, &default_hidden_puzzle_hash);
-    let want_offset_bytes = [0x69, 0x51, 0x33, 0xf4, 0x61, 0x0a, 0x5e, 0x50, 0x7b, 0x2f, 0x24, 0x98, 0x22, 0x21, 0x91, 0xde, 0x54, 0x6e, 0xeb, 0x53, 0x90, 0x46, 0x34, 0x52, 0x74, 0x61, 0x39, 0x71, 0x4f, 0x05, 0x94, 0x65];
+    let want_offset_bytes = [
+        0x69, 0x51, 0x33, 0xf4, 0x61, 0x0a, 0x5e, 0x50, 0x7b, 0x2f, 0x24, 0x98, 0x22, 0x21, 0x91,
+        0xde, 0x54, 0x6e, 0xeb, 0x53, 0x90, 0x46, 0x34, 0x52, 0x74, 0x61, 0x39, 0x71, 0x4f, 0x05,
+        0x94, 0x65,
+    ];
     let want_offset = number_from_u8(&want_offset_bytes);
     assert_eq!(offset, want_offset);
 }
 
-pub fn calculate_synthetic_secret_key(secret_key: &PrivateKey, hidden_puzzle_hash: &Hash) -> Result<PrivateKey, types::Error> {
+pub fn calculate_synthetic_secret_key(
+    secret_key: &PrivateKey,
+    hidden_puzzle_hash: &Hash,
+) -> Result<PrivateKey, types::Error> {
     let secret_exponent_bytes = secret_key.bytes();
     let secret_exponent = number_from_u8(&secret_exponent_bytes);
     let public_key = private_to_public_key(secret_key);
-    let synthetic_secret_offset = calculate_synthetic_offset(&public_key, &PuzzleHash::from_hash(hidden_puzzle_hash.clone()));
+    let synthetic_secret_offset = calculate_synthetic_offset(
+        &public_key,
+        &PuzzleHash::from_hash(hidden_puzzle_hash.clone()),
+    );
     let synthetic_secret_exponent = (secret_exponent + synthetic_secret_offset) % group_order_int();
     let private_key_bytes_right = u8_from_number(synthetic_secret_exponent);
     let mut private_key_bytes: [u8; 32] = [0; 32];
@@ -110,11 +126,22 @@ pub fn calculate_synthetic_public_key(
 
 #[test]
 fn test_calculate_synthetic_public_key() {
-    let pk_bytes: [u8; 48] = [0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00, 0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f, 0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b, 0xe2, 0xce, 0xdb];
+    let pk_bytes: [u8; 48] = [
+        0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00,
+        0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f,
+        0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b,
+        0xe2, 0xce, 0xdb,
+    ];
     let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
     let default_hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
-    let spk = calculate_synthetic_public_key(&pk, &default_hidden_puzzle_hash).expect("should be ok");
-    let want_spk_bytes: [u8; 48] = [0x93, 0xbd, 0x85, 0x12, 0x8d, 0x0e, 0x9f, 0xbc, 0xfc, 0xa5, 0x47, 0xb9, 0x64, 0xbd, 0x31, 0x80, 0x77, 0x7c, 0x6f, 0xe9, 0xfa, 0xd8, 0x08, 0xdd, 0xa4, 0x15, 0xbb, 0x32, 0x88, 0x70, 0x22, 0x86, 0x47, 0x74, 0xb5, 0xff, 0x04, 0x45, 0x2b, 0x88, 0xbc, 0x98, 0x29, 0x40, 0x8f, 0xb7, 0xf8, 0x87];
+    let spk =
+        calculate_synthetic_public_key(&pk, &default_hidden_puzzle_hash).expect("should be ok");
+    let want_spk_bytes: [u8; 48] = [
+        0x93, 0xbd, 0x85, 0x12, 0x8d, 0x0e, 0x9f, 0xbc, 0xfc, 0xa5, 0x47, 0xb9, 0x64, 0xbd, 0x31,
+        0x80, 0x77, 0x7c, 0x6f, 0xe9, 0xfa, 0xd8, 0x08, 0xdd, 0xa4, 0x15, 0xbb, 0x32, 0x88, 0x70,
+        0x22, 0x86, 0x47, 0x74, 0xb5, 0xff, 0x04, 0x45, 0x2b, 0x88, 0xbc, 0x98, 0x29, 0x40, 0x8f,
+        0xb7, 0xf8, 0x87,
+    ];
     let want_spk = PublicKey::from_bytes(want_spk_bytes).expect("should be ok");
     assert_eq!(spk, want_spk);
 }
@@ -206,23 +233,30 @@ pub fn puzzle_hash_for_synthetic_public_key(
 fn test_puzzle_for_synthetic_public_key() {
     let mut allocator = AllocEncoder::new();
     let expect_hex = "ff02ffff01ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080ffff04ffff01b0a3bbced33d27329da1e360ff4b0f00db1747eee8e66c0c0ae450f90b760f42972216c2ff027636aeeb5268bc2be2cedbff018080";
-    let expect_program = hex_to_sexp(&mut allocator, expect_hex.to_string()).expect("should be good hex");
+    let expect_program =
+        hex_to_sexp(&mut allocator, expect_hex.to_string()).expect("should be good hex");
     let expect_hash = Node(expect_program).sha256tree(&mut allocator);
 
-    let pk_bytes: [u8; 48] = [0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00, 0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f, 0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b, 0xe2, 0xce, 0xdb];
+    let pk_bytes: [u8; 48] = [
+        0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00,
+        0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f,
+        0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b,
+        0xe2, 0xce, 0xdb,
+    ];
     let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
 
     let standard_coin_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should read");
-    let puzzle_for_synthetic_public_key = puzzle_for_synthetic_public_key(
-        &mut allocator,
-        &standard_coin_puzzle,
-        &pk
-    ).expect("should work");
-    assert_eq!(puzzle_for_synthetic_public_key.sha256tree(&mut allocator), expect_hash);
-    assert_eq!(expect_hash, puzzle_hash_for_synthetic_public_key(
-        &mut allocator,
-        &pk
-    ).expect("should make"));
+    let puzzle_for_synthetic_public_key =
+        puzzle_for_synthetic_public_key(&mut allocator, &standard_coin_puzzle, &pk)
+            .expect("should work");
+    assert_eq!(
+        puzzle_for_synthetic_public_key.sha256tree(&mut allocator),
+        expect_hash
+    );
+    assert_eq!(
+        expect_hash,
+        puzzle_hash_for_synthetic_public_key(&mut allocator, &pk).expect("should make")
+    );
 }
 
 pub fn puzzle_for_pk(
@@ -259,11 +293,17 @@ pub fn puzzle_hash_for_pk(
 fn test_puzzle_for_pk() {
     let mut allocator = AllocEncoder::new();
 
-    let pk_bytes: [u8; 48] = [0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00, 0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f, 0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b, 0xe2, 0xce, 0xdb];
+    let pk_bytes: [u8; 48] = [
+        0xa3, 0xbb, 0xce, 0xd3, 0x3d, 0x27, 0x32, 0x9d, 0xa1, 0xe3, 0x60, 0xff, 0x4b, 0x0f, 0x00,
+        0xdb, 0x17, 0x47, 0xee, 0xe8, 0xe6, 0x6c, 0x0c, 0x0a, 0xe4, 0x50, 0xf9, 0x0b, 0x76, 0x0f,
+        0x42, 0x97, 0x22, 0x16, 0xc2, 0xff, 0x02, 0x76, 0x36, 0xae, 0xeb, 0x52, 0x68, 0xbc, 0x2b,
+        0xe2, 0xce, 0xdb,
+    ];
     let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
 
     let want_puzzle_for_pk = "ff02ffff01ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080ffff04ffff01b093bd85128d0e9fbcfca547b964bd3180777c6fe9fad808dda415bb32887022864774b5ff04452b88bc9829408fb7f887ff018080";
-    let want_puzzle = hex_to_sexp(&mut allocator, want_puzzle_for_pk.to_string()).expect("should be ok hex");
+    let want_puzzle =
+        hex_to_sexp(&mut allocator, want_puzzle_for_pk.to_string()).expect("should be ok hex");
     let want_puzzle_hash = Node(want_puzzle).sha256tree(&mut allocator);
 
     let got_puzzle = puzzle_for_pk(&mut allocator, &pk).expect("should be ok");
@@ -371,7 +411,7 @@ pub fn standard_solution_unsafe(
         solution,
         conditions,
         message,
-        signature: sig
+        signature: sig,
     })
 }
 
@@ -420,36 +460,24 @@ pub fn standard_solution_partial(
     let conds = CoinCondition::from_nodeptr(allocator, conditions);
     for cond in conds.iter() {
         match cond {
-            CoinCondition::CreateCoin(_,_) => {
+            CoinCondition::CreateCoin(_, _) => {
                 add_signature(
                     &mut aggregated_signature,
                     if partial {
-                        partial_signer(
-                            private_key,
-                            &aggregate_public_key,
-                            &coin_agg_sig_me_message
-                        )
+                        partial_signer(private_key, &aggregate_public_key, &coin_agg_sig_me_message)
                     } else {
                         private_key.sign(&coin_agg_sig_me_message)
-                    }
+                    },
                 );
             }
             CoinCondition::AggSigMe(pubkey, data) => {
                 let mut message = pubkey.bytes().to_vec();
                 message.extend_from_slice(&data);
                 let extra_agg_sig_me_message =
-                    agg_sig_me_message(
-                        &message,
-                        parent_coin,
-                        agg_sig_me_additional_data
-                    );
+                    agg_sig_me_message(&message, parent_coin, agg_sig_me_additional_data);
                 add_signature(
                     &mut aggregated_signature,
-                    partial_signer(
-                        private_key,
-                        &pubkey,
-                        &extra_agg_sig_me_message
-                    ),
+                    partial_signer(private_key, &pubkey, &extra_agg_sig_me_message),
                 );
             }
             CoinCondition::AggSigUnsafe(pubkey, data) => {
@@ -467,7 +495,7 @@ pub fn standard_solution_partial(
             solution,
             signature,
             conditions,
-            message: coin_agg_sig_me_message
+            message: coin_agg_sig_me_message,
         })
     } else {
         Err(types::Error::StrErr(
@@ -483,19 +511,17 @@ pub struct ChiaIdentity {
     pub public_key: PublicKey,
     pub synthetic_private_key: PrivateKey,
     pub puzzle: Puzzle,
-    pub puzzle_hash: PuzzleHash
+    pub puzzle_hash: PuzzleHash,
 }
 
 impl ChiaIdentity {
     pub fn new(
         allocator: &mut AllocEncoder,
-        private_key: PrivateKey
+        private_key: PrivateKey,
     ) -> Result<Self, types::Error> {
         let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
-        let synthetic_private_key = calculate_synthetic_secret_key(
-            &private_key,
-            &default_hidden_puzzle_hash
-        )?;
+        let synthetic_private_key =
+            calculate_synthetic_secret_key(&private_key, &default_hidden_puzzle_hash)?;
         let public_key = private_to_public_key(&private_key);
         let synthetic_public_key = private_to_public_key(&synthetic_private_key);
         let puzzle = puzzle_for_pk(allocator, &public_key)?;
@@ -514,12 +540,18 @@ impl ChiaIdentity {
     pub fn standard_solution(
         &self,
         allocator: &mut AllocEncoder,
-        targets: &[(PuzzleHash, Amount)]
+        targets: &[(PuzzleHash, Amount)],
     ) -> Result<NodePtr, types::Error> {
-        let conditions: Vec<Node> =
-            map_m(|(ph, amt)| {
-                Ok(Node((CREATE_COIN, (ph.clone(), (amt.clone(), ()))).to_clvm(allocator).into_gen()?))
-            }, targets)?;
+        let conditions: Vec<Node> = map_m(
+            |(ph, amt)| {
+                Ok(Node(
+                    (CREATE_COIN, (ph.clone(), (amt.clone(), ())))
+                        .to_clvm(allocator)
+                        .into_gen()?,
+                ))
+            },
+            targets,
+        )?;
         let conditions_converted = conditions.to_clvm(allocator).into_gen()?;
         solution_for_conditions(allocator, conditions_converted)
     }

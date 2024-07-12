@@ -3,18 +3,21 @@ use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::ToClvm;
 
-use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{
-    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, GameStartInfo, ValidationProgram, UnrollCoin, UnrollCoinConditionInputs, ChannelCoinSpendInfo, HandshakeResult, ChannelHandlerPrivateKeys,
-};
 use crate::channel_handler::runner::ChannelHandlerGame;
+use crate::channel_handler::types::{
+    read_unroll_metapuzzle, read_unroll_puzzle, ChannelCoinSpendInfo, ChannelHandlerEnv,
+    ChannelHandlerInitiationData, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
+    GameStartInfo, HandshakeResult, UnrollCoin, UnrollCoinConditionInputs, ValidationProgram,
+};
+use crate::channel_handler::ChannelHandler;
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-use crate::common::standard_coin::{private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk, get_standard_coin_puzzle, read_hex_puzzle};
+use crate::common::standard_coin::{
+    get_standard_coin_puzzle, private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk,
+    read_hex_puzzle,
+};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash,
-    Sha256tree, Timeout
+    AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 
 #[test]
@@ -48,20 +51,15 @@ fn test_smoke_can_initiate_channel_handler<'a>() {
         &mut env,
         game_id,
         &launcher_coin,
-        &[Amount::new(100), Amount::new(100)]
-    ).expect("should build");
+        &[Amount::new(100), Amount::new(100)],
+    )
+    .expect("should build");
 
     let _finish_hs_result1 = game
-        .finish_handshake(
-            &mut env,
-            1,
-        )
+        .finish_handshake(&mut env, 1)
         .expect("should finish handshake");
     let _finish_hs_result2 = game
-        .finish_handshake(
-            &mut env,
-            0,
-        )
+        .finish_handshake(&mut env, 0)
         .expect("should finish handshake");
 
     // Set up for the spend.
@@ -116,21 +114,16 @@ fn test_smoke_can_start_game() {
         &mut env,
         game_id,
         &launcher_coin,
-        &[Amount::new(100), Amount::new(100)]
-    ).expect("should work");
+        &[Amount::new(100), Amount::new(100)],
+    )
+    .expect("should work");
 
     let _finish_hs_result1 = game
-        .finish_handshake(
-            &mut env,
-            1,
-        )
+        .finish_handshake(&mut env, 1)
         .expect("should finish handshake");
 
     let _finish_hs_result2 = game
-        .finish_handshake(
-            &mut env,
-            0,
-        )
+        .finish_handshake(&mut env, 0)
         .expect("should finish handshake");
 
     // Set up for the spend.
@@ -141,10 +134,8 @@ fn test_smoke_can_start_game() {
     let game_handler = env.allocator.allocator().null();
     let initial_validation_puzzle = game_handler;
     let initial_state = env.allocator.allocator().null();
-    let initial_validation_program = ValidationProgram::new(
-        &mut env.allocator,
-        initial_validation_puzzle
-    );
+    let initial_validation_program =
+        ValidationProgram::new(&mut env.allocator, initial_validation_puzzle);
 
     let timeout = Timeout::new(1337);
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
@@ -172,12 +163,12 @@ fn test_unroll_can_verify_own_signature() {
     let mut unroll_coin_1 = UnrollCoin {
         started_with_potato: true,
         state_number: 1,
-        .. UnrollCoin::default()
+        ..UnrollCoin::default()
     };
 
     let mut unroll_coin_2 = UnrollCoin {
         state_number: 1,
-        .. UnrollCoin::default()
+        ..UnrollCoin::default()
     };
 
     let private_key_1 = rng.gen();
@@ -209,36 +200,28 @@ fn test_unroll_can_verify_own_signature() {
         their_referee_puzzle_hash: ref_puzzle_hash_2.clone(),
         my_balance: Amount::new(0),
         their_balance: Amount::new(100),
-        puzzle_hashes_and_amounts: vec![]
+        puzzle_hashes_and_amounts: vec![],
     };
 
-    let _sig1 = unroll_coin_1.update(
-        &mut env,
-        &private_key_1,
-        &public_key_2,
-        &inputs_1
-    ).expect("should work");
+    let _sig1 = unroll_coin_1
+        .update(&mut env, &private_key_1, &public_key_2, &inputs_1)
+        .expect("should work");
 
     let inputs_2 = UnrollCoinConditionInputs {
         ref_pubkey: public_key_2.clone(),
         their_referee_puzzle_hash: ref_puzzle_hash_1.clone(),
         my_balance: inputs_1.their_balance.clone(),
         their_balance: inputs_1.my_balance.clone(),
-        .. inputs_1
+        ..inputs_1
     };
 
-    let sig2 = unroll_coin_2.update(
-        &mut env,
-        &private_key_2,
-        &public_key_1,
-        &inputs_2
-    ).expect("should work");
+    let sig2 = unroll_coin_2
+        .update(&mut env, &private_key_2, &public_key_1, &inputs_2)
+        .expect("should work");
 
     let aggregate_unroll_public_key = public_key_1.clone() + public_key_2.clone();
 
-    assert!(unroll_coin_1.verify(
-        &mut env,
-        &aggregate_unroll_public_key,
-        &sig2,
-    ).expect("should verify"));
+    assert!(unroll_coin_1
+        .verify(&mut env, &aggregate_unroll_public_key, &sig2,)
+        .expect("should verify"));
 }

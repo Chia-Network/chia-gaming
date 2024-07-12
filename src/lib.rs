@@ -1,7 +1,7 @@
 pub mod channel_handler;
 mod common;
-mod referee;
 pub mod outside;
+mod referee;
 
 #[cfg(test)]
 mod tests;
