@@ -23,7 +23,9 @@ use crate::common::types::{
 #[derive(Debug, Clone)]
 pub struct IncludeTransactionResult {
     pub code: u32,
+    #[allow(dead_code)]
     pub e: Option<u32>,
+    #[allow(dead_code)]
     pub diagnostic: String,
 }
 

@@ -163,8 +163,8 @@ pub fn channel_handler_env<'a, R: Rng>(
         read_hex_puzzle(allocator, "resources/unroll_meta_puzzle.hex").expect("should read");
     let standard_puzzle = get_standard_coin_puzzle(allocator).expect("should load");
     ChannelHandlerEnv {
-        allocator: allocator,
-        rng: rng,
+        allocator,
+        rng,
         referee_coin_puzzle,
         referee_coin_puzzle_hash,
         unroll_metapuzzle,

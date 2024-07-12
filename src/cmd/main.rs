@@ -6,8 +6,6 @@ use salvo::http::ResBody;
 use salvo::hyper::body::Bytes;
 use salvo::prelude::*;
 
-use chia_gaming::channel_handler::runner::ChannelHandlerParty;
-
 struct GameRunner {}
 
 lazy_static! {
@@ -19,6 +17,7 @@ impl GameRunner {
         GameRunner {}
     }
 
+    #[allow(dead_code)]
     fn index(&self) -> String {
         "<html><body>Coming soon</body></html>".to_string()
     }
@@ -53,7 +52,7 @@ async fn index_css(response: &mut Response) -> Result<(), String> {
 }
 
 #[handler]
-async fn start_game(req: &mut Request) -> Result<String, String> {
+async fn start_game(_req: &mut Request) -> Result<String, String> {
     let mut locked = MUTEX.try_lock().map_err(|e| format!("{e:?}"))?;
     Ok((*locked).start_game())
 }

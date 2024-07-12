@@ -14,8 +14,8 @@ use crate::channel_handler::types::{
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{
-    get_standard_coin_puzzle, private_to_public_key, puzzle_for_synthetic_public_key,
-    read_hex_puzzle, standard_solution_partial, ChiaIdentity,
+    private_to_public_key, puzzle_for_synthetic_public_key,
+    standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, IntoErr, Node,
@@ -29,10 +29,12 @@ use crate::tests::simulator::Simulator;
 #[derive(Debug, Clone)]
 pub enum GameAction {
     /// Do a timeout
+    #[allow(dead_code)]
     Timeout(usize),
     /// Move (player, clvm readable move, was received)
     Move(usize, NodePtr, bool),
     /// Fake move, just calls receive on the indicated side.
+    #[allow(dead_code)]
     FakeMove(usize, NodePtr, Vec<u8>),
     /// Go on chain
     GoOnChain(usize),
@@ -40,7 +42,7 @@ pub enum GameAction {
 
 impl GameAction {
     pub fn lose(&self) -> GameAction {
-        if let GameAction::Move(p, m, r) = self {
+        if let GameAction::Move(p, m, _r) = self {
             return GameAction::Move(*p, *m, false);
         }
 
@@ -50,6 +52,7 @@ impl GameAction {
 
 #[derive(Debug, Clone)]
 pub enum GameActionResult {
+    #[allow(dead_code)]
     MoveResult(NodePtr, Vec<u8>),
     BrokenMove,
     MoveToOnChain,
@@ -296,11 +299,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         &mut self,
         player: usize,
         readable: NodePtr,
-        game_coins: &[CoinString],
+        _game_coins: &[CoinString],
     ) -> Result<GameActionResult, Error> {
         let game_id = self.parties.game_id.clone();
         let player_ch = &mut self.parties.player(player).ch;
-        let move_result = player_ch.send_potato_move(
+        let _move_result = player_ch.send_potato_move(
             &mut self.env,
             &game_id,
             &ReadableMove::from_nodeptr(readable),
@@ -315,7 +318,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         match action {
             GameAction::Move(player, readable, received) => {
                 match &self.on_chain {
-                    OnChainState::OffChain(coins) => {
+                    OnChainState::OffChain(_coins) => {
                         self.do_off_chain_move(*player, *readable, *received)
                     }
                     OnChainState::OnChain(games) => {
@@ -347,12 +350,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     self.spend_channel_coin(*player, state_channel_coin, &unroll_target)?;
                 eprintln!("unroll_coin {unroll_coin:?}");
 
-                let channel_spent_result_1 = self
+                let _channel_spent_result_1 = self
                     .parties
                     .player(*player)
                     .ch
                     .channel_coin_spent(&mut self.env, channel_coin_conditions)?;
-                let channel_spent_result_2 = self
+                let _channel_spent_result_2 = self
                     .parties
                     .player(*player ^ 1)
                     .ch

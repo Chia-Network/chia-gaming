@@ -35,9 +35,9 @@ use crate::referee::RefereeMaker;
 
 pub struct CoinDataForReward {
     coin_string: CoinString,
-    parent: CoinID,
-    puzzle_hash: PuzzleHash,
-    amount: Amount,
+    // parent: CoinID,
+    // puzzle_hash: PuzzleHash,
+    // amount: Amount,
 }
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -82,8 +82,6 @@ pub struct CoinDataForReward {
 pub struct ChannelHandler {
     private_keys: ChannelHandlerPrivateKeys,
 
-    my_referee_public_key: PublicKey,
-
     their_channel_coin_public_key: PublicKey,
     their_unroll_coin_public_key: PublicKey,
     their_referee_puzzle_hash: PuzzleHash,
@@ -111,10 +109,6 @@ pub struct ChannelHandler {
     // most recent move.
     unroll: ChannelHandlerUnrollSpendInfo,
     timeout: Option<ChannelHandlerUnrollSpendInfo>,
-
-    game_id_of_most_recent_move: Option<GameID>,
-    game_id_of_most_recent_created_game: Option<GameID>,
-    game_id_of_most_recent_accepted_game: Option<GameID>,
 
     // Live games
     live_games: Vec<LiveGame>,
@@ -253,8 +247,6 @@ impl ChannelHandler {
         );
 
         let mut myself = ChannelHandler {
-            my_referee_public_key: private_to_public_key(&private_keys.my_referee_private_key),
-
             their_channel_coin_public_key: initiation.their_channel_pubkey.clone(),
             their_unroll_coin_public_key: initiation.their_unroll_pubkey.clone(),
             their_referee_puzzle_hash: initiation.their_referee_puzzle_hash.clone(),
@@ -279,10 +271,6 @@ impl ChannelHandler {
 
             unroll: ChannelHandlerUnrollSpendInfo::default(),
             timeout: None,
-
-            game_id_of_most_recent_move: None,
-            game_id_of_most_recent_created_game: None,
-            game_id_of_most_recent_accepted_game: None,
 
             live_games: Vec::new(),
 
@@ -1348,14 +1336,14 @@ impl ChannelHandler {
         let spend_coin_puzzle = puzzle_for_pk(env.allocator, &referee_pk)?;
 
         for c in coins.iter() {
-            if let Some((parent, ph, amount)) = c.to_parts() {
+            if let Some((_parent, ph, amount)) = c.to_parts() {
                 assert_eq!(ph, referee_puzzle_hash);
                 total_amount += amount.clone();
                 exploded_coins.push(CoinDataForReward {
                     coin_string: c.clone(),
-                    parent,
-                    puzzle_hash: ph,
-                    amount,
+                    // parent,
+                    // puzzle_hash: ph,
+                    // amount,
                 });
             } else {
                 return Err(Error::StrErr(

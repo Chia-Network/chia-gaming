@@ -6,18 +6,15 @@ use clvm_traits::ToClvm;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::runner::ChannelHandlerGame;
 use crate::channel_handler::types::{
-    read_unroll_metapuzzle, read_unroll_puzzle, ChannelCoinSpendInfo, ChannelHandlerEnv,
-    ChannelHandlerInitiationData, ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys,
-    GameStartInfo, HandshakeResult, UnrollCoin, UnrollCoinConditionInputs, ValidationProgram,
+    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv,
+    GameStartInfo, UnrollCoin, UnrollCoinConditionInputs, ValidationProgram,
 };
-use crate::channel_handler::ChannelHandler;
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{
-    get_standard_coin_puzzle, private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk,
-    read_hex_puzzle,
+    get_standard_coin_puzzle, private_to_public_key, puzzle_hash_for_pk,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    AllocEncoder, Amount, CoinID, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 
 #[test]

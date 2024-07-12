@@ -104,7 +104,7 @@ impl ToClvm<NodePtr> for ReadableMove {
 }
 
 #[derive(Clone)]
-pub struct ReadableUX(NodePtr);
+pub struct ReadableUX(/*NodePtr*/);
 
 pub struct MoveResult {
     pub signatures: PotatoSignatures,
@@ -300,7 +300,7 @@ pub struct ValidationProgram {
 impl ValidationProgram {
     pub fn new(allocator: &mut AllocEncoder, validation_program: NodePtr) -> Self {
         ValidationProgram {
-            validation_program: validation_program,
+            validation_program,
             validation_program_hash: Node(validation_program)
                 .sha256tree(allocator)
                 .hash()

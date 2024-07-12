@@ -4,15 +4,14 @@ use clvmr::NodePtr;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
+    ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Program, PublicKey,
+    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, PublicKey,
     PuzzleHash, SpendBundle, Timeout, TransactionBundle,
 };
 
@@ -20,27 +19,27 @@ struct LocalGameStart {}
 
 struct RemoteGameStart {}
 
-struct GameInfoMyTurn {
-    id: GameID,
-    their_turn_game_handler: GameHandler,
-    validation_program: Program,
-    validation_program_hash: Hash,
-    state: NodePtr,
-    move_made: Vec<u8>,
-    max_move_size: usize,
-    mover_share: Amount,
-}
+// struct GameInfoMyTurn {
+//     id: GameID,
+//     their_turn_game_handler: GameHandler,
+//     validation_program: Program,
+//     validation_program_hash: Hash,
+//     state: NodePtr,
+//     move_made: Vec<u8>,
+//     max_move_size: usize,
+//     mover_share: Amount,
+// }
 
-struct GameInfoTheirTurn {
-    id: GameID,
-    their_turn_game_handler: GameHandler,
-    validation_program: Program,
-    validation_program_hash: Hash,
-    state: NodePtr,
-    move_made: Vec<u8>,
-    max_move_size: usize,
-    mover_share: Amount,
-}
+// struct GameInfoTheirTurn {
+//     id: GameID,
+//     their_turn_game_handler: GameHandler,
+//     validation_program: Program,
+//     validation_program_hash: Hash,
+//     state: NodePtr,
+//     move_made: Vec<u8>,
+//     max_move_size: usize,
+//     mover_share: Amount,
+// }
 
 /// Async interface for messaging out of the game layer toward the wallet.
 ///
@@ -163,7 +162,8 @@ pub trait WalletSpendInterface {
     fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error>;
 }
 
-struct GameType(Vec<u8>);
+#[allow(dead_code)]
+pub struct GameType(Vec<u8>);
 
 pub trait ToLocalUI {
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
@@ -175,6 +175,7 @@ pub trait ToLocalUI {
     fn going_on_chain(&mut self) -> Result<(), Error>;
 }
 
+#[allow(dead_code)]
 trait FromLocalUI {
     /// Start games requires queueing so that we handle them one at a time only
     /// when the previous start game.
@@ -291,6 +292,7 @@ where
 /// If there is more work left, also send a receive potato message at that time.
 ///
 /// Also do this when any queue becomes non-empty.
+#[allow(dead_code)]
 pub struct Peer {
     have_potato: bool,
 
@@ -389,7 +391,7 @@ impl Peer {
             channel_public_key,
             unroll_public_key,
             reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-            referee_puzzle_hash: referee_puzzle_hash,
+            referee_puzzle_hash,
         };
         self.handshake_state = HandshakeState::StepB(parent_coin, my_hs_info.clone());
         penv.system_interface
@@ -400,8 +402,8 @@ impl Peer {
 
     fn update_channel_coin_after_receive<G, R: Rng>(
         &mut self,
-        penv: &mut PeerEnv<G, R>,
-        spend: &ChannelCoinSpendInfo,
+        _penv: &mut PeerEnv<G, R>,
+        _spend: &ChannelCoinSpendInfo,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
@@ -481,7 +483,7 @@ impl Peer {
                     my_contribution: self.my_contribution.clone(),
                     their_contribution: self.their_contribution.clone(),
                 };
-                let (channel_handler, init_result) =
+                let (channel_handler, _init_result) =
                     ChannelHandler::new(&mut penv.env, self.private_keys.clone(), &init_data)?;
 
                 // init_result
@@ -501,7 +503,7 @@ impl Peer {
                     channel_public_key,
                     unroll_public_key,
                     reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-                    referee_puzzle_hash: referee_puzzle_hash,
+                    referee_puzzle_hash,
                 };
 
                 self.channel_handler = Some(channel_handler);
@@ -515,9 +517,9 @@ impl Peer {
                     .send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
             }
 
-            HandshakeState::StepC {
-                first_player_hs_info,
-                second_player_hs_info,
+            HandshakeState::StepC { ..
+                // first_player_hs_info,
+                // second_player_hs_info,
             } => {
                 let msg_envelope: PeerMessage =
                     bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
@@ -558,7 +560,7 @@ impl Peer {
                     my_contribution: self.my_contribution.clone(),
                     their_contribution: self.their_contribution.clone(),
                 };
-                let (mut channel_handler, init_result) =
+                let (mut channel_handler, _init_result) =
                     ChannelHandler::new(&mut penv.env, self.private_keys.clone(), &init_data)?;
 
                 let nil_sigs = channel_handler.send_empty_potato(penv.env)?;
@@ -573,9 +575,9 @@ impl Peer {
                     .send_message(&PeerMessage::Nil(nil_sigs))?;
             }
 
-            HandshakeState::StepD {
-                first_player_hs_info,
-                second_player_hs_info,
+            HandshakeState::StepD { ..
+                 // _first_player_hs_info,
+                 // _second_player_hs_info,
             } => {
                 self.pass_on_channel_handler_message(penv, msg)?;
 

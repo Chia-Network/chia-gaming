@@ -281,6 +281,7 @@ impl ValidatorMoveArgs {
     }
 }
 
+#[allow(dead_code)]
 pub enum Validation {
     ValidationByState(ValidationInfo),
     ValidationByStateHash(Hash),
@@ -300,6 +301,7 @@ enum RefereeMakerGameState {
     // as well as a state.
     AfterOurTurn {
         game_handler: GameHandler,
+        #[allow(dead_code)]
         their_turn_game_handler: GameHandler,
         their_previous_validation_info_hash: Option<Hash>,
         validation_program: ValidationProgram,
@@ -309,10 +311,12 @@ enum RefereeMakerGameState {
     },
     AfterTheirTurn {
         game_handler: GameHandler,
+        #[allow(dead_code)]
         our_turn_game_handler: GameHandler,
         our_previous_validation_info_hash: Option<Hash>,
         most_recent_our_validation_program: ValidationProgram,
         most_recent_our_state_result: NodePtr,
+        #[allow(dead_code)]
         most_recent_our_move: GameMoveStateInfo,
         most_recent_their_move: GameMoveDetails,
     },
@@ -382,6 +386,7 @@ pub struct OnChainRefereeSlash {
 pub enum OnChainRefereeSolution {
     Timeout,
     Move(OnChainRefereeMove),
+    #[allow(dead_code)]
     Slash(OnChainRefereeSlash),
 }
 
@@ -514,7 +519,7 @@ impl RefereeMaker {
                 },
                 timeout: game_start_info.timeout.clone(),
                 amount: game_start_info.amount.clone(),
-                nonce: nonce,
+                nonce,
                 game_move: GameMoveDetails {
                     basic: GameMoveStateInfo {
                         mover_share: if my_turn {
@@ -709,7 +714,7 @@ impl RefereeMaker {
                     their_turn_game_handler: game_handler.clone(),
                     validation_program: validation_program.clone(),
                     their_previous_validation_info_hash: None,
-                    state: state,
+                    state,
                     most_recent_their_move: initial_move.clone(),
                     most_recent_our_move: details.clone(),
                 }
@@ -726,7 +731,7 @@ impl RefereeMaker {
                 game_handler: game_handler.clone(),
                 their_turn_game_handler: game_handler.clone(),
                 validation_program: validation_program.clone(),
-                state: state,
+                state,
                 most_recent_their_move: most_recent_their_move.basic.clone(),
                 most_recent_our_move: details.clone(),
                 their_previous_validation_info_hash: Some(
