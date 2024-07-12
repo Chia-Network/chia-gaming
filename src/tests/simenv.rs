@@ -14,8 +14,7 @@ use crate::channel_handler::types::{
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_synthetic_public_key,
-    standard_solution_partial, ChiaIdentity,
+    private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, IntoErr, Node,
