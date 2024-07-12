@@ -283,7 +283,7 @@ impl GameHandler {
         let validation_program = ValidationProgram::new(allocator, pl[1]);
         Ok(MyTurnResult {
             waiting_driver: GameHandler::their_driver_from_nodeptr(pl[6]),
-            validation_program: validation_program,
+            validation_program,
             validation_program_hash: validation_program_hash.clone(),
             state: pl[3],
             game_move: GameMoveDetails {

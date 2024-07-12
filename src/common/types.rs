@@ -16,7 +16,9 @@ use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
 
+#[cfg(test)]
 use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
+#[cfg(test)]
 use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
@@ -564,6 +566,7 @@ impl Default for Node {
 }
 
 impl Node {
+    #[cfg(test)]
     pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
         let mut stream = Stream::new(None);
         sexp_to_stream(allocator.allocator(), self.0, &mut stream);
@@ -828,6 +831,7 @@ where
 pub enum CoinCondition {
     AggSigMe(PublicKey, Vec<u8>),
     AggSigUnsafe(PublicKey, Vec<u8>),
+    #[allow(dead_code)]
     CreateCoin(PuzzleHash, Amount),
     Rem(Vec<Vec<u8>>),
 }
@@ -937,13 +941,6 @@ impl Default for TransactionBundle {
             signature: Aggsig::default(),
         }
     }
-}
-
-pub struct SpentResult {
-    pub transaction_bundle: TransactionBundle,
-    pub unroll_coin_string_up: CoinString,
-    pub transaction_up: TransactionBundle,
-    pub whether_has_timeout_up: bool,
 }
 
 pub struct SpendRewardResult {

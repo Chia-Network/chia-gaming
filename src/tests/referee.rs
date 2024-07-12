@@ -90,14 +90,20 @@ pub fn make_debug_game_handler(
     }
 }
 
+#[cfg(test)]
 pub struct RefereeTest {
+    #[allow(dead_code)]
     pub my_identity: ChiaIdentity,
+    #[allow(dead_code)]
     pub their_identity: ChiaIdentity,
 
+    #[allow(dead_code)]
     pub my_referee: RefereeMaker,
     pub their_referee: RefereeMaker,
 
+    #[allow(dead_code)]
     pub referee_coin_puzzle: Puzzle,
+    #[allow(dead_code)]
     pub referee_coin_puzzle_hash: PuzzleHash,
 }
 

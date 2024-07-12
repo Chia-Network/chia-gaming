@@ -3,10 +3,8 @@ use std::collections::{HashMap, VecDeque};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use clvm_tools_rs::compiler::sexp::decode_string;
-
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
+use crate::channel_handler::types::{ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, PrivateKey, PuzzleHash, SpendBundle,
@@ -17,6 +15,7 @@ use crate::outside::{
     WalletSpendInterface,
 };
 
+#[allow(dead_code)]
 enum NotificationToLocalUI {
     OpponentMoved(GameID, ReadableMove),
     MessageFromOpponent(GameID, ReadableMove),
@@ -26,6 +25,7 @@ enum NotificationToLocalUI {
     GoingOnChain,
 }
 
+#[allow(dead_code)]
 enum WalletBootstrapState {
     PartlySigned(TransactionBundle),
     FullySigned(TransactionBundle),
@@ -41,10 +41,13 @@ struct Pipe {
     registered_coins: HashMap<CoinID, Timeout>,
 
     // Game UI
+    #[allow(dead_code)]
     game_starts: VecDeque<NotificationToLocalUI>,
 
     // Bootstrap info
+    #[allow(dead_code)]
     channel_puzzle_hash: Option<PuzzleHash>,
+    #[allow(dead_code)]
     bootstrap_state: Option<WalletBootstrapState>,
 }
 
@@ -73,37 +76,37 @@ impl WalletSpendInterface for Pipe {
 }
 
 impl BootstrapTowardWallet for Pipe {
-    fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
+    fn channel_puzzle_hash(&mut self, _puzzle_hash: &PuzzleHash) -> Result<(), Error> {
         todo!();
     }
 
-    fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+    fn received_channel_offer(&mut self, _bundle: &SpendBundle) -> Result<(), Error> {
         todo!();
     }
 
     fn received_channel_transaction_completion(
         &mut self,
-        bundle: &SpendBundle,
+        _bundle: &SpendBundle,
     ) -> Result<(), Error> {
         todo!();
     }
 }
 
 impl ToLocalUI for Pipe {
-    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
         todo!();
     }
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
         todo!();
     }
-    fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
+    fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
         todo!();
     }
-    fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error> {
+    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
     }
 
-    fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error> {
+    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
         todo!();
     }
     fn going_on_chain(&mut self) -> Result<(), Error> {
