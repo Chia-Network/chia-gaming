@@ -5,8 +5,11 @@ use crate::channel_handler::game::Game;
 use crate::channel_handler::types::ChannelHandlerEnv;
 
 use crate::channel_handler::runner::ChannelHandlerGame;
+
+#[cfg(feature="sim-tests")]
 use crate::tests::simulator::Simulator;
 
+#[cfg(feature="sim-tests")]
 pub fn new_channel_handler_game<R: Rng>(
     simulator: &Simulator,
     env: &mut ChannelHandlerEnv<R>,

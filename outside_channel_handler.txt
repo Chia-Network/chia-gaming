@@ -59,7 +59,7 @@ F: channel initiation full transaction
 
 send_potato_nil: unroll_signatures
 send_potato_start_game: unroll_signatures
-    The receiving side has to have been given warning of the other side initiating before this 
+    The receiving side has to have been given warning of the other side initiating before this
     is received so it has the appropriate arguments. Those must happen in order and may be queued up.
 send_potato_move: id, move, unroll_signatures
 send_potato_accept: id, unroll_signatures

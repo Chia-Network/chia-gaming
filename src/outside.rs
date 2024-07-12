@@ -4,7 +4,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use clvmr::NodePtr;
 
-use crate::common::types::{Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, Program, PuzzleHash, Timeout, TransactionBundle, PublicKey, IntoErr};
+use crate::common::types::{Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, Program, PuzzleHash, Timeout, TransactionBundle, PublicKey, IntoErr, SpendBundle};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{ChannelHandlerEnv, PotatoSignatures, ReadableMove, ChannelHandlerPrivateKeys, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, ChannelCoinSpendInfo};
@@ -328,6 +328,7 @@ impl Peer {
         reward_puzzle_hash: PuzzleHash,
     ) -> Peer {
         Peer {
+            have_potato,
             handshake_state:
             if have_potato {
                 HandshakeState::PreInit
@@ -563,16 +564,17 @@ impl Peer {
                     penv,
                     msg
                 )?;
-                self.handshake_state = HandshakeState::StepF {
-                    first_player_hs_info: first_player_hs_info.clone(),
-                    second_player_hs_info: second_player_hs_info.clone()
-                };
+
+                todo!();
+                // self.handshake_state = HandshakeState::StepF {
+                // first_player_hs_info: first_player_hs_info.clone(),
+                // second_player_hs_info: second_player_hs_info.clone()
+                // };
 
                 // Outer layer already knows the launcher coin string.
                 //
                 // Provide the channel puzzle hash to the full node bootstrap and
                 // it replies with the channel puzzle hash
-                todo!();
                 // penv.system_interface.send_message(&PeerMessage::HandshakeE {
                 // bundle: 
                 // })?;

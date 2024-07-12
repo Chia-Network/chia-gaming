@@ -5,7 +5,7 @@ use rand_chacha::ChaCha8Rng;
 
 use clvm_tools_rs::compiler::sexp::decode_string;
 
-use crate::common::types::{AllocEncoder, Amount, CoinID, CoinString, Error, PrivateKey, GameID, TransactionBundle, Timeout, PuzzleHash};
+use crate::common::types::{AllocEncoder, Amount, CoinID, CoinString, Error, PrivateKey, GameID, TransactionBundle, Timeout, PuzzleHash, SpendBundle};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::outside::{PacketSender, Peer, PeerMessage, WalletSpendInterface, BootstrapTowardWallet, ToLocalUI, PeerEnv};
 use crate::channel_handler::types::{ChannelHandlerPrivateKeys, ReadableMove, ChannelHandlerEnv};
@@ -67,20 +67,15 @@ impl WalletSpendInterface for Pipe {
 
 impl BootstrapTowardWallet for Pipe {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
-        self.channel_puzzle_hash = Some(puzzle_hash.clone());
-        Ok(())
+        todo!();
     }
 
-    fn channel_offer(&mut self, bundle: &TransactionBundle) -> Result<(), Error> {
-        self.bootstrap_state = Some(WalletBootstrapState::PartlySigned(bundle.clone()));
-
-        Ok(())
+    fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+        todo!();
     }
 
-    fn channel_transaction_completion(&mut self, bundle: &TransactionBundle) -> Result<(), Error> {
-        self.bootstrap_state = Some(WalletBootstrapState::FullySigned(bundle.clone()));
-
-        Ok(())
+    fn received_channel_transaction_completion(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+        todo!();
     }
 }
 
