@@ -18,12 +18,14 @@ use clvmr::allocator::NodePtr;
 use clvmr::NO_UNKNOWN_OPS;
 use clvmr::{run_program, ChiaDialect};
 
-use crate::channel_handler::types::{ReadableMove, ReadableUX, Evidence, ValidationProgram, ValidationInfo};
+use crate::channel_handler::types::{
+    Evidence, ReadableMove, ReadableUX, ValidationInfo, ValidationProgram,
+};
 use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
     IntoErr, Node,
 };
-use crate::referee::{GameMoveStateInfo, GameMoveDetails};
+use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 
 pub fn chia_dialect() -> ChiaDialect {
     ChiaDialect::new(NO_UNKNOWN_OPS)
@@ -206,9 +208,7 @@ impl GameHandler {
                     inputs.last_mover_share.clone(),
                     (
                         inputs.last_max_move_size.clone(),
-                        (
-                            inputs.entropy.clone(), ()
-                        ),
+                        (inputs.entropy.clone(), ()),
                     ),
                 ),
             ),
@@ -296,7 +296,9 @@ impl GameHandler {
                     allocator,
                     validation_program_hash,
                     pl[3],
-                ).hash().clone(),
+                )
+                .hash()
+                .clone(),
             },
             message_parser,
         })
@@ -312,7 +314,11 @@ impl GameHandler {
             (
                 Node(inputs.last_state.clone()),
                 (
-                    Node(allocator.encode_atom(&inputs.new_move.basic.move_made).into_gen()?),
+                    Node(
+                        allocator
+                            .encode_atom(&inputs.new_move.basic.move_made)
+                            .into_gen()?,
+                    ),
                     (
                         inputs.new_move.validation_info_hash.clone(),
                         (
@@ -363,16 +369,15 @@ impl GameHandler {
             } else if pl.len() < 3 {
                 Ok(TheirTurnResult::FinalMove(pl[1]))
             } else {
-                let message_data =
-                    if pl.len() == 4 {
-                        allocator.allocator().atom(pl[3]).to_vec()
-                    } else {
-                        vec![]
-                    };
+                let message_data = if pl.len() == 4 {
+                    allocator.allocator().atom(pl[3]).to_vec()
+                } else {
+                    vec![]
+                };
                 Ok(TheirTurnResult::MakeMove(
                     pl[1],
                     GameHandler::my_driver_from_nodeptr(pl[2]),
-                    message_data
+                    message_data,
                 ))
             }
         } else if move_type == 2 {

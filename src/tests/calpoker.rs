@@ -3,12 +3,16 @@ use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
-use crate::common::types::{Amount, AllocEncoder, Error, Sha256Input, GameID, Hash};
 use crate::channel_handler::game::Game;
-use crate::tests::simenv::{SimulatorEnvironment, GameAction, GameActionResult};
+use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, Sha256Input};
+use crate::tests::simenv::{GameAction, GameActionResult, SimulatorEnvironment};
 
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
-    Game::new(allocator, game_id, "resources/calpoker_include_calpoker_template.hex")
+    Game::new(
+        allocator,
+        game_id,
+        "resources/calpoker_include_calpoker_template.hex",
+    )
 }
 
 #[test]
@@ -21,17 +25,13 @@ fn test_load_calpoker() {
     let calpoker = load_calpoker(&mut allocator, game_id).expect("should load");
     let contributions = [Amount::new(100), Amount::new(100)];
 
-    let _simenv = SimulatorEnvironment::new(
-        &mut allocator,
-        &mut rng,
-        &calpoker,
-        &contributions
-    ).expect("should get a sim env");
+    let _simenv = SimulatorEnvironment::new(&mut allocator, &mut rng, &calpoker, &contributions)
+        .expect("should get a sim env");
 }
 
 fn run_calpoker_play_test(
     allocator: &mut AllocEncoder,
-    moves: &[GameAction]
+    moves: &[GameAction],
 ) -> Result<Vec<GameActionResult>, Error> {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
@@ -40,22 +40,27 @@ fn run_calpoker_play_test(
     let calpoker = load_calpoker(allocator, game_id).expect("should load");
     let contributions = [Amount::new(100), Amount::new(100)];
 
-    let mut simenv = SimulatorEnvironment::new(
-        allocator,
-        &mut rng,
-        &calpoker,
-        &contributions
-    ).expect("should get a sim env");
+    let mut simenv = SimulatorEnvironment::new(allocator, &mut rng, &calpoker, &contributions)
+        .expect("should get a sim env");
 
     simenv.play_game(moves)
 }
 
 fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
     let alice_word = b"0alice6789abcdef";
-    let alice_word_hash = Sha256Input::Bytes(alice_word).hash().to_clvm(allocator).expect("should work");
-    let bob_word = allocator.encode_atom(b"0bob456789abcdef").expect("should work");
-    let alice_picks = [0,1,0,1,0,1,0,1].to_clvm(allocator).expect("should work");
-    let bob_picks = [1,0,1,0,1,0,1,0].to_clvm(allocator).expect("should work");
+    let alice_word_hash = Sha256Input::Bytes(alice_word)
+        .hash()
+        .to_clvm(allocator)
+        .expect("should work");
+    let bob_word = allocator
+        .encode_atom(b"0bob456789abcdef")
+        .expect("should work");
+    let alice_picks = [0, 1, 0, 1, 0, 1, 0, 1]
+        .to_clvm(allocator)
+        .expect("should work");
+    let bob_picks = [1, 0, 1, 0, 1, 0, 1, 0]
+        .to_clvm(allocator)
+        .expect("should work");
     let alice_win_move = ().to_clvm(allocator).expect("should work");
 
     [
@@ -74,10 +79,7 @@ fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
 fn test_play_calpoker_happy_path() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
-    let test1 = run_calpoker_play_test(
-        &mut allocator,
-        &moves,
-    ).expect("should work");
+    let test1 = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
     eprintln!("play_result {test1:?}");
 }
 
@@ -89,13 +91,9 @@ fn test_play_calpoker_on_chain_after_1_move_p1() {
     // The second player receives the move, and then observes the first player
     // going on chain.
     let moves = test_moves_1(&mut allocator);
-    let mut on_chain_moves_1: Vec<GameAction> =
-        moves.into_iter().take(1).collect();
+    let mut on_chain_moves_1: Vec<GameAction> = moves.into_iter().take(1).collect();
     on_chain_moves_1.push(GameAction::GoOnChain(true as usize));
-    let test2 = run_calpoker_play_test(
-        &mut allocator,
-        &on_chain_moves_1
-    ).expect("should work");
+    let test2 = run_calpoker_play_test(&mut allocator, &on_chain_moves_1).expect("should work");
     eprintln!("play_result {test2:?}");
 }
 
@@ -106,10 +104,7 @@ fn test_play_calpoker_on_chain_after_1_move_p0_lost_message() {
     let mut on_chain_moves_2: Vec<GameAction> =
         moves.into_iter().take(1).map(|x| x.lose()).collect();
     on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
-    let test3 = run_calpoker_play_test(
-        &mut allocator,
-        &on_chain_moves_2
-    ).expect("should work");
+    let test3 = run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
     eprintln!("play_result {test3:?}");
 }
 
@@ -117,13 +112,9 @@ fn test_play_calpoker_on_chain_after_1_move_p0_lost_message() {
 fn test_play_calpoker_on_chain_after_1_move_p0() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
-    let mut on_chain_moves_2: Vec<GameAction> =
-        moves.into_iter().take(1).collect();
+    let mut on_chain_moves_2: Vec<GameAction> = moves.into_iter().take(1).collect();
     on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
-    let test3 = run_calpoker_play_test(
-        &mut allocator,
-        &on_chain_moves_2
-    ).expect("should work");
+    let test3 = run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
     eprintln!("play_result {test3:?}");
 }
 
@@ -132,13 +123,9 @@ fn test_play_calpoker_on_chain_after_2_moves_p0() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
     // Alice moves, then bob, then bob spends the channel coin.
-    let mut on_chain_moves_3: Vec<GameAction> =
-        moves.into_iter().take(2).collect();
+    let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
     on_chain_moves_3.push(GameAction::GoOnChain(false as usize));
-    let test4 = run_calpoker_play_test(
-        &mut allocator,
-        &on_chain_moves_3
-    ).expect("should work");
+    let test4 = run_calpoker_play_test(&mut allocator, &on_chain_moves_3).expect("should work");
     eprintln!("play_result {test4:?}");
 }
 #[test]
@@ -146,13 +133,9 @@ fn test_play_calpoker_on_chain_after_2_moves_p1() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
     // Alice moves, then bob, then bob spends the channel coin.
-    let mut on_chain_moves_3: Vec<GameAction> =
-        moves.into_iter().take(2).collect();
+    let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
     on_chain_moves_3.push(GameAction::GoOnChain(true as usize));
-    let test4 = run_calpoker_play_test(
-        &mut allocator,
-        &on_chain_moves_3
-    );
+    let test4 = run_calpoker_play_test(&mut allocator, &on_chain_moves_3);
     assert!(test4.is_err());
     assert!(format!("{:?}", test4).contains("from the past"));
     eprintln!("play_result {test4:?}");

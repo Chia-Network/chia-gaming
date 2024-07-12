@@ -5,11 +5,17 @@ use rand_chacha::ChaCha8Rng;
 
 use clvm_tools_rs::compiler::sexp::decode_string;
 
-use crate::common::types::{AllocEncoder, Amount, CoinID, CoinString, Error, PrivateKey, GameID, TransactionBundle, Timeout, PuzzleHash, SpendBundle};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
-use crate::outside::{PacketSender, Peer, PeerMessage, WalletSpendInterface, BootstrapTowardWallet, ToLocalUI, PeerEnv};
-use crate::channel_handler::types::{ChannelHandlerPrivateKeys, ReadableMove, ChannelHandlerEnv};
 use crate::channel_handler::runner::channel_handler_env;
+use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
+use crate::common::types::{
+    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, PrivateKey, PuzzleHash, SpendBundle,
+    Timeout, TransactionBundle,
+};
+use crate::outside::{
+    BootstrapTowardWallet, PacketSender, Peer, PeerEnv, PeerMessage, ToLocalUI,
+    WalletSpendInterface,
+};
 
 enum NotificationToLocalUI {
     OpponentMoved(GameID, ReadableMove),
@@ -17,12 +23,12 @@ enum NotificationToLocalUI {
     GameFinished(GameID, Amount),
     GameCancelled(GameID),
     ShutdownComplete(CoinString),
-    GoingOnChain
+    GoingOnChain,
 }
 
 enum WalletBootstrapState {
     PartlySigned(TransactionBundle),
-    FullySigned(TransactionBundle)
+    FullySigned(TransactionBundle),
 }
 
 #[derive(Default)]
@@ -59,7 +65,8 @@ impl WalletSpendInterface for Pipe {
     }
 
     fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error> {
-        self.registered_coins.insert(coin_id.clone(), timeout.clone());
+        self.registered_coins
+            .insert(coin_id.clone(), timeout.clone());
 
         Ok(())
     }
@@ -74,7 +81,10 @@ impl BootstrapTowardWallet for Pipe {
         todo!();
     }
 
-    fn received_channel_transaction_completion(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+    fn received_channel_transaction_completion(
+        &mut self,
+        bundle: &SpendBundle,
+    ) -> Result<(), Error> {
         todo!();
     }
 }
@@ -113,7 +123,8 @@ fn test_peer_smoke() {
         let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
         let reward_private_key1: PrivateKey = rng.gen();
         let reward_public_key1 = private_to_public_key(&reward_private_key1);
-        let reward_puzzle_hash1 = puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
+        let reward_puzzle_hash1 =
+            puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
 
         Peer::new(
             have_potato,
@@ -126,14 +137,12 @@ fn test_peer_smoke() {
 
     let parent_private_key: PrivateKey = rng.gen();
     let parent_public_key = private_to_public_key(&parent_private_key);
-    let parent_puzzle_hash = puzzle_hash_for_pk(&mut allocator, &parent_public_key).expect("should work");
+    let parent_puzzle_hash =
+        puzzle_hash_for_pk(&mut allocator, &parent_public_key).expect("should work");
 
     let parent_coin_id = CoinID::default();
-    let parent_coin = CoinString::from_parts(
-        &parent_coin_id,
-        &parent_puzzle_hash,
-        &Amount::new(200)
-    );
+    let parent_coin =
+        CoinString::from_parts(&parent_coin_id, &parent_puzzle_hash, &Amount::new(200));
 
     let p1 = new_peer(&mut allocator, &mut rng, true);
     let p2 = new_peer(&mut allocator, &mut rng, false);
@@ -143,7 +152,7 @@ fn test_peer_smoke() {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
         let mut penv = PeerEnv {
             env: &mut env,
-            system_interface: &mut pipe_sender[0]
+            system_interface: &mut pipe_sender[0],
         };
         peers[0].start(&mut penv, parent_coin).expect("should work");
     };
@@ -154,9 +163,11 @@ fn test_peer_smoke() {
         let mut env = channel_handler_env(allocator, rng);
         let mut penv = PeerEnv {
             env: &mut env,
-            system_interface: &mut pipe_sender[who]
+            system_interface: &mut pipe_sender[who],
         };
-        peers[who].received_message(&mut penv, msg).expect("should receive");
+        peers[who]
+            .received_message(&mut penv, msg)
+            .expect("should receive");
     };
 
     for i in 1..=4 {

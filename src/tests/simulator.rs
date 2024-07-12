@@ -1,23 +1,30 @@
-use clvmr::allocator::NodePtr;
 use clvm_traits::{ClvmEncoder, ToClvm};
+use clvmr::allocator::NodePtr;
 
 use clvm_tools_rs::compiler::comptypes::map_m;
 
-use pyo3::prelude::*;
-use pyo3::types::{PyNone, PyBytes, PyTuple};
 use pyo3::exceptions::PyIndexError;
+use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyNone, PyTuple};
 
 use indoc::indoc;
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity, agg_sig_me_message, solution_for_conditions, sign_agg_sig_me};
-use crate::common::types::{ErrToError, Error, Puzzle, Amount, Hash, CoinString, CoinID, PuzzleHash, Aggsig, Node, SpecificTransactionBundle, AllocEncoder, TransactionBundle, ToQuotedProgram, Sha256tree, IntoErr, Program};
+use crate::common::standard_coin::{
+    agg_sig_me_message, sign_agg_sig_me, solution_for_conditions, standard_solution_partial,
+    ChiaIdentity,
+};
+use crate::common::types::{
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, ErrToError, Error, Hash, IntoErr, Node,
+    Program, Puzzle, PuzzleHash, Sha256tree, SpecificTransactionBundle, ToQuotedProgram,
+    TransactionBundle,
+};
 
 #[derive(Debug, Clone)]
 pub struct IncludeTransactionResult {
     pub code: u32,
     pub e: Option<u32>,
-    pub diagnostic: String
+    pub diagnostic: String,
 }
 
 // Allow simulator from rust.
@@ -31,7 +38,7 @@ pub struct Simulator {
     program: PyObject,
     spend_bundle: PyObject,
     g2_element: PyObject,
-    coin_as_list: PyObject
+    coin_as_list: PyObject,
 }
 
 #[cfg(test)]
@@ -45,8 +52,11 @@ impl Drop for Simulator {
     fn drop(&mut self) {
         Python::with_gil(|py| -> PyResult<_> {
             let none = PyNone::get(py);
-            let exit_task = self.guard.call_method1(py, "__aexit__", (none, none, none))?;
-            self.evloop.call_method1(py, "run_until_complete", (exit_task,))?;
+            let exit_task = self
+                .guard
+                .call_method1(py, "__aexit__", (none, none, none))?;
+            self.evloop
+                .call_method1(py, "run_until_complete", (exit_task,))?;
             self.evloop.call_method0(py, "stop")?;
             self.evloop.call_method0(py, "close")?;
 
@@ -72,7 +82,11 @@ fn extract_code(e: &str) -> Option<u32> {
     }
 
     if let Some(p) = e.chars().position(|c| c == ':') {
-        return Some(e[(p+2)..(e.len()-1)].parse::<u32>().expect("should parse"));
+        return Some(
+            e[(p + 2)..(e.len() - 1)]
+                .parse::<u32>()
+                .expect("should parse"),
+        );
     }
 
     panic!("could not parse code");
@@ -85,7 +99,7 @@ fn to_spend_result(py: Python<'_>, spend_res: PyObject) -> PyResult<IncludeTrans
     Ok(IncludeTransactionResult {
         code: status,
         e: extract_code(&e),
-        diagnostic: e
+        diagnostic: e,
     })
 }
 
@@ -103,10 +117,16 @@ impl Simulator {
         let (_first_coin_parent, first_coin_ph, _first_coin_amt) = coin.to_parts().unwrap();
         assert_eq!(puzzle.sha256tree(allocator), first_coin_ph);
 
-        let conditions_vec = map_m(|(ph, amt): &(PuzzleHash, Amount)| -> Result<Node, Error> {
-            Ok(Node((CREATE_COIN, (ph.clone(), (amt.clone(), ())))
-                .to_clvm(allocator).into_gen()?))
-        }, target_coins)?;
+        let conditions_vec = map_m(
+            |(ph, amt): &(PuzzleHash, Amount)| -> Result<Node, Error> {
+                Ok(Node(
+                    (CREATE_COIN, (ph.clone(), (amt.clone(), ())))
+                        .to_clvm(allocator)
+                        .into_gen()?,
+                ))
+            },
+            target_coins,
+        )?;
         let conditions = conditions_vec.to_clvm(allocator).into_gen()?;
 
         let coin_spend_info = standard_solution_partial(
@@ -116,15 +136,18 @@ impl Simulator {
             conditions,
             &identity.synthetic_public_key,
             &agg_sig_me_additional_data,
-            false
-        ).expect("should build");
+            false,
+        )
+        .expect("should build");
 
-        let quoted_conds = conditions.to_quoted_program(allocator).expect("should work");
+        let quoted_conds = conditions
+            .to_quoted_program(allocator)
+            .expect("should work");
         let hashed_conds = quoted_conds.sha256tree(allocator);
         let agg_sig_me_message = agg_sig_me_message(
             &hashed_conds.bytes(),
             &coin.to_coin_id(),
-            &agg_sig_me_additional_data
+            &agg_sig_me_additional_data,
         );
         eprintln!("our message {agg_sig_me_message:?}");
         let signature2 = identity.synthetic_private_key.sign(&agg_sig_me_message);
@@ -136,24 +159,18 @@ impl Simulator {
                 puzzle: identity.puzzle.clone(),
                 solution: Program::from_nodeptr(allocator, coin_spend_info.solution)?,
                 signature: coin_spend_info.signature,
-            }
+            },
         };
 
-        let status = self.push_tx(
-            allocator,
-            &[specific]
-        ).expect("should spend");
+        let status = self.push_tx(allocator, &[specific]).expect("should spend");
         if status.code == 3 {
             return Err(Error::StrErr("failed to spend coin".to_string()));
         }
 
-        Ok(target_coins.iter().map(|(ph, amt)| {
-            CoinString::from_parts(
-                &coin.to_coin_id(),
-                ph,
-                amt
-            )
-        }).collect())
+        Ok(target_coins
+            .iter()
+            .map(|(ph, amt)| CoinString::from_parts(&coin.to_coin_id(), ph, amt))
+            .collect())
     }
 
     pub fn new() -> Self {
@@ -197,19 +214,23 @@ impl Simulator {
 
     fn async_call<ArgT>(&self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
     where
-        ArgT: IntoPy<Py<PyTuple>>
+        ArgT: IntoPy<Py<PyTuple>>,
     {
         let task = self.sim.call_method1(py, name, args)?;
-        let res = self.evloop.call_method1(py, "run_until_complete", (task,))?;
+        let res = self
+            .evloop
+            .call_method1(py, "run_until_complete", (task,))?;
         Ok(res.into())
     }
 
     fn async_client<ArgT>(&self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
     where
-        ArgT: IntoPy<Py<PyTuple>>
+        ArgT: IntoPy<Py<PyTuple>>,
     {
         let task = self.client.call_method1(py, name, args)?;
-        let res = self.evloop.call_method1(py, "run_until_complete", (task,))?;
+        let res = self
+            .evloop
+            .call_method1(py, "run_until_complete", (task,))?;
         Ok(res.into())
     }
 
@@ -225,11 +246,8 @@ impl Simulator {
     pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
             let hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
-            let coins = self.async_client(
-                py,
-                "get_coin_records_by_puzzle_hash",
-                (hash_bytes, false)
-            )?;
+            let coins =
+                self.async_client(py, "get_coin_records_by_puzzle_hash", (hash_bytes, false))?;
             let items: Vec<PyObject> = coins.extract(py)?;
             eprintln!("num coins {}", items.len());
             let mut result_coins = Vec::new();
@@ -237,7 +255,8 @@ impl Simulator {
                 let coin_of_item: PyObject = i.getattr(py, "coin")?.extract(py)?;
                 let as_list_str: String = coin_of_item.call_method0(py, "__repr__")?.extract(py)?;
                 eprintln!("as_list_str {as_list_str}");
-                let as_list: Vec<PyObject> = self.coin_as_list.call1(py, (coin_of_item,))?.extract(py)?;
+                let as_list: Vec<PyObject> =
+                    self.coin_as_list.call1(py, (coin_of_item,))?.extract(py)?;
                 let parent_coin_info: &PyBytes = as_list[0].downcast(py)?;
                 let parent_coin_info_slice: &[u8] = parent_coin_info.extract()?;
                 let puzzle_hash: &PyBytes = as_list[1].downcast(py)?;
@@ -248,7 +267,7 @@ impl Simulator {
                 result_coins.push(CoinString::from_parts(
                     &CoinID::new(parent_coin_hash),
                     &PuzzleHash::from_hash(puzzle_hash),
-                    &Amount::new(amount)
+                    &Amount::new(amount),
                 ));
             }
             Ok(result_coins)
@@ -258,33 +277,29 @@ impl Simulator {
     pub fn g2_element(&self, aggsig: &Aggsig) -> PyResult<PyObject> {
         Python::with_gil(|py| -> PyResult<_> {
             let bytes = PyBytes::new(py, &aggsig.bytes());
-            self.g2_element.call_method1(py, "from_bytes_unchecked", (bytes,))
+            self.g2_element
+                .call_method1(py, "from_bytes_unchecked", (bytes,))
         })
     }
 
     pub fn make_coin(&self, coin_string: &CoinString) -> PyResult<PyObject> {
-        let (parent_id, puzzle_hash, amount) =
-            if let Some(parts) = coin_string.to_parts() {
-                parts
-            } else {
-                panic!("coin string didn't parse");
-            };
+        let (parent_id, puzzle_hash, amount) = if let Some(parts) = coin_string.to_parts() {
+            parts
+        } else {
+            panic!("coin string didn't parse");
+        };
 
         Python::with_gil(|py| -> PyResult<_> {
             let parent_parent_coin = PyBytes::new(py, &parent_id.bytes());
             let puzzle_hash_data = PyBytes::new(py, &puzzle_hash.bytes());
             let amt: u64 = amount.into();
-            self.chia_rs_coin.call1(py, (parent_parent_coin, puzzle_hash_data, amt))
+            self.chia_rs_coin
+                .call1(py, (parent_parent_coin, puzzle_hash_data, amt))
         })
     }
 
-    pub fn hex_to_program(
-        &self,
-        hex: &str
-    ) -> PyResult<PyObject> {
-        Python::with_gil(|py| -> PyResult<_> {
-            self.program.call_method1(py, "fromhex", (hex,))
-        })
+    pub fn hex_to_program(&self, hex: &str) -> PyResult<PyObject> {
+        Python::with_gil(|py| -> PyResult<_> { self.program.call_method1(py, "fromhex", (hex,)) })
     }
 
     pub fn make_coin_spend(
@@ -293,7 +308,7 @@ impl Simulator {
         allocator: &mut AllocEncoder,
         parent_coin: &CoinString,
         puzzle_reveal: Puzzle,
-        solution: NodePtr
+        solution: NodePtr,
     ) -> PyResult<PyObject> {
         let coin = self.make_coin(parent_coin)?;
         eprintln!("coin = {coin:?}");
@@ -303,35 +318,34 @@ impl Simulator {
         let solution_hex = Node(solution).to_hex(allocator);
         let solution_program = self.hex_to_program(&solution_hex)?;
         eprintln!("solution_program = {solution_program:?}");
-        self.make_spend.call1(py, (coin, puzzle_program, solution_program))
+        self.make_spend
+            .call1(py, (coin, puzzle_program, solution_program))
     }
 
     pub fn make_spend_bundle(
         &self,
         allocator: &mut AllocEncoder,
-        txs: &[SpecificTransactionBundle]
+        txs: &[SpecificTransactionBundle],
     ) -> PyResult<PyObject> {
         Python::with_gil(|py| {
             let mut spends = Vec::new();
             if txs.is_empty() {
-                return Err(
-                    PyErr::from_value(
-                        PyIndexError::new_err(
-                            "some type error"
-                        ).value(py).into()
-                    )
-                );
+                return Err(PyErr::from_value(
+                    PyIndexError::new_err("some type error").value(py).into(),
+                ));
             }
 
             let mut signature = txs[0].bundle.signature.clone();
             for (i, tx) in txs.iter().enumerate() {
-                let spend_args = tx.bundle.solution.to_clvm(allocator).map_err(|e| PyErr::from_value(PyIndexError::new_err(format!("{e:?}")).value(py).into()))?;
+                let spend_args = tx.bundle.solution.to_clvm(allocator).map_err(|e| {
+                    PyErr::from_value(PyIndexError::new_err(format!("{e:?}")).value(py).into())
+                })?;
                 let spend = self.make_coin_spend(
                     py,
                     allocator,
                     &tx.coin,
                     tx.bundle.puzzle.clone(),
-                    spend_args
+                    spend_args,
                 )?;
                 spends.push(spend);
                 if i > 0 {
@@ -346,16 +360,14 @@ impl Simulator {
     pub fn push_tx(
         &self,
         allocator: &mut AllocEncoder,
-        txs: &[SpecificTransactionBundle]
+        txs: &[SpecificTransactionBundle],
     ) -> PyResult<IncludeTransactionResult> {
         let spend_bundle = self.make_spend_bundle(allocator, txs)?;
         Python::with_gil(|py| {
             eprintln!("spend_bundle {:?}", spend_bundle);
-            let spend_res: PyObject = self.async_client(
-                py,
-                "push_tx",
-                (spend_bundle,)
-            )?.extract(py)?;
+            let spend_res: PyObject = self
+                .async_client(py, "push_tx", (spend_bundle,))?
+                .extract(py)?;
             to_spend_result(py, spend_res)
         })
     }
@@ -370,37 +382,42 @@ impl Simulator {
         source_coin: &CoinString,
         target_amt: Amount,
     ) -> Result<(CoinString, CoinString), Error> {
-        let (_parent, _, amt) =
-            if let Some(p) = source_coin.to_parts() {
-                p
-            } else {
-                return Err(Error::StrErr("failed to parse coin string".to_string()));
-            };
+        let (_parent, _, amt) = if let Some(p) = source_coin.to_parts() {
+            p
+        } else {
+            return Err(Error::StrErr("failed to parse coin string".to_string()));
+        };
 
         let change_amt = amt.clone() - target_amt.clone();
         let first_coin = CoinString::from_parts(
             &source_coin.to_coin_id(),
             &identity_target.puzzle_hash,
-            &target_amt
+            &target_amt,
         );
         let second_coin = CoinString::from_parts(
             &source_coin.to_coin_id(),
             &identity_source.puzzle_hash,
-            &change_amt
+            &change_amt,
         );
 
-        let conditions =
-            ((CREATE_COIN,
-              (identity_target.puzzle_hash.clone(),
-               (target_amt.clone(), ()),
-              )
+        let conditions = (
+            (
+                CREATE_COIN,
+                (
+                    identity_target.puzzle_hash.clone(),
+                    (target_amt.clone(), ()),
+                ),
             ),
-             ((CREATE_COIN,
-               (identity_source.puzzle_hash.clone(),
-                (change_amt, ()),
-               )
-             ), ())
-            ).to_clvm(allocator).into_gen()?;
+            (
+                (
+                    CREATE_COIN,
+                    (identity_source.puzzle_hash.clone(), (change_amt, ())),
+                ),
+                (),
+            ),
+        )
+            .to_clvm(allocator)
+            .into_gen()?;
         let quoted_conditions = conditions.to_quoted_program(allocator)?;
         let quoted_conditions_hash = quoted_conditions.sha256tree(allocator);
         let standard_solution = solution_for_conditions(allocator, conditions)?;
@@ -408,7 +425,7 @@ impl Simulator {
             &identity_source.synthetic_private_key,
             &quoted_conditions_hash.bytes(),
             &source_coin.to_coin_id(),
-            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA)
+            &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
         );
         let tx = SpecificTransactionBundle {
             bundle: TransactionBundle {
@@ -442,42 +459,35 @@ impl Simulator {
         }
 
         for (i, c) in coins.iter().enumerate() {
-            let (_, _, amt) =
-                if let Some(p) = c.to_parts() {
-                    p
-                } else {
-                    return Err(Error::StrErr("improper coin string".to_string()));
-                };
+            let (_, _, amt) = if let Some(p) = c.to_parts() {
+                p
+            } else {
+                return Err(Error::StrErr("improper coin string".to_string()));
+            };
             amount += amt.clone();
-            let conditions =
-                if i == coins.len()-1 {
-                    ((CREATE_COIN,
-                      (target_ph.clone(),
-                       (amount.clone(), ())
-                      )
-                    ), ()).to_clvm(allocator).into_gen()?
-                } else {
-                    nil
-                };
-            let solution = solution_for_conditions(
-                allocator,
-                conditions
-            )?;
+            let conditions = if i == coins.len() - 1 {
+                ((CREATE_COIN, (target_ph.clone(), (amount.clone(), ()))), ())
+                    .to_clvm(allocator)
+                    .into_gen()?
+            } else {
+                nil
+            };
+            let solution = solution_for_conditions(allocator, conditions)?;
             let quoted_conditions = conditions.to_quoted_program(allocator)?;
             let quoted_conditions_hash = quoted_conditions.sha256tree(allocator);
             let signature = sign_agg_sig_me(
                 &owner.synthetic_private_key,
                 &quoted_conditions_hash.bytes(),
                 &c.to_coin_id(),
-                &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA)
+                &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
             );
             spends.push(SpecificTransactionBundle {
                 bundle: TransactionBundle {
                     puzzle: owner.puzzle.clone(),
                     solution: Program::from_nodeptr(allocator, solution)?,
-                    signature
+                    signature,
                 },
-                coin: c.clone()
+                coin: c.clone(),
             });
         }
 
@@ -486,6 +496,10 @@ impl Simulator {
             return Err(Error::StrErr(format!("failed to spend: {included:?}")));
         }
 
-        Ok(CoinString::from_parts(&coins[coins.len()-1].to_coin_id(), target_ph, &amount))
+        Ok(CoinString::from_parts(
+            &coins[coins.len() - 1].to_coin_id(),
+            target_ph,
+            &amount,
+        ))
     }
 }

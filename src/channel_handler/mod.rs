@@ -11,25 +11,26 @@ use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
 
 use crate::channel_handler::types::{
-    CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo, CoinSpentAccept,
-    CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
-    LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData, PotatoMoveCachedData,
-    PotatoSignatures, ReadableMove, ReadableUX, UnrollCoinConditionInputs, UnrollCoin, HandshakeResult, ChannelCoinSpendInfo,
+    CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
+    ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
+    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
+    CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult,
+    GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData,
+    PotatoMoveCachedData, PotatoSignatures, ReadableMove, ReadableUX, UnrollCoin,
+    UnrollCoinConditionInputs,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    ChiaIdentity, private_to_public_key,
-    puzzle_for_pk, puzzle_hash_for_pk, sign_agg_sig_me, standard_solution_unsafe,
-    puzzle_for_synthetic_public_key, puzzle_hash_for_synthetic_public_key,
-};
-use crate::common::types::{
-    usize_from_atom, Aggsig, Amount, CoinCondition, CoinID, CoinString, Error, GameID, IntoErr,
-    PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256tree,
-    SpecificTransactionBundle, SpendRewardResult, ToQuotedProgram, TransactionBundle, BrokenOutCoinSpendInfo, Program
+    private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
+    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
 };
 #[cfg(test)]
 use crate::common::types::Node;
+use crate::common::types::{
+    usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinString,
+    Error, GameID, IntoErr, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256tree,
+    SpecificTransactionBundle, SpendRewardResult, ToQuotedProgram, TransactionBundle,
+};
 use crate::referee::RefereeMaker;
 
 pub struct CoinDataForReward {
@@ -146,18 +147,16 @@ impl ChannelHandler {
 
     fn unroll_coin_condition_inputs(
         &self,
-        puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)]
+        puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)],
     ) -> UnrollCoinConditionInputs {
-        let my_referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
+        let my_referee_public_key =
+            private_to_public_key(&self.private_keys.my_referee_private_key);
         UnrollCoinConditionInputs {
             ref_pubkey: my_referee_public_key,
             their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-            my_balance:
-            self.my_out_of_game_balance.clone() -
-                self.my_allocated_balance.clone(),
-            their_balance:
-            self.their_out_of_game_balance.clone() -
-                self.their_allocated_balance.clone(),
+            my_balance: self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
+            their_balance: self.their_out_of_game_balance.clone()
+                - self.their_allocated_balance.clone(),
             puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
         }
     }
@@ -177,7 +176,9 @@ impl ChannelHandler {
     }
 
     fn get_just_created_games(&self) -> Vec<GameID> {
-        if let Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(games, _, _)) = &self.cached_last_action {
+        if let Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(games, _, _)) =
+            &self.cached_last_action
+        {
             games.clone()
         } else {
             vec![]
@@ -196,7 +197,7 @@ impl ChannelHandler {
             &self.get_aggregate_channel_public_key(),
             &self.get_aggregate_unroll_public_key(),
             &self.state_channel.amount,
-            unroll_coin
+            unroll_coin,
         )
     }
 
@@ -215,10 +216,8 @@ impl ChannelHandler {
         private_keys: ChannelHandlerPrivateKeys,
         initiation: &ChannelHandlerInitiationData,
     ) -> Result<(Self, ChannelHandlerInitiationResult), Error> {
-        let our_channel_pubkey =
-            private_to_public_key(&private_keys.my_channel_coin_private_key);
-        let our_unroll_pubkey =
-            private_to_public_key(&private_keys.my_unroll_coin_private_key);
+        let our_channel_pubkey = private_to_public_key(&private_keys.my_channel_coin_private_key);
+        let our_unroll_pubkey = private_to_public_key(&private_keys.my_unroll_coin_private_key);
         if initiation.their_channel_pubkey == our_channel_pubkey {
             return Err(Error::Channel(
                 "Duplicated channel coin public key".to_string(),
@@ -232,31 +231,29 @@ impl ChannelHandler {
         }
 
         let aggregate_public_key =
-            our_channel_pubkey.clone() +
-            initiation.their_channel_pubkey.clone();
-        eprintln!("construct channel handler {}", initiation.we_start_with_potato);
+            our_channel_pubkey.clone() + initiation.their_channel_pubkey.clone();
+        eprintln!(
+            "construct channel handler {}",
+            initiation.we_start_with_potato
+        );
         eprintln!("aggregate public key {aggregate_public_key:?}");
         eprintln!("our unroll public key {our_unroll_pubkey:?}");
-        eprintln!("their unroll public key {:?}", initiation.their_unroll_pubkey);
+        eprintln!(
+            "their unroll public key {:?}",
+            initiation.their_unroll_pubkey
+        );
 
         let state_channel_coin_puzzle_hash =
-            puzzle_hash_for_synthetic_public_key(
-                env.allocator,
-                &aggregate_public_key
-            )?;
-        let amount =
-            initiation.my_contribution.clone() +
-            initiation.their_contribution.clone();
+            puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
+        let amount = initiation.my_contribution.clone() + initiation.their_contribution.clone();
         let channel_coin_parent = CoinString::from_parts(
             &initiation.launcher_coin_id,
             &state_channel_coin_puzzle_hash,
-            &amount
+            &amount,
         );
 
         let mut myself = ChannelHandler {
-            my_referee_public_key: private_to_public_key(
-                &private_keys.my_referee_private_key
-            ),
+            my_referee_public_key: private_to_public_key(&private_keys.my_referee_private_key),
 
             their_channel_coin_public_key: initiation.their_channel_pubkey.clone(),
             their_unroll_coin_public_key: initiation.their_unroll_pubkey.clone(),
@@ -289,7 +286,7 @@ impl ChannelHandler {
 
             live_games: Vec::new(),
 
-            private_keys
+            private_keys,
         };
 
         myself.unroll.coin.state_number = myself.current_state_number;
@@ -322,29 +319,29 @@ impl ChannelHandler {
             &myself.private_keys.my_unroll_coin_private_key,
             &myself.their_unroll_coin_public_key,
             // XXX might need to mutate slightly.
-            &inputs
+            &inputs,
         )?;
 
         let channel_coin_spend =
-            myself.create_conditions_and_signature_of_channel_coin(
-                env,
-                &myself.unroll.coin
-            )?;
+            myself.create_conditions_and_signature_of_channel_coin(env, &myself.unroll.coin)?;
 
         myself.state_channel.spend = TransactionBundle {
             puzzle: puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
-                &aggregate_public_key
+                &aggregate_public_key,
             )?,
             solution: Program::from_nodeptr(&mut env.allocator, channel_coin_spend.solution)?,
             signature: channel_coin_spend.signature.clone(),
         };
 
-        Ok((myself, ChannelHandlerInitiationResult {
-            channel_puzzle_hash_up: state_channel_coin_puzzle_hash,
-            my_initial_channel_half_signature_peer: channel_coin_spend.signature,
-        }))
+        Ok((
+            myself,
+            ChannelHandlerInitiationResult {
+                channel_puzzle_hash_up: state_channel_coin_puzzle_hash,
+                my_initial_channel_half_signature_peer: channel_coin_spend.signature,
+            },
+        ))
     }
 
     pub fn finish_handshake<R: Rng>(
@@ -356,22 +353,22 @@ impl ChannelHandler {
 
         eprintln!("finish_handshake");
         let channel_coin_spend =
-            self.create_conditions_and_signature_of_channel_coin(
-                env,
-                &self.unroll.coin
-            )?;
+            self.create_conditions_and_signature_of_channel_coin(env, &self.unroll.coin)?;
 
         eprintln!("their sig {:?}", their_initial_channel_half_signature);
-        let combined_signature = channel_coin_spend.signature.clone()
-            + their_initial_channel_half_signature.clone();
+        let combined_signature =
+            channel_coin_spend.signature.clone() + their_initial_channel_half_signature.clone();
         eprintln!("combined signature {combined_signature:?}");
 
         let state_channel_puzzle = puzzle_for_synthetic_public_key(
             env.allocator,
             &env.standard_puzzle,
-            &aggregate_public_key
+            &aggregate_public_key,
         )?;
-        eprintln!("puzzle hash for state channel coin (ch) {:?}", state_channel_puzzle.sha256tree(env.allocator));
+        eprintln!(
+            "puzzle hash for state channel coin (ch) {:?}",
+            state_channel_puzzle.sha256tree(env.allocator)
+        );
 
         Ok(HandshakeResult {
             channel_puzzle_reveal: state_channel_puzzle,
@@ -380,7 +377,7 @@ impl ChannelHandler {
                 aggsig: combined_signature,
                 solution: channel_coin_spend.solution,
                 conditions: channel_coin_spend.conditions,
-            }
+            },
         })
     }
 
@@ -389,7 +386,7 @@ impl ChannelHandler {
         unroll_coin: Option<&CoinID>,
         skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
-        games: &'a [LiveGame]
+        games: &'a [LiveGame],
     ) -> Result<Vec<OnChainGameCoin>, Error> {
         // It's ok to not have a proper coin id here when we only want
         // the puzzle hashes and amounts.
@@ -423,14 +420,10 @@ impl ChannelHandler {
         &self,
         skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
-        games: &[LiveGame]
+        games: &[LiveGame],
     ) -> Result<Vec<(PuzzleHash, Amount)>, Error> {
-        Ok(self.compute_game_coin_unroll_data(
-            None,
-            skip_game,
-            skip_coin_id,
-            games
-        )?
+        Ok(self
+            .compute_game_coin_unroll_data(None, skip_game, skip_coin_id, games)?
             .iter()
             .filter_map(|ngc| ngc.coin_string_up.as_ref().and_then(|c| c.to_parts()))
             .map(|(_, puzzle_hash, amount)| (puzzle_hash, amount))
@@ -444,8 +437,8 @@ impl ChannelHandler {
         self.current_state_number += 1;
         self.unroll.coin.state_number = self.current_state_number;
 
-        let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> = self.
-            compute_unroll_data_for_games(&[], None, &self.live_games)?;
+        let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
+            self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
         // Now update our unroll state.
         self.unroll.coin.update(
@@ -458,14 +451,11 @@ impl ChannelHandler {
         self.have_potato = false;
 
         let channel_coin_spend =
-            self.create_conditions_and_signature_of_channel_coin(
-                env,
-                &self.unroll.coin
-            )?;
+            self.create_conditions_and_signature_of_channel_coin(env, &self.unroll.coin)?;
 
         Ok(PotatoSignatures {
             my_channel_half_signature_peer: channel_coin_spend.signature,
-            my_unroll_half_signature_peer: self.unroll.coin.get_unroll_coin_signature()?
+            my_unroll_half_signature_peer: self.unroll.coin.get_unroll_coin_signature()?,
         })
     }
 
@@ -487,22 +477,20 @@ impl ChannelHandler {
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
-        let channel_coin_spend =
-            spend.get_solution_and_signature_from_conditions(
-                env,
-                &self.private_keys.my_channel_coin_private_key,
-                &aggregate_public_key,
-                conditions,
-            )?;
+        let channel_coin_spend = spend.get_solution_and_signature_from_conditions(
+            env,
+            &self.private_keys.my_channel_coin_private_key,
+            &aggregate_public_key,
+            conditions,
+        )?;
 
         let full_signature =
-            channel_coin_spend.signature.clone() +
-            their_channel_half_signature.clone();
+            channel_coin_spend.signature.clone() + their_channel_half_signature.clone();
         eprintln!("combined signature {full_signature:?}");
         if full_signature.verify(&aggregate_public_key, &channel_coin_spend.message) {
             Ok(BrokenOutCoinSpendInfo {
                 signature: full_signature,
-                .. channel_coin_spend
+                ..channel_coin_spend
             })
         } else {
             Err(Error::StrErr("failed to verify signature".to_string()))
@@ -522,32 +510,29 @@ impl ChannelHandler {
             env,
             &self.private_keys.my_unroll_coin_private_key,
             &self.their_unroll_coin_public_key,
-            inputs
+            inputs,
         )?;
-        eprintln!("verify: started with potato: {}", test_unroll.started_with_potato);
+        eprintln!(
+            "verify: started with potato: {}",
+            test_unroll.started_with_potato
+        );
 
         if !test_unroll.verify(
             env,
             &self.get_aggregate_unroll_public_key(),
             &signatures.my_unroll_half_signature_peer,
         )? {
-            return Err(Error::StrErr(
-                "bad unroll signature verify".to_string(),
-            ));
+            return Err(Error::StrErr("bad unroll signature verify".to_string()));
         }
 
         // State coin section
         let channel_coin_spend =
-            self.create_conditions_and_signature_of_channel_coin(
-                env,
-                &test_unroll,
-            )?;
-        self
-            .verify_channel_coin_from_peer_signatures(
-                env,
-                &signatures.my_channel_half_signature_peer,
-                channel_coin_spend.conditions,
-            )?;
+            self.create_conditions_and_signature_of_channel_coin(env, &test_unroll)?;
+        self.verify_channel_coin_from_peer_signatures(
+            env,
+            &signatures.my_channel_half_signature_peer,
+            channel_coin_spend.conditions,
+        )?;
 
         // If state number is 0 and we're receiving the potato, then we don't
         // verify, we do finish_handshake instead.
@@ -558,15 +543,15 @@ impl ChannelHandler {
         self.current_state_number += 1;
         self.timeout = Some(ChannelHandlerUnrollSpendInfo {
             coin: test_unroll.clone(),
-            signatures: signatures.clone()
+            signatures: signatures.clone(),
         });
 
         self.have_potato = true;
 
         Ok(BrokenOutCoinSpendInfo {
-            signature: channel_coin_spend.signature.clone() +
-                signatures.my_channel_half_signature_peer.clone(),
-            .. channel_coin_spend
+            signature: channel_coin_spend.signature.clone()
+                + signatures.my_channel_half_signature_peer.clone(),
+            ..channel_coin_spend
         })
     }
 
@@ -575,11 +560,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         signatures: &PotatoSignatures,
     ) -> Result<ChannelCoinSpendInfo, Error> {
-        let unroll_data = self.compute_unroll_data_for_games(
-            &[],
-            None,
-            &self.live_games
-        )?;
+        let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
         let spend = self.received_potato_verify_signatures(
             env,
@@ -606,7 +587,7 @@ impl ChannelHandler {
 
             let referee_identity = ChiaIdentity::new(
                 &mut env.allocator,
-                self.private_keys.my_referee_private_key.clone()
+                self.private_keys.my_referee_private_key.clone(),
             )?;
 
             let (referee_maker, puzzle_hash) = RefereeMaker::new(
@@ -630,10 +611,7 @@ impl ChannelHandler {
         Ok(res)
     }
 
-    fn start_game_contributions(
-        &mut self,
-        start_info_list: &[GameStartInfo]
-    ) -> (Amount, Amount) {
+    fn start_game_contributions(&mut self, start_info_list: &[GameStartInfo]) -> (Amount, Amount) {
         let mut my_full_contribution = Amount::default();
         let mut their_full_contribution = Amount::default();
 
@@ -654,7 +632,9 @@ impl ChannelHandler {
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
 
-        eprintln!("send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}");
+        eprintln!(
+            "send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
+        );
 
         // We let them spend a state number 1 higher but nothing else changes.
         self.update_cache_for_potato_send(Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
@@ -663,7 +643,10 @@ impl ChannelHandler {
             their_full_contribution.clone(),
         )));
 
-        eprintln!("send: started with potato: {}", self.unroll.coin.started_with_potato);
+        eprintln!(
+            "send: started with potato: {}",
+            self.unroll.coin.started_with_potato
+        );
 
         eprintln!("before adding games: {} games", self.live_games.len());
         let mut new_games = self.add_games(env, start_info_list)?;
@@ -682,28 +665,31 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         start_info_list: &[GameStartInfo],
     ) -> Result<ChannelCoinSpendInfo, Error> {
-        eprintln!("RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}", self.current_state_number, self.unroll.coin.state_number);
+        eprintln!(
+            "RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",
+            self.current_state_number, self.unroll.coin.state_number
+        );
         let mut new_games = self.add_games(env, start_info_list)?;
 
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
 
-        eprintln!("recv potato start game: me {my_full_contribution:?} then {their_full_contribution:?}");
+        eprintln!(
+            "recv potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
+        );
 
         self.my_allocated_balance += my_full_contribution;
         self.their_allocated_balance += their_full_contribution;
 
         // Make a list of all game outputs in order.
         let mut unroll_data_for_all_games =
-            self.compute_unroll_data_for_games(
-                &[], None, &self.live_games
-            )?;
+            self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
         eprintln!("start with {} games", unroll_data_for_all_games.len());
-        unroll_data_for_all_games.append(
-            &mut self.compute_unroll_data_for_games(
-                &[], None, &new_games
-            )?
-        );
+        unroll_data_for_all_games.append(&mut self.compute_unroll_data_for_games(
+            &[],
+            None,
+            &new_games,
+        )?);
 
         eprintln!(
             "existing games {} new games {} total games {}",
@@ -713,7 +699,10 @@ impl ChannelHandler {
         );
 
         // Update an unroll coin to see if we can verify the message.
-        eprintln!("aggregate state channel public key {:?}", self.get_aggregate_channel_public_key());
+        eprintln!(
+            "aggregate state channel public key {:?}",
+            self.get_aggregate_channel_public_key()
+        );
         let spend = self.received_potato_verify_signatures(
             env,
             signatures,
@@ -753,7 +742,8 @@ impl ChannelHandler {
         let referee_result =
             referee_maker.my_turn_make_move(env.rng, env.allocator, readable_move)?;
         eprintln!("move_result {referee_result:?}");
-        self.live_games[game_idx].last_referee_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
+        self.live_games[game_idx].last_referee_puzzle_hash =
+            referee_result.puzzle_hash_for_unroll.clone();
 
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
@@ -771,7 +761,7 @@ impl ChannelHandler {
 
         Ok(MoveResult {
             signatures,
-            game_move: referee_result.details.clone()
+            game_move: referee_result.details.clone(),
         })
     }
 
@@ -785,26 +775,20 @@ impl ChannelHandler {
         let game_idx = self.get_game_by_id(game_id)?;
 
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
-        let their_move_result = referee_maker.their_turn_move_off_chain(
-            env.allocator,
-            &move_result.game_move
-        )?;
-        self.live_games[game_idx].last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
+        let their_move_result =
+            referee_maker.their_turn_move_off_chain(env.allocator, &move_result.game_move)?;
+        self.live_games[game_idx].last_referee_puzzle_hash =
+            their_move_result.puzzle_hash_for_unroll.clone();
 
         eprintln!("their_move_result {their_move_result:?}");
 
-        let unroll_data = self.compute_unroll_data_for_games(
-            &[],
-            None,
-            &self.live_games,
-        )?;
+        let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
-        let spend =
-            self.received_potato_verify_signatures(
-                env,
-                &move_result.signatures,
-                &self.unroll_coin_condition_inputs(&unroll_data),
-            )?;
+        let spend = self.received_potato_verify_signatures(
+            env,
+            &move_result.signatures,
+            &self.unroll_coin_condition_inputs(&unroll_data),
+        )?;
 
         // Needs to know their puzzle_hash_for_unroll so we can keep it to do
         // the unroll spend.
@@ -813,11 +797,15 @@ impl ChannelHandler {
         // Check whether the spend signed in the Move Result is valid by using
         // the unroll puzzle hash that was given to us.
 
-        Ok((ChannelCoinSpendInfo {
-            aggsig: spend.signature,
-            solution: spend.solution,
-            conditions: spend.conditions,
-        }, their_move_result.readable_move, their_move_result.message))
+        Ok((
+            ChannelCoinSpendInfo {
+                aggsig: spend.signature,
+                solution: spend.solution,
+                conditions: spend.conditions,
+            },
+            their_move_result.readable_move,
+            their_move_result.message,
+        ))
     }
 
     pub fn received_message<R: Rng>(
@@ -883,7 +871,7 @@ impl ChannelHandler {
             // Skip the removed game.
             &[game_id.clone()],
             None,
-            &self.live_games
+            &self.live_games,
         )?;
 
         self.received_potato_verify_signatures(
@@ -918,13 +906,12 @@ impl ChannelHandler {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
 
-        let channel_coin_spend =
-            spend.get_solution_and_signature_from_conditions(
-                env,
-                &self.private_keys.my_channel_coin_private_key,
-                &aggregate_public_key,
-                conditions,
-            )?;
+        let channel_coin_spend = spend.get_solution_and_signature_from_conditions(
+            env,
+            &self.private_keys.my_channel_coin_private_key,
+            &aggregate_public_key,
+            conditions,
+        )?;
 
         Ok(TransactionBundle {
             solution: Program::from_nodeptr(&mut env.allocator, channel_coin_spend.solution)?,
@@ -940,13 +927,12 @@ impl ChannelHandler {
     ) -> Result<(NodePtr, Aggsig), Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
-        let channel_coin_spend =
-            spend.get_solution_and_signature_from_conditions(
-                env,
-                &self.private_keys.my_channel_coin_private_key,
-                &aggregate_public_key,
-                conditions,
-            )?;
+        let channel_coin_spend = spend.get_solution_and_signature_from_conditions(
+            env,
+            &self.private_keys.my_channel_coin_private_key,
+            &aggregate_public_key,
+            conditions,
+        )?;
 
         Ok((channel_coin_spend.solution, channel_coin_spend.signature))
     }
@@ -1016,26 +1002,22 @@ impl ChannelHandler {
         // Should have a cached signature for unrolling
 
         // Full unroll puzzle reveal includes the curried info,
-        let curried_unroll_puzzle =
-            use_unroll.coin.make_curried_unroll_puzzle(
-                env,
-                &self.get_aggregate_unroll_public_key(),
-            )?;
-        let unroll_puzzle_solution =
-            use_unroll.coin.make_unroll_puzzle_solution(
-                env,
-                &self.get_aggregate_unroll_public_key(),
-            )?;
+        let curried_unroll_puzzle = use_unroll
+            .coin
+            .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())?;
+        let unroll_puzzle_solution = use_unroll
+            .coin
+            .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
 
         Ok(ChannelCoinSpentResult {
             transaction: TransactionBundle {
                 puzzle: Puzzle::from_nodeptr(&mut env.allocator, curried_unroll_puzzle)?,
                 solution: Program::from_nodeptr(&mut env.allocator, unroll_puzzle_solution)?,
-                signature: use_unroll.coin.get_unroll_coin_signature()? +
-                    use_unroll.signatures.my_unroll_half_signature_peer.clone(),
+                signature: use_unroll.coin.get_unroll_coin_signature()?
+                    + use_unroll.signatures.my_unroll_half_signature_peer.clone(),
             },
             timeout: false,
-            games_canceled: self.get_just_created_games()
+            games_canceled: self.get_just_created_games(),
         })
     }
 
@@ -1086,18 +1068,22 @@ impl ChannelHandler {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
         let full_coin = self.get_finished_unroll_coin();
 
-        let state_number =
-            usize_from_atom(&rem_conditions[0]).ok_or_else(|| {
-                Error::StrErr("Unconvertible state number".to_string())
-            })?;
+        let state_number = usize_from_atom(&rem_conditions[0])
+            .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))?;
 
         let our_parity = self.unroll.coin.state_number & 1;
         let their_parity = state_number & 1;
 
-        eprintln!("CHANNEL COIN SPENT: my state {} coin state {} channel coin state {state_number}", self.current_state_number, full_coin.coin.state_number);
+        eprintln!(
+            "CHANNEL COIN SPENT: my state {} coin state {} channel coin state {state_number}",
+            self.current_state_number, full_coin.coin.state_number
+        );
 
         if state_number > self.current_state_number {
-            return Err(Error::StrErr(format!("Reply from the future onchain {} (me {}) vs {}", state_number, self.current_state_number, self.unroll.coin.state_number)));
+            return Err(Error::StrErr(format!(
+                "Reply from the future onchain {} (me {}) vs {}",
+                state_number, self.current_state_number, self.unroll.coin.state_number
+            )));
         } else if state_number < self.current_state_number {
             if our_parity == their_parity {
                 return Err(Error::StrErr(
@@ -1108,16 +1094,14 @@ impl ChannelHandler {
             self.get_unroll_coin_transaction(env)
         } else if state_number == self.current_state_number {
             // Timeout
-            let curried_unroll_puzzle =
-                self.unroll.coin.make_curried_unroll_puzzle(
-                    env,
-                    &self.get_aggregate_unroll_public_key(),
-                )?;
-            let unroll_puzzle_solution =
-                self.unroll.coin.make_unroll_puzzle_solution(
-                    env,
-                    &self.get_aggregate_unroll_public_key(),
-                )?;
+            let curried_unroll_puzzle = self
+                .unroll
+                .coin
+                .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())?;
+            let unroll_puzzle_solution = self
+                .unroll
+                .coin
+                .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
 
             Ok(ChannelCoinSpentResult {
                 transaction: TransactionBundle {
@@ -1126,7 +1110,7 @@ impl ChannelHandler {
                     signature: self.unroll.coin.get_unroll_coin_signature()?,
                 },
                 timeout: true,
-                games_canceled: self.get_just_created_games()
+                games_canceled: self.get_just_created_games(),
             })
         } else {
             Err(Error::StrErr(format!(
@@ -1189,12 +1173,11 @@ impl ChannelHandler {
                     &cached.at_stake_amount,
                 );
 
-                let spend_transaction =
-                    cached.live_game.referee_maker.get_transaction_for_move(
-                        env.allocator,
-                        &game_coin,
-                        &env.agg_sig_me_additional_data,
-                    )?;
+                let spend_transaction = cached.live_game.referee_maker.get_transaction_for_move(
+                    env.allocator,
+                    &game_coin,
+                    &env.agg_sig_me_additional_data,
+                )?;
 
                 Ok(Some(DispositionResult {
                     disposition: CoinSpentDisposition::Accept(CoinSpentAccept {
@@ -1261,12 +1244,7 @@ impl ChannelHandler {
         skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
     ) -> Result<Vec<OnChainGameCoin>, Error> {
-        self.compute_game_coin_unroll_data(
-            unroll_coin,
-            skip_game,
-            skip_coin_id,
-            &self.live_games
-        )
+        self.compute_game_coin_unroll_data(unroll_coin, skip_game, skip_coin_id, &self.live_games)
     }
 
     // what our vanilla coin string is
@@ -1316,16 +1294,15 @@ impl ChannelHandler {
         };
 
         let disposition =
-            self.get_cached_disposition_for_spent_result(
-                env,
-                unroll_coin,
-                state_number
-            )?;
+            self.get_cached_disposition_for_spent_result(env, unroll_coin, state_number)?;
 
         // return list of triples of game_id, coin_id, referee maker pulling from a list of pairs of (id, ref maker)
         let new_game_coins_on_chain = self.get_new_game_coins_on_chain(
             Some(&unroll_coin.to_coin_id()),
-            &disposition.as_ref().map(|d| d.skip_game.clone()).unwrap_or_default(),
+            &disposition
+                .as_ref()
+                .map(|d| d.skip_game.clone())
+                .unwrap_or_default(),
             disposition.as_ref().and_then(|d| d.skip_coin_id.as_ref()),
         )?;
 
@@ -1415,10 +1392,7 @@ impl ChannelHandler {
             )?;
             coins_with_solutions.push(TransactionBundle {
                 puzzle: spend_coin_puzzle.clone(),
-                solution: Program::from_nodeptr(
-                    &mut env.allocator,
-                    standard_solution.solution
-                )?,
+                solution: Program::from_nodeptr(&mut env.allocator, standard_solution.solution)?,
                 signature,
             });
         }
@@ -1448,17 +1422,15 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<(usize, PuzzleHash, Amount, Amount), Error> {
         let use_unroll = self.get_finished_unroll_coin();
-        let curried_unroll_puzzle =
-            use_unroll.coin.make_curried_unroll_puzzle(
-                env,
-                &self.get_aggregate_unroll_public_key(),
-            )?;
+        let curried_unroll_puzzle = use_unroll
+            .coin
+            .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())?;
 
         Ok((
             use_unroll.coin.state_number,
             Node(curried_unroll_puzzle).sha256tree(&mut env.allocator),
             self.my_out_of_game_balance.clone(),
-            self.their_out_of_game_balance.clone()
+            self.their_out_of_game_balance.clone(),
         ))
     }
 }

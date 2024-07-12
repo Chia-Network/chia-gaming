@@ -1,8 +1,8 @@
 use std::io;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Visitor;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use num_bigint::{BigInt, Sign};
 use num_traits::cast::ToPrimitive;
@@ -13,8 +13,8 @@ use rand::prelude::*;
 use sha2::{Digest, Sha256};
 
 use clvmr::allocator::{Allocator, NodePtr, SExp};
-use clvmr::serde::{node_from_bytes, node_to_bytes};
 use clvmr::reduction::EvalErr;
+use clvmr::serde::{node_from_bytes, node_to_bytes};
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
 use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
@@ -177,7 +177,8 @@ impl Default for PublicKey {
 impl Serialize for PublicKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer {
+        S: Serializer,
+    {
         let bytes = self.bytes();
         serializer.serialize_bytes(&bytes)
     }
@@ -186,16 +187,18 @@ impl Serialize for PublicKey {
 impl<'de> Deserialize<'de> for PublicKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de> {
+        D: Deserializer<'de>,
+    {
         let b = SerdeByteConsumer;
         let bytes = deserializer.deserialize_bytes(b);
         let mut fixed_bytes: [u8; 48] = [0; 48];
         for v in bytes.into_iter().take(1) {
-            for (i,b) in v.into_iter().enumerate() {
+            for (i, b) in v.into_iter().enumerate() {
                 fixed_bytes[i] = b;
             }
         }
-        Ok(PublicKey::from_bytes(fixed_bytes).map_err(|e| serde::de::Error::custom(format!("couldn't make pubkey: {e:?}")))?)
+        Ok(PublicKey::from_bytes(fixed_bytes)
+            .map_err(|e| serde::de::Error::custom(format!("couldn't make pubkey: {e:?}")))?)
     }
 }
 
@@ -257,7 +260,8 @@ impl Default for Aggsig {
 impl Serialize for Aggsig {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer {
+        S: Serializer,
+    {
         let bytes = self.bytes();
         serializer.serialize_bytes(&bytes)
     }
@@ -266,16 +270,18 @@ impl Serialize for Aggsig {
 impl<'de> Deserialize<'de> for Aggsig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de> {
+        D: Deserializer<'de>,
+    {
         let b = SerdeByteConsumer;
         let bytes = deserializer.deserialize_bytes(b);
         let mut fixed_bytes: [u8; 96] = [0; 96];
         for v in bytes.into_iter().take(1) {
-            for (i,b) in v.into_iter().enumerate() {
+            for (i, b) in v.into_iter().enumerate() {
                 fixed_bytes[i] = b;
             }
         }
-        Ok(Aggsig::from_bytes(fixed_bytes).map_err(|e| serde::de::Error::custom(format!("couldn't make aggsig: {e:?}")))?)
+        Ok(Aggsig::from_bytes(fixed_bytes)
+            .map_err(|e| serde::de::Error::custom(format!("couldn't make aggsig: {e:?}")))?)
     }
 }
 
@@ -558,16 +564,9 @@ impl Default for Node {
 }
 
 impl Node {
-    pub fn to_hex(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> String {
+    pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
         let mut stream = Stream::new(None);
-        sexp_to_stream(
-            allocator.allocator(),
-            self.0,
-            &mut stream
-        );
+        sexp_to_stream(allocator.allocator(), self.0, &mut stream);
         stream.get_value().hex()
     }
 }
@@ -634,7 +633,8 @@ impl Program {
 impl Serialize for Program {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer {
+        S: Serializer,
+    {
         serializer.serialize_bytes(&self.0)
     }
 }
@@ -642,7 +642,8 @@ impl Serialize for Program {
 impl<'de> Deserialize<'de> for Program {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de> {
+        D: Deserializer<'de>,
+    {
         let b = SerdeByteConsumer;
         let byte_data = deserializer.deserialize_bytes(b)?;
         Ok(Program(byte_data))
@@ -652,14 +653,14 @@ impl<'de> Deserialize<'de> for Program {
 fn clone_to_encoder(
     encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     source_allocator: &Allocator,
-    node: NodePtr
+    node: NodePtr,
 ) -> Result<NodePtr, ToClvmError> {
     match source_allocator.sexp(node) {
         SExp::Atom => {
             let buf = source_allocator.atom(node);
             encoder.encode_atom(&buf)
         }
-        SExp::Pair(a,b) => {
+        SExp::Pair(a, b) => {
             let ac = clone_to_encoder(encoder, source_allocator, a)?;
             let bc = clone_to_encoder(encoder, source_allocator, b)?;
             encoder.encode_pair(ac, bc)
@@ -673,7 +674,8 @@ impl ToClvm<NodePtr> for Program {
         encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
         let mut allocator = Allocator::new();
-        let result = node_from_bytes(&mut allocator, &self.0).map_err(|e| ToClvmError::Custom(format!("{e:?}")))?;
+        let result = node_from_bytes(&mut allocator, &self.0)
+            .map_err(|e| ToClvmError::Custom(format!("{e:?}")))?;
         clone_to_encoder(encoder, &allocator, result)
     }
 }
@@ -844,14 +846,16 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
         }
         PublicKey::from_bytes(fixed)
     };
-    if exploded.len() > 2 && matches!(
-        (
-            allocator.allocator().sexp(exploded[0]),
-            allocator.allocator().sexp(exploded[1]),
-            allocator.allocator().sexp(exploded[2])
-        ),
-        (SExp::Atom, SExp::Atom, SExp::Atom)
-    ) {
+    if exploded.len() > 2
+        && matches!(
+            (
+                allocator.allocator().sexp(exploded[0]),
+                allocator.allocator().sexp(exploded[1]),
+                allocator.allocator().sexp(exploded[2])
+            ),
+            (SExp::Atom, SExp::Atom, SExp::Atom)
+        )
+    {
         let atoms: Vec<Vec<u8>> = exploded
             .iter()
             .take(3)
@@ -868,22 +872,22 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
         } else if *atoms[0] == CREATE_COIN_ATOM {
             if let Some(amt) = u64_from_atom(&atoms[2]) {
                 return Some(CoinCondition::CreateCoin(
-                    PuzzleHash::from_hash(
-                        Hash::from_slice(&atoms[1]),
-                    ),
-                    Amount::new(amt)
+                    PuzzleHash::from_hash(Hash::from_slice(&atoms[1])),
+                    Amount::new(amt),
                 ));
             }
         } else {
             return None;
         }
-    } else if exploded.len() > 1 && matches!(
-        (
-            allocator.allocator().sexp(exploded[0]),
-            allocator.allocator().sexp(exploded[1])
-        ),
-        (SExp::Atom, SExp::Atom)
-    ) {
+    } else if exploded.len() > 1
+        && matches!(
+            (
+                allocator.allocator().sexp(exploded[0]),
+                allocator.allocator().sexp(exploded[1])
+            ),
+            (SExp::Atom, SExp::Atom)
+        )
+    {
         let atoms: Vec<Vec<u8>> = exploded
             .iter()
             .map(|a| allocator.allocator().atom(*a).to_vec())
@@ -947,8 +951,7 @@ pub struct SpendRewardResult {
     pub result_coin_string_up: CoinString,
 }
 
-pub struct SpendBundle {
-}
+pub struct SpendBundle {}
 
 pub fn usize_from_atom(a: &[u8]) -> Option<usize> {
     let bi = BigInt::from_bytes_be(Sign::Plus, a);

@@ -1,20 +1,24 @@
 use std::collections::VecDeque;
 
+use clvmr::NodePtr;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use clvmr::NodePtr;
 
-use crate::common::types::{Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, Program, PuzzleHash, Timeout, TransactionBundle, PublicKey, IntoErr, SpendBundle};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{ChannelHandlerEnv, PotatoSignatures, ReadableMove, ChannelHandlerPrivateKeys, ChannelHandlerInitiationData, ChannelHandlerInitiationResult, ChannelCoinSpendInfo};
+use crate::channel_handler::types::{
+    ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
+    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
+};
 use crate::channel_handler::ChannelHandler;
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
+use crate::common::types::{
+    Aggsig, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Program, PublicKey,
+    PuzzleHash, SpendBundle, Timeout, TransactionBundle,
+};
 
-struct LocalGameStart {
-}
+struct LocalGameStart {}
 
-struct RemoteGameStart {
-}
+struct RemoteGameStart {}
 
 struct GameInfoMyTurn {
     id: GameID,
@@ -137,7 +141,10 @@ pub trait BootstrapTowardWallet {
     ///
     /// Both alice and bob, upon knowing the full channel coin id, use the more
     /// general wallet interface to register for notifications of the channel coin.
-    fn received_channel_transaction_completion(&mut self, bundle: &SpendBundle) -> Result<(), Error>;
+    fn received_channel_transaction_completion(
+        &mut self,
+        bundle: &SpendBundle,
+    ) -> Result<(), Error>;
 }
 
 /// Spend wallet receiver
@@ -179,7 +186,11 @@ trait FromLocalUI {
     /// General flow:
     ///
     /// Have queues of games we're starting and other side is starting.
-    fn start_games(&mut self, i_initiated: bool, games: &[(GameType, bool, NodePtr)]) -> Result<GameID, Error>;
+    fn start_games(
+        &mut self,
+        i_initiated: bool,
+        games: &[(GameType, bool, NodePtr)],
+    ) -> Result<GameID, Error>;
     fn make_move(&mut self, id: GameID, readable: ReadableMove) -> Result<(), Error>;
     fn accept(&mut self, id: GameID) -> Result<(), Error>;
     fn shut_down(&mut self) -> Result<(), Error>;
@@ -230,15 +241,15 @@ pub enum HandshakeState {
     StepB(CoinString, HandshakeA),
     StepC {
         first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB
+        second_player_hs_info: HandshakeB,
     },
     StepD {
         first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB
+        second_player_hs_info: HandshakeB,
     },
     StepE {
         first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB
+        second_player_hs_info: HandshakeB,
     },
     StepF {
         first_player_hs_info: HandshakeA,
@@ -249,7 +260,7 @@ pub enum HandshakeState {
         first_player_hs_info: HandshakeA,
         second_player_hs_info: HandshakeB,
         channel_initiation_transaction: TransactionBundle,
-    }
+    },
 }
 
 pub trait PacketSender {
@@ -259,7 +270,7 @@ pub trait PacketSender {
 pub struct PeerEnv<'a, G, R>
 where
     G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    R: Rng
+    R: Rng,
 {
     pub env: &'a mut ChannelHandlerEnv<'a, R>,
 
@@ -329,8 +340,7 @@ impl Peer {
     ) -> Peer {
         Peer {
             have_potato,
-            handshake_state:
-            if have_potato {
+            handshake_state: if have_potato {
                 HandshakeState::PreInit
             } else {
                 HandshakeState::StepA
@@ -368,8 +378,7 @@ impl Peer {
             private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         let unroll_public_key =
             private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
-        let referee_public_key =
-            private_to_public_key(&self.private_keys.my_referee_private_key);
+        let referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
         let referee_puzzle_hash = puzzle_hash_for_pk(penv.env.allocator, &referee_public_key)?;
 
         eprintln!("Start: our channel public key {:?}", channel_public_key);
@@ -383,7 +392,8 @@ impl Peer {
             referee_puzzle_hash: referee_puzzle_hash,
         };
         self.handshake_state = HandshakeState::StepB(parent_coin, my_hs_info.clone());
-        penv.system_interface.send_message(&PeerMessage::HandshakeA(my_hs_info))?;
+        penv.system_interface
+            .send_message(&PeerMessage::HandshakeA(my_hs_info))?;
 
         Ok(())
     }
@@ -391,7 +401,7 @@ impl Peer {
     fn update_channel_coin_after_receive<G, R: Rng>(
         &mut self,
         penv: &mut PeerEnv<G, R>,
-        spend: &ChannelCoinSpendInfo
+        spend: &ChannelCoinSpendInfo,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
@@ -402,7 +412,7 @@ impl Peer {
     fn pass_on_channel_handler_message<G, R: Rng>(
         &mut self,
         penv: &mut PeerEnv<G, R>,
-        msg: Vec<u8>
+        msg: Vec<u8>,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
@@ -430,7 +440,7 @@ impl Peer {
     pub fn received_message<G, R: Rng>(
         &mut self,
         penv: &mut PeerEnv<G, R>,
-        msg: Vec<u8>
+        msg: Vec<u8>,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
@@ -439,15 +449,20 @@ impl Peer {
         match &self.handshake_state {
             // non potato progression
             HandshakeState::StepA => {
-                let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let msg =
-                    if let PeerMessage::HandshakeA(msg) = msg_envelope {
-                        msg
-                    } else {
-                        return Err(Error::StrErr(format!("Expected handshake a message, got {msg_envelope:?}")));
-                    };
+                let msg_envelope: PeerMessage =
+                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let msg = if let PeerMessage::HandshakeA(msg) = msg_envelope {
+                    msg
+                } else {
+                    return Err(Error::StrErr(format!(
+                        "Expected handshake a message, got {msg_envelope:?}"
+                    )));
+                };
 
-                eprintln!("StepA: their channel public key {:?}", msg.channel_public_key);
+                eprintln!(
+                    "StepA: their channel public key {:?}",
+                    msg.channel_public_key
+                );
 
                 // XXX Call the UX saying the channel coin has been created
                 // and play can happen.
@@ -466,11 +481,8 @@ impl Peer {
                     my_contribution: self.my_contribution.clone(),
                     their_contribution: self.their_contribution.clone(),
                 };
-                let (channel_handler, init_result) = ChannelHandler::new(
-                    &mut penv.env,
-                    self.private_keys.clone(),
-                    &init_data
-                )?;
+                let (channel_handler, init_result) =
+                    ChannelHandler::new(&mut penv.env, self.private_keys.clone(), &init_data)?;
 
                 // init_result
                 // pub channel_puzzle_hash_up: PuzzleHash,
@@ -482,7 +494,8 @@ impl Peer {
                     private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
                 let referee_public_key =
                     private_to_public_key(&self.private_keys.my_referee_private_key);
-                let referee_puzzle_hash = puzzle_hash_for_pk(penv.env.allocator, &referee_public_key)?;
+                let referee_puzzle_hash =
+                    puzzle_hash_for_pk(penv.env.allocator, &referee_public_key)?;
 
                 let our_handshake_data = HandshakeB {
                     channel_public_key,
@@ -498,37 +511,43 @@ impl Peer {
                 };
 
                 // Factor out to one method.
-                penv.system_interface.send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
+                penv.system_interface
+                    .send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
             }
 
             HandshakeState::StepC {
                 first_player_hs_info,
-                second_player_hs_info
+                second_player_hs_info,
             } => {
-                let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let nil_msg =
-                    if let PeerMessage::Nil(nil_msg) = msg_envelope {
-                        nil_msg
-                    } else {
-                        return Err(Error::StrErr(format!("Expected handshake a message, got {msg_envelope:?}")));
-                    };
+                let msg_envelope: PeerMessage =
+                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let nil_msg = if let PeerMessage::Nil(nil_msg) = msg_envelope {
+                    nil_msg
+                } else {
+                    return Err(Error::StrErr(format!(
+                        "Expected handshake a message, got {msg_envelope:?}"
+                    )));
+                };
 
                 let ch = self.channel_handler_mut()?;
                 ch.received_empty_potato(penv.env, &nil_msg)?;
                 let nil_msg = ch.send_empty_potato(penv.env)?;
 
-                penv.system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
+                penv.system_interface
+                    .send_message(&PeerMessage::Nil(nil_msg))?;
             }
 
             // potato progression
             HandshakeState::StepB(parent_coin, my_hs_info) => {
-                let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let msg =
-                    if let PeerMessage::HandshakeB(msg) = msg_envelope {
-                        msg
-                    } else {
-                        return Err(Error::StrErr(format!("Expected handshake a message, got {msg_envelope:?}")));
-                    };
+                let msg_envelope: PeerMessage =
+                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let msg = if let PeerMessage::HandshakeB(msg) = msg_envelope {
+                    msg
+                } else {
+                    return Err(Error::StrErr(format!(
+                        "Expected handshake a message, got {msg_envelope:?}"
+                    )));
+                };
 
                 let init_data = ChannelHandlerInitiationData {
                     launcher_coin_id: parent_coin.to_coin_id(),
@@ -539,11 +558,8 @@ impl Peer {
                     my_contribution: self.my_contribution.clone(),
                     their_contribution: self.their_contribution.clone(),
                 };
-                let (mut channel_handler, init_result) = ChannelHandler::new(
-                    &mut penv.env,
-                    self.private_keys.clone(),
-                    &init_data
-                )?;
+                let (mut channel_handler, init_result) =
+                    ChannelHandler::new(&mut penv.env, self.private_keys.clone(), &init_data)?;
 
                 let nil_sigs = channel_handler.send_empty_potato(penv.env)?;
 
@@ -553,17 +569,15 @@ impl Peer {
                     second_player_hs_info: msg,
                 };
 
-                penv.system_interface.send_message(&PeerMessage::Nil(nil_sigs))?;
+                penv.system_interface
+                    .send_message(&PeerMessage::Nil(nil_sigs))?;
             }
 
             HandshakeState::StepD {
                 first_player_hs_info,
-                second_player_hs_info
+                second_player_hs_info,
             } => {
-                self.pass_on_channel_handler_message(
-                    penv,
-                    msg
-                )?;
+                self.pass_on_channel_handler_message(penv, msg)?;
 
                 todo!();
                 // self.handshake_state = HandshakeState::StepF {
@@ -576,7 +590,7 @@ impl Peer {
                 // Provide the channel puzzle hash to the full node bootstrap and
                 // it replies with the channel puzzle hash
                 // penv.system_interface.send_message(&PeerMessage::HandshakeE {
-                // bundle: 
+                // bundle:
                 // })?;
             }
 
