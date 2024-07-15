@@ -1,6 +1,5 @@
 use clvm_traits::{ClvmEncoder, ToClvm};
-use clvmr::allocator::NodePtr;
-use clvmr::run_program;
+use clvmr::{NodePtr, run_program};
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 

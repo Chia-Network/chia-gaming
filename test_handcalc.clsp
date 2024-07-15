@@ -13,7 +13,7 @@
 (import std.append)
 
 (import handcalc exposing handcalc)
-(import onchain.calpoker.onehandcalc exposing onehandcalc)
+(import onehandcalc exposing onehandcalc)
 
 (defun cards-by-bitmask (mask cards)
   (if cards

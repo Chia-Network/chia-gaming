@@ -1,6 +1,5 @@
-pub mod channel_handler;
 mod common;
-pub mod outside;
+mod channel_handler;
 mod referee;
 
 #[cfg(test)]

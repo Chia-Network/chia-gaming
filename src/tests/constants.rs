@@ -1,5 +1,5 @@
-use crate::common::types::PublicKey;
 use lazy_static::lazy_static;
+use crate::common::types::PublicKey;
 
 lazy_static! {
     pub static ref TEST_PUBLIC_KEY_BYTES: [u8; 48] = [

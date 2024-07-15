@@ -1,0 +1,13 @@
+(
+    (defun max_inner (myless best_so_far mylist)
+        (if (not mylist) best_so_far
+            (if (a myless (list best_so_far (f mylist)))
+                (max_inner myless (f mylist) (r mylist))
+                (max_inner myless best_so_far (r mylist))
+            )
+        )
+    )
+    (defun max (myless mylist)
+        (max_inner myless (f mylist) (r mylist))
+    )
+)

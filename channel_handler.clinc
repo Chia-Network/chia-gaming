@@ -64,7 +64,7 @@
 ; state channel coin id
 ; [(game_id, puzzle_hash, amount, referee)]
 ; my out of game balance
-; their out of game balance
+; thir out of game balance
 ; my channel coin private key
 ; my unroll coin private key
 ; my referee private key
@@ -96,7 +96,7 @@
 ; takes into account whose turn it is
 ; my_share get_my_share()
 ;
-; In the case of an unknown my turn coin spend it should be compared to a timeout.
+; In the case of an unknown my turn coin spend it should be compared to a timeout
 ; takes into account whose turn it is
 ; (puzzle_reveal, solution, aggsig, my_reward_coin_string) get_timeout_transaction(coin_string)
 ;
