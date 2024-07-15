@@ -155,7 +155,7 @@ fn run_code(
 pub enum TheirTurnResult {
     FinalMove(NodePtr),
     MakeMove(NodePtr, GameHandler, Vec<u8>),
-    Slash(Evidence, Aggsig),
+    Slash(Evidence, Box<Aggsig>),
 }
 
 impl GameHandler {
@@ -206,10 +206,7 @@ impl GameHandler {
                 inputs.amount.clone(),
                 (
                     inputs.last_mover_share.clone(),
-                    (
-                        inputs.last_max_move_size.clone(),
-                        (inputs.entropy.clone(), ()),
-                    ),
+                    (inputs.last_max_move_size, (inputs.entropy.clone(), ())),
                 ),
             ),
         )
@@ -249,27 +246,27 @@ impl GameHandler {
         }
 
         let max_move_size =
-            if let Some(mm) = atom_from_clvm(allocator, pl[4]).and_then(|a| usize_from_atom(a)) {
+            if let Some(mm) = atom_from_clvm(allocator, pl[4]).and_then(usize_from_atom) {
                 mm
             } else {
                 return Err(Error::StrErr("bad max move size".to_string()));
             };
-        let mover_share =
-            if let Some(ms) = atom_from_clvm(allocator, pl[5]).and_then(|a| u64_from_atom(a)) {
-                Amount::new(ms)
-            } else {
-                return Err(Error::StrErr(format!(
-                    "bad share {}",
-                    disassemble(allocator.allocator(), pl[5], None)
-                )));
-            };
+        let mover_share = if let Some(ms) = atom_from_clvm(allocator, pl[5]).and_then(u64_from_atom)
+        {
+            Amount::new(ms)
+        } else {
+            return Err(Error::StrErr(format!(
+                "bad share {}",
+                disassemble(allocator.allocator(), pl[5], None)
+            )));
+        };
         let message_parser = if pl[7] == allocator.allocator().null() {
             None
         } else {
             Some(MessageHandler::from_nodeptr(pl[7]))
         };
         let validation_program_hash =
-            if let Some(h) = atom_from_clvm(allocator, pl[2]).map(|a| Hash::from_slice(a)) {
+            if let Some(h) = atom_from_clvm(allocator, pl[2]).map(Hash::from_slice) {
                 h
             } else {
                 return Err(Error::StrErr("bad hash".to_string()));
@@ -312,7 +309,7 @@ impl GameHandler {
         let driver_args = (
             inputs.amount.clone(),
             (
-                Node(inputs.last_state.clone()),
+                Node(inputs.last_state),
                 (
                     Node(
                         allocator
@@ -322,7 +319,7 @@ impl GameHandler {
                     (
                         inputs.new_move.validation_info_hash.clone(),
                         (
-                            inputs.new_move.basic.max_move_size.clone(),
+                            inputs.new_move.basic.max_move_size,
                             (inputs.new_move.basic.mover_share.clone(), ()),
                         ),
                     ),
@@ -362,10 +359,10 @@ impl GameHandler {
 
         if move_type == 0 {
             if pl.len() < 2 {
-                return Err(Error::StrErr(format!(
+                Err(Error::StrErr(format!(
                     "bad length for move result {}",
                     disassemble(allocator.allocator(), run_result, None)
-                )));
+                )))
             } else if pl.len() < 3 {
                 Ok(TheirTurnResult::FinalMove(pl[1]))
             } else {
@@ -390,7 +387,7 @@ impl GameHandler {
             let sig_bytes = allocator.allocator().atom(pl[2]).to_vec();
             Ok(TheirTurnResult::Slash(
                 Evidence::from_nodeptr(pl[1]),
-                Aggsig::from_slice(&sig_bytes)?,
+                Box::new(Aggsig::from_slice(&sig_bytes)?),
             ))
         } else {
             Err(Error::StrErr("unknown move result type".to_string()))

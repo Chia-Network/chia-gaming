@@ -170,6 +170,6 @@ pub fn channel_handler_env<'a, R: Rng>(
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,
-        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
+        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
     }
 }

@@ -1,6 +1,6 @@
-#[cfg(feature="sim-tests")]
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
-#[cfg(feature="sim-tests")]
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
