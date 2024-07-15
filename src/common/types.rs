@@ -16,10 +16,6 @@ use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
 
-#[cfg(test)]
-use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
-#[cfg(test)]
-use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
@@ -546,14 +542,14 @@ impl Default for Node {
     }
 }
 
-impl Node {
-    #[cfg(test)]
-    pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
-        let mut stream = Stream::new(None);
-        sexp_to_stream(allocator.allocator(), self.0, &mut stream);
-        stream.get_value().hex()
-    }
-}
+// impl Node {
+//     #[cfg(test)]
+//     pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
+//         let mut stream = Stream::new(None);
+//         sexp_to_stream(allocator.allocator(), self.0, &mut stream);
+//         stream.get_value().hex()
+//     }
+// }
 
 impl ToClvm<NodePtr> for Node {
     fn to_clvm(
