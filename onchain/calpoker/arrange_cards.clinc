@@ -1,5 +1,5 @@
 (import onchain.calpoker.make_card)
-
+(import std.assert)
 (import std.popcount)
 
 (defun split_cards (mask cards)
@@ -11,8 +11,8 @@
     (if (not cards)
         (list leftcards rightcards)
         (if (logand mask 1)
-            (split_cards (lsh mask -1) (r cards) leftcards (c (f cards) rightcards))
-            (split_cards (lsh mask -1) (r cards) (c (f cards) leftcards) rightcards)
+            (split_cards_inner (lsh mask -1) (r cards) leftcards (c (f cards) rightcards))
+            (split_cards_inner (lsh mask -1) (r cards) (c (f cards) leftcards) rightcards)
         )
     )
 )

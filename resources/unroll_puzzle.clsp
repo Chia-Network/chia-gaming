@@ -17,7 +17,7 @@
             reveal
         )
         (assign
-            conditions (a reveal solution)
+            conditions (a reveal (list solution))
             new_sequence_number (extract_sequence_number conditions)
             (assert
                 (> new_sequence_number OLD_SEQUENCE_NUMBER)
