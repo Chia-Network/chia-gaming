@@ -4,6 +4,7 @@ pub mod runner;
 pub mod types;
 
 use std::borrow::BorrowMut;
+use std::cmp::Ordering;
 
 use rand::prelude::*;
 
@@ -133,7 +134,7 @@ impl ChannelHandler {
 
     pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
         if let Some(t) = self.timeout.as_ref() {
-            &t
+            t
         } else {
             &self.unroll
         }
@@ -319,7 +320,7 @@ impl ChannelHandler {
                 &env.standard_puzzle,
                 &aggregate_public_key,
             )?,
-            solution: Program::from_nodeptr(&mut env.allocator, channel_coin_spend.solution)?,
+            solution: Program::from_nodeptr(env.allocator, channel_coin_spend.solution)?,
             signature: channel_coin_spend.signature.clone(),
         };
 
@@ -574,12 +575,12 @@ impl ChannelHandler {
             self.next_nonce_number += 1;
 
             let referee_identity = ChiaIdentity::new(
-                &mut env.allocator,
+                env.allocator,
                 self.private_keys.my_referee_private_key.clone(),
             )?;
 
             let (referee_maker, puzzle_hash) = RefereeMaker::new(
-                &mut env.allocator,
+                env.allocator,
                 env.referee_coin_puzzle.clone(),
                 env.referee_coin_puzzle_hash.clone(),
                 g,
@@ -902,7 +903,7 @@ impl ChannelHandler {
         )?;
 
         Ok(TransactionBundle {
-            solution: Program::from_nodeptr(&mut env.allocator, channel_coin_spend.solution)?,
+            solution: Program::from_nodeptr(env.allocator, channel_coin_spend.solution)?,
             signature: channel_coin_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
@@ -936,12 +937,12 @@ impl ChannelHandler {
         assert!(!self.have_potato);
         let channel_spend = self.verify_channel_coin_from_peer_signatures(
             env,
-            &their_channel_half_signature,
+            their_channel_half_signature,
             conditions,
         )?;
 
         Ok(TransactionBundle {
-            solution: Program::from_nodeptr(&mut env.allocator, channel_spend.solution)?,
+            solution: Program::from_nodeptr(env.allocator, channel_spend.solution)?,
             signature: channel_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
@@ -966,7 +967,7 @@ impl ChannelHandler {
             })
             .collect();
 
-        if rem_conditions.len() < 1 {
+        if rem_conditions.is_empty() {
             return Err(Error::StrErr(
                 "Wrong number of rems in conditions".to_string(),
             ));
@@ -999,8 +1000,8 @@ impl ChannelHandler {
 
         Ok(ChannelCoinSpentResult {
             transaction: TransactionBundle {
-                puzzle: Puzzle::from_nodeptr(&mut env.allocator, curried_unroll_puzzle)?,
-                solution: Program::from_nodeptr(&mut env.allocator, unroll_puzzle_solution)?,
+                puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
+                solution: Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?,
                 signature: use_unroll.coin.get_unroll_coin_signature()?
                     + use_unroll.signatures.my_unroll_half_signature_peer.clone(),
             },
@@ -1067,44 +1068,41 @@ impl ChannelHandler {
             self.current_state_number, full_coin.coin.state_number
         );
 
-        if state_number > self.current_state_number {
-            return Err(Error::StrErr(format!(
+        match state_number.cmp(&self.current_state_number) {
+            Ordering::Greater => Err(Error::StrErr(format!(
                 "Reply from the future onchain {} (me {}) vs {}",
                 state_number, self.current_state_number, self.unroll.coin.state_number
-            )));
-        } else if state_number < self.current_state_number {
-            if our_parity == their_parity {
-                return Err(Error::StrErr(
-                    "We're superceding ourselves from the past?".to_string(),
-                ));
+            ))),
+            Ordering::Less => {
+                if our_parity == their_parity {
+                    return Err(Error::StrErr(
+                        "We're superceding ourselves from the past?".to_string(),
+                    ));
+                }
+
+                self.get_unroll_coin_transaction(env)
             }
+            _ => {
+                // Timeout
+                let curried_unroll_puzzle = self
+                    .unroll
+                    .coin
+                    .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())?;
+                let unroll_puzzle_solution = self
+                    .unroll
+                    .coin
+                    .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
 
-            self.get_unroll_coin_transaction(env)
-        } else if state_number == self.current_state_number {
-            // Timeout
-            let curried_unroll_puzzle = self
-                .unroll
-                .coin
-                .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())?;
-            let unroll_puzzle_solution = self
-                .unroll
-                .coin
-                .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
-
-            Ok(ChannelCoinSpentResult {
-                transaction: TransactionBundle {
-                    puzzle: Puzzle::from_nodeptr(&mut env.allocator, curried_unroll_puzzle)?,
-                    solution: Program::from_nodeptr(&mut env.allocator, unroll_puzzle_solution)?,
-                    signature: self.unroll.coin.get_unroll_coin_signature()?,
-                },
-                timeout: true,
-                games_canceled: self.get_just_created_games(),
-            })
-        } else {
-            Err(Error::StrErr(format!(
-                "Unhandled relationship between state numbers {state_number} {}",
-                self.unroll.coin.state_number
-            )))
+                Ok(ChannelCoinSpentResult {
+                    transaction: TransactionBundle {
+                        puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
+                        solution: Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?,
+                        signature: self.unroll.coin.get_unroll_coin_signature()?,
+                    },
+                    timeout: true,
+                    games_canceled: self.get_just_created_games(),
+                })
+            }
         }
     }
 
@@ -1148,7 +1146,7 @@ impl ChannelHandler {
                 // Add amount contributed to vanilla balance
                 // Skip game when generating result.
                 Ok(Some(DispositionResult {
-                    disposition: CoinSpentDisposition::CancelledUX(ids.iter().cloned().collect()),
+                    disposition: CoinSpentDisposition::CancelledUX(ids.to_vec()),
                     skip_game: ids.clone(),
                     skip_coin_id: None,
                     our_contribution_adjustment: our_contrib.clone(),
@@ -1267,8 +1265,8 @@ impl ChannelHandler {
     // balances.
     //
     // If we have the potato at state 0 and they start an unroll, we don't
-    pub fn unroll_coin_spent<'a, R: Rng>(
-        &'a self,
+    pub fn unroll_coin_spent<R: Rng>(
+        &self,
         env: &mut ChannelHandlerEnv<R>,
         unroll_coin: &CoinString,
         conditions: NodePtr,
@@ -1300,7 +1298,7 @@ impl ChannelHandler {
         let adjusted_amount = disposition
             .as_ref()
             .map(|d| d.our_contribution_adjustment.clone())
-            .unwrap_or_else(|| Amount::default());
+            .unwrap_or_default();
 
         Ok(CoinSpentResult {
             my_clean_reward_coin_string_up: CoinString::from_parts(
@@ -1368,19 +1366,16 @@ impl ChannelHandler {
             let quoted_program_hash = quoted_program.sha256tree(env.allocator);
             let signature = sign_agg_sig_me(
                 &self.referee_private_key(),
-                &quoted_program_hash.bytes(),
+                quoted_program_hash.bytes(),
                 &parent_id,
                 &env.agg_sig_me_additional_data,
             );
 
-            let standard_solution = standard_solution_unsafe(
-                &mut env.allocator,
-                &self.referee_private_key(),
-                conditions,
-            )?;
+            let standard_solution =
+                standard_solution_unsafe(env.allocator, &self.referee_private_key(), conditions)?;
             coins_with_solutions.push(TransactionBundle {
                 puzzle: spend_coin_puzzle.clone(),
-                solution: Program::from_nodeptr(&mut env.allocator, standard_solution.solution)?,
+                solution: Program::from_nodeptr(env.allocator, standard_solution.solution)?,
                 signature,
             });
         }

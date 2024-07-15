@@ -18,6 +18,7 @@ use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, Validator
 
 pub struct DebugGamePrograms {
     pub my_validation_program: NodePtr,
+    #[allow(dead_code)]
     pub their_validation_program: NodePtr,
     pub my_turn_handler: GameHandler,
     pub their_turn_handler: GameHandler,

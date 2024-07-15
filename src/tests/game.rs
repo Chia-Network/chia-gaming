@@ -1,12 +1,18 @@
+#[cfg(feature = "sim-tests")]
+use rand::prelude::*;
+
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
+#[cfg(feature = "sim-tests")]
+use crate::channel_handler::runner::ChannelHandlerGame;
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ChannelHandlerEnv;
+#[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
 };
+#[cfg(feature = "sim-tests")]
 use crate::common::types::{Amount, CoinString, Error, IntoErr, Timeout};
-use rand::prelude::*;
-
-use crate::channel_handler::runner::ChannelHandlerGame;
 
 #[cfg(feature = "sim-tests")]
 use crate::tests::simulator::Simulator;

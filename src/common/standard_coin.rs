@@ -6,8 +6,8 @@ use chia_bls;
 
 use clvm_traits::{clvm_curried_args, ToClvm};
 
-use clvmr::allocator::NodePtr;
 use clvmr::serde::node_from_bytes;
+use clvmr::NodePtr;
 
 use clvm_tools_rs::util::{number_from_u8, u8_from_number};
 
@@ -36,7 +36,7 @@ pub fn hex_to_sexp(
     let hex_stream = Stream::new(Some(
         Bytes::new_validated(Some(UnvalidatedBytesFromType::Hex(hex_data))).into_gen()?,
     ));
-    node_from_bytes(allocator.allocator(), &hex_stream.get_value().data()).into_gen()
+    node_from_bytes(allocator.allocator(), hex_stream.get_value().data()).into_gen()
 }
 
 pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, types::Error> {
@@ -58,7 +58,7 @@ fn group_order_int() -> BigInt {
 
 fn calculate_synthetic_offset(public_key: &PublicKey, hidden_puzzle_hash: &PuzzleHash) -> BigInt {
     let mut blob_input = public_key.bytes().to_vec();
-    blob_input.extend_from_slice(&mut hidden_puzzle_hash.bytes());
+    blob_input.extend_from_slice(hidden_puzzle_hash.bytes());
     let blob = Sha256Input::Bytes(&blob_input).hash();
     BigInt::from_bytes_be(Sign::Plus, blob.bytes()) % group_order_int()
 }
@@ -168,11 +168,11 @@ fn hash_of_consed_parameter_hash(environment: &Hash, parameter: &Hash) -> Hash {
             Sha256Input::Hashed(vec![
                 Sha256Input::Bytes(&TWO),
                 Sha256Input::Hashed(vec![Sha256Input::Bytes(&ONE), Sha256Input::Bytes(&Q_KW)]),
-                Sha256Input::Hash(&parameter),
+                Sha256Input::Hash(parameter),
             ]),
             Sha256Input::Hashed(vec![
                 Sha256Input::Bytes(&TWO),
-                Sha256Input::Hash(&environment),
+                Sha256Input::Hash(environment),
                 Sha256Input::Hashed(vec![Sha256Input::Bytes(&ONE)]),
             ]),
         ]),
@@ -212,7 +212,7 @@ pub fn calculate_hash_of_quoted_mod_hash(mod_hash: &PuzzleHash) -> Hash {
     Sha256Input::Array(vec![
         Sha256Input::Bytes(&TWO),
         Sha256Input::Hash(&Q_KW_TREEHASH),
-        Sha256Input::Hash(&mod_hash.hash()),
+        Sha256Input::Hash(mod_hash.hash()),
     ])
     .hash()
 }
@@ -222,7 +222,7 @@ pub fn puzzle_hash_for_synthetic_public_key(
     synthetic_public_key: &PublicKey,
 ) -> Result<PuzzleHash, types::Error> {
     let quoted_mod_hash = PuzzleHash::from_hash(calculate_hash_of_quoted_mod_hash(
-        &PuzzleHash::from_bytes(DEFAULT_PUZZLE_HASH.clone()),
+        &PuzzleHash::from_bytes(DEFAULT_PUZZLE_HASH),
     ));
     let public_key_hash =
         Node(synthetic_public_key.to_clvm(allocator).into_gen()?).sha256tree(allocator);
@@ -265,14 +265,10 @@ pub fn puzzle_for_pk(
 ) -> Result<Puzzle, types::Error> {
     let standard_puzzle = get_standard_coin_puzzle(allocator)?;
     let synthetic_public_key = calculate_synthetic_public_key(
-        &public_key,
-        &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone()),
+        public_key,
+        &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH),
     )?;
-    Ok(puzzle_for_synthetic_public_key(
-        allocator,
-        &standard_puzzle,
-        &synthetic_public_key,
-    )?)
+    puzzle_for_synthetic_public_key(allocator, &standard_puzzle, &synthetic_public_key)
 }
 
 pub fn puzzle_hash_for_pk(
@@ -280,13 +276,10 @@ pub fn puzzle_hash_for_pk(
     public_key: &PublicKey,
 ) -> Result<PuzzleHash, types::Error> {
     let synthetic_public_key = calculate_synthetic_public_key(
-        &public_key,
-        &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone()),
+        public_key,
+        &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH),
     )?;
-    Ok(puzzle_hash_for_synthetic_public_key(
-        allocator,
-        &synthetic_public_key,
-    )?)
+    puzzle_hash_for_synthetic_public_key(allocator, &synthetic_public_key)
 }
 
 #[test]
@@ -368,7 +361,7 @@ pub fn private_to_public_key(private_key: &types::PrivateKey) -> types::PublicKe
 pub fn unsafe_sign_partial<Msg: AsRef<[u8]>>(sk: &PrivateKey, pk: &PublicKey, msg: Msg) -> Aggsig {
     let mut aug_msg = pk.bytes().to_vec();
     aug_msg.extend_from_slice(msg.as_ref());
-    Aggsig::from_bls(chia_bls::sign_raw(&sk.to_bls(), aug_msg))
+    Aggsig::from_bls(chia_bls::sign_raw(sk.to_bls(), aug_msg))
 }
 
 // From: https://github.com/Chia-Network/chia_rs/blob/2334c842f694444da317fa7432f308f159f62d70/chia-wallet/src/wallet.rs#L1166
@@ -438,7 +431,7 @@ pub fn standard_solution_partial(
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
     let coin_agg_sig_me_message = agg_sig_me_message(
-        &quoted_conds_hash.bytes(),
+        quoted_conds_hash.bytes(),
         parent_coin,
         agg_sig_me_additional_data,
     );
@@ -464,7 +457,7 @@ pub fn standard_solution_partial(
                 add_signature(
                     &mut aggregated_signature,
                     if partial {
-                        partial_signer(private_key, &aggregate_public_key, &coin_agg_sig_me_message)
+                        partial_signer(private_key, aggregate_public_key, &coin_agg_sig_me_message)
                     } else {
                         private_key.sign(&coin_agg_sig_me_message)
                     },
@@ -472,19 +465,19 @@ pub fn standard_solution_partial(
             }
             CoinCondition::AggSigMe(pubkey, data) => {
                 let mut message = pubkey.bytes().to_vec();
-                message.extend_from_slice(&data);
+                message.extend_from_slice(data);
                 let extra_agg_sig_me_message =
                     agg_sig_me_message(&message, parent_coin, agg_sig_me_additional_data);
                 add_signature(
                     &mut aggregated_signature,
-                    partial_signer(private_key, &pubkey, &extra_agg_sig_me_message),
+                    partial_signer(private_key, pubkey, &extra_agg_sig_me_message),
                 );
             }
             CoinCondition::AggSigUnsafe(pubkey, data) => {
                 // It's "unsafe" because it's just a hash of the data.
                 add_signature(
                     &mut aggregated_signature,
-                    partial_signer(private_key, &pubkey, &data),
+                    partial_signer(private_key, pubkey, data),
                 );
             }
             _ => {}
@@ -519,7 +512,7 @@ impl ChiaIdentity {
         allocator: &mut AllocEncoder,
         private_key: PrivateKey,
     ) -> Result<Self, types::Error> {
-        let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
+        let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH);
         let synthetic_private_key =
             calculate_synthetic_secret_key(&private_key, &default_hidden_puzzle_hash)?;
         let public_key = private_to_public_key(&private_key);

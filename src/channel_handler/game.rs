@@ -1,6 +1,5 @@
 use clvm_traits::{ClvmEncoder, ToClvm};
-use clvmr::allocator::NodePtr;
-use clvmr::run_program;
+use clvmr::{run_program, NodePtr};
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -66,11 +65,11 @@ impl Game {
             .expect("should be an atom");
         let required_size_factor = Amount::new(
             atom_from_clvm(allocator, template_list[3])
-                .and_then(|a| u64_from_atom(a))
+                .and_then(u64_from_atom)
                 .expect("should be an atom"),
         );
         let initial_max_move_size = atom_from_clvm(allocator, template_list[4])
-            .and_then(|a| usize_from_atom(a))
+            .and_then(usize_from_atom)
             .expect("should be an atom");
         let initial_validation_program = ValidationProgram::new(allocator, template_list[5]);
         let initial_validation_program_hash =
@@ -83,7 +82,7 @@ impl Game {
             };
         let initial_state = template_list[7];
         let initial_mover_share_proportion = atom_from_clvm(allocator, template_list[8])
-            .and_then(|a| usize_from_atom(a))
+            .and_then(usize_from_atom)
             .expect("should be an atom");
         Ok(Game {
             id: game_id,

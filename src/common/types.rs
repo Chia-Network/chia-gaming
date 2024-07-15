@@ -16,9 +16,9 @@ use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sim-tests"))]
 use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
-#[cfg(test)]
+#[cfg(all(test, feature = "sim-tests"))]
 use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
@@ -41,7 +41,7 @@ impl CoinID {
     pub fn new(h: Hash) -> CoinID {
         CoinID(h)
     }
-    pub fn bytes<'a>(&'a self) -> &'a [u8] {
+    pub fn bytes(&self) -> &[u8] {
         self.0.bytes()
     }
 }
@@ -140,8 +140,8 @@ impl PrivateKey {
 impl Distribution<Hash> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Hash {
         let mut pk = [0; 32];
-        for i in 0..32 {
-            pk[i] = rng.gen();
+        for item in &mut pk {
+            *item = rng.gen();
         }
         Hash::from_bytes(pk)
     }
@@ -167,14 +167,8 @@ impl<'de> Visitor<'de> for SerdeByteConsumer {
 }
 
 /// Public key
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug, Default)]
 pub struct PublicKey(chia_bls::PublicKey);
-
-impl Default for PublicKey {
-    fn default() -> Self {
-        PublicKey(chia_bls::PublicKey::default())
-    }
-}
 
 impl Serialize for PublicKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -199,8 +193,8 @@ impl<'de> Deserialize<'de> for PublicKey {
                 fixed_bytes[i] = b;
             }
         }
-        Ok(PublicKey::from_bytes(fixed_bytes)
-            .map_err(|e| serde::de::Error::custom(format!("couldn't make pubkey: {e:?}")))?)
+        PublicKey::from_bytes(fixed_bytes)
+            .map_err(|e| serde::de::Error::custom(format!("couldn't make pubkey: {e:?}")))
     }
 }
 
@@ -249,15 +243,8 @@ impl ToClvm<NodePtr> for PublicKey {
 }
 
 /// Aggsig
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug, Default)]
 pub struct Aggsig(chia_bls::Signature);
-
-impl Default for Aggsig {
-    // Revisit for empty aggsig.
-    fn default() -> Self {
-        Aggsig(chia_bls::Signature::default())
-    }
-}
 
 impl Serialize for Aggsig {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -282,8 +269,8 @@ impl<'de> Deserialize<'de> for Aggsig {
                 fixed_bytes[i] = b;
             }
         }
-        Ok(Aggsig::from_bytes(fixed_bytes)
-            .map_err(|e| serde::de::Error::custom(format!("couldn't make aggsig: {e:?}")))?)
+        Aggsig::from_bytes(fixed_bytes)
+            .map_err(|e| serde::de::Error::custom(format!("couldn't make aggsig: {e:?}")))
     }
 }
 
@@ -429,14 +416,8 @@ impl From<Amount> for u64 {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize, Hash)]
+#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize, Hash, Default)]
 pub struct Hash([u8; 32]);
-
-impl Default for Hash {
-    fn default() -> Self {
-        Hash([0; 32])
-    }
-}
 
 impl ToClvm<NodePtr> for Hash {
     fn to_clvm(
@@ -461,7 +442,7 @@ impl Hash {
         }
         Hash::from_bytes(fixed)
     }
-    pub fn bytes<'a>(&'a self) -> &'a [u8; 32] {
+    pub fn bytes(&self) -> &[u8; 32] {
         &self.0
     }
 }
@@ -481,7 +462,7 @@ impl<'a> Sha256Input<'a> {
                 hasher.update(b);
             }
             Sha256Input::Hash(hash) => {
-                hasher.update(&hash.bytes());
+                hasher.update(hash.bytes());
             }
             Sha256Input::Hashed(input) => {
                 let mut new_hasher = Sha256::new();
@@ -518,10 +499,10 @@ impl PuzzleHash {
     pub fn from_hash(h: Hash) -> PuzzleHash {
         PuzzleHash(h)
     }
-    pub fn bytes<'a>(&'a self) -> &'a [u8] {
+    pub fn bytes(&self) -> &[u8] {
         self.0.bytes()
     }
-    pub fn hash<'a>(&'a self) -> &'a Hash {
+    pub fn hash(&self) -> &Hash {
         &self.0
     }
 }
@@ -546,12 +527,12 @@ impl ToClvm<NodePtr> for PuzzleHash {
 pub enum Error {
     ClvmErr(EvalErr),
     IoErr(io::Error),
-    BasicError,
+    BasicErr,
     SyntaxErr(SyntaxErr),
     EncodeErr(ToClvmError),
     StrErr(String),
     BlsErr(chia_bls::Error),
-    BsonError(bson::de::Error),
+    BsonErr(bson::de::Error),
     Channel(String),
 }
 
@@ -566,7 +547,7 @@ impl Default for Node {
 }
 
 impl Node {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "sim-tests"))]
     pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
         let mut stream = Stream::new(None);
         sexp_to_stream(allocator.allocator(), self.0, &mut stream);
@@ -590,7 +571,7 @@ pub trait ToQuotedProgram {
 impl ToQuotedProgram for NodePtr {
     fn to_quoted_program(&self, allocator: &mut AllocEncoder) -> Result<Program, Error> {
         let pair = allocator.0.new_pair(allocator.0.one(), *self).into_gen()?;
-        Ok(Program::from_nodeptr(allocator, pair)?)
+        Program::from_nodeptr(allocator, pair)
     }
 }
 
@@ -661,7 +642,7 @@ fn clone_to_encoder(
     match source_allocator.sexp(node) {
         SExp::Atom => {
             let buf = source_allocator.atom(node);
-            encoder.encode_atom(&buf)
+            encoder.encode_atom(buf)
         }
         SExp::Pair(a, b) => {
             let ac = clone_to_encoder(encoder, source_allocator, a)?;
@@ -731,12 +712,18 @@ impl ToClvm<NodePtr> for Timeout {
 
 pub struct AllocEncoder(Allocator);
 
-impl AllocEncoder {
-    pub fn new() -> Self {
+impl Default for AllocEncoder {
+    fn default() -> Self {
         AllocEncoder(Allocator::new())
     }
+}
 
-    pub fn allocator<'a>(&'a mut self) -> &'a mut Allocator {
+impl AllocEncoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn allocator(&mut self) -> &mut Allocator {
         &mut self.0
     }
 }
@@ -810,7 +797,7 @@ impl ErrToError for ToClvmError {
 
 impl ErrToError for bson::de::Error {
     fn into_gen(self) -> Error {
-        Error::BsonError(self)
+        Error::BsonErr(self)
     }
 }
 
@@ -837,12 +824,7 @@ pub enum CoinCondition {
 }
 
 fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<CoinCondition> {
-    let exploded = if let Some(pl) = proper_list(allocator.allocator(), condition, true) {
-        pl
-    } else {
-        return None;
-    };
-
+    let exploded = proper_list(allocator.allocator(), condition, true)?;
     let public_key_from_bytes = |b: &[u8]| -> Result<PublicKey, Error> {
         let mut fixed: [u8; 48] = [0; 48];
         for (i, b) in b.iter().enumerate() {
@@ -960,7 +942,7 @@ pub fn u64_from_atom(a: &[u8]) -> Option<u64> {
     bi.to_u64()
 }
 
-pub fn atom_from_clvm<'a>(allocator: &'a mut AllocEncoder, n: NodePtr) -> Option<&'a [u8]> {
+pub fn atom_from_clvm(allocator: &mut AllocEncoder, n: NodePtr) -> Option<&[u8]> {
     if matches!(allocator.allocator().sexp(n), SExp::Atom) {
         Some(allocator.allocator().atom(n))
     } else {

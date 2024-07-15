@@ -49,7 +49,7 @@ fn test_game_handler_their_move_slash() {
         .expect("should run");
     if let TheirTurnResult::Slash(evidence, aggsig) = result {
         // Good, check more
-        assert_eq!(aggsig, default_aggsig);
+        assert_eq!(*aggsig, default_aggsig);
         assert_eq!(disassemble(allocator.allocator(), evidence.to_nodeptr(), None), "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000 () ())");
     } else {
         assert!(false);

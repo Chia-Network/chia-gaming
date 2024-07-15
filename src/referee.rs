@@ -58,7 +58,7 @@ pub struct TheirTurnMoveResult {
 pub enum SlashOutcome {
     NoReward,
     Reward {
-        transaction: SpecificTransactionBundle,
+        transaction: Box<SpecificTransactionBundle>,
         my_reward_coin_string: CoinString,
     },
 }
@@ -78,7 +78,7 @@ pub enum TheirTurnCoinSpentResult {
         new_coin_string: CoinString,
         readable: NodePtr,
     },
-    Slash(SlashOutcome),
+    Slash(Box<SlashOutcome>),
 }
 
 /// Adjudicates a two player turn based game
@@ -169,7 +169,7 @@ impl RefereePuzzleArgs {
             },
         ]
         .into_iter()
-        .map(|n| Node(n))
+        .map(Node)
         .collect())
     }
 }
@@ -276,7 +276,7 @@ impl ValidatorMoveArgs {
             self.mover_puzzle.to_clvm(allocator).into_gen()?,
             self.solution,
         ];
-        let argvec: Vec<Node> = args.into_iter().map(|v| Node(*v)).collect();
+        let argvec: Vec<Node> = args.iter().map(|v| Node(*v)).collect();
         argvec.to_clvm(allocator).into_gen()
     }
 }
@@ -425,10 +425,7 @@ impl ToClvm<NodePtr> for OnChainRefereeSolution {
                                 refmove.details.basic.max_move_size,
                                 (
                                     refmove.mover_coin.mover_coin_puzzle.clone(),
-                                    (
-                                        Node(refmove.mover_coin.mover_coin_spend_solution.clone()),
-                                        (),
-                                    ),
+                                    (Node(refmove.mover_coin.mover_coin_spend_solution), ()),
                                 ),
                             ),
                         ),
@@ -820,7 +817,7 @@ impl RefereeMaker {
                 RefereeMakerGameState::Initial { initial_move, .. } => (
                     initial_move.move_made.clone(),
                     initial_move.mover_share.clone(),
-                    initial_move.max_move_size.clone(),
+                    initial_move.max_move_size,
                     None,
                 ),
                 RefereeMakerGameState::AfterOurTurn { .. } => {
@@ -864,7 +861,7 @@ impl RefereeMaker {
         self.accept_this_move(
             &result.waiting_driver,
             &result.validation_program,
-            result.state.clone(),
+            result.state,
             &result.game_move,
         )?;
 
@@ -939,7 +936,7 @@ impl RefereeMaker {
                 &MessageInputs {
                     message: message.to_vec(),
                     amount: self.amount.clone(),
-                    state: state.clone(),
+                    state: *state,
                     move_data,
                     mover_share,
                 },
@@ -1037,11 +1034,7 @@ impl RefereeMaker {
         let my_mover_share = self.get_our_current_share();
 
         if always_produce_transaction || my_mover_share != Amount::default() {
-            let signature = if let Some(sig) = args.get_signature() {
-                sig
-            } else {
-                Aggsig::default()
-            };
+            let signature = args.get_signature().unwrap_or_default();
 
             // The transaction solution is not the same as the solution for the
             // inner puzzle as we take additional move or slash data.
@@ -1226,7 +1219,7 @@ impl RefereeMaker {
             details: self.get_our_most_recent_game_move()?,
             mover_coin: IdentityCoinAndSolution {
                 mover_coin_puzzle: self.my_identity.puzzle.clone(),
-                mover_coin_spend_solution: referee_spend.solution.clone(),
+                mover_coin_spend_solution: referee_spend.solution,
                 mover_coin_spend_signature: referee_spend.signature.clone(),
             },
         });
@@ -1315,7 +1308,7 @@ impl RefereeMaker {
 
         let (readable_move, message) = match result {
             TheirTurnResult::FinalMove(readable_move) => {
-                self.accept_their_move(allocator, None, &details)?;
+                self.accept_their_move(allocator, None, details)?;
 
                 (readable_move, vec![])
             }
@@ -1332,7 +1325,7 @@ impl RefereeMaker {
                 // In case this succeeds, we'll direct the result to our mover
                 // puzzle, which sets our identity for the game and is a value-
                 // holding coin spendable by us.
-                self.accept_their_move(allocator, Some(handler), &details)?;
+                self.accept_their_move(allocator, Some(handler), details)?;
 
                 (readable_move, message)
             }
@@ -1364,7 +1357,7 @@ impl RefereeMaker {
         // Coin calculated off the new new state.
         Ok(TheirTurnMoveResult {
             puzzle_hash_for_unroll,
-            readable_move: readable_move.clone(),
+            readable_move,
             message: message.clone(),
         })
     }
@@ -1383,7 +1376,7 @@ impl RefereeMaker {
         evidence: Evidence,
     ) -> Result<NodePtr, Error> {
         (
-            Node(state.clone()),
+            Node(state),
             (
                 Node(validation_program_clvm),
                 (
@@ -1396,6 +1389,7 @@ impl RefereeMaker {
             .into_gen()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn make_slash_for_their_turn(
         &self,
         allocator: &mut AllocEncoder,
@@ -1416,7 +1410,9 @@ impl RefereeMaker {
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let reward_amount = self.amount.clone() - current_mover_share;
         if reward_amount == Amount::default() {
-            return Ok(TheirTurnCoinSpentResult::Slash(SlashOutcome::NoReward));
+            return Ok(TheirTurnCoinSpentResult::Slash(Box::new(
+                SlashOutcome::NoReward,
+            )));
         }
 
         let slashing_coin_solution = self.slashing_coin_solution(
@@ -1428,20 +1424,22 @@ impl RefereeMaker {
         )?;
 
         let coin_string_of_output_coin =
-            CoinString::from_parts(&coin_string.to_coin_id(), &new_puzzle_hash, &reward_amount);
+            CoinString::from_parts(&coin_string.to_coin_id(), new_puzzle_hash, &reward_amount);
 
-        Ok(TheirTurnCoinSpentResult::Slash(SlashOutcome::Reward {
-            transaction: SpecificTransactionBundle {
-                // Ultimate parent of these coins.
-                coin: coin_string.clone(),
-                bundle: TransactionBundle {
-                    puzzle: new_puzzle.clone(),
-                    solution: Program::from_nodeptr(allocator, slashing_coin_solution)?,
-                    signature: sig.clone(),
-                },
+        Ok(TheirTurnCoinSpentResult::Slash(Box::new(
+            SlashOutcome::Reward {
+                transaction: Box::new(SpecificTransactionBundle {
+                    // Ultimate parent of these coins.
+                    coin: coin_string.clone(),
+                    bundle: TransactionBundle {
+                        puzzle: new_puzzle.clone(),
+                        solution: Program::from_nodeptr(allocator, slashing_coin_solution)?,
+                        signature: sig.clone(),
+                    },
+                }),
+                my_reward_coin_string: coin_string_of_output_coin,
             },
-            my_reward_coin_string: coin_string_of_output_coin,
-        }))
+        )))
     }
 
     pub fn their_turn_coin_spent(
@@ -1454,8 +1452,7 @@ impl RefereeMaker {
         let rem_condition = if let Some(CoinCondition::Rem(rem_condition)) =
             CoinCondition::from_nodeptr(allocator, *conditions)
                 .iter()
-                .filter(|cond| matches!(cond, CoinCondition::Rem(_)))
-                .next()
+                .find(|cond| matches!(cond, CoinCondition::Rem(_)))
         {
             // Got rem condition
             rem_condition.to_vec()
@@ -1572,7 +1569,7 @@ impl RefereeMaker {
         );
 
         let full_slash_solution = (
-            Node(state.clone()),
+            Node(state),
             (
                 Node(validation_program.to_nodeptr()),
                 // No evidence here.
@@ -1637,7 +1634,7 @@ impl RefereeMaker {
                             &new_puzzle_hash,
                             full_slash_solution,
                             evidence,
-                            &(slash_spend.signature + sig),
+                            &(slash_spend.signature + *sig),
                         );
                     }
                     TheirTurnResult::FinalMove(readable_move) => (readable_move, None),
