@@ -484,7 +484,7 @@ impl Peer {
                     their_contribution: self.their_contribution.clone(),
                 };
                 let (channel_handler, _init_result) =
-                    ChannelHandler::new(&mut penv.env, self.private_keys.clone(), &init_data)?;
+                    ChannelHandler::new(penv.env, self.private_keys.clone(), &init_data)?;
 
                 // init_result
                 // pub channel_puzzle_hash_up: PuzzleHash,
@@ -561,7 +561,7 @@ impl Peer {
                     their_contribution: self.their_contribution.clone(),
                 };
                 let (mut channel_handler, _init_result) =
-                    ChannelHandler::new(&mut penv.env, self.private_keys.clone(), &init_data)?;
+                    ChannelHandler::new(penv.env, self.private_keys.clone(), &init_data)?;
 
                 let nil_sigs = channel_handler.send_empty_potato(penv.env)?;
 

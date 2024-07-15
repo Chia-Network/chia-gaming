@@ -309,7 +309,7 @@ impl ValidationProgram {
     }
 
     pub fn to_nodeptr(&self) -> NodePtr {
-        self.validation_program.clone()
+        self.validation_program
     }
 
     pub fn hash(&self) -> &Hash {
@@ -343,7 +343,7 @@ impl ValidationInfo {
     ) -> Self {
         let hash = Sha256Input::Array(vec![
             Sha256Input::Hash(validation_program.hash()),
-            Sha256Input::Hash(&Node(game_state).sha256tree(allocator).hash()),
+            Sha256Input::Hash(Node(game_state).sha256tree(allocator).hash()),
         ])
         .hash();
         ValidationInfo::FromProgram {
@@ -362,7 +362,7 @@ impl ValidationInfo {
     ) -> Self {
         let hash = Sha256Input::Array(vec![
             Sha256Input::Hash(&validation_program_hash),
-            Sha256Input::Hash(&Node(game_state).sha256tree(allocator).hash()),
+            Sha256Input::Hash(Node(game_state).sha256tree(allocator).hash()),
         ])
         .hash();
         ValidationInfo::FromProgramHash {
@@ -375,7 +375,7 @@ impl ValidationInfo {
         match self {
             ValidationInfo::FromProgramHash { hash, .. }
             | ValidationInfo::FromProgram { hash, .. }
-            | ValidationInfo::FromHash { hash } => &hash,
+            | ValidationInfo::FromHash { hash } => hash,
         }
     }
 }
@@ -412,10 +412,10 @@ impl ChannelCoin {
         );
         let spend = standard_solution_partial(
             env.allocator,
-            &private_key,
+            private_key,
             &self.state_channel_coin.to_coin_id(),
             conditions,
-            &aggregate_public_key,
+            aggregate_public_key,
             &env.agg_sig_me_additional_data,
             true,
         )?;
@@ -683,7 +683,7 @@ impl UnrollCoin {
     ) -> Result<Aggsig, Error> {
         let unroll_conditions = self.compute_unroll_coin_conditions(env, inputs)?;
         let conditions_hash = Node(unroll_conditions).sha256tree(env.allocator);
-        let unroll_public_key = private_to_public_key(&unroll_private_key);
+        let unroll_public_key = private_to_public_key(unroll_private_key);
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
         eprintln!(
             "conditions {}",
@@ -691,9 +691,9 @@ impl UnrollCoin {
         );
         eprintln!("conditions_hash {conditions_hash:?}");
         let unroll_signature = unsafe_sign_partial(
-            &unroll_private_key,
+            unroll_private_key,
             &unroll_aggregate_key,
-            &conditions_hash.bytes().to_vec(),
+            conditions_hash.bytes(),
         );
         self.outcome = Some(UnrollCoinOutcome {
             conditions: unroll_conditions,
@@ -730,8 +730,8 @@ impl UnrollCoin {
         let aggregate_unroll_signature = signature.clone() + self.get_unroll_coin_signature()?;
 
         Ok(aggregate_unroll_signature.verify(
-            &aggregate_unroll_public_key,
-            &unroll_puzzle_solution_hash.bytes(),
+            aggregate_unroll_public_key,
+            unroll_puzzle_solution_hash.bytes(),
         ))
     }
 }
