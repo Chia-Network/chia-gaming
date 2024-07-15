@@ -16,9 +16,9 @@ use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
 
-#[cfg(all(test, feature="sim-tests"))]
+#[cfg(all(test, feature = "sim-tests"))]
 use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
-#[cfg(all(test, feature="sim-tests"))]
+#[cfg(all(test, feature = "sim-tests"))]
 use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
@@ -547,7 +547,7 @@ impl Default for Node {
 }
 
 impl Node {
-    #[cfg(all(test, feature="sim-tests"))]
+    #[cfg(all(test, feature = "sim-tests"))]
     pub fn to_hex(&self, allocator: &mut AllocEncoder) -> String {
         let mut stream = Stream::new(None);
         sexp_to_stream(allocator.allocator(), self.0, &mut stream);
