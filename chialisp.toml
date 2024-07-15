@@ -1,0 +1,2 @@
+[compile]
+unroll-puzzle = "resources/unroll_puzzle.clsp"

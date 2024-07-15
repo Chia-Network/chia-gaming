@@ -6,7 +6,7 @@ use chia_bls;
 
 use clvm_traits::{ToClvm, clvm_curried_args};
 
-use clvmr::allocator::NodePtr;
+use clvmr::NodePtr;
 
 use clvm_tools_rs::classic::clvm::__type_compatibility__::{Bytes, Stream, UnvalidatedBytesFromType};
 use clvm_tools_rs::classic::clvm::serialize::{sexp_from_stream, SimpleCreateCLVMObject};
