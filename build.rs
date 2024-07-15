@@ -1,24 +1,17 @@
 use std::collections::HashMap;
 use std::fs;
-use std::rc::Rc;
 
 use clvmr::Allocator;
-
-use serde::Deserialize;
 use toml::{Table, Value};
 
-use clvm_tools_rs::classic::clvm_tools::clvmc::{CompileError, compile_clvm_text};
+use clvm_tools_rs::classic::clvm_tools::clvmc::CompileError;
 use clvm_tools_rs::classic::platform::argparse::ArgumentValue;
 use clvm_tools_rs::classic::clvm_tools::comp_input::RunAndCompileInputData;
-use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 use clvm_tools_rs::compiler::comptypes::CompileErr;
-use clvm_tools_rs::compiler::dialect::{AcceptedDialect, KNOWN_DIALECTS};
 use clvm_tools_rs::compiler::srcloc::Srcloc;
 
 fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {
     let mut allocator = Allocator::new();
-    let runner = Rc::new(DefaultProgramRunner::new());
-
     let mut arguments: HashMap<String, ArgumentValue> = HashMap::new();
     arguments.insert("include".to_string(), ArgumentValue::ArgArray(vec![ArgumentValue::ArgString(None, ".".to_string())]));
 
