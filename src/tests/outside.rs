@@ -11,7 +11,7 @@ use crate::common::types::{
     Timeout, TransactionBundle,
 };
 use crate::outside::{
-    BootstrapTowardWallet, PacketSender, Peer, PeerEnv, PeerMessage, ToLocalUI,
+    BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage, PotatoHandler, ToLocalUI,
     WalletSpendInterface,
 };
 
@@ -129,7 +129,7 @@ fn test_peer_smoke() {
         let reward_puzzle_hash1 =
             puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
 
-        Peer::new(
+        PotatoHandler::new(
             have_potato,
             private_keys1,
             Amount::new(100),
