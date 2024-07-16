@@ -28,9 +28,9 @@ use crate::common::standard_coin::{
 #[cfg(test)]
 use crate::common::types::Node;
 use crate::common::types::{
-    usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinString,
-    Error, GameID, IntoErr, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256tree,
-    CoinSpend, SpendRewardResult, ToQuotedProgram, Spend,
+    usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
+    CoinString, Error, GameID, IntoErr, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash,
+    Sha256tree, Spend, SpendRewardResult, ToQuotedProgram,
 };
 use crate::referee::RefereeMaker;
 

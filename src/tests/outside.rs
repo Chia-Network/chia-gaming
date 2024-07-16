@@ -7,8 +7,8 @@ use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, PrivateKey, PuzzleHash, SpendBundle,
-    Timeout, Spend,
+    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, PrivateKey, PuzzleHash, Spend,
+    SpendBundle, Timeout,
 };
 use crate::outside::{
     BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage, PotatoHandler, ToLocalUI,

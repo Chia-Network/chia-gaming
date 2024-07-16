@@ -15,9 +15,9 @@ use crate::common::standard_coin::{
     unsafe_sign_partial,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID, CoinString, Error, GameID, Hash,
-    IntoErr, Node, PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
-    CoinSpend, Timeout, Spend,
+    Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID, CoinSpend, CoinString, Error,
+    GameID, Hash, IntoErr, Node, PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input,
+    Sha256tree, Spend, Timeout,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 

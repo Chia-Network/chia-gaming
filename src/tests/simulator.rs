@@ -15,9 +15,8 @@ use crate::common::standard_coin::{
     ChiaIdentity,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, ErrToError, Error, Hash, IntoErr, Node,
-    Program, Puzzle, PuzzleHash, Sha256tree, CoinSpend, ToQuotedProgram,
-    Spend,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, ErrToError, Error, Hash, IntoErr,
+    Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend, ToQuotedProgram,
 };
 
 #[derive(Debug, Clone)]

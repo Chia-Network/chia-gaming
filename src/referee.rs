@@ -20,9 +20,9 @@ use crate::common::standard_coin::{
     standard_solution_partial, standard_solution_unsafe, ChiaIdentity,
 };
 use crate::common::types::{
-    u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error,
-    Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, CoinSpend,
-    Timeout, Spend,
+    u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend,
+    CoinString, Error, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
+    Timeout,
 };
 
 pub const REM_CONDITION_FIELDS: usize = 4;
