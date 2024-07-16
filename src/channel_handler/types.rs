@@ -17,7 +17,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID, CoinString, Error, GameID, Hash,
     IntoErr, Node, PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
-    SpecificTransactionBundle, Timeout, Spend,
+    CoinSpend, Timeout, Spend,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -120,14 +120,14 @@ pub struct OnChainGameCoin {
 #[derive(Debug, Clone)]
 pub struct CoinSpentMoveUp {
     pub game_id: GameID,
-    pub spend_before_game_coin: SpecificTransactionBundle,
+    pub spend_before_game_coin: CoinSpend,
     pub after_update_game_coin: CoinString,
 }
 
 #[derive(Debug, Clone)]
 pub struct CoinSpentAccept {
     pub game_id: GameID,
-    pub spend: SpecificTransactionBundle,
+    pub spend: CoinSpend,
     pub reward_coin: CoinString,
 }
 

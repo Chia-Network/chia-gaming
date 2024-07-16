@@ -30,7 +30,7 @@ use crate::common::types::Node;
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinString,
     Error, GameID, IntoErr, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256tree,
-    SpecificTransactionBundle, SpendRewardResult, ToQuotedProgram, Spend,
+    CoinSpend, SpendRewardResult, ToQuotedProgram, Spend,
 };
 use crate::referee::RefereeMaker;
 
@@ -1168,7 +1168,7 @@ impl ChannelHandler {
                 Ok(Some(DispositionResult {
                     disposition: CoinSpentDisposition::Accept(CoinSpentAccept {
                         game_id: cached.game_id.clone(),
-                        spend: SpecificTransactionBundle {
+                        spend: CoinSpend {
                             coin: unroll_coin.clone(),
                             bundle: spend_transaction.bundle.clone(),
                         },
@@ -1210,7 +1210,7 @@ impl ChannelHandler {
                 Ok(Some(DispositionResult {
                     disposition: CoinSpentDisposition::Move(CoinSpentMoveUp {
                         game_id: cached.game_id.clone(),
-                        spend_before_game_coin: SpecificTransactionBundle {
+                        spend_before_game_coin: CoinSpend {
                             coin: game_coin.clone(),
                             bundle: spend_transaction.bundle.clone(),
                         },

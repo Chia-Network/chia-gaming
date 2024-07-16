@@ -910,7 +910,7 @@ pub struct Spend {
 }
 
 #[derive(Clone, Debug)]
-pub struct SpecificTransactionBundle {
+pub struct CoinSpend {
     pub coin: CoinString,
     pub bundle: Spend,
 }

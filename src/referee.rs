@@ -21,7 +21,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error,
-    Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, SpecificTransactionBundle,
+    Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, CoinSpend,
     Timeout, Spend,
 };
 
@@ -58,7 +58,7 @@ pub struct TheirTurnMoveResult {
 pub enum SlashOutcome {
     NoReward,
     Reward {
-        transaction: Box<SpecificTransactionBundle>,
+        transaction: Box<CoinSpend>,
         my_reward_coin_string: CoinString,
     },
 }
@@ -1428,7 +1428,7 @@ impl RefereeMaker {
 
         Ok(TheirTurnCoinSpentResult::Slash(Box::new(
             SlashOutcome::Reward {
-                transaction: Box::new(SpecificTransactionBundle {
+                transaction: Box::new(CoinSpend {
                     // Ultimate parent of these coins.
                     coin: coin_string.clone(),
                     bundle: Spend {
