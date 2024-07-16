@@ -903,7 +903,7 @@ impl CoinCondition {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TransactionBundle {
+pub struct Spend {
     pub puzzle: Puzzle,
     pub solution: Program,
     pub signature: Aggsig,
@@ -912,12 +912,12 @@ pub struct TransactionBundle {
 #[derive(Clone, Debug)]
 pub struct SpecificTransactionBundle {
     pub coin: CoinString,
-    pub bundle: TransactionBundle,
+    pub bundle: Spend,
 }
 
-impl Default for TransactionBundle {
+impl Default for Spend {
     fn default() -> Self {
-        TransactionBundle {
+        Spend {
             puzzle: Puzzle::from_bytes(&[0x80]),
             solution: Program::from_bytes(&[0x80]),
             signature: Aggsig::default(),
@@ -926,7 +926,7 @@ impl Default for TransactionBundle {
 }
 
 pub struct SpendRewardResult {
-    pub coins_with_solutions: Vec<TransactionBundle>,
+    pub coins_with_solutions: Vec<Spend>,
     pub result_coin_string_up: CoinString,
 }
 

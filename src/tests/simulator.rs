@@ -17,7 +17,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, ErrToError, Error, Hash, IntoErr, Node,
     Program, Puzzle, PuzzleHash, Sha256tree, SpecificTransactionBundle, ToQuotedProgram,
-    TransactionBundle,
+    Spend,
 };
 
 #[derive(Debug, Clone)]
@@ -157,7 +157,7 @@ impl Simulator {
 
         let specific = SpecificTransactionBundle {
             coin: coin.clone(),
-            bundle: TransactionBundle {
+            bundle: Spend {
                 puzzle: identity.puzzle.clone(),
                 solution: Program::from_nodeptr(allocator, coin_spend_info.solution)?,
                 signature: coin_spend_info.signature,
@@ -430,7 +430,7 @@ impl Simulator {
             &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
         );
         let tx = SpecificTransactionBundle {
-            bundle: TransactionBundle {
+            bundle: Spend {
                 puzzle: identity_source.puzzle.clone(),
                 solution: Program::from_nodeptr(allocator, standard_solution)?,
                 signature,
@@ -484,7 +484,7 @@ impl Simulator {
                 &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
             );
             spends.push(SpecificTransactionBundle {
-                bundle: TransactionBundle {
+                bundle: Spend {
                     puzzle: owner.puzzle.clone(),
                     solution: Program::from_nodeptr(allocator, solution)?,
                     signature,

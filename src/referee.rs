@@ -22,7 +22,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinString, Error,
     Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, SpecificTransactionBundle,
-    Timeout, TransactionBundle,
+    Timeout, Spend,
 };
 
 pub const REM_CONDITION_FIELDS: usize = 4;
@@ -65,7 +65,7 @@ pub enum SlashOutcome {
 
 #[derive(Debug, Clone)]
 pub struct RefereeOnChainTransaction {
-    pub bundle: TransactionBundle,
+    pub bundle: Spend,
     pub reward_coin: CoinString,
 }
 
@@ -1045,7 +1045,7 @@ impl RefereeMaker {
                 "transaction_solution {}",
                 disassemble(allocator.allocator(), transaction_solution, None)
             );
-            let transaction_bundle = TransactionBundle {
+            let transaction_bundle = Spend {
                 puzzle: puzzle.clone(),
                 solution: Program::from_nodeptr(allocator, transaction_solution)?,
                 signature,
@@ -1431,7 +1431,7 @@ impl RefereeMaker {
                 transaction: Box::new(SpecificTransactionBundle {
                     // Ultimate parent of these coins.
                     coin: coin_string.clone(),
-                    bundle: TransactionBundle {
+                    bundle: Spend {
                         puzzle: new_puzzle.clone(),
                         solution: Program::from_nodeptr(allocator, slashing_coin_solution)?,
                         signature: sig.clone(),

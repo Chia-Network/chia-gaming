@@ -8,7 +8,7 @@ use crate::channel_handler::types::{ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, PrivateKey, PuzzleHash, SpendBundle,
-    Timeout, TransactionBundle,
+    Timeout, Spend,
 };
 use crate::outside::{
     BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage, PotatoHandler, ToLocalUI,
@@ -27,8 +27,8 @@ enum NotificationToLocalUI {
 
 #[allow(dead_code)]
 enum WalletBootstrapState {
-    PartlySigned(TransactionBundle),
-    FullySigned(TransactionBundle),
+    PartlySigned(Spend),
+    FullySigned(Spend),
 }
 
 #[derive(Default)]
@@ -37,7 +37,7 @@ struct Pipe {
     queue: VecDeque<Vec<u8>>,
 
     // WalletSpendInterface
-    outgoing_transactions: VecDeque<TransactionBundle>,
+    outgoing_transactions: VecDeque<Spend>,
     registered_coins: HashMap<CoinID, Timeout>,
 
     // Game UI
@@ -61,7 +61,7 @@ impl PacketSender for Pipe {
 }
 
 impl WalletSpendInterface for Pipe {
-    fn spend_transaction_and_add_fee(&mut self, bundle: &TransactionBundle) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
         self.outgoing_transactions.push_back(bundle.clone());
 
         Ok(())
