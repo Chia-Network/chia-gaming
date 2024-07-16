@@ -18,7 +18,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, Program, PuzzleHash, Sha256tree, SpecificTransactionBundle, Timeout,
+    PrivateKey, Program, PuzzleHash, Sha256tree, CoinSpend, Timeout,
     Spend,
 };
 use crate::tests::game::new_channel_handler_game;
@@ -166,7 +166,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         assert_eq!(cc_ph, predicted_puzzle.sha256tree(self.env.allocator));
         assert_eq!(signature, cc_spend.spend.aggsig);
 
-        let spend_of_channel_coin = SpecificTransactionBundle {
+        let spend_of_channel_coin = CoinSpend {
             coin: state_channel.clone(),
             bundle: Spend {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
@@ -268,7 +268,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             .simulator
             .push_tx(
                 self.env.allocator,
-                &[SpecificTransactionBundle {
+                &[CoinSpend {
                     bundle: pre_unroll_data.transaction.clone(),
                     coin: unroll_coin.clone(),
                 }],
@@ -601,7 +601,7 @@ fn test_referee_can_slash_on_chain() {
         disassemble(allocator.allocator(), puzzle_clvm, None)
     );
 
-    let specific = SpecificTransactionBundle {
+    let specific = CoinSpend {
         coin: referee_coins[0].clone(),
         bundle: timeout_transaction.bundle.clone(),
     };
@@ -722,7 +722,7 @@ fn test_referee_can_move_on_chain() {
         .expect("should work");
 
     eprintln!("move_transaction {move_transaction:?}");
-    let specific = SpecificTransactionBundle {
+    let specific = CoinSpend {
         coin: referee_coins[0].clone(),
         bundle: move_transaction.bundle.clone(),
     };

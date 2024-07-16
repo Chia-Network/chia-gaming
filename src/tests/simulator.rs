@@ -16,7 +16,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, ErrToError, Error, Hash, IntoErr, Node,
-    Program, Puzzle, PuzzleHash, Sha256tree, SpecificTransactionBundle, ToQuotedProgram,
+    Program, Puzzle, PuzzleHash, Sha256tree, CoinSpend, ToQuotedProgram,
     Spend,
 };
 
@@ -155,7 +155,7 @@ impl Simulator {
         let signature2 = identity.synthetic_private_key.sign(&agg_sig_me_message);
         assert_eq!(coin_spend_info.signature, signature2);
 
-        let specific = SpecificTransactionBundle {
+        let specific = CoinSpend {
             coin: coin.clone(),
             bundle: Spend {
                 puzzle: identity.puzzle.clone(),
@@ -327,7 +327,7 @@ impl Simulator {
     pub fn make_spend_bundle(
         &self,
         allocator: &mut AllocEncoder,
-        txs: &[SpecificTransactionBundle],
+        txs: &[CoinSpend],
     ) -> PyResult<PyObject> {
         Python::with_gil(|py| {
             let mut spends = Vec::new();
@@ -362,7 +362,7 @@ impl Simulator {
     pub fn push_tx(
         &self,
         allocator: &mut AllocEncoder,
-        txs: &[SpecificTransactionBundle],
+        txs: &[CoinSpend],
     ) -> PyResult<IncludeTransactionResult> {
         let spend_bundle = self.make_spend_bundle(allocator, txs)?;
         Python::with_gil(|py| {
@@ -429,7 +429,7 @@ impl Simulator {
             &source_coin.to_coin_id(),
             &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
         );
-        let tx = SpecificTransactionBundle {
+        let tx = CoinSpend {
             bundle: Spend {
                 puzzle: identity_source.puzzle.clone(),
                 solution: Program::from_nodeptr(allocator, standard_solution)?,
@@ -483,7 +483,7 @@ impl Simulator {
                 &c.to_coin_id(),
                 &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
             );
-            spends.push(SpecificTransactionBundle {
+            spends.push(CoinSpend {
                 bundle: Spend {
                     puzzle: owner.puzzle.clone(),
                     solution: Program::from_nodeptr(allocator, solution)?,
