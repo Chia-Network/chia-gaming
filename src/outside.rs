@@ -12,7 +12,7 @@ use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, PublicKey, PuzzleHash, SpendBundle,
-    Timeout, TransactionBundle,
+    Timeout, Spend,
 };
 
 struct LocalGameStart {}
@@ -156,7 +156,7 @@ pub trait SpendWalletReceiver {
 /// Unroll time wallet interface.
 pub trait WalletSpendInterface {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &TransactionBundle) -> Result<(), Error>;
+    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error>;
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
     fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error>;
@@ -222,10 +222,10 @@ pub enum PeerMessage {
 
     /// Includes spend of launcher coin id.
     HandshakeE {
-        bundle: TransactionBundle,
+        bundle: Spend,
     },
     HandshakeF {
-        bundle: TransactionBundle,
+        bundle: Spend,
     },
 
     Nil(PotatoSignatures),
@@ -255,12 +255,12 @@ pub enum HandshakeState {
     StepF {
         first_player_hs_info: HandshakeA,
         second_player_hs_info: HandshakeB,
-        channel_initiation_offer: TransactionBundle,
+        channel_initiation_offer: Spend,
     },
     Finished {
         first_player_hs_info: HandshakeA,
         second_player_hs_info: HandshakeB,
-        channel_initiation_transaction: TransactionBundle,
+        channel_initiation_transaction: Spend,
     },
 }
 

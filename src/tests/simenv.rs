@@ -19,7 +19,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, IntoErr, Node,
     PrivateKey, Program, PuzzleHash, Sha256tree, SpecificTransactionBundle, Timeout,
-    TransactionBundle,
+    Spend,
 };
 use crate::tests::game::new_channel_handler_game;
 use crate::tests::referee::{make_debug_game_handler, RefereeTest};
@@ -168,7 +168,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
         let spend_of_channel_coin = SpecificTransactionBundle {
             coin: state_channel.clone(),
-            bundle: TransactionBundle {
+            bundle: Spend {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
                 solution: Program::from_nodeptr(&mut self.env.allocator, cc_spend.spend.solution)?,
                 signature,

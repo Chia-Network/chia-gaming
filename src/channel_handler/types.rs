@@ -17,7 +17,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID, CoinString, Error, GameID, Hash,
     IntoErr, Node, PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
-    SpecificTransactionBundle, Timeout, TransactionBundle,
+    SpecificTransactionBundle, Timeout, Spend,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -233,7 +233,7 @@ pub enum CachedPotatoRegenerateLastHop {
 
 #[derive(Clone, Debug)]
 pub struct ChannelCoinSpentResult {
-    pub transaction: TransactionBundle,
+    pub transaction: Spend,
     pub timeout: bool,
     pub games_canceled: Vec<GameID>,
 }
@@ -462,7 +462,7 @@ pub struct ChannelCoinInfo {
     pub coin: ChannelCoin,
     pub amount: Amount,
     // Used in unrolling.
-    pub spend: TransactionBundle,
+    pub spend: Spend,
 }
 
 pub struct UnrollCoinConditionInputs {

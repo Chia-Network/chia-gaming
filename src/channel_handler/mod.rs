@@ -30,7 +30,7 @@ use crate::common::types::Node;
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinString,
     Error, GameID, IntoErr, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256tree,
-    SpecificTransactionBundle, SpendRewardResult, ToQuotedProgram, TransactionBundle,
+    SpecificTransactionBundle, SpendRewardResult, ToQuotedProgram, Spend,
 };
 use crate::referee::RefereeMaker;
 
@@ -267,7 +267,7 @@ impl ChannelHandler {
             state_channel: ChannelCoinInfo {
                 coin: ChannelCoin::new(channel_coin_parent),
                 amount,
-                spend: TransactionBundle::default(),
+                spend: Spend::default(),
             },
 
             unroll: ChannelHandlerUnrollSpendInfo::default(),
@@ -314,7 +314,7 @@ impl ChannelHandler {
         let channel_coin_spend =
             myself.create_conditions_and_signature_of_channel_coin(env, &myself.unroll.coin)?;
 
-        myself.state_channel.spend = TransactionBundle {
+        myself.state_channel.spend = Spend {
             puzzle: puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
@@ -885,12 +885,12 @@ impl ChannelHandler {
     }
 
     /// Uses the channel coin key to post standard format coin generation to the
-    /// real blockchain via a TransactionBundle.
+    /// real blockchain via a Spend.
     pub fn send_potato_clean_shutdown<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
         conditions: NodePtr,
-    ) -> Result<TransactionBundle, Error> {
+    ) -> Result<Spend, Error> {
         assert!(self.have_potato);
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
@@ -902,7 +902,7 @@ impl ChannelHandler {
             conditions,
         )?;
 
-        Ok(TransactionBundle {
+        Ok(Spend {
             solution: Program::from_nodeptr(env.allocator, channel_coin_spend.solution)?,
             signature: channel_coin_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
@@ -931,7 +931,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
-    ) -> Result<TransactionBundle, Error> {
+    ) -> Result<Spend, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
 
         assert!(!self.have_potato);
@@ -941,7 +941,7 @@ impl ChannelHandler {
             conditions,
         )?;
 
-        Ok(TransactionBundle {
+        Ok(Spend {
             solution: Program::from_nodeptr(env.allocator, channel_spend.solution)?,
             signature: channel_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
@@ -999,7 +999,7 @@ impl ChannelHandler {
             .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
 
         Ok(ChannelCoinSpentResult {
-            transaction: TransactionBundle {
+            transaction: Spend {
                 puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
                 solution: Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?,
                 signature: use_unroll.coin.get_unroll_coin_signature()?
@@ -1094,7 +1094,7 @@ impl ChannelHandler {
                     .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
 
                 Ok(ChannelCoinSpentResult {
-                    transaction: TransactionBundle {
+                    transaction: Spend {
                         puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
                         solution: Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?,
                         signature: self.unroll.coin.get_unroll_coin_signature()?,
@@ -1373,7 +1373,7 @@ impl ChannelHandler {
 
             let standard_solution =
                 standard_solution_unsafe(env.allocator, &self.referee_private_key(), conditions)?;
-            coins_with_solutions.push(TransactionBundle {
+            coins_with_solutions.push(Spend {
                 puzzle: spend_coin_puzzle.clone(),
                 solution: Program::from_nodeptr(env.allocator, standard_solution.solution)?,
                 signature,
