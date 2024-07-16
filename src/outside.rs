@@ -293,7 +293,7 @@ where
 ///
 /// Also do this when any queue becomes non-empty.
 #[allow(dead_code)]
-pub struct Peer {
+pub struct PotatoHandler {
     have_potato: bool,
 
     handshake_state: HandshakeState,
@@ -332,15 +332,15 @@ pub struct Peer {
 /// Alice sends the "received channel transaction completion" message.
 ///
 /// once this object knows the channel puzzle hash they should register the coin.
-impl Peer {
+impl PotatoHandler {
     pub fn new(
         have_potato: bool,
         private_keys: ChannelHandlerPrivateKeys,
         my_contribution: Amount,
         their_contribution: Amount,
         reward_puzzle_hash: PuzzleHash,
-    ) -> Peer {
-        Peer {
+    ) -> PotatoHandler {
+        PotatoHandler {
             have_potato,
             handshake_state: if have_potato {
                 HandshakeState::PreInit
