@@ -931,7 +931,7 @@ pub struct SpendRewardResult {
 }
 
 pub struct SpendBundle {
-    pub spends: Vec<CoinSpend>
+    pub spends: Vec<CoinSpend>,
 }
 
 pub fn usize_from_atom(a: &[u8]) -> Option<usize> {
