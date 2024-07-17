@@ -4,7 +4,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{ChannelHandlerPrivateKeys, ReadableMove};
+use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, PrivateKey, PuzzleHash, Spend,
@@ -45,8 +45,8 @@ struct Pipe {
     game_starts: VecDeque<NotificationToLocalUI>,
 
     // Bootstrap info
-    #[allow(dead_code)]
     channel_puzzle_hash: Option<PuzzleHash>,
+
     #[allow(dead_code)]
     bootstrap_state: Option<WalletBootstrapState>,
 }
@@ -76,8 +76,9 @@ impl WalletSpendInterface for Pipe {
 }
 
 impl BootstrapTowardWallet for Pipe {
-    fn channel_puzzle_hash(&mut self, _puzzle_hash: &PuzzleHash) -> Result<(), Error> {
-        todo!();
+    fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
+        self.channel_puzzle_hash = Some(puzzle_hash.clone());
+        Ok(())
     }
 
     fn received_channel_offer(&mut self, _bundle: &SpendBundle) -> Result<(), Error> {
@@ -112,6 +113,30 @@ impl ToLocalUI for Pipe {
     fn going_on_chain(&mut self) -> Result<(), Error> {
         todo!();
     }
+}
+
+fn run_move<'a, R: Rng>(
+    env: &'a mut ChannelHandlerEnv<'a, R>,
+    amount: Amount,
+    pipe: &'a mut [Pipe; 2],
+    peer: &mut PotatoHandler,
+    who: usize,
+) -> Result<(), Error> {
+    let msg = pipe[who ^ 1].queue.pop_front().unwrap();
+
+    let mut penv: PeerEnv<Pipe, R> = PeerEnv {
+        env: env,
+        system_interface: &mut pipe[who],
+    };
+    peer.received_message(&mut penv, msg)?;
+
+    let parent = CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
+
+    if let Some(ch) = penv.system_interface.channel_puzzle_hash.clone() {
+        penv.test_handle_received_channel_puzzle_hash(peer, &parent, &ch)?;
+    }
+
+    Ok(())
 }
 
 #[test]
@@ -160,21 +185,16 @@ fn test_peer_smoke() {
         peers[0].start(&mut penv, parent_coin).expect("should work");
     };
 
-    let mut run_move = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, who: usize| {
-        let msg = pipe_sender[who ^ 1].queue.pop_front().unwrap();
-
-        let mut env = channel_handler_env(allocator, rng);
-        let mut penv = PeerEnv {
-            env: &mut env,
-            system_interface: &mut pipe_sender[who],
-        };
-        peers[who]
-            .received_message(&mut penv, msg)
-            .expect("should receive");
-    };
-
     // XXX Keep going to more message handling.
     for i in 1..=3 {
-        run_move(&mut allocator, &mut rng, i % 2);
+        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let who = i % 2;
+        run_move(
+            &mut env,
+            Amount::new(200),
+            &mut pipe_sender,
+            &mut peers[who],
+            who
+        ).expect("should send");
     }
 }

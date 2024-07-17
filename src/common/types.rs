@@ -930,7 +930,9 @@ pub struct SpendRewardResult {
     pub result_coin_string_up: CoinString,
 }
 
-pub struct SpendBundle {}
+pub struct SpendBundle {
+    pub spends: Vec<CoinSpend>
+}
 
 pub fn usize_from_atom(a: &[u8]) -> Option<usize> {
     let bi = BigInt::from_bytes_be(Sign::Plus, a);

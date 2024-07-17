@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+#[cfg(test)]
+use clvm_traits::ToClvm;
 use clvmr::NodePtr;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -9,11 +11,17 @@ use crate::channel_handler::types::{
     ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
+#[cfg(test)]
+use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
+#[cfg(test)]
+use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, PublicKey, PuzzleHash, Spend,
     SpendBundle, Timeout,
 };
+#[cfg(test)]
+use crate::common::types::{CoinSpend, Program};
 
 struct LocalGameStart {}
 
@@ -48,7 +56,11 @@ struct RemoteGameStart {}
 /// to not take place in the potato handler.  The injected wallet bootstrap
 /// dependency must be stateful enough that it can cope with receiving a partly
 /// funded offer spend bundle and fully fund it if needed.
-pub trait BootstrapTowardGame {
+pub trait BootstrapTowardGame<
+    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+    R: Rng,
+>
+{
     /// Gives a partly signed offer to the wallet bootstrap.
     ///
     /// Intended use: channel_puzzle_hash delivers the desired puzzle hash and this
@@ -85,7 +97,8 @@ pub trait BootstrapTowardGame {
     ///
     /// Only alice sends this spend bundle in message E, but only after receiving
     /// message D.
-    fn channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error>;
+    fn channel_offer(&mut self, penv: &mut PeerEnv<G, R>, bundle: SpendBundle)
+        -> Result<(), Error>;
 
     /// Gives the fully signed offer to the wallet bootstrap.
     /// Causes bob to send this spend bundle down the wire to the other peer.
@@ -106,7 +119,11 @@ pub trait BootstrapTowardGame {
     ///
     /// Both alice and bob, upon knowing the full channel coin id, use the more
     /// general wallet interface to register for notifications of the channel coin.
-    fn channel_transaction_completion(&mut self, bundle: &SpendBundle) -> Result<(), Error>;
+    fn channel_transaction_completion(
+        &mut self,
+        penv: &mut PeerEnv<G, R>,
+        bundle: &SpendBundle,
+    ) -> Result<(), Error>;
 }
 
 /// Async interface implemented by Peer to receive notifications about wallet
@@ -236,46 +253,104 @@ pub enum PeerMessage {
     RequestPotato,
 }
 
+pub struct HandshakeStepInfo {
+    #[allow(dead_code)]
+    pub first_player_hs_info: HandshakeA,
+    #[allow(dead_code)]
+    pub second_player_hs_info: HandshakeB,
+}
+
+pub struct HandshakeStepWithLauncher {
+    #[allow(dead_code)]
+    pub info: HandshakeStepInfo,
+    #[allow(dead_code)]
+    pub launcher: CoinString,
+}
+
+pub struct HandshakeStepWithSpend {
+    #[allow(dead_code)]
+    pub info: HandshakeStepInfo,
+    #[allow(dead_code)]
+    pub spend: Spend,
+}
+
 pub enum HandshakeState {
     PreInit,
     StepA,
-    StepB(CoinString, HandshakeA),
-    StepC {
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-    },
-    StepD {
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-    },
-    StepE {
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-    },
-    StepF {
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-        channel_initiation_offer: Spend,
-    },
-    Finished {
-        first_player_hs_info: HandshakeA,
-        second_player_hs_info: HandshakeB,
-        channel_initiation_transaction: Spend,
-    },
+    StepB(CoinString, Box<HandshakeA>),
+    StepC(Box<HandshakeStepInfo>),
+    StepD(Box<HandshakeStepWithLauncher>),
+    StepE(Box<HandshakeStepInfo>),
+    StepF(Box<HandshakeStepWithSpend>),
+    Finished(Box<HandshakeStepInfo>),
 }
 
 pub trait PacketSender {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error>;
 }
 
-pub struct PeerEnv<'a, G, R>
+pub struct PeerEnv<'inputs, G, R>
 where
     G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
     R: Rng,
 {
-    pub env: &'a mut ChannelHandlerEnv<'a, R>,
+    pub env: &'inputs mut ChannelHandlerEnv<'inputs, R>,
 
-    pub system_interface: &'a mut G,
+    pub system_interface: &'inputs mut G,
+}
+
+// This is test infrastructure, so it makes assumptions about the environment the
+// test is running in.
+#[cfg(test)]
+impl<'inputs, G, R> PeerEnv<'inputs, G, R>
+where
+    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
+    R: Rng,
+{
+    #[cfg(test)]
+    pub fn test_handle_received_channel_puzzle_hash(
+        &mut self,
+        peer: &mut PotatoHandler,
+        parent: &CoinString,
+        channel_handler_puzzle_hash: &PuzzleHash,
+    ) -> Result<(), Error> {
+        let ch = peer.channel_handler()?;
+        let channel_coin = ch.state_channel_coin();
+        let channel_coin_amt =
+            if let Some((_, _, amt)) = channel_coin.coin_string().to_parts() {
+                amt
+            } else {
+                return Err(Error::StrErr("no channel coin".to_string()));
+            };
+
+        let public_key = private_to_public_key(&ch.channel_private_key());
+        let conditions_clvm = [
+            (CREATE_COIN, (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())))
+        ].to_clvm(self.env.allocator).into_gen()?;
+        let spend = standard_solution_partial(
+            self.env.allocator,
+            &ch.channel_private_key(),
+            &parent.to_coin_id(),
+            conditions_clvm,
+            &public_key,
+            &self.env.agg_sig_me_additional_data,
+            false,
+        )?;
+        let spend_solution_program = Program::from_nodeptr(
+            &mut self.env.allocator, spend.solution.clone()
+        )?;
+
+        peer.channel_offer(self, SpendBundle {
+            spends: vec![CoinSpend {
+                coin: parent.clone(),
+                bundle: Spend {
+                    puzzle: self.env.standard_puzzle.clone(),
+                    solution: spend_solution_program,
+                    signature: spend.signature.clone()
+                }
+            }]
+        })
+    }
 }
 
 /// Handle potato in flight when I request potato:
@@ -302,6 +377,8 @@ pub struct PotatoHandler {
     my_start_queue: VecDeque<LocalGameStart>,
 
     channel_handler: Option<ChannelHandler>,
+
+    channel_initiation_transaction: Option<SpendBundle>,
 
     private_keys: ChannelHandlerPrivateKeys,
 
@@ -352,11 +429,20 @@ impl PotatoHandler {
             my_start_queue: VecDeque::default(),
 
             channel_handler: None,
+            channel_initiation_transaction: None,
 
             private_keys,
             my_contribution,
             their_contribution,
             reward_puzzle_hash,
+        }
+    }
+
+    pub fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
+        if let Some(ch) = &self.channel_handler {
+            Ok(ch)
+        } else {
+            Err(Error::StrErr("no channel handler".to_string()))
         }
     }
 
@@ -393,7 +479,7 @@ impl PotatoHandler {
             reward_puzzle_hash: self.reward_puzzle_hash.clone(),
             referee_puzzle_hash,
         };
-        self.handshake_state = HandshakeState::StepB(parent_coin, my_hs_info.clone());
+        self.handshake_state = HandshakeState::StepB(parent_coin, Box::new(my_hs_info.clone()));
         penv.system_interface
             .send_message(&PeerMessage::HandshakeA(my_hs_info))?;
 
@@ -434,6 +520,30 @@ impl PotatoHandler {
             _ => {
                 todo!();
             }
+        }
+
+        Ok(())
+    }
+
+    pub fn try_complete_step_d<G, R: Rng>(&mut self, _penv: &mut PeerEnv<G, R>) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+    {
+        if let Some(_spend) = self.channel_initiation_transaction.as_ref() {
+            todo!();
+
+            // self.handshake_state = HandshakeState::StepF {
+            // first_player_hs_info: first_player_hs_info.clone(),
+            // second_player_hs_info: second_player_hs_info.clone()
+            // };
+
+            // Outer layer already knows the launcher coin string.
+            //
+            // Provide the channel puzzle hash to the full node bootstrap and
+            // it replies with the channel puzzle hash
+            // penv.system_interface.send_message(&PeerMessage::HandshakeE {
+            // bundle:
+            // })?;
         }
 
         Ok(())
@@ -486,6 +596,19 @@ impl PotatoHandler {
                 let (channel_handler, _init_result) =
                     ChannelHandler::new(penv.env, self.private_keys.clone(), &init_data)?;
 
+                let channel_coin = channel_handler.state_channel_coin();
+
+                let channel_puzzle_hash =
+                    if let Some((_, puzzle_hash, _)) = channel_coin.coin_string().to_parts() {
+                        puzzle_hash
+                    } else {
+                        return Err(Error::StrErr("could not understand channel coin parts".to_string()));
+                    };
+
+                // Send the boostrap wallet interface the channel puzzle hash to use.
+                // it will reply at some point with the channel offer.
+                penv.system_interface.channel_puzzle_hash(&channel_puzzle_hash)?;
+
                 // init_result
                 // pub channel_puzzle_hash_up: PuzzleHash,
                 // pub my_initial_channel_half_signature_peer: Aggsig,
@@ -507,20 +630,17 @@ impl PotatoHandler {
                 };
 
                 self.channel_handler = Some(channel_handler);
-                self.handshake_state = HandshakeState::StepC {
+                self.handshake_state = HandshakeState::StepC(Box::new(HandshakeStepInfo {
                     first_player_hs_info: msg,
                     second_player_hs_info: our_handshake_data.clone(),
-                };
+                }));
 
                 // Factor out to one method.
                 penv.system_interface
                     .send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
             }
 
-            HandshakeState::StepC { ..
-                // first_player_hs_info,
-                // second_player_hs_info,
-            } => {
+            HandshakeState::StepC(_info) => {
                 let msg_envelope: PeerMessage =
                     bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
                 let nil_msg = if let PeerMessage::Nil(nil_msg) = msg_envelope {
@@ -566,10 +686,13 @@ impl PotatoHandler {
                 let nil_sigs = channel_handler.send_empty_potato(penv.env)?;
 
                 self.channel_handler = Some(channel_handler);
-                self.handshake_state = HandshakeState::StepD {
-                    first_player_hs_info: my_hs_info.clone(),
-                    second_player_hs_info: msg,
-                };
+                self.handshake_state = HandshakeState::StepD(Box::new(HandshakeStepWithLauncher {
+                    info: HandshakeStepInfo {
+                        first_player_hs_info: *my_hs_info.clone(),
+                        second_player_hs_info: msg,
+                    },
+                    launcher: parent_coin.clone()
+                }));
 
                 penv.system_interface
                     .send_message(&PeerMessage::Nil(nil_sigs))?;
@@ -580,20 +703,7 @@ impl PotatoHandler {
                  // _second_player_hs_info,
             } => {
                 self.pass_on_channel_handler_message(penv, msg)?;
-
-                todo!();
-                // self.handshake_state = HandshakeState::StepF {
-                // first_player_hs_info: first_player_hs_info.clone(),
-                // second_player_hs_info: second_player_hs_info.clone()
-                // };
-
-                // Outer layer already knows the launcher coin string.
-                //
-                // Provide the channel puzzle hash to the full node bootstrap and
-                // it replies with the channel puzzle hash
-                // penv.system_interface.send_message(&PeerMessage::HandshakeE {
-                // bundle:
-                // })?;
+                self.try_complete_step_d(penv)?;
             }
 
             _ => {
@@ -602,5 +712,31 @@ impl PotatoHandler {
         }
 
         Ok(())
+    }
+}
+
+impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender, R: Rng>
+    BootstrapTowardGame<G, R> for PotatoHandler
+{
+    fn channel_offer(
+        &mut self,
+        penv: &mut PeerEnv<G, R>,
+        bundle: SpendBundle,
+    ) -> Result<(), Error> {
+        self.channel_initiation_transaction = Some(bundle);
+
+        if matches!(self.handshake_state, HandshakeState::StepD { .. }) {
+            self.try_complete_step_d(penv)?;
+        }
+
+        Ok(())
+    }
+
+    fn channel_transaction_completion(
+        &mut self,
+        _penv: &mut PeerEnv<G, R>,
+        _bundle: &SpendBundle,
+    ) -> Result<(), Error> {
+        todo!();
     }
 }
