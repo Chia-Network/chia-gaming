@@ -13,9 +13,9 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 #[cfg(test)]
 use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 #[cfg(test)]
 use crate::common::standard_coin::standard_solution_partial;
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, PublicKey, PuzzleHash, Spend,
     SpendBundle, Timeout,
@@ -316,17 +316,19 @@ where
     ) -> Result<(), Error> {
         let ch = peer.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt =
-            if let Some((_, _, amt)) = channel_coin.coin_string().to_parts() {
-                amt
-            } else {
-                return Err(Error::StrErr("no channel coin".to_string()));
-            };
+        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.coin_string().to_parts() {
+            amt
+        } else {
+            return Err(Error::StrErr("no channel coin".to_string()));
+        };
 
         let public_key = private_to_public_key(&ch.channel_private_key());
-        let conditions_clvm = [
-            (CREATE_COIN, (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())))
-        ].to_clvm(self.env.allocator).into_gen()?;
+        let conditions_clvm = [(
+            CREATE_COIN,
+            (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
+        )]
+        .to_clvm(self.env.allocator)
+        .into_gen()?;
         let spend = standard_solution_partial(
             self.env.allocator,
             &ch.channel_private_key(),
@@ -336,20 +338,22 @@ where
             &self.env.agg_sig_me_additional_data,
             false,
         )?;
-        let spend_solution_program = Program::from_nodeptr(
-            &mut self.env.allocator, spend.solution.clone()
-        )?;
+        let spend_solution_program =
+            Program::from_nodeptr(&mut self.env.allocator, spend.solution.clone())?;
 
-        peer.channel_offer(self, SpendBundle {
-            spends: vec![CoinSpend {
-                coin: parent.clone(),
-                bundle: Spend {
-                    puzzle: self.env.standard_puzzle.clone(),
-                    solution: spend_solution_program,
-                    signature: spend.signature.clone()
-                }
-            }]
-        })
+        peer.channel_offer(
+            self,
+            SpendBundle {
+                spends: vec![CoinSpend {
+                    coin: parent.clone(),
+                    bundle: Spend {
+                        puzzle: self.env.standard_puzzle.clone(),
+                        solution: spend_solution_program,
+                        signature: spend.signature.clone(),
+                    },
+                }],
+            },
+        )
     }
 }
 

@@ -194,7 +194,8 @@ fn test_peer_smoke() {
             Amount::new(200),
             &mut pipe_sender,
             &mut peers[who],
-            who
-        ).expect("should send");
+            who,
+        )
+        .expect("should send");
     }
 }
