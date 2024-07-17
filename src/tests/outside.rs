@@ -1,5 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
+use clvm_traits::ToClvm;
+
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -7,13 +9,17 @@ use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, PrivateKey, PuzzleHash, Spend,
-    SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
+    Spend, SpendBundle, Timeout,
 };
 use crate::outside::{
-    BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage, PotatoHandler, ToLocalUI,
-    WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage, PotatoHandler,
+    ToLocalUI, WalletSpendInterface,
 };
+
+use crate::common::constants::CREATE_COIN;
+use crate::common::standard_coin::standard_solution_partial;
+use crate::common::types::{CoinSpend, Program};
 
 #[allow(dead_code)]
 enum NotificationToLocalUI {
@@ -115,6 +121,81 @@ impl ToLocalUI for Pipe {
     }
 }
 
+pub struct TestPeerEnv<'inputs, G, R>
+where
+    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
+    R: Rng,
+{
+    pub env: &'inputs mut ChannelHandlerEnv<'inputs, R>,
+
+    pub system_interface: &'inputs mut G,
+}
+
+impl<'inputs, G, R> PeerEnv<'inputs, G, R> for TestPeerEnv<'inputs, G, R>
+where
+    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
+    R: Rng,
+{
+    fn env(&mut self) -> (&mut ChannelHandlerEnv<'inputs, R>, &mut G) {
+        (self.env, self.system_interface)
+    }
+}
+
+impl<'inputs, G, R> TestPeerEnv<'inputs, G, R>
+where
+    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
+    R: Rng,
+{
+    pub fn test_handle_received_channel_puzzle_hash(
+        &mut self,
+        peer: &mut PotatoHandler,
+        parent: &CoinString,
+        channel_handler_puzzle_hash: &PuzzleHash,
+    ) -> Result<(), Error> {
+        let standard_puzzle = self.env.standard_puzzle.clone();
+        let ch = peer.channel_handler()?;
+        let channel_coin = ch.state_channel_coin();
+        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.coin_string().to_parts() {
+            amt
+        } else {
+            return Err(Error::StrErr("no channel coin".to_string()));
+        };
+
+        let public_key = private_to_public_key(&ch.channel_private_key());
+        let conditions_clvm = [(
+            CREATE_COIN,
+            (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
+        )]
+        .to_clvm(self.env.allocator)
+        .into_gen()?;
+        let spend = standard_solution_partial(
+            self.env.allocator,
+            &ch.channel_private_key(),
+            &parent.to_coin_id(),
+            conditions_clvm,
+            &public_key,
+            &self.env.agg_sig_me_additional_data,
+            false,
+        )?;
+        let spend_solution_program =
+            Program::from_nodeptr(&mut self.env.allocator, spend.solution.clone())?;
+
+        peer.channel_offer(
+            self,
+            SpendBundle {
+                spends: vec![CoinSpend {
+                    coin: parent.clone(),
+                    bundle: Spend {
+                        puzzle: standard_puzzle,
+                        solution: spend_solution_program,
+                        signature: spend.signature.clone(),
+                    },
+                }],
+            },
+        )
+    }
+}
+
 fn run_move<'a, R: Rng>(
     env: &'a mut ChannelHandlerEnv<'a, R>,
     amount: Amount,
@@ -124,7 +205,7 @@ fn run_move<'a, R: Rng>(
 ) -> Result<(), Error> {
     let msg = pipe[who ^ 1].queue.pop_front().unwrap();
 
-    let mut penv: PeerEnv<Pipe, R> = PeerEnv {
+    let mut penv: TestPeerEnv<Pipe, R> = TestPeerEnv {
         env: env,
         system_interface: &mut pipe[who],
     };
@@ -178,7 +259,7 @@ fn test_peer_smoke() {
 
     {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
-        let mut penv = PeerEnv {
+        let mut penv = TestPeerEnv {
             env: &mut env,
             system_interface: &mut pipe_sender[0],
         };

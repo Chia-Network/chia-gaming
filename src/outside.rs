@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 
-#[cfg(test)]
-use clvm_traits::ToClvm;
 use clvmr::NodePtr;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -11,17 +9,11 @@ use crate::channel_handler::types::{
     ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
-#[cfg(test)]
-use crate::common::constants::CREATE_COIN;
-#[cfg(test)]
-use crate::common::standard_coin::standard_solution_partial;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, PublicKey, PuzzleHash, Spend,
     SpendBundle, Timeout,
 };
-#[cfg(test)]
-use crate::common::types::{CoinSpend, Program};
 
 struct LocalGameStart {}
 
@@ -97,8 +89,11 @@ pub trait BootstrapTowardGame<
     ///
     /// Only alice sends this spend bundle in message E, but only after receiving
     /// message D.
-    fn channel_offer(&mut self, penv: &mut PeerEnv<G, R>, bundle: SpendBundle)
-        -> Result<(), Error>;
+    fn channel_offer(
+        &mut self,
+        penv: &mut dyn PeerEnv<G, R>,
+        bundle: SpendBundle,
+    ) -> Result<(), Error>;
 
     /// Gives the fully signed offer to the wallet bootstrap.
     /// Causes bob to send this spend bundle down the wire to the other peer.
@@ -121,7 +116,7 @@ pub trait BootstrapTowardGame<
     /// general wallet interface to register for notifications of the channel coin.
     fn channel_transaction_completion(
         &mut self,
-        penv: &mut PeerEnv<G, R>,
+        penv: &mut dyn PeerEnv<G, R>,
         bundle: &SpendBundle,
     ) -> Result<(), Error>;
 }
@@ -289,72 +284,12 @@ pub trait PacketSender {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error>;
 }
 
-pub struct PeerEnv<'inputs, G, R>
+pub trait PeerEnv<'inputs, G, R>
 where
     G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
     R: Rng,
 {
-    pub env: &'inputs mut ChannelHandlerEnv<'inputs, R>,
-
-    pub system_interface: &'inputs mut G,
-}
-
-// This is test infrastructure, so it makes assumptions about the environment the
-// test is running in.
-#[cfg(test)]
-impl<'inputs, G, R> PeerEnv<'inputs, G, R>
-where
-    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    R: Rng,
-{
-    #[cfg(test)]
-    pub fn test_handle_received_channel_puzzle_hash(
-        &mut self,
-        peer: &mut PotatoHandler,
-        parent: &CoinString,
-        channel_handler_puzzle_hash: &PuzzleHash,
-    ) -> Result<(), Error> {
-        let ch = peer.channel_handler()?;
-        let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt = if let Some((_, _, amt)) = channel_coin.coin_string().to_parts() {
-            amt
-        } else {
-            return Err(Error::StrErr("no channel coin".to_string()));
-        };
-
-        let public_key = private_to_public_key(&ch.channel_private_key());
-        let conditions_clvm = [(
-            CREATE_COIN,
-            (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
-        )]
-        .to_clvm(self.env.allocator)
-        .into_gen()?;
-        let spend = standard_solution_partial(
-            self.env.allocator,
-            &ch.channel_private_key(),
-            &parent.to_coin_id(),
-            conditions_clvm,
-            &public_key,
-            &self.env.agg_sig_me_additional_data,
-            false,
-        )?;
-        let spend_solution_program =
-            Program::from_nodeptr(&mut self.env.allocator, spend.solution.clone())?;
-
-        peer.channel_offer(
-            self,
-            SpendBundle {
-                spends: vec![CoinSpend {
-                    coin: parent.clone(),
-                    bundle: Spend {
-                        puzzle: self.env.standard_puzzle.clone(),
-                        solution: spend_solution_program,
-                        signature: spend.signature.clone(),
-                    },
-                }],
-            },
-        )
-    }
+    fn env(&mut self) -> (&mut ChannelHandlerEnv<'inputs, R>, &mut G);
 }
 
 /// Handle potato in flight when I request potato:
@@ -458,20 +393,21 @@ impl PotatoHandler {
         }
     }
 
-    pub fn start<G, R: Rng>(
+    pub fn start<'a, G, R: Rng + 'a>(
         &mut self,
-        penv: &mut PeerEnv<G, R>,
+        penv: &'a mut dyn PeerEnv<'a, G, R>,
         parent_coin: CoinString,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     {
+        let (env, system_interface) = penv.env();
         let channel_public_key =
             private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         let unroll_public_key =
             private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
         let referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
-        let referee_puzzle_hash = puzzle_hash_for_pk(penv.env.allocator, &referee_public_key)?;
+        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
 
         eprintln!("Start: our channel public key {:?}", channel_public_key);
 
@@ -484,15 +420,14 @@ impl PotatoHandler {
             referee_puzzle_hash,
         };
         self.handshake_state = HandshakeState::StepB(parent_coin, Box::new(my_hs_info.clone()));
-        penv.system_interface
-            .send_message(&PeerMessage::HandshakeA(my_hs_info))?;
+        system_interface.send_message(&PeerMessage::HandshakeA(my_hs_info))?;
 
         Ok(())
     }
 
     fn update_channel_coin_after_receive<G, R: Rng>(
         &mut self,
-        _penv: &mut PeerEnv<G, R>,
+        _penv: &mut dyn PeerEnv<G, R>,
         _spend: &ChannelCoinSpendInfo,
     ) -> Result<(), Error>
     where
@@ -501,13 +436,13 @@ impl PotatoHandler {
         todo!();
     }
 
-    fn pass_on_channel_handler_message<G, R: Rng>(
+    fn pass_on_channel_handler_message<'a, G, R: Rng + 'a>(
         &mut self,
-        penv: &mut PeerEnv<G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
         msg: Vec<u8>,
     ) -> Result<(), Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let ch = self.channel_handler_mut()?;
 
@@ -518,7 +453,10 @@ impl PotatoHandler {
         match msg_envelope {
             PeerMessage::Nil(n) => {
                 eprintln!("about to receive empty potato");
-                let spend_info = ch.received_empty_potato(penv.env, &n)?;
+                let spend_info = {
+                    let (env, _system_interface) = penv.env();
+                    ch.received_empty_potato(env, &n)?
+                };
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             _ => {
@@ -529,7 +467,10 @@ impl PotatoHandler {
         Ok(())
     }
 
-    pub fn try_complete_step_d<G, R: Rng>(&mut self, _penv: &mut PeerEnv<G, R>) -> Result<(), Error>
+    pub fn try_complete_step_d<G, R: Rng>(
+        &mut self,
+        _penv: &mut dyn PeerEnv<G, R>,
+    ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     {
@@ -553,13 +494,13 @@ impl PotatoHandler {
         Ok(())
     }
 
-    pub fn received_message<G, R: Rng>(
+    pub fn received_message<'a, G, R: Rng + 'a>(
         &mut self,
-        penv: &mut PeerEnv<G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
         msg: Vec<u8>,
     ) -> Result<(), Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
         match &self.handshake_state {
@@ -598,7 +539,10 @@ impl PotatoHandler {
                     their_contribution: self.their_contribution.clone(),
                 };
                 let (channel_handler, _init_result) =
-                    ChannelHandler::new(penv.env, self.private_keys.clone(), &init_data)?;
+                {
+                    let (env, _system_interface) = penv.env();
+                    ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
+                };
 
                 let channel_coin = channel_handler.state_channel_coin();
 
@@ -611,7 +555,10 @@ impl PotatoHandler {
 
                 // Send the boostrap wallet interface the channel puzzle hash to use.
                 // it will reply at some point with the channel offer.
-                penv.system_interface.channel_puzzle_hash(&channel_puzzle_hash)?;
+                {
+                    let (_env, system_interface) = penv.env();
+                    system_interface.channel_puzzle_hash(&channel_puzzle_hash)?;
+                };
 
                 // init_result
                 // pub channel_puzzle_hash_up: PuzzleHash,
@@ -624,7 +571,10 @@ impl PotatoHandler {
                 let referee_public_key =
                     private_to_public_key(&self.private_keys.my_referee_private_key);
                 let referee_puzzle_hash =
-                    puzzle_hash_for_pk(penv.env.allocator, &referee_public_key)?;
+                {
+                    let (env, _system_interface) = penv.env();
+                    puzzle_hash_for_pk(env.allocator, &referee_public_key)?
+                };
 
                 let our_handshake_data = HandshakeB {
                     channel_public_key,
@@ -640,8 +590,11 @@ impl PotatoHandler {
                 }));
 
                 // Factor out to one method.
-                penv.system_interface
-                    .send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
+                {
+                    let (_env, system_interface) = penv.env();
+                    system_interface
+                        .send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
+                };
             }
 
             HandshakeState::StepC(_info) => {
@@ -656,11 +609,14 @@ impl PotatoHandler {
                 };
 
                 let ch = self.channel_handler_mut()?;
-                ch.received_empty_potato(penv.env, &nil_msg)?;
-                let nil_msg = ch.send_empty_potato(penv.env)?;
+                {
+                    let (env, system_interface) = penv.env();
+                    ch.received_empty_potato(env, &nil_msg)?;
+                    let nil_msg = ch.send_empty_potato(env)?;
 
-                penv.system_interface
-                    .send_message(&PeerMessage::Nil(nil_msg))?;
+                    system_interface
+                        .send_message(&PeerMessage::Nil(nil_msg))?;
+                }
             }
 
             // potato progression
@@ -685,9 +641,16 @@ impl PotatoHandler {
                     their_contribution: self.their_contribution.clone(),
                 };
                 let (mut channel_handler, _init_result) =
-                    ChannelHandler::new(penv.env, self.private_keys.clone(), &init_data)?;
+                    {
+                        let (env, _system_interface) = penv.env();
+                        ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
+                    };
 
-                let nil_sigs = channel_handler.send_empty_potato(penv.env)?;
+                let nil_sigs =
+                {
+                    let (env, _system_interface) = penv.env();
+                        channel_handler.send_empty_potato(env)?
+                    };
 
                 self.channel_handler = Some(channel_handler);
                 self.handshake_state = HandshakeState::StepD(Box::new(HandshakeStepWithLauncher {
@@ -698,8 +661,11 @@ impl PotatoHandler {
                     launcher: parent_coin.clone()
                 }));
 
-                penv.system_interface
-                    .send_message(&PeerMessage::Nil(nil_sigs))?;
+                {
+                    let (_env, system_interface) = penv.env();
+                    system_interface
+                        .send_message(&PeerMessage::Nil(nil_sigs))?;
+                }
             }
 
             HandshakeState::StepD { ..
@@ -724,7 +690,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 {
     fn channel_offer(
         &mut self,
-        penv: &mut PeerEnv<G, R>,
+        penv: &mut dyn PeerEnv<G, R>,
         bundle: SpendBundle,
     ) -> Result<(), Error> {
         self.channel_initiation_transaction = Some(bundle);
@@ -738,7 +704,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
     fn channel_transaction_completion(
         &mut self,
-        _penv: &mut PeerEnv<G, R>,
+        _penv: &mut dyn PeerEnv<G, R>,
         _bundle: &SpendBundle,
     ) -> Result<(), Error> {
         todo!();
