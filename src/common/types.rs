@@ -909,7 +909,7 @@ pub struct Spend {
     pub signature: Aggsig,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CoinSpend {
     pub coin: CoinString,
     pub bundle: Spend,
@@ -930,6 +930,7 @@ pub struct SpendRewardResult {
     pub result_coin_string_up: CoinString,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendBundle {
     pub spends: Vec<CoinSpend>,
 }

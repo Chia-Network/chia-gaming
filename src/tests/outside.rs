@@ -39,6 +39,8 @@ enum WalletBootstrapState {
 
 #[derive(Default)]
 struct Pipe {
+    my_id: usize,
+
     // PacketSender
     queue: VecDeque<Vec<u8>>,
 
@@ -53,12 +55,16 @@ struct Pipe {
     // Bootstrap info
     channel_puzzle_hash: Option<PuzzleHash>,
 
+    // Have other side's offer
+    unfunded_offer: Option<SpendBundle>,
+
     #[allow(dead_code)]
     bootstrap_state: Option<WalletBootstrapState>,
 }
 
 impl PacketSender for Pipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
+        eprintln!("Send Message from {} {msg:?}", self.my_id);
         let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         self.queue.push_back(msg_data);
@@ -87,8 +93,9 @@ impl BootstrapTowardWallet for Pipe {
         Ok(())
     }
 
-    fn received_channel_offer(&mut self, _bundle: &SpendBundle) -> Result<(), Error> {
-        todo!();
+    fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+        self.unfunded_offer = Some(bundle.clone());
+        Ok(())
     }
 
     fn received_channel_transaction_completion(
@@ -194,6 +201,15 @@ where
             },
         )
     }
+
+    // XXX fund the offer when we hook up simulation.
+    pub fn test_handle_received_unfunded_offer(
+        &mut self,
+        peer: &mut PotatoHandler,
+        unfunded_offer: &SpendBundle,
+    ) -> Result<(), Error> {
+        peer.channel_transaction_completion(self, unfunded_offer)
+    }
 }
 
 fn run_move<'a, R: Rng>(
@@ -203,18 +219,24 @@ fn run_move<'a, R: Rng>(
     peer: &mut PotatoHandler,
     who: usize,
 ) -> Result<(), Error> {
+    assert_eq!(pipe[who ^ 1].queue.len(), 1);
     let msg = pipe[who ^ 1].queue.pop_front().unwrap();
 
     let mut penv: TestPeerEnv<Pipe, R> = TestPeerEnv {
         env: env,
         system_interface: &mut pipe[who],
     };
+
     peer.received_message(&mut penv, msg)?;
 
-    let parent = CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
-
     if let Some(ch) = penv.system_interface.channel_puzzle_hash.clone() {
+        let parent = CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
         penv.test_handle_received_channel_puzzle_hash(peer, &parent, &ch)?;
+        penv.system_interface.channel_puzzle_hash = None;
+    }
+
+    if let Some(ufo) = penv.system_interface.unfunded_offer.clone() {
+        penv.test_handle_received_unfunded_offer(peer, &ufo)?;
     }
 
     Ok(())
@@ -227,6 +249,7 @@ fn test_peer_smoke() {
     let mut allocator = AllocEncoder::new();
 
     let mut pipe_sender: [Pipe; 2] = Default::default();
+    pipe_sender[1].my_id = 1;
 
     let new_peer = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, have_potato: bool| {
         let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
@@ -267,7 +290,7 @@ fn test_peer_smoke() {
     };
 
     // XXX Keep going to more message handling.
-    for i in 1..=3 {
+    for i in 1..=6 {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
         let who = i % 2;
         run_move(

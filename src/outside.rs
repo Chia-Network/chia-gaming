@@ -89,11 +89,14 @@ pub trait BootstrapTowardGame<
     ///
     /// Only alice sends this spend bundle in message E, but only after receiving
     /// message D.
-    fn channel_offer(
+    fn channel_offer<'a>(
         &mut self,
-        penv: &mut dyn PeerEnv<G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
         bundle: SpendBundle,
-    ) -> Result<(), Error>;
+    ) -> Result<(), Error>
+    where
+        R: 'a,
+        G: 'a;
 
     /// Gives the fully signed offer to the wallet bootstrap.
     /// Causes bob to send this spend bundle down the wire to the other peer.
@@ -114,11 +117,14 @@ pub trait BootstrapTowardGame<
     ///
     /// Both alice and bob, upon knowing the full channel coin id, use the more
     /// general wallet interface to register for notifications of the channel coin.
-    fn channel_transaction_completion(
+    fn channel_transaction_completion<'a>(
         &mut self,
-        penv: &mut dyn PeerEnv<G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
         bundle: &SpendBundle,
-    ) -> Result<(), Error>;
+    ) -> Result<(), Error>
+    where
+        R: 'a,
+        G: 'a;
 }
 
 /// Async interface implemented by Peer to receive notifications about wallet
@@ -234,10 +240,10 @@ pub enum PeerMessage {
 
     /// Includes spend of launcher coin id.
     HandshakeE {
-        bundle: Spend,
+        bundle: SpendBundle,
     },
     HandshakeF {
-        bundle: Spend,
+        bundle: SpendBundle,
     },
 
     Nil(PotatoSignatures),
@@ -248,6 +254,7 @@ pub enum PeerMessage {
     RequestPotato,
 }
 
+#[derive(Debug, Clone)]
 pub struct HandshakeStepInfo {
     #[allow(dead_code)]
     pub first_player_hs_info: HandshakeA,
@@ -255,29 +262,25 @@ pub struct HandshakeStepInfo {
     pub second_player_hs_info: HandshakeB,
 }
 
-pub struct HandshakeStepWithLauncher {
-    #[allow(dead_code)]
-    pub info: HandshakeStepInfo,
-    #[allow(dead_code)]
-    pub launcher: CoinString,
-}
-
+#[derive(Debug)]
 pub struct HandshakeStepWithSpend {
     #[allow(dead_code)]
     pub info: HandshakeStepInfo,
     #[allow(dead_code)]
-    pub spend: Spend,
+    pub spend: SpendBundle,
 }
 
+#[derive(Debug)]
 pub enum HandshakeState {
-    PreInit,
     StepA,
-    StepB(CoinString, Box<HandshakeA>),
-    StepC(Box<HandshakeStepInfo>),
-    StepD(Box<HandshakeStepWithLauncher>),
+    StepB,
+    StepC(CoinString, Box<HandshakeA>),
+    StepD(Box<HandshakeStepInfo>),
     StepE(Box<HandshakeStepInfo>),
-    StepF(Box<HandshakeStepWithSpend>),
-    Finished(Box<HandshakeStepInfo>),
+    PostStepE(Box<HandshakeStepInfo>),
+    StepF(Box<HandshakeStepInfo>),
+    PostStepF(Box<HandshakeStepInfo>),
+    Finished(Box<HandshakeStepWithSpend>),
 }
 
 pub trait PacketSender {
@@ -316,8 +319,8 @@ pub struct PotatoHandler {
     my_start_queue: VecDeque<LocalGameStart>,
 
     channel_handler: Option<ChannelHandler>,
-
     channel_initiation_transaction: Option<SpendBundle>,
+    channel_finished_transaction: Option<SpendBundle>,
 
     private_keys: ChannelHandlerPrivateKeys,
 
@@ -359,9 +362,9 @@ impl PotatoHandler {
         PotatoHandler {
             have_potato,
             handshake_state: if have_potato {
-                HandshakeState::PreInit
-            } else {
                 HandshakeState::StepA
+            } else {
+                HandshakeState::StepB
             },
 
             their_start_queue: VecDeque::default(),
@@ -369,6 +372,7 @@ impl PotatoHandler {
 
             channel_handler: None,
             channel_initiation_transaction: None,
+            channel_finished_transaction: None,
 
             private_keys,
             my_contribution,
@@ -411,7 +415,7 @@ impl PotatoHandler {
 
         eprintln!("Start: our channel public key {:?}", channel_public_key);
 
-        assert!(matches!(self.handshake_state, HandshakeState::PreInit));
+        assert!(matches!(self.handshake_state, HandshakeState::StepA));
         let my_hs_info = HandshakeA {
             parent: parent_coin.clone(),
             channel_public_key,
@@ -419,7 +423,8 @@ impl PotatoHandler {
             reward_puzzle_hash: self.reward_puzzle_hash.clone(),
             referee_puzzle_hash,
         };
-        self.handshake_state = HandshakeState::StepB(parent_coin, Box::new(my_hs_info.clone()));
+        self.handshake_state =
+            HandshakeState::StepC(parent_coin.clone(), Box::new(my_hs_info.clone()));
         system_interface.send_message(&PeerMessage::HandshakeA(my_hs_info))?;
 
         Ok(())
@@ -433,7 +438,7 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     {
-        todo!();
+        Ok(())
     }
 
     fn pass_on_channel_handler_message<'a, G, R: Rng + 'a>(
@@ -460,35 +465,74 @@ impl PotatoHandler {
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             _ => {
-                todo!();
+                todo!("unhandled passthrough message {msg_envelope:?}");
             }
         }
 
         Ok(())
     }
 
-    pub fn try_complete_step_d<G, R: Rng>(
+    pub fn try_complete_step_e<'a, G, R: Rng + 'a>(
         &mut self,
-        _penv: &mut dyn PeerEnv<G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        first_player_hs_info: HandshakeA,
+        second_player_hs_info: HandshakeB,
     ) -> Result<(), Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        if let Some(_spend) = self.channel_initiation_transaction.as_ref() {
-            todo!();
-
-            // self.handshake_state = HandshakeState::StepF {
-            // first_player_hs_info: first_player_hs_info.clone(),
-            // second_player_hs_info: second_player_hs_info.clone()
-            // };
+        if let Some(spend) = self.channel_initiation_transaction.as_ref() {
+            self.handshake_state = HandshakeState::Finished(Box::new(HandshakeStepWithSpend {
+                info: HandshakeStepInfo {
+                    first_player_hs_info,
+                    second_player_hs_info,
+                },
+                spend: spend.clone(),
+            }));
 
             // Outer layer already knows the launcher coin string.
             //
             // Provide the channel puzzle hash to the full node bootstrap and
             // it replies with the channel puzzle hash
-            // penv.system_interface.send_message(&PeerMessage::HandshakeE {
-            // bundle:
-            // })?;
+            {
+                let (_env, system_interface) = penv.env();
+                system_interface.send_message(&PeerMessage::HandshakeE {
+                    bundle: spend.clone(),
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn try_complete_step_f<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        first_player_hs_info: HandshakeA,
+        second_player_hs_info: HandshakeB,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        if let Some(spend) = self.channel_finished_transaction.as_ref() {
+            self.handshake_state = HandshakeState::Finished(Box::new(HandshakeStepWithSpend {
+                info: HandshakeStepInfo {
+                    first_player_hs_info,
+                    second_player_hs_info,
+                },
+                spend: spend.clone(),
+            }));
+
+            // Outer layer already knows the launcher coin string.
+            //
+            // Provide the channel puzzle hash to the full node bootstrap and
+            // it replies with the channel puzzle hash
+            {
+                let (_env, system_interface) = penv.env();
+                system_interface.send_message(&PeerMessage::HandshakeF {
+                    bundle: spend.clone(),
+                })?;
+            }
         }
 
         Ok(())
@@ -503,6 +547,9 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
+
+        eprintln!("received message in state {:?}", self.handshake_state);
+
         match &self.handshake_state {
             // non potato progression
             HandshakeState::StepA => {
@@ -521,6 +568,20 @@ impl PotatoHandler {
                     msg.channel_public_key
                 );
 
+                todo!();
+            }
+
+            HandshakeState::StepC(parent_coin, handshake_a) => {
+                let msg_envelope: PeerMessage =
+                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let msg = if let PeerMessage::HandshakeB(msg) = msg_envelope {
+                    msg
+                } else {
+                    return Err(Error::StrErr(format!(
+                        "Expected handshake a message, got {msg_envelope:?}"
+                    )));
+                };
+
                 // XXX Call the UX saying the channel coin has been created
                 // and play can happen.
                 // Register the channel coin in the bootstrap provider.
@@ -530,7 +591,7 @@ impl PotatoHandler {
                 //
                 // That should halt for the channel coin notifiation.
                 let init_data = ChannelHandlerInitiationData {
-                    launcher_coin_id: msg.parent.to_coin_id(),
+                    launcher_coin_id: parent_coin.to_coin_id(),
                     we_start_with_potato: false,
                     their_channel_pubkey: msg.channel_public_key.clone(),
                     their_unroll_pubkey: msg.unroll_public_key.clone(),
@@ -538,8 +599,7 @@ impl PotatoHandler {
                     my_contribution: self.my_contribution.clone(),
                     their_contribution: self.their_contribution.clone(),
                 };
-                let (channel_handler, _init_result) =
-                {
+                let (mut channel_handler, _init_result) = {
                     let (env, _system_interface) = penv.env();
                     ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
                 };
@@ -550,7 +610,9 @@ impl PotatoHandler {
                     if let Some((_, puzzle_hash, _)) = channel_coin.coin_string().to_parts() {
                         puzzle_hash
                     } else {
-                        return Err(Error::StrErr("could not understand channel coin parts".to_string()));
+                        return Err(Error::StrErr(
+                            "could not understand channel coin parts".to_string(),
+                        ));
                     };
 
                 // Send the boostrap wallet interface the channel puzzle hash to use.
@@ -560,18 +622,13 @@ impl PotatoHandler {
                     system_interface.channel_puzzle_hash(&channel_puzzle_hash)?;
                 };
 
-                // init_result
-                // pub channel_puzzle_hash_up: PuzzleHash,
-                // pub my_initial_channel_half_signature_peer: Aggsig,
-
                 let channel_public_key =
                     private_to_public_key(&self.private_keys.my_channel_coin_private_key);
                 let unroll_public_key =
                     private_to_public_key(&self.private_keys.my_unroll_coin_private_key);
                 let referee_public_key =
                     private_to_public_key(&self.private_keys.my_referee_private_key);
-                let referee_puzzle_hash =
-                {
+                let referee_puzzle_hash = {
                     let (env, _system_interface) = penv.env();
                     puzzle_hash_for_pk(env.allocator, &referee_public_key)?
                 };
@@ -583,47 +640,35 @@ impl PotatoHandler {
                     referee_puzzle_hash,
                 };
 
-                self.channel_handler = Some(channel_handler);
-                self.handshake_state = HandshakeState::StepC(Box::new(HandshakeStepInfo {
-                    first_player_hs_info: msg,
-                    second_player_hs_info: our_handshake_data.clone(),
-                }));
-
-                // Factor out to one method.
-                {
-                    let (_env, system_interface) = penv.env();
-                    system_interface
-                        .send_message(&PeerMessage::HandshakeB(our_handshake_data))?;
-                };
-            }
-
-            HandshakeState::StepC(_info) => {
-                let msg_envelope: PeerMessage =
-                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let nil_msg = if let PeerMessage::Nil(nil_msg) = msg_envelope {
-                    nil_msg
-                } else {
-                    return Err(Error::StrErr(format!(
-                        "Expected handshake a message, got {msg_envelope:?}"
-                    )));
-                };
-
-                let ch = self.channel_handler_mut()?;
                 {
                     let (env, system_interface) = penv.env();
-                    ch.received_empty_potato(env, &nil_msg)?;
-                    let nil_msg = ch.send_empty_potato(env)?;
-
-                    system_interface
-                        .send_message(&PeerMessage::Nil(nil_msg))?;
+                    let nil_msg = channel_handler.send_empty_potato(env)?;
+                    system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                 }
+                self.channel_handler = Some(channel_handler);
+
+                self.handshake_state = HandshakeState::StepE(Box::new(HandshakeStepInfo {
+                    first_player_hs_info: *handshake_a.clone(),
+                    second_player_hs_info: our_handshake_data.clone(),
+                }));
+            }
+
+            HandshakeState::StepE(info) => {
+                let first_player_hs = info.first_player_hs_info.clone();
+                let second_player_hs = info.second_player_hs_info.clone();
+
+                self.handshake_state = HandshakeState::PostStepE(info.clone());
+
+                self.pass_on_channel_handler_message(penv, msg)?;
+
+                self.try_complete_step_e(penv, first_player_hs, second_player_hs)?;
             }
 
             // potato progression
-            HandshakeState::StepB(parent_coin, my_hs_info) => {
+            HandshakeState::StepB => {
                 let msg_envelope: PeerMessage =
                     bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let msg = if let PeerMessage::HandshakeB(msg) = msg_envelope {
+                let msg = if let PeerMessage::HandshakeA(msg) = msg_envelope {
                     msg
                 } else {
                     return Err(Error::StrErr(format!(
@@ -632,7 +677,7 @@ impl PotatoHandler {
                 };
 
                 let init_data = ChannelHandlerInitiationData {
-                    launcher_coin_id: parent_coin.to_coin_id(),
+                    launcher_coin_id: msg.parent.to_coin_id(),
                     we_start_with_potato: true,
                     their_channel_pubkey: msg.channel_public_key.clone(),
                     their_unroll_pubkey: msg.unroll_public_key.clone(),
@@ -640,44 +685,96 @@ impl PotatoHandler {
                     my_contribution: self.my_contribution.clone(),
                     their_contribution: self.their_contribution.clone(),
                 };
-                let (mut channel_handler, _init_result) =
-                    {
-                        let (env, _system_interface) = penv.env();
-                        ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
-                    };
-
-                let nil_sigs =
-                {
+                let (channel_handler, _init_result) = {
                     let (env, _system_interface) = penv.env();
-                        channel_handler.send_empty_potato(env)?
-                    };
+                    ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
+                };
+
+                let channel_public_key =
+                    private_to_public_key(&channel_handler.channel_private_key());
+                let unroll_public_key =
+                    private_to_public_key(&channel_handler.unroll_private_key());
+                let referee_public_key =
+                    private_to_public_key(&self.private_keys.my_referee_private_key);
+                let referee_puzzle_hash = {
+                    let (env, _system_interface) = penv.env();
+                    puzzle_hash_for_pk(env.allocator, &referee_public_key)?
+                };
+
+                let my_hs_info = HandshakeB {
+                    channel_public_key,
+                    unroll_public_key,
+                    reward_puzzle_hash: self.reward_puzzle_hash.clone(),
+                    referee_puzzle_hash,
+                };
 
                 self.channel_handler = Some(channel_handler);
-                self.handshake_state = HandshakeState::StepD(Box::new(HandshakeStepWithLauncher {
-                    info: HandshakeStepInfo {
-                        first_player_hs_info: *my_hs_info.clone(),
-                        second_player_hs_info: msg,
-                    },
-                    launcher: parent_coin.clone()
+                self.handshake_state = HandshakeState::StepD(Box::new(HandshakeStepInfo {
+                    first_player_hs_info: msg.clone(),
+                    second_player_hs_info: my_hs_info.clone(),
                 }));
 
                 {
                     let (_env, system_interface) = penv.env();
-                    system_interface
-                        .send_message(&PeerMessage::Nil(nil_sigs))?;
+                    system_interface.send_message(&PeerMessage::HandshakeB(my_hs_info))?;
                 }
             }
 
-            HandshakeState::StepD { ..
-                 // _first_player_hs_info,
-                 // _second_player_hs_info,
-            } => {
+            HandshakeState::StepD(info) => {
+                self.handshake_state = HandshakeState::StepF(info.clone());
+
                 self.pass_on_channel_handler_message(penv, msg)?;
-                self.try_complete_step_d(penv)?;
+
+                let ch = self.channel_handler_mut()?;
+                {
+                    let (env, system_interface) = penv.env();
+                    let nil_msg = ch.send_empty_potato(env)?;
+                    system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
+                }
+            }
+
+            HandshakeState::StepF(info) => {
+                let msg_envelope: PeerMessage =
+                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let bundle = if let PeerMessage::HandshakeE { bundle } = msg_envelope {
+                    bundle
+                } else {
+                    return Err(Error::StrErr(format!(
+                        "Expected handshake e message, got {msg_envelope:?}"
+                    )));
+                };
+
+                {
+                    let (_env, system_interface) = penv.env();
+                    system_interface.received_channel_offer(&bundle)?;
+                }
+
+                let first_player_hs = info.first_player_hs_info.clone();
+                let second_player_hs = info.second_player_hs_info.clone();
+
+                self.handshake_state = HandshakeState::PostStepF(info.clone());
+
+                self.try_complete_step_f(penv, first_player_hs, second_player_hs)?;
+            }
+
+            HandshakeState::Finished(_) => {
+                let msg_envelope: PeerMessage =
+                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let spend = if let PeerMessage::HandshakeF { bundle } = msg_envelope {
+                    bundle
+                } else {
+                    self.pass_on_channel_handler_message(penv, msg)?;
+                    return Ok(());
+                };
+
+                self.channel_finished_transaction = Some(spend);
             }
 
             _ => {
-                todo!();
+                return Err(Error::StrErr(format!(
+                    "should not receive message in state {:?}",
+                    self.handshake_state
+                )));
             }
         }
 
@@ -688,25 +785,48 @@ impl PotatoHandler {
 impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender, R: Rng>
     BootstrapTowardGame<G, R> for PotatoHandler
 {
-    fn channel_offer(
+    fn channel_offer<'a>(
         &mut self,
-        penv: &mut dyn PeerEnv<G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
         bundle: SpendBundle,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        R: 'a,
+        G: 'a,
+    {
         self.channel_initiation_transaction = Some(bundle);
 
-        if matches!(self.handshake_state, HandshakeState::StepD { .. }) {
-            self.try_complete_step_d(penv)?;
+        eprintln!("channel offer: {:?}", self.handshake_state);
+        if let HandshakeState::PostStepE(info) = &self.handshake_state {
+            self.try_complete_step_e(
+                penv,
+                info.first_player_hs_info.clone(),
+                info.second_player_hs_info.clone(),
+            )?;
         }
 
         Ok(())
     }
 
-    fn channel_transaction_completion(
+    fn channel_transaction_completion<'a>(
         &mut self,
-        _penv: &mut dyn PeerEnv<G, R>,
-        _bundle: &SpendBundle,
-    ) -> Result<(), Error> {
-        todo!();
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        bundle: &SpendBundle,
+    ) -> Result<(), Error>
+    where
+        R: 'a,
+        G: 'a,
+    {
+        self.channel_finished_transaction = Some(bundle.clone());
+
+        if let HandshakeState::PostStepF(info) = &self.handshake_state {
+            self.try_complete_step_f(
+                penv,
+                info.first_player_hs_info.clone(),
+                info.second_player_hs_info.clone(),
+            )?;
+        }
+
+        Ok(())
     }
 }
