@@ -50,12 +50,19 @@ UX
 Messages
 
 Handshake
-A: launcher_coin_string, public_keys, reward_puzzle_hash
-B: public_keys, reward_puzzle_hash
-C: send potato state 0
-D: send potato state 1
-E: channel initiation offer
-F: channel initiation full transaction
+Alice A: launcher_coin_string, public_keys, reward_puzzle_hash -> Sends msg A
+Bob   B: public_keys, reward_puzzle_hash                       -> Sends msg B
+Alice C: send potato state 0                                   -> Sends potato nil
+Bob   D: send potato state 1                                   -> Sends potato nil
+Alice E: channel initiation offer                              -> alice sends msg E when
+                                                                  channel_offer callback
+                                                                  arrives.
+Bob   F: channel initiation full transaction                   -> bob calls
+                                                                  received_channel_offer
+                                                                  and replies with msg F
+                                                                  when
+                                                                  channel_transaction_completion
+                                                                  arrives.
 
 send_potato_nil: unroll_signatures
 send_potato_start_game: unroll_signatures
