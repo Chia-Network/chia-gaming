@@ -33,7 +33,7 @@ pub fn make_debug_game_handler(
     timeout: &Timeout,
 ) -> DebugGamePrograms {
     let debug_game_handler =
-        read_hex_puzzle(allocator, "resources/debug_game_handler.hex").expect("should be readable");
+        read_hex_puzzle(allocator, "clsp/test/debug_game_handler.hex").expect("should be readable");
     let game_handler_mod_hash = debug_game_handler.sha256tree(allocator);
     let make_curried_game_handler = |my_turn: bool| {
         let aggsig = Aggsig::default();

@@ -1,7 +1,0 @@
-(defun flatten_card ((rank . suit))
-    (logior (lsh rank 4) suit)
-)
-
-(defun unflatten_card (my_card)
-    (c (lsh my_card -4) (logand my_card 15))
-)
