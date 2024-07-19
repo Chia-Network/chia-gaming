@@ -1,8 +1,0 @@
-(defun assert_ (items)
-    (if (r items)
-        (qq (if (unquote (f items)) (unquote (assert_ (r items))) (x)))
-        (f items)
-    )
-)
-
-(defmac assert items (assert_ items))

@@ -157,11 +157,11 @@ pub fn channel_handler_env<'a, R: Rng>(
     let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
     let unroll_puzzle = read_hex_puzzle(
         allocator,
-        "resources/unroll_puzzle_state_channel_unrolling.hex",
+        "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
     )
     .expect("should read");
     let unroll_metapuzzle =
-        read_hex_puzzle(allocator, "resources/unroll_meta_puzzle.hex").expect("should read");
+        read_hex_puzzle(allocator, "clsp/unroll/unroll_meta_puzzle.hex").expect("should read");
     let standard_puzzle = get_standard_coin_puzzle(allocator).expect("should load");
     ChannelHandlerEnv {
         allocator,

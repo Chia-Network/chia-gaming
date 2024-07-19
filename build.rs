@@ -15,7 +15,9 @@ fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {
     let mut arguments: HashMap<String, ArgumentValue> = HashMap::new();
     arguments.insert(
         "include".to_string(),
-        ArgumentValue::ArgArray(vec![ArgumentValue::ArgString(None, ".".to_string())]),
+        ArgumentValue::ArgArray(vec![
+            ArgumentValue::ArgString(None, "clsp".to_string()),
+        ]),
     );
 
     let file_content = fs::read_to_string(filename).map_err(|e| {

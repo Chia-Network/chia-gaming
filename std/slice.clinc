@@ -1,7 +1,0 @@
-; returns the first count elements of mylist
-(defun slice (mylist count)
-    (if (print (list "slice inputs" nylist count) (not count))
-        0
-        (c (f mylist) (slice (r mylist) (- count 1)))
-    )
-)

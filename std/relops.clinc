@@ -1,4 +1,0 @@
-(defun-inline >= (A B) (not (> B A)))
-(defun-inline <= (A B) (not (> A B)))
-(defun-inline <  (A B) (> B A))
-(defun-inline != (A B) (not (= A B)))
