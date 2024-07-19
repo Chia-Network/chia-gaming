@@ -220,12 +220,11 @@ fn run_move<'a, R: Rng>(
     who: usize,
 ) -> Result<bool, Error> {
     assert!(pipe[who ^ 1].queue.len() < 2);
-    let msg =
-        if let Some(msg) = pipe[who ^ 1].queue.pop_front() {
-            msg
-        } else {
-            return Ok(false);
-        };
+    let msg = if let Some(msg) = pipe[who ^ 1].queue.pop_front() {
+        msg
+    } else {
+        return Ok(false);
+    };
 
     let mut penv: TestPeerEnv<Pipe, R> = TestPeerEnv {
         env: env,
@@ -294,10 +293,10 @@ fn test_peer_smoke() {
         peers[0].start(&mut penv, parent_coin).expect("should work");
     };
 
-    // XXX Keep going to more message handling.
     let mut i = 0;
     let mut messages = 0;
 
+    // Do handshake for peers.
     while !peers[0].handshake_finished() && !peers[1].handshake_finished() {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
         let who = i % 2;
@@ -308,7 +307,8 @@ fn test_peer_smoke() {
             &mut peers[who],
             who,
         )
-        .expect("should send") {
+        .expect("should send")
+        {
             messages += 1;
         }
 
