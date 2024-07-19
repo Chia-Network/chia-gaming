@@ -218,9 +218,14 @@ fn run_move<'a, R: Rng>(
     pipe: &'a mut [Pipe; 2],
     peer: &mut PotatoHandler,
     who: usize,
-) -> Result<(), Error> {
-    assert_eq!(pipe[who ^ 1].queue.len(), 1);
-    let msg = pipe[who ^ 1].queue.pop_front().unwrap();
+) -> Result<bool, Error> {
+    assert!(pipe[who ^ 1].queue.len() < 2);
+    let msg =
+        if let Some(msg) = pipe[who ^ 1].queue.pop_front() {
+            msg
+        } else {
+            return Ok(false);
+        };
 
     let mut penv: TestPeerEnv<Pipe, R> = TestPeerEnv {
         env: env,
@@ -239,7 +244,7 @@ fn run_move<'a, R: Rng>(
         penv.test_handle_received_unfunded_offer(peer, &ufo)?;
     }
 
-    Ok(())
+    Ok(true)
 }
 
 #[test]
@@ -290,16 +295,25 @@ fn test_peer_smoke() {
     };
 
     // XXX Keep going to more message handling.
-    for i in 1..=6 {
+    let mut i = 0;
+    let mut messages = 0;
+
+    while !peers[0].handshake_finished() && !peers[1].handshake_finished() {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
         let who = i % 2;
-        run_move(
+        if run_move(
             &mut env,
             Amount::new(200),
             &mut pipe_sender,
             &mut peers[who],
             who,
         )
-        .expect("should send");
+        .expect("should send") {
+            messages += 1;
+        }
+
+        i += 1;
+
+        assert!(messages + 2 >= i);
     }
 }
