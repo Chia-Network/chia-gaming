@@ -397,6 +397,10 @@ impl PotatoHandler {
         }
     }
 
+    pub fn handshake_finished(&self) -> bool {
+        matches!(self.handshake_state, HandshakeState::Finished(_))
+    }
+
     pub fn start<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &'a mut dyn PeerEnv<'a, G, R>,
