@@ -1,3 +1,5 @@
+use log::debug;
+
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
@@ -80,7 +82,7 @@ fn test_play_calpoker_happy_path() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
     let test1 = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
-    eprintln!("play_result {test1:?}");
+    debug!("play_result {test1:?}");
 }
 
 #[test]
@@ -94,7 +96,7 @@ fn test_play_calpoker_on_chain_after_1_move_p1() {
     let mut on_chain_moves_1: Vec<GameAction> = moves.into_iter().take(1).collect();
     on_chain_moves_1.push(GameAction::GoOnChain(true as usize));
     let test2 = run_calpoker_play_test(&mut allocator, &on_chain_moves_1).expect("should work");
-    eprintln!("play_result {test2:?}");
+    debug!("play_result {test2:?}");
 }
 
 #[test]
@@ -105,7 +107,7 @@ fn test_play_calpoker_on_chain_after_1_move_p0_lost_message() {
         moves.into_iter().take(1).map(|x| x.lose()).collect();
     on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
     let test3 = run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
-    eprintln!("play_result {test3:?}");
+    debug!("play_result {test3:?}");
 }
 
 #[test]
@@ -115,7 +117,7 @@ fn test_play_calpoker_on_chain_after_1_move_p0() {
     let mut on_chain_moves_2: Vec<GameAction> = moves.into_iter().take(1).collect();
     on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
     let test3 = run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
-    eprintln!("play_result {test3:?}");
+    debug!("play_result {test3:?}");
 }
 
 #[test]
@@ -126,7 +128,7 @@ fn test_play_calpoker_on_chain_after_2_moves_p0() {
     let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
     on_chain_moves_3.push(GameAction::GoOnChain(false as usize));
     let test4 = run_calpoker_play_test(&mut allocator, &on_chain_moves_3).expect("should work");
-    eprintln!("play_result {test4:?}");
+    debug!("play_result {test4:?}");
 }
 #[test]
 fn test_play_calpoker_on_chain_after_2_moves_p1() {
@@ -138,7 +140,7 @@ fn test_play_calpoker_on_chain_after_2_moves_p1() {
     let test4 = run_calpoker_play_test(&mut allocator, &on_chain_moves_3);
     assert!(test4.is_err());
     assert!(format!("{:?}", test4).contains("from the past"));
-    eprintln!("play_result {test4:?}");
+    debug!("play_result {test4:?}");
 }
 
 // Bram: slashing tests

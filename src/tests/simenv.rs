@@ -6,6 +6,8 @@ use clvmr::{run_program, NodePtr};
 
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 
+use log::debug;
+
 use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::runner::{channel_handler_env, ChannelHandlerGame};
@@ -118,8 +120,8 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let cc_ph = cc_spend
             .channel_puzzle_reveal
             .sha256tree(self.env.allocator);
-        eprintln!("puzzle hash to spend state channel coin: {cc_ph:?}");
-        eprintln!(
+        debug!("puzzle hash to spend state channel coin: {cc_ph:?}");
+        debug!(
             "spend conditions {}",
             disassemble(
                 self.env.allocator.allocator(),
@@ -134,7 +136,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let aggregate_public_key2 = self.parties.player(1).ch.get_aggregate_channel_public_key();
         assert_eq!(aggregate_public_key1, aggregate_public_key2);
 
-        eprintln!("parent coin {:?}", state_channel.to_parts());
+        debug!("parent coin {:?}", state_channel.to_parts());
         let spend1 = standard_solution_partial(
             self.env.allocator,
             &private_key_1,
@@ -144,7 +146,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             &self.env.agg_sig_me_additional_data,
             true,
         )?;
-        eprintln!("party1 predicted sig {:?}", spend1.signature);
+        debug!("party1 predicted sig {:?}", spend1.signature);
         let spend2 = standard_solution_partial(
             self.env.allocator,
             &private_key_2,
@@ -154,7 +156,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             &self.env.agg_sig_me_additional_data,
             true,
         )?;
-        eprintln!("party2 predicted sig {:?}", spend2.signature);
+        debug!("party2 predicted sig {:?}", spend2.signature);
         let signature = spend1.signature.clone() + spend2.signature.clone();
         let predicted_puzzle = puzzle_for_synthetic_public_key(
             self.env.allocator,
@@ -254,15 +256,15 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
         self.simulator.farm_block(&self.identities[0].puzzle_hash);
 
-        eprintln!(
+        debug!(
             "private key 1: {:?}",
             self.parties.player(0).ch.unroll_private_key()
         );
-        eprintln!(
+        debug!(
             "private key 2: {:?}",
             self.parties.player(1).ch.unroll_private_key()
         );
-        eprintln!("doing transaction");
+        debug!("doing transaction");
         let included = self
             .simulator
             .push_tx(
@@ -307,12 +309,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             &ReadableMove::from_nodeptr(readable),
         )?;
         let post_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env)?;
-        eprintln!("post_unroll_data {post_unroll_data:?}");
+        debug!("post_unroll_data {post_unroll_data:?}");
         todo!();
     }
 
     pub fn perform_action(&mut self, action: &GameAction) -> Result<GameActionResult, Error> {
-        eprintln!("play move {action:?}");
+        debug!("play move {action:?}");
         match action {
             GameAction::Move(player, readable, received) => {
                 match &self.on_chain {
@@ -331,7 +333,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .player(*player)
                     .ch
                     .get_unroll_target(&mut self.env)?;
-                eprintln!("GO ON CHAIN: {state_number} {my_amount:?} {their_amount:?}");
+                debug!("GO ON CHAIN: {state_number} {my_amount:?} {their_amount:?}");
                 let state_channel_coin = match self.on_chain.clone() {
                     OnChainState::OffChain(coin) => coin.clone(),
                     _ => {
@@ -342,11 +344,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 let aggregate_public_key =
                     private_to_public_key(&self.parties.player(0).ch.channel_private_key())
                         + private_to_public_key(&self.parties.player(1).ch.channel_private_key());
-                eprintln!("going on chain: aggregate public key is: {aggregate_public_key:?}",);
+                debug!("going on chain: aggregate public key is: {aggregate_public_key:?}",);
 
                 let (channel_coin_conditions, unroll_coin) =
                     self.spend_channel_coin(*player, state_channel_coin, &unroll_target)?;
-                eprintln!("unroll_coin {unroll_coin:?}");
+                debug!("unroll_coin {unroll_coin:?}");
 
                 let _channel_spent_result_1 = self
                     .parties
@@ -361,7 +363,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
                 let game_coins = self.do_unroll_spend_to_games(*player, unroll_coin)?;
 
-                eprintln!(
+                debug!(
                     "channel coin conditions {}",
                     disassemble(
                         self.env.allocator.allocator(),
@@ -397,12 +399,12 @@ fn test_sim() {
     let s = Simulator::new();
     let private_key: PrivateKey = rng.gen();
     let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
-    eprintln!("identity public key {:?}", identity.public_key);
+    debug!("identity public key {:?}", identity.public_key);
     s.farm_block(&identity.puzzle_hash);
 
     let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
-    eprintln!("coin 0 {:?}", coins[0].to_parts());
-    eprintln!("coin 0 id {:?}", coins[0].to_coin_id());
+    debug!("coin 0 {:?}", coins[0].to_parts());
+    debug!("coin 0 id {:?}", coins[0].to_coin_id());
 
     let (_, _, amt) = coins[0].to_parts().unwrap();
     s.spend_coin_to_puzzle_hash(
@@ -589,13 +591,13 @@ fn test_referee_can_slash_on_chain() {
         disassembled_puzzle_in_transaction
     );
 
-    eprintln!("timeout_transaction {timeout_transaction:?}");
+    debug!("timeout_transaction {timeout_transaction:?}");
     let puzzle_clvm = timeout_transaction
         .bundle
         .puzzle
         .to_clvm(&mut allocator)
         .expect("should work");
-    eprintln!(
+    debug!(
         "referee puzzle curried {}",
         disassemble(allocator.allocator(), puzzle_clvm, None)
     );
@@ -686,7 +688,7 @@ fn test_referee_can_move_on_chain() {
 
     // Create the referee coin.
     let (_, _, amt) = coins[0].to_parts().unwrap();
-    eprintln!("state at start of referee object");
+    debug!("state at start of referee object");
     let spend_to_referee = reftest
         .my_referee
         .curried_referee_puzzle_for_validator(&mut allocator)
@@ -695,7 +697,7 @@ fn test_referee_can_move_on_chain() {
         .to_clvm(&mut allocator)
         .expect("should work");
     let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
-    eprintln!(
+    debug!(
         "referee start state {}",
         disassemble(allocator.allocator(), spend_to_referee_clvm, None)
     );
@@ -720,13 +722,13 @@ fn test_referee_can_move_on_chain() {
         )
         .expect("should work");
 
-    eprintln!("move_transaction {move_transaction:?}");
+    debug!("move_transaction {move_transaction:?}");
     let specific = CoinSpend {
         coin: referee_coins[0].clone(),
         bundle: move_transaction.bundle.clone(),
     };
 
     let included = s.push_tx(&mut allocator, &[specific]).expect("should work");
-    eprintln!("included {included:?}");
+    debug!("included {included:?}");
     assert_eq!(included.code, 1);
 }

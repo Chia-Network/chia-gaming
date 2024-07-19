@@ -29,6 +29,9 @@ salvo = "0.64.0"
 tokio = { version = "1", features = ["macros"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+ctor = "0.2.8"
+log = "0.4.22"
+env_logger = "0.11.3"
 
 [dev-dependencies]
 pyo3 = { version = "0.20.0", features = ["auto-initialize"] }

@@ -5,6 +5,8 @@ use clvmr::run_program;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
+use log::debug;
+
 use rand::Rng;
 
 use crate::channel_handler::game_handler::{
@@ -181,17 +183,17 @@ fn curry_referee_puzzle_hash(
 ) -> Result<PuzzleHash, Error> {
     let args_to_curry: Vec<Node> = args.to_node_list(allocator, referee_coin_puzzle_hash)?;
     let combined_args = args_to_curry.to_clvm(allocator).into_gen()?;
-    eprintln!(
+    debug!(
         "combined_args {}",
         disassemble(allocator.allocator(), combined_args, None)
     );
     let arg_hash = Node(combined_args).sha256tree(allocator);
     let arg_hash_clvm = arg_hash.to_clvm(allocator).into_gen()?;
-    eprintln!(
+    debug!(
         "curried in puzzle arg_hash {}",
         disassemble(allocator.allocator(), arg_hash_clvm, None)
     );
-    eprintln!(
+    debug!(
         "curry_referee_puzzle_hash {}",
         disassemble(allocator.allocator(), combined_args, None)
     );
@@ -212,7 +214,7 @@ fn curry_referee_puzzle(
 ) -> Result<Puzzle, Error> {
     let args_to_curry: Vec<Node> = args.to_node_list(allocator, referee_coin_puzzle_hash)?;
     let combined_args = args_to_curry.to_clvm(allocator).into_gen()?;
-    eprintln!(
+    debug!(
         "curry_referee_puzzle {}",
         disassemble(allocator.allocator(), combined_args, None)
     );
@@ -703,7 +705,7 @@ impl RefereeMaker {
         state: NodePtr,
         details: &GameMoveDetails,
     ) -> Result<(), Error> {
-        eprintln!("accept move {details:?}");
+        debug!("accept move {details:?}");
         let new_state = match &self.state {
             RefereeMakerGameState::Initial { initial_move, .. } => {
                 RefereeMakerGameState::AfterOurTurn {
@@ -747,7 +749,7 @@ impl RefereeMaker {
         game_handler: Option<GameHandler>,
         details: &GameMoveDetails,
     ) -> Result<(), Error> {
-        eprintln!("accept their move {details:?}");
+        debug!("accept their move {details:?}");
 
         // An empty handler if the game ended.
         let raw_game_handler = if let Some(g) = game_handler.as_ref() {
@@ -799,7 +801,7 @@ impl RefereeMaker {
             self.finished = true;
         }
 
-        eprintln!("accept their move: {new_state:?}");
+        debug!("accept their move: {new_state:?}");
         self.state = new_state;
         Ok(())
     }
@@ -836,7 +838,7 @@ impl RefereeMaker {
                 ),
             };
 
-        eprintln!("my turn: previous_validation_info_hash {previous_validation_info_hash:?}");
+        debug!("my turn: previous_validation_info_hash {previous_validation_info_hash:?}");
 
         let result = game_handler.call_my_turn_driver(
             allocator,
@@ -852,8 +854,8 @@ impl RefereeMaker {
             },
         )?;
 
-        eprintln!("my turn result {result:?}");
-        eprintln!(
+        debug!("my turn result {result:?}");
+        debug!(
             "new state {}",
             disassemble(allocator.allocator(), result.state, None)
         );
@@ -886,7 +888,7 @@ impl RefereeMaker {
             },
         )?;
 
-        eprintln!("new_curried_referee_puzzle_hash (our turn) {new_curried_referee_puzzle_hash:?}");
+        debug!("new_curried_referee_puzzle_hash (our turn) {new_curried_referee_puzzle_hash:?}");
         Ok(GameMoveWireData {
             puzzle_hash_for_unroll: new_curried_referee_puzzle_hash,
             details: result.game_move.clone(),
@@ -1041,7 +1043,7 @@ impl RefereeMaker {
             //
             // OnChainRefereeSolution encodes this properly.
             let transaction_solution = args.to_clvm(allocator).into_gen()?;
-            eprintln!(
+            debug!(
                 "transaction_solution {}",
                 disassemble(allocator.allocator(), transaction_solution, None)
             );
@@ -1128,7 +1130,7 @@ impl RefereeMaker {
         // The current referee uses the previous state since we have already
         // taken the move.
         //
-        eprintln!("get_transaction_for_move: previous curry");
+        debug!("get_transaction_for_move: previous curry");
         let (their_most_recent_game_move, previous_validation_info_hash) =
             self.get_their_move_and_validation_info_for_onchain_move()?;
 
@@ -1146,7 +1148,7 @@ impl RefereeMaker {
             &self.referee_coin_puzzle_hash,
             &existing_curry_args,
         )?;
-        eprintln!("actual puzzle reveal");
+        debug!("actual puzzle reveal");
         let spend_puzzle = curry_referee_puzzle(
             allocator,
             &self.referee_coin_puzzle,
@@ -1155,7 +1157,7 @@ impl RefereeMaker {
         )?;
 
         let spend_puzzle_nodeptr = spend_puzzle.to_clvm(allocator).into_gen()?;
-        eprintln!(
+        debug!(
             "spend puzzle {}",
             disassemble(allocator.allocator(), spend_puzzle_nodeptr, None)
         );
@@ -1164,7 +1166,7 @@ impl RefereeMaker {
             current_referee_puzzle_hash
         );
 
-        eprintln!("get_transaction_for_move: target curry");
+        debug!("get_transaction_for_move: target curry");
         let game_move = self.get_our_most_recent_game_move()?;
         let target_args = RefereePuzzleArgs {
             mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
@@ -1184,7 +1186,7 @@ impl RefereeMaker {
             &target_args,
         )?;
         let target_referee_puzzle_nodeptr = target_referee_puzzle.to_clvm(allocator).into_gen()?;
-        eprintln!(
+        debug!(
             "target_referee_puzzle {}",
             disassemble(allocator.allocator(), target_referee_puzzle_nodeptr, None)
         );
@@ -1261,7 +1263,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
     ) -> Result<TheirTurnMoveResult, Error> {
-        eprintln!("do their turn {details:?}");
+        debug!("do their turn {details:?}");
 
         let handler = self.get_game_handler();
 
@@ -1287,7 +1289,7 @@ impl RefereeMaker {
             }
         };
 
-        eprintln!("their turn: previous_validation_info_hash {previous_validation_info_hash:?}");
+        debug!("their turn: previous_validation_info_hash {previous_validation_info_hash:?}");
 
         // Retrieve evidence from their turn handler.
         let result = handler.call_their_turn_driver(
@@ -1349,7 +1351,7 @@ impl RefereeMaker {
                 previous_validation_info_hash,
             },
         )?;
-        eprintln!(
+        debug!(
             "new_curried_referee_puzzle_hash (their turn): {:?}",
             puzzle_hash_for_unroll
         );

@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
-use clvmr::run_program;
-
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{AllocEncoder, Node, Sha256Input};
+
+use clvm_traits::ToClvm;
+use clvmr::run_program;
 
 use clvm_tools_rs::classic::clvm::sexp::first;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
@@ -16,6 +16,8 @@ use clvm_tools_rs::compiler::clvm::{convert_from_clvm_rs, run};
 use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
 use clvm_tools_rs::compiler::comptypes::CompilerOpts;
 use clvm_tools_rs::compiler::srcloc::Srcloc;
+
+use log::debug;
 
 #[test]
 fn test_prepend_count() {
@@ -915,12 +917,12 @@ fn test_handcalc() {
             )
             .expect("should run")
             .1;
-            eprintln!("{explanation:?}");
-            eprintln!(
+            debug!("{explanation:?}");
+            debug!(
                 "result 1 {}",
                 disassemble(allocator.allocator(), result_1, None)
             );
-            eprintln!(
+            debug!(
                 "result 2 {}",
                 disassemble(allocator.allocator(), result_2, None)
             );
@@ -947,7 +949,7 @@ fn test_handcalc() {
         };
 
     for test in examples.into_iter() {
-        eprintln!("test {test:?}");
+        debug!("test {test:?}");
         test_handcalc_with_example(test);
     }
 }
