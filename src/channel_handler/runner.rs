@@ -1,3 +1,4 @@
+use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::{
@@ -128,7 +129,7 @@ impl ChannelHandlerGame {
         spend: &ChannelCoinSpendInfo,
     ) -> Result<(), Error> {
         if let Some(r) = &mut self.handshake_result[player] {
-            eprintln!("UPDATE CHANNEL COIN AFTER RECEIVE");
+            debug!("UPDATE CHANNEL COIN AFTER RECEIVE");
             r.spend = spend.clone();
             return Ok(());
         }

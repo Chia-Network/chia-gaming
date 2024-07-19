@@ -3,6 +3,8 @@ use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
 
+use log::debug;
+
 use rand::distributions::Standard;
 use rand::prelude::*;
 
@@ -406,7 +408,7 @@ impl ChannelCoin {
         aggregate_public_key: &PublicKey,
         conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        eprintln!(
+        debug!(
             "STATE CONDITONS: {}",
             disassemble(env.allocator.allocator(), conditions, None)
         );
@@ -431,7 +433,7 @@ impl ChannelCoin {
         amount: &Amount,
         unroll_coin: &UnrollCoin,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        eprintln!(
+        debug!(
             "making solution for channel coin with unroll state {}",
             unroll_coin.state_number
         );
@@ -685,11 +687,11 @@ impl UnrollCoin {
         let conditions_hash = Node(unroll_conditions).sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(unroll_private_key);
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
-        eprintln!(
+        debug!(
             "conditions {}",
             disassemble(env.allocator.allocator(), unroll_conditions, None)
         );
-        eprintln!("conditions_hash {conditions_hash:?}");
+        debug!("conditions_hash {conditions_hash:?}");
         let unroll_signature = unsafe_sign_partial(
             unroll_private_key,
             &unroll_aggregate_key,
@@ -703,12 +705,12 @@ impl UnrollCoin {
             signature: unroll_signature.clone(),
         });
 
-        eprintln!("AGGREGATE PUBLIC KEY {:?}", unroll_aggregate_key);
-        eprintln!(
+        debug!("AGGREGATE PUBLIC KEY {:?}", unroll_aggregate_key);
+        debug!(
             "SIGNATURE {} {:?}",
             self.started_with_potato, unroll_signature
         );
-        eprintln!(
+        debug!(
             "UNROLL UPDATE {} {}",
             self.started_with_potato,
             disassemble(env.allocator.allocator(), unroll_conditions, None)

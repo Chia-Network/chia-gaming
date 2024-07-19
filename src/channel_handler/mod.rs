@@ -6,6 +6,8 @@ pub mod types;
 use std::borrow::BorrowMut;
 use std::cmp::Ordering;
 
+use log::debug;
+
 use rand::prelude::*;
 
 use clvm_traits::ToClvm;
@@ -227,13 +229,13 @@ impl ChannelHandler {
 
         let aggregate_public_key =
             our_channel_pubkey.clone() + initiation.their_channel_pubkey.clone();
-        eprintln!(
+        debug!(
             "construct channel handler {}",
             initiation.we_start_with_potato
         );
-        eprintln!("aggregate public key {aggregate_public_key:?}");
-        eprintln!("our unroll public key {our_unroll_pubkey:?}");
-        eprintln!(
+        debug!("aggregate public key {aggregate_public_key:?}");
+        debug!("our unroll public key {our_unroll_pubkey:?}");
+        debug!(
             "their unroll public key {:?}",
             initiation.their_unroll_pubkey
         );
@@ -340,21 +342,21 @@ impl ChannelHandler {
     ) -> Result<HandshakeResult, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
 
-        eprintln!("finish_handshake");
+        debug!("finish_handshake");
         let channel_coin_spend =
             self.create_conditions_and_signature_of_channel_coin(env, &self.unroll.coin)?;
 
-        eprintln!("their sig {:?}", their_initial_channel_half_signature);
+        debug!("their sig {:?}", their_initial_channel_half_signature);
         let combined_signature =
             channel_coin_spend.signature.clone() + their_initial_channel_half_signature.clone();
-        eprintln!("combined signature {combined_signature:?}");
+        debug!("combined signature {combined_signature:?}");
 
         let state_channel_puzzle = puzzle_for_synthetic_public_key(
             env.allocator,
             &env.standard_puzzle,
             &aggregate_public_key,
         )?;
-        eprintln!(
+        debug!(
             "puzzle hash for state channel coin (ch) {:?}",
             state_channel_puzzle.sha256tree(env.allocator)
         );
@@ -475,7 +477,7 @@ impl ChannelHandler {
 
         let full_signature =
             channel_coin_spend.signature.clone() + their_channel_half_signature.clone();
-        eprintln!("combined signature {full_signature:?}");
+        debug!("combined signature {full_signature:?}");
         if full_signature.verify(&aggregate_public_key, &channel_coin_spend.message) {
             Ok(BrokenOutCoinSpendInfo {
                 signature: full_signature,
@@ -501,7 +503,7 @@ impl ChannelHandler {
             &self.their_unroll_coin_public_key,
             inputs,
         )?;
-        eprintln!(
+        debug!(
             "verify: started with potato: {}",
             test_unroll.started_with_potato
         );
@@ -617,11 +619,11 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         start_info_list: &[GameStartInfo],
     ) -> Result<PotatoSignatures, Error> {
-        eprintln!("SEND POTATO START GAME");
+        debug!("SEND POTATO START GAME");
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
 
-        eprintln!(
+        debug!(
             "send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
@@ -632,15 +634,15 @@ impl ChannelHandler {
             their_full_contribution.clone(),
         )));
 
-        eprintln!(
+        debug!(
             "send: started with potato: {}",
             self.unroll.coin.started_with_potato
         );
 
-        eprintln!("before adding games: {} games", self.live_games.len());
+        debug!("before adding games: {} games", self.live_games.len());
         let mut new_games = self.add_games(env, start_info_list)?;
         self.live_games.append(&mut new_games);
-        eprintln!("after adding games: {} games", self.live_games.len());
+        debug!("after adding games: {} games", self.live_games.len());
 
         self.my_allocated_balance += my_full_contribution;
         self.their_allocated_balance += their_full_contribution;
@@ -654,7 +656,7 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         start_info_list: &[GameStartInfo],
     ) -> Result<ChannelCoinSpendInfo, Error> {
-        eprintln!(
+        debug!(
             "RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",
             self.current_state_number, self.unroll.coin.state_number
         );
@@ -663,7 +665,7 @@ impl ChannelHandler {
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
 
-        eprintln!(
+        debug!(
             "recv potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
@@ -673,14 +675,14 @@ impl ChannelHandler {
         // Make a list of all game outputs in order.
         let mut unroll_data_for_all_games =
             self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
-        eprintln!("start with {} games", unroll_data_for_all_games.len());
+        debug!("start with {} games", unroll_data_for_all_games.len());
         unroll_data_for_all_games.append(&mut self.compute_unroll_data_for_games(
             &[],
             None,
             &new_games,
         )?);
 
-        eprintln!(
+        debug!(
             "existing games {} new games {} total games {}",
             self.live_games.len(),
             new_games.len(),
@@ -688,7 +690,7 @@ impl ChannelHandler {
         );
 
         // Update an unroll coin to see if we can verify the message.
-        eprintln!(
+        debug!(
             "aggregate state channel public key {:?}",
             self.get_aggregate_channel_public_key()
         );
@@ -724,13 +726,13 @@ impl ChannelHandler {
         game_id: &GameID,
         readable_move: &ReadableMove,
     ) -> Result<MoveResult, Error> {
-        eprintln!("SEND_POTATO_MOVE");
+        debug!("SEND_POTATO_MOVE");
         let game_idx = self.get_game_by_id(game_id)?;
 
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
         let referee_result =
             referee_maker.my_turn_make_move(env.rng, env.allocator, readable_move)?;
-        eprintln!("move_result {referee_result:?}");
+        debug!("move_result {referee_result:?}");
         self.live_games[game_idx].last_referee_puzzle_hash =
             referee_result.puzzle_hash_for_unroll.clone();
 
@@ -760,7 +762,7 @@ impl ChannelHandler {
         game_id: &GameID,
         move_result: &MoveResult,
     ) -> Result<(ChannelCoinSpendInfo, NodePtr, Vec<u8>), Error> {
-        eprintln!("RECEIVED_POTATO_MOVE");
+        debug!("RECEIVED_POTATO_MOVE");
         let game_idx = self.get_game_by_id(game_id)?;
 
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
@@ -769,7 +771,7 @@ impl ChannelHandler {
         self.live_games[game_idx].last_referee_puzzle_hash =
             their_move_result.puzzle_hash_for_unroll.clone();
 
-        eprintln!("their_move_result {their_move_result:?}");
+        debug!("their_move_result {their_move_result:?}");
 
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
@@ -955,7 +957,7 @@ impl ChannelHandler {
     ) -> Result<Vec<Vec<u8>>, Error> {
         // Figure out our state number vs the one given in conditions.
         let all_conditions = CoinCondition::from_nodeptr(env.allocator, conditions);
-        eprintln!("all_conditions {all_conditions:?}");
+        debug!("all_conditions {all_conditions:?}");
         let rem_conditions: Vec<Vec<u8>> = all_conditions
             .iter()
             .filter_map(|c| {
@@ -983,7 +985,7 @@ impl ChannelHandler {
         assert!(self.timeout.is_some());
         let use_unroll = self.get_finished_unroll_coin();
 
-        eprintln!("channel handler at {}", self.current_state_number);
+        debug!("channel handler at {}", self.current_state_number);
 
         // Superceding state no timeout
         // Provide a reveal of the unroll puzzle.
@@ -1063,7 +1065,7 @@ impl ChannelHandler {
         let our_parity = self.unroll.coin.state_number & 1;
         let their_parity = state_number & 1;
 
-        eprintln!(
+        debug!(
             "CHANNEL COIN SPENT: my state {} coin state {} channel coin state {state_number}",
             self.current_state_number, full_coin.coin.state_number
         );
