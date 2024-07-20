@@ -1,0 +1,78 @@
+(include *standard-cl-23*)
+(import std.assert)
+(import std.curry)
+(import std.shatree)
+(import std.prefix)
+(import std.relops)
+(import std.append exposing (append as concat))
+(import std.condition_codes)
+(import std.match)
+(import std.li)
+(import onchain.game_codes)
+
+; Adjudicates a two player turn based game
+; MOVE, VALIDATION_HASH and MOVER_SHARE were all accepted optimistically from the last move
+; Both VALIDATION_HASH values are a sha256 of a validation program hash and the shatree of a state
+; The next validation program hash may be nil which means no futher moves are allowed
+; MOVER_SHARE is how much the mover will get if they fold/accept
+; MOD_HASH should be the shatree of referee itself
+; NONCE is for anti-replay prevention
+; If action is timeout args is nil
+; If action is slash args is (state validation_program mover_puzzle solution evidence)
+; If action is move args is (new_move new_validation_info_hash new_mover_share mover_puzzle solution)
+; validation programs get passed this:
+; ((last_move next_validation_hash my_share me_hash my_puzzle_hash opponent_puzzle_hash
+;        amount timeout max_move_size referee_hash)
+;        state me mover_puzzle solution evidence)
+(export (@ all_args ((MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH) . args))
+    (if (not args)
+        ; timeout
+        (list
+            (list ASSERT_HEIGHT_RELATIVE TIMEOUT)
+            (i MOVER_SHARE (list CREATE_COIN MOVER_PUZZLE_HASH MOVER_SHARE) (list 1))
+            (i (- AMOUNT MOVER_SHARE) (list CREATE_COIN WAITER_PUZZLE_HASH (- AMOUNT MOVER_SHARE)) (list 1))
+        )
+        (l (f (r args)))
+        ; slash
+        (assign
+            (previous_state previous_validation_program mover_puzzle solution evidence) args
+            previous_validation_program_hash (shatree previous_validation_program)
+            (assert
+                (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
+                (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree 
+                        previous_state)))
+                ; usually returns the conditions verbatim
+                (c (list REMARK)
+                    (concat (a previous_validation_program (c previous_validation_program_hash all_args)) 
+                        (a mover_puzzle solution))
+                )
+            )
+        )
+        ; move
+        (assign 
+            (new_move new_validation_info_hash new_mover_share new_max_move_size mover_puzzle solution) args
+            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT 
+                    AMOUNT MOD_HASH NONCE new_move new_max_move_size new_validation_info_hash new_mover_share
+                    VALIDATION_INFO_HASH)))
+            conditions (a mover_puzzle solution)
+            (assert
+                VALIDATION_INFO_HASH
+                (<= (strlen MOVE) MAX_MOVE_SIZE)
+                (<= new_mover_share AMOUNT)
+                (>= new_mover_share 0)
+                (logior (not new_validation_info_hash) (= 32 (strlen new_validation_info_hash)))
+                (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
+                ; Check that the child output is made
+                (match
+                    (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))
+                        (logand (= condname CREATE_COIN) (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
+                    )
+                    conditions
+                )
+                (li (list REMARK new_move new_validation_info_hash new_mover_share new_max_move_size) 
+                        (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT) &rest conditions)
+            )
+        )
+    )
+)

@@ -1,0 +1,57 @@
+(include *standard-cl-23*)
+
+(import std.assert_fail)
+(import onchain.krunk.krunk_make_clue exposing make_clue)
+
+
+; state is (guess_hash image guesses clues)
+; move is clue or preimage reveal
+; evidence is index of wrong clue or range signed to not be in dictionary
+(export (quine_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (guess_hash image guesses clues) me mover_puzzle solution evidence)
+
+    (if (= (strlen move)) 5
+        ; clue
+        (if_any_fail
+            (= new_validation hash (sha256 guess_hash (shatree (li image guesses (c move clues)))))
+            (!= (len clues) 4)
+            (= max_move_size 5)
+            0
+            (x)
+        )
+        ; game end
+        (if_any_fail
+            (= (strlen move) 21)
+            (! new_validation_hash)
+            (! max_move_size)
+            (= image (sha256 move))
+            (assign word (substr move 0 5)
+                (= move_share 
+                    (* (/ amount 100)
+                        (assign mylen (len guesses)
+                            (if (= mylen 5)
+                                (if (= guess5 word) 1 0)
+                                (index (li 0 100 100 20 5) mylen)
+                            )
+                        )
+                    )
+                )
+            )
+            0
+            (if (= (strlen evidence) 1)
+                ; index of wrong clue
+                (assert (!= (make_clue (index guesses evidence)) (index clues evidence)) 0)
+                ; proof
+                (assert
+                    (>= (substr move 0 5) (substr evidence 0 5))
+                    (<= (substr move 0 5) (substr evidence 5 10))
+                    (li (li AGGSIG_UNSAFE my_trusted_key evidence))
+                )
+            )
+        )
+    )
+)
+
+
+

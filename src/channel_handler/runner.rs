@@ -153,7 +153,7 @@ pub fn channel_handler_env<'a, R: Rng>(
     rng: &'a mut R,
 ) -> ChannelHandlerEnv<'a, R> {
     let referee_coin_puzzle =
-        read_hex_puzzle(allocator, "onchain/referee.hex").expect("should be readable");
+        read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable");
     let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
     let unroll_puzzle = read_hex_puzzle(
         allocator,

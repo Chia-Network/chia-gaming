@@ -1,0 +1,21 @@
+(include *standard-cl-23*)
+
+(import onchain.poker.commitB exposing (program_hash as bhash))
+(import std.assert)
+
+; state is minraise
+; move is alice commit to a salted word
+; evidence is empty
+(export (mod_hash (mover_image_5 new_validation_hash max_move_size mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    minraise me mover_puzzle solution evidence)
+
+    (if_any_fail
+        (= (strlen move) 32)
+        (= new_validation_hash (sha256 bhash (shatree (li minraise mover_image_5))))
+        (= max_move_size 32)
+        (= mover_share (/ amount 2))
+        0
+        (x)
+    )
+)
