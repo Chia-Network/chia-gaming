@@ -14,12 +14,12 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, PublicKey, PuzzleHash, Spend,
-    SpendBundle, Timeout, Sha256Input,
+    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, PublicKey, PuzzleHash, Sha256Input,
+    Spend, SpendBundle, Timeout,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct GameStart {
+pub struct GameStart {
     pub game_type: GameType,
     pub my_turn: bool,
     pub parameters: Vec<u8>,
@@ -202,7 +202,8 @@ pub trait ToLocalUI {
 pub trait FromLocalUI<
     G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     R: Rng,
-> {
+>
+{
     /// Start games requires queueing so that we handle them one at a time only
     /// when the previous start game.
     ///
@@ -582,7 +583,7 @@ impl PotatoHandler {
 
     fn request_potato<'a, G, R: Rng + 'a>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
+        _penv: &mut dyn PeerEnv<'a, G, R>,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
@@ -604,7 +605,7 @@ impl PotatoHandler {
             }
         }
 
-        return Ok(GameID::from_bytes(&game_id));
+        Ok(GameID::from_bytes(&game_id))
     }
 
     pub fn received_message<'a, G, R: Rng + 'a>(
@@ -719,7 +720,10 @@ impl PotatoHandler {
                     Sha256Input::Bytes(&self.private_keys.my_channel_coin_private_key.bytes()),
                     Sha256Input::Bytes(&self.private_keys.my_unroll_coin_private_key.bytes()),
                     Sha256Input::Bytes(&self.private_keys.my_referee_private_key.bytes()),
-                ]).hash().bytes().to_vec();
+                ])
+                .hash()
+                .bytes()
+                .to_vec();
                 self.channel_handler = Some(channel_handler);
 
                 self.handshake_state = HandshakeState::StepE(Box::new(HandshakeStepInfo {
@@ -877,15 +881,17 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     fn start_games<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        i_initiated: bool,
+        _i_initiated: bool,
         games: &[(GameType, bool, NodePtr)],
     ) -> Result<Vec<GameID>, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: 'a
+        R: 'a,
     {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr("start games without finishing handshake".to_string()));
+            return Err(Error::StrErr(
+                "start games without finishing handshake".to_string(),
+            ));
         }
 
         let mut game_ids = Vec::new();
@@ -893,18 +899,20 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             game_ids.push(self.next_game_id()?);
         }
 
-        let game_starts =
-        {
+        let game_starts = {
             let (env, _) = penv.env();
-            games.iter().map(|(gt, start, params)| {
-                let mut stream = Stream::new(None);
-                sexp_to_stream(env.allocator.allocator(), *params, &mut stream);
-                GameStart {
-                    game_type: gt.clone(),
-                    my_turn: *start,
-                    parameters: stream.get_value().data().clone()
-                }
-            }).collect()
+            games
+                .iter()
+                .map(|(gt, start, params)| {
+                    let mut stream = Stream::new(None);
+                    sexp_to_stream(env.allocator.allocator(), *params, &mut stream);
+                    GameStart {
+                        game_type: gt.clone(),
+                        my_turn: *start,
+                        parameters: stream.get_value().data().clone(),
+                    }
+                })
+                .collect()
         };
 
         self.my_start_queue.push_back(game_starts);
@@ -915,20 +923,24 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         }
 
         self.have_potato_start_game(penv)?;
-        return Ok(game_ids);
+        Ok(game_ids)
     }
 
-    fn make_move(&mut self, id: GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn make_move(&mut self, _id: GameID, _readable: ReadableMove) -> Result<(), Error> {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr("move without finishing handshake".to_string()));
+            return Err(Error::StrErr(
+                "move without finishing handshake".to_string(),
+            ));
         }
 
         todo!();
     }
 
-    fn accept(&mut self, id: GameID) -> Result<(), Error> {
+    fn accept(&mut self, _id: GameID) -> Result<(), Error> {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr("accept without finishing handshake".to_string()));
+            return Err(Error::StrErr(
+                "accept without finishing handshake".to_string(),
+            ));
         }
 
         todo!();
@@ -936,7 +948,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
     fn shut_down(&mut self) -> Result<(), Error> {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr("shut_down without finishing handshake".to_string()));
+            return Err(Error::StrErr(
+                "shut_down without finishing handshake".to_string(),
+            ));
         }
 
         todo!();
