@@ -318,4 +318,19 @@ fn test_peer_smoke() {
 
         assert!(messages + 2 >= i);
     }
+
+    // Start a game
+    {
+        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let nil = env.allocator.allocator().null();
+        let mut penv = TestPeerEnv {
+            env: &mut env,
+            system_interface: &mut pipe_sender[0],
+        };
+        peers[0].start_games(
+            &mut penv,
+            true,
+            &[(GameType(b"calpoker".to_vec()), true, nil)]
+        ).expect("should run");
+    }
 }
