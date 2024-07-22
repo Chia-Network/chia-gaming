@@ -331,6 +331,4 @@ fn test_peer_smoke() {
             &[(GameType(b"calpoker".to_vec()), true, nil)]
         ).expect("should run");
     }
-
-    todo!();
 }
