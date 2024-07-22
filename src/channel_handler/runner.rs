@@ -1,3 +1,4 @@
+use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::{
@@ -128,7 +129,7 @@ impl ChannelHandlerGame {
         spend: &ChannelCoinSpendInfo,
     ) -> Result<(), Error> {
         if let Some(r) = &mut self.handshake_result[player] {
-            eprintln!("UPDATE CHANNEL COIN AFTER RECEIVE");
+            debug!("UPDATE CHANNEL COIN AFTER RECEIVE");
             r.spend = spend.clone();
             return Ok(());
         }
@@ -152,15 +153,15 @@ pub fn channel_handler_env<'a, R: Rng>(
     rng: &'a mut R,
 ) -> ChannelHandlerEnv<'a, R> {
     let referee_coin_puzzle =
-        read_hex_puzzle(allocator, "onchain/referee.hex").expect("should be readable");
+        read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable");
     let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
     let unroll_puzzle = read_hex_puzzle(
         allocator,
-        "resources/unroll_puzzle_state_channel_unrolling.hex",
+        "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
     )
     .expect("should read");
     let unroll_metapuzzle =
-        read_hex_puzzle(allocator, "resources/unroll_meta_puzzle.hex").expect("should read");
+        read_hex_puzzle(allocator, "clsp/unroll/unroll_meta_puzzle.hex").expect("should read");
     let standard_puzzle = get_standard_coin_puzzle(allocator).expect("should load");
     ChannelHandlerEnv {
         allocator,

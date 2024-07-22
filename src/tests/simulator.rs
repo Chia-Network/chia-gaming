@@ -3,11 +3,12 @@ use clvmr::allocator::NodePtr;
 
 use clvm_tools_rs::compiler::comptypes::map_m;
 
+use indoc::indoc;
+use log::debug;
+
 use pyo3::exceptions::PyIndexError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyNone, PyTuple};
-
-use indoc::indoc;
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 use crate::common::standard_coin::{
@@ -150,7 +151,7 @@ impl Simulator {
             &coin.to_coin_id(),
             &agg_sig_me_additional_data,
         );
-        eprintln!("our message {agg_sig_me_message:?}");
+        debug!("our message {agg_sig_me_message:?}");
         let signature2 = identity.synthetic_private_key.sign(&agg_sig_me_message);
         assert_eq!(coin_spend_info.signature, signature2);
 
@@ -250,12 +251,12 @@ impl Simulator {
             let coins =
                 self.async_client(py, "get_coin_records_by_puzzle_hash", (hash_bytes, false))?;
             let items: Vec<PyObject> = coins.extract(py)?;
-            eprintln!("num coins {}", items.len());
+            debug!("num coins {}", items.len());
             let mut result_coins = Vec::new();
             for i in items.iter() {
                 let coin_of_item: PyObject = i.getattr(py, "coin")?.extract(py)?;
                 let as_list_str: String = coin_of_item.call_method0(py, "__repr__")?.extract(py)?;
-                eprintln!("as_list_str {as_list_str}");
+                debug!("as_list_str {as_list_str}");
                 let as_list: Vec<PyObject> =
                     self.coin_as_list.call1(py, (coin_of_item,))?.extract(py)?;
                 let parent_coin_info: &PyBytes = as_list[0].downcast(py)?;
@@ -312,13 +313,13 @@ impl Simulator {
         solution: NodePtr,
     ) -> PyResult<PyObject> {
         let coin = self.make_coin(parent_coin)?;
-        eprintln!("coin = {coin:?}");
+        debug!("coin = {coin:?}");
         let puzzle_hex = puzzle_reveal.to_hex();
         let puzzle_program = self.hex_to_program(&puzzle_hex)?;
-        eprintln!("puzzle_program = {puzzle_program:?}");
+        debug!("puzzle_program = {puzzle_program:?}");
         let solution_hex = Node(solution).to_hex(allocator);
         let solution_program = self.hex_to_program(&solution_hex)?;
-        eprintln!("solution_program = {solution_program:?}");
+        debug!("solution_program = {solution_program:?}");
         self.make_spend
             .call1(py, (coin, puzzle_program, solution_program))
     }
@@ -365,7 +366,7 @@ impl Simulator {
     ) -> PyResult<IncludeTransactionResult> {
         let spend_bundle = self.make_spend_bundle(allocator, txs)?;
         Python::with_gil(|py| {
-            eprintln!("spend_bundle {:?}", spend_bundle);
+            debug!("spend_bundle {:?}", spend_bundle);
             let spend_res: PyObject = self
                 .async_client(py, "push_tx", (spend_bundle,))?
                 .extract(py)?;

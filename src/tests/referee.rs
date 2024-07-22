@@ -7,6 +7,8 @@ use rand_chacha::ChaCha8Rng;
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 use clvmr::NodePtr;
 
+use log::debug;
+
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
@@ -31,7 +33,7 @@ pub fn make_debug_game_handler(
     timeout: &Timeout,
 ) -> DebugGamePrograms {
     let debug_game_handler =
-        read_hex_puzzle(allocator, "resources/debug_game_handler.hex").expect("should be readable");
+        read_hex_puzzle(allocator, "clsp/test/debug_game_handler.hex").expect("should be readable");
     let game_handler_mod_hash = debug_game_handler.sha256tree(allocator);
     let make_curried_game_handler = |my_turn: bool| {
         let aggsig = Aggsig::default();
@@ -121,7 +123,7 @@ impl RefereeTest {
     ) -> RefereeTest {
         // Load up the real referee coin.
         let referee_coin_puzzle =
-            read_hex_puzzle(allocator, "onchain/referee.hex").expect("should be readable");
+            read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable");
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
         let (my_referee, _) = RefereeMaker::new(
             allocator,
@@ -232,7 +234,7 @@ fn test_referee_smoke() {
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
         },
     );
-    eprintln!("their move result {their_move_result:?}");
+    debug!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
         assert!(s.contains("slash"));
         assert!(s.contains("off chain"));
@@ -245,7 +247,7 @@ fn test_referee_smoke() {
         .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details)
         .expect("should move");
 
-    eprintln!("their_move_wire_data {their_move_local_update:?}");
+    debug!("their_move_wire_data {their_move_local_update:?}");
 
     let validator_move_args = ValidatorMoveArgs {
         game_move: my_move_wire_data.details.clone(),

@@ -1,6 +1,8 @@
 #[cfg(feature = "sim-tests")]
 use rand::prelude::*;
 
+use log::debug;
+
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
@@ -79,7 +81,7 @@ pub fn new_channel_handler_game<R: Rng>(
         + private_to_public_key(&party.player(1).ch.channel_private_key());
 
     let cc_ph = puzzle_hash_for_synthetic_public_key(&mut env.allocator, &aggregate_public_key)?;
-    eprintln!("puzzle hash for state channel coin: {cc_ph:?}");
+    debug!("puzzle hash for state channel coin: {cc_ph:?}");
 
     let state_channel_coin = simulator.combine_coins(
         &mut env.allocator,
@@ -87,7 +89,7 @@ pub fn new_channel_handler_game<R: Rng>(
         &party.players[0].init_data.channel_puzzle_hash_up,
         &[u1, u2],
     )?;
-    eprintln!(
+    debug!(
         "actual state channel coin {:?}",
         state_channel_coin.to_parts()
     );

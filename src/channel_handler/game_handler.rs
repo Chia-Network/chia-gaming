@@ -18,6 +18,8 @@ use clvmr::allocator::NodePtr;
 use clvmr::NO_UNKNOWN_OPS;
 use clvmr::{run_program, ChiaDialect};
 
+use log::debug;
+
 use crate::channel_handler::types::{
     Evidence, ReadableMove, ReadableUX, ValidationInfo, ValidationProgram,
 };
@@ -213,7 +215,7 @@ impl GameHandler {
             .to_clvm(allocator)
             .into_gen()?;
 
-        eprintln!(
+        debug!(
             "driver_args {}",
             disassemble(allocator.allocator(), driver_args, None)
         );
@@ -225,7 +227,7 @@ impl GameHandler {
             get_my_turn_debug_flag(inputs),
         )?;
 
-        eprintln!(
+        debug!(
             "my turn driver result {}",
             disassemble(allocator.allocator(), run_result, None)
         );

@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
-use clvmr::run_program;
-
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{AllocEncoder, Node, Sha256Input};
+
+use clvm_traits::ToClvm;
+use clvmr::run_program;
 
 use clvm_tools_rs::classic::clvm::sexp::first;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
@@ -16,6 +16,8 @@ use clvm_tools_rs::compiler::clvm::{convert_from_clvm_rs, run};
 use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
 use clvm_tools_rs::compiler::comptypes::CompilerOpts;
 use clvm_tools_rs::compiler::srcloc::Srcloc;
+
+use log::debug;
 
 #[test]
 fn test_prepend_count() {
@@ -38,7 +40,7 @@ fn test_prepend_count() {
         .to_clvm(&mut allocator)
         .expect("should build");
     let program =
-        read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+        read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
     let program_clvm = program.to_clvm(&mut allocator).expect("should do");
     let result = run_program(
         allocator.allocator(),
@@ -62,7 +64,7 @@ fn test_make_cards() {
     let opts = Rc::new(DefaultCompilerOpts::new("game_handler"));
 
     let program =
-        read_hex_puzzle(&mut allocator, "resources/test_make_cards.hex").expect("should read");
+        read_hex_puzzle(&mut allocator, "clsp/test/test_make_cards.hex").expect("should read");
     let program_clvm = program.to_clvm(&mut allocator).expect("should do");
     let converted_program = convert_from_clvm_rs(allocator.allocator(), loc.clone(), program_clvm)
         .expect("should work");
@@ -95,7 +97,7 @@ fn test_mergein() {
         ([vec![1, 2, 9], vec![3], vec![]], "(q 2 5 9)"),
     ];
     let program =
-        read_hex_puzzle(&mut allocator, "resources/test_mergein.hex").expect("should read");
+        read_hex_puzzle(&mut allocator, "clsp/test/test_mergein.hex").expect("should read");
     let program_clvm = program.to_clvm(&mut allocator).expect("should do");
     for t in tests.iter() {
         let clvm_arg = t.0.to_clvm(&mut allocator).expect("should build");
@@ -136,7 +138,7 @@ fn test_pull_indices() {
         .to_clvm(&mut allocator)
         .expect("should build");
     let program =
-        read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+        read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
     let program_clvm = program.to_clvm(&mut allocator).expect("should do");
     let result = run_program(
         allocator.allocator(),
@@ -166,7 +168,7 @@ fn test_pull_out_straight() {
         .to_clvm(&mut allocator)
         .expect("should build");
     let program =
-        read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+        read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
     let program_clvm = program.to_clvm(&mut allocator).expect("should do");
     let result = run_program(
         allocator.allocator(),
@@ -203,7 +205,7 @@ fn test_find_straight_high() {
         .to_clvm(&mut allocator)
         .expect("should build");
     let program =
-        read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+        read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
     let program_clvm = program.to_clvm(&mut allocator).expect("should work");
     let result = run_program(
         allocator.allocator(),
@@ -238,7 +240,7 @@ fn test_straight_indices() {
         .to_clvm(&mut allocator)
         .expect("should build");
     let program =
-        read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+        read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
     let program_clvm = program.to_clvm(&mut allocator).expect("should work");
     let result = run_program(
         allocator.allocator(),
@@ -884,9 +886,9 @@ fn test_handcalc() {
     ];
 
     let program =
-        read_hex_puzzle(&mut allocator, "resources/test_handcalc_micro.hex").expect("should read");
+        read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
     let deep_compare =
-        read_hex_puzzle(&mut allocator, "resources/deep_compare.hex").expect("should read");
+        read_hex_puzzle(&mut allocator, "clsp/test/deep_compare.hex").expect("should read");
 
     let mut test_handcalc_with_example =
         |(expected_relationship, explanation, ex_data_1, ex_data_2)| {
@@ -915,12 +917,12 @@ fn test_handcalc() {
             )
             .expect("should run")
             .1;
-            eprintln!("{explanation:?}");
-            eprintln!(
+            debug!("{explanation:?}");
+            debug!(
                 "result 1 {}",
                 disassemble(allocator.allocator(), result_1, None)
             );
-            eprintln!(
+            debug!(
                 "result 2 {}",
                 disassemble(allocator.allocator(), result_2, None)
             );
@@ -947,7 +949,7 @@ fn test_handcalc() {
         };
 
     for test in examples.into_iter() {
-        eprintln!("test {test:?}");
+        debug!("test {test:?}");
         test_handcalc_with_example(test);
     }
 }

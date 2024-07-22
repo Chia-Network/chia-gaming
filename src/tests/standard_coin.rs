@@ -7,6 +7,8 @@ use rand_chacha::ChaCha8Rng;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::{DefaultProgramRunner, TRunProgram};
 
+use log::debug;
+
 use crate::common::constants::{DEFAULT_HIDDEN_PUZZLE_HASH, ONE, TWO};
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, calculate_synthetic_public_key, curry_and_treehash,
@@ -186,7 +188,7 @@ fn test_standard_puzzle_solution_maker() {
     let expected_full_conditions = (expected_added_condition, Node(spend_info.conditions))
         .to_clvm(&mut allocator)
         .expect("should work");
-    eprintln!(
+    debug!(
         "solution {}",
         disassemble(allocator.allocator(), spend_info.solution, None)
     );
