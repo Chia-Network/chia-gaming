@@ -102,7 +102,6 @@
    ;; Validation info
    validation_info readable_new_move
 
-   state_hash (shatree state)
    other_turn (curried_other_turn CURRIED)
 
    program-hash
