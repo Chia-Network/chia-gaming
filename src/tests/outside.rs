@@ -67,6 +67,7 @@ struct Pipe {
 impl PacketSender for Pipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
         debug!("Send Message from {} {msg:?}", self.my_id);
+        assert!(self.queue.is_empty());
         let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         self.queue.push_back(msg_data);
@@ -248,6 +249,27 @@ fn run_move<'a, R: Rng>(
     Ok(true)
 }
 
+fn quiesce<'a, R: Rng + 'a>(
+    rng: &'a mut R,
+    allocator: &'a mut AllocEncoder,
+    amount: Amount,
+    peers: &'a mut [PotatoHandler; 2],
+    pipes: &'a mut [Pipe; 2],
+) -> Result<(), Error> {
+    loop {
+        let mut msgs = 0;
+        for who in 0..=1 {
+            let mut env = channel_handler_env(allocator, rng);
+            msgs += run_move(&mut env, amount.clone(), pipes, &mut peers[who], who)? as usize;
+        }
+        if msgs == 0 {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
 #[test]
 fn test_peer_smoke() {
     let seed: [u8; 32] = [0; 32];
@@ -299,7 +321,7 @@ fn test_peer_smoke() {
     let mut messages = 0;
 
     // Do handshake for peers.
-    while !peers[0].handshake_finished() && !peers[1].handshake_finished() {
+    while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
         let who = i % 2;
         if run_move(
@@ -319,15 +341,26 @@ fn test_peer_smoke() {
         assert!(messages + 2 >= i);
     }
 
+    {
+        quiesce(
+            &mut rng,
+            &mut allocator,
+            Amount::new(200),
+            &mut peers,
+            &mut pipe_sender,
+        )
+        .expect("should work");
+    }
+
     // Start a game
     {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
         let nil = env.allocator.allocator().null();
         let mut penv = TestPeerEnv {
             env: &mut env,
-            system_interface: &mut pipe_sender[0],
+            system_interface: &mut pipe_sender[1],
         };
-        peers[0]
+        peers[1]
             .start_games(
                 &mut penv,
                 true,
@@ -335,4 +368,6 @@ fn test_peer_smoke() {
             )
             .expect("should run");
     }
+
+    assert_eq!(pipe_sender[1].queue.len(), 1);
 }

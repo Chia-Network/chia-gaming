@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use clvmr::NodePtr;
+use log::debug;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -265,7 +266,7 @@ pub enum PeerMessage {
     Move(GameID, Vec<u8>, PotatoSignatures),
     Accept(GameID, PotatoSignatures),
     Shutdown(Aggsig),
-    RequestPotato,
+    RequestPotato(()),
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +346,17 @@ pub struct PotatoHandler {
     their_contribution: Amount,
 
     reward_puzzle_hash: PuzzleHash,
+}
+
+fn init_game_id(private_keys: &ChannelHandlerPrivateKeys) -> Vec<u8> {
+    Sha256Input::Array(vec![
+        Sha256Input::Bytes(&private_keys.my_channel_coin_private_key.bytes()),
+        Sha256Input::Bytes(&private_keys.my_unroll_coin_private_key.bytes()),
+        Sha256Input::Bytes(&private_keys.my_referee_private_key.bytes()),
+    ])
+    .hash()
+    .bytes()
+    .to_vec()
 }
 
 /// Peer interface for high level opaque messages.
@@ -435,7 +447,7 @@ impl PotatoHandler {
         let referee_public_key = private_to_public_key(&self.private_keys.my_referee_private_key);
         let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
 
-        eprintln!("Start: our channel public key {:?}", channel_public_key);
+        debug!("Start: our channel public key {:?}", channel_public_key);
 
         assert!(matches!(self.handshake_state, HandshakeState::StepA));
         let my_hs_info = HandshakeA {
@@ -476,10 +488,10 @@ impl PotatoHandler {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
         let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
 
-        eprintln!("msg {msg_envelope:?}");
+        debug!("msg {msg_envelope:?}");
         match msg_envelope {
             PeerMessage::Nil(n) => {
-                eprintln!("about to receive empty potato");
+                debug!("about to receive empty potato");
                 let spend_info = {
                     let (env, _system_interface) = penv.env();
                     ch.received_empty_potato(env, &n)?
@@ -583,12 +595,14 @@ impl PotatoHandler {
 
     fn request_potato<'a, G, R: Rng + 'a>(
         &mut self,
-        _penv: &mut dyn PeerEnv<'a, G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        todo!();
+        let (_, system_interface) = penv.env();
+        system_interface.send_message(&PeerMessage::RequestPotato(()))?;
+        Ok(())
     }
 
     fn next_game_id(&mut self) -> Result<GameID, Error> {
@@ -618,7 +632,7 @@ impl PotatoHandler {
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
 
-        eprintln!("received message in state {:?}", self.handshake_state);
+        debug!("received message in state {:?}", self.handshake_state);
 
         match &self.handshake_state {
             // non potato progression
@@ -633,7 +647,7 @@ impl PotatoHandler {
                     )));
                 };
 
-                eprintln!(
+                debug!(
                     "StepA: their channel public key {:?}",
                     msg.channel_public_key
                 );
@@ -716,14 +730,7 @@ impl PotatoHandler {
                     system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                 }
 
-                self.next_game_id = Sha256Input::Array(vec![
-                    Sha256Input::Bytes(&self.private_keys.my_channel_coin_private_key.bytes()),
-                    Sha256Input::Bytes(&self.private_keys.my_unroll_coin_private_key.bytes()),
-                    Sha256Input::Bytes(&self.private_keys.my_referee_private_key.bytes()),
-                ])
-                .hash()
-                .bytes()
-                .to_vec();
+                self.next_game_id = init_game_id(&self.private_keys);
                 self.channel_handler = Some(channel_handler);
 
                 self.handshake_state = HandshakeState::StepE(Box::new(HandshakeStepInfo {
@@ -787,6 +794,7 @@ impl PotatoHandler {
                     referee_puzzle_hash,
                 };
 
+                self.next_game_id = init_game_id(&self.private_keys);
                 self.channel_handler = Some(channel_handler);
                 self.handshake_state = HandshakeState::StepD(Box::new(HandshakeStepInfo {
                     first_player_hs_info: msg.clone(),
@@ -833,7 +841,7 @@ impl PotatoHandler {
 
                 self.handshake_state = HandshakeState::PostStepF(info.clone());
 
-                self.have_potato = true;
+                self.have_potato = false;
                 self.try_complete_step_f(penv, first_player_hs, second_player_hs)?;
             }
 
@@ -845,7 +853,7 @@ impl PotatoHandler {
                     PeerMessage::HandshakeF { bundle } => {
                         self.channel_finished_transaction = Some(bundle.clone());
                     }
-                    PeerMessage::RequestPotato => {
+                    PeerMessage::RequestPotato(_) => {
                         assert!(self.have_potato);
                         {
                             let (env, system_interface) = penv.env();
@@ -853,7 +861,7 @@ impl PotatoHandler {
                             let nil_msg = ch.send_empty_potato(env)?;
                             system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                         }
-                        self.have_potato = false;
+                        self.have_potato = true;
                     }
                     _ => {
                         self.pass_on_channel_handler_message(penv, msg)?;
@@ -889,9 +897,10 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         R: 'a,
     {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr(
-                "start games without finishing handshake".to_string(),
-            ));
+            return Err(Error::StrErr(format!(
+                "start games without finishing handshake: {:?}",
+                self.handshake_state
+            )));
         }
 
         let mut game_ids = Vec::new();
@@ -971,7 +980,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     {
         self.channel_initiation_transaction = Some(bundle);
 
-        eprintln!("channel offer: {:?}", self.handshake_state);
+        debug!("channel offer: {:?}", self.handshake_state);
         if let HandshakeState::PostStepE(info) = &self.handshake_state {
             self.try_complete_step_e(
                 penv,
