@@ -1,4 +1,6 @@
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+use clvm_tools_rs::classic::clvm::sexp::proper_list;
+
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
@@ -19,7 +21,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID, CoinSpend, CoinString, Error,
     GameID, Hash, IntoErr, Node, PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, Timeout,
+    Sha256tree, Spend, Timeout, atom_from_clvm, u64_from_atom, usize_from_atom,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -84,6 +86,65 @@ pub struct GameStartInfo {
 impl GameStartInfo {
     pub fn is_my_turn(&self) -> bool {
         matches!(self.game_handler, GameHandler::MyTurnHandler(_))
+    }
+
+    pub fn from_clvm(
+        allocator: &mut AllocEncoder,
+        my_turn: bool,
+        clvm: NodePtr
+    ) -> Result<Self, Error> {
+        let lst =
+            if let Some(lst) = proper_list(allocator.allocator(), clvm, true) {
+                lst
+            } else {
+                return Err(Error::StrErr("game start info clvm wasn't a full list".to_string()));
+            };
+
+        if lst.len() != 11 {
+            return Err(Error::StrErr("game start info clvm needs 11 items".to_string()));
+        }
+
+        let returned_game_id = GameID::from_clvm(allocator, lst[0])?;
+        let returned_amount = Amount::from_clvm(allocator, lst[1])?;
+        let returned_handler =
+            if my_turn {
+                GameHandler::MyTurnHandler(lst[2])
+            } else {
+                GameHandler::TheirTurnHandler(lst[2])
+            };
+        let returned_timeout = Timeout::from_clvm(allocator, lst[3])?;
+        let returned_my_contribution = Amount::from_clvm(allocator, lst[4])?;
+        let returned_their_contribution = Amount::from_clvm(allocator, lst[5])?;
+
+        let validation_program = ValidationProgram::new(allocator, lst[6]);
+        let initial_state = lst[7];
+        let initial_move =
+            if let Some(a) = atom_from_clvm(allocator, lst[8]) {
+                a.to_vec()
+            } else {
+                return Err(Error::StrErr("initial move wasn't an atom".to_string()));
+            };
+        let initial_max_move_size =
+            if let Some(a) = atom_from_clvm(allocator, lst[9]).and_then(usize_from_atom) {
+                a
+            } else {
+                return Err(Error::StrErr("bad initial max move size".to_string()));
+            };
+        let initial_mover_share = Amount::from_clvm(allocator, lst[10])?;
+
+        Ok(GameStartInfo {
+            game_id: returned_game_id,
+            amount: returned_amount,
+            game_handler: returned_handler,
+            timeout: returned_timeout,
+            my_contribution_this_game: returned_my_contribution,
+            their_contribution_this_game: returned_their_contribution,
+            initial_validation_program: validation_program,
+            initial_state,
+            initial_move: initial_move,
+            initial_max_move_size,
+            initial_mover_share
+        })
     }
 }
 

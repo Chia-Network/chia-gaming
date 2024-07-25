@@ -349,6 +349,14 @@ impl GameID {
     pub fn new(s: Vec<u8>) -> GameID {
         GameID(s)
     }
+
+    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
+        if let Some(atom) = atom_from_clvm(allocator, clvm) {
+            Ok(GameID::new(atom.to_vec()))
+        } else {
+            Err(Error::StrErr("bad game id".to_string()))
+        }
+    }
 }
 
 impl GameID {
@@ -357,8 +365,17 @@ impl GameID {
     }
 }
 
+impl ToClvm<NodePtr> for GameID {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
+        encoder.encode_atom(&self.0)
+    }
+}
+
 /// Amount
-#[derive(Default, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Default, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Amount(u64);
 
 impl Amount {
@@ -368,6 +385,14 @@ impl Amount {
 
     pub fn half(&self) -> Amount {
         Amount::new(self.0 / 2)
+    }
+
+    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Amount, Error> {
+        if let Some(val) = atom_from_clvm(allocator, clvm).and_then(u64_from_atom) {
+            Ok(Amount::new(val))
+        } else {
+            Err(Error::StrErr("bad amount".to_string()))
+        }
     }
 }
 
@@ -698,6 +723,14 @@ pub struct Timeout(u64);
 impl Timeout {
     pub fn new(t: u64) -> Self {
         Timeout(t)
+    }
+
+    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
+        if let Some(amt) = atom_from_clvm(allocator, clvm).and_then(u64_from_atom) {
+            Ok(Timeout::new(amt))
+        } else {
+            Err(Error::StrErr("bad timeout".to_string()))
+        }
     }
 }
 

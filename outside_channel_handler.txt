@@ -36,6 +36,13 @@ Wallet/Full Node unroll
 UX
 -> start_games (whether_I_initiated, [game_type, first_turn_me, parameters])
     returns [game_id]
+    -- Bram: start_games should take one parameter set and return a set of games from the
+    -- factory.
+    -- Bram: amount and contribution belong here.
+    -- More like start_games(
+    --   whether_i_initiated, amount, my_contribution, game_type, first_turn_me, parameters
+    -- )
+    -- And the factory returns a list of games based on this info.
 -> move (id, readable)
 -> accept (id)
 <- opponent_moved (id, readable)
