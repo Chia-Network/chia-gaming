@@ -39,6 +39,7 @@ pub fn hex_to_sexp(
     node_from_bytes(allocator.allocator(), hex_stream.get_value().data()).into_gen()
 }
 
+
 pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, types::Error> {
     let hex_data = read_to_string(name).into_gen()?;
     let hex_sexp = hex_to_sexp(allocator, hex_data)?;

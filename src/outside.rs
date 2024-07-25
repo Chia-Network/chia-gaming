@@ -1,6 +1,9 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
-use clvmr::NodePtr;
+use clvmr::{NodePtr, run_program};
+use clvmr::serde::node_from_bytes;
+use clvm_traits::ToClvm;
+
 use log::debug;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -8,22 +11,31 @@ use serde::{Deserialize, Serialize};
 use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
 use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
 
+use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
+    ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove, GameStartInfo,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, PublicKey, PuzzleHash, Sha256Input,
-    Spend, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, Program, PublicKey, PuzzleHash, Sha256Input,
+    Spend, SpendBundle, Timeout, Node
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameStart {
     pub game_type: GameType,
+    pub amount: Amount,
+    pub my_contribution: Amount,
     pub my_turn: bool,
     pub parameters: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WireGameStart {
+    pub game_id: GameID,
+    pub start: GameStart,
 }
 
 // struct GameInfoMyTurn {
@@ -187,7 +199,7 @@ pub trait WalletSpendInterface {
     fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error>;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
@@ -219,8 +231,8 @@ pub trait FromLocalUI<
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         i_initiated: bool,
-        games: &[(GameType, bool, NodePtr)],
-    ) -> Result<Vec<GameID>, Error>
+        game: &GameStart,
+    ) -> Result<GameID, Error>
     where
         G: 'a,
         R: 'a;
@@ -262,11 +274,11 @@ pub enum PeerMessage {
     },
 
     Nil(PotatoSignatures),
-    StartGames(Vec<GameStart>),
     Move(GameID, Vec<u8>, PotatoSignatures),
     Accept(GameID, PotatoSignatures),
     Shutdown(Aggsig),
     RequestPotato(()),
+    StartGames(PotatoSignatures, WireGameStart),
 }
 
 #[derive(Debug, Clone)]
@@ -330,14 +342,16 @@ pub struct PotatoHandler {
 
     handshake_state: HandshakeState,
 
-    their_start_queue: VecDeque<Vec<GameStart>>,
-    my_start_queue: VecDeque<Vec<GameStart>>,
+    their_start_queue: VecDeque<WireGameStart>,
+    my_start_queue: VecDeque<WireGameStart>,
 
     next_game_id: Vec<u8>,
 
     channel_handler: Option<ChannelHandler>,
     channel_initiation_transaction: Option<SpendBundle>,
     channel_finished_transaction: Option<SpendBundle>,
+
+    game_types: BTreeMap<GameType, Program>,
 
     private_keys: ChannelHandlerPrivateKeys,
 
@@ -383,6 +397,7 @@ impl PotatoHandler {
     pub fn new(
         have_potato: bool,
         private_keys: ChannelHandlerPrivateKeys,
+        game_types: BTreeMap<GameType, Program>,
         my_contribution: Amount,
         their_contribution: Amount,
         reward_puzzle_hash: PuzzleHash,
@@ -396,6 +411,7 @@ impl PotatoHandler {
             },
 
             next_game_id: Vec::new(),
+            game_types,
 
             their_start_queue: VecDeque::default(),
             my_start_queue: VecDeque::default(),
@@ -503,6 +519,14 @@ impl PotatoHandler {
             }
         }
 
+        // We passed on the message.  If there is a group of games to start, we should
+        // send them on.
+        self.have_potato = true;
+
+        if !self.my_start_queue.is_empty() {
+            self.have_potato_start_game(penv)?;
+        }
+
         Ok(())
     }
 
@@ -584,13 +608,71 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        if let Some(games) = self.my_start_queue.pop_front() {
+        if let Some(desc) = self.my_start_queue.pop_front() {
+            let channel_handler_game_descriptions = self.get_games_by_start_type(
+                penv,
+                &desc
+            )?;
+
+            let sigs =
+            {
+                let ch = self.channel_handler_mut()?;
+                let (env, _) = penv.env();
+                ch.send_potato_start_game(env, &channel_handler_game_descriptions)?
+            };
+
             let (_, system_interface) = penv.env();
-            system_interface.send_message(&PeerMessage::StartGames(games.clone()))?;
+            system_interface.send_message(&PeerMessage::StartGames(sigs, desc.clone()))?;
             return Ok(true);
         }
 
         Ok(false)
+    }
+
+    fn get_games_by_start_type<'a, G, R: Rng + 'a>(
+        &self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        game_start: &WireGameStart
+    ) -> Result<Vec<GameStartInfo>, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let starter =
+            if let Some(starter) = self.game_types.get(&game_start.start.game_type) {
+                starter
+            } else {
+                return Err(Error::StrErr(format!("no such game {:?}", game_start.start.game_type)));
+            };
+
+        let (env, _) = penv.env();
+        let starter_clvm = starter.to_clvm(env.allocator).into_gen()?;
+        let params_clvm = node_from_bytes(env.allocator.allocator(), &game_start.start.parameters).into_gen()?;
+        let program_run_args =
+            (game_start.game_id.clone(),
+             (game_start.start.amount.clone(),
+              (game_start.start.my_turn,
+               (game_start.start.my_contribution.clone(),
+                (Node(params_clvm), ())
+               )
+              )
+             )
+            ).to_clvm(env.allocator).into_gen()?;
+
+        let program_output =
+            run_program(
+                env.allocator.allocator(),
+                &chia_dialect(),
+                starter_clvm,
+                program_run_args,
+                0
+            ).into_gen()?
+            .1;
+
+        // The result is two parallel lists of opposite sides of game starts.
+        // Well re-glue these together into a list of pairs.
+        todo!();
+
+        // GameStartInfo::from_clvm(env.allocator, game_start.start.my_turn, program_output)
     }
 
     fn request_potato<'a, G, R: Rng + 'a>(
@@ -620,6 +702,15 @@ impl PotatoHandler {
         }
 
         Ok(GameID::from_bytes(&game_id))
+    }
+
+    pub fn received_game_start<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        sigs: &PotatoSignatures,
+        games: &WireGameStart,
+    ) -> Result<(), Error> {
+        todo!();
     }
 
     pub fn received_message<'a, G, R: Rng + 'a>(
@@ -861,7 +952,10 @@ impl PotatoHandler {
                             let nil_msg = ch.send_empty_potato(env)?;
                             system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                         }
-                        self.have_potato = true;
+                        self.have_potato = false;
+                    }
+                    PeerMessage::StartGames(sigs, g) => {
+                        self.received_game_start(penv, &sigs, &g)?;
                     }
                     _ => {
                         self.pass_on_channel_handler_message(penv, msg)?;
@@ -889,9 +983,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     fn start_games<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        _i_initiated: bool,
-        games: &[(GameType, bool, NodePtr)],
-    ) -> Result<Vec<GameID>, Error>
+        i_initiated: bool,
+        game: &GameStart,
+    ) -> Result<GameID, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
         R: 'a,
@@ -903,36 +997,21 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        let mut game_ids = Vec::new();
-        for _ in games.iter() {
-            game_ids.push(self.next_game_id()?);
-        }
-
-        let game_starts = {
-            let (env, _) = penv.env();
-            games
-                .iter()
-                .map(|(gt, start, params)| {
-                    let mut stream = Stream::new(None);
-                    sexp_to_stream(env.allocator.allocator(), *params, &mut stream);
-                    GameStart {
-                        game_type: gt.clone(),
-                        my_turn: *start,
-                        parameters: stream.get_value().data().clone(),
-                    }
-                })
-                .collect()
+        let game_id = self.next_game_id()?;
+        let game_start = WireGameStart {
+            game_id: game_id.clone(),
+            start: game.clone()
         };
 
-        self.my_start_queue.push_back(game_starts);
+        self.my_start_queue.push_back(game_start);
 
         if !self.have_potato {
             self.request_potato(penv)?;
-            return Ok(game_ids);
+            return Ok(game_id);
         }
 
         self.have_potato_start_game(penv)?;
-        Ok(game_ids)
+        Ok(game_id)
     }
 
     fn make_move(&mut self, _id: GameID, _readable: ReadableMove) -> Result<(), Error> {
