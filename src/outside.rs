@@ -8,10 +8,7 @@ use log::debug;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
-use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
-
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
@@ -736,9 +733,9 @@ impl PotatoHandler {
 
     pub fn received_game_start<'a, G, R: Rng + 'a>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        sigs: &PotatoSignatures,
-        games: &WireGameStart,
+        _penv: &mut dyn PeerEnv<'a, G, R>,
+        _sigs: &PotatoSignatures,
+        _games: &WireGameStart,
     ) -> Result<(), Error> {
         todo!();
     }
@@ -1013,7 +1010,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     fn start_games<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        i_initiated: bool,
+        _i_initiated: bool,
         game: &GameStart,
     ) -> Result<GameID, Error>
     where

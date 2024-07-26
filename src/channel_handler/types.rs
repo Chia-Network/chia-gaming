@@ -19,7 +19,7 @@ use crate::common::standard_coin::{
     unsafe_sign_partial,
 };
 use crate::common::types::{
-    atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
+    atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount,
     BrokenOutCoinSpendInfo, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
     PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
@@ -142,7 +142,7 @@ impl GameStartInfo {
             their_contribution_this_game: returned_their_contribution,
             initial_validation_program: validation_program,
             initial_state,
-            initial_move: initial_move,
+            initial_move,
             initial_max_move_size,
             initial_mover_share,
         })
