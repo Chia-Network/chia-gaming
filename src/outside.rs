@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
-use clvmr::{NodePtr, run_program};
-use clvmr::serde::node_from_bytes;
 use clvm_traits::ToClvm;
+use clvmr::serde::node_from_bytes;
+use clvmr::{run_program, NodePtr};
 
 use log::debug;
 use rand::Rng;
@@ -14,13 +14,13 @@ use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove, GameStartInfo,
+    ChannelHandlerPrivateKeys, GameStartInfo, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, Program, PublicKey, PuzzleHash, Sha256Input,
-    Spend, SpendBundle, Timeout, Node
+    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program, PublicKey,
+    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -609,13 +609,9 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if let Some(desc) = self.my_start_queue.pop_front() {
-            let channel_handler_game_descriptions = self.get_games_by_start_type(
-                penv,
-                &desc
-            )?;
+            let channel_handler_game_descriptions = self.get_games_by_start_type(penv, &desc)?;
 
-            let sigs =
-            {
+            let sigs = {
                 let ch = self.channel_handler_mut()?;
                 let (env, _) = penv.env();
                 ch.send_potato_start_game(env, &channel_handler_game_descriptions)?
@@ -632,41 +628,49 @@ impl PotatoHandler {
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(
         &self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        game_start: &WireGameStart
+        game_start: &WireGameStart,
     ) -> Result<Vec<GameStartInfo>, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let starter =
-            if let Some(starter) = self.game_types.get(&game_start.start.game_type) {
-                starter
-            } else {
-                return Err(Error::StrErr(format!("no such game {:?}", game_start.start.game_type)));
-            };
+        let starter = if let Some(starter) = self.game_types.get(&game_start.start.game_type) {
+            starter
+        } else {
+            return Err(Error::StrErr(format!(
+                "no such game {:?}",
+                game_start.start.game_type
+            )));
+        };
 
         let (env, _) = penv.env();
         let starter_clvm = starter.to_clvm(env.allocator).into_gen()?;
-        let params_clvm = node_from_bytes(env.allocator.allocator(), &game_start.start.parameters).into_gen()?;
-        let program_run_args =
-            (game_start.game_id.clone(),
-             (game_start.start.amount.clone(),
-              (game_start.start.my_turn,
-               (game_start.start.my_contribution.clone(),
-                (Node(params_clvm), ())
-               )
-              )
-             )
-            ).to_clvm(env.allocator).into_gen()?;
+        let params_clvm =
+            node_from_bytes(env.allocator.allocator(), &game_start.start.parameters).into_gen()?;
+        let program_run_args = (
+            game_start.game_id.clone(),
+            (
+                game_start.start.amount.clone(),
+                (
+                    game_start.start.my_turn,
+                    (
+                        game_start.start.my_contribution.clone(),
+                        (Node(params_clvm), ()),
+                    ),
+                ),
+            ),
+        )
+            .to_clvm(env.allocator)
+            .into_gen()?;
 
-        let program_output =
-            run_program(
-                env.allocator.allocator(),
-                &chia_dialect(),
-                starter_clvm,
-                program_run_args,
-                0
-            ).into_gen()?
-            .1;
+        let program_output = run_program(
+            env.allocator.allocator(),
+            &chia_dialect(),
+            starter_clvm,
+            program_run_args,
+            0,
+        )
+        .into_gen()?
+        .1;
 
         // The result is two parallel lists of opposite sides of game starts.
         // Well re-glue these together into a list of pairs.
@@ -1000,7 +1004,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         let game_id = self.next_game_id()?;
         let game_start = WireGameStart {
             game_id: game_id.clone(),
-            start: game.clone()
+            start: game.clone(),
         };
 
         self.my_start_queue.push_back(game_start);
