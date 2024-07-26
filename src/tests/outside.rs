@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use clvmr::NodePtr;
 use clvm_traits::ToClvm;
+use clvmr::NodePtr;
 
 use log::debug;
 
@@ -9,15 +9,17 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove, GameStartInfo};
+use crate::channel_handler::types::{
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, ReadableMove,
+};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
     Spend, SpendBundle, Timeout,
 };
 use crate::outside::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameType, PacketSender, PeerEnv,
-    PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface, GameStart
+    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
+    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -226,7 +228,7 @@ where
     fn get_game_by_id(
         game_type: &GameType,
         initiated: bool,
-        params: NodePtr
+        params: NodePtr,
     ) -> Result<Vec<GameStartInfo>, Error> {
         todo!();
     }
@@ -300,15 +302,7 @@ fn handshake<'a, R: Rng + 'a>(
     while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
         let mut env = channel_handler_env(allocator, rng);
         let who = i % 2;
-        if run_move(
-            &mut env,
-            Amount::new(200),
-            pipes,
-            &mut peers[who],
-            who,
-        )
-            .expect("should send")
-        {
+        if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send") {
             messages += 1;
         }
 
@@ -330,14 +324,13 @@ fn test_peer_smoke() {
     pipe_sender[1].my_id = 1;
 
     let mut game_type_map = BTreeMap::new();
-    let calpoker_factory = read_hex_puzzle(
-        &mut allocator,
-        "clsp/calpoker_include_calpoker_factory.hex"
-    ).expect("should load");
+    let calpoker_factory =
+        read_hex_puzzle(&mut allocator, "clsp/calpoker_include_calpoker_factory.hex")
+            .expect("should load");
 
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),
-        calpoker_factory.to_program()
+        calpoker_factory.to_program(),
     );
 
     let new_peer = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, have_potato: bool| {
@@ -385,8 +378,9 @@ fn test_peer_smoke() {
         &mut allocator,
         Amount::new(200),
         &mut peers,
-        &mut pipe_sender
-    ).expect("should work");
+        &mut pipe_sender,
+    )
+    .expect("should work");
 
     quiesce(
         &mut rng,
@@ -395,7 +389,7 @@ fn test_peer_smoke() {
         &mut peers,
         &mut pipe_sender,
     )
-        .expect("should work");
+    .expect("should work");
 
     // Start a game
     {
@@ -413,8 +407,8 @@ fn test_peer_smoke() {
                     my_contribution: Amount::new(100),
                     game_type: GameType(b"calpoker".to_vec()),
                     my_turn: true,
-                    parameters: vec![0x80]
-                }
+                    parameters: vec![0x80],
+                },
             )
             .expect("should run");
     }
@@ -426,7 +420,7 @@ fn test_peer_smoke() {
         &mut peers,
         &mut pipe_sender,
     )
-        .expect("should work");
+    .expect("should work");
 
     assert!(pipe_sender[0].queue.is_empty());
     assert!(pipe_sender[1].queue.is_empty());
