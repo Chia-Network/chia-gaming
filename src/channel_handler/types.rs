@@ -627,7 +627,9 @@ pub struct UnrollCoinOutcome {
 ///
 /// The fully curried unroll program takes either
 /// - reveal
+///
 /// or
+///
 /// - meta_puzzle conditions since conditions are passed through metapuzzle.
 ///
 /// At the end of the day update and verify should produce the same conditions for
