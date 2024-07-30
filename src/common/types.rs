@@ -621,8 +621,8 @@ impl<X: ToClvm<NodePtr>> Sha256tree for X {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Program(Vec<u8>);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Program(pub Vec<u8>);
 
 impl Program {
     pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Program, Error> {
@@ -717,7 +717,7 @@ impl Puzzle {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Timeout(u64);
 
 impl Timeout {

@@ -406,6 +406,7 @@ fn test_peer_smoke() {
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
                     game_type: GameType(b"calpoker".to_vec()),
+                    timeout: Timeout::new(1000),
                     my_turn: true,
                     parameters: vec![0x80],
                 },
