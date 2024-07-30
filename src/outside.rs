@@ -39,7 +39,6 @@ pub struct WireGameStart {
 
 #[derive(Debug, Clone)]
 pub struct GameStartQueueEntry {
-    start: GameStart,
     games: Vec<GameStartInfo>,
 }
 
@@ -1078,14 +1077,14 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             }
 
             self.my_start_queue.push_back(GameStartQueueEntry {
-                start: game.clone(),
+                // start: game.clone(),
                 games: factory_games,
             });
 
             self.have_potato_start_game(penv)?;
         } else {
             self.their_start_queue.push_back(GameStartQueueEntry {
-                start: game.clone(),
+                // start: game.clone(),
                 games: factory_games,
             });
         }
