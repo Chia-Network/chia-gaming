@@ -219,7 +219,15 @@ pub trait FromLocalUI<
         G: 'a,
         R: 'a;
 
-    fn make_move(&mut self, id: GameID, readable: ReadableMove) -> Result<(), Error>;
+    fn make_move<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        id: GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a;
     fn accept(&mut self, id: GameID) -> Result<(), Error>;
     fn shut_down(&mut self) -> Result<(), Error>;
 }
@@ -347,6 +355,8 @@ pub struct PotatoHandler {
     // Our outgoing game starts.
     my_start_queue: VecDeque<GameStartQueueEntry>,
 
+    move_queue: VecDeque<(GameID, ReadableMove)>,
+
     next_game_id: Vec<u8>,
 
     channel_handler: Option<ChannelHandler>,
@@ -421,6 +431,7 @@ impl PotatoHandler {
 
             their_start_queue: VecDeque::default(),
             my_start_queue: VecDeque::default(),
+            move_queue: VecDeque::default(),
 
             channel_handler: None,
             channel_initiation_transaction: None,
@@ -500,6 +511,10 @@ impl PotatoHandler {
             return Ok(());
         }
 
+        if self.have_potato_move(penv)? {
+            return Ok(());
+        }
+
         Ok(())
     }
 
@@ -529,14 +544,6 @@ impl PotatoHandler {
             _ => {
                 todo!("unhandled passthrough message {msg_envelope:?}");
             }
-        }
-
-        // We passed on the message.  If there is a group of games to start, we should
-        // send them on.
-        self.have_potato = PotatoState::Present;
-
-        if !self.my_start_queue.is_empty() {
-            self.have_potato_start_game(penv)?;
         }
 
         Ok(())
@@ -635,6 +642,20 @@ impl PotatoHandler {
             let (_, system_interface) = penv.env();
             system_interface.send_message(&PeerMessage::StartGames(sigs, dehydrated_games))?;
             return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    fn have_potato_move<'a, G, R: Rng + 'a>(
+        &mut self,
+        _penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<bool, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        if let Some(_move_made) = self.move_queue.pop_front() {
+            todo!();
         }
 
         Ok(false)
@@ -1109,7 +1130,16 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         Ok(game_id_list)
     }
 
-    fn make_move(&mut self, _id: GameID, _readable: ReadableMove) -> Result<(), Error> {
+    fn make_move<'a>(
+        &mut self,
+        _penv: &mut dyn PeerEnv<'a, G, R>,
+        _id: GameID,
+        _readable: ReadableMove,
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a,
+    {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
             return Err(Error::StrErr(
                 "move without finishing handshake".to_string(),
