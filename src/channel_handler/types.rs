@@ -20,9 +20,9 @@ use crate::common::standard_coin::{
     unsafe_sign_partial,
 };
 use crate::common::types::{
-    atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    BrokenOutCoinSpendInfo, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout, Program
+    atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
+    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -68,7 +68,11 @@ pub struct PotatoSignatures {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GenericGameStartInfo<H: std::fmt::Debug + Clone + ?Sized, VP: std::fmt::Debug + Clone + ?Sized, S: std::fmt::Debug + Clone + ?Sized> {
+pub struct GenericGameStartInfo<
+    H: std::fmt::Debug + Clone + ?Sized,
+    VP: std::fmt::Debug + Clone + ?Sized,
+    S: std::fmt::Debug + Clone + ?Sized,
+> {
     pub game_id: GameID,
     pub amount: Amount,
     pub game_handler: H,
@@ -98,26 +102,23 @@ impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
     ) -> Result<GameStartInfo, Error> {
         let game_handler_nodeptr = node_from_bytes(
             allocator.allocator(),
-            &serializable.game_handler.serialized.0
-        ).into_gen()?;
-        let game_handler =
-            if serializable.game_handler.my_turn {
-                GameHandler::MyTurnHandler(game_handler_nodeptr)
-            } else {
-                GameHandler::TheirTurnHandler(game_handler_nodeptr)
-            };
+            &serializable.game_handler.serialized.0,
+        )
+        .into_gen()?;
+        let game_handler = if serializable.game_handler.my_turn {
+            GameHandler::MyTurnHandler(game_handler_nodeptr)
+        } else {
+            GameHandler::TheirTurnHandler(game_handler_nodeptr)
+        };
         let initial_validation_program_nodeptr = node_from_bytes(
             allocator.allocator(),
-            &serializable.initial_validation_program.0
-        ).into_gen()?;
-        let initial_validation_program = ValidationProgram::new(
-            allocator,
-            initial_validation_program_nodeptr
-        );
-        let initial_state_nodeptr = node_from_bytes(
-            allocator.allocator(),
-            &serializable.initial_state.0
-        ).into_gen()?;
+            &serializable.initial_validation_program.0,
+        )
+        .into_gen()?;
+        let initial_validation_program =
+            ValidationProgram::new(allocator, initial_validation_program_nodeptr);
+        let initial_state_nodeptr =
+            node_from_bytes(allocator.allocator(), &serializable.initial_state.0).into_gen()?;
         Ok(GenericGameStartInfo {
             game_id: serializable.game_id.clone(),
             amount: serializable.amount.clone(),
@@ -129,16 +130,17 @@ impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
             initial_state: initial_state_nodeptr,
             initial_move: serializable.initial_move.clone(),
             initial_max_move_size: serializable.initial_max_move_size,
-            initial_mover_share: serializable.initial_mover_share.clone()
+            initial_mover_share: serializable.initial_mover_share.clone(),
         })
     }
 
     pub fn to_serializable(
         &self,
-        allocator: &mut AllocEncoder
+        allocator: &mut AllocEncoder,
     ) -> Result<FlatGameStartInfo, Error> {
         let flat_game_handler = self.game_handler.to_serializable(allocator)?;
-        let flat_validation_program = Program::from_nodeptr(allocator, self.initial_validation_program.to_nodeptr())?;
+        let flat_validation_program =
+            Program::from_nodeptr(allocator, self.initial_validation_program.to_nodeptr())?;
         let flat_state = Program::from_nodeptr(allocator, self.initial_state)?;
 
         Ok(GenericGameStartInfo {

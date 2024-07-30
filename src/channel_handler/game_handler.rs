@@ -60,19 +60,15 @@ pub struct FlatGameHandler {
 }
 
 impl GameHandler {
-    pub fn to_serializable(
-        &self,
-        allocator: &mut AllocEncoder
-    ) -> Result<FlatGameHandler, Error> {
-        let (my_turn, nodeptr) =
-            match self {
-                GameHandler::MyTurnHandler(n) => (true, n),
-                GameHandler::TheirTurnHandler(n) => (false, n)
-            };
+    pub fn to_serializable(&self, allocator: &mut AllocEncoder) -> Result<FlatGameHandler, Error> {
+        let (my_turn, nodeptr) = match self {
+            GameHandler::MyTurnHandler(n) => (true, n),
+            GameHandler::TheirTurnHandler(n) => (false, n),
+        };
 
         Ok(FlatGameHandler {
             my_turn,
-            serialized: Program::from_nodeptr(allocator, *nodeptr)?
+            serialized: Program::from_nodeptr(allocator, *nodeptr)?,
         })
     }
 }
