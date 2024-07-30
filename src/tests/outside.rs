@@ -1,6 +1,7 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use clvm_traits::ToClvm;
+use clvmr::NodePtr;
 
 use log::debug;
 
@@ -8,20 +9,24 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
+use crate::channel_handler::types::{
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, ReadableMove,
+};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
     Spend, SpendBundle, Timeout,
 };
 use crate::outside::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameType, PacketSender, PeerEnv,
-    PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
+    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface,
 };
 
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::{CoinSpend, Program};
+
+use crate::tests::calpoker::load_calpoker;
 
 #[allow(dead_code)]
 enum NotificationToLocalUI {
@@ -215,6 +220,20 @@ where
     }
 }
 
+impl<'inputs, G, R> TestPeerEnv<'inputs, G, R>
+where
+    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
+    R: Rng,
+{
+    fn get_game_by_id(
+        game_type: &GameType,
+        initiated: bool,
+        params: NodePtr,
+    ) -> Result<Vec<GameStartInfo>, Error> {
+        todo!();
+    }
+}
+
 fn run_move<'a, R: Rng>(
     env: &'a mut ChannelHandlerEnv<'a, R>,
     amount: Amount,
@@ -270,6 +289,31 @@ fn quiesce<'a, R: Rng + 'a>(
     Ok(())
 }
 
+fn handshake<'a, R: Rng + 'a>(
+    rng: &'a mut R,
+    allocator: &'a mut AllocEncoder,
+    amount: Amount,
+    peers: &'a mut [PotatoHandler; 2],
+    pipes: &'a mut [Pipe; 2],
+) -> Result<(), Error> {
+    let mut i = 0;
+    let mut messages = 0;
+
+    while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
+        let mut env = channel_handler_env(allocator, rng);
+        let who = i % 2;
+        if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send") {
+            messages += 1;
+        }
+
+        i += 1;
+
+        assert!(messages + 2 >= i);
+    }
+
+    Ok(())
+}
+
 #[test]
 fn test_peer_smoke() {
     let seed: [u8; 32] = [0; 32];
@@ -278,6 +322,16 @@ fn test_peer_smoke() {
 
     let mut pipe_sender: [Pipe; 2] = Default::default();
     pipe_sender[1].my_id = 1;
+
+    let mut game_type_map = BTreeMap::new();
+    let calpoker_factory =
+        read_hex_puzzle(&mut allocator, "clsp/calpoker_include_calpoker_factory.hex")
+            .expect("should load");
+
+    game_type_map.insert(
+        GameType(b"calpoker".to_vec()),
+        calpoker_factory.to_program(),
+    );
 
     let new_peer = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, have_potato: bool| {
         let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
@@ -289,6 +343,7 @@ fn test_peer_smoke() {
         PotatoHandler::new(
             have_potato,
             private_keys1,
+            game_type_map.clone(),
             Amount::new(100),
             Amount::new(100),
             reward_puzzle_hash1.clone(),
@@ -317,45 +372,28 @@ fn test_peer_smoke() {
         peers[0].start(&mut penv, parent_coin).expect("should work");
     };
 
-    let mut i = 0;
-    let mut messages = 0;
-
     // Do handshake for peers.
-    while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
-        let mut env = channel_handler_env(&mut allocator, &mut rng);
-        let who = i % 2;
-        if run_move(
-            &mut env,
-            Amount::new(200),
-            &mut pipe_sender,
-            &mut peers[who],
-            who,
-        )
-        .expect("should send")
-        {
-            messages += 1;
-        }
+    handshake(
+        &mut rng,
+        &mut allocator,
+        Amount::new(200),
+        &mut peers,
+        &mut pipe_sender,
+    )
+    .expect("should work");
 
-        i += 1;
-
-        assert!(messages + 2 >= i);
-    }
-
-    {
-        quiesce(
-            &mut rng,
-            &mut allocator,
-            Amount::new(200),
-            &mut peers,
-            &mut pipe_sender,
-        )
-        .expect("should work");
-    }
+    quiesce(
+        &mut rng,
+        &mut allocator,
+        Amount::new(200),
+        &mut peers,
+        &mut pipe_sender,
+    )
+    .expect("should work");
 
     // Start a game
     {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
-        let nil = env.allocator.allocator().null();
         let mut penv = TestPeerEnv {
             env: &mut env,
             system_interface: &mut pipe_sender[1],
@@ -364,10 +402,27 @@ fn test_peer_smoke() {
             .start_games(
                 &mut penv,
                 true,
-                &[(GameType(b"calpoker".to_vec()), true, nil)],
+                &GameStart {
+                    amount: Amount::new(200),
+                    my_contribution: Amount::new(100),
+                    game_type: GameType(b"calpoker".to_vec()),
+                    timeout: Timeout::new(1000),
+                    my_turn: true,
+                    parameters: vec![0x80],
+                },
             )
             .expect("should run");
     }
 
-    assert_eq!(pipe_sender[1].queue.len(), 1);
+    quiesce(
+        &mut rng,
+        &mut allocator,
+        Amount::new(200),
+        &mut peers,
+        &mut pipe_sender,
+    )
+    .expect("should work");
+
+    assert!(pipe_sender[0].queue.is_empty());
+    assert!(pipe_sender[1].queue.is_empty());
 }

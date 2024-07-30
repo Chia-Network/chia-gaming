@@ -1,52 +1,46 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
-use clvmr::NodePtr;
+use clvm_traits::ToClvm;
+use clvmr::serde::node_from_bytes;
+use clvmr::{run_program, Allocator, NodePtr};
+
 use log::debug;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
-use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
-
+use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
+    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, PublicKey, PuzzleHash, Sha256Input,
-    Spend, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program, PublicKey,
+    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
+use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStart {
     pub game_type: GameType,
+    pub timeout: Timeout,
+    pub amount: Amount,
+    pub my_contribution: Amount,
     pub my_turn: bool,
     pub parameters: Vec<u8>,
 }
 
-// struct GameInfoMyTurn {
-//     id: GameID,
-//     their_turn_game_handler: GameHandler,
-//     validation_program: Program,
-//     validation_program_hash: Hash,
-//     state: NodePtr,
-//     move_made: Vec<u8>,
-//     max_move_size: usize,
-//     mover_share: Amount,
-// }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WireGameStart {
+    pub game_ids: Vec<GameID>,
+    pub start: GameStart,
+}
 
-// struct GameInfoTheirTurn {
-//     id: GameID,
-//     their_turn_game_handler: GameHandler,
-//     validation_program: Program,
-//     validation_program_hash: Hash,
-//     state: NodePtr,
-//     move_made: Vec<u8>,
-//     max_move_size: usize,
-//     mover_share: Amount,
-// }
+#[derive(Debug, Clone)]
+pub struct GameStartQueueEntry {
+    games: Vec<GameStartInfo>,
+}
 
 /// Async interface for messaging out of the game layer toward the wallet.
 ///
@@ -187,7 +181,7 @@ pub trait WalletSpendInterface {
     fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error>;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
@@ -219,7 +213,7 @@ pub trait FromLocalUI<
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         i_initiated: bool,
-        games: &[(GameType, bool, NodePtr)],
+        game: &GameStart,
     ) -> Result<Vec<GameID>, Error>
     where
         G: 'a,
@@ -262,11 +256,11 @@ pub enum PeerMessage {
     },
 
     Nil(PotatoSignatures),
-    StartGames(Vec<GameStart>),
     Move(GameID, Vec<u8>, PotatoSignatures),
     Accept(GameID, PotatoSignatures),
     Shutdown(Aggsig),
     RequestPotato(()),
+    StartGames(PotatoSignatures, Vec<FlatGameStartInfo>),
 }
 
 #[derive(Debug, Clone)]
@@ -324,20 +318,36 @@ where
 /// If there is more work left, also send a receive potato message at that time.
 ///
 /// Also do this when any queue becomes non-empty.
+///
+/// State machine surrounding game starts:
+///
+/// First peer receives game start from the ui
+/// First peer tries to acquire the potato and when we have it, send a peer level start game
+/// message.
+/// First peer creates the game by giving channel_handler the game definitions.
+/// second peer receives the game start from the first peer and stores it.
+///
+/// When the channel handler game start is reeived, we must receive a matching datum to
+/// the one we receive in the channel handler game start.  If we receive that, we allow
+/// the message through to the channel handler.
 #[allow(dead_code)]
 pub struct PotatoHandler {
     have_potato: bool,
 
     handshake_state: HandshakeState,
 
-    their_start_queue: VecDeque<Vec<GameStart>>,
-    my_start_queue: VecDeque<Vec<GameStart>>,
+    // Waiting game starts at the peer level.
+    their_start_queue: VecDeque<GameStartQueueEntry>,
+    // Our outgoing game starts.
+    my_start_queue: VecDeque<GameStartQueueEntry>,
 
     next_game_id: Vec<u8>,
 
     channel_handler: Option<ChannelHandler>,
     channel_initiation_transaction: Option<SpendBundle>,
     channel_finished_transaction: Option<SpendBundle>,
+
+    game_types: BTreeMap<GameType, Program>,
 
     private_keys: ChannelHandlerPrivateKeys,
 
@@ -383,6 +393,7 @@ impl PotatoHandler {
     pub fn new(
         have_potato: bool,
         private_keys: ChannelHandlerPrivateKeys,
+        game_types: BTreeMap<GameType, Program>,
         my_contribution: Amount,
         their_contribution: Amount,
         reward_puzzle_hash: PuzzleHash,
@@ -396,6 +407,7 @@ impl PotatoHandler {
             },
 
             next_game_id: Vec::new(),
+            game_types,
 
             their_start_queue: VecDeque::default(),
             my_start_queue: VecDeque::default(),
@@ -464,14 +476,18 @@ impl PotatoHandler {
         Ok(())
     }
 
-    fn update_channel_coin_after_receive<G, R: Rng>(
+    fn update_channel_coin_after_receive<'a, G, R: Rng + 'a>(
         &mut self,
-        _penv: &mut dyn PeerEnv<G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
         _spend: &ChannelCoinSpendInfo,
     ) -> Result<(), Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        if self.have_potato_start_game(penv)? {
+            return Ok(());
+        }
+
         Ok(())
     }
 
@@ -501,6 +517,14 @@ impl PotatoHandler {
             _ => {
                 todo!("unhandled passthrough message {msg_envelope:?}");
             }
+        }
+
+        // We passed on the message.  If there is a group of games to start, we should
+        // send them on.
+        self.have_potato = true;
+
+        if !self.my_start_queue.is_empty() {
+            self.have_potato_start_game(penv)?;
         }
 
         Ok(())
@@ -584,13 +608,116 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        if let Some(games) = self.my_start_queue.pop_front() {
+        if let Some(desc) = self.my_start_queue.pop_front() {
+            let mut dehydrated_games = Vec::new();
+
+            let sigs = {
+                let ch = self.channel_handler_mut()?;
+                let (env, _) = penv.env();
+                for game in desc.games.iter() {
+                    dehydrated_games.push(game.to_serializable(env.allocator)?);
+                }
+                ch.send_potato_start_game(env, &desc.games)?
+            };
+
             let (_, system_interface) = penv.env();
-            system_interface.send_message(&PeerMessage::StartGames(games.clone()))?;
+            system_interface.send_message(&PeerMessage::StartGames(sigs, dehydrated_games))?;
             return Ok(true);
         }
 
         Ok(false)
+    }
+
+    fn get_games_by_start_type<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        i_initiated: bool,
+        game_start: &GameStart,
+    ) -> Result<Vec<GameStartInfo>, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
+            starter
+        } else {
+            return Err(Error::StrErr(format!(
+                "no such game {:?}",
+                game_start.game_type
+            )));
+        };
+
+        let (env, _) = penv.env();
+        let starter_clvm = starter.to_clvm(env.allocator).into_gen()?;
+        let params_clvm =
+            node_from_bytes(env.allocator.allocator(), &game_start.parameters).into_gen()?;
+        let program_run_args = (
+            game_start.amount.clone(),
+            (
+                game_start.my_contribution.clone(),
+                (game_start.my_turn, (Node(params_clvm), ())),
+            ),
+        )
+            .to_clvm(env.allocator)
+            .into_gen()?;
+
+        let program_output = run_program(
+            env.allocator.allocator(),
+            &chia_dialect(),
+            starter_clvm,
+            program_run_args,
+            0,
+        )
+        .into_gen()?
+        .1;
+
+        let to_list =
+            |allocator: &mut Allocator, node: NodePtr, err: &str| -> Result<Vec<NodePtr>, Error> {
+                if let Some(p) = proper_list(allocator, node, true) {
+                    Ok(p)
+                } else {
+                    Err(Error::StrErr(format!("bad factory output: {err}")))
+                }
+            };
+
+        // The result is two parallel lists of opposite sides of game starts.
+        // Well re-glue these together into a list of pairs.
+        let pair_of_output_lists = to_list(
+            env.allocator.allocator(),
+            program_output,
+            "not a pair of lists",
+        )?;
+
+        if pair_of_output_lists.len() != 2 {
+            return Err(Error::StrErr("output wasn't a list of 2 items".to_string()));
+        }
+
+        let my_info_list = if i_initiated {
+            to_list(
+                env.allocator.allocator(),
+                pair_of_output_lists[0],
+                "not a list (first)",
+            )?
+        } else {
+            to_list(
+                env.allocator.allocator(),
+                pair_of_output_lists[1],
+                "not a list (second)",
+            )?
+        };
+
+        let mut result_start_info = Vec::new();
+        for node in my_info_list.into_iter() {
+            let new_game =
+                GameStartInfo::from_clvm(env.allocator, game_start.my_turn ^ !i_initiated, node)?;
+            // Timeout and game_id are supplied here.
+            result_start_info.push(GameStartInfo {
+                game_id: self.next_game_id()?,
+                timeout: game_start.timeout.clone(),
+                ..new_game
+            });
+        }
+
+        Ok(result_start_info)
     }
 
     fn request_potato<'a, G, R: Rng + 'a>(
@@ -620,6 +747,36 @@ impl PotatoHandler {
         }
 
         Ok(GameID::from_bytes(&game_id))
+    }
+
+    fn received_game_start<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        sigs: &PotatoSignatures,
+        games: &[FlatGameStartInfo],
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        // We must have received a peer layer message indicating that we're waiting for this
+        // game start.
+        if self.their_start_queue.pop_front().is_none() {
+            return Err(Error::StrErr("no waiting games to start".to_string()));
+        };
+
+        let ch = self.channel_handler_mut()?;
+        let spend_info = {
+            let (env, _system_interface) = penv.env();
+            let mut rehydrated_games = Vec::new();
+            for game in games.iter() {
+                rehydrated_games.push(GameStartInfo::from_serializable(env.allocator, game)?);
+            }
+            ch.received_potato_start_game(env, sigs, &rehydrated_games)?
+        };
+
+        self.update_channel_coin_after_receive(penv, &spend_info)?;
+
+        Ok(())
     }
 
     pub fn received_message<'a, G, R: Rng + 'a>(
@@ -861,7 +1018,10 @@ impl PotatoHandler {
                             let nil_msg = ch.send_empty_potato(env)?;
                             system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                         }
-                        self.have_potato = true;
+                        self.have_potato = false;
+                    }
+                    PeerMessage::StartGames(sigs, g) => {
+                        self.received_game_start(penv, &sigs, &g)?;
                     }
                     _ => {
                         self.pass_on_channel_handler_message(penv, msg)?;
@@ -889,8 +1049,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     fn start_games<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        _i_initiated: bool,
-        games: &[(GameType, bool, NodePtr)],
+        i_initiated: bool,
+        game: &GameStart,
     ) -> Result<Vec<GameID>, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
@@ -903,36 +1063,33 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        let mut game_ids = Vec::new();
-        for _ in games.iter() {
-            game_ids.push(self.next_game_id()?);
+        let factory_games = self.get_games_by_start_type(penv, true, game)?;
+
+        let game_id_list = factory_games.iter().map(|g| g.game_id.clone()).collect();
+
+        // This comes to both peers before any game start happens.
+        // In the didn't initiate scenario, we hang onto the game start to ensure that
+        // we know what we're receiving from the remote end.
+        if i_initiated {
+            if !self.have_potato {
+                self.request_potato(penv)?;
+                return Ok(game_id_list);
+            }
+
+            self.my_start_queue.push_back(GameStartQueueEntry {
+                // start: game.clone(),
+                games: factory_games,
+            });
+
+            self.have_potato_start_game(penv)?;
+        } else {
+            self.their_start_queue.push_back(GameStartQueueEntry {
+                // start: game.clone(),
+                games: factory_games,
+            });
         }
 
-        let game_starts = {
-            let (env, _) = penv.env();
-            games
-                .iter()
-                .map(|(gt, start, params)| {
-                    let mut stream = Stream::new(None);
-                    sexp_to_stream(env.allocator.allocator(), *params, &mut stream);
-                    GameStart {
-                        game_type: gt.clone(),
-                        my_turn: *start,
-                        parameters: stream.get_value().data().clone(),
-                    }
-                })
-                .collect()
-        };
-
-        self.my_start_queue.push_back(game_starts);
-
-        if !self.have_potato {
-            self.request_potato(penv)?;
-            return Ok(game_ids);
-        }
-
-        self.have_potato_start_game(penv)?;
-        Ok(game_ids)
+        Ok(game_id_list)
     }
 
     fn make_move(&mut self, _id: GameID, _readable: ReadableMove) -> Result<(), Error> {

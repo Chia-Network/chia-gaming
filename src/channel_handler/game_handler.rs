@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 #[cfg(test)]
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 #[cfg(test)]
@@ -25,7 +27,7 @@ use crate::channel_handler::types::{
 };
 use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
-    IntoErr, Node,
+    IntoErr, Node, Program,
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 
@@ -49,6 +51,26 @@ pub fn chia_dialect() -> ChiaDialect {
 pub enum GameHandler {
     MyTurnHandler(NodePtr),
     TheirTurnHandler(NodePtr),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FlatGameHandler {
+    pub my_turn: bool,
+    pub serialized: Program,
+}
+
+impl GameHandler {
+    pub fn to_serializable(&self, allocator: &mut AllocEncoder) -> Result<FlatGameHandler, Error> {
+        let (my_turn, nodeptr) = match self {
+            GameHandler::MyTurnHandler(n) => (true, n),
+            GameHandler::TheirTurnHandler(n) => (false, n),
+        };
+
+        Ok(FlatGameHandler {
+            my_turn,
+            serialized: Program::from_nodeptr(allocator, *nodeptr)?,
+        })
+    }
 }
 
 pub struct MyTurnInputs<'a> {
