@@ -4,6 +4,7 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
+use clvmr::serde::node_from_bytes;
 
 use log::debug;
 
@@ -12,7 +13,7 @@ use rand::prelude::*;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::GameHandler;
+use crate::channel_handler::game_handler::{FlatGameHandler, GameHandler};
 use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle, standard_solution_partial,
@@ -21,7 +22,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount,
     BrokenOutCoinSpendInfo, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
+    PrivateKey, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout, Program
 };
 use crate::referee::{GameMoveDetails, RefereeMaker};
 
@@ -66,26 +67,93 @@ pub struct PotatoSignatures {
     pub my_unroll_half_signature_peer: Aggsig,
 }
 
-#[derive(Debug, Clone)]
-pub struct GameStartInfo {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GenericGameStartInfo<H: std::fmt::Debug + Clone + ?Sized, VP: std::fmt::Debug + Clone + ?Sized, S: std::fmt::Debug + Clone + ?Sized> {
     pub game_id: GameID,
     pub amount: Amount,
-    pub game_handler: GameHandler,
+    pub game_handler: H,
     pub timeout: Timeout,
 
     pub my_contribution_this_game: Amount,
     pub their_contribution_this_game: Amount,
 
-    pub initial_validation_program: ValidationProgram,
-    pub initial_state: NodePtr,
+    pub initial_validation_program: VP,
+    pub initial_state: S,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
 }
 
-impl GameStartInfo {
+pub type GameStartInfo = GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr>;
+pub type FlatGameStartInfo = GenericGameStartInfo<FlatGameHandler, Program, Program>;
+
+impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
     pub fn is_my_turn(&self) -> bool {
         matches!(self.game_handler, GameHandler::MyTurnHandler(_))
+    }
+
+    pub fn from_serializable(
+        allocator: &mut AllocEncoder,
+        serializable: &FlatGameStartInfo,
+    ) -> Result<GameStartInfo, Error> {
+        let game_handler_nodeptr = node_from_bytes(
+            allocator.allocator(),
+            &serializable.game_handler.serialized.0
+        ).into_gen()?;
+        let game_handler =
+            if serializable.game_handler.my_turn {
+                GameHandler::MyTurnHandler(game_handler_nodeptr)
+            } else {
+                GameHandler::TheirTurnHandler(game_handler_nodeptr)
+            };
+        let initial_validation_program_nodeptr = node_from_bytes(
+            allocator.allocator(),
+            &serializable.initial_validation_program.0
+        ).into_gen()?;
+        let initial_validation_program = ValidationProgram::new(
+            allocator,
+            initial_validation_program_nodeptr
+        );
+        let initial_state_nodeptr = node_from_bytes(
+            allocator.allocator(),
+            &serializable.initial_state.0
+        ).into_gen()?;
+        Ok(GenericGameStartInfo {
+            game_id: serializable.game_id.clone(),
+            amount: serializable.amount.clone(),
+            game_handler,
+            timeout: serializable.timeout.clone(),
+            my_contribution_this_game: serializable.my_contribution_this_game.clone(),
+            their_contribution_this_game: serializable.their_contribution_this_game.clone(),
+            initial_validation_program,
+            initial_state: initial_state_nodeptr,
+            initial_move: serializable.initial_move.clone(),
+            initial_max_move_size: serializable.initial_max_move_size,
+            initial_mover_share: serializable.initial_mover_share.clone()
+        })
+    }
+
+    pub fn to_serializable(
+        &self,
+        allocator: &mut AllocEncoder
+    ) -> Result<FlatGameStartInfo, Error> {
+        let flat_game_handler = self.game_handler.to_serializable(allocator)?;
+        let flat_validation_program = Program::from_nodeptr(allocator, self.initial_validation_program.to_nodeptr())?;
+        let flat_state = Program::from_nodeptr(allocator, self.initial_state)?;
+
+        Ok(GenericGameStartInfo {
+            game_id: self.game_id.clone(),
+            amount: self.amount.clone(),
+            game_handler: flat_game_handler,
+            timeout: self.timeout.clone(),
+            my_contribution_this_game: self.my_contribution_this_game.clone(),
+            their_contribution_this_game: self.their_contribution_this_game.clone(),
+            initial_validation_program: flat_validation_program,
+            initial_state: flat_state,
+            initial_move: self.initial_move.clone(),
+            initial_max_move_size: self.initial_max_move_size,
+            initial_mover_share: self.initial_mover_share.clone(),
+        })
     }
 
     pub fn from_clvm(

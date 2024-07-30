@@ -21,7 +21,7 @@
 
 (defun max-move-size-of-template ((_ _ _ _ m)) m)
 
-(defun calpoker_factory (game_id amount my_contribution my_turn params)
+(defun calpoker_factory (amount my_contribution my_turn params)
   (assign
 
    template (calpoker_template)
@@ -37,8 +37,8 @@
      (list
       ;; One game
       (list
-       ;; GameID
-       game_id
+       ;; GameID - will be replaced by caller
+       ()
        ;; Amount
        amount
 
@@ -74,8 +74,8 @@
      (list
       ;; One game
       (list
-       ;; GameID
-       game_id
+       ;; GameID - will be replaced by caller
+       ()
        ;; Amount
        amount
 
