@@ -2,18 +2,16 @@ use std::collections::{BTreeMap, VecDeque};
 
 use clvm_traits::ToClvm;
 use clvmr::serde::node_from_bytes;
-use clvmr::{Allocator, run_program, NodePtr};
+use clvmr::{run_program, Allocator, NodePtr};
 
 use log::debug;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, GameStartInfo, PotatoSignatures, ReadableMove,
-    FlatGameStartInfo
+    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
@@ -21,6 +19,7 @@ use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program, PublicKey,
     PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
+use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStart {
@@ -656,10 +655,7 @@ impl PotatoHandler {
             game_start.amount.clone(),
             (
                 game_start.my_contribution.clone(),
-                (
-                    game_start.my_turn,
-                    (Node(params_clvm), ()),
-                ),
+                (game_start.my_turn, (Node(params_clvm), ())),
             ),
         )
             .to_clvm(env.allocator)
@@ -675,40 +671,50 @@ impl PotatoHandler {
         .into_gen()?
         .1;
 
-        let to_list = |allocator: &mut Allocator, node: NodePtr, err: &str| -> Result<Vec<NodePtr>, Error> {
-            if let Some(p) = proper_list(allocator, node, true) {
-                Ok(p)
-            } else {
-                Err(Error::StrErr(format!("bad factory output: {err}")))
-            }
-        };
+        let to_list =
+            |allocator: &mut Allocator, node: NodePtr, err: &str| -> Result<Vec<NodePtr>, Error> {
+                if let Some(p) = proper_list(allocator, node, true) {
+                    Ok(p)
+                } else {
+                    Err(Error::StrErr(format!("bad factory output: {err}")))
+                }
+            };
 
         // The result is two parallel lists of opposite sides of game starts.
         // Well re-glue these together into a list of pairs.
-        let pair_of_output_lists = to_list(env.allocator.allocator(), program_output, "not a pair of lists")?;
+        let pair_of_output_lists = to_list(
+            env.allocator.allocator(),
+            program_output,
+            "not a pair of lists",
+        )?;
 
         if pair_of_output_lists.len() != 2 {
             return Err(Error::StrErr("output wasn't a list of 2 items".to_string()));
         }
 
-        let my_info_list =
-            if i_initiated {
-                to_list(env.allocator.allocator(), pair_of_output_lists[0], "not a list (first)")?
-            } else {
-                to_list(env.allocator.allocator(), pair_of_output_lists[1], "not a list (second)")?
-            };
+        let my_info_list = if i_initiated {
+            to_list(
+                env.allocator.allocator(),
+                pair_of_output_lists[0],
+                "not a list (first)",
+            )?
+        } else {
+            to_list(
+                env.allocator.allocator(),
+                pair_of_output_lists[1],
+                "not a list (second)",
+            )?
+        };
 
         let mut result_start_info = Vec::new();
         for node in my_info_list.into_iter() {
-            let new_game = GameStartInfo::from_clvm(
-                env.allocator,
-                game_start.my_turn ^ !i_initiated, node
-            )?;
+            let new_game =
+                GameStartInfo::from_clvm(env.allocator, game_start.my_turn ^ !i_initiated, node)?;
             // Timeout and game_id are supplied here.
             result_start_info.push(GameStartInfo {
                 game_id: self.next_game_id()?,
                 timeout: game_start.timeout.clone(),
-                .. new_game
+                ..new_game
             });
         }
 
@@ -760,15 +766,11 @@ impl PotatoHandler {
         };
 
         let ch = self.channel_handler_mut()?;
-        let spend_info =
-        {
+        let spend_info = {
             let (env, _system_interface) = penv.env();
             let mut rehydrated_games = Vec::new();
             for game in games.iter() {
-                rehydrated_games.push(GameStartInfo::from_serializable(
-                    env.allocator,
-                    game
-                )?);
+                rehydrated_games.push(GameStartInfo::from_serializable(env.allocator, game)?);
             }
             ch.received_potato_start_game(env, sigs, &rehydrated_games)?
         };
@@ -1062,11 +1064,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        let factory_games = self.get_games_by_start_type(
-            penv,
-            true,
-            game
-        )?;
+        let factory_games = self.get_games_by_start_type(penv, true, game)?;
 
         let game_id_list = factory_games.iter().map(|g| g.game_id.clone()).collect();
 
@@ -1081,14 +1079,14 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
             self.my_start_queue.push_back(GameStartQueueEntry {
                 start: game.clone(),
-                games: factory_games
+                games: factory_games,
             });
 
             self.have_potato_start_game(penv)?;
         } else {
             self.their_start_queue.push_back(GameStartQueueEntry {
                 start: game.clone(),
-                games: factory_games
+                games: factory_games,
             });
         }
 
