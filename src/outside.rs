@@ -304,6 +304,12 @@ where
     fn env(&mut self) -> (&mut ChannelHandlerEnv<'inputs, R>, &mut G);
 }
 
+enum PotatoState {
+    Absent,
+    Requested,
+    Present,
+}
+
 /// Handle potato in flight when I request potato:
 ///
 /// Every time i send the potato, if i have stuff i want to do, then i also send
@@ -332,7 +338,7 @@ where
 /// the message through to the channel handler.
 #[allow(dead_code)]
 pub struct PotatoHandler {
-    have_potato: bool,
+    have_potato: PotatoState,
 
     handshake_state: HandshakeState,
 
@@ -399,7 +405,11 @@ impl PotatoHandler {
         reward_puzzle_hash: PuzzleHash,
     ) -> PotatoHandler {
         PotatoHandler {
-            have_potato,
+            have_potato: if have_potato {
+                PotatoState::Present
+            } else {
+                PotatoState::Absent
+            },
             handshake_state: if have_potato {
                 HandshakeState::StepA
             } else {
@@ -484,6 +494,8 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        self.have_potato = PotatoState::Present;
+
         if self.have_potato_start_game(penv)? {
             return Ok(());
         }
@@ -521,7 +533,7 @@ impl PotatoHandler {
 
         // We passed on the message.  If there is a group of games to start, we should
         // send them on.
-        self.have_potato = true;
+        self.have_potato = PotatoState::Present;
 
         if !self.my_start_queue.is_empty() {
             self.have_potato_start_game(penv)?;
@@ -727,8 +739,13 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        if matches!(self.have_potato, PotatoState::Requested) {
+            return Ok(());
+        }
+
         let (_, system_interface) = penv.env();
         system_interface.send_message(&PeerMessage::RequestPotato(()))?;
+        self.have_potato = PotatoState::Requested;
         Ok(())
     }
 
@@ -998,7 +1015,7 @@ impl PotatoHandler {
 
                 self.handshake_state = HandshakeState::PostStepF(info.clone());
 
-                self.have_potato = false;
+                self.have_potato = PotatoState::Absent;
                 self.try_complete_step_f(penv, first_player_hs, second_player_hs)?;
             }
 
@@ -1011,14 +1028,14 @@ impl PotatoHandler {
                         self.channel_finished_transaction = Some(bundle.clone());
                     }
                     PeerMessage::RequestPotato(_) => {
-                        assert!(self.have_potato);
+                        assert!(matches!(self.have_potato, PotatoState::Present));
                         {
                             let (env, system_interface) = penv.env();
                             let ch = self.channel_handler_mut()?;
                             let nil_msg = ch.send_empty_potato(env)?;
                             system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                         }
-                        self.have_potato = false;
+                        self.have_potato = PotatoState::Absent;
                     }
                     PeerMessage::StartGames(sigs, g) => {
                         self.received_game_start(penv, &sigs, &g)?;
@@ -1071,7 +1088,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         // In the didn't initiate scenario, we hang onto the game start to ensure that
         // we know what we're receiving from the remote end.
         if i_initiated {
-            if !self.have_potato {
+            if !matches!(self.have_potato, PotatoState::Present) {
                 self.request_potato(penv)?;
                 return Ok(game_id_list);
             }
