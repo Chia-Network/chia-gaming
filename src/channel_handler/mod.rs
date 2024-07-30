@@ -50,6 +50,7 @@ pub struct CoinDataForReward {
 /// 1) channel coin puzzle: vanilla 2 of 2 to the 2 sides' public keys
 ///
 /// 2) unroll coin -- calculate based on current state
+///
 ///   curried in:
 ///     shared puzzle hash
 ///       2 of 2 combining the unroll pubkeys of the 2 sides.
