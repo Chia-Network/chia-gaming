@@ -479,6 +479,7 @@ fn test_peer_smoke() {
     )
     .expect("should work");
 
+    assert_eq!(pipe_sender[0].opponent_moves.len(), 1);
     assert!(pipe_sender[0].queue.is_empty());
     assert!(pipe_sender[1].queue.is_empty());
 }
