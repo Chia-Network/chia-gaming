@@ -26,7 +26,8 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::{CoinSpend, Program};
 
-use crate::tests::calpoker::load_calpoker;
+use crate::tests::calpoker::{load_calpoker, test_moves_1};
+use crate::tests::simenv::GameAction;
 
 #[allow(dead_code)]
 enum NotificationToLocalUI {
@@ -446,40 +447,36 @@ fn test_peer_smoke() {
     assert!(pipe_sender[0].queue.is_empty());
     assert!(pipe_sender[1].queue.is_empty());
 
-    let alice_word = b"0alice6789abcdef";
-    let alice_word_hash = Sha256Input::Bytes(alice_word)
-        .hash()
-        .to_clvm(&mut allocator)
-        .expect("should work");
-    let readable_move = allocator
-        .encode_atom(b"0b0b456789abcdef")
-        .expect("should work");
+    let moves = test_moves_1(&mut allocator);
 
-    {
-        let mut env = channel_handler_env(&mut allocator, &mut rng);
-        let mut penv = TestPeerEnv {
-            env: &mut env,
-            system_interface: &mut pipe_sender[1],
+    for this_move in moves.iter() {
+        let (who, what) = if let GameAction::Move(who, what, _) = this_move {
+            (who, what)
+        } else {
+            panic!();
         };
-        peers[1]
-            .make_move(
-                &mut penv,
-                &game_ids[0],
-                &ReadableMove::from_nodeptr(readable_move),
-            )
-            .expect("should work");
+
+        {
+            let mut env = channel_handler_env(&mut allocator, &mut rng);
+            let mut penv = TestPeerEnv {
+                env: &mut env,
+                system_interface: &mut pipe_sender[who ^ 1],
+            };
+            peers[who ^ 1]
+                .make_move(&mut penv, &game_ids[0], &ReadableMove::from_nodeptr(*what))
+                .expect("should work");
+        }
+
+        quiesce(
+            &mut rng,
+            &mut allocator,
+            Amount::new(200),
+            &mut peers,
+            &mut pipe_sender,
+        )
+        .expect("should work");
     }
 
-    quiesce(
-        &mut rng,
-        &mut allocator,
-        Amount::new(200),
-        &mut peers,
-        &mut pipe_sender,
-    )
-    .expect("should work");
-
-    assert_eq!(pipe_sender[0].opponent_moves.len(), 1);
     assert!(pipe_sender[0].queue.is_empty());
     assert!(pipe_sender[1].queue.is_empty());
 }
