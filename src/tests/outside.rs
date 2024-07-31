@@ -55,9 +55,9 @@ struct Pipe {
     outgoing_transactions: VecDeque<Spend>,
     registered_coins: HashMap<CoinID, Timeout>,
 
-    // Game UI
-    #[allow(dead_code)]
-    game_starts: VecDeque<NotificationToLocalUI>,
+    // Opponent moves
+    opponent_moves: Vec<(GameID, ReadableMove)>,
+    opponent_messages: Vec<(GameID, Vec<u8>)>,
 
     // Bootstrap info
     channel_puzzle_hash: Option<PuzzleHash>,
@@ -115,11 +115,13 @@ impl BootstrapTowardWallet for Pipe {
 }
 
 impl ToLocalUI for Pipe {
-    fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
-        todo!();
+    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.opponent_moves.push((id.clone(), readable));
+        Ok(())
     }
-    fn game_message(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
-        todo!();
+    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.opponent_messages.push((id.clone(), readable.to_vec()));
+        Ok(())
     }
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
         todo!();
@@ -431,6 +433,42 @@ fn test_peer_smoke() {
 
         game_ids
     };
+
+    quiesce(
+        &mut rng,
+        &mut allocator,
+        Amount::new(200),
+        &mut peers,
+        &mut pipe_sender,
+    )
+    .expect("should work");
+
+    assert!(pipe_sender[0].queue.is_empty());
+    assert!(pipe_sender[1].queue.is_empty());
+
+    let alice_word = b"0alice6789abcdef";
+    let alice_word_hash = Sha256Input::Bytes(alice_word)
+        .hash()
+        .to_clvm(&mut allocator)
+        .expect("should work");
+    let readable_move = allocator
+        .encode_atom(b"0b0b456789abcdef")
+        .expect("should work");
+
+    {
+        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let mut penv = TestPeerEnv {
+            env: &mut env,
+            system_interface: &mut pipe_sender[1],
+        };
+        peers[1]
+            .make_move(
+                &mut penv,
+                &game_ids[0],
+                &ReadableMove::from_nodeptr(readable_move),
+            )
+            .expect("should work");
+    }
 
     quiesce(
         &mut rng,

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, PotatoSignatures,
+    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult, PotatoSignatures,
     PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
@@ -191,7 +191,7 @@ pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
+    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
@@ -269,7 +269,7 @@ pub enum PeerMessage {
     },
 
     Nil(PotatoSignatures),
-    Move(GameID, Vec<u8>, PotatoSignatures),
+    Move(GameID, MoveResult),
     Accept(GameID, PotatoSignatures),
     Shutdown(Aggsig),
     RequestPotato(()),
@@ -546,6 +546,21 @@ impl PotatoHandler {
                 };
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
+            PeerMessage::Move(game_id, m) => {
+                let (spend_info, readable_move, message) = {
+                    let (env, _) = penv.env();
+                    ch.received_potato_move(env, &game_id, &m)?
+                };
+                {
+                    let (_, system_interface) = penv.env();
+                    system_interface
+                        .opponent_moved(&game_id, ReadableMove::from_nodeptr(readable_move))?;
+                    if !message.is_empty() {
+                        system_interface.game_message(&game_id, &message)?;
+                    }
+                }
+                self.update_channel_coin_after_receive(penv, &spend_info)?;
+            }
             _ => {
                 todo!("unhandled passthrough message {msg_envelope:?}");
             }
@@ -664,13 +679,22 @@ impl PotatoHandler {
 
     fn have_potato_move<'a, G, R: Rng + 'a>(
         &mut self,
-        _penv: &mut dyn PeerEnv<'a, G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
     ) -> Result<bool, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        if let Some(_move_made) = self.move_queue.pop_front() {
-            todo!();
+        if let Some((game_id, readable_move)) = self.move_queue.pop_front() {
+            let move_result = {
+                let ch = self.channel_handler_mut()?;
+                let (env, _) = penv.env();
+                ch.send_potato_move(env, &game_id, &readable_move)?
+            };
+
+            let (_, system_interface) = penv.env();
+            system_interface.send_message(&PeerMessage::Move(game_id, move_result))?;
+
+            return Ok(true);
         }
 
         Ok(false)
