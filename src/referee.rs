@@ -8,6 +8,7 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use log::debug;
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::{
     chia_dialect, GameHandler, MessageHandler, MessageInputs, MyTurnInputs, TheirTurnInputs,
@@ -30,14 +31,14 @@ use crate::common::types::{
 
 pub const REM_CONDITION_FIELDS: usize = 4;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameMoveStateInfo {
     pub move_made: Vec<u8>,
     pub mover_share: Amount,
     pub max_move_size: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameMoveDetails {
     pub basic: GameMoveStateInfo,
     /// sha256 of the concatenation of two hashes:
