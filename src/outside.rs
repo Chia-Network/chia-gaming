@@ -12,12 +12,13 @@ use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, PotatoSignatures, ReadableMove,
+    PrintableGameStartInfo,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
     Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program, PublicKey,
-    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, AllocEncoder,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -40,6 +41,12 @@ pub struct WireGameStart {
 #[derive(Debug, Clone)]
 pub struct GameStartQueueEntry {
     games: Vec<GameStartInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MyGameStartQueueEntry {
+    my_games: Vec<GameStartInfo>,
+    their_games: Vec<GameStartInfo>,
 }
 
 /// Async interface for messaging out of the game layer toward the wallet.
@@ -222,8 +229,8 @@ pub trait FromLocalUI<
     fn make_move<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        id: GameID,
-        readable: ReadableMove,
+        id: &GameID,
+        readable: &ReadableMove,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -353,7 +360,7 @@ pub struct PotatoHandler {
     // Waiting game starts at the peer level.
     their_start_queue: VecDeque<GameStartQueueEntry>,
     // Our outgoing game starts.
-    my_start_queue: VecDeque<GameStartQueueEntry>,
+    my_start_queue: VecDeque<MyGameStartQueueEntry>,
 
     move_queue: VecDeque<(GameID, ReadableMove)>,
 
@@ -633,12 +640,19 @@ impl PotatoHandler {
             let sigs = {
                 let ch = self.channel_handler_mut()?;
                 let (env, _) = penv.env();
-                for game in desc.games.iter() {
+                for game in desc.their_games.iter() {
                     dehydrated_games.push(game.to_serializable(env.allocator)?);
                 }
-                ch.send_potato_start_game(env, &desc.games)?
+                for game in desc.my_games.iter() {
+                    debug!("using game {:?}", PrintableGameStartInfo {
+                        allocator: env.allocator.allocator(),
+                        info: &game
+                    });
+                }
+                ch.send_potato_start_game(env, &desc.my_games)?
             };
 
+            debug!("dehydrated_games {dehydrated_games:?}");
             let (_, system_interface) = penv.env();
             system_interface.send_message(&PeerMessage::StartGames(sigs, dehydrated_games))?;
             return Ok(true);
@@ -664,9 +678,8 @@ impl PotatoHandler {
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        i_initiated: bool,
         game_start: &GameStart,
-    ) -> Result<Vec<GameStartInfo>, Error>
+    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
@@ -687,7 +700,7 @@ impl PotatoHandler {
             game_start.amount.clone(),
             (
                 game_start.my_contribution.clone(),
-                (game_start.my_turn, (Node(params_clvm), ())),
+                (Node(params_clvm), ())
             ),
         )
             .to_clvm(env.allocator)
@@ -724,33 +737,47 @@ impl PotatoHandler {
             return Err(Error::StrErr("output wasn't a list of 2 items".to_string()));
         }
 
-        let my_info_list = if i_initiated {
+        let my_info_list =
             to_list(
                 env.allocator.allocator(),
                 pair_of_output_lists[0],
                 "not a list (first)",
-            )?
-        } else {
+            )?;
+        let their_info_list =
             to_list(
                 env.allocator.allocator(),
                 pair_of_output_lists[1],
                 "not a list (second)",
-            )?
-        };
+            )?;
 
-        let mut result_start_info = Vec::new();
-        for node in my_info_list.into_iter() {
-            let new_game =
-                GameStartInfo::from_clvm(env.allocator, game_start.my_turn ^ !i_initiated, node)?;
-            // Timeout and game_id are supplied here.
-            result_start_info.push(GameStartInfo {
-                game_id: self.next_game_id()?,
-                timeout: game_start.timeout.clone(),
-                ..new_game
-            });
+        if their_info_list.len() != my_info_list.len() {
+            return Err(Error::StrErr("mismatched my and their game starts".to_string()));
         }
 
-        Ok(result_start_info)
+        let mut game_ids = Vec::new();
+        for _ in my_info_list.iter() {
+            game_ids.push(self.next_game_id()?);
+        }
+
+        let convert_info_list = |allocator: &mut AllocEncoder, my_turn: bool, my_info_list: &[NodePtr]| -> Result<Vec<GameStartInfo>, Error> {
+            let mut result_start_info = Vec::new();
+            for (i, node) in my_info_list.iter().enumerate() {
+                let new_game =
+                    GameStartInfo::from_clvm(allocator, my_turn, *node)?;
+                // Timeout and game_id are supplied here.
+                result_start_info.push(GameStartInfo {
+                    game_id: game_ids[i].clone(),
+                    timeout: game_start.timeout.clone(),
+                    ..new_game
+                });
+            }
+            Ok(result_start_info)
+        };
+
+        let mut my_result_start_info = convert_info_list(env.allocator, true, &my_info_list)?;
+        let mut their_result_start_info = convert_info_list(env.allocator, false, &their_info_list)?;
+
+        Ok((my_result_start_info, their_result_start_info))
     }
 
     fn request_potato<'a, G, R: Rng + 'a>(
@@ -763,6 +790,8 @@ impl PotatoHandler {
         if matches!(self.have_potato, PotatoState::Requested) {
             return Ok(());
         }
+
+        debug!("requesting potato");
 
         let (_, system_interface) = penv.env();
         system_interface.send_message(&PeerMessage::RequestPotato(()))?;
@@ -807,7 +836,14 @@ impl PotatoHandler {
             let (env, _system_interface) = penv.env();
             let mut rehydrated_games = Vec::new();
             for game in games.iter() {
-                rehydrated_games.push(GameStartInfo::from_serializable(env.allocator, game)?);
+                let new_rehydrated_game = GameStartInfo::from_serializable(env.allocator, game)?;
+                let re_dehydrated = new_rehydrated_game.to_serializable(env.allocator)?;
+                assert_eq!(&re_dehydrated, game);
+                debug!("their game {:?}", PrintableGameStartInfo {
+                    allocator: env.allocator.allocator(),
+                    info: &new_rehydrated_game
+                });
+                rehydrated_games.push(new_rehydrated_game);
             }
             ch.received_potato_start_game(env, sigs, &rehydrated_games)?
         };
@@ -826,8 +862,6 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
-
-        debug!("received message in state {:?}", self.handshake_state);
 
         match &self.handshake_state {
             // non potato progression
@@ -1044,6 +1078,8 @@ impl PotatoHandler {
                 let msg_envelope: PeerMessage =
                     bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
 
+                debug!("running: got message {:?}", msg_envelope);
+
                 match msg_envelope {
                     PeerMessage::HandshakeF { bundle } => {
                         self.channel_finished_transaction = Some(bundle.clone());
@@ -1101,29 +1137,31 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        let factory_games = self.get_games_by_start_type(penv, true, game)?;
+        let (my_games, their_games) =
+            self.get_games_by_start_type(penv, game)?;
 
-        let game_id_list = factory_games.iter().map(|g| g.game_id.clone()).collect();
+        let game_id_list = my_games.iter().map(|g| g.game_id.clone()).collect();
 
         // This comes to both peers before any game start happens.
         // In the didn't initiate scenario, we hang onto the game start to ensure that
         // we know what we're receiving from the remote end.
         if i_initiated {
+            self.my_start_queue.push_back(MyGameStartQueueEntry {
+                // start: game.clone(),
+                my_games,
+                their_games
+            });
+
             if !matches!(self.have_potato, PotatoState::Present) {
                 self.request_potato(penv)?;
                 return Ok(game_id_list);
             }
 
-            self.my_start_queue.push_back(GameStartQueueEntry {
-                // start: game.clone(),
-                games: factory_games,
-            });
-
             self.have_potato_start_game(penv)?;
         } else {
             self.their_start_queue.push_back(GameStartQueueEntry {
                 // start: game.clone(),
-                games: factory_games,
+                games: their_games,
             });
         }
 
@@ -1132,9 +1170,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
     fn make_move<'a>(
         &mut self,
-        _penv: &mut dyn PeerEnv<'a, G, R>,
-        _id: GameID,
-        _readable: ReadableMove,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        id: &GameID,
+        readable: &ReadableMove,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -1146,7 +1184,16 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             ));
         }
 
-        todo!();
+        self.move_queue.push_back((id.clone(), readable.clone()));
+
+        if !matches!(self.have_potato, PotatoState::Present) {
+            self.request_potato(penv)?;
+            return Ok(());
+        }
+
+        self.have_potato_move(penv)?;
+
+        Ok(())
     }
 
     fn accept(&mut self, _id: GameID) -> Result<(), Error> {

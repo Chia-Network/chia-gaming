@@ -21,7 +21,7 @@
 
 (defun max-move-size-of-template ((_ _ _ _ m)) m)
 
-(defun calpoker_factory (amount my_contribution my_turn params)
+(defun calpoker_factory (amount my_contribution params)
   (assign
 
    template (calpoker_template)
@@ -43,7 +43,7 @@
        amount
 
        ;; Handler
-       (if my_turn (f template) (f (r template)))
+       (f template)
 
        ;; Timeout, specified as 0 since we'll populate it above
        ()
@@ -66,7 +66,7 @@
        (max-move-size-of-template template)
 
        ;; Initial mover share
-       (/ amount 2)
+       amount
        )
       )
 
@@ -80,7 +80,7 @@
        amount
 
        ;; Handler
-       (if my_turn (f (f template)) (r template))
+       (f (r template))
 
        ;; Timeout - specified as zero here since we'll fix it above.
        ()
@@ -103,7 +103,7 @@
        (max-move-size-of-template template)
 
        ;; Initial mover share
-       (/ amount 2)
+       ()
        )
       )
      )
