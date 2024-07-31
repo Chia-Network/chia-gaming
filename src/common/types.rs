@@ -621,7 +621,7 @@ impl<X: ToClvm<NodePtr>> Sha256tree for X {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Program(pub Vec<u8>);
 
 impl Program {
@@ -636,26 +636,6 @@ impl Program {
 
     pub fn to_hex(&self) -> String {
         hex::encode(&self.0)
-    }
-}
-
-impl Serialize for Program {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_bytes(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for Program {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let b = SerdeByteConsumer;
-        let byte_data = deserializer.deserialize_bytes(b)?;
-        Ok(Program(byte_data))
     }
 }
 
