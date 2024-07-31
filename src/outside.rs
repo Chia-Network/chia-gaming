@@ -11,14 +11,14 @@ use serde::{Deserialize, Serialize};
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, PotatoSignatures, ReadableMove,
-    PrintableGameStartInfo,
+    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, PotatoSignatures,
+    PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program, PublicKey,
-    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, AllocEncoder,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program,
+    PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -39,9 +39,7 @@ pub struct WireGameStart {
 }
 
 #[derive(Debug, Clone)]
-pub struct GameStartQueueEntry {
-    games: Vec<GameStartInfo>,
-}
+pub struct GameStartQueueEntry;
 
 #[derive(Debug, Clone)]
 pub struct MyGameStartQueueEntry {
@@ -644,10 +642,13 @@ impl PotatoHandler {
                     dehydrated_games.push(game.to_serializable(env.allocator)?);
                 }
                 for game in desc.my_games.iter() {
-                    debug!("using game {:?}", PrintableGameStartInfo {
-                        allocator: env.allocator.allocator(),
-                        info: &game
-                    });
+                    debug!(
+                        "using game {:?}",
+                        PrintableGameStartInfo {
+                            allocator: env.allocator.allocator(),
+                            info: game
+                        }
+                    );
                 }
                 ch.send_potato_start_game(env, &desc.my_games)?
             };
@@ -698,10 +699,7 @@ impl PotatoHandler {
             node_from_bytes(env.allocator.allocator(), &game_start.parameters).into_gen()?;
         let program_run_args = (
             game_start.amount.clone(),
-            (
-                game_start.my_contribution.clone(),
-                (Node(params_clvm), ())
-            ),
+            (game_start.my_contribution.clone(), (Node(params_clvm), ())),
         )
             .to_clvm(env.allocator)
             .into_gen()?;
@@ -737,21 +735,21 @@ impl PotatoHandler {
             return Err(Error::StrErr("output wasn't a list of 2 items".to_string()));
         }
 
-        let my_info_list =
-            to_list(
-                env.allocator.allocator(),
-                pair_of_output_lists[0],
-                "not a list (first)",
-            )?;
-        let their_info_list =
-            to_list(
-                env.allocator.allocator(),
-                pair_of_output_lists[1],
-                "not a list (second)",
-            )?;
+        let my_info_list = to_list(
+            env.allocator.allocator(),
+            pair_of_output_lists[0],
+            "not a list (first)",
+        )?;
+        let their_info_list = to_list(
+            env.allocator.allocator(),
+            pair_of_output_lists[1],
+            "not a list (second)",
+        )?;
 
         if their_info_list.len() != my_info_list.len() {
-            return Err(Error::StrErr("mismatched my and their game starts".to_string()));
+            return Err(Error::StrErr(
+                "mismatched my and their game starts".to_string(),
+            ));
         }
 
         let mut game_ids = Vec::new();
@@ -759,11 +757,13 @@ impl PotatoHandler {
             game_ids.push(self.next_game_id()?);
         }
 
-        let convert_info_list = |allocator: &mut AllocEncoder, my_turn: bool, my_info_list: &[NodePtr]| -> Result<Vec<GameStartInfo>, Error> {
+        let convert_info_list = |allocator: &mut AllocEncoder,
+                                 my_turn: bool,
+                                 my_info_list: &[NodePtr]|
+         -> Result<Vec<GameStartInfo>, Error> {
             let mut result_start_info = Vec::new();
             for (i, node) in my_info_list.iter().enumerate() {
-                let new_game =
-                    GameStartInfo::from_clvm(allocator, my_turn, *node)?;
+                let new_game = GameStartInfo::from_clvm(allocator, my_turn, *node)?;
                 // Timeout and game_id are supplied here.
                 result_start_info.push(GameStartInfo {
                     game_id: game_ids[i].clone(),
@@ -774,8 +774,8 @@ impl PotatoHandler {
             Ok(result_start_info)
         };
 
-        let mut my_result_start_info = convert_info_list(env.allocator, true, &my_info_list)?;
-        let mut their_result_start_info = convert_info_list(env.allocator, false, &their_info_list)?;
+        let my_result_start_info = convert_info_list(env.allocator, true, &my_info_list)?;
+        let their_result_start_info = convert_info_list(env.allocator, false, &their_info_list)?;
 
         Ok((my_result_start_info, their_result_start_info))
     }
@@ -839,10 +839,13 @@ impl PotatoHandler {
                 let new_rehydrated_game = GameStartInfo::from_serializable(env.allocator, game)?;
                 let re_dehydrated = new_rehydrated_game.to_serializable(env.allocator)?;
                 assert_eq!(&re_dehydrated, game);
-                debug!("their game {:?}", PrintableGameStartInfo {
-                    allocator: env.allocator.allocator(),
-                    info: &new_rehydrated_game
-                });
+                debug!(
+                    "their game {:?}",
+                    PrintableGameStartInfo {
+                        allocator: env.allocator.allocator(),
+                        info: &new_rehydrated_game
+                    }
+                );
                 rehydrated_games.push(new_rehydrated_game);
             }
             ch.received_potato_start_game(env, sigs, &rehydrated_games)?
@@ -1137,8 +1140,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        let (my_games, their_games) =
-            self.get_games_by_start_type(penv, game)?;
+        let (my_games, their_games) = self.get_games_by_start_type(penv, game)?;
 
         let game_id_list = my_games.iter().map(|g| g.game_id.clone()).collect();
 
@@ -1147,9 +1149,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         // we know what we're receiving from the remote end.
         if i_initiated {
             self.my_start_queue.push_back(MyGameStartQueueEntry {
-                // start: game.clone(),
                 my_games,
-                their_games
+                their_games,
             });
 
             if !matches!(self.have_potato, PotatoState::Present) {
@@ -1159,10 +1160,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
             self.have_potato_start_game(penv)?;
         } else {
-            self.their_start_queue.push_back(GameStartQueueEntry {
-                // start: game.clone(),
-                games: their_games,
-            });
+            // All checking needed is done by channel handler.
+            self.their_start_queue.push_back(GameStartQueueEntry);
         }
 
         Ok(game_id_list)

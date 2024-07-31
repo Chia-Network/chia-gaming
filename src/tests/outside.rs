@@ -15,7 +15,7 @@ use crate::channel_handler::types::{
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
-    Spend, SpendBundle, Timeout, Sha256Input,
+    Sha256Input, Spend, SpendBundle, Timeout,
 };
 use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
@@ -392,16 +392,14 @@ fn test_peer_smoke() {
     .expect("should work");
 
     // Start a game
-    let game_ids =
-    {
+    let game_ids = {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
         let mut penv = TestPeerEnv {
             env: &mut env,
             system_interface: &mut pipe_sender[1],
         };
 
-        let game_ids =
-            peers[1]
+        let game_ids = peers[1]
             .start_games(
                 &mut penv,
                 true,
@@ -441,7 +439,7 @@ fn test_peer_smoke() {
         &mut peers,
         &mut pipe_sender,
     )
-        .expect("should work");
+    .expect("should work");
 
     assert!(pipe_sender[0].queue.is_empty());
     assert!(pipe_sender[1].queue.is_empty());

@@ -14,8 +14,8 @@ use crate::channel_handler::game_handler::{
     TheirTurnResult,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, ReadableUX, ValidationInfo, ValidationProgram,
-    PrintableGameStartInfo,
+    Evidence, GameStartInfo, PrintableGameStartInfo, ReadableMove, ReadableUX, ValidationInfo,
+    ValidationProgram,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -490,10 +490,13 @@ impl RefereeMaker {
         their_puzzle_hash: &PuzzleHash,
         nonce: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
-        debug!("referee maker: game start {:?}", PrintableGameStartInfo {
-            allocator: allocator.allocator(),
-            info: game_start_info
-        });
+        debug!(
+            "referee maker: game start {:?}",
+            PrintableGameStartInfo {
+                allocator: allocator.allocator(),
+                info: game_start_info
+            }
+        );
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share.clone(),
             move_made: game_start_info.initial_move.clone(),
