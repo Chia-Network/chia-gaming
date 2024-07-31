@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::NodePtr;
 
 use log::debug;
@@ -15,7 +15,7 @@ use crate::channel_handler::types::{
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
-    Spend, SpendBundle, Timeout,
+    Sha256Input, Spend, SpendBundle, Timeout,
 };
 use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
@@ -392,13 +392,14 @@ fn test_peer_smoke() {
     .expect("should work");
 
     // Start a game
-    {
+    let game_ids = {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
         let mut penv = TestPeerEnv {
             env: &mut env,
             system_interface: &mut pipe_sender[1],
         };
-        peers[1]
+
+        let game_ids = peers[1]
             .start_games(
                 &mut penv,
                 true,
@@ -406,13 +407,30 @@ fn test_peer_smoke() {
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
                     game_type: GameType(b"calpoker".to_vec()),
-                    timeout: Timeout::new(1000),
+                    timeout: Timeout::new(10),
                     my_turn: true,
                     parameters: vec![0x80],
                 },
             )
             .expect("should run");
-    }
+
+        peers[0]
+            .start_games(
+                &mut penv,
+                false,
+                &GameStart {
+                    amount: Amount::new(200),
+                    my_contribution: Amount::new(100),
+                    game_type: GameType(b"calpoker".to_vec()),
+                    timeout: Timeout::new(10),
+                    my_turn: false,
+                    parameters: vec![0x80],
+                },
+            )
+            .expect("should run");
+
+        game_ids
+    };
 
     quiesce(
         &mut rng,
