@@ -238,8 +238,7 @@ pub trait FromLocalUI<
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct HandshakeA {
-    parent: CoinString,
+pub struct HandshakeB {
     channel_public_key: PublicKey,
     unroll_public_key: PublicKey,
     reward_puzzle_hash: PuzzleHash,
@@ -247,11 +246,9 @@ pub struct HandshakeA {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct HandshakeB {
-    channel_public_key: PublicKey,
-    unroll_public_key: PublicKey,
-    reward_puzzle_hash: PuzzleHash,
-    referee_puzzle_hash: PuzzleHash,
+pub struct HandshakeA {
+    parent: CoinString,
+    simple: HandshakeB,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -490,10 +487,12 @@ impl PotatoHandler {
         assert!(matches!(self.handshake_state, HandshakeState::StepA));
         let my_hs_info = HandshakeA {
             parent: parent_coin.clone(),
-            channel_public_key,
-            unroll_public_key,
-            reward_puzzle_hash: self.reward_puzzle_hash.clone(),
-            referee_puzzle_hash,
+            simple: HandshakeB {
+                channel_public_key,
+                unroll_public_key,
+                reward_puzzle_hash: self.reward_puzzle_hash.clone(),
+                referee_puzzle_hash,
+            },
         };
         self.handshake_state =
             HandshakeState::StepC(parent_coin.clone(), Box::new(my_hs_info.clone()));
@@ -890,6 +889,17 @@ impl PotatoHandler {
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
 
+        let make_channel_handler_initiation =
+            |parent: CoinID, start_potato, msg: &HandshakeB| ChannelHandlerInitiationData {
+                launcher_coin_id: parent,
+                we_start_with_potato: start_potato,
+                their_channel_pubkey: msg.channel_public_key.clone(),
+                their_unroll_pubkey: msg.unroll_public_key.clone(),
+                their_referee_puzzle_hash: msg.referee_puzzle_hash.clone(),
+                my_contribution: self.my_contribution.clone(),
+                their_contribution: self.their_contribution.clone(),
+            };
+
         match &self.handshake_state {
             // non potato progression
             HandshakeState::StepA => {
@@ -905,7 +915,7 @@ impl PotatoHandler {
 
                 debug!(
                     "StepA: their channel public key {:?}",
-                    msg.channel_public_key
+                    msg.simple.channel_public_key
                 );
 
                 todo!();
@@ -930,15 +940,8 @@ impl PotatoHandler {
                 // alice will get a potato from bob or bob a request from alice.
                 //
                 // That should halt for the channel coin notifiation.
-                let init_data = ChannelHandlerInitiationData {
-                    launcher_coin_id: parent_coin.to_coin_id(),
-                    we_start_with_potato: false,
-                    their_channel_pubkey: msg.channel_public_key.clone(),
-                    their_unroll_pubkey: msg.unroll_public_key.clone(),
-                    their_referee_puzzle_hash: msg.referee_puzzle_hash.clone(),
-                    my_contribution: self.my_contribution.clone(),
-                    their_contribution: self.their_contribution.clone(),
-                };
+                let init_data =
+                    make_channel_handler_initiation(parent_coin.to_coin_id(), false, &msg);
                 let (mut channel_handler, _init_result) = {
                     let (env, _system_interface) = penv.env();
                     ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
@@ -1018,15 +1021,8 @@ impl PotatoHandler {
                     )));
                 };
 
-                let init_data = ChannelHandlerInitiationData {
-                    launcher_coin_id: msg.parent.to_coin_id(),
-                    we_start_with_potato: true,
-                    their_channel_pubkey: msg.channel_public_key.clone(),
-                    their_unroll_pubkey: msg.unroll_public_key.clone(),
-                    their_referee_puzzle_hash: msg.referee_puzzle_hash.clone(),
-                    my_contribution: self.my_contribution.clone(),
-                    their_contribution: self.their_contribution.clone(),
-                };
+                let init_data =
+                    make_channel_handler_initiation(msg.parent.to_coin_id(), true, &msg.simple);
                 let (channel_handler, _init_result) = {
                     let (env, _system_interface) = penv.env();
                     ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
