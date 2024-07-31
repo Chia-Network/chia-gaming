@@ -48,7 +48,7 @@ fn run_calpoker_play_test(
     simenv.play_game(moves)
 }
 
-fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
+pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
     let alice_word = b"0alice6789abcdef";
     let alice_word_hash = Sha256Input::Bytes(alice_word)
         .hash()
