@@ -111,14 +111,20 @@ pub fn new_channel_handler_game<R: Rng>(
         &timeout,
     );
 
-    debug!("our_game_start {:?}", PrintableGameStartInfo {
-        allocator: env.allocator.allocator(),
-        info: &our_game_start
-    });
-    debug!("their_game_start {:?}", PrintableGameStartInfo {
-        allocator: env.allocator.allocator(),
-        info: &their_game_start
-    });
+    debug!(
+        "our_game_start {:?}",
+        PrintableGameStartInfo {
+            allocator: env.allocator.allocator(),
+            info: &our_game_start
+        }
+    );
+    debug!(
+        "their_game_start {:?}",
+        PrintableGameStartInfo {
+            allocator: env.allocator.allocator(),
+            info: &their_game_start
+        }
+    );
 
     let sigs1 = party.player(0).ch.send_empty_potato(env)?;
     let spend1 = party.player(1).ch.received_empty_potato(env, &sigs1)?;

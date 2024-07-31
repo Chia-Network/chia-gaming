@@ -3,9 +3,9 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
-use clvmr::Allocator;
 use clvmr::allocator::NodePtr;
 use clvmr::serde::node_from_bytes;
+use clvmr::Allocator;
 
 use log::debug;
 
@@ -94,22 +94,55 @@ pub type FlatGameStartInfo = GenericGameStartInfo<FlatGameHandler, Program, Prog
 
 pub struct PrintableGameStartInfo<'a> {
     pub allocator: &'a mut Allocator,
-    pub info: &'a GameStartInfo
+    pub info: &'a GameStartInfo,
 }
 
 impl<'a> std::fmt::Debug for PrintableGameStartInfo<'a> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         writeln!(formatter, "- game_id: {:?}", self.info.game_id)?;
         writeln!(formatter, "- amount: {:?}", self.info.amount)?;
-        writeln!(formatter, "- game_handler: {} {}", self.info.game_handler.is_my_turn(), disassemble(self.allocator, self.info.game_handler.to_nodeptr(), None));
+        writeln!(
+            formatter,
+            "- game_handler: {} {}",
+            self.info.game_handler.is_my_turn(),
+            disassemble(self.allocator, self.info.game_handler.to_nodeptr(), None)
+        )?;
         writeln!(formatter, "- timeout: {:?}", self.info.timeout)?;
-        writeln!(formatter, "- my_contribution_this_game: {:?}", self.info.my_contribution_this_game)?;
-        writeln!(formatter, "- their_contribution_this_game: {:?}", self.info.their_contribution_this_game)?;
-        writeln!(formatter, "- initial_validation_program: {}", disassemble(self.allocator, self.info.initial_validation_program.to_nodeptr(), None))?;
-        writeln!(formatter, "- initial_state: {}", disassemble(self.allocator, self.info.initial_state, None))?;
+        writeln!(
+            formatter,
+            "- my_contribution_this_game: {:?}",
+            self.info.my_contribution_this_game
+        )?;
+        writeln!(
+            formatter,
+            "- their_contribution_this_game: {:?}",
+            self.info.their_contribution_this_game
+        )?;
+        writeln!(
+            formatter,
+            "- initial_validation_program: {}",
+            disassemble(
+                self.allocator,
+                self.info.initial_validation_program.to_nodeptr(),
+                None
+            )
+        )?;
+        writeln!(
+            formatter,
+            "- initial_state: {}",
+            disassemble(self.allocator, self.info.initial_state, None)
+        )?;
         writeln!(formatter, "- initial_move: {:?}", self.info.initial_move)?;
-        writeln!(formatter, "- initial_max_move_size: {:?}", self.info.initial_max_move_size)?;
-        writeln!(formatter, "- initial_mover_share: {:?}", self.info.initial_mover_share)?;
+        writeln!(
+            formatter,
+            "- initial_max_move_size: {:?}",
+            self.info.initial_max_move_size
+        )?;
+        writeln!(
+            formatter,
+            "- initial_mover_share: {:?}",
+            self.info.initial_mover_share
+        )?;
 
         Ok(())
     }
