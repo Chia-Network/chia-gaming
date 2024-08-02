@@ -145,6 +145,8 @@ impl ChannelHandler {
 
     fn unroll_coin_condition_inputs(
         &self,
+        my_ending_game_value: Amount,
+        their_ending_game_value: Amount,
         puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)],
     ) -> UnrollCoinConditionInputs {
         let my_referee_public_key =
@@ -152,9 +154,11 @@ impl ChannelHandler {
         UnrollCoinConditionInputs {
             ref_pubkey: my_referee_public_key,
             their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-            my_balance: self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
+            my_balance: self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone()
+                + my_ending_game_value,
             their_balance: self.their_out_of_game_balance.clone()
-                - self.their_allocated_balance.clone(),
+                - self.their_allocated_balance.clone()
+                + their_ending_game_value,
             puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
         }
     }
@@ -305,7 +309,7 @@ impl ChannelHandler {
         // We need a spend of the channel coin to sign.
         // The seq number is zero.
         // There are no game coins and a balance for both sides.
-        let inputs = myself.unroll_coin_condition_inputs(&[]);
+        let inputs = myself.unroll_coin_condition_inputs(Amount::default(), Amount::default(), &[]);
         myself.unroll.coin.update(
             env,
             &myself.private_keys.my_unroll_coin_private_key,
@@ -432,12 +436,18 @@ impl ChannelHandler {
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
             self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
+        let unroll_inputs = self.unroll_coin_condition_inputs(
+            Amount::default(),
+            Amount::default(),
+            &new_game_coins_on_chain,
+        );
+
         // Now update our unroll state.
         self.unroll.coin.update(
             env,
             &self.private_keys.my_unroll_coin_private_key,
             &self.their_unroll_coin_public_key,
-            &self.unroll_coin_condition_inputs(&new_game_coins_on_chain),
+            &unroll_inputs,
         )?;
         self.unroll.signatures = Default::default();
         self.have_potato = false;
@@ -557,7 +567,7 @@ impl ChannelHandler {
         let spend = self.received_potato_verify_signatures(
             env,
             signatures,
-            &self.unroll_coin_condition_inputs(&unroll_data),
+            &self.unroll_coin_condition_inputs(Amount::default(), Amount::default(), &unroll_data),
         )?;
 
         Ok(ChannelCoinSpendInfo {
@@ -698,7 +708,11 @@ impl ChannelHandler {
         let spend = self.received_potato_verify_signatures(
             env,
             signatures,
-            &self.unroll_coin_condition_inputs(&unroll_data_for_all_games),
+            &self.unroll_coin_condition_inputs(
+                Amount::default(),
+                Amount::default(),
+                &unroll_data_for_all_games,
+            ),
         )?;
         self.live_games.append(&mut new_games);
 
@@ -779,7 +793,7 @@ impl ChannelHandler {
         let spend = self.received_potato_verify_signatures(
             env,
             &move_result.signatures,
-            &self.unroll_coin_condition_inputs(&unroll_data),
+            &self.unroll_coin_condition_inputs(Amount::default(), Amount::default(), &unroll_data),
         )?;
 
         // Needs to know their puzzle_hash_for_unroll so we can keep it to do
@@ -818,6 +832,8 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
     ) -> Result<(PotatoSignatures, Amount), Error> {
+        assert!(self.have_potato);
+        debug!("SEND_POTATO_ACCEPT");
         let game_idx = self.get_game_by_id(game_id)?;
 
         // referee maker is removed and will be destroyed when we leave this
@@ -854,11 +870,9 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         game_id: &GameID,
     ) -> Result<ChannelCoinSpendInfo, Error> {
+        assert!(!self.have_potato);
+        debug!("RECEIVED_POTATO_ACCEPT");
         let game_idx = self.get_game_by_id(game_id)?;
-        let live_game = self.live_games.remove(game_idx);
-        self.my_allocated_balance -= live_game.my_contribution.clone();
-        self.their_allocated_balance -= live_game.their_contribution.clone();
-
         let unroll_data = self.compute_unroll_data_for_games(
             // Skip the removed game.
             &[game_id.clone()],
@@ -866,19 +880,30 @@ impl ChannelHandler {
             &self.live_games,
         )?;
 
-        self.received_potato_verify_signatures(
-            env,
-            signatures,
-            &self.unroll_coin_condition_inputs(&unroll_data),
-        )?;
+        let game_amount_for_me = self
+            .live_games
+            .iter()
+            .find(|l| &l.game_id == game_id)
+            .map(|l| l.my_contribution.clone())
+            .unwrap_or_default();
+        let game_amount_for_them = self
+            .live_games
+            .iter()
+            .find(|l| &l.game_id == game_id)
+            .map(|l| l.their_contribution.clone())
+            .unwrap_or_default();
 
-        self.live_games.remove(game_idx);
+        let unroll_condition_inputs = self.unroll_coin_condition_inputs(
+            game_amount_for_me,
+            game_amount_for_them,
+            &unroll_data,
+        );
+        let spend =
+            self.received_potato_verify_signatures(env, signatures, &unroll_condition_inputs)?;
 
-        let spend = self.received_potato_verify_signatures(
-            env,
-            signatures,
-            &self.unroll_coin_condition_inputs(&unroll_data),
-        )?;
+        let live_game = self.live_games.remove(game_idx);
+        self.my_allocated_balance -= live_game.my_contribution.clone();
+        self.their_allocated_balance -= live_game.their_contribution.clone();
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
