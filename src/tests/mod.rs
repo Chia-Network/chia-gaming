@@ -6,7 +6,7 @@ pub mod constants;
 pub mod game;
 pub mod game_handler;
 pub mod outside;
-#[cfg(feaure = "sim-tests")]
+#[cfg(feature = "sim-tests")]
 pub mod outsim;
 pub mod referee;
 #[cfg(feature = "sim-tests")]

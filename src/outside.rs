@@ -233,7 +233,12 @@ pub trait FromLocalUI<
     where
         G: 'a,
         R: 'a;
-    fn accept(&mut self, id: GameID) -> Result<(), Error>;
+
+    fn accept<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a;
+
     fn shut_down(&mut self) -> Result<(), Error>;
 }
 
@@ -267,7 +272,7 @@ pub enum PeerMessage {
 
     Nil(PotatoSignatures),
     Move(GameID, MoveResult),
-    Accept(GameID, PotatoSignatures),
+    Accept(GameID, Amount, PotatoSignatures),
     Shutdown(Aggsig),
     RequestPotato(()),
     StartGames(PotatoSignatures, Vec<FlatGameStartInfo>),
@@ -320,6 +325,11 @@ enum PotatoState {
     Present,
 }
 
+enum GameAction {
+    Move(GameID, ReadableMove),
+    Accept(GameID),
+}
+
 /// Handle potato in flight when I request potato:
 ///
 /// Every time i send the potato, if i have stuff i want to do, then i also send
@@ -357,7 +367,7 @@ pub struct PotatoHandler {
     // Our outgoing game starts.
     my_start_queue: VecDeque<MyGameStartQueueEntry>,
 
-    move_queue: VecDeque<(GameID, ReadableMove)>,
+    game_action_queue: VecDeque<GameAction>,
 
     next_game_id: Vec<u8>,
 
@@ -433,7 +443,7 @@ impl PotatoHandler {
 
             their_start_queue: VecDeque::default(),
             my_start_queue: VecDeque::default(),
-            move_queue: VecDeque::default(),
+            game_action_queue: VecDeque::default(),
 
             channel_handler: None,
             channel_initiation_transaction: None,
@@ -464,6 +474,12 @@ impl PotatoHandler {
 
     pub fn handshake_finished(&self) -> bool {
         matches!(self.handshake_state, HandshakeState::Finished(_))
+    }
+
+    /// Tell whether this peer has the potato.  If it has been sent but not received yet
+    /// then both will say false
+    pub fn has_potato(&self) -> bool {
+        matches!(self.have_potato, PotatoState::Present)
     }
 
     pub fn start<'a, G, R: Rng + 'a>(
@@ -558,6 +574,13 @@ impl PotatoHandler {
                         system_interface.game_message(&game_id, &message)?;
                     }
                 }
+                self.update_channel_coin_after_receive(penv, &spend_info)?;
+            }
+            PeerMessage::Accept(game_id, _amount, sigs) => {
+                let spend_info = {
+                    let (env, _) = penv.env();
+                    ch.received_potato_accept(env, &sigs, &game_id)?
+                };
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             _ => {
@@ -683,20 +706,39 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        if let Some((game_id, readable_move)) = self.move_queue.pop_front() {
-            let move_result = {
-                let ch = self.channel_handler_mut()?;
-                let (env, _) = penv.env();
-                ch.send_potato_move(env, &game_id, &readable_move)?
-            };
+        match self.game_action_queue.pop_front() {
+            Some(GameAction::Move(game_id, readable_move)) => {
+                let move_result = {
+                    let ch = self.channel_handler_mut()?;
+                    let (env, _) = penv.env();
+                    ch.send_potato_move(env, &game_id, &readable_move)?
+                };
 
-            let (_, system_interface) = penv.env();
-            system_interface.send_message(&PeerMessage::Move(game_id, move_result))?;
+                let (_, system_interface) = penv.env();
+                system_interface.send_message(&PeerMessage::Move(game_id, move_result))?;
+                self.have_potato = PotatoState::Absent;
 
-            return Ok(true);
+                Ok(true)
+            }
+            Some(GameAction::Accept(game_id)) => {
+                let (sigs, amount) = {
+                    let ch = self.channel_handler_mut()?;
+                    let (env, _) = penv.env();
+                    ch.send_potato_accept(env, &game_id)?
+                };
+
+                let (_, system_interface) = penv.env();
+                system_interface.send_message(&PeerMessage::Accept(
+                    game_id.clone(),
+                    amount,
+                    sigs,
+                ))?;
+                self.have_potato = PotatoState::Absent;
+
+                Ok(true)
+            }
+            None => Ok(false),
         }
-
-        Ok(false)
     }
 
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(
@@ -1138,6 +1180,32 @@ impl PotatoHandler {
 
         Ok(())
     }
+
+    fn do_game_action<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        action: GameAction,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
+            return Err(Error::StrErr(
+                "move without finishing handshake".to_string(),
+            ));
+        }
+
+        self.game_action_queue.push_back(action);
+
+        if !matches!(self.have_potato, PotatoState::Present) {
+            self.request_potato(penv)?;
+            return Ok(());
+        }
+
+        self.have_potato_move(penv)?;
+
+        Ok(())
+    }
 }
 
 impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender, R: Rng>
@@ -1197,32 +1265,15 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
-        if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr(
-                "move without finishing handshake".to_string(),
-            ));
-        }
-
-        self.move_queue.push_back((id.clone(), readable.clone()));
-
-        if !matches!(self.have_potato, PotatoState::Present) {
-            self.request_potato(penv)?;
-            return Ok(());
-        }
-
-        self.have_potato_move(penv)?;
-
-        Ok(())
+        self.do_game_action(penv, GameAction::Move(id.clone(), readable.clone()))
     }
 
-    fn accept(&mut self, _id: GameID) -> Result<(), Error> {
-        if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr(
-                "accept without finishing handshake".to_string(),
-            ));
-        }
-
-        todo!();
+    fn accept<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a,
+    {
+        self.do_game_action(penv, GameAction::Accept(id.clone()))
     }
 
     fn shut_down(&mut self) -> Result<(), Error> {

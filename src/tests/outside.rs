@@ -479,4 +479,29 @@ fn test_peer_smoke() {
 
     assert!(pipe_sender[0].queue.is_empty());
     assert!(pipe_sender[1].queue.is_empty());
+
+    let have_potato = if peers[0].has_potato() { 0 } else { 1 };
+
+    {
+        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let mut penv = TestPeerEnv {
+            env: &mut env,
+            system_interface: &mut pipe_sender[have_potato],
+        };
+        peers[have_potato]
+            .accept(&mut penv, &game_ids[0])
+            .expect("should work");
+    }
+
+    quiesce(
+        &mut rng,
+        &mut allocator,
+        Amount::new(200),
+        &mut peers,
+        &mut pipe_sender,
+    )
+    .expect("should work");
+
+    assert!(pipe_sender[0].queue.is_empty());
+    assert!(pipe_sender[1].queue.is_empty());
 }
