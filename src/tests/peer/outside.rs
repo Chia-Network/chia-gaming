@@ -40,17 +40,22 @@ enum NotificationToLocalUI {
 }
 
 #[allow(dead_code)]
-enum WalletBootstrapState {
+pub enum WalletBootstrapState {
     PartlySigned(Spend),
     FullySigned(Spend),
 }
 
 #[derive(Default)]
-struct Pipe {
+pub struct MessagePipe {
     my_id: usize,
 
     // PacketSender
     queue: VecDeque<Vec<u8>>,
+}
+
+#[derive(Default)]
+struct Pipe {
+    message_pipe: MessagePipe,
 
     // WalletSpendInterface
     outgoing_transactions: VecDeque<Spend>,
@@ -70,7 +75,7 @@ struct Pipe {
     bootstrap_state: Option<WalletBootstrapState>,
 }
 
-impl PacketSender for Pipe {
+impl PacketSender for MessagePipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
         debug!("Send Message from {} {msg:?}", self.my_id);
         assert!(self.queue.is_empty());
@@ -78,6 +83,12 @@ impl PacketSender for Pipe {
         let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         self.queue.push_back(msg_data);
         Ok(())
+    }
+}
+
+impl PacketSender for Pipe {
+    fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
+        self.message_pipe.send_message(msg)
     }
 }
 
@@ -223,20 +234,6 @@ where
     }
 }
 
-impl<'inputs, G, R> TestPeerEnv<'inputs, G, R>
-where
-    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    R: Rng,
-{
-    fn get_game_by_id(
-        game_type: &GameType,
-        initiated: bool,
-        params: NodePtr,
-    ) -> Result<Vec<GameStartInfo>, Error> {
-        todo!();
-    }
-}
-
 fn run_move<'a, R: Rng>(
     env: &'a mut ChannelHandlerEnv<'a, R>,
     amount: Amount,
@@ -244,8 +241,8 @@ fn run_move<'a, R: Rng>(
     peer: &mut PotatoHandler,
     who: usize,
 ) -> Result<bool, Error> {
-    assert!(pipe[who ^ 1].queue.len() < 2);
-    let msg = if let Some(msg) = pipe[who ^ 1].queue.pop_front() {
+    assert!(pipe[who ^ 1].message_pipe.queue.len() < 2);
+    let msg = if let Some(msg) = pipe[who ^ 1].message_pipe.queue.pop_front() {
         msg
     } else {
         return Ok(false);
@@ -324,7 +321,7 @@ fn test_peer_smoke() {
     let mut allocator = AllocEncoder::new();
 
     let mut pipe_sender: [Pipe; 2] = Default::default();
-    pipe_sender[1].my_id = 1;
+    pipe_sender[1].message_pipe.my_id = 1;
 
     let mut game_type_map = BTreeMap::new();
     let calpoker_factory =
@@ -444,8 +441,8 @@ fn test_peer_smoke() {
     )
     .expect("should work");
 
-    assert!(pipe_sender[0].queue.is_empty());
-    assert!(pipe_sender[1].queue.is_empty());
+    assert!(pipe_sender[0].message_pipe.queue.is_empty());
+    assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
     let moves = test_moves_1(&mut allocator);
 
@@ -477,8 +474,8 @@ fn test_peer_smoke() {
         .expect("should work");
     }
 
-    assert!(pipe_sender[0].queue.is_empty());
-    assert!(pipe_sender[1].queue.is_empty());
+    assert!(pipe_sender[0].message_pipe.queue.is_empty());
+    assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
     let have_potato = if peers[0].has_potato() { 0 } else { 1 };
 
@@ -502,6 +499,6 @@ fn test_peer_smoke() {
     )
     .expect("should work");
 
-    assert!(pipe_sender[0].queue.is_empty());
-    assert!(pipe_sender[1].queue.is_empty());
+    assert!(pipe_sender[0].message_pipe.queue.is_empty());
+    assert!(pipe_sender[1].message_pipe.queue.is_empty());
 }
