@@ -245,6 +245,14 @@ impl Simulator {
         .expect("should farm");
     }
 
+    pub fn get_all_coins(&self) -> PyResult<Vec<CoinString>> {
+        Python::with_gil(|py| -> PyResult<_> {
+            let coins =
+                self.async_client(py, "get_all_coins", (false,))?;
+            todo!();
+        })
+    }
+
     pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
             let hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
