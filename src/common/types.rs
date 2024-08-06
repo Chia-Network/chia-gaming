@@ -56,7 +56,7 @@ impl ToClvm<NodePtr> for CoinID {
 }
 
 /// Coin String
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct CoinString(Vec<u8>);
 
 impl CoinString {
