@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::NodePtr;
 
@@ -41,6 +43,7 @@ pub struct Simulator {
     spend_bundle: PyObject,
     g2_element: PyObject,
     coin_as_list: PyObject,
+    height: RefCell<usize>,
 }
 
 #[cfg(test)]
@@ -209,6 +212,7 @@ impl Simulator {
                 spend_bundle: evloop.get_item(7)?.extract()?,
                 g2_element: evloop.get_item(8)?.extract()?,
                 coin_as_list: evloop.get_item(9)?.extract()?,
+                height: RefCell::new(0),
             })
         })
         .expect("should work")
@@ -239,16 +243,20 @@ impl Simulator {
     pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
         Python::with_gil(|py| -> PyResult<_> {
             let puzzle_hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
-            self.async_call(py, "farm_block", (puzzle_hash_bytes,))?;
+            let result_height: usize = self.async_call(py, "farm_block", (puzzle_hash_bytes,))?.extract(py)?;
+            self.height.replace(result_height);
             Ok(())
         })
         .expect("should farm");
     }
 
+    pub fn get_current_height(&self) -> usize {
+        *self.height.borrow()
+    }
+
     pub fn get_all_coins(&self) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
-            let coins =
-                self.async_client(py, "get_all_coins", (false,))?;
+            let coins = self.async_client(py, "get_all_coins", (false,))?;
             todo!();
         })
     }

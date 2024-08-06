@@ -171,10 +171,35 @@ pub trait BootstrapTowardWallet {
 }
 
 /// Spend wallet receiver
-pub trait SpendWalletReceiver {
-    fn coin_created(&mut self, coin_id: &CoinString) -> Result<(), Error>;
-    fn coin_spent(&mut self, coin_id: &CoinString) -> Result<(), Error>;
-    fn coin_timeout_reached(&mut self, coin_id: &CoinString) -> Result<(), Error>;
+pub trait SpendWalletReceiver<
+    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+    R: Rng,
+>
+{
+    fn coin_created<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a;
+    fn coin_spent<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a;
+    fn coin_timeout_reached<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a;
 }
 
 /// Unroll time wallet interface.
