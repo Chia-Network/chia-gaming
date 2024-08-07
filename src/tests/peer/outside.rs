@@ -59,7 +59,7 @@ struct Pipe {
 
     // WalletSpendInterface
     outgoing_transactions: VecDeque<Spend>,
-    registered_coins: HashMap<CoinID, Timeout>,
+    registered_coins: HashMap<CoinString, Timeout>,
 
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove)>,
@@ -99,7 +99,7 @@ impl WalletSpendInterface for Pipe {
         Ok(())
     }
 
-    fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error> {
+    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
         self.registered_coins
             .insert(coin_id.clone(), timeout.clone());
 
@@ -326,7 +326,7 @@ fn test_peer_smoke() {
     let mut game_type_map = BTreeMap::new();
     let calpoker_factory =
         read_hex_puzzle(&mut allocator, "clsp/calpoker_include_calpoker_factory.hex")
-            .expect("should load");
+        .expect("should load");
 
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),

@@ -241,31 +241,27 @@ impl Simulator {
     }
 
     pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
-        Python::with_gil(|py| -> PyResult<_> {
+        Python::with_gil(|py| -> PyResult<()> {
             let puzzle_hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
-            let result_height: usize = self.async_call(py, "farm_block", (puzzle_hash_bytes,))?.extract(py)?;
-            self.height.replace(result_height);
-            Ok(())
+            let result_height = self.async_call(py, "farm_block", (puzzle_hash_bytes,))?;
+            debug!("result_height {result_height}");
+            todo!();
+            // self.height.replace(result_height);
+            // Ok(())
         })
-        .expect("should farm");
+            .expect("should farm")
     }
 
     pub fn get_current_height(&self) -> usize {
         *self.height.borrow()
     }
 
-    pub fn get_all_coins(&self) -> PyResult<Vec<CoinString>> {
+    fn convert_coin_list_to_coin_strings(
+        &self,
+        py: Python<'_>,
+        coins: &PyObject
+    ) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
-            let coins = self.async_client(py, "get_all_coins", (false,))?;
-            todo!();
-        })
-    }
-
-    pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
-        Python::with_gil(|py| -> PyResult<_> {
-            let hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
-            let coins =
-                self.async_client(py, "get_coin_records_by_puzzle_hash", (hash_bytes, false))?;
             let items: Vec<PyObject> = coins.extract(py)?;
             debug!("num coins {}", items.len());
             let mut result_coins = Vec::new();
@@ -289,6 +285,22 @@ impl Simulator {
                 ));
             }
             Ok(result_coins)
+        })
+    }
+
+    pub fn get_all_coins(&self) -> PyResult<Vec<CoinString>> {
+        Python::with_gil(|py| -> PyResult<_> {
+            let coins = self.async_client(py, "get_all_coins", (false,))?;
+            self.convert_coin_list_to_coin_strings(py, &coins)
+        })
+
+    }
+
+    pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
+        Python::with_gil(|py| -> PyResult<_> {
+            let hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
+            let coins = self.async_client(py, "get_coin_records_by_puzzle_hash", (hash_bytes, false))?;
+            self.convert_coin_list_to_coin_strings(py, &coins)
         })
     }
 
