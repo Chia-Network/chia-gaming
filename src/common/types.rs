@@ -697,13 +697,15 @@ impl Puzzle {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Timeout(u64);
 
 impl Timeout {
     pub fn new(t: u64) -> Self {
         Timeout(t)
     }
+
+    pub fn to_u64(&self) -> u64 { self.0 }
 
     pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
         if let Some(amt) = atom_from_clvm(allocator, clvm).and_then(u64_from_atom) {

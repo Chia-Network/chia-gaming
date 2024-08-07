@@ -208,7 +208,7 @@ pub trait WalletSpendInterface {
     fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error>;
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
-    fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error>;
+    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
@@ -1360,3 +1360,44 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         Ok(())
     }
 }
+
+impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender, R: Rng>
+    SpendWalletReceiver<G, R> for PotatoHandler
+{
+    fn coin_created<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a
+    {
+        todo!();
+    }
+
+    fn coin_spent<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a
+    {
+        todo!();
+    }
+
+    fn coin_timeout_reached<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a
+    {
+        todo!();
+    }
+}
+
