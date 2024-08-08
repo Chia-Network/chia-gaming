@@ -15,7 +15,7 @@ use crate::channel_handler::types::{
     PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, get_spend_creations};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program,
     PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
@@ -1367,13 +1367,29 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     fn coin_created<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        coin_id: &CoinString
+        coin: &CoinString
     ) -> Result<(), Error>
     where
         G: 'a,
         R: 'a
     {
-        todo!();
+        // When the channel coin is created, we know we can proceed in playing the game.
+        let channel_coin_created =
+            if let HandshakeState::Finished(hs) = &self.handshake_state {
+                // We've been through the handshake process.  The handshake state contains
+                // the spend which should have created the channel coin.
+                let (env, _) = penv.env();
+                let coin_creation = get_spend_creations(env.allocator, &hs.spend)?;
+                coin_creation.iter().find(|c| *c == coin).cloned()
+            } else {
+                None
+            };
+
+        if let Some(coin) = channel_coin_created {
+            todo!();
+        }
+
+        Ok(())
     }
 
     fn coin_spent<'a>(
