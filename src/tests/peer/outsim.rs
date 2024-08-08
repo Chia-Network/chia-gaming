@@ -37,6 +37,7 @@ struct WatchReport {
 
 impl SimulatedWalletSpend {
     pub fn watch_and_report_coins(&mut self, current_height: usize, current_coins: &[CoinString]) -> Result<WatchReport, Error> {
+        debug!("update known coins {current_height}: current coins from blockchain {current_coins:?}");
         let mut current_coin_set: HashSet<CoinString> = current_coins.iter().cloned().collect();
         let created_coins: HashSet<CoinString> = current_coin_set.difference(&self.current_coins).filter(|c| {
             // Report coin if it's being watched.
@@ -331,7 +332,6 @@ fn test_peer_in_sim() {
     // Get the coins each one owns and test our detection.
     let coins0 = simulator.get_my_coins(&identities[0].puzzle_hash).expect("should work");
     assert!(!coins0.is_empty());
-    peers[0].register_coin(&coins0[0], &Timeout::new(100)).expect("should work");
 
     // Make a 100 coin for each player (and test the deleted and created events).
     let new_coin = simulator.transfer_coin_amount(
@@ -341,6 +341,8 @@ fn test_peer_in_sim() {
         &coins0[0],
         Amount::new(100)
     ).expect("should work");
+    peers[0].register_coin(&new_coin.0, &Timeout::new(100)).expect("should work");
+    peers[0].register_coin(&new_coin.1, &Timeout::new(100)).expect("should work");
 
     {
         let mut simenv0 = SimulatedPeerSystem::new(
@@ -353,6 +355,4 @@ fn test_peer_in_sim() {
         let watch_report = simenv0.farm_block(&mut handlers[0], &identities[0].puzzle_hash).expect("should run");
         debug!("watch_report {watch_report:?}");
     }
-
-    todo!();
 }

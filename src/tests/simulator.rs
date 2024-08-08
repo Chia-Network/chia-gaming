@@ -222,10 +222,14 @@ impl Simulator {
     where
         ArgT: IntoPy<Py<PyTuple>>,
     {
-        let task = self.sim.call_method1(py, name, args)?;
-        let res = self
+        let coro = self.sim.call_method1(py, name, args)?;
+        let task = self
             .evloop
-            .call_method1(py, "run_until_complete", (task,))?;
+            .call_method1(py, "create_task", (coro.clone(),))?;
+        self
+            .evloop
+            .call_method1(py, "run_until_complete", (task.clone(),))?;
+        let res = task.call_method0(py, "result")?;
         Ok(res.into())
     }
 
@@ -243,11 +247,10 @@ impl Simulator {
     pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
         Python::with_gil(|py| -> PyResult<()> {
             let puzzle_hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
-            let result_height = self.async_call(py, "farm_block", (puzzle_hash_bytes,))?;
-            debug!("result_height {result_height}");
-            todo!();
-            // self.height.replace(result_height);
-            // Ok(())
+            self.async_call(py, "farm_block", (puzzle_hash_bytes,))?;
+            let old_height = *self.height.borrow();
+            self.height.replace(old_height + 1);
+            Ok(())
         })
             .expect("should farm")
     }
@@ -266,7 +269,12 @@ impl Simulator {
             debug!("num coins {}", items.len());
             let mut result_coins = Vec::new();
             for i in items.iter() {
-                let coin_of_item: PyObject = i.getattr(py, "coin")?.extract(py)?;
+                let coin_of_item: PyObject =
+                    if let Ok(res) = i.getattr(py, "coin") {
+                        res.extract(py)?
+                    } else {
+                        i.extract(py)?
+                    };
                 let as_list_str: String = coin_of_item.call_method0(py, "__repr__")?.extract(py)?;
                 debug!("as_list_str {as_list_str}");
                 let as_list: Vec<PyObject> =
@@ -290,7 +298,7 @@ impl Simulator {
 
     pub fn get_all_coins(&self) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
-            let coins = self.async_client(py, "get_all_coins", (false,))?;
+            let coins = self.async_call(py, "all_non_reward_coins", ())?;
             self.convert_coin_list_to_coin_strings(py, &coins)
         })
 
