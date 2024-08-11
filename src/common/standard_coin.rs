@@ -484,6 +484,19 @@ pub fn standard_solution_partial(
             _ => {}
         }
     }
+
+    // Assume something like create coin if nothing else.
+    if aggregated_signature.is_none() {
+        add_signature(
+            &mut aggregated_signature,
+            if partial {
+                partial_signer(private_key, aggregate_public_key, &coin_agg_sig_me_message)
+            } else {
+                private_key.sign(&coin_agg_sig_me_message)
+            },
+        );
+    }
+
     if let Some(signature) = aggregated_signature {
         Ok(BrokenOutCoinSpendInfo {
             solution,

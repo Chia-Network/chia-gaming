@@ -311,7 +311,7 @@ pub struct HandshakeStepInfo {
     pub second_player_hs_info: HandshakeB,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HandshakeStepWithSpend {
     #[allow(dead_code)]
     pub info: HandshakeStepInfo,
@@ -409,6 +409,8 @@ pub struct PotatoHandler {
     their_contribution: Amount,
 
     reward_puzzle_hash: PuzzleHash,
+
+    waiting_to_start: bool,
 }
 
 fn init_game_id(private_keys: &ChannelHandlerPrivateKeys) -> Vec<u8> {
@@ -473,6 +475,8 @@ impl PotatoHandler {
             channel_handler: None,
             channel_initiation_transaction: None,
             channel_finished_transaction: None,
+
+            waiting_to_start: true,
 
             private_keys,
             my_contribution,
@@ -1386,7 +1390,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             };
 
         if let Some(coin) = channel_coin_created {
-            todo!();
+            self.waiting_to_start = false;
         }
 
         Ok(())

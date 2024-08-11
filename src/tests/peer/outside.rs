@@ -75,6 +75,28 @@ struct Pipe {
     bootstrap_state: Option<WalletBootstrapState>,
 }
 
+pub trait MessagePeerQueue {
+    fn message_pipe(&mut self) -> &mut MessagePipe;
+    fn get_channel_puzzle_hash(&self) -> Option<PuzzleHash>;
+    fn set_channel_puzzle_hash(&mut self, ph: Option<PuzzleHash>);
+    fn get_unfunded_offer(&self) -> Option<SpendBundle>;
+}
+
+impl MessagePeerQueue for Pipe {
+    fn message_pipe(&mut self) -> &mut MessagePipe {
+        &mut self.message_pipe
+    }
+    fn get_channel_puzzle_hash(&self) -> Option<PuzzleHash> {
+        self.channel_puzzle_hash.clone()
+    }
+    fn set_channel_puzzle_hash(&mut self, ph: Option<PuzzleHash>) {
+        self.channel_puzzle_hash = ph;
+    }
+    fn get_unfunded_offer(&self) -> Option<SpendBundle> {
+        self.unfunded_offer.clone()
+    }
+}
+
 impl PacketSender for MessagePipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
         debug!("Send Message from {} {msg:?}", self.my_id);
@@ -195,8 +217,8 @@ where
             CREATE_COIN,
             (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
         )]
-        .to_clvm(self.env.allocator)
-        .into_gen()?;
+            .to_clvm(self.env.allocator)
+            .into_gen()?;
         let spend = standard_solution_partial(
             self.env.allocator,
             &ch.channel_private_key(),
@@ -234,47 +256,53 @@ where
     }
 }
 
-fn run_move<'a, R: Rng>(
+pub fn run_move<'a, P, R: Rng>(
     env: &'a mut ChannelHandlerEnv<'a, R>,
     amount: Amount,
-    pipe: &'a mut [Pipe; 2],
+    pipe: &'a mut [P; 2],
     peer: &mut PotatoHandler,
     who: usize,
-) -> Result<bool, Error> {
-    assert!(pipe[who ^ 1].message_pipe.queue.len() < 2);
-    let msg = if let Some(msg) = pipe[who ^ 1].message_pipe.queue.pop_front() {
+) -> Result<bool, Error>
+where
+    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue + 'a,
+{
+    assert!(pipe[who ^ 1].message_pipe().queue.len() < 2);
+    let msg = if let Some(msg) = pipe[who ^ 1].message_pipe().queue.pop_front() {
         msg
     } else {
         return Ok(false);
     };
 
-    let mut penv: TestPeerEnv<Pipe, R> = TestPeerEnv {
+    let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
         env: env,
         system_interface: &mut pipe[who],
     };
 
     peer.received_message(&mut penv, msg)?;
 
-    if let Some(ch) = penv.system_interface.channel_puzzle_hash.clone() {
+    if let Some(ch) = penv.system_interface.get_channel_puzzle_hash() {
         let parent = CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
         penv.test_handle_received_channel_puzzle_hash(peer, &parent, &ch)?;
-        penv.system_interface.channel_puzzle_hash = None;
+        penv.system_interface.set_channel_puzzle_hash(None);
     }
 
-    if let Some(ufo) = penv.system_interface.unfunded_offer.clone() {
+    if let Some(ufo) = penv.system_interface.get_unfunded_offer() {
         penv.test_handle_received_unfunded_offer(peer, &ufo)?;
     }
 
     Ok(true)
 }
 
-fn quiesce<'a, R: Rng + 'a>(
+pub fn quiesce<'a, P: MessagePeerQueue, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
     amount: Amount,
     peers: &'a mut [PotatoHandler; 2],
-    pipes: &'a mut [Pipe; 2],
-) -> Result<(), Error> {
+    pipes: &'a mut [P; 2],
+) -> Result<(), Error>
+where
+    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue + 'a,
+{
     loop {
         let mut msgs = 0;
         for who in 0..=1 {
@@ -289,13 +317,16 @@ fn quiesce<'a, R: Rng + 'a>(
     Ok(())
 }
 
-fn handshake<'a, R: Rng + 'a>(
+pub fn handshake<'a, P: MessagePeerQueue, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
     amount: Amount,
     peers: &'a mut [PotatoHandler; 2],
-    pipes: &'a mut [Pipe; 2],
-) -> Result<(), Error> {
+    pipes: &'a mut [P; 2],
+) -> Result<(), Error>
+where
+    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue + 'a,
+{
     let mut i = 0;
     let mut messages = 0;
 
