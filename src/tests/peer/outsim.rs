@@ -517,15 +517,13 @@ pub fn handshake<'a, R: Rng + 'a>(
     Ok(())
 }
 
-#[test]
-fn test_peer_in_sim() {
-    let mut allocator = AllocEncoder::new();
+fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
     let seed_data: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed_data);
 
     let mut game_type_map = BTreeMap::new();
     let calpoker_factory =
-        read_hex_puzzle(&mut allocator, "clsp/calpoker_include_calpoker_factory.hex")
+        read_hex_puzzle(allocator, "clsp/calpoker_include_calpoker_factory.hex")
         .expect("should load");
 
     game_type_map.insert(
@@ -550,15 +548,15 @@ fn test_peer_in_sim() {
         )
     };
 
-    let ph1 = new_peer(&mut allocator, &mut rng, false);
-    let ph2 = new_peer(&mut allocator, &mut rng, true);
+    let ph1 = new_peer(allocator, &mut rng, false);
+    let ph2 = new_peer(allocator, &mut rng, true);
     let mut handlers = [ph1, ph2];
 
     let my_private_key: PrivateKey = rng.gen();
     let their_private_key: PrivateKey = rng.gen();
     let identities = [
-        ChiaIdentity::new(&mut allocator, my_private_key).expect("should generate"),
-        ChiaIdentity::new(&mut allocator, their_private_key).expect("should generate"),
+        ChiaIdentity::new(allocator, my_private_key).expect("should generate"),
+        ChiaIdentity::new(allocator, their_private_key).expect("should generate"),
     ];
     let mut peers = [
         SimulatedPeer::default(),
@@ -577,14 +575,14 @@ fn test_peer_in_sim() {
 
     // Make a 100 coin for each player (and test the deleted and created events).
     let (parent_coin_0, rest_0) = simulator.transfer_coin_amount(
-        &mut allocator,
+        allocator,
         &identities[0],
         &identities[0],
         &coins0[0],
         Amount::new(100)
     ).expect("should work");
     let (parent_coin_1, rest_1) = simulator.transfer_coin_amount(
-        &mut allocator,
+        allocator,
         &identities[1],
         &identities[1],
         &coins1[0],
@@ -593,7 +591,7 @@ fn test_peer_in_sim() {
     peers[0].register_coin(&parent_coin_0, &Timeout::new(100)).expect("should work");
 
     {
-        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let mut env = channel_handler_env(allocator, &mut rng);
         check_watch_report(&mut env, &identities[0], &mut peers[0], &mut handlers[1], &mut simulator);
     }
 
@@ -601,7 +599,7 @@ fn test_peer_in_sim() {
     simulator.farm_block(&identities[0].puzzle_hash);
 
     {
-        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let mut env = channel_handler_env(allocator, &mut rng);
         let mut penv = SimulatedPeerSystem::new(
             &mut env,
             &identities[1],
@@ -613,7 +611,7 @@ fn test_peer_in_sim() {
 
     handshake(
         &mut rng,
-        &mut allocator,
+        allocator,
         Amount::new(100),
         &identities,
         &mut handlers,
@@ -625,7 +623,7 @@ fn test_peer_in_sim() {
 
     quiesce(
         &mut rng,
-        &mut allocator,
+        allocator,
         Amount::new(200),
         &mut handlers,
         &mut peers
@@ -634,18 +632,18 @@ fn test_peer_in_sim() {
 
     // Start game
     let game_ids = {
-        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let mut env = channel_handler_env(allocator, &mut rng);
         do_first_game_start(&mut env, &identities[1], &mut peers[1], &mut handlers[1], &mut simulator)
     };
 
     {
-        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let mut env = channel_handler_env(allocator, &mut rng);
         do_second_game_start(&mut env, &identities[0], &mut peers[0], &mut handlers[0], &mut simulator);
     }
 
     quiesce(
         &mut rng,
-        &mut allocator,
+        allocator,
         Amount::new(200),
         &mut handlers,
         &mut peers
@@ -655,9 +653,6 @@ fn test_peer_in_sim() {
     assert!(peers[0].message_pipe.queue.is_empty());
     assert!(peers[1].message_pipe.queue.is_empty());
 
-    // Play moves
-    let moves = test_moves_1(&mut allocator);
-
     for this_move in moves.iter() {
         let (who, what) = if let GameAction::Move(who, what, _) = this_move {
             (who, what)
@@ -666,7 +661,7 @@ fn test_peer_in_sim() {
         };
 
         {
-            let mut env = channel_handler_env(&mut allocator, &mut rng);
+            let mut env = channel_handler_env(allocator, &mut rng);
             let mut penv = SimulatedPeerSystem::new(
                 &mut env,
                 &identities[who ^ 1],
@@ -680,11 +675,20 @@ fn test_peer_in_sim() {
 
         quiesce(
             &mut rng,
-            &mut allocator,
+            allocator,
             Amount::new(200),
             &mut handlers,
             &mut peers,
         )
             .expect("should work");
     }
+}
+
+#[test]
+fn test_peer_in_sim() {
+    let mut allocator = AllocEncoder::new();
+
+    // Play moves
+    let moves = test_moves_1(&mut allocator);
+    run_calpoker_test_with_action_list(&mut allocator, &moves);
 }
