@@ -47,10 +47,10 @@ pub enum WalletBootstrapState {
 
 #[derive(Default)]
 pub struct MessagePipe {
-    my_id: usize,
+    pub my_id: usize,
 
     // PacketSender
-    queue: VecDeque<Vec<u8>>,
+    pub queue: VecDeque<Vec<u8>>,
 }
 
 #[derive(Default)]

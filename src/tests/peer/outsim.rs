@@ -13,6 +13,8 @@ use crate::common::standard_coin::{ChiaIdentity, private_to_public_key, puzzle_h
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove, ChannelHandlerPrivateKeys};
 use crate::outside::{PacketSender, PeerEnv, PeerMessage, WalletSpendInterface, BootstrapTowardWallet, SpendWalletReceiver, ToLocalUI, PotatoHandler, GameType, GameStart, FromLocalUI, BootstrapTowardGame};
+use crate::tests::calpoker::test_moves_1;
+use crate::tests::simenv::GameAction;
 use crate::tests::simulator::Simulator;
 use crate::tests::peer::outside::{MessagePeerQueue, MessagePipe, quiesce, run_move};
 
@@ -213,10 +215,13 @@ impl BootstrapTowardWallet for SimulatedPeer {
 
 impl ToLocalUI for SimulatedPeer {
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
-        todo!();
+        // We can record stuff here and check that we got what was expected, but there's
+        // no effect on the game mechanics.
+        Ok(())
     }
     fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        todo!();
+        // Record for testing, but doens't affect the game.
+        Ok(())
     }
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
         todo!();
@@ -630,7 +635,7 @@ fn test_peer_in_sim() {
     // Start game
     let game_ids = {
         let mut env = channel_handler_env(&mut allocator, &mut rng);
-        do_first_game_start(&mut env, &identities[1], &mut peers[1], &mut handlers[1], &mut simulator);
+        do_first_game_start(&mut env, &identities[1], &mut peers[1], &mut handlers[1], &mut simulator)
     };
 
     {
@@ -647,5 +652,39 @@ fn test_peer_in_sim() {
     )
         .expect("should work");
 
+    assert!(peers[0].message_pipe.queue.is_empty());
+    assert!(peers[1].message_pipe.queue.is_empty());
+
     // Play moves
+    let moves = test_moves_1(&mut allocator);
+
+    for this_move in moves.iter() {
+        let (who, what) = if let GameAction::Move(who, what, _) = this_move {
+            (who, what)
+        } else {
+            panic!();
+        };
+
+        {
+            let mut env = channel_handler_env(&mut allocator, &mut rng);
+            let mut penv = SimulatedPeerSystem::new(
+                &mut env,
+                &identities[who ^ 1],
+                &mut peers[who ^ 1],
+                &mut simulator
+            );
+            handlers[who ^ 1]
+                .make_move(&mut penv, &game_ids[0], &ReadableMove::from_nodeptr(*what))
+                .expect("should work");
+        }
+
+        quiesce(
+            &mut rng,
+            &mut allocator,
+            Amount::new(200),
+            &mut handlers,
+            &mut peers,
+        )
+            .expect("should work");
+    }
 }
