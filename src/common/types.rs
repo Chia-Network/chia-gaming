@@ -56,8 +56,14 @@ impl ToClvm<NodePtr> for CoinID {
 }
 
 /// Coin String
-#[derive(Default, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Default, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct CoinString(Vec<u8>);
+
+impl std::fmt::Debug for CoinString {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        writeln!(formatter, "{:?}", self.to_parts())
+    }
+}
 
 impl CoinString {
     pub fn from_parts(parent: &CoinID, puzzle_hash: &PuzzleHash, amount: &Amount) -> CoinString {
