@@ -7,7 +7,7 @@ use chia_bls;
 use clvm_traits::{clvm_curried_args, ToClvm};
 
 use clvmr::serde::node_from_bytes;
-use clvmr::{NodePtr, run_program};
+use clvmr::NodePtr;
 
 use clvm_tools_rs::util::{number_from_u8, u8_from_number};
 
@@ -24,11 +24,10 @@ use crate::common::constants::{
 };
 use crate::common::types;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinString, Hash, IntoErr,
+    Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr,
     Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
-    ToQuotedProgram, SpendBundle,
+    ToQuotedProgram,
 };
-use crate::channel_handler::game_handler::chia_dialect;
 
 pub fn hex_to_sexp(
     allocator: &mut AllocEncoder,
@@ -562,28 +561,4 @@ impl ChiaIdentity {
         let conditions_converted = conditions.to_clvm(allocator).into_gen()?;
         solution_for_conditions(allocator, conditions_converted)
     }
-}
-
-pub fn get_spend_creations(allocator: &mut AllocEncoder, spends: &SpendBundle) -> Result<Vec<CoinString>, types::Error> {
-    let mut result = Vec::new();
-    for s in spends.spends.iter() {
-        let parent_id = s.coin.to_coin_id();
-        let puzzle_clvm = s.bundle.puzzle.to_clvm(allocator).into_gen()?;
-        let solution_clvm = s.bundle.solution.to_clvm(allocator).into_gen()?;
-        let puzzle_result = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
-            puzzle_clvm,
-            solution_clvm,
-            0
-        ).into_gen()?.1;
-        let conditions = CoinCondition::from_nodeptr(allocator, puzzle_result);
-        for cond in conditions.iter() {
-            if let CoinCondition::CreateCoin(ph, amt) = cond {
-                let final_string = CoinString::from_parts(&parent_id, &ph, &amt);
-                result.push(final_string);
-            }
-        }
-    }
-    Ok(result)
 }

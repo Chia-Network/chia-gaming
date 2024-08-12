@@ -19,7 +19,7 @@ use crate::common::types::{
 };
 use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface, SpendWalletReceiver
+    PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -217,8 +217,8 @@ where
             CREATE_COIN,
             (channel_handler_puzzle_hash.clone(), (channel_coin_amt, ())),
         )]
-            .to_clvm(self.env.allocator)
-            .into_gen()?;
+        .to_clvm(self.env.allocator)
+        .into_gen()?;
         let spend = standard_solution_partial(
             self.env.allocator,
             &ch.channel_private_key(),
@@ -264,7 +264,12 @@ pub fn run_move<'a, P, R: Rng>(
     who: usize,
 ) -> Result<bool, Error>
 where
-    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue + 'a,
+    P: ToLocalUI
+        + BootstrapTowardWallet
+        + WalletSpendInterface
+        + PacketSender
+        + MessagePeerQueue
+        + 'a,
 {
     assert!(pipe[who ^ 1].message_pipe().queue.len() < 2);
     let msg = if let Some(msg) = pipe[who ^ 1].message_pipe().queue.pop_front() {
@@ -301,7 +306,12 @@ pub fn quiesce<'a, P: MessagePeerQueue, R: Rng + 'a>(
     pipes: &'a mut [P; 2],
 ) -> Result<(), Error>
 where
-    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue + 'a,
+    P: ToLocalUI
+        + BootstrapTowardWallet
+        + WalletSpendInterface
+        + PacketSender
+        + MessagePeerQueue
+        + 'a,
 {
     loop {
         let mut msgs = 0;
@@ -330,7 +340,12 @@ pub fn handshake<'a, P: MessagePeerQueue, R: Rng + 'a>(
     pipes: &'a mut [P; 2],
 ) -> Result<(), Error>
 where
-    P: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + MessagePeerQueue + 'a,
+    P: ToLocalUI
+        + BootstrapTowardWallet
+        + WalletSpendInterface
+        + PacketSender
+        + MessagePeerQueue
+        + 'a,
 {
     let mut i = 0;
     let mut messages = 0;
@@ -344,7 +359,9 @@ where
 
         {
             let mut env = channel_handler_env(allocator, rng);
-            if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send") {
+            if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who)
+                .expect("should send")
+            {
                 messages += 1;
             }
         }
@@ -382,7 +399,7 @@ fn test_peer_smoke() {
     let mut game_type_map = BTreeMap::new();
     let calpoker_factory =
         read_hex_puzzle(&mut allocator, "clsp/calpoker_include_calpoker_factory.hex")
-        .expect("should load");
+            .expect("should load");
 
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),

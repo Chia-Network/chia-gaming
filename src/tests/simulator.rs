@@ -226,8 +226,7 @@ impl Simulator {
         let task = self
             .evloop
             .call_method1(py, "create_task", (coro.clone(),))?;
-        self
-            .evloop
+        self.evloop
             .call_method1(py, "run_until_complete", (task.clone(),))?;
         let res = task.call_method0(py, "result")?;
         Ok(res.into())
@@ -252,7 +251,7 @@ impl Simulator {
             self.height.replace(old_height + 1);
             Ok(())
         })
-            .expect("should farm")
+        .expect("should farm")
     }
 
     pub fn get_current_height(&self) -> usize {
@@ -262,19 +261,18 @@ impl Simulator {
     fn convert_coin_list_to_coin_strings(
         &self,
         py: Python<'_>,
-        coins: &PyObject
+        coins: &PyObject,
     ) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
             let items: Vec<PyObject> = coins.extract(py)?;
             debug!("num coins {}", items.len());
             let mut result_coins = Vec::new();
             for i in items.iter() {
-                let coin_of_item: PyObject =
-                    if let Ok(res) = i.getattr(py, "coin") {
-                        res.extract(py)?
-                    } else {
-                        i.extract(py)?
-                    };
+                let coin_of_item: PyObject = if let Ok(res) = i.getattr(py, "coin") {
+                    res.extract(py)?
+                } else {
+                    i.extract(py)?
+                };
                 let as_list_str: String = coin_of_item.call_method0(py, "__repr__")?.extract(py)?;
                 debug!("as_list_str {as_list_str}");
                 let as_list: Vec<PyObject> =
@@ -301,13 +299,13 @@ impl Simulator {
             let coins = self.async_call(py, "all_non_reward_coins", ())?;
             self.convert_coin_list_to_coin_strings(py, &coins)
         })
-
     }
 
     pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
             let hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
-            let coins = self.async_client(py, "get_coin_records_by_puzzle_hash", (hash_bytes, false))?;
+            let coins =
+                self.async_client(py, "get_coin_records_by_puzzle_hash", (hash_bytes, false))?;
             self.convert_coin_list_to_coin_strings(py, &coins)
         })
     }
