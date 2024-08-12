@@ -188,7 +188,7 @@ impl WalletSpendInterface for SimulatedPeer {
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
     fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
-        debug!("register coin");
+        debug!("register coin {coin_id:?}");
         self.simulated_wallet_spend.register_coin(coin_id, timeout)
     }
 }
@@ -276,16 +276,19 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
 
         // Report timed out coins
         for t in watch_report.timed_out.iter() {
+            debug!("reporting coin timeout: {t:?}");
             potato_handler.coin_timeout_reached(self, t)?;
         }
 
         // Report deleted coins
         for d in watch_report.deleted_watched.iter() {
+            debug!("reporting coin deletion: {d:?}");
             potato_handler.coin_spent(self, d)?;
         }
 
         // Report created coins
         for c in watch_report.created_watched.iter() {
+            debug!("reporting coin creation: {c:?}");
             potato_handler.coin_created(self, c)?;
         }
 
@@ -332,7 +335,6 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
             .to_clvm(self.env.allocator)
             .into_gen()?;
 
-        debug!("preparing unfunded offer for {:?}", identity.synthetic_private_key);
         let spend = standard_solution_partial(
             self.env.allocator,
             &identity.synthetic_private_key,
@@ -473,9 +475,7 @@ pub fn handshake<'a, R: Rng + 'a>(
         if let Some(u) = pipes[who].simulated_wallet_spend.unfunded_offer.as_ref() {
             debug!("unfunded offer received by {:?}", identities[who].synthetic_private_key);
             let mut env = channel_handler_env(allocator, rng);
-            let mut spends = SpendBundle {
-                spends: Vec::new() // u.clone();
-            };
+            let mut spends = u.clone();
             // Create no coins.  The target is already created in the partially funded
             // transaction.
             //
@@ -502,8 +502,24 @@ pub fn handshake<'a, R: Rng + 'a>(
                 env.allocator,
                 &spends.spends
             ).into_gen()?;
+            pipes[who].simulated_wallet_spend.unfunded_offer = None;
             debug!("included_result {included_result:?}");
             assert_eq!(included_result.code, 1);
+
+            simulator.farm_block(&identities[who].puzzle_hash);
+            simulator.farm_block(&identities[who].puzzle_hash);
+
+            for to_observe in 0..=1 {
+                let mut env = channel_handler_env(allocator, rng);
+                let mut penv = SimulatedPeerSystem::new(
+                    &mut env,
+                    &identities[to_observe],
+                    &mut pipes[to_observe],
+                    simulator
+                );
+                debug!("observe coins for peer {to_observe}");
+                penv.update_and_report_coins(&mut peers[to_observe])?;
+            }
         }
 
         if !pipes[who].simulated_wallet_spend.outbound_transactions.is_empty() {
@@ -544,6 +560,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
             game_type_map.clone(),
             Amount::new(100),
             Amount::new(100),
+            Timeout::new(1000),
             reward_puzzle_hash1.clone(),
         )
     };

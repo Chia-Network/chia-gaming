@@ -19,7 +19,7 @@ use crate::common::types::{
 };
 use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface, SpendWalletReceiver
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -317,6 +317,11 @@ where
     Ok(())
 }
 
+fn get_channel_coin_for_peer(p: &PotatoHandler) -> Result<CoinString, Error> {
+    let channel_handler = p.channel_handler()?;
+    Ok(channel_handler.state_channel_coin().coin_string().clone())
+}
+
 pub fn handshake<'a, P: MessagePeerQueue, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
@@ -331,15 +336,35 @@ where
     let mut messages = 0;
 
     while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
-        let mut env = channel_handler_env(allocator, rng);
+        if i > 50 {
+            panic!();
+        }
+
         let who = i % 2;
-        if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send") {
-            messages += 1;
+
+        {
+            let mut env = channel_handler_env(allocator, rng);
+            if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send") {
+                messages += 1;
+            }
         }
 
         i += 1;
 
-        assert!(messages + 2 >= i);
+        if i >= 10 && i < 12 {
+            let mut env = channel_handler_env(allocator, rng);
+            // Ensure that we notify about the channel coin (fake here, but the notification
+            // is required).
+            let channel_coin = get_channel_coin_for_peer(&peers[who])?;
+
+            {
+                let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
+                    env: &mut env,
+                    system_interface: &mut pipes[who],
+                };
+                peers[who].coin_created(&mut penv, &channel_coin)?;
+            }
+        }
     }
 
     Ok(())
@@ -377,6 +402,7 @@ fn test_peer_smoke() {
             game_type_map.clone(),
             Amount::new(100),
             Amount::new(100),
+            Timeout::new(1000),
             reward_puzzle_hash1.clone(),
         )
     };
