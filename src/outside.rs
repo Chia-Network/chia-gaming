@@ -15,7 +15,7 @@ use crate::channel_handler::types::{
     PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, get_spend_creations};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program,
     PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
@@ -179,7 +179,7 @@ pub trait SpendWalletReceiver<
     fn coin_created<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        coin_id: &CoinString
+        coin_id: &CoinString,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -187,7 +187,7 @@ pub trait SpendWalletReceiver<
     fn coin_spent<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        coin_id: &CoinString
+        coin_id: &CoinString,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -195,7 +195,7 @@ pub trait SpendWalletReceiver<
     fn coin_timeout_reached<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        coin_id: &CoinString
+        coin_id: &CoinString,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -667,7 +667,7 @@ impl PotatoHandler {
     {
         // Haven't got the channel coin yet.
         if self.waiting_to_start {
-            return Ok(())
+            return Ok(());
         }
 
         if let Some(spend) = self.channel_finished_transaction.as_ref() {
@@ -1041,10 +1041,8 @@ impl PotatoHandler {
                 {
                     let (_env, system_interface) = penv.env();
                     system_interface.channel_puzzle_hash(&channel_puzzle_hash)?;
-                    system_interface.register_coin(
-                        &channel_coin.coin_string(),
-                        &self.channel_timeout,
-                    )?;
+                    system_interface
+                        .register_coin(channel_coin.coin_string(), &self.channel_timeout)?;
                 };
 
                 let channel_public_key =
@@ -1165,8 +1163,7 @@ impl PotatoHandler {
                     )));
                 };
 
-                let channel_coin =
-                {
+                let channel_coin = {
                     let ch = self.channel_handler()?;
                     ch.state_channel_coin()
                 };
@@ -1176,16 +1173,14 @@ impl PotatoHandler {
                 {
                     let (_env, system_interface) = penv.env();
                     if bundle.spends.is_empty() {
-                        return Err(Error::StrErr(format!(
-                            "No spends to draw the channel coin from"
-                        )));
+                        return Err(Error::StrErr(
+                            "No spends to draw the channel coin from".to_string(),
+                        ));
                     }
 
                     // Ensure we're watching for this coin.
-                    system_interface.register_coin(
-                        &channel_coin.coin_string(),
-                        &self.channel_timeout,
-                    )?;
+                    system_interface
+                        .register_coin(channel_coin.coin_string(), &self.channel_timeout)?;
 
                     system_interface.received_channel_offer(&bundle)?;
                 }
@@ -1402,20 +1397,21 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     fn coin_created<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        coin: &CoinString
+        coin: &CoinString,
     ) -> Result<(), Error>
     where
         G: 'a,
-        R: 'a
+        R: 'a,
     {
         // When the channel coin is created, we know we can proceed in playing the game.
         if let HandshakeState::PostStepF(info) = &self.handshake_state {
-            let channel_coin_created = self.channel_handler().ok().map(|ch| {
-                ch.state_channel_coin().coin_string()
-            });
+            let channel_coin_created = self
+                .channel_handler()
+                .ok()
+                .map(|ch| ch.state_channel_coin().coin_string());
 
             debug!("checking created coin {coin:?} vs expected {channel_coin_created:?}");
-            if let Some(coin) = channel_coin_created {
+            if let Some(_coin) = channel_coin_created {
                 self.waiting_to_start = false;
                 self.try_complete_step_f(
                     penv,
@@ -1430,12 +1426,12 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
     fn coin_spent<'a>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        coin_id: &CoinString
+        _penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString,
     ) -> Result<(), Error>
     where
         G: 'a,
-        R: 'a
+        R: 'a,
     {
         if let Some(ch) = self.channel_handler.as_ref() {
             let channel_coin = ch.state_channel_coin();
@@ -1450,14 +1446,13 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
     fn coin_timeout_reached<'a>(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        coin_id: &CoinString
+        _penv: &mut dyn PeerEnv<'a, G, R>,
+        _coin_id: &CoinString,
     ) -> Result<(), Error>
     where
         G: 'a,
-        R: 'a
+        R: 'a,
     {
         todo!();
     }
 }
-
