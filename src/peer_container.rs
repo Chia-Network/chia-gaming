@@ -22,7 +22,6 @@ pub trait MessagePeerQueue {
 }
 
 pub struct WatchEntry {
-    pub established_height: Timeout,
     pub timeout_height: Timeout,
 }
 
