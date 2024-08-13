@@ -35,7 +35,6 @@ struct SimulatedWalletSpend {
     current_height: u64,
     watching_coins: HashMap<CoinString, WatchEntry>,
 
-    outbound_transactions: Vec<Spend>,
     channel_puzzle_hash: Option<PuzzleHash>,
 }
 
@@ -90,6 +89,7 @@ struct SimulatedPeer {
     channel_puzzle_hash: Option<PuzzleHash>,
 
     unfunded_offer: Option<SpendBundle>,
+    outbound_transactions: Vec<Spend>,
 
     simulated_wallet_spend: SimulatedWalletSpend,
 }
@@ -133,14 +133,7 @@ impl PacketSender for SimulatedPeer {
     }
 }
 
-impl WalletSpendInterface for SimulatedWalletSpend {
-    /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
-        debug!("waiting to spend transaction");
-        self.outbound_transactions.push(bundle.clone());
-        Ok(())
-    }
-
+impl SimulatedWalletSpend {
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
     fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
@@ -173,9 +166,9 @@ impl SimulatedWalletSpend {
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
     fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
-        debug!("spend transaction add fee");
-        self.simulated_wallet_spend
-            .spend_transaction_and_add_fee(bundle)
+        debug!("waiting to spend transaction");
+        self.outbound_transactions.push(bundle.clone());
+        Ok(())
     }
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
@@ -538,13 +531,12 @@ pub fn handshake<'a, R: Rng + 'a>(
         }
 
         if !pipes[who]
-            .simulated_wallet_spend
             .outbound_transactions
             .is_empty()
         {
             debug!(
                 "waiting transactions: {:?}",
-                pipes[who].simulated_wallet_spend.outbound_transactions
+                pipes[who].outbound_transactions
             );
             todo!();
         }
