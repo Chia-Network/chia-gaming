@@ -724,6 +724,14 @@ impl Timeout {
     }
 }
 
+impl Add for Timeout {
+    type Output = Timeout;
+
+    fn add(mut self, rhs: Self) -> Timeout {
+        Timeout::new(self.0 + rhs.0)
+    }
+}
+
 impl ToClvm<NodePtr> for Timeout {
     fn to_clvm(
         &self,
