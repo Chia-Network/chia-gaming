@@ -14,7 +14,7 @@ pub trait MessagePeerQueue {
 }
 
 pub struct WatchEntry {
-    pub established_height: Option<Timeout>,
+    pub established_height: Timeout,
     pub timeout_height: Timeout,
 }
 
@@ -41,6 +41,7 @@ pub enum WalletBootstrapState {
 /// Normally the blockchain reports additions and subtractions to the coin set.
 /// This allows the simulator and others to be used with the full coin set by computing the
 /// watch report.
+#[derive(Default)]
 pub struct FullCoinSetAdapter {
     watching_coins: HashMap<CoinString, WatchEntry>,
     current_coins: HashSet<CoinString>
@@ -49,62 +50,27 @@ pub struct FullCoinSetAdapter {
 impl FullCoinSetAdapter {
     pub fn make_report_from_coin_set_update(
         &mut self,
-        current_height: usize,
+        current_height: Timeout,
         current_coins: &[CoinString],
     ) -> Result<WatchReport, Error> {
         debug!(
-            "update known coins {current_height}: current coins from blockchain {current_coins:?}"
+            "update known coins {current_height:?}: current coins from blockchain {current_coins:?}"
         );
         let mut current_coin_set: HashSet<CoinString> = current_coins.iter().cloned().collect();
         let created_coins: HashSet<CoinString> = current_coin_set
             .difference(&self.current_coins)
-            .filter(|c| {
-                // Report coin if it's being watched.
-                self.watching_coins.contains_key(c)
-            })
             .cloned()
             .collect();
         let deleted_coins: HashSet<CoinString> = self
             .current_coins
             .difference(&current_coin_set)
-            .filter(|c| self.watching_coins.contains_key(c))
             .cloned()
             .collect();
         std::mem::swap(&mut current_coin_set, &mut self.current_coins);
-
-        for d in deleted_coins.iter() {
-            self.watching_coins.remove(d);
-        }
-
-        // Bump timeout if created.
-        for c in created_coins.iter() {
-            if let Some(m) = self.watching_coins.get_mut(c) {
-                m.established_height = None;
-            }
-        }
-
-        let mut timeouts = HashSet::new();
-        for (k, v) in self.watching_coins.iter_mut() {
-            if v.established_height.is_none() {
-                v.established_height = Some(Timeout::new(current_height as u64));
-                v.timeout_height =
-                    Timeout::new(v.timeout_height.to_u64() + (current_height as u64));
-            }
-
-            if Timeout::new(current_height as u64) > v.timeout_height {
-                // No action on this coin in the timeout.
-                timeouts.insert(k.clone());
-            }
-        }
-
-        for t in timeouts.iter() {
-            self.watching_coins.remove(&t);
-        }
-
         Ok(WatchReport {
             created_watched: created_coins,
             deleted_watched: deleted_coins,
-            timed_out: timeouts,
+            timed_out: HashSet::default(),
         })
     }
 }
@@ -113,7 +79,6 @@ impl FullCoinSetAdapter {
 #[derive(Default)]
 pub struct SimulatedWalletSpend {
     watching_coins: HashMap<CoinString, WatchEntry>,
-    current_coins: HashSet<CoinString>,
 
     outbound_transactions: Vec<Spend>,
     channel_puzzle_hash: Option<PuzzleHash>,
@@ -143,17 +108,6 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
     }
     fn get_unfunded_offer(&self) -> Option<SpendBundle> {
         self.unfunded_offer.clone()
-    }
-}
-
-impl SimulatedPeer<SimulatedWalletSpend> {
-    pub fn watch_and_report_coins(
-        &mut self,
-        current_height: usize,
-        current_coins: &[CoinString],
-    ) -> Result<WatchReport, Error> {
-        self.simulated_wallet_spend
-            .watch_and_report_coins(current_height, current_coins)
     }
 }
 
