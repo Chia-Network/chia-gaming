@@ -47,9 +47,10 @@ struct SimulatedWalletSpend {
 impl SimulatedWalletSpend {
     pub fn watch_and_report_coins(
         &mut self,
-        current_height: usize,
+        current_height: u64,
         current_coins: &WatchReport,
     ) -> Result<WatchReport, Error> {
+        self.current_height = current_height;
         let created_coins: HashSet<CoinString> = current_coins
             .created_watched
             .iter()
@@ -114,7 +115,7 @@ impl MessagePeerQueue for SimulatedPeer {
 impl SimulatedPeer {
     pub fn watch_and_report_coins(
         &mut self,
-        current_height: usize,
+        current_height: u64,
         current_coins: &WatchReport
     ) -> Result<WatchReport, Error> {
         self.simulated_wallet_spend
@@ -150,7 +151,7 @@ impl WalletSpendInterface for SimulatedWalletSpend {
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
-                timeout_height: timeout.clone(),
+                timeout_height: timeout.clone() + Timeout::new(self.current_height),
             },
         );
         Ok(())
@@ -271,12 +272,12 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
         let current_height = self.simulator.get_current_height();
         let current_coins = self.simulator.get_all_coins().into_gen()?;
         let coinset_report = coinset_adapter.make_report_from_coin_set_update(
-            Timeout::new(current_height as u64),
+            current_height as u64,
             &current_coins,
         )?;
         let watch_report = self
             .peer
-            .watch_and_report_coins(current_height, &coinset_report)?;
+            .watch_and_report_coins(current_height as u64, &coinset_report)?;
 
         // Report timed out coins
         for t in watch_report.timed_out.iter() {

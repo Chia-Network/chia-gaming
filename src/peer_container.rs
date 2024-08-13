@@ -43,6 +43,7 @@ pub enum WalletBootstrapState {
 /// watch report.
 #[derive(Default)]
 pub struct FullCoinSetAdapter {
+    current_height: u64,
     watching_coins: HashMap<CoinString, WatchEntry>,
     current_coins: HashSet<CoinString>
 }
@@ -50,12 +51,13 @@ pub struct FullCoinSetAdapter {
 impl FullCoinSetAdapter {
     pub fn make_report_from_coin_set_update(
         &mut self,
-        current_height: Timeout,
+        current_height: u64,
         current_coins: &[CoinString],
     ) -> Result<WatchReport, Error> {
         debug!(
             "update known coins {current_height:?}: current coins from blockchain {current_coins:?}"
         );
+        self.current_height = current_height;
         let mut current_coin_set: HashSet<CoinString> = current_coins.iter().cloned().collect();
         let created_coins: HashSet<CoinString> = current_coin_set
             .difference(&self.current_coins)
