@@ -22,16 +22,12 @@ use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
     PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
-use crate::peer_container::{FullCoinSetAdapter, MessagePeerQueue, MessagePipe, WatchReport};
+use crate::peer_container::{FullCoinSetAdapter, MessagePeerQueue, MessagePipe, WatchEntry, WatchReport};
 
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::peer::outside::{quiesce, run_move};
 use crate::tests::simenv::GameAction;
 use crate::tests::simulator::Simulator;
-
-struct WatchEntry {
-    timeout_height: Timeout,
-}
 
 // potato handler tests with simulator.
 #[derive(Default)]
