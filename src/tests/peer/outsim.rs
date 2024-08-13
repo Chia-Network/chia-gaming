@@ -22,79 +22,52 @@ use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
     PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
+use crate::peer_container::{FullCoinSetAdapter, WatchReport};
+
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::peer::outside::{quiesce, run_move, MessagePeerQueue, MessagePipe};
 use crate::tests::simenv::GameAction;
 use crate::tests::simulator::Simulator;
 
 struct WatchEntry {
-    established_height: Option<Timeout>,
     timeout_height: Timeout,
 }
 
 // potato handler tests with simulator.
 #[derive(Default)]
 struct SimulatedWalletSpend {
+    current_height: u64,
     watching_coins: HashMap<CoinString, WatchEntry>,
-    current_coins: HashSet<CoinString>,
 
     outbound_transactions: Vec<Spend>,
     channel_puzzle_hash: Option<PuzzleHash>,
     unfunded_offer: Option<SpendBundle>,
 }
 
-#[derive(Debug, Clone)]
-struct WatchReport {
-    created_watched: HashSet<CoinString>,
-    deleted_watched: HashSet<CoinString>,
-    timed_out: HashSet<CoinString>,
-}
-
 impl SimulatedWalletSpend {
     pub fn watch_and_report_coins(
         &mut self,
         current_height: usize,
-        current_coins: &[CoinString],
+        current_coins: &WatchReport,
     ) -> Result<WatchReport, Error> {
-        debug!(
-            "update known coins {current_height}: current coins from blockchain {current_coins:?}"
-        );
-        let mut current_coin_set: HashSet<CoinString> = current_coins.iter().cloned().collect();
-        let created_coins: HashSet<CoinString> = current_coin_set
-            .difference(&self.current_coins)
+        let created_coins: HashSet<CoinString> = current_coins
+            .created_watched
+            .iter()
             .filter(|c| {
                 // Report coin if it's being watched.
                 self.watching_coins.contains_key(c)
             })
             .cloned()
             .collect();
-        let deleted_coins: HashSet<CoinString> = self
-            .current_coins
-            .difference(&current_coin_set)
+        let deleted_coins: HashSet<CoinString> = current_coins
+            .deleted_watched
+            .iter()
             .filter(|c| self.watching_coins.contains_key(c))
             .cloned()
             .collect();
-        std::mem::swap(&mut current_coin_set, &mut self.current_coins);
-
-        for d in deleted_coins.iter() {
-            self.watching_coins.remove(d);
-        }
-
-        // Bump timeout if created.
-        for c in created_coins.iter() {
-            if let Some(m) = self.watching_coins.get_mut(c) {
-                m.established_height = None;
-            }
-        }
 
         let mut timeouts = HashSet::new();
         for (k, v) in self.watching_coins.iter_mut() {
-            if v.established_height.is_none() {
-                v.established_height = Some(Timeout::new(current_height as u64));
-                v.timeout_height =
-                    Timeout::new(v.timeout_height.to_u64() + (current_height as u64));
-            }
-
             if Timeout::new(current_height as u64) > v.timeout_height {
                 // No action on this coin in the timeout.
                 timeouts.insert(k.clone());
@@ -142,7 +115,7 @@ impl SimulatedPeer {
     pub fn watch_and_report_coins(
         &mut self,
         current_height: usize,
-        current_coins: &[CoinString],
+        current_coins: &WatchReport
     ) -> Result<WatchReport, Error> {
         self.simulated_wallet_spend
             .watch_and_report_coins(current_height, current_coins)
@@ -177,7 +150,6 @@ impl WalletSpendInterface for SimulatedWalletSpend {
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
-                established_height: None,
                 timeout_height: timeout.clone(),
             },
         );
@@ -293,13 +265,18 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
     /// Check the reported coins vs the current coin set and report changes.
     pub fn update_and_report_coins(
         &mut self,
+        coinset_adapter: &mut FullCoinSetAdapter,
         potato_handler: &mut PotatoHandler,
     ) -> Result<WatchReport, Error> {
         let current_height = self.simulator.get_current_height();
         let current_coins = self.simulator.get_all_coins().into_gen()?;
+        let coinset_report = coinset_adapter.make_report_from_coin_set_update(
+            Timeout::new(current_height as u64),
+            &current_coins,
+        )?;
         let watch_report = self
             .peer
-            .watch_and_report_coins(current_height, &current_coins)?;
+            .watch_and_report_coins(current_height, &coinset_report)?;
 
         // Report timed out coins
         for t in watch_report.timed_out.iter() {
@@ -324,11 +301,12 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
 
     pub fn farm_block(
         &mut self,
+        coinset_adapter: &mut FullCoinSetAdapter,
         potato_handler: &mut PotatoHandler,
         target: &PuzzleHash,
     ) -> Result<WatchReport, Error> {
         self.simulator.farm_block(target);
-        self.update_and_report_coins(potato_handler)
+        self.update_and_report_coins(coinset_adapter, potato_handler)
     }
 
     /// For each spend in the outbound transaction queue, push it to the blockchain.
@@ -446,6 +424,7 @@ fn do_second_game_start<'a, 'b: 'a>(
 fn check_watch_report<'a, 'b: 'a>(
     env: &'b mut ChannelHandlerEnv<'a, ChaCha8Rng>,
     identity: &'b ChiaIdentity,
+    coinset_adapter: &mut FullCoinSetAdapter,
     peer: &'b mut SimulatedPeer,
     handler: &'b mut PotatoHandler,
     simulator: &'b mut Simulator,
@@ -453,7 +432,7 @@ fn check_watch_report<'a, 'b: 'a>(
     let mut simenv0 = SimulatedPeerSystem::new(env, identity, peer, simulator);
 
     let watch_report = simenv0
-        .farm_block(handler, &identity.puzzle_hash)
+        .farm_block(coinset_adapter, handler, &identity.puzzle_hash)
         .expect("should run");
     debug!("{watch_report:?}");
     let wanted_coin: Vec<CoinString> = watch_report
@@ -469,6 +448,7 @@ pub fn handshake<'a, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
     amount: Amount,
+    coinset_adapter: &'a mut FullCoinSetAdapter,
     identities: &'a [ChiaIdentity; 2],
     peers: &'a mut [PotatoHandler; 2],
     pipes: &'a mut [SimulatedPeer; 2],
@@ -560,7 +540,7 @@ pub fn handshake<'a, R: Rng + 'a>(
                     simulator,
                 );
                 debug!("observe coins for peer {to_observe}");
-                penv.update_and_report_coins(&mut peers[to_observe])?;
+                penv.update_and_report_coins(coinset_adapter, &mut peers[to_observe])?;
             }
         }
 
@@ -624,6 +604,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         ChiaIdentity::new(allocator, their_private_key).expect("should generate"),
     ];
     let mut peers = [SimulatedPeer::default(), SimulatedPeer::default()];
+    let mut coinset_adapter = FullCoinSetAdapter::default();
     let mut simulator = Simulator::new();
 
     // Get some coins.
@@ -667,6 +648,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         check_watch_report(
             &mut env,
             &identities[0],
+            &mut coinset_adapter,
             &mut peers[0],
             &mut handlers[1],
             &mut simulator,
@@ -689,6 +671,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         &mut rng,
         allocator,
         Amount::new(100),
+        &mut coinset_adapter,
         &identities,
         &mut handlers,
         &mut peers,
