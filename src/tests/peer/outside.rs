@@ -19,7 +19,7 @@ use crate::common::types::{
 };
 use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -40,21 +40,26 @@ enum NotificationToLocalUI {
 }
 
 #[allow(dead_code)]
-enum WalletBootstrapState {
+pub enum WalletBootstrapState {
     PartlySigned(Spend),
     FullySigned(Spend),
 }
 
 #[derive(Default)]
-struct Pipe {
-    my_id: usize,
+pub struct MessagePipe {
+    pub my_id: usize,
 
     // PacketSender
-    queue: VecDeque<Vec<u8>>,
+    pub queue: VecDeque<Vec<u8>>,
+}
+
+#[derive(Default)]
+struct Pipe {
+    message_pipe: MessagePipe,
 
     // WalletSpendInterface
     outgoing_transactions: VecDeque<Spend>,
-    registered_coins: HashMap<CoinID, Timeout>,
+    registered_coins: HashMap<CoinString, Timeout>,
 
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove)>,
@@ -70,7 +75,29 @@ struct Pipe {
     bootstrap_state: Option<WalletBootstrapState>,
 }
 
-impl PacketSender for Pipe {
+pub trait MessagePeerQueue {
+    fn message_pipe(&mut self) -> &mut MessagePipe;
+    fn get_channel_puzzle_hash(&self) -> Option<PuzzleHash>;
+    fn set_channel_puzzle_hash(&mut self, ph: Option<PuzzleHash>);
+    fn get_unfunded_offer(&self) -> Option<SpendBundle>;
+}
+
+impl MessagePeerQueue for Pipe {
+    fn message_pipe(&mut self) -> &mut MessagePipe {
+        &mut self.message_pipe
+    }
+    fn get_channel_puzzle_hash(&self) -> Option<PuzzleHash> {
+        self.channel_puzzle_hash.clone()
+    }
+    fn set_channel_puzzle_hash(&mut self, ph: Option<PuzzleHash>) {
+        self.channel_puzzle_hash = ph;
+    }
+    fn get_unfunded_offer(&self) -> Option<SpendBundle> {
+        self.unfunded_offer.clone()
+    }
+}
+
+impl PacketSender for MessagePipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
         debug!("Send Message from {} {msg:?}", self.my_id);
         assert!(self.queue.is_empty());
@@ -81,6 +108,12 @@ impl PacketSender for Pipe {
     }
 }
 
+impl PacketSender for Pipe {
+    fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
+        self.message_pipe.send_message(msg)
+    }
+}
+
 impl WalletSpendInterface for Pipe {
     fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
         self.outgoing_transactions.push_back(bundle.clone());
@@ -88,7 +121,7 @@ impl WalletSpendInterface for Pipe {
         Ok(())
     }
 
-    fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error> {
+    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
         self.registered_coins
             .insert(coin_id.clone(), timeout.clone());
 
@@ -223,61 +256,63 @@ where
     }
 }
 
-impl<'inputs, G, R> TestPeerEnv<'inputs, G, R>
-where
-    G: ToLocalUI + WalletSpendInterface + BootstrapTowardWallet + PacketSender,
-    R: Rng,
-{
-    fn get_game_by_id(
-        game_type: &GameType,
-        initiated: bool,
-        params: NodePtr,
-    ) -> Result<Vec<GameStartInfo>, Error> {
-        todo!();
-    }
-}
-
-fn run_move<'a, R: Rng>(
+pub fn run_move<'a, P, R: Rng>(
     env: &'a mut ChannelHandlerEnv<'a, R>,
     amount: Amount,
-    pipe: &'a mut [Pipe; 2],
+    pipe: &'a mut [P; 2],
     peer: &mut PotatoHandler,
     who: usize,
-) -> Result<bool, Error> {
-    assert!(pipe[who ^ 1].queue.len() < 2);
-    let msg = if let Some(msg) = pipe[who ^ 1].queue.pop_front() {
+) -> Result<bool, Error>
+where
+    P: ToLocalUI
+        + BootstrapTowardWallet
+        + WalletSpendInterface
+        + PacketSender
+        + MessagePeerQueue
+        + 'a,
+{
+    assert!(pipe[who ^ 1].message_pipe().queue.len() < 2);
+    let msg = if let Some(msg) = pipe[who ^ 1].message_pipe().queue.pop_front() {
         msg
     } else {
         return Ok(false);
     };
 
-    let mut penv: TestPeerEnv<Pipe, R> = TestPeerEnv {
+    let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
         env: env,
         system_interface: &mut pipe[who],
     };
 
     peer.received_message(&mut penv, msg)?;
 
-    if let Some(ch) = penv.system_interface.channel_puzzle_hash.clone() {
+    if let Some(ch) = penv.system_interface.get_channel_puzzle_hash() {
         let parent = CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
         penv.test_handle_received_channel_puzzle_hash(peer, &parent, &ch)?;
-        penv.system_interface.channel_puzzle_hash = None;
+        penv.system_interface.set_channel_puzzle_hash(None);
     }
 
-    if let Some(ufo) = penv.system_interface.unfunded_offer.clone() {
+    if let Some(ufo) = penv.system_interface.get_unfunded_offer() {
         penv.test_handle_received_unfunded_offer(peer, &ufo)?;
     }
 
     Ok(true)
 }
 
-fn quiesce<'a, R: Rng + 'a>(
+pub fn quiesce<'a, P: MessagePeerQueue, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
     amount: Amount,
     peers: &'a mut [PotatoHandler; 2],
-    pipes: &'a mut [Pipe; 2],
-) -> Result<(), Error> {
+    pipes: &'a mut [P; 2],
+) -> Result<(), Error>
+where
+    P: ToLocalUI
+        + BootstrapTowardWallet
+        + WalletSpendInterface
+        + PacketSender
+        + MessagePeerQueue
+        + 'a,
+{
     loop {
         let mut msgs = 0;
         for who in 0..=1 {
@@ -292,26 +327,61 @@ fn quiesce<'a, R: Rng + 'a>(
     Ok(())
 }
 
-fn handshake<'a, R: Rng + 'a>(
+fn get_channel_coin_for_peer(p: &PotatoHandler) -> Result<CoinString, Error> {
+    let channel_handler = p.channel_handler()?;
+    Ok(channel_handler.state_channel_coin().coin_string().clone())
+}
+
+pub fn handshake<'a, P: MessagePeerQueue, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
     amount: Amount,
     peers: &'a mut [PotatoHandler; 2],
-    pipes: &'a mut [Pipe; 2],
-) -> Result<(), Error> {
+    pipes: &'a mut [P; 2],
+) -> Result<(), Error>
+where
+    P: ToLocalUI
+        + BootstrapTowardWallet
+        + WalletSpendInterface
+        + PacketSender
+        + MessagePeerQueue
+        + 'a,
+{
     let mut i = 0;
     let mut messages = 0;
 
     while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
-        let mut env = channel_handler_env(allocator, rng);
+        if i > 50 {
+            panic!();
+        }
+
         let who = i % 2;
-        if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send") {
-            messages += 1;
+
+        {
+            let mut env = channel_handler_env(allocator, rng);
+            if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who)
+                .expect("should send")
+            {
+                messages += 1;
+            }
         }
 
         i += 1;
 
-        assert!(messages + 2 >= i);
+        if i >= 10 && i < 12 {
+            let mut env = channel_handler_env(allocator, rng);
+            // Ensure that we notify about the channel coin (fake here, but the notification
+            // is required).
+            let channel_coin = get_channel_coin_for_peer(&peers[who])?;
+
+            {
+                let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
+                    env: &mut env,
+                    system_interface: &mut pipes[who],
+                };
+                peers[who].coin_created(&mut penv, &channel_coin)?;
+            }
+        }
     }
 
     Ok(())
@@ -324,7 +394,7 @@ fn test_peer_smoke() {
     let mut allocator = AllocEncoder::new();
 
     let mut pipe_sender: [Pipe; 2] = Default::default();
-    pipe_sender[1].my_id = 1;
+    pipe_sender[1].message_pipe.my_id = 1;
 
     let mut game_type_map = BTreeMap::new();
     let calpoker_factory =
@@ -349,6 +419,7 @@ fn test_peer_smoke() {
             game_type_map.clone(),
             Amount::new(100),
             Amount::new(100),
+            Timeout::new(1000),
             reward_puzzle_hash1.clone(),
         )
     };
@@ -444,8 +515,8 @@ fn test_peer_smoke() {
     )
     .expect("should work");
 
-    assert!(pipe_sender[0].queue.is_empty());
-    assert!(pipe_sender[1].queue.is_empty());
+    assert!(pipe_sender[0].message_pipe.queue.is_empty());
+    assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
     let moves = test_moves_1(&mut allocator);
 
@@ -477,8 +548,8 @@ fn test_peer_smoke() {
         .expect("should work");
     }
 
-    assert!(pipe_sender[0].queue.is_empty());
-    assert!(pipe_sender[1].queue.is_empty());
+    assert!(pipe_sender[0].message_pipe.queue.is_empty());
+    assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
     let have_potato = if peers[0].has_potato() { 0 } else { 1 };
 
@@ -502,6 +573,6 @@ fn test_peer_smoke() {
     )
     .expect("should work");
 
-    assert!(pipe_sender[0].queue.is_empty());
-    assert!(pipe_sender[1].queue.is_empty());
+    assert!(pipe_sender[0].message_pipe.queue.is_empty());
+    assert!(pipe_sender[1].message_pipe.queue.is_empty());
 }

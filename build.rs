@@ -72,7 +72,9 @@ fn compile_chialisp() -> Result<(), CompileError> {
 
 // Compile chialisp programs in this tree.
 fn main() {
-    if let Err(e) = compile_chialisp() {
-        panic!("error compiling chialisp: {e:?}");
+    if std::env::var("CHIALISP_NOCOMPILE").is_err() {
+        if let Err(e) = compile_chialisp() {
+            panic!("error compiling chialisp: {e:?}");
+        }
     }
 }
