@@ -21,6 +21,7 @@ use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
     PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
+use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
 
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
@@ -28,30 +29,6 @@ use crate::common::types::{CoinSpend, Program};
 
 use crate::tests::calpoker::{load_calpoker, test_moves_1};
 use crate::tests::simenv::GameAction;
-
-#[allow(dead_code)]
-enum NotificationToLocalUI {
-    OpponentMoved(GameID, ReadableMove),
-    MessageFromOpponent(GameID, ReadableMove),
-    GameFinished(GameID, Amount),
-    GameCancelled(GameID),
-    ShutdownComplete(CoinString),
-    GoingOnChain,
-}
-
-#[allow(dead_code)]
-pub enum WalletBootstrapState {
-    PartlySigned(Spend),
-    FullySigned(Spend),
-}
-
-#[derive(Default)]
-pub struct MessagePipe {
-    pub my_id: usize,
-
-    // PacketSender
-    pub queue: VecDeque<Vec<u8>>,
-}
 
 #[derive(Default)]
 struct Pipe {
@@ -73,13 +50,6 @@ struct Pipe {
 
     #[allow(dead_code)]
     bootstrap_state: Option<WalletBootstrapState>,
-}
-
-pub trait MessagePeerQueue {
-    fn message_pipe(&mut self) -> &mut MessagePipe;
-    fn get_channel_puzzle_hash(&self) -> Option<PuzzleHash>;
-    fn set_channel_puzzle_hash(&mut self, ph: Option<PuzzleHash>);
-    fn get_unfunded_offer(&self) -> Option<SpendBundle>;
 }
 
 impl MessagePeerQueue for Pipe {
