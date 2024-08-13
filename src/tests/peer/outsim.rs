@@ -22,10 +22,10 @@ use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
     PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
-use crate::peer_container::{FullCoinSetAdapter, WatchReport};
+use crate::peer_container::{FullCoinSetAdapter, MessagePeerQueue, MessagePipe, WatchReport};
 
 use crate::tests::calpoker::test_moves_1;
-use crate::tests::peer::outside::{quiesce, run_move, MessagePeerQueue, MessagePipe};
+use crate::tests::peer::outside::{quiesce, run_move};
 use crate::tests::simenv::GameAction;
 use crate::tests::simulator::Simulator;
 

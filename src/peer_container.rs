@@ -6,6 +6,14 @@ use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{CoinString, Error, GameID, PuzzleHash, Spend, SpendBundle, Timeout};
 use crate::outside::{GameStart, ToLocalUI};
 
+#[derive(Default)]
+pub struct MessagePipe {
+    pub my_id: usize,
+
+    // PacketSender
+    pub queue: VecDeque<Vec<u8>>,
+}
+
 pub trait MessagePeerQueue {
     fn message_pipe(&mut self) -> &mut MessagePipe;
     fn get_channel_puzzle_hash(&self) -> Option<PuzzleHash>;
@@ -23,14 +31,6 @@ pub struct WatchReport {
     pub created_watched: HashSet<CoinString>,
     pub deleted_watched: HashSet<CoinString>,
     pub timed_out: HashSet<CoinString>,
-}
-
-#[derive(Default)]
-pub struct MessagePipe {
-    pub my_id: usize,
-
-    // PacketSender
-    pub queue: VecDeque<Vec<u8>>,
 }
 
 pub enum WalletBootstrapState {
