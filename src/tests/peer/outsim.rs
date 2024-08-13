@@ -37,7 +37,6 @@ struct SimulatedWalletSpend {
 
     outbound_transactions: Vec<Spend>,
     channel_puzzle_hash: Option<PuzzleHash>,
-    unfunded_offer: Option<SpendBundle>,
 }
 
 impl SimulatedWalletSpend {
@@ -90,6 +89,8 @@ struct SimulatedPeer {
     // Bootstrap info
     channel_puzzle_hash: Option<PuzzleHash>,
 
+    unfunded_offer: Option<SpendBundle>,
+
     simulated_wallet_spend: SimulatedWalletSpend,
 }
 
@@ -104,7 +105,7 @@ impl MessagePeerQueue for SimulatedPeer {
         self.channel_puzzle_hash = ph;
     }
     fn get_unfunded_offer(&self) -> Option<SpendBundle> {
-        self.simulated_wallet_spend.unfunded_offer.clone()
+        self.unfunded_offer.clone()
     }
 }
 
@@ -154,16 +155,10 @@ impl WalletSpendInterface for SimulatedWalletSpend {
     }
 }
 
-impl BootstrapTowardWallet for SimulatedWalletSpend {
+impl SimulatedWalletSpend {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
         debug!("inner channel puzzle hash");
         self.channel_puzzle_hash = Some(puzzle_hash.clone());
-        Ok(())
-    }
-
-    fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
-        debug!("inner received channel offer");
-        self.unfunded_offer = Some(bundle.clone());
         Ok(())
     }
 
@@ -198,7 +193,8 @@ impl BootstrapTowardWallet for SimulatedPeer {
 
     fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
         debug!("received channel offer");
-        self.simulated_wallet_spend.received_channel_offer(bundle)
+        self.unfunded_offer = Some(bundle.clone());
+        Ok(())
     }
 
     fn received_channel_transaction_completion(
@@ -489,7 +485,7 @@ pub fn handshake<'a, R: Rng + 'a>(
             )?;
         }
 
-        if let Some(u) = pipes[who].simulated_wallet_spend.unfunded_offer.as_ref() {
+        if let Some(u) = pipes[who].unfunded_offer.as_ref() {
             debug!(
                 "unfunded offer received by {:?}",
                 identities[who].synthetic_private_key
@@ -521,7 +517,7 @@ pub fn handshake<'a, R: Rng + 'a>(
             let included_result = simulator
                 .push_tx(env.allocator, &spends.spends)
                 .into_gen()?;
-            pipes[who].simulated_wallet_spend.unfunded_offer = None;
+            pipes[who].unfunded_offer = None;
             debug!("included_result {included_result:?}");
             assert_eq!(included_result.code, 1);
 
