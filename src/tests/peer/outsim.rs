@@ -120,6 +120,52 @@ impl SimulatedPeer {
     }
 }
 
+/// Check the reported coins vs the current coin set and report changes.
+pub fn update_and_report_coins<'a, 'b, R: Rng>(
+    allocator: &mut AllocEncoder,
+    rng: &mut R,
+    identities: &'a [ChiaIdentity; 2],
+    coinset_adapter: &mut FullCoinSetAdapter,
+    peers: &mut [PotatoHandler; 2],
+    pipes: &'a mut [SimulatedPeer; 2],
+    simulator: &'a mut Simulator,
+) -> Result<WatchReport, Error> {
+    let current_height = simulator.get_current_height();
+    let current_coins = simulator.get_all_coins().into_gen()?;
+    debug!("current coins {current_height} {current_coins:?}");
+    let watch_report = coinset_adapter.make_report_from_coin_set_update(
+        current_height as u64,
+        &current_coins,
+    )?;
+    debug!("coinset adapter result {watch_report:?}");
+
+    // Report timed out coins
+    for who in 0..=1 {
+        let mut env = channel_handler_env(allocator, rng);
+        let mut penv: SimulatedPeerSystem<'_, '_, R> =
+            SimulatedPeerSystem::new(&mut env, &identities[who], &mut pipes[who], simulator);
+
+        for t in watch_report.timed_out.iter() {
+            debug!("reporting coin timeout: {t:?}");
+            peers[who].coin_timeout_reached(&mut penv, t)?;
+        }
+
+        // Report deleted coins
+        for d in watch_report.deleted_watched.iter() {
+            debug!("reporting coin deletion: {d:?}");
+            peers[who].coin_spent(&mut penv, d)?;
+        }
+
+        // Report created coins
+        for c in watch_report.created_watched.iter() {
+            debug!("reporting coin creation: {c:?}");
+            peers[who].coin_created(&mut penv, c)?;
+        }
+    }
+
+    Ok(watch_report)
+}
+
 struct SimulatedPeerSystem<'a, 'b: 'a, R: Rng> {
     env: &'b mut ChannelHandlerEnv<'a, R>,
     identity: &'b ChiaIdentity,
@@ -407,19 +453,34 @@ fn do_second_game_start<'a, 'b: 'a>(
         .expect("should run");
 }
 
-fn check_watch_report<'a, 'b: 'a>(
-    env: &'b mut ChannelHandlerEnv<'a, ChaCha8Rng>,
-    identity: &'b ChiaIdentity,
+fn check_watch_report<'a, 'b: 'a, R: Rng>(
+    allocator: &mut AllocEncoder,
+    rng: &mut R,
+    identities: &'b [ChiaIdentity; 2],
     coinset_adapter: &mut FullCoinSetAdapter,
-    peer: &'b mut SimulatedPeer,
-    handler: &'b mut PotatoHandler,
+    peers: &'b mut [PotatoHandler; 2],
+    pipes: &'b mut [SimulatedPeer; 2],
     simulator: &'b mut Simulator,
 ) {
-    let mut simenv0 = SimulatedPeerSystem::new(env, identity, peer, simulator);
+    let mut env = channel_handler_env(allocator, rng);
+    let mut simenv0 = SimulatedPeerSystem::new(
+        &mut env,
+        &identities[0],
+        &mut pipes[0],
+        simulator
+    );
+    simulator.farm_block(&identities[0].puzzle_hash);
 
-    let watch_report = simenv0
-        .farm_block(coinset_adapter, handler, &identity.puzzle_hash)
-        .expect("should run");
+    let watch_report = update_and_report_coins(
+        allocator,
+        rng,
+        identities,
+        coinset_adapter,
+        peers,
+        pipes,
+        simulator
+    ).expect("should work");
+
     debug!("{watch_report:?}");
     let wanted_coin: Vec<CoinString> = watch_report
         .created_watched
@@ -427,7 +488,7 @@ fn check_watch_report<'a, 'b: 'a>(
         .filter(|a| a.to_parts().unwrap().2 == Amount::new(100))
         .cloned()
         .collect();
-    assert_eq!(wanted_coin.len(), 1);
+    assert_eq!(wanted_coin.len(), 2);
 }
 
 pub fn handshake<'a, R: Rng + 'a>(
@@ -517,17 +578,15 @@ pub fn handshake<'a, R: Rng + 'a>(
             simulator.farm_block(&identities[who].puzzle_hash);
             simulator.farm_block(&identities[who].puzzle_hash);
 
-            for to_observe in 0..=1 {
-                let mut env = channel_handler_env(allocator, rng);
-                let mut penv = SimulatedPeerSystem::new(
-                    &mut env,
-                    &identities[to_observe],
-                    &mut pipes[to_observe],
-                    simulator,
-                );
-                debug!("observe coins for peer {to_observe}");
-                penv.update_and_report_coins(coinset_adapter, &mut peers[to_observe])?;
-            }
+            update_and_report_coins(
+                allocator,
+                rng,
+                identities,
+                coinset_adapter,
+                peers,
+                pipes,
+                simulator
+            )?;
         }
 
         if !pipes[who]
@@ -631,11 +690,12 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
     {
         let mut env = channel_handler_env(allocator, &mut rng);
         check_watch_report(
-            &mut env,
-            &identities[0],
+            allocator,
+            &mut rng,
+            &identities,
             &mut coinset_adapter,
-            &mut peers[0],
-            &mut handlers[1],
+            &mut handlers,
+            &mut peers,
             &mut simulator,
         );
     }
