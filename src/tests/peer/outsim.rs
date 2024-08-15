@@ -34,8 +34,6 @@ use crate::tests::simulator::Simulator;
 struct SimulatedWalletSpend {
     current_height: u64,
     watching_coins: HashMap<CoinString, WatchEntry>,
-
-    channel_puzzle_hash: Option<PuzzleHash>,
 }
 
 impl SimulatedWalletSpend {
@@ -195,12 +193,6 @@ impl SimulatedWalletSpend {
 }
 
 impl SimulatedWalletSpend {
-    fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
-        debug!("inner channel puzzle hash");
-        self.channel_puzzle_hash = Some(puzzle_hash.clone());
-        Ok(())
-    }
-
     fn received_channel_transaction_completion(
         &mut self,
         _bundle: &SpendBundle,
@@ -227,7 +219,8 @@ impl WalletSpendInterface for SimulatedPeer {
 impl BootstrapTowardWallet for SimulatedPeer {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
         debug!("channel puzzle hash");
-        self.simulated_wallet_spend.channel_puzzle_hash(puzzle_hash)
+        self.channel_puzzle_hash = Some(puzzle_hash.clone());
+        Ok(())
     }
 
     fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
@@ -475,12 +468,11 @@ pub fn handshake<'a, R: Rng + 'a>(
         }
 
         if let Some(ph) = pipes[who]
-            .simulated_wallet_spend
             .channel_puzzle_hash
             .clone()
         {
             debug!("puzzle hash");
-            pipes[who].simulated_wallet_spend.channel_puzzle_hash = None;
+            pipes[who].channel_puzzle_hash = None;
             let mut env = channel_handler_env(allocator, rng);
             let mut penv =
                 SimulatedPeerSystem::new(&mut env, &identities[who], &mut pipes[who], simulator);
