@@ -294,53 +294,6 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
         }
     }
 
-    /// Check the reported coins vs the current coin set and report changes.
-    pub fn update_and_report_coins(
-        &mut self,
-        coinset_adapter: &mut FullCoinSetAdapter,
-        potato_handler: &mut PotatoHandler,
-    ) -> Result<WatchReport, Error> {
-        let current_height = self.simulator.get_current_height();
-        let current_coins = self.simulator.get_all_coins().into_gen()?;
-        let coinset_report = coinset_adapter.make_report_from_coin_set_update(
-            current_height as u64,
-            &current_coins,
-        )?;
-        let watch_report = self
-            .peer
-            .watch_and_report_coins(current_height as u64, &coinset_report)?;
-
-        // Report timed out coins
-        for t in watch_report.timed_out.iter() {
-            debug!("reporting coin timeout: {t:?}");
-            potato_handler.coin_timeout_reached(self, t)?;
-        }
-
-        // Report deleted coins
-        for d in watch_report.deleted_watched.iter() {
-            debug!("reporting coin deletion: {d:?}");
-            potato_handler.coin_spent(self, d)?;
-        }
-
-        // Report created coins
-        for c in watch_report.created_watched.iter() {
-            debug!("reporting coin creation: {c:?}");
-            potato_handler.coin_created(self, c)?;
-        }
-
-        Ok(watch_report)
-    }
-
-    pub fn farm_block(
-        &mut self,
-        coinset_adapter: &mut FullCoinSetAdapter,
-        potato_handler: &mut PotatoHandler,
-        target: &PuzzleHash,
-    ) -> Result<WatchReport, Error> {
-        self.simulator.farm_block(target);
-        self.update_and_report_coins(coinset_adapter, potato_handler)
-    }
-
     /// For each spend in the outbound transaction queue, push it to the blockchain.
     pub fn push_outbound_spends(&mut self) -> Result<(), Error> {
         todo!();
