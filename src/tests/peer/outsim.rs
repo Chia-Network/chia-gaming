@@ -492,11 +492,19 @@ pub fn handshake<'a, R: Rng + 'a>(
             )?;
         }
 
-        if let Some(u) = pipes[who].unfunded_offer.as_ref() {
+        if let Some(u) = pipes[who].unfunded_offer.clone() {
             debug!(
                 "unfunded offer received by {:?}",
                 identities[who].synthetic_private_key
             );
+
+            {
+                let mut env = channel_handler_env(allocator, rng);
+                let mut penv =
+                    SimulatedPeerSystem::new(&mut env, &identities[who], &mut pipes[who], simulator);
+                peers[who].channel_transaction_completion(&mut penv, &u)?;
+            }
+
             let mut env = channel_handler_env(allocator, rng);
             let mut spends = u.clone();
             // Create no coins.  The target is already created in the partially funded

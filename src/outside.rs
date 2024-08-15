@@ -667,6 +667,7 @@ impl PotatoHandler {
     {
         // Haven't got the channel coin yet.
         if self.waiting_to_start {
+            debug!("waiting to start");
             return Ok(());
         }
 

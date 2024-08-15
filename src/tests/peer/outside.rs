@@ -255,10 +255,6 @@ where
 
     peer.received_message(&mut penv, msg)?;
 
-    if let Some(ufo) = penv.system_interface.get_unfunded_offer() {
-        penv.test_handle_received_unfunded_offer(peer, &ufo)?;
-    }
-
     Ok(true)
 }
 
@@ -344,7 +340,12 @@ where
                 penv.test_handle_received_channel_puzzle_hash(&mut peers[who], &parent, &ch)?;
                 penv.system_interface.set_channel_puzzle_hash(None);
             }
-        }
+
+            if let Some(ufo) = penv.system_interface.get_unfunded_offer() {
+                penv.test_handle_received_unfunded_offer(&mut peers[who], &ufo)?;
+            }
+
+}
 
         if i >= 10 && i < 12 {
             let mut env = channel_handler_env(allocator, rng);
