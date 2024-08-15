@@ -255,6 +255,16 @@ where
 
     peer.received_message(&mut penv, msg)?;
 
+    if let Some(ch) = penv.system_interface.get_channel_puzzle_hash() {
+        let parent = CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
+        penv.test_handle_received_channel_puzzle_hash(peer, &parent, &ch)?;
+        penv.system_interface.set_channel_puzzle_hash(None);
+    }
+
+    if let Some(ufo) = penv.system_interface.get_unfunded_offer() {
+        penv.test_handle_received_unfunded_offer(peer, &ufo)?;
+    }
+
     Ok(true)
 }
 
@@ -327,24 +337,6 @@ where
         }
 
         i += 1;
-
-        {
-            let mut env = channel_handler_env(allocator, rng);
-            let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
-                env: &mut env,
-                system_interface: &mut pipes[who],
-            };
-
-            if let Some(ch) = penv.system_interface.get_channel_puzzle_hash() {
-                let parent = CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
-                penv.test_handle_received_channel_puzzle_hash(&mut peers[who], &parent, &ch)?;
-                penv.system_interface.set_channel_puzzle_hash(None);
-            }
-
-            if let Some(ufo) = penv.system_interface.get_unfunded_offer() {
-                penv.test_handle_received_unfunded_offer(&mut peers[who], &ufo)?;
-            }
-        }
 
         if i >= 10 && i < 12 {
             let mut env = channel_handler_env(allocator, rng);
