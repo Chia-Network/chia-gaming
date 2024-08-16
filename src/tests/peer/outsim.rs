@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use clvm_traits::ToClvm;
 use log::debug;
@@ -22,7 +22,10 @@ use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
     PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
-use crate::peer_container::{FullCoinSetAdapter, MessagePeerQueue, MessagePipe, WatchEntry, WatchReport};
+use crate::peer_container::{
+    report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
+    SynchronousGameCradle, WatchEntry, WatchReport,
+};
 
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::peer::outside::{quiesce, run_move};
@@ -111,7 +114,7 @@ impl SimulatedPeer {
     pub fn watch_and_report_coins(
         &mut self,
         current_height: u64,
-        current_coins: &WatchReport
+        current_coins: &WatchReport,
     ) -> Result<WatchReport, Error> {
         self.simulated_wallet_spend
             .watch_and_report_coins(current_height, current_coins)
@@ -131,10 +134,8 @@ pub fn update_and_report_coins<'a, 'b, R: Rng>(
     let current_height = simulator.get_current_height();
     let current_coins = simulator.get_all_coins().into_gen()?;
     debug!("current coins {current_height} {current_coins:?}");
-    let watch_report = coinset_adapter.make_report_from_coin_set_update(
-        current_height as u64,
-        &current_coins,
-    )?;
+    let watch_report =
+        coinset_adapter.make_report_from_coin_set_update(current_height as u64, &current_coins)?;
     debug!("coinset adapter result {watch_report:?}");
 
     // Report timed out coins
@@ -143,22 +144,7 @@ pub fn update_and_report_coins<'a, 'b, R: Rng>(
         let mut penv: SimulatedPeerSystem<'_, '_, R> =
             SimulatedPeerSystem::new(&mut env, &identities[who], &mut pipes[who], simulator);
 
-        for t in watch_report.timed_out.iter() {
-            debug!("reporting coin timeout: {t:?}");
-            peers[who].coin_timeout_reached(&mut penv, t)?;
-        }
-
-        // Report deleted coins
-        for d in watch_report.deleted_watched.iter() {
-            debug!("reporting coin deletion: {d:?}");
-            peers[who].coin_spent(&mut penv, d)?;
-        }
-
-        // Report created coins
-        for c in watch_report.created_watched.iter() {
-            debug!("reporting coin creation: {c:?}");
-            peers[who].coin_created(&mut penv, c)?;
-        }
+        report_coin_changes_to_peer(&mut penv, &mut peers[who], &watch_report)?;
     }
 
     Ok(watch_report)
@@ -189,15 +175,6 @@ impl SimulatedWalletSpend {
             },
         );
         Ok(())
-    }
-}
-
-impl SimulatedWalletSpend {
-    fn received_channel_transaction_completion(
-        &mut self,
-        _bundle: &SpendBundle,
-    ) -> Result<(), Error> {
-        todo!();
     }
 }
 
@@ -234,8 +211,7 @@ impl BootstrapTowardWallet for SimulatedPeer {
         bundle: &SpendBundle,
     ) -> Result<(), Error> {
         debug!("received channel transaction completion");
-        self.simulated_wallet_spend
-            .received_channel_transaction_completion(bundle)
+        todo!();
     }
 }
 
@@ -409,12 +385,7 @@ fn check_watch_report<'a, 'b: 'a, R: Rng>(
     simulator: &'b mut Simulator,
 ) {
     let mut env = channel_handler_env(allocator, rng);
-    let mut simenv0 = SimulatedPeerSystem::new(
-        &mut env,
-        &identities[0],
-        &mut pipes[0],
-        simulator
-    );
+    let mut simenv0 = SimulatedPeerSystem::new(&mut env, &identities[0], &mut pipes[0], simulator);
     simulator.farm_block(&identities[0].puzzle_hash);
 
     let watch_report = update_and_report_coins(
@@ -424,8 +395,9 @@ fn check_watch_report<'a, 'b: 'a, R: Rng>(
         coinset_adapter,
         peers,
         pipes,
-        simulator
-    ).expect("should work");
+        simulator,
+    )
+    .expect("should work");
 
     debug!("{watch_report:?}");
     let wanted_coin: Vec<CoinString> = watch_report
@@ -467,10 +439,7 @@ pub fn handshake<'a, R: Rng + 'a>(
             }
         }
 
-        if let Some(ph) = pipes[who]
-            .channel_puzzle_hash
-            .clone()
-        {
+        if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
             debug!("puzzle hash");
             pipes[who].channel_puzzle_hash = None;
             let mut env = channel_handler_env(allocator, rng);
@@ -492,8 +461,12 @@ pub fn handshake<'a, R: Rng + 'a>(
 
             {
                 let mut env = channel_handler_env(allocator, rng);
-                let mut penv =
-                    SimulatedPeerSystem::new(&mut env, &identities[who], &mut pipes[who], simulator);
+                let mut penv = SimulatedPeerSystem::new(
+                    &mut env,
+                    &identities[who],
+                    &mut pipes[who],
+                    simulator,
+                );
                 peers[who].channel_transaction_completion(&mut penv, &u)?;
             }
 
@@ -538,14 +511,11 @@ pub fn handshake<'a, R: Rng + 'a>(
                 coinset_adapter,
                 peers,
                 pipes,
-                simulator
+                simulator,
             )?;
         }
 
-        if !pipes[who]
-            .outbound_transactions
-            .is_empty()
-        {
+        if !pipes[who].outbound_transactions.is_empty() {
             debug!(
                 "waiting transactions: {:?}",
                 pipes[who].outbound_transactions
@@ -559,10 +529,7 @@ pub fn handshake<'a, R: Rng + 'a>(
     Ok(())
 }
 
-fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
-    let seed_data: [u8; 32] = [0; 32];
-    let mut rng = ChaCha8Rng::from_seed(seed_data);
-
+fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Program> {
     let mut game_type_map = BTreeMap::new();
     let calpoker_factory = read_hex_puzzle(allocator, "clsp/calpoker_include_calpoker_factory.hex")
         .expect("should load");
@@ -571,6 +538,13 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         GameType(b"calpoker".to_vec()),
         calpoker_factory.to_program(),
     );
+    game_type_map
+}
+
+fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
+    let seed_data: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed_data);
+    let game_type_map = poker_collection(allocator);
 
     let new_peer = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, have_potato: bool| {
         let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
@@ -760,4 +734,261 @@ fn test_peer_in_sim() {
     // Play moves
     let moves = test_moves_1(&mut allocator);
     run_calpoker_test_with_action_list(&mut allocator, &moves);
+}
+
+#[derive(Default)]
+struct LocalTestUIReceiver {
+    shutdown_complete: bool,
+    game_finished: Option<Amount>,
+    opponent_moved: bool,
+}
+
+impl ToLocalUI for LocalTestUIReceiver {
+    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.opponent_moved = true;
+        Ok(())
+    }
+
+    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
+        self.game_finished = Some(my_share);
+        Ok(())
+    }
+
+    fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error> {
+        todo!();
+    }
+
+    fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error> {
+        self.shutdown_complete = true;
+        Ok(())
+    }
+
+    fn going_on_chain(&mut self) -> Result<(), Error> {
+        todo!();
+    }
+}
+
+fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
+    // Coinset adapter for each side.
+    let mut rng = ChaCha8Rng::from_seed([0; 32]);
+    let game_type_map = poker_collection(allocator);
+
+    let neutral_pk: PrivateKey = rng.gen();
+    let neutral_identity = ChiaIdentity::new(allocator, neutral_pk).expect("should work");
+
+    let pk1: PrivateKey = rng.gen();
+    let id1 = ChiaIdentity::new(allocator, pk1).expect("should work");
+    let pk2: PrivateKey = rng.gen();
+    let id2 = ChiaIdentity::new(allocator, pk2).expect("should work");
+
+    let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
+    let mut coinset_adapter = FullCoinSetAdapter::default();
+    let mut local_uis = [
+        LocalTestUIReceiver::default(),
+        LocalTestUIReceiver::default(),
+    ];
+    let mut simulator = Simulator::new();
+
+    // Give some money to the users.
+    simulator.farm_block(&identities[0].puzzle_hash);
+    simulator.farm_block(&identities[1].puzzle_hash);
+
+    let coins0 = simulator
+        .get_my_coins(&identities[0].puzzle_hash)
+        .expect("should work");
+    let coins1 = simulator
+        .get_my_coins(&identities[1].puzzle_hash)
+        .expect("should work");
+
+    // Make a 100 coin for each player (and test the deleted and created events).
+    let (parent_coin_0, rest_0) = simulator
+        .transfer_coin_amount(
+            allocator,
+            &identities[0],
+            &identities[0],
+            &coins0[0],
+            Amount::new(100),
+        )
+        .expect("should work");
+    let (parent_coin_1, rest_1) = simulator
+        .transfer_coin_amount(
+            allocator,
+            &identities[1],
+            &identities[1],
+            &coins1[0],
+            Amount::new(100),
+        )
+        .expect("should work");
+
+    simulator.farm_block(&neutral_identity.puzzle_hash);
+
+    let cradle1 = SynchronousGameCradle::new(
+        &mut rng,
+        game_type_map.clone(),
+        true,
+        &identities[0],
+        Amount::new(100),
+        Amount::new(100),
+        Timeout::new(100),
+        id1.puzzle_hash.clone(),
+    );
+    let cradle2 = SynchronousGameCradle::new(
+        &mut rng,
+        game_type_map.clone(),
+        false,
+        &identities[1],
+        Amount::new(100),
+        Amount::new(100),
+        Timeout::new(100),
+        id2.puzzle_hash.clone(),
+    );
+    let mut cradles = [cradle1, cradle2];
+    let mut game_ids = Vec::default();
+    let mut handshake_done = false;
+    let mut can_move = false;
+
+    let mut current_move = moves.iter();
+    let mut last_move = 0;
+    let mut num_steps = 0;
+
+    // Give coins to the cradles.
+    cradles[0]
+        .opening_coin(allocator, &mut rng, parent_coin_0)
+        .expect("should work");
+    cradles[1]
+        .opening_coin(allocator, &mut rng, parent_coin_1)
+        .expect("should work");
+
+    // XXX Move on to shutdown complete.
+    while !local_uis.iter().all(|l| l.game_finished.is_some()) {
+        num_steps += 1;
+
+        assert!(num_steps < 100);
+
+        simulator.farm_block(&neutral_identity.puzzle_hash);
+        let current_height = simulator.get_current_height();
+        let current_coins = simulator.get_all_coins().expect("should work");
+        debug!("current coins {current_height} {current_coins:?}");
+        let watch_report = coinset_adapter
+            .make_report_from_coin_set_update(current_height as u64, &current_coins)
+            .expect("should work");
+
+        for i in 0..=1 {
+            cradles[i]
+                .new_block(allocator, &mut rng, current_height, &watch_report)
+                .expect("should work");
+
+            loop {
+                let result = cradles[i]
+                    .idle(allocator, &mut rng, &mut local_uis[i])
+                    .expect("should work");
+                debug!(
+                    "cradle {i}: continue_on {} outbound {}",
+                    result.continue_on,
+                    result.outbound_messages.len()
+                );
+
+                for tx in result.outbound_transactions.iter() {
+                    let included_result = simulator
+                        .push_tx(allocator, &tx.spends)
+                        .expect("should work");
+                    debug!("included_result {included_result:?}");
+                    assert_eq!(included_result.code, 1);
+                }
+
+                for msg in result.outbound_messages.iter() {
+                    cradles[i ^ 1].deliver_message(&msg).expect("should work");
+                }
+
+                if !result.continue_on {
+                    break;
+                }
+            }
+        }
+
+        if !handshake_done && cradles[0].handshake_finished() && cradles[1].handshake_finished() {
+            // Start game.
+            handshake_done = true;
+
+            game_ids = cradles[0]
+                .start_games(
+                    allocator,
+                    &mut rng,
+                    true,
+                    &GameStart {
+                        amount: Amount::new(200),
+                        my_contribution: Amount::new(100),
+                        game_type: GameType(b"calpoker".to_vec()),
+                        timeout: Timeout::new(10),
+                        my_turn: true,
+                        parameters: vec![0x80],
+                    },
+                )
+                .expect("should run");
+
+            cradles[1]
+                .start_games(
+                    allocator,
+                    &mut rng,
+                    false,
+                    &GameStart {
+                        amount: Amount::new(200),
+                        my_contribution: Amount::new(100),
+                        game_type: GameType(b"calpoker".to_vec()),
+                        timeout: Timeout::new(10),
+                        my_turn: false,
+                        parameters: vec![0x80],
+                    },
+                )
+                .expect("should run");
+
+            can_move = true;
+        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) {
+            can_move = false;
+            assert!(!game_ids.is_empty());
+
+            // Reset moved flags.
+            for l in local_uis.iter_mut() {
+                l.opponent_moved = false;
+            }
+
+            if let Some(ga) = current_move.next() {
+                match ga {
+                    GameAction::Move(who, readable, _) => {
+                        last_move = *who;
+                        debug!("make move");
+                        let readable_program =
+                            Program::from_nodeptr(allocator, *readable).expect("should convert");
+                        let encoded_readable_move = readable_program.bytes();
+                        cradles[*who]
+                            .make_move(
+                                allocator,
+                                &mut rng,
+                                &game_ids[0],
+                                encoded_readable_move.to_vec(),
+                            )
+                            .expect("should work");
+                    }
+                    _ => todo!(),
+                }
+            } else {
+                cradles[last_move ^ 1]
+                    .accept(allocator, &mut rng, &game_ids[0])
+                    .expect("should work");
+            }
+        }
+    }
+}
+
+#[test]
+fn sim_test_with_peer_container() {
+    let mut allocator = AllocEncoder::new();
+
+    // Play moves
+    let moves = test_moves_1(&mut allocator);
+    run_calpoker_container_with_action_list(&mut allocator, &moves);
 }

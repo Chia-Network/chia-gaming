@@ -631,6 +631,9 @@ impl<X: ToClvm<NodePtr>> Sha256tree for X {
 pub struct Program(pub Vec<u8>);
 
 impl Program {
+    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
+        clvmr::serde::node_from_bytes(allocator.allocator(), &self.0).into_gen()
+    }
     pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Program, Error> {
         let bytes = clvmr::serde::node_to_bytes(allocator.allocator(), n).into_gen()?;
         Ok(Program(bytes))
@@ -638,6 +641,10 @@ impl Program {
 
     pub fn from_bytes(by: &[u8]) -> Program {
         Program(by.to_vec())
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
     }
 
     pub fn to_hex(&self) -> String {

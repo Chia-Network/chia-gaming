@@ -128,7 +128,7 @@ impl ToLocalUI for Pipe {
         Ok(())
     }
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
-        todo!();
+        Ok(())
     }
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
@@ -336,7 +336,8 @@ where
             };
 
             if let Some(ch) = penv.system_interface.get_channel_puzzle_hash() {
-                let parent = CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
+                let parent =
+                    CoinString::from_parts(&CoinID::default(), &PuzzleHash::default(), &amount);
                 penv.test_handle_received_channel_puzzle_hash(&mut peers[who], &parent, &ch)?;
                 penv.system_interface.set_channel_puzzle_hash(None);
             }
@@ -344,8 +345,7 @@ where
             if let Some(ufo) = penv.system_interface.get_unfunded_offer() {
                 penv.test_handle_received_unfunded_offer(&mut peers[who], &ufo)?;
             }
-
-}
+        }
 
         if i >= 10 && i < 12 {
             let mut env = channel_handler_env(allocator, rng);
