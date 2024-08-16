@@ -56,8 +56,8 @@ pub enum WalletBootstrapState {
 /// watch report.
 #[derive(Default)]
 pub struct FullCoinSetAdapter {
-    current_height: u64,
-    current_coins: HashSet<CoinString>,
+    pub current_height: u64,
+    pub current_coins: HashSet<CoinString>,
 }
 
 impl FullCoinSetAdapter {

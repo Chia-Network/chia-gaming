@@ -1,14 +1,22 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::stdin;
 use std::sync::Mutex;
+use std::thread;
+use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc;
+
+use lazy_static::lazy_static;
+use log::debug;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use lazy_static::lazy_static;
 use salvo::http::ResBody;
 use salvo::hyper::body::Bytes;
 use salvo::prelude::*;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
@@ -16,9 +24,9 @@ use chia_gaming::common::types::{
     AllocEncoder, Amount, CoinString, Error, GameID, PrivateKey, Program, Timeout,
 };
 use chia_gaming::games::poker_collection;
-use chia_gaming::outside::{GameType, ToLocalUI};
+use chia_gaming::outside::{GameStart, GameType, ToLocalUI};
 use chia_gaming::peer_container::{
-    FullCoinSetAdapter, SynchronousGameCradle, SynchronousGameCradleConfig,
+    FullCoinSetAdapter, SynchronousGameCradle, SynchronousGameCradleConfig, GameCradle
 };
 use chia_gaming::simulator::Simulator;
 
@@ -67,12 +75,29 @@ struct GameRunner {
     cradles: [SynchronousGameCradle; 2],
     game_ids: Vec<GameID>,
 
+    fund_coins: [CoinString; 2],
     handshake_done: bool,
     can_move: bool,
+    funded: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct UpdateResult {
+    info: String,
+    p1: String,
+    p2: String,
 }
 
 lazy_static! {
     static ref MUTEX: Mutex<GameRunner> = Mutex::new(GameRunner::new().unwrap());
+    static ref TO_WEB: (Mutex<Sender<String>>, Mutex<Receiver<String>>) = {
+        let (tx, rx) = mpsc::channel();
+        (tx.into(), rx.into())
+    };
+    static ref FROM_WEB: (Mutex<Sender<String>>, Mutex<Receiver<String>>) = {
+        let (tx, rx) = mpsc::channel();
+        (tx.into(), rx.into())
+    };
 }
 
 impl GameRunner {
@@ -169,12 +194,125 @@ impl GameRunner {
             game_ids,
             handshake_done,
             can_move,
+            funded: false,
+            fund_coins: [parent_coin_0.clone(), parent_coin_1.clone()]
         })
     }
 
-    #[allow(dead_code)]
-    fn index(&self) -> String {
-        "<html><body>Coming soon</body></html>".to_string()
+    fn info(&self) -> String {
+        format!("<ul><li>block height: {}<li>handshake_done: {}<li>can_move: {}</ul>", self.coinset_adapter.current_height, self.handshake_done, self.can_move)
+    }
+
+    fn idle(&mut self) -> String {
+        self.simulator.farm_block(&self.neutral_identity.puzzle_hash);
+
+        let current_height = self.simulator.get_current_height();
+        let current_coins = self.simulator.get_all_coins().expect("should work");
+        let watch_report = self.coinset_adapter
+            .make_report_from_coin_set_update(current_height as u64, &current_coins)
+            .expect("should work");
+
+        for i in 0..=1 {
+            self.cradles[i]
+                .new_block(&mut self.allocator, &mut self.rng, current_height, &watch_report)
+                .expect("should work");
+
+            loop {
+                let result = self.cradles[i]
+                    .idle(&mut self.allocator, &mut self.rng, &mut self.local_uis[i])
+                    .expect("should work");
+                debug!(
+                    "cradle {i}: continue_on {} outbound {}",
+                    result.continue_on,
+                    result.outbound_messages.len()
+                );
+
+                for tx in result.outbound_transactions.iter() {
+                    let included_result = self.simulator
+                        .push_tx(&mut self.allocator, &tx.spends)
+                        .expect("should work");
+                    debug!("included_result {included_result:?}");
+                    assert_eq!(included_result.code, 1);
+                }
+
+                for msg in result.outbound_messages.iter() {
+                    self.cradles[i ^ 1].deliver_message(&msg).expect("should work");
+                }
+
+                if !result.continue_on {
+                    break;
+                }
+            }
+        }
+
+        if !self.funded {
+            // Give coins to the cradles.
+            self.cradles[0]
+                .opening_coin(&mut self.allocator, &mut self.rng, self.fund_coins[0].clone())
+                .expect("should work");
+            self.cradles[1]
+                .opening_coin(&mut self.allocator, &mut self.rng, self.fund_coins[1].clone())
+                .expect("should work");
+
+            self.funded = true;
+
+            return serde_json::to_string(&UpdateResult {
+                info: self.info(),
+                p1: "player 1 funded".to_string(),
+                p2: "player 2 funded".to_string()
+            }).unwrap();
+        }
+
+        if self.can_move {
+            return serde_json::to_string(&UpdateResult {
+                info: self.info(),
+                p1: "player 1 can play".to_string(),
+                p2: "player 2 can play".to_string()
+            }).unwrap();
+        }
+
+        if !self.handshake_done && self.cradles[0].handshake_finished() && self.cradles[1].handshake_finished() {
+            self.game_ids = self.cradles[0]
+                .start_games(
+                    &mut self.allocator,
+                    &mut self.rng,
+                    true,
+                    &GameStart {
+                        amount: Amount::new(200),
+                        my_contribution: Amount::new(100),
+                        game_type: GameType(b"calpoker".to_vec()),
+                        timeout: Timeout::new(10),
+                        my_turn: true,
+                        parameters: vec![0x80],
+                    },
+                )
+                .expect("should run");
+
+            self.cradles[1]
+                .start_games(
+                    &mut self.allocator,
+                    &mut self.rng,
+                    false,
+                    &GameStart {
+                        amount: Amount::new(200),
+                        my_contribution: Amount::new(100),
+                        game_type: GameType(b"calpoker".to_vec()),
+                        timeout: Timeout::new(10),
+                        my_turn: false,
+                        parameters: vec![0x80],
+                    },
+                )
+                .expect("should run");
+
+            self.can_move = true;
+            self.handshake_done = true;
+        }
+
+        serde_json::to_string(&UpdateResult {
+            info: self.info(),
+            p1: "player 1 handshaking".to_string(),
+            p2: "player 2 handshaking".to_string()
+        }).unwrap()
     }
 
     fn start_game(&mut self) -> String {
@@ -212,13 +350,62 @@ async fn start_game(_req: &mut Request) -> Result<String, String> {
     Ok((*locked).start_game())
 }
 
+#[handler]
+async fn idle(_req: &mut Request) -> Result<String, String> {
+    {
+        let to_web = TO_WEB.0.lock().unwrap();
+        (*to_web).send("idle".to_string()).unwrap();
+    }
+    let from_web = FROM_WEB.1.lock().unwrap();
+    (*from_web).recv().map_err(|e| format!("{e:?}"))
+}
+
+#[handler]
+async fn exit(_req: &mut Request) -> Result<String, String> {
+    std::process::exit(0);
+    Ok("done".to_string())
+}
+
 #[tokio::main]
 async fn main() {
     let router = Router::new()
         .get(index)
         .push(Router::with_path("start").post(start_game))
         .push(Router::with_path("index.css").get(index_css))
-        .push(Router::with_path("index.js").get(index_js));
+        .push(Router::with_path("index.js").get(index_js))
+        .push(Router::with_path("exit").post(exit))
+        .push(Router::with_path("idle.json").post(idle));
     let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
+
+    let s = std::thread::spawn(|| {
+        loop {
+            let request =
+            {
+                let channel = TO_WEB.1.lock().unwrap();
+                (*channel).recv().unwrap()
+            };
+
+            eprintln!("request {request}");
+            let result =
+            {
+                let mut locked = MUTEX.lock().unwrap();
+                (*locked).idle()
+            };
+
+            {
+                let channel = FROM_WEB.0.lock().unwrap();
+                (*channel).send(result).unwrap();
+            }
+        }
+    });
+
+    println!("port 5800.  press return to exit gracefully...");
+    let t = std::thread::spawn(|| {
+        let mut buffer = String::default();
+        stdin().read_line(&mut buffer).ok();
+        std::process::exit(0);
+    });
+
     Server::new(acceptor).serve(router).await;
+    t.join().unwrap();
 }
