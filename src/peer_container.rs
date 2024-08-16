@@ -340,13 +340,13 @@ pub struct SynchronousGameCradle {
 }
 
 pub struct SynchronousGameCradleConfig<'a> {
-    game_types: BTreeMap<GameType, Program>,
-    have_potato: bool,
-    identity: &'a ChiaIdentity,
-    my_contribution: Amount,
-    their_contribution: Amount,
-    channel_timeout: Timeout,
-    reward_puzzle_hash: PuzzleHash,
+    pub game_types: BTreeMap<GameType, Program>,
+    pub have_potato: bool,
+    pub identity: &'a ChiaIdentity,
+    pub my_contribution: Amount,
+    pub their_contribution: Amount,
+    pub channel_timeout: Timeout,
+    pub reward_puzzle_hash: PuzzleHash,
 }
 
 impl SynchronousGameCradle {
