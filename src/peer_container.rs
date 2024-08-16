@@ -471,6 +471,10 @@ where
 }
 
 impl SynchronousGameCradle {
+    pub fn has_potato(&self) -> bool {
+        self.peer.has_potato()
+    }
+
     fn create_partial_spend_for_channel_coin<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
