@@ -1,10 +1,17 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::stdin;
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 use std::thread;
-use std::sync::mpsc::{Sender, Receiver};
-use std::sync::mpsc;
+
+use clvm_tools_rs::classic::clvm::sexp::proper_list;
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+use clvm_tools_rs::compiler::sexp::decode_string;
+use clvm_traits::{ClvmEncoder, ToClvm};
+use clvmr::serde::node_to_bytes;
+use clvmr::NodePtr;
 
 use lazy_static::lazy_static;
 use log::debug;
@@ -21,29 +28,40 @@ use serde_json::json;
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
-    AllocEncoder, Amount, CoinString, Error, GameID, PrivateKey, Program, Timeout,
+    atom_from_clvm, usize_from_atom, AllocEncoder, Amount, CoinString, Error, GameID, PrivateKey,
+    Program, Sha256Input, Timeout,
 };
 use chia_gaming::games::poker_collection;
 use chia_gaming::outside::{GameStart, GameType, ToLocalUI};
 use chia_gaming::peer_container::{
-    FullCoinSetAdapter, SynchronousGameCradle, SynchronousGameCradleConfig, GameCradle
+    FullCoinSetAdapter, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig,
 };
 use chia_gaming::simulator::Simulator;
 
-#[derive(Default)]
-struct UIReceiver {}
+struct UIReceiver {
+    readable_move: ReadableMove,
+}
+
+impl UIReceiver {
+    fn new(allocator: &mut AllocEncoder) -> Self {
+        UIReceiver {
+            readable_move: ReadableMove::from_nodeptr(allocator.encode_atom(&[]).unwrap()),
+        }
+    }
+}
 
 impl ToLocalUI for UIReceiver {
-    fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
-        todo!();
+    fn opponent_moved(&mut self, _id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.readable_move = readable;
+        Ok(())
     }
 
     fn game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
-        todo!();
+        Ok(())
     }
 
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
-        todo!();
+        Ok(())
     }
 
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
@@ -57,6 +75,20 @@ impl ToLocalUI for UIReceiver {
     fn going_on_chain(&mut self) -> Result<(), Error> {
         todo!();
     }
+}
+
+#[derive(Debug, Clone)]
+enum PlayState {
+    AliceWord,
+    BobWord,
+    AlicePicks,
+    BobPicks,
+    FinishGame,
+}
+
+struct CardsDescription {
+    state: usize,
+    cards: Vec<(usize, usize)>,
 }
 
 #[allow(dead_code)]
@@ -79,6 +111,7 @@ struct GameRunner {
     handshake_done: bool,
     can_move: bool,
     funded: bool,
+    play_state: PlayState,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -88,9 +121,19 @@ struct UpdateResult {
     p2: String,
 }
 
+#[derive(Debug, Clone)]
+enum WebRequest {
+    Idle,
+    AliceWordHash(Vec<u8>),
+    BobWord(Vec<u8>),
+    AlicePicks(Vec<bool>),
+    BobPicks(Vec<bool>),
+    FinishMove,
+}
+
 lazy_static! {
     static ref MUTEX: Mutex<GameRunner> = Mutex::new(GameRunner::new().unwrap());
-    static ref TO_WEB: (Mutex<Sender<String>>, Mutex<Receiver<String>>) = {
+    static ref TO_WEB: (Mutex<Sender<WebRequest>>, Mutex<Receiver<WebRequest>>) = {
         let (tx, rx) = mpsc::channel();
         (tx.into(), rx.into())
     };
@@ -116,7 +159,9 @@ impl GameRunner {
 
         let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
         let coinset_adapter = FullCoinSetAdapter::default();
-        let local_uis = [UIReceiver::default(), UIReceiver::default()];
+        let ui1 = UIReceiver::new(&mut allocator);
+        let ui2 = UIReceiver::new(&mut allocator);
+        let local_uis = [ui1, ui2];
         let simulator = Simulator::default();
 
         // Give some money to the users.
@@ -195,26 +240,211 @@ impl GameRunner {
             handshake_done,
             can_move,
             funded: false,
-            fund_coins: [parent_coin_0.clone(), parent_coin_1.clone()]
+            fund_coins: [parent_coin_0.clone(), parent_coin_1.clone()],
+            play_state: PlayState::AliceWord,
         })
     }
 
     fn info(&self) -> String {
-        format!("<ul><li>block height: {}<li>handshake_done: {}<li>can_move: {}</ul>", self.coinset_adapter.current_height, self.handshake_done, self.can_move)
+        format!(
+            "<ul><li>block height: {}<li>handshake_done: {}<li>can_move: {}<li>play_state: {:?}</ul>",
+            self.coinset_adapter.current_height,
+            self.handshake_done,
+            self.can_move,
+            self.play_state
+        )
+    }
+
+    fn alice_word_hash(&mut self, hash: &[u8]) -> String {
+        let encoded_node = self.allocator.encode_atom(hash).unwrap();
+        let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
+        self.cradles[0]
+            .make_move(
+                &mut self.allocator,
+                &mut self.rng,
+                &self.game_ids[0],
+                encoded,
+            )
+            .unwrap();
+
+        self.play_state = PlayState::BobWord;
+
+        self.move_state()
+    }
+
+    fn bob_word(&mut self, word: &[u8]) -> String {
+        let encoded_node = self.allocator.encode_atom(word).unwrap();
+        let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
+        self.cradles[1]
+            .make_move(
+                &mut self.allocator,
+                &mut self.rng,
+                &self.game_ids[0],
+                encoded,
+            )
+            .unwrap();
+
+        self.play_state = PlayState::AlicePicks;
+
+        self.move_state()
+    }
+
+    fn alice_picks(&mut self, picks: &[bool]) -> String {
+        let encoded_node = picks.to_clvm(&mut self.allocator).unwrap();
+        let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
+        self.cradles[0]
+            .make_move(
+                &mut self.allocator,
+                &mut self.rng,
+                &self.game_ids[0],
+                encoded,
+            )
+            .unwrap();
+
+        self.play_state = PlayState::BobPicks;
+
+        self.move_state()
+    }
+
+    fn bob_picks(&mut self, picks: &[bool]) -> String {
+        let encoded_node = picks.to_clvm(&mut self.allocator).unwrap();
+        let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
+        self.cradles[1]
+            .make_move(
+                &mut self.allocator,
+                &mut self.rng,
+                &self.game_ids[0],
+                encoded,
+            )
+            .unwrap();
+
+        self.play_state = PlayState::FinishGame;
+
+        self.move_state()
+    }
+
+    fn basic_show(&mut self) -> (String, String) {
+        let p1 = disassemble(
+            self.allocator.allocator(),
+            self.local_uis[0].readable_move.to_nodeptr(),
+            None,
+        );
+        let p2 = disassemble(
+            self.allocator.allocator(),
+            self.local_uis[1].readable_move.to_nodeptr(),
+            None,
+        );
+        (p1, p2)
+    }
+
+    fn convert_cards(&mut self, card_list: NodePtr) -> Vec<(usize, usize)> {
+        if let Some(cards_nodeptrs) = proper_list(self.allocator.allocator(), card_list, true) {
+            return cards_nodeptrs
+                .iter()
+                .filter_map(|elt| {
+                    proper_list(self.allocator.allocator(), *elt, true).map(|card| {
+                        let rank: usize = atom_from_clvm(&mut self.allocator, card[0])
+                            .and_then(usize_from_atom)
+                            .unwrap_or_default();
+                        let suit: usize = atom_from_clvm(&mut self.allocator, card[1])
+                            .and_then(usize_from_atom)
+                            .unwrap_or_default();
+                        (rank, suit)
+                    })
+                })
+                .collect();
+        }
+
+        Vec::new()
+    }
+
+    fn picks_state(&mut self, bob: bool) -> (String, String) {
+        let bs = self.basic_show();
+        if let Some(alice_bob_cards) = proper_list(
+            self.allocator.allocator(),
+            self.local_uis[0].readable_move.to_nodeptr(),
+            true,
+        ) {
+            if alice_bob_cards.is_empty() {
+                self.basic_show()
+            } else {
+                eprintln!("alice_bob_cards {alice_bob_cards:?}");
+                let alice_cards = self.convert_cards(alice_bob_cards[0]);
+                let bob_cards = self.convert_cards(alice_bob_cards[1]);
+                let mut p1 = b"<div><h2>alice cards</h2><div>".to_vec();
+                let mut p2 = b"<div><h2>bob cards</h2><div>".to_vec();
+                for (i, (rank, suit)) in alice_cards.into_iter().enumerate() {
+                    let mut card_fmt: Vec<u8> = format!("<button class='cardspan' id='alice_card{}' rank='{}' suit='{}' onclick='alice_toggle({})'>{} {}</span>", i, rank, suit, i, rank, suit).bytes().collect();
+                    p1.append(&mut card_fmt);
+                }
+                for (i, (rank, suit)) in bob_cards.into_iter().enumerate() {
+                    let mut card_fmt: Vec<u8> = format!("<button class='cardspan' id='bob_card{}' rank='{}' suit='{}' onclick='bob_toggle({})'>{} {}</span>", i, rank, suit, i, rank, suit).bytes().collect();
+                    p2.append(&mut card_fmt);
+                }
+
+                {
+                    let (who, to_append_button, to_append_other) = if bob {
+                        ("bob", &mut p2, &mut p1)
+                    } else {
+                        ("alice", &mut p1, &mut p2)
+                    };
+
+                    let button_append = format!("</div><button id='{who}_pick' onclick='set_{who}_picks()'>Set {who} picks</button></div>");
+
+                    to_append_button.append(&mut button_append.bytes().collect());
+                    to_append_other.append(&mut b"</div></div>".to_vec());
+                }
+
+                (decode_string(&p1), decode_string(&p2))
+            }
+        } else {
+            self.basic_show()
+        }
+    }
+
+    fn move_state(&mut self) -> String {
+        let (p1, p2) = match &self.play_state {
+            PlayState::AliceWord => {
+                let p1 = "<div><h2>generate alice word</h2><button onclick='send_alice_word()'>Generate</button></div>".to_string();
+                let p2 = "<div><h2>alice' turn</h2></div>".to_string();
+                (p1, p2)
+            }
+            PlayState::BobWord => {
+                let p1 = "<div><h2>bob's turn</h2></div>".to_string();
+                let p2 = "<div><h2>generate bob's word</h2><button onclick='send_bob_word()'>Generate</button></div>".to_string();
+                (p1, p2)
+            }
+            PlayState::AlicePicks => self.picks_state(false),
+            PlayState::BobPicks => self.picks_state(true),
+            _ => self.basic_show(),
+        };
+        serde_json::to_string(&UpdateResult {
+            info: self.info(),
+            p1,
+            p2,
+        })
+        .unwrap()
     }
 
     fn idle(&mut self) -> String {
-        self.simulator.farm_block(&self.neutral_identity.puzzle_hash);
+        self.simulator
+            .farm_block(&self.neutral_identity.puzzle_hash);
 
         let current_height = self.simulator.get_current_height();
         let current_coins = self.simulator.get_all_coins().expect("should work");
-        let watch_report = self.coinset_adapter
+        let watch_report = self
+            .coinset_adapter
             .make_report_from_coin_set_update(current_height as u64, &current_coins)
             .expect("should work");
 
         for i in 0..=1 {
             self.cradles[i]
-                .new_block(&mut self.allocator, &mut self.rng, current_height, &watch_report)
+                .new_block(
+                    &mut self.allocator,
+                    &mut self.rng,
+                    current_height,
+                    &watch_report,
+                )
                 .expect("should work");
 
             loop {
@@ -228,7 +458,8 @@ impl GameRunner {
                 );
 
                 for tx in result.outbound_transactions.iter() {
-                    let included_result = self.simulator
+                    let included_result = self
+                        .simulator
                         .push_tx(&mut self.allocator, &tx.spends)
                         .expect("should work");
                     debug!("included_result {included_result:?}");
@@ -236,7 +467,9 @@ impl GameRunner {
                 }
 
                 for msg in result.outbound_messages.iter() {
-                    self.cradles[i ^ 1].deliver_message(&msg).expect("should work");
+                    self.cradles[i ^ 1]
+                        .deliver_message(&msg)
+                        .expect("should work");
                 }
 
                 if !result.continue_on {
@@ -248,10 +481,18 @@ impl GameRunner {
         if !self.funded {
             // Give coins to the cradles.
             self.cradles[0]
-                .opening_coin(&mut self.allocator, &mut self.rng, self.fund_coins[0].clone())
+                .opening_coin(
+                    &mut self.allocator,
+                    &mut self.rng,
+                    self.fund_coins[0].clone(),
+                )
                 .expect("should work");
             self.cradles[1]
-                .opening_coin(&mut self.allocator, &mut self.rng, self.fund_coins[1].clone())
+                .opening_coin(
+                    &mut self.allocator,
+                    &mut self.rng,
+                    self.fund_coins[1].clone(),
+                )
                 .expect("should work");
 
             self.funded = true;
@@ -259,19 +500,19 @@ impl GameRunner {
             return serde_json::to_string(&UpdateResult {
                 info: self.info(),
                 p1: "player 1 funded".to_string(),
-                p2: "player 2 funded".to_string()
-            }).unwrap();
+                p2: "player 2 funded".to_string(),
+            })
+            .unwrap();
         }
 
         if self.can_move {
-            return serde_json::to_string(&UpdateResult {
-                info: self.info(),
-                p1: "player 1 can play".to_string(),
-                p2: "player 2 can play".to_string()
-            }).unwrap();
+            return self.move_state();
         }
 
-        if !self.handshake_done && self.cradles[0].handshake_finished() && self.cradles[1].handshake_finished() {
+        if !self.handshake_done
+            && self.cradles[0].handshake_finished()
+            && self.cradles[1].handshake_finished()
+        {
             self.game_ids = self.cradles[0]
                 .start_games(
                     &mut self.allocator,
@@ -311,12 +552,9 @@ impl GameRunner {
         serde_json::to_string(&UpdateResult {
             info: self.info(),
             p1: "player 1 handshaking".to_string(),
-            p2: "player 2 handshaking".to_string()
-        }).unwrap()
-    }
-
-    fn start_game(&mut self) -> String {
-        "start".to_string()
+            p2: "player 2 handshaking".to_string(),
+        })
+        .unwrap()
     }
 }
 
@@ -344,20 +582,74 @@ async fn index_css(response: &mut Response) -> Result<(), String> {
     get_file("resources/web/index.css", "text/css", response)
 }
 
-#[handler]
-async fn start_game(_req: &mut Request) -> Result<String, String> {
-    let mut locked = MUTEX.try_lock().map_err(|e| format!("{e:?}"))?;
-    Ok((*locked).start_game())
+fn pass_on_request(wr: WebRequest) -> Result<String, String> {
+    {
+        let to_web = TO_WEB.0.lock().unwrap();
+        (*to_web).send(wr).unwrap();
+    }
+    let from_web = FROM_WEB.1.lock().unwrap();
+    (*from_web).recv().map_err(|e| format!("{e:?}"))
 }
 
 #[handler]
 async fn idle(_req: &mut Request) -> Result<String, String> {
-    {
-        let to_web = TO_WEB.0.lock().unwrap();
-        (*to_web).send("idle".to_string()).unwrap();
+    pass_on_request(WebRequest::Idle)
+}
+
+#[handler]
+async fn alice_word_hash(req: &mut Request) -> Result<String, String> {
+    let uri_string = req.uri().to_string();
+    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
+        let arg: Vec<u8> = uri_string.bytes().skip(found_eq + 1).collect();
+        let hash = Sha256Input::Bytes(&arg).hash();
+        return pass_on_request(WebRequest::AliceWordHash(hash.bytes().to_vec()));
     }
-    let from_web = FROM_WEB.1.lock().unwrap();
-    (*from_web).recv().map_err(|e| format!("{e:?}"))
+
+    Err("no argument".to_string())
+}
+
+#[handler]
+async fn bob_word(req: &mut Request) -> Result<String, String> {
+    let uri_string = req.uri().to_string();
+    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
+        let arg: Vec<u8> = uri_string.bytes().skip(found_eq + 1).collect();
+        let hash = Sha256Input::Bytes(&arg).hash();
+        return pass_on_request(WebRequest::BobWord(
+            hash.bytes().iter().take(16).cloned().collect(),
+        ));
+    }
+
+    Err("no argument".to_string())
+}
+
+#[handler]
+async fn alice_picks(req: &mut Request) -> Result<String, String> {
+    let uri_string = req.uri().to_string();
+    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
+        let arg: Vec<bool> = uri_string
+            .bytes()
+            .skip(found_eq + 1)
+            .map(|b| b == b'1')
+            .collect();
+        return pass_on_request(WebRequest::AlicePicks(arg));
+    }
+
+    Err("no argument".to_string())
+}
+
+#[handler]
+async fn bob_picks(req: &mut Request) -> Result<String, String> {
+    let uri_string = req.uri().to_string();
+    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
+        let arg: Vec<bool> = uri_string
+            .bytes()
+            .skip(found_eq + 1)
+            .map(|b| b == b'1')
+            .collect();
+        return pass_on_request(WebRequest::BobPicks(arg));
+    }
+
+    Err("no argument".to_string())
 }
 
 #[handler]
@@ -370,32 +662,38 @@ async fn exit(_req: &mut Request) -> Result<String, String> {
 async fn main() {
     let router = Router::new()
         .get(index)
-        .push(Router::with_path("start").post(start_game))
         .push(Router::with_path("index.css").get(index_css))
         .push(Router::with_path("index.js").get(index_js))
         .push(Router::with_path("exit").post(exit))
-        .push(Router::with_path("idle.json").post(idle));
+        .push(Router::with_path("idle.json").post(idle))
+        .push(Router::with_path("alice_word_hash").post(alice_word_hash))
+        .push(Router::with_path("bob_word").post(bob_word))
+        .push(Router::with_path("alice_picks").post(alice_picks))
+        .push(Router::with_path("bob_picks").post(bob_picks));
     let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
-    let s = std::thread::spawn(|| {
-        loop {
-            let request =
-            {
-                let channel = TO_WEB.1.lock().unwrap();
-                (*channel).recv().unwrap()
-            };
+    let s = std::thread::spawn(|| loop {
+        let request = {
+            let channel = TO_WEB.1.lock().unwrap();
+            (*channel).recv().unwrap()
+        };
 
-            eprintln!("request {request}");
-            let result =
-            {
-                let mut locked = MUTEX.lock().unwrap();
-                (*locked).idle()
-            };
-
-            {
-                let channel = FROM_WEB.0.lock().unwrap();
-                (*channel).send(result).unwrap();
+        eprintln!("request {request:?}");
+        let result = {
+            let mut locked = MUTEX.lock().unwrap();
+            match request {
+                WebRequest::Idle => (*locked).idle(),
+                WebRequest::AliceWordHash(hash) => (*locked).alice_word_hash(&hash),
+                WebRequest::BobWord(bytes) => (*locked).bob_word(&bytes),
+                WebRequest::AlicePicks(picks) => (*locked).alice_picks(&picks),
+                WebRequest::BobPicks(picks) => (*locked).bob_picks(&picks),
+                _ => todo!(),
             }
+        };
+
+        {
+            let channel = FROM_WEB.0.lock().unwrap();
+            (*channel).send(result).unwrap();
         }
     });
 

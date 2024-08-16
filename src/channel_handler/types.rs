@@ -283,6 +283,10 @@ impl ReadableMove {
     pub fn from_nodeptr(n: NodePtr) -> Self {
         ReadableMove(n)
     }
+
+    pub fn to_nodeptr(&self) -> NodePtr {
+        self.0
+    }
 }
 
 impl ToClvm<NodePtr> for ReadableMove {
