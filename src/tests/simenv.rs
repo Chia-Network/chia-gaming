@@ -22,9 +22,9 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
     PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
 };
+use crate::simulator::Simulator;
 use crate::tests::game::new_channel_handler_game;
 use crate::tests::referee::{make_debug_game_handler, RefereeTest};
-use crate::tests::simulator::Simulator;
 
 #[derive(Debug, Clone)]
 pub enum GameAction {
@@ -89,7 +89,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         ];
 
         let mut env = channel_handler_env(allocator, rng);
-        let simulator = Simulator::new();
+        let simulator = Simulator::default();
         let (parties, coin) = new_channel_handler_game(
             &simulator,
             &mut env,
@@ -396,7 +396,7 @@ fn test_sim() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
-    let s = Simulator::new();
+    let s = Simulator::default();
     let private_key: PrivateKey = rng.gen();
     let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
     debug!("identity public key {:?}", identity.public_key);
@@ -422,7 +422,7 @@ fn test_simulator_transfer_coin() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
-    let s = Simulator::new();
+    let s = Simulator::default();
     let private_key: PrivateKey = rng.gen();
     let identity1 = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
     let pk2: PrivateKey = rng.gen();
@@ -455,7 +455,7 @@ fn test_simulator_combine_coins() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
-    let s = Simulator::new();
+    let s = Simulator::default();
     let private_key: PrivateKey = rng.gen();
     let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
 
@@ -527,7 +527,7 @@ fn test_referee_can_slash_on_chain() {
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
     // Make simulator and create referee coin.
-    let s = Simulator::new();
+    let s = Simulator::default();
     s.farm_block(&reftest.my_identity.puzzle_hash);
 
     let coins = s
@@ -678,7 +678,7 @@ fn test_referee_can_move_on_chain() {
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
 
     // Make simulator and create referee coin.
-    let s = Simulator::new();
+    let s = Simulator::default();
     s.farm_block(&reftest.my_identity.puzzle_hash);
 
     let coins = s

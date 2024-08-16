@@ -18,6 +18,7 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, IntoErr, PrivateKey,
     Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
+use crate::games::poker_collection;
 use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
     PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
@@ -27,10 +28,10 @@ use crate::peer_container::{
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 
+use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::peer::outside::{quiesce, run_move};
 use crate::tests::simenv::GameAction;
-use crate::tests::simulator::Simulator;
 
 // potato handler tests with simulator.
 #[derive(Default)]
@@ -529,18 +530,6 @@ pub fn handshake<'a, R: Rng + 'a>(
     Ok(())
 }
 
-fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Program> {
-    let mut game_type_map = BTreeMap::new();
-    let calpoker_factory = read_hex_puzzle(allocator, "clsp/calpoker_include_calpoker_factory.hex")
-        .expect("should load");
-
-    game_type_map.insert(
-        GameType(b"calpoker".to_vec()),
-        calpoker_factory.to_program(),
-    );
-    game_type_map
-}
-
 fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
     let seed_data: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed_data);
@@ -576,7 +565,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
     ];
     let mut peers = [SimulatedPeer::default(), SimulatedPeer::default()];
     let mut coinset_adapter = FullCoinSetAdapter::default();
-    let mut simulator = Simulator::new();
+    let mut simulator = Simulator::default();
 
     // Get some coins.
     simulator.farm_block(&identities[0].puzzle_hash);
@@ -791,7 +780,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
         LocalTestUIReceiver::default(),
         LocalTestUIReceiver::default(),
     ];
-    let mut simulator = Simulator::new();
+    let mut simulator = Simulator::default();
 
     // Give some money to the users.
     simulator.farm_block(&identities[0].puzzle_hash);
