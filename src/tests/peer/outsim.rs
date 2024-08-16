@@ -24,7 +24,7 @@ use crate::outside::{
 };
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
-    SynchronousGameCradle, WatchEntry, WatchReport,
+    SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 
 use crate::tests::calpoker::test_moves_1;
@@ -828,23 +828,27 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
 
     let cradle1 = SynchronousGameCradle::new(
         &mut rng,
-        game_type_map.clone(),
-        true,
-        &identities[0],
-        Amount::new(100),
-        Amount::new(100),
-        Timeout::new(100),
-        id1.puzzle_hash.clone(),
+        SynchronousGameCradleConfig {
+            game_types: game_type_map.clone(),
+            have_potato: true,
+            identity: &identities[0],
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+            channel_timeout: Timeout::new(100),
+            reward_puzzle_hash: id1.puzzle_hash.clone(),
+        },
     );
     let cradle2 = SynchronousGameCradle::new(
         &mut rng,
-        game_type_map.clone(),
-        false,
-        &identities[1],
-        Amount::new(100),
-        Amount::new(100),
-        Timeout::new(100),
-        id2.puzzle_hash.clone(),
+        SynchronousGameCradleConfig {
+            game_types: game_type_map.clone(),
+            have_potato: false,
+            identity: &identities[1],
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+            channel_timeout: Timeout::new(100),
+            reward_puzzle_hash: id2.puzzle_hash.clone(),
+        },
     );
     let mut cradles = [cradle1, cradle2];
     let mut game_ids = Vec::default();
