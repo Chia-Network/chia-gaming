@@ -383,6 +383,7 @@ enum GameAction {
 /// the message through to the channel handler.
 #[allow(dead_code)]
 pub struct PotatoHandler {
+    initiator: bool,
     have_potato: PotatoState,
 
     handshake_state: HandshakeState,
@@ -456,6 +457,7 @@ impl PotatoHandler {
         reward_puzzle_hash: PuzzleHash,
     ) -> PotatoHandler {
         PotatoHandler {
+            initiator: have_potato,
             have_potato: if have_potato {
                 PotatoState::Present
             } else {
@@ -486,6 +488,10 @@ impl PotatoHandler {
             channel_timeout,
             reward_puzzle_hash,
         }
+    }
+
+    pub fn is_initiator(&self) -> bool {
+        self.initiator
     }
 
     pub fn channel_handler(&self) -> Result<&ChannelHandler, Error> {
@@ -608,11 +614,13 @@ impl PotatoHandler {
                 }
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
-            PeerMessage::Accept(game_id, _amount, sigs) => {
+            PeerMessage::Accept(game_id, amount, sigs) => {
                 let spend_info = {
-                    let (env, _) = penv.env();
-                    ch.received_potato_accept(env, &sigs, &game_id)?
-                };
+                    let (env, system_interface) = penv.env();
+                    let result = ch.received_potato_accept(env, &sigs, &game_id)?;
+                    system_interface.game_finished(&game_id, amount)?;
+                    Ok(result)
+                }?;
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             _ => {
@@ -768,9 +776,10 @@ impl PotatoHandler {
                 let (_, system_interface) = penv.env();
                 system_interface.send_message(&PeerMessage::Accept(
                     game_id.clone(),
-                    amount,
+                    amount.clone(),
                     sigs,
                 ))?;
+                system_interface.game_finished(&game_id, amount)?;
                 self.have_potato = PotatoState::Absent;
 
                 Ok(true)
@@ -1204,6 +1213,8 @@ impl PotatoHandler {
                 match msg_envelope {
                     PeerMessage::HandshakeF { bundle } => {
                         self.channel_finished_transaction = Some(bundle.clone());
+                        let (_, system_interface) = penv.env();
+                        system_interface.received_channel_offer(&bundle)?;
                     }
                     PeerMessage::RequestPotato(_) => {
                         assert!(matches!(self.have_potato, PotatoState::Present));
