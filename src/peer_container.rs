@@ -4,7 +4,6 @@ use std::mem::swap;
 use clvm_traits::ToClvm;
 use log::debug;
 use rand::Rng;
-use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
@@ -58,7 +57,6 @@ pub enum WalletBootstrapState {
 #[derive(Default)]
 pub struct FullCoinSetAdapter {
     current_height: u64,
-    watching_coins: HashMap<CoinString, WatchEntry>,
     current_coins: HashSet<CoinString>,
 }
 
@@ -93,6 +91,7 @@ impl FullCoinSetAdapter {
 
 // potato handler tests with simulator.
 #[derive(Default)]
+#[cfg(test)]
 pub struct SimulatedWalletSpend {
     watching_coins: HashMap<CoinString, WatchEntry>,
 
@@ -112,6 +111,7 @@ pub struct SimulatedPeer<CoinTracker> {
     pub simulated_wallet_spend: CoinTracker,
 }
 
+#[cfg(test)]
 impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
     fn message_pipe(&mut self) -> &mut MessagePipe {
         &mut self.message_pipe
@@ -128,6 +128,7 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 }
 
 #[derive(Default)]
+#[cfg(test)]
 struct Pipe {
     message_pipe: MessagePipe,
 
@@ -149,22 +150,24 @@ struct Pipe {
     bootstrap_state: Option<WalletBootstrapState>,
 }
 
+#[cfg(test)]
 impl WalletSpendInterface for Pipe {
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, _bundle: &Spend) -> Result<(), Error> {
         todo!();
     }
 
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
+    fn register_coin(&mut self, _coin_id: &CoinString, _timeout: &Timeout) -> Result<(), Error> {
         todo!();
     }
 }
 
+#[cfg(test)]
 impl BootstrapTowardWallet for Pipe {
-    fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
+    fn channel_puzzle_hash(&mut self, _puzzle_hash: &PuzzleHash) -> Result<(), Error> {
         todo!();
     }
 
-    fn received_channel_offer(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+    fn received_channel_offer(&mut self, _bundle: &SpendBundle) -> Result<(), Error> {
         todo!();
     }
     fn received_channel_transaction_completion(
@@ -175,11 +178,12 @@ impl BootstrapTowardWallet for Pipe {
     }
 }
 
+#[cfg(test)]
 impl ToLocalUI for Pipe {
-    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
         todo!();
     }
-    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+    fn game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
         todo!();
     }
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
@@ -205,7 +209,7 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
     type Item = (&'a CoinString, &'a WatchEntry);
 
     fn next(&mut self) -> std::option::Option<<Self as Iterator>::Item> {
-        self.internal_iterator.next().map(|(k, v)| (k, v))
+        self.internal_iterator.next()
     }
 }
 
@@ -262,7 +266,7 @@ pub trait GameCradle {
     fn shut_down(&mut self) -> Result<(), Error>;
 
     /// Tell the game cradle that a new block arrived, giving a watch report.
-    fn new_block<'a, R: Rng>(
+    fn new_block<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -275,7 +279,7 @@ pub trait GameCradle {
 
     /// Allow the game to carry out tasks it needs to perform, yielding peer messages that
     /// should be forwarded.  Returns false when no more work is needed.
-    fn idle<'a, R: Rng>(
+    fn idle<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -311,7 +315,7 @@ impl PacketSender for SynchronousGameCradleState {
 
 impl WalletSpendInterface for SynchronousGameCradleState {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, _bundle: &Spend) -> Result<(), Error> {
         todo!();
     }
     /// Coin should report its lifecycle until it gets spent, then should be
@@ -320,7 +324,7 @@ impl WalletSpendInterface for SynchronousGameCradleState {
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
-                timeout_height: timeout.clone() + Timeout::new(self.current_height as u64),
+                timeout_height: timeout.clone() + Timeout::new(self.current_height),
             },
         );
 
@@ -335,24 +339,25 @@ pub struct SynchronousGameCradle {
     peer: PotatoHandler,
 }
 
+pub struct SynchronousGameCradleConfig<'a> {
+    game_types: BTreeMap<GameType, Program>,
+    have_potato: bool,
+    identity: &'a ChiaIdentity,
+    my_contribution: Amount,
+    their_contribution: Amount,
+    channel_timeout: Timeout,
+    reward_puzzle_hash: PuzzleHash,
+}
+
 impl SynchronousGameCradle {
-    pub fn new<R: Rng>(
-        rng: &mut R,
-        game_types: BTreeMap<GameType, Program>,
-        have_potato: bool,
-        identity: &ChiaIdentity,
-        my_contribution: Amount,
-        their_contribution: Amount,
-        channel_timeout: Timeout,
-        reward_puzzle_hash: PuzzleHash,
-    ) -> Self {
+    pub fn new<R: Rng>(rng: &mut R, config: SynchronousGameCradleConfig) -> Self {
         let private_keys: ChannelHandlerPrivateKeys = rng.gen();
         SynchronousGameCradle {
             state: SynchronousGameCradleState {
-                is_initiator: have_potato,
+                is_initiator: config.have_potato,
                 current_height: 0,
                 watching_coins: HashMap::default(),
-                identity: identity.clone(),
+                identity: config.identity.clone(),
                 inbound_messages: VecDeque::default(),
                 outbound_transactions: VecDeque::default(),
                 outbound_messages: VecDeque::default(),
@@ -364,13 +369,13 @@ impl SynchronousGameCradle {
                 unfunded_offer: None,
             },
             peer: PotatoHandler::new(
-                have_potato,
+                config.have_potato,
                 private_keys,
-                game_types,
-                my_contribution,
-                their_contribution,
-                channel_timeout,
-                reward_puzzle_hash,
+                config.game_types,
+                config.my_contribution,
+                config.their_contribution,
+                config.channel_timeout,
+                config.reward_puzzle_hash,
             ),
         }
     }
@@ -390,7 +395,7 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 
     fn received_channel_transaction_completion(
         &mut self,
-        bundle: &SpendBundle,
+        _bundle: &SpendBundle,
     ) -> Result<(), Error> {
         todo!();
     }
@@ -410,10 +415,10 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.game_finished.push_back((id.clone(), my_share));
         Ok(())
     }
-    fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error> {
+    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
     }
-    fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error> {
+    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
         todo!();
     }
     fn going_on_chain(&mut self) -> Result<(), Error> {
@@ -508,8 +513,7 @@ impl SynchronousGameCradle {
             false,
         )?;
 
-        let spend_solution_program =
-            Program::from_nodeptr(&mut env.allocator, spend.solution.clone())?;
+        let spend_solution_program = Program::from_nodeptr(env.allocator, spend.solution)?;
 
         let bundle = SpendBundle {
             spends: vec![CoinSpend {
@@ -558,7 +562,7 @@ impl SynchronousGameCradle {
         // XXX break this code out
         let signature = sign_agg_sig_me(
             &self.state.identity.synthetic_private_key,
-            &quoted_empty_hash.bytes(),
+            quoted_empty_hash.bytes(),
             &parent_coin.to_coin_id(),
             &env.agg_sig_me_additional_data,
         );
@@ -670,7 +674,7 @@ impl GameCradle for SynchronousGameCradle {
     }
 
     /// Tell the game cradle that a new block arrived, giving a watch report.
-    fn new_block<'a, R: Rng>(
+    fn new_block<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -697,7 +701,7 @@ impl GameCradle for SynchronousGameCradle {
 
     /// Allow the game to carry out tasks it needs to perform, yielding peer messages that
     /// should be forwarded.  Returns false when no more work is needed.
-    fn idle<'a, R: Rng>(
+    fn idle<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -729,7 +733,7 @@ impl GameCradle for SynchronousGameCradle {
         }
 
         if let Some((id, amount)) = self.state.game_finished.pop_front() {
-            local_ui.game_finished(&id, amount.clone());
+            local_ui.game_finished(&id, amount.clone())?;
             result.continue_on = true;
             return Ok(result);
         }
