@@ -17,7 +17,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{Amount, CoinString, Error, IntoErr, Timeout};
 
 #[cfg(feature = "sim-tests")]
-use crate::tests::simulator::Simulator;
+use crate::simulator::Simulator;
 
 #[cfg(feature = "sim-tests")]
 pub fn new_channel_handler_game<R: Rng>(

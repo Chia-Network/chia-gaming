@@ -46,7 +46,6 @@ pub struct Simulator {
     height: RefCell<usize>,
 }
 
-#[cfg(test)]
 impl ErrToError for PyErr {
     fn into_gen(self) -> Error {
         Error::StrErr(format!("{self:?}"))
@@ -108,6 +107,48 @@ fn to_spend_result(py: Python<'_>, spend_res: PyObject) -> PyResult<IncludeTrans
     })
 }
 
+impl Default for Simulator {
+    fn default() -> Self {
+        Python::with_gil(|py| -> PyResult<_> {
+            let module = PyModule::from_code(
+                py,
+                indoc! {"
+               import asyncio
+               import chia.clvm.spend_sim
+               from chia.types.coin_spend import make_spend
+               from chia_rs import Coin, G2Element
+               from chia.types.blockchain_format.program import Program
+               from chia.types.spend_bundle import SpendBundle
+               from chia.types.blockchain_format.coin import coin_as_list
+
+               def start():
+                   evloop = asyncio.new_event_loop()
+                   sac_gen = chia.clvm.spend_sim.sim_and_client()
+                   (sim, client) = evloop.run_until_complete(sac_gen.__aenter__())
+                   return (evloop, sim, client, sac_gen, make_spend, Coin, Program, SpendBundle, G2Element, coin_as_list)
+            "},
+                "tmod.py",
+                "tmod",
+            )?;
+            let evloop = module.call_method0("start")?;
+            Ok(Simulator {
+                evloop: evloop.get_item(0)?.extract()?,
+                sim: evloop.get_item(1)?.extract()?,
+                client: evloop.get_item(2)?.extract()?,
+                guard: evloop.get_item(3)?.extract()?,
+                make_spend: evloop.get_item(4)?.extract()?,
+                chia_rs_coin: evloop.get_item(5)?.extract()?,
+                program: evloop.get_item(6)?.extract()?,
+                spend_bundle: evloop.get_item(7)?.extract()?,
+                g2_element: evloop.get_item(8)?.extract()?,
+                coin_as_list: evloop.get_item(9)?.extract()?,
+                height: RefCell::new(0),
+            })
+        })
+        .expect("should work")
+    }
+}
+
 impl Simulator {
     /// Given a coin in our inventory, spend the coin to the target puzzle hash.
     pub fn spend_coin_to_puzzle_hash(
@@ -150,7 +191,7 @@ impl Simulator {
             .expect("should work");
         let hashed_conds = quoted_conds.sha256tree(allocator);
         let agg_sig_me_message = agg_sig_me_message(
-            &hashed_conds.bytes(),
+            hashed_conds.bytes(),
             &coin.to_coin_id(),
             &agg_sig_me_additional_data,
         );
@@ -178,46 +219,6 @@ impl Simulator {
             .collect())
     }
 
-    pub fn new() -> Self {
-        Python::with_gil(|py| -> PyResult<_> {
-            let module = PyModule::from_code(
-                py,
-                indoc! {"
-               import asyncio
-               import chia.clvm.spend_sim
-               from chia.types.coin_spend import make_spend
-               from chia_rs import Coin, G2Element
-               from chia.types.blockchain_format.program import Program
-               from chia.types.spend_bundle import SpendBundle
-               from chia.types.blockchain_format.coin import coin_as_list
-
-               def start():
-                   evloop = asyncio.new_event_loop()
-                   sac_gen = chia.clvm.spend_sim.sim_and_client()
-                   (sim, client) = evloop.run_until_complete(sac_gen.__aenter__())
-                   return (evloop, sim, client, sac_gen, make_spend, Coin, Program, SpendBundle, G2Element, coin_as_list)
-            "},
-                "tmod.py",
-                "tmod",
-            )?;
-            let evloop = module.call_method0("start")?;
-            Ok(Simulator {
-                evloop: evloop.get_item(0)?.extract()?,
-                sim: evloop.get_item(1)?.extract()?,
-                client: evloop.get_item(2)?.extract()?,
-                guard: evloop.get_item(3)?.extract()?,
-                make_spend: evloop.get_item(4)?.extract()?,
-                chia_rs_coin: evloop.get_item(5)?.extract()?,
-                program: evloop.get_item(6)?.extract()?,
-                spend_bundle: evloop.get_item(7)?.extract()?,
-                g2_element: evloop.get_item(8)?.extract()?,
-                coin_as_list: evloop.get_item(9)?.extract()?,
-                height: RefCell::new(0),
-            })
-        })
-        .expect("should work")
-    }
-
     fn async_call<ArgT>(&self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
     where
         ArgT: IntoPy<Py<PyTuple>>,
@@ -229,7 +230,7 @@ impl Simulator {
         self.evloop
             .call_method1(py, "run_until_complete", (task.clone(),))?;
         let res = task.call_method0(py, "result")?;
-        Ok(res.into())
+        Ok(res)
     }
 
     fn async_client<ArgT>(&self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
@@ -240,12 +241,12 @@ impl Simulator {
         let res = self
             .evloop
             .call_method1(py, "run_until_complete", (task,))?;
-        Ok(res.into())
+        Ok(res)
     }
 
     pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
         Python::with_gil(|py| -> PyResult<()> {
-            let puzzle_hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
+            let puzzle_hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
             self.async_call(py, "farm_block", (puzzle_hash_bytes,))?;
             let old_height = *self.height.borrow();
             self.height.replace(old_height + 1);
@@ -260,7 +261,7 @@ impl Simulator {
 
     fn convert_coin_list_to_coin_strings(
         &self,
-        py: Python<'_>,
+        _py: Python<'_>,
         coins: &PyObject,
     ) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
@@ -303,7 +304,7 @@ impl Simulator {
 
     pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
-            let hash_bytes = PyBytes::new(py, &puzzle_hash.bytes());
+            let hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
             let coins =
                 self.async_client(py, "get_coin_records_by_puzzle_hash", (hash_bytes, false))?;
             self.convert_coin_list_to_coin_strings(py, &coins)
@@ -326,8 +327,8 @@ impl Simulator {
         };
 
         Python::with_gil(|py| -> PyResult<_> {
-            let parent_parent_coin = PyBytes::new(py, &parent_id.bytes());
-            let puzzle_hash_data = PyBytes::new(py, &puzzle_hash.bytes());
+            let parent_parent_coin = PyBytes::new(py, parent_id.bytes());
+            let puzzle_hash_data = PyBytes::new(py, puzzle_hash.bytes());
             let amt: u64 = amount.into();
             self.chia_rs_coin
                 .call1(py, (parent_parent_coin, puzzle_hash_data, amt))
@@ -351,8 +352,20 @@ impl Simulator {
         let puzzle_hex = puzzle_reveal.to_hex();
         let puzzle_program = self.hex_to_program(&puzzle_hex)?;
         debug!("puzzle_program = {puzzle_program:?}");
-        let solution_hex = Node(solution).to_hex(allocator);
-        let solution_program = self.hex_to_program(&solution_hex)?;
+        let solution_hex = Node(solution).to_hex(allocator).map_err(|_| {
+            PyErr::from_value(
+                PyIndexError::new_err("failed hex conversion")
+                    .value(py)
+                    .into(),
+            )
+        })?;
+        let solution_program = self.hex_to_program(&solution_hex).map_err(|_| {
+            PyErr::from_value(
+                PyIndexError::new_err("failed hex conversion")
+                    .value(py)
+                    .into(),
+            )
+        })?;
         debug!("solution_program = {solution_program:?}");
         self.make_spend
             .call1(py, (coin, puzzle_program, solution_program))
@@ -459,7 +472,7 @@ impl Simulator {
         let standard_solution = solution_for_conditions(allocator, conditions)?;
         let signature = sign_agg_sig_me(
             &identity_source.synthetic_private_key,
-            &quoted_conditions_hash.bytes(),
+            quoted_conditions_hash.bytes(),
             &source_coin.to_coin_id(),
             &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
         );
@@ -513,7 +526,7 @@ impl Simulator {
             let quoted_conditions_hash = quoted_conditions.sha256tree(allocator);
             let signature = sign_agg_sig_me(
                 &owner.synthetic_private_key,
-                &quoted_conditions_hash.bytes(),
+                quoted_conditions_hash.bytes(),
                 &c.to_coin_id(),
                 &Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA),
             );
