@@ -761,6 +761,11 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 }
 
+enum ContainerPlayState {
+    Handshaking,
+    Moving,
+}
+
 fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
     // Coinset adapter for each side.
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
@@ -841,7 +846,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
     );
     let mut cradles = [cradle1, cradle2];
     let mut game_ids = Vec::default();
-    let mut handshake_done = false;
+    let mut container_state = ContainerPlayState::Handshaking;
     let mut can_move = false;
 
     let mut current_move = moves.iter();
@@ -903,9 +908,9 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
             }
         }
 
-        if !handshake_done && cradles[0].handshake_finished() && cradles[1].handshake_finished() {
+        if matches!(container_state, ContainerPlayState::Handshaking) && cradles[0].handshake_finished() && cradles[1].handshake_finished() {
             // Start game.
-            handshake_done = true;
+            container_state = ContainerPlayState::Moving;
 
             game_ids = cradles[0]
                 .start_games(
