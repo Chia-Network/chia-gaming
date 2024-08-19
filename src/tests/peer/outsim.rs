@@ -763,7 +763,9 @@ impl ToLocalUI for LocalTestUIReceiver {
 
 enum ContainerPlayState {
     Handshaking,
+    FirstMove,
     Moving,
+    Ending,
 }
 
 fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
@@ -910,7 +912,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
 
         if matches!(container_state, ContainerPlayState::Handshaking) && cradles[0].handshake_finished() && cradles[1].handshake_finished() {
             // Start game.
-            container_state = ContainerPlayState::Moving;
+            container_state = ContainerPlayState::FirstMove;
 
             game_ids = cradles[0]
                 .start_games(
@@ -943,10 +945,8 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                     },
                 )
                 .expect("should run");
-
-            can_move = true;
-        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) {
-            can_move = false;
+        } else if matches!(container_state, ContainerPlayState::FirstMove) || local_uis.iter().any(|l| l.opponent_moved) {
+            container_state = ContainerPlayState::Moving;
             assert!(!game_ids.is_empty());
 
             // Reset moved flags.
@@ -974,6 +974,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                     _ => todo!(),
                 }
             } else {
+                container_state = ContainerPlayState::Ending;
                 cradles[last_move ^ 1]
                     .accept(allocator, &mut rng, &game_ids[0])
                     .expect("should work");
