@@ -56,8 +56,8 @@ pub enum WalletBootstrapState {
 /// watch report.
 #[derive(Default)]
 pub struct FullCoinSetAdapter {
-    current_height: u64,
-    current_coins: HashSet<CoinString>,
+    pub current_height: u64,
+    pub current_coins: HashSet<CoinString>,
 }
 
 impl FullCoinSetAdapter {
@@ -471,6 +471,10 @@ where
 }
 
 impl SynchronousGameCradle {
+    pub fn has_potato(&self) -> bool {
+        self.peer.has_potato()
+    }
+
     fn create_partial_spend_for_channel_coin<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,

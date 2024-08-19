@@ -1,0 +1,59 @@
+body {
+    overflow: hidden;
+}
+
+#heading {
+    display: inline-block;
+}
+
+#container {
+    position: relative;
+    width: 300vw;
+    height: 85vw;
+    overflow: hidden;
+}
+
+#app {
+    top: 0;
+    left: 30vw;
+    display: inline-block;
+    margin: 0;
+    position: absolute;
+    padding: 0;
+    width: 78vw;
+    height: 85vh;
+    background: #ccc;
+}
+
+#info {
+    left: 0;
+    top: 0;
+    display: inline-block;
+    margin: 0;
+    position: absolute;
+    width: 28vw;
+    height: 85vh;
+    background: #bbb;
+}
+
+#p1 {
+    margin: 0;
+    position: relative;
+    height: 40vh;
+    width: 98vw;
+    background: #fcc;
+}
+
+#p2 {
+    margin: 0;
+    margin-top: 1rem;
+    position: relative;
+    height: 40vh;
+    width: 98vw;
+    background: #cfc;
+}
+
+.cardspan {
+    margin-left: 0.5em;
+    border: 1px solid black;
+}

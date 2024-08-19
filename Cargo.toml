@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-sim-tests = []
+sim-tests = ["dep:pyo3"]
+simulator = ["dep:pyo3"]
 
 [dependencies]
 clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "ec75759377791c9b785123d2d3e2457d08ac6621" }
@@ -32,9 +33,9 @@ tracing-subscriber = "0.3"
 ctor = "0.2.8"
 log = "0.4.22"
 env_logger = "0.11.3"
+pyo3 = { version = "0.20.0", features = ["auto-initialize"], optional = true }
 
 [dev-dependencies]
-pyo3 = { version = "0.20.0", features = ["auto-initialize"] }
 bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 
 [build-dependencies]
@@ -50,3 +51,4 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "chia-gaming"
 path = "src/cmd/main.rs"
+required-features = ["simulator"]
