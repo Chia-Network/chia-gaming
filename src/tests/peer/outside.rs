@@ -41,6 +41,7 @@ struct Pipe {
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove)>,
     opponent_messages: Vec<(GameID, Vec<u8>)>,
+    our_moves: Vec<(GameID, ReadableMove)>,
 
     // Bootstrap info
     channel_puzzle_hash: Option<PuzzleHash>,
@@ -119,6 +120,11 @@ impl BootstrapTowardWallet for Pipe {
 }
 
 impl ToLocalUI for Pipe {
+    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.our_moves.push((id.clone(), readable));
+        Ok(())
+    }
+
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moves.push((id.clone(), readable));
         Ok(())

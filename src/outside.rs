@@ -215,6 +215,7 @@ pub trait WalletSpendInterface {
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
+    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
     fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;

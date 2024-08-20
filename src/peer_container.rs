@@ -180,6 +180,10 @@ impl BootstrapTowardWallet for Pipe {
 
 #[cfg(test)]
 impl ToLocalUI for Pipe {
+    fn self_move(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
+        todo!();
+    }
+
     fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
         todo!();
     }
@@ -298,6 +302,7 @@ struct SynchronousGameCradleState {
     inbound_messages: VecDeque<Vec<u8>>,
     outbound_messages: VecDeque<Vec<u8>>,
     outbound_transactions: VecDeque<SpendBundle>,
+    our_moves: VecDeque<(GameID, ReadableMove)>,
     opponent_moves: VecDeque<(GameID, ReadableMove)>,
     game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_finished: VecDeque<(GameID, Amount)>,
@@ -361,6 +366,7 @@ impl SynchronousGameCradle {
                 inbound_messages: VecDeque::default(),
                 outbound_transactions: VecDeque::default(),
                 outbound_messages: VecDeque::default(),
+                our_moves: VecDeque::default(),
                 opponent_moves: VecDeque::default(),
                 game_messages: VecDeque::default(),
                 game_finished: VecDeque::default(),
@@ -402,6 +408,11 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
+    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.our_moves.push_back((id.clone(), readable));
+        Ok(())
+    }
+
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moves.push_back((id.clone(), readable));
         Ok(())
