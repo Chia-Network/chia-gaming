@@ -28,7 +28,7 @@ use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::{CoinSpend, Program};
 
 use crate::tests::calpoker::{load_calpoker, test_moves_1};
-use crate::tests::simenv::GameAction;
+use crate::tests::game::GameAction;
 
 #[derive(Default)]
 struct Pipe {
