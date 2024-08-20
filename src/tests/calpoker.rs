@@ -9,7 +9,7 @@ use crate::channel_handler::game::Game;
 use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, Sha256Input};
 use crate::tests::game::{GameAction, GameActionResult};
 
-#[cfg(features = "sim-tests")]
+#[cfg(feature = "sim-tests")]
 use crate::tests::simenv::SimulatorEnvironment;
 
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
@@ -20,7 +20,7 @@ pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Ga
     )
 }
 
-#[cfg(features = "sim-tests")]
+#[cfg(feature = "sim-tests")]
 #[test]
 fn test_load_calpoker() {
     let mut allocator = AllocEncoder::new();
@@ -35,7 +35,7 @@ fn test_load_calpoker() {
         .expect("should get a sim env");
 }
 
-#[cfg(features = "sim-tests")]
+#[cfg(feature = "sim-tests")]
 fn run_calpoker_play_test(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
@@ -82,7 +82,7 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
     ]
 }
 
-#[cfg(features = "sim-tests")]
+#[cfg(feature = "sim-tests")]
 #[test]
 fn test_play_calpoker_happy_path() {
     let mut allocator = AllocEncoder::new();
@@ -91,8 +91,8 @@ fn test_play_calpoker_happy_path() {
     debug!("play_result {test1:?}");
 }
 
-#[cfg(features = "sim-tests")]
 #[test]
+#[cfg(feature = "sim-tests")]
 fn test_play_calpoker_on_chain_after_1_move_p1() {
     let mut allocator = AllocEncoder::new();
 
@@ -106,8 +106,8 @@ fn test_play_calpoker_on_chain_after_1_move_p1() {
     debug!("play_result {test2:?}");
 }
 
-#[cfg(features = "sim-tests")]
 #[test]
+#[cfg(feature = "sim-tests")]
 fn test_play_calpoker_on_chain_after_1_move_p0_lost_message() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
@@ -118,8 +118,8 @@ fn test_play_calpoker_on_chain_after_1_move_p0_lost_message() {
     debug!("play_result {test3:?}");
 }
 
-#[cfg(features = "sim-tests")]
 #[test]
+#[cfg(feature = "sim-tests")]
 fn test_play_calpoker_on_chain_after_1_move_p0() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
@@ -129,8 +129,8 @@ fn test_play_calpoker_on_chain_after_1_move_p0() {
     debug!("play_result {test3:?}");
 }
 
-#[cfg(features = "sim-tests")]
 #[test]
+#[cfg(feature = "sim-tests")]
 fn test_play_calpoker_on_chain_after_2_moves_p0() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
@@ -140,8 +140,9 @@ fn test_play_calpoker_on_chain_after_2_moves_p0() {
     let test4 = run_calpoker_play_test(&mut allocator, &on_chain_moves_3).expect("should work");
     debug!("play_result {test4:?}");
 }
-#[cfg(features = "sim-tests")]
+
 #[test]
+#[cfg(feature = "sim-tests")]
 fn test_play_calpoker_on_chain_after_2_moves_p1() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
