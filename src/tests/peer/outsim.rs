@@ -975,10 +975,15 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                 }
             } else {
                 container_state = ContainerPlayState::Ending;
+                last_move ^= 1;
                 cradles[last_move ^ 1]
                     .accept(allocator, &mut rng, &game_ids[0])
                     .expect("should work");
             }
+        } else if matches!(container_state, ContainerPlayState::Ending) { // Ending
+            cradles[last_move ^ 1]
+                .shut_down(allocator, &mut rng)
+                .expect("should be able to shut down");
         }
     }
 }

@@ -263,7 +263,11 @@ pub trait GameCradle {
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
     /// Perhaps we should consider reporting the reward coins.
-    fn shut_down(&mut self) -> Result<(), Error>;
+    fn shut_down<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<(), Error>;
 
     /// Tell the game cradle that a new block arrived, giving a watch report.
     fn new_block<R: Rng>(
@@ -673,8 +677,18 @@ impl GameCradle for SynchronousGameCradle {
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
     /// Perhaps we should consider reporting the reward coins.
-    fn shut_down(&mut self) -> Result<(), Error> {
-        todo!();
+    fn shut_down<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<(), Error> {
+        let mut env = channel_handler_env(allocator, rng);
+        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
+            env: &mut env,
+            system_interface: &mut self.state,
+        };
+        self.peer.shut_down(&mut penv)?;
+        Ok(())
     }
 
     /// Tell the game cradle that a new block arrived, giving a watch report.

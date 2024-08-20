@@ -15,9 +15,10 @@ use crate::channel_handler::types::{
     PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
+use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GameID, IntoErr, Node, Program,
     PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -264,7 +265,10 @@ pub trait FromLocalUI<
         G: 'a,
         R: 'a;
 
-    fn shut_down(&mut self) -> Result<(), Error>;
+    fn shut_down<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a;
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -353,6 +357,7 @@ enum PotatoState {
 enum GameAction {
     Move(GameID, ReadableMove),
     Accept(GameID),
+    Shutdown(NodePtr)
 }
 
 /// Handle potato in flight when I request potato:
@@ -780,6 +785,23 @@ impl PotatoHandler {
                     sigs,
                 ))?;
                 system_interface.game_finished(&game_id, amount)?;
+                self.have_potato = PotatoState::Absent;
+
+                Ok(true)
+            }
+            Some(GameAction::Shutdown(target_conditions)) => {
+                let spend_for_shutdown =
+                {
+                    let (env, _system_interface) = penv.env();
+                    let ch = self.channel_handler_mut()?;
+                    ch.send_potato_clean_shutdown(
+                        env,
+                        target_conditions
+                    )?
+                };
+
+                let (_env, system_interface) = penv.env();
+                system_interface.spend_transaction_and_add_fee(&spend_for_shutdown)?;
                 self.have_potato = PotatoState::Absent;
 
                 Ok(true)
@@ -1343,14 +1365,36 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         self.do_game_action(penv, GameAction::Accept(id.clone()))
     }
 
-    fn shut_down(&mut self) -> Result<(), Error> {
+    fn shut_down<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a
+    {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
             return Err(Error::StrErr(
-                "shut_down without finishing handshake".to_string(),
+                format!("shut_down without finishing handshake, have state {:?}", self.handshake_state)
             ));
         }
 
-        todo!();
+        let amount =
+            {
+                let ch = self.channel_handler_mut()?;
+                ch.clean_shutdown_amount()
+            };
+
+
+        let target_conditions =
+        {
+            let (env, _) = penv.env();
+            [
+                (CREATE_COIN, (self.reward_puzzle_hash.clone(), (amount, ())))
+            ].to_clvm(env.allocator).into_gen()?
+        };
+
+        let ch = self.channel_handler_mut()?;
+        self.do_game_action(penv, GameAction::Shutdown(target_conditions))?;
+
+        Ok(())
     }
 }
 
