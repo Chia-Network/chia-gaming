@@ -217,6 +217,10 @@ impl BootstrapTowardWallet for SimulatedPeer {
 }
 
 impl ToLocalUI for SimulatedPeer {
+    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         // We can record stuff here and check that we got what was expected, but there's
         // no effect on the game mechanics.
@@ -730,9 +734,15 @@ struct LocalTestUIReceiver {
     shutdown_complete: bool,
     game_finished: Option<Amount>,
     opponent_moved: bool,
+    we_moved: bool,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
+    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.we_moved = true;
+        Ok(())
+    }
+
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moved = true;
         Ok(())
