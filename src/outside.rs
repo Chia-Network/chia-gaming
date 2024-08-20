@@ -18,7 +18,7 @@ use crate::channel_handler::ChannelHandler;
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GameID, IntoErr, Node, Program,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, IntoErr, Node, Program,
     PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -206,7 +206,7 @@ pub trait SpendWalletReceiver<
 /// Unroll time wallet interface.
 pub trait WalletSpendInterface {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error>;
+    fn spend_transaction_and_add_fee(&mut self, spend: &SpendBundle) -> Result<(), Error>;
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
     fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error>;
@@ -317,9 +317,7 @@ pub struct HandshakeStepInfo {
 
 #[derive(Debug, Clone)]
 pub struct HandshakeStepWithSpend {
-    #[allow(dead_code)]
     pub info: HandshakeStepInfo,
-    #[allow(dead_code)]
     pub spend: SpendBundle,
 }
 
@@ -493,6 +491,14 @@ impl PotatoHandler {
             channel_timeout,
             reward_puzzle_hash,
         }
+    }
+
+    pub fn parent_coin(&self) -> Result<CoinString, Error> {
+        if let HandshakeState::Finished(state) = &self.handshake_state {
+            return Ok(state.info.first_player_hs_info.parent.clone());
+        }
+
+        Err(Error::StrErr("no handshake yet".to_string()))
     }
 
     pub fn is_initiator(&self) -> bool {
@@ -790,19 +796,48 @@ impl PotatoHandler {
                 Ok(true)
             }
             Some(GameAction::Shutdown(target_conditions)) => {
-                let spend_for_shutdown =
+                // Get shutdown amount.
+                let (channel_puzzle_hash, amount) =
+                {
+                    let ch = self.channel_handler_mut()?;
+                    // Dig out the channel puzzle hash.
+                    let channel_coin = ch.state_channel_coin().coin_string();
+                    let channel_ph = if let Some((_, ph, _)) = channel_coin.to_parts() {
+                        ph
+                    } else {
+                        return Err(Error::StrErr("shutdown with no channel coin".to_string()));
+                    };
+                    (channel_ph, ch.clean_shutdown_amount())
+                };
+
+                let parent = self.parent_coin()?;
+                let target_conditions =
+                {
+                    let (env, _system_interface) = penv.env();
+                    [
+                        (CREATE_COIN, (self.reward_puzzle_hash.clone(), (amount, ())))
+                    ].to_clvm(env.allocator).into_gen()?
+                };
+
+                let inner_spend_for_shutdown =
                 {
                     let (env, _system_interface) = penv.env();
                     let ch = self.channel_handler_mut()?;
-                    ch.send_potato_clean_shutdown(
+                    let spend = ch.send_potato_clean_shutdown(
                         env,
                         target_conditions
-                    )?
+                    )?;
+                    self.have_potato = PotatoState::Absent;
+                    spend
                 };
 
                 let (_env, system_interface) = penv.env();
-                system_interface.spend_transaction_and_add_fee(&spend_for_shutdown)?;
-                self.have_potato = PotatoState::Absent;
+                system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                    spends: vec![CoinSpend {
+                        coin: parent,
+                        bundle: inner_spend_for_shutdown
+                    }]
+                })?;
 
                 Ok(true)
             }

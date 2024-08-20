@@ -91,7 +91,7 @@ struct SimulatedPeer {
     channel_puzzle_hash: Option<PuzzleHash>,
 
     unfunded_offer: Option<SpendBundle>,
-    outbound_transactions: Vec<Spend>,
+    outbound_transactions: Vec<SpendBundle>,
 
     simulated_wallet_spend: SimulatedWalletSpend,
 }
@@ -181,7 +181,7 @@ impl SimulatedWalletSpend {
 
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
         debug!("waiting to spend transaction");
         self.outbound_transactions.push(bundle.clone());
         Ok(())
@@ -981,6 +981,9 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                     .expect("should work");
             }
         } else if matches!(container_state, ContainerPlayState::Ending) { // Ending
+            cradles[last_move]
+                .shut_down(allocator, &mut rng)
+                .expect("should be able to shut down");
             cradles[last_move ^ 1]
                 .shut_down(allocator, &mut rng)
                 .expect("should be able to shut down");

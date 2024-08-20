@@ -152,7 +152,7 @@ struct Pipe {
 
 #[cfg(test)]
 impl WalletSpendInterface for Pipe {
-    fn spend_transaction_and_add_fee(&mut self, _bundle: &Spend) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, _bundle: &SpendBundle) -> Result<(), Error> {
         todo!();
     }
 
@@ -319,8 +319,10 @@ impl PacketSender for SynchronousGameCradleState {
 
 impl WalletSpendInterface for SynchronousGameCradleState {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, _bundle: &Spend) -> Result<(), Error> {
-        todo!();
+    fn spend_transaction_and_add_fee(&mut self, spend: &SpendBundle) -> Result<(), Error> {
+        self.outbound_transactions.push_back(spend.clone());
+
+        Ok(())
     }
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.

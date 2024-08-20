@@ -35,7 +35,7 @@ struct Pipe {
     message_pipe: MessagePipe,
 
     // WalletSpendInterface
-    outgoing_transactions: VecDeque<Spend>,
+    outgoing_transactions: VecDeque<SpendBundle>,
     registered_coins: HashMap<CoinString, Timeout>,
 
     // Opponent moves
@@ -85,7 +85,7 @@ impl PacketSender for Pipe {
 }
 
 impl WalletSpendInterface for Pipe {
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
         self.outgoing_transactions.push_back(bundle.clone());
 
         Ok(())
