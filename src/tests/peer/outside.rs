@@ -28,7 +28,7 @@ use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::{CoinSpend, Program};
 
 use crate::tests::calpoker::{load_calpoker, test_moves_1};
-use crate::tests::game::GameAction;
+use crate::tests::simenv::GameAction;
 
 #[derive(Default)]
 struct Pipe {
@@ -41,6 +41,7 @@ struct Pipe {
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove)>,
     opponent_messages: Vec<(GameID, Vec<u8>)>,
+    our_moves: Vec<(GameID, Vec<u8>)>,
 
     // Bootstrap info
     channel_puzzle_hash: Option<PuzzleHash>,
@@ -119,6 +120,11 @@ impl BootstrapTowardWallet for Pipe {
 }
 
 impl ToLocalUI for Pipe {
+    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.our_moves.push((id.clone(), readable.to_vec()));
+        Ok(())
+    }
+
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moves.push((id.clone(), readable));
         Ok(())

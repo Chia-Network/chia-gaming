@@ -1,5 +1,3 @@
-use clvmr::NodePtr;
-
 #[cfg(feature = "sim-tests")]
 use rand::prelude::*;
 
@@ -20,38 +18,6 @@ use crate::common::types::{Amount, CoinString, Error, IntoErr, Timeout};
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::Simulator;
-
-#[derive(Debug, Clone)]
-pub enum GameAction {
-    /// Do a timeout
-    #[allow(dead_code)]
-    Timeout(usize),
-    /// Move (player, clvm readable move, was received)
-    Move(usize, NodePtr, bool),
-    /// Fake move, just calls receive on the indicated side.
-    #[allow(dead_code)]
-    FakeMove(usize, NodePtr, Vec<u8>),
-    /// Go on chain
-    GoOnChain(usize),
-}
-
-impl GameAction {
-    pub fn lose(&self) -> GameAction {
-        if let GameAction::Move(p, m, _r) = self {
-            return GameAction::Move(*p, *m, false);
-        }
-
-        self.clone()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum GameActionResult {
-    #[allow(dead_code)]
-    MoveResult(NodePtr, Vec<u8>),
-    BrokenMove,
-    MoveToOnChain,
-}
 
 #[cfg(feature = "sim-tests")]
 pub fn new_channel_handler_game<R: Rng>(

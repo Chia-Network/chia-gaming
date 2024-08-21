@@ -39,7 +39,8 @@ use chia_gaming::peer_container::{
 use chia_gaming::simulator::Simulator;
 
 struct UIReceiver {
-    readable_move: ReadableMove,
+    our_readable_move: ReadableMove,
+    opponent_readable_move: ReadableMove,
 }
 
 impl UIReceiver {
@@ -51,8 +52,12 @@ impl UIReceiver {
 }
 
 impl ToLocalUI for UIReceiver {
+    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.our_readable_move = readable;
+    }
+
     fn opponent_moved(&mut self, _id: &GameID, readable: ReadableMove) -> Result<(), Error> {
-        self.readable_move = readable;
+        self.opponent_readable_move = readable;
         Ok(())
     }
 

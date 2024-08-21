@@ -215,6 +215,7 @@ pub trait WalletSpendInterface {
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
+    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error>;
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
     fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;
@@ -761,6 +762,8 @@ impl PotatoHandler {
                 };
 
                 let (_, system_interface) = penv.env();
+                system_interface.self_move(&game_id, &move_result.game_move.basic.move_made)?;
+
                 system_interface.send_message(&PeerMessage::Move(game_id, move_result))?;
                 self.have_potato = PotatoState::Absent;
 

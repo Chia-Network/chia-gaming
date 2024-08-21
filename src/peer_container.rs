@@ -150,6 +150,61 @@ struct Pipe {
     bootstrap_state: Option<WalletBootstrapState>,
 }
 
+#[cfg(test)]
+impl WalletSpendInterface for Pipe {
+    fn spend_transaction_and_add_fee(&mut self, _bundle: &Spend) -> Result<(), Error> {
+        todo!();
+    }
+
+    fn register_coin(&mut self, _coin_id: &CoinString, _timeout: &Timeout) -> Result<(), Error> {
+        todo!();
+    }
+}
+
+#[cfg(test)]
+impl BootstrapTowardWallet for Pipe {
+    fn channel_puzzle_hash(&mut self, _puzzle_hash: &PuzzleHash) -> Result<(), Error> {
+        todo!();
+    }
+
+    fn received_channel_offer(&mut self, _bundle: &SpendBundle) -> Result<(), Error> {
+        todo!();
+    }
+    fn received_channel_transaction_completion(
+        &mut self,
+        _bundle: &SpendBundle,
+    ) -> Result<(), Error> {
+        todo!();
+    }
+}
+
+#[cfg(test)]
+impl ToLocalUI for Pipe {
+    fn self_move(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
+        todo!();
+    }
+
+    fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
+        todo!();
+    }
+    fn game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
+        todo!();
+    }
+    fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
+        todo!();
+    }
+    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
+        todo!();
+    }
+
+    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
+        todo!();
+    }
+    fn going_on_chain(&mut self) -> Result<(), Error> {
+        todo!();
+    }
+}
+
 pub struct RegisteredCoinsIterator<'a> {
     internal_iterator: std::collections::btree_map::Iter<'a, CoinString, WatchEntry>,
 }
@@ -247,6 +302,7 @@ struct SynchronousGameCradleState {
     inbound_messages: VecDeque<Vec<u8>>,
     outbound_messages: VecDeque<Vec<u8>>,
     outbound_transactions: VecDeque<SpendBundle>,
+    our_moves: VecDeque<(GameID, Vec<u8>)>,
     opponent_moves: VecDeque<(GameID, ReadableMove)>,
     game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_finished: VecDeque<(GameID, Amount)>,
@@ -310,6 +366,7 @@ impl SynchronousGameCradle {
                 inbound_messages: VecDeque::default(),
                 outbound_transactions: VecDeque::default(),
                 outbound_messages: VecDeque::default(),
+                our_moves: VecDeque::default(),
                 opponent_moves: VecDeque::default(),
                 game_messages: VecDeque::default(),
                 game_finished: VecDeque::default(),
@@ -351,6 +408,11 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
+    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.our_moves.push_back((id.clone(), readable.to_vec()));
+        Ok(())
+    }
+
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moves.push_back((id.clone(), readable));
         Ok(())
