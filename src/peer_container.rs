@@ -180,7 +180,7 @@ impl BootstrapTowardWallet for Pipe {
 
 #[cfg(test)]
 impl ToLocalUI for Pipe {
-    fn self_move(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
+    fn self_move(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
         todo!();
     }
 
@@ -302,7 +302,7 @@ struct SynchronousGameCradleState {
     inbound_messages: VecDeque<Vec<u8>>,
     outbound_messages: VecDeque<Vec<u8>>,
     outbound_transactions: VecDeque<SpendBundle>,
-    our_moves: VecDeque<(GameID, ReadableMove)>,
+    our_moves: VecDeque<(GameID, Vec<u8>)>,
     opponent_moves: VecDeque<(GameID, ReadableMove)>,
     game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_finished: VecDeque<(GameID, Amount)>,
@@ -408,8 +408,8 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
-    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
-        self.our_moves.push_back((id.clone(), readable));
+    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.our_moves.push_back((id.clone(), readable.to_vec()));
         Ok(())
     }
 

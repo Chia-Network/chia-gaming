@@ -217,7 +217,7 @@ impl BootstrapTowardWallet for SimulatedPeer {
 }
 
 impl ToLocalUI for SimulatedPeer {
-    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
         Ok(())
     }
 
@@ -738,7 +738,7 @@ struct LocalTestUIReceiver {
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
-    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
         self.we_moved = true;
         Ok(())
     }
