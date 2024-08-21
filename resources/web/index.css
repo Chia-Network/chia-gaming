@@ -57,3 +57,28 @@ body {
     margin-left: 0.5em;
     border: 1px solid black;
 }
+
+#p1 iframe {
+    position: relative;
+    background: #fcc;
+    left: 0;
+    top: 0;
+    right: 100%;
+    bottom: 100%;
+}
+
+#player-heading {
+    margin: 0;
+}
+
+#player-info {
+    position: relative;
+}
+
+.player-attr {
+    margin-left: 1em;
+}
+
+#player-body {
+    font-size: 0.6rem;
+}

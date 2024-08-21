@@ -23,7 +23,7 @@ use salvo::http::ResBody;
 use salvo::hyper::body::Bytes;
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
@@ -39,21 +39,23 @@ use chia_gaming::peer_container::{
 use chia_gaming::simulator::Simulator;
 
 struct UIReceiver {
-    our_readable_move: ReadableMove,
+    our_readable_move: Vec<u8>,
     opponent_readable_move: ReadableMove,
 }
 
 impl UIReceiver {
     fn new(allocator: &mut AllocEncoder) -> Self {
         UIReceiver {
-            readable_move: ReadableMove::from_nodeptr(allocator.encode_atom(&[]).unwrap()),
+            our_readable_move: Vec::default(),
+            opponent_readable_move: ReadableMove::from_nodeptr(allocator.encode_atom(&[]).unwrap()),
         }
     }
 }
 
 impl ToLocalUI for UIReceiver {
-    fn self_move(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
-        self.our_readable_move = readable;
+    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.our_readable_move = readable.to_vec();
+        Ok(())
     }
 
     fn opponent_moved(&mut self, _id: &GameID, readable: ReadableMove) -> Result<(), Error> {
@@ -82,12 +84,14 @@ impl ToLocalUI for UIReceiver {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 enum PlayState {
-    AliceWord,
-    BobWord,
-    AlicePicks,
-    BobPicks,
+    BeforeAliceWord,
+    BeforeAlicePicks,
+    BeforeFinish,
+
+    WaitingForAliceWord,
+    WaitingForAlicePicks,
     FinishGame,
 }
 
@@ -110,25 +114,30 @@ struct GameRunner {
 
     simulator: Simulator,
     cradles: [SynchronousGameCradle; 2],
+    play_states: [PlayState; 2],
     game_ids: Vec<GameID>,
 
     fund_coins: [CoinString; 2],
     handshake_done: bool,
     can_move: bool,
     funded: bool,
-    play_state: PlayState,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct UpdateResult {
-    info: String,
-    p1: String,
-    p2: String,
+    info: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PlayerResult {
+    can_move: bool,
+    state: String,
 }
 
 #[derive(Debug, Clone)]
 enum WebRequest {
     Idle,
+    Player(bool),
     AliceWordHash(Vec<u8>),
     BobWord(Vec<u8>),
     AlicePicks(Vec<bool>),
@@ -246,100 +255,18 @@ impl GameRunner {
             can_move,
             funded: false,
             fund_coins: [parent_coin_0.clone(), parent_coin_1.clone()],
-            play_state: PlayState::AliceWord,
+            play_states: [PlayState::BeforeAliceWord, PlayState::WaitingForAliceWord],
         })
     }
 
-    fn info(&self) -> String {
-        format!(
-            "<ul><li>block height: {}<li>handshake_done: {}<li>can_move: {}<li>play_state: {:?}</ul>",
-            self.coinset_adapter.current_height,
-            self.handshake_done,
-            self.can_move,
-            self.play_state
-        )
-    }
-
-    fn alice_word_hash(&mut self, hash: &[u8]) -> String {
-        let encoded_node = self.allocator.encode_atom(hash).unwrap();
-        let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
-        self.cradles[0]
-            .make_move(
-                &mut self.allocator,
-                &mut self.rng,
-                &self.game_ids[0],
-                encoded,
-            )
-            .unwrap();
-
-        self.play_state = PlayState::BobWord;
-
-        self.move_state()
-    }
-
-    fn bob_word(&mut self, word: &[u8]) -> String {
-        let encoded_node = self.allocator.encode_atom(word).unwrap();
-        let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
-        self.cradles[1]
-            .make_move(
-                &mut self.allocator,
-                &mut self.rng,
-                &self.game_ids[0],
-                encoded,
-            )
-            .unwrap();
-
-        self.play_state = PlayState::AlicePicks;
-
-        self.move_state()
-    }
-
-    fn alice_picks(&mut self, picks: &[bool]) -> String {
-        let encoded_node = picks.to_clvm(&mut self.allocator).unwrap();
-        let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
-        self.cradles[0]
-            .make_move(
-                &mut self.allocator,
-                &mut self.rng,
-                &self.game_ids[0],
-                encoded,
-            )
-            .unwrap();
-
-        self.play_state = PlayState::BobPicks;
-
-        self.move_state()
-    }
-
-    fn bob_picks(&mut self, picks: &[bool]) -> String {
-        let encoded_node = picks.to_clvm(&mut self.allocator).unwrap();
-        let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
-        self.cradles[1]
-            .make_move(
-                &mut self.allocator,
-                &mut self.rng,
-                &self.game_ids[0],
-                encoded,
-            )
-            .unwrap();
-
-        self.play_state = PlayState::FinishGame;
-
-        self.move_state()
-    }
-
-    fn basic_show(&mut self) -> (String, String) {
-        let p1 = disassemble(
-            self.allocator.allocator(),
-            self.local_uis[0].readable_move.to_nodeptr(),
-            None,
-        );
-        let p2 = disassemble(
-            self.allocator.allocator(),
-            self.local_uis[1].readable_move.to_nodeptr(),
-            None,
-        );
-        (p1, p2)
+    fn info(&self) -> Value {
+        let mut r = Map::default();
+        r.insert("block_height".to_string(), serde_json::to_value(self.coinset_adapter.current_height).unwrap());
+        r.insert("handshake_done".to_string(), serde_json::to_value(self.handshake_done).unwrap());
+        r.insert("can_move".to_string(), serde_json::to_value(self.can_move).unwrap());
+        r.insert("alice_state".to_string(), serde_json::to_value(&self.play_states[0]).unwrap());
+        r.insert("bob_state".to_string(), serde_json::to_value(&self.play_states[1]).unwrap());
+        Value::Object(r)
     }
 
     fn convert_cards(&mut self, card_list: NodePtr) -> Vec<(usize, usize)> {
@@ -363,72 +290,30 @@ impl GameRunner {
         Vec::new()
     }
 
-    fn picks_state(&mut self, bob: bool) -> (String, String) {
-        let bs = self.basic_show();
-        if let Some(alice_bob_cards) = proper_list(
-            self.allocator.allocator(),
-            self.local_uis[0].readable_move.to_nodeptr(),
-            true,
-        ) {
-            if alice_bob_cards.is_empty() {
-                self.basic_show()
-            } else {
-                eprintln!("alice_bob_cards {alice_bob_cards:?}");
-                let alice_cards = self.convert_cards(alice_bob_cards[0]);
-                let bob_cards = self.convert_cards(alice_bob_cards[1]);
-                let mut p1 = b"<div><h2>alice cards</h2><div>".to_vec();
-                let mut p2 = b"<div><h2>bob cards</h2><div>".to_vec();
-                for (i, (rank, suit)) in alice_cards.into_iter().enumerate() {
-                    let mut card_fmt: Vec<u8> = format!("<button class='cardspan' id='alice_card{}' rank='{}' suit='{}' onclick='alice_toggle({})'>{} {}</span>", i, rank, suit, i, rank, suit).bytes().collect();
-                    p1.append(&mut card_fmt);
-                }
-                for (i, (rank, suit)) in bob_cards.into_iter().enumerate() {
-                    let mut card_fmt: Vec<u8> = format!("<button class='cardspan' id='bob_card{}' rank='{}' suit='{}' onclick='bob_toggle({})'>{} {}</span>", i, rank, suit, i, rank, suit).bytes().collect();
-                    p2.append(&mut card_fmt);
-                }
+    // Get the game state for this player.  The report depends on the game state that player
+    // is showing.  This requires each player to individually have a notion of the full game
+    // stage.
+    fn game_state(&self, id: bool) -> String {
+        let state = &self.play_states[id as usize];
+        let player_ui = &self.local_uis[id as usize];
 
-                {
-                    let (who, to_append_button, to_append_other) = if bob {
-                        ("bob", &mut p2, &mut p1)
-                    } else {
-                        ("alice", &mut p1, &mut p2)
-                    };
-
-                    let button_append = format!("</div><button id='{who}_pick' onclick='set_{who}_picks()'>Set {who} picks</button></div>");
-
-                    to_append_button.append(&mut button_append.bytes().collect());
-                    to_append_other.append(&mut b"</div></div>".to_vec());
-                }
-
-                (decode_string(&p1), decode_string(&p2))
-            }
-        } else {
-            self.basic_show()
-        }
+        todo!();
     }
 
-    fn move_state(&mut self) -> String {
-        let (p1, p2) = match &self.play_state {
-            PlayState::AliceWord => {
-                let p1 = "<div><h2>generate alice word</h2><button onclick='send_alice_word()'>Generate</button></div>".to_string();
-                let p2 = "<div><h2>alice' turn</h2></div>".to_string();
-                (p1, p2)
-            }
-            PlayState::BobWord => {
-                let p1 = "<div><h2>bob's turn</h2></div>".to_string();
-                let p2 = "<div><h2>generate bob's word</h2><button onclick='send_bob_word()'>Generate</button></div>".to_string();
-                (p1, p2)
-            }
-            PlayState::AlicePicks => self.picks_state(false),
-            PlayState::BobPicks => self.picks_state(true),
-            _ => self.basic_show(),
-        };
+    // Produce the state result for when a move is possible.
+    fn move_state(&self) -> String {
         serde_json::to_string(&UpdateResult {
             info: self.info(),
-            p1,
-            p2,
         })
-        .unwrap()
+            .unwrap()
+    }
+
+    fn player(&self, id: bool) -> String {
+        serde_json::to_string(&PlayerResult {
+            can_move: self.can_move,
+            state: format!("{:?}", self.play_states[id as usize])
+        })
+            .unwrap()
     }
 
     fn idle(&mut self) -> String {
@@ -504,8 +389,6 @@ impl GameRunner {
 
             return serde_json::to_string(&UpdateResult {
                 info: self.info(),
-                p1: "player 1 funded".to_string(),
-                p2: "player 2 funded".to_string(),
             })
             .unwrap();
         }
@@ -556,10 +439,8 @@ impl GameRunner {
 
         serde_json::to_string(&UpdateResult {
             info: self.info(),
-            p1: "player 1 handshaking".to_string(),
-            p2: "player 2 handshaking".to_string(),
         })
-        .unwrap()
+            .unwrap()
     }
 }
 
@@ -578,8 +459,18 @@ async fn index(response: &mut Response) -> Result<(), String> {
 }
 
 #[handler]
+async fn player_html(response: &mut Response) -> Result<(), String> {
+    get_file("resources/web/player.html", "text/html", response)
+}
+
+#[handler]
 async fn index_js(response: &mut Response) -> Result<(), String> {
     get_file("resources/web/index.js", "text/javascript", response)
+}
+
+#[handler]
+async fn player_js(response: &mut Response) -> Result<(), String> {
+    get_file("resources/web/player.js", "text/javascript", response)
 }
 
 #[handler]
@@ -599,6 +490,23 @@ fn pass_on_request(wr: WebRequest) -> Result<String, String> {
 #[handler]
 async fn idle(_req: &mut Request) -> Result<String, String> {
     pass_on_request(WebRequest::Idle)
+}
+
+#[handler]
+async fn player(req: &mut Request) -> Result<String, String> {
+    let uri_string = req.uri().to_string();
+    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
+        let arg: Vec<u8> = uri_string.bytes().skip(found_eq + 1).collect();
+        let pid =
+            if arg.is_empty() {
+                false
+            } else {
+                arg[0] == b'2'
+            };
+        return pass_on_request(WebRequest::Player(pid));
+    };
+
+    Err("no argument".to_string())
 }
 
 #[handler]
@@ -669,8 +577,11 @@ async fn main() {
         .get(index)
         .push(Router::with_path("index.css").get(index_css))
         .push(Router::with_path("index.js").get(index_js))
+        .push(Router::with_path("player.html").get(player_html))
+        .push(Router::with_path("player.js").get(player_js))
         .push(Router::with_path("exit").post(exit))
         .push(Router::with_path("idle.json").post(idle))
+        .push(Router::with_path("player.json").post(player))
         .push(Router::with_path("alice_word_hash").post(alice_word_hash))
         .push(Router::with_path("bob_word").post(bob_word))
         .push(Router::with_path("alice_picks").post(alice_picks))
@@ -688,10 +599,11 @@ async fn main() {
             let mut locked = MUTEX.lock().unwrap();
             match request {
                 WebRequest::Idle => (*locked).idle(),
-                WebRequest::AliceWordHash(hash) => (*locked).alice_word_hash(&hash),
-                WebRequest::BobWord(bytes) => (*locked).bob_word(&bytes),
-                WebRequest::AlicePicks(picks) => (*locked).alice_picks(&picks),
-                WebRequest::BobPicks(picks) => (*locked).bob_picks(&picks),
+                WebRequest::Player(id) => (*locked).player(id),
+                //WebRequest::AliceWordHash(hash) => (*locked).alice_word_hash(&hash),
+                //WebRequest::BobWord(bytes) => (*locked).bob_word(&bytes),
+                //WebRequest::AlicePicks(picks) => (*locked).alice_picks(&picks),
+                //WebRequest::BobPicks(picks) => (*locked).bob_picks(&picks),
                 _ => todo!(),
             }
         };
