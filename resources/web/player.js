@@ -1,4 +1,11 @@
 let all_selected_cards = {};
+let have_made_move_in_current_state = false;
+let most_recent_state = null;
+let latched_in_move_state = null;
+let auto_moves = {
+    "BeforeAliceWord": true,
+    "WaitingForAliceWord": true
+};
 
 function clear(elt) {
     for (let node = elt.firstChild; node; node = elt.firstChild) {
@@ -88,12 +95,51 @@ function set_picks(who, id) {
     });
 }
 
+function take_auto_action(player_id, json) {
+    console.log(`take auto action ${player_id} ${JSON.stringify(json)}`);
+}
+
+function generate_alice_entropy(player_id) {
+    return fetch(`alice_word_hash?arg=${player_id}${Math.random()}`).then((response) => {
+        return response.json();
+    }).then((json) => {
+        latched_in_move_state = null;
+    });
+}
+
+function allow_manual_move(player_id, move, json) {
+    console.log(`allow manual move ${player_id} ${move} ${JSON.stringify(json)}`);
+    let element = document.getElementById('playspace');
+    if (move === 'BeforeAliceWord') {
+        element.innerHTML = '<h2>Alice must generate a secret value and send a hash commitment</h2><div><button onclick="generate_alice_entropy">Generate secret value</button>"';
+    }
+}
+
 function take_update(player_id, auto, json) {
-    let keys = Object.keys(json);
+    if (json.can_move) {
+        let first_time_seeing_state = null;
+        if (json.state !== most_recent_state) {
+            first_time_seeing_state = json.state;
+            most_recent_state = json.state;
+        }
+
+        if (first_time_seeing_state) {
+            if (auto && auto_moves[first_time_seeing_state]) {
+                take_auto_action(player_id, json);
+            } else {
+                latched_in_move_state = first_time_seeing_state;
+            }
+        }
+    }
+
+    if (latched_in_move_state) {
+        allow_manual_move(player_id, latched_in_move_state, json);
+    }
 
     let info = document.getElementById('player-info');
     clear(info);
 
+    let keys = Object.keys(json);
     for (let ki = 0; ki < keys.length; ki++) {
         let key = keys[ki];
         let val = json[key];
@@ -108,11 +154,11 @@ function take_update(player_id, auto, json) {
 function check() {
     let player_id = get_player_id();
     let auto = auto_move() == "true";
-    auto_move = auto ? 'automatic default moves' : 'manual moves';
+    let do_auto_move = auto ? 'automatic default moves' : 'manual moves';
 
     let h1 = document.getElementById('player-heading');
     clear(h1);
-    h1.appendChild(document.createTextNode(`Player ${player_id} - ${auto_move}`));
+    h1.appendChild(document.createTextNode(`Player ${player_id} - ${do_auto_move}`));
 
     return fetch(`player.json?id=${player_id}`, {
         "method": "POST"

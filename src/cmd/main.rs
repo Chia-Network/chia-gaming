@@ -121,6 +121,8 @@ struct GameRunner {
     handshake_done: bool,
     can_move: bool,
     funded: bool,
+
+    auto: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -132,6 +134,7 @@ struct UpdateResult {
 struct PlayerResult {
     can_move: bool,
     state: String,
+    auto: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -256,7 +259,12 @@ impl GameRunner {
             funded: false,
             fund_coins: [parent_coin_0.clone(), parent_coin_1.clone()],
             play_states: [PlayState::BeforeAliceWord, PlayState::WaitingForAliceWord],
+            auto: false,
         })
+    }
+
+    fn set_auto(&mut self, new_auto: bool) {
+        self.auto = new_auto;
     }
 
     fn info(&self) -> Value {
@@ -290,16 +298,6 @@ impl GameRunner {
         Vec::new()
     }
 
-    // Get the game state for this player.  The report depends on the game state that player
-    // is showing.  This requires each player to individually have a notion of the full game
-    // stage.
-    fn game_state(&self, id: bool) -> String {
-        let state = &self.play_states[id as usize];
-        let player_ui = &self.local_uis[id as usize];
-
-        todo!();
-    }
-
     // Produce the state result for when a move is possible.
     fn move_state(&self) -> String {
         serde_json::to_string(&UpdateResult {
@@ -311,9 +309,14 @@ impl GameRunner {
     fn player(&self, id: bool) -> String {
         serde_json::to_string(&PlayerResult {
             can_move: self.can_move,
-            state: format!("{:?}", self.play_states[id as usize])
+            state: format!("{:?}", self.play_states[id as usize]),
+            auto: self.auto
         })
             .unwrap()
+    }
+
+    fn alice_word_hash(&mut self, word: &[u8]) -> String {
+        todo!();
     }
 
     fn idle(&mut self) -> String {
@@ -514,6 +517,10 @@ async fn alice_word_hash(req: &mut Request) -> Result<String, String> {
     let uri_string = req.uri().to_string();
     if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
         let arg: Vec<u8> = uri_string.bytes().skip(found_eq + 1).collect();
+        if arg.is_empty() {
+            return Err("empty arg".to_string());
+        }
+        let player_id = arg[0] == b'2';
         let hash = Sha256Input::Bytes(&arg).hash();
         return pass_on_request(WebRequest::AliceWordHash(hash.bytes().to_vec()));
     }
@@ -573,6 +580,12 @@ async fn exit(_req: &mut Request) -> Result<String, String> {
 
 #[tokio::main]
 async fn main() {
+    let mut args = std::env::args();
+    if args.any(|x| x == "auto") {
+        let mut locked = MUTEX.lock().unwrap();
+        (*locked).set_auto(true);
+    }
+
     let router = Router::new()
         .get(index)
         .push(Router::with_path("index.css").get(index_css))
@@ -600,10 +613,10 @@ async fn main() {
             match request {
                 WebRequest::Idle => (*locked).idle(),
                 WebRequest::Player(id) => (*locked).player(id),
-                //WebRequest::AliceWordHash(hash) => (*locked).alice_word_hash(&hash),
-                //WebRequest::BobWord(bytes) => (*locked).bob_word(&bytes),
-                //WebRequest::AlicePicks(picks) => (*locked).alice_picks(&picks),
-                //WebRequest::BobPicks(picks) => (*locked).bob_picks(&picks),
+                WebRequest::AliceWordHash(hash) => (*locked).alice_word_hash(&hash),
+                // WebRequest::BobWord(bytes) => (*locked).bob_word(&bytes),
+                // WebRequest::AlicePicks(picks) => (*locked).alice_picks(&picks),
+                // WebRequest::BobPicks(picks) => (*locked).bob_picks(&picks),
                 _ => todo!(),
             }
         };
