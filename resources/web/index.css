@@ -95,6 +95,11 @@ body {
     font-size: 2rem;
     padding-left: 0.5rem;
     padding-right: 0.5rem;
+    cursor: pointer;
+}
+
+.selected_true {
+    background: #aca !important;
 }
 
 .card_bot {

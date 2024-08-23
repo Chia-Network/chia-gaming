@@ -298,6 +298,7 @@ pub enum PeerMessage {
 
     Nil(PotatoSignatures),
     Move(GameID, MoveResult),
+    Message(GameID, Vec<u8>),
     Accept(GameID, Amount, PotatoSignatures),
     Shutdown(Aggsig),
     RequestPotato(()),
@@ -610,10 +611,15 @@ impl PotatoHandler {
                     system_interface
                         .opponent_moved(&game_id, ReadableMove::from_nodeptr(readable_move))?;
                     if !message.is_empty() {
-                        system_interface.game_message(&game_id, &message)?;
+                        system_interface.send_message(&PeerMessage::Message(game_id, message))?;
                     }
                 }
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
+            }
+            PeerMessage::Message(game_id, message) => {
+                let (_, system_interface) = penv.env();
+                system_interface.game_message(&game_id, &message)?;
+                // Does not affect potato.
             }
             PeerMessage::Accept(game_id, amount, sigs) => {
                 let spend_info = {
