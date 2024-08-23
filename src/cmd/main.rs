@@ -31,7 +31,7 @@ use serde_json::{json, Map, Value};
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
-    atom_from_clvm, usize_from_atom, AllocEncoder, Amount, CoinString, Error, GameID, PrivateKey,
+    atom_from_clvm, usize_from_atom, AllocEncoder, Amount, CoinString, Error, GameID, Hash, PrivateKey,
     Program, Sha256Input, Timeout,
 };
 use chia_gaming::games::poker_collection;
@@ -187,14 +187,31 @@ fn mergein(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
         if outer.is_empty() {
             res.push(first);
             res.append(&mut mergein(&[], &inner[1..], offset));
+        } else if outer[0] <= first {
+            res.push(outer[0]);
+            res.append(&mut mergein(&outer[1..], inner, offset + 1));
         } else {
-            if outer[0] <= first {
-                res.push(outer[0]);
-                res.append(&mut mergein(&outer[1..], inner, offset + 1));
-            } else {
-                res.push(first);
-                res.append(&mut mergein(outer, &inner[1..], offset));
-            }
+            res.push(first);
+            res.append(&mut mergein(outer, &inner[1..], offset));
+        }
+        res
+    }
+}
+
+fn mergeover(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
+    if inner.is_empty() {
+        vec![]
+    } else {
+        let first = inner[0] + offset;
+        let mut res = Vec::new();
+        if outer.is_empty() {
+            res.push(first);
+            res.append(&mut mergeover(&[], &inner[1..], offset));
+        } else if outer[0] <= first {
+            return mergeover(&outer[1..], inner, offset + 1);
+        } else {
+            res.push(first);
+            res.append(&mut mergeover(outer, &inner[1..], offset));
         }
         res
     }
@@ -204,11 +221,11 @@ fn mergein(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
 // returns (cards newvals).
 fn choose(numcards: usize, numchoose: usize, randomness: BigInt) -> (Vec<usize>, BigInt) {
     if numchoose == 1 {
-        let new_randomness = randomness.clone() / numcards.to_bigint().unwrap();
+        let newrandomness = randomness.clone() / numcards.to_bigint().unwrap();
         let card = (randomness % numcards.to_bigint().unwrap())
             .to_usize()
             .unwrap();
-        (vec![card], new_randomness)
+        (vec![card], newrandomness)
     } else {
         let half = numchoose >> 1;
         let (cards1, newrandomness2) = choose(numcards, half, randomness);
@@ -223,26 +240,40 @@ fn cards_to_hand(cards: &[usize]) -> Vec<(usize, usize)> {
         .map(|val| {
             let rank = val / 4;
             let suit = val % 4;
-            (rank, suit)
+            if rank == 12 {
+                (1, suit + 1)
+            } else {
+                (rank + 2, suit + 1)
+            }
         })
         .collect()
 }
 
 // Does the same thing as make_cards so bob can see the card display that alice can see once
 // the message of alice' preimage (alice_hash) goes through.
-fn make_cards(alice_hash: &[u8], bob_hash: &[u8]) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+    let amount_bigint = amount.to_u64().to_bigint().unwrap();
+    let (_, mut amount_bytes) = amount_bigint.to_bytes_be();
+    if &amount_bytes == &[0] {
+        amount_bytes = vec![];
+    }
+    if amount_bytes[0] & 0x80 != 0 {
+        amount_bytes.insert(0, 0);
+    }
+    eprintln!("make cards with alice_hash {alice_hash:?} bob_hash {bob_hash:?} amount {amount_bytes:?}");
     let randomness = BigInt::from_bytes_be(
         Sign::Plus,
         Sha256Input::Array(vec![
-            Sha256Input::Bytes(alice_hash),
-            Sha256Input::Bytes(bob_hash),
+            Sha256Input::Bytes(&alice_hash[..16]),
+            Sha256Input::Bytes(&bob_hash[..16]),
+            Sha256Input::Bytes(&amount_bytes),
         ])
         .hash()
         .bytes(),
     );
     let (handa, newrandomness) = choose(52, 8, randomness);
-    let (handb, newrandomness2) = choose(52, 8, newrandomness);
-    (cards_to_hand(&handa), cards_to_hand(&handb))
+    let (handb, _) = choose(52 - 8, 8, newrandomness);
+    (cards_to_hand(&handa), cards_to_hand(&mergeover(&handa, &handb, 0)))
 }
 
 impl GameRunner {
@@ -404,6 +435,31 @@ impl GameRunner {
         serde_json::to_string(&UpdateResult { info: self.info() }).unwrap()
     }
 
+    fn bob_readable(&mut self, id: bool) -> Result<Value, String> {
+        // See if we have enough info to get the cardlists.
+        if !self.local_uis[id as usize].remote_message.is_empty() {
+            // make_cards
+            serde_json::to_value(make_cards(
+                &self.local_uis[id as usize].remote_message,
+                &self.preimage[id as usize],
+                self.cradles[id as usize].amount()
+            ))
+                .map_err(|e| format!("failed make cards: {:?}", e))
+        } else {
+            let empty_vec: Vec<(usize, usize)> = vec![];
+            serde_json::to_value((
+                // self.convert_cards(
+                //     self.local_uis[id as usize]
+                //         .opponent_readable_move
+                //         .to_nodeptr(),
+                // ),
+                empty_vec.clone(),
+                empty_vec,
+            ))
+                .map_err(|e| format!("couldn't make basic bob result: {e:?}"))
+        }
+    }
+
     fn player_readable(&mut self, id: bool) -> Result<Value, String> {
         match &self.play_states[id as usize] {
             PlayState::BeforeAlicePicks => {
@@ -422,26 +478,7 @@ impl GameRunner {
                 serde_json::to_value(cardlist).map_err(|e| format!("couldn't make json: {e:?}"))
             }
             PlayState::WaitingForAlicePicks => {
-                // See if we have enough info to get the cardlists.
-                if !self.local_uis[id as usize].remote_message.is_empty() {
-                    // make_cards
-                    serde_json::to_value(make_cards(
-                        &self.local_uis[id as usize].remote_message,
-                        &self.preimage[id as usize],
-                    ))
-                    .map_err(|e| format!("failed make cards: {:?}", e))
-                } else {
-                    let empty_vec: Vec<(usize, usize)> = vec![];
-                    serde_json::to_value((
-                        self.convert_cards(
-                            self.local_uis[id as usize]
-                                .opponent_readable_move
-                                .to_nodeptr(),
-                        ),
-                        empty_vec,
-                    ))
-                    .map_err(|e| format!("couldn't make basic bob result: {e:?}"))
-                }
+                self.bob_readable(id)
             }
             _ => Ok(Value::String(disassemble(
                 self.allocator.allocator(),
@@ -477,6 +514,7 @@ impl GameRunner {
                 &mut self.rng,
                 &self.game_ids[0],
                 encoded,
+                Hash::from_slice(hash)
             )
             .unwrap();
 
@@ -485,14 +523,17 @@ impl GameRunner {
 
     fn bob_word_hash(&mut self, word: &[u8]) -> String {
         self.preimage[1] = word.to_vec();
+
         let encoded_node = self.allocator.encode_atom(word).unwrap();
         let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
+        let new_entropy = Hash::from_slice(word);
         self.cradles[1]
             .make_move(
                 &mut self.allocator,
                 &mut self.rng,
                 &self.game_ids[0],
                 encoded,
+                new_entropy,
             )
             .unwrap();
 
@@ -502,12 +543,14 @@ impl GameRunner {
     fn alice_picks(&mut self, picks: &[bool]) -> String {
         let encoded_node = picks.to_clvm(&mut self.allocator).unwrap();
         let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
+        let new_entropy: Hash = self.rng.gen();
         self.cradles[0]
             .make_move(
                 &mut self.allocator,
                 &mut self.rng,
                 &self.game_ids[0],
                 encoded,
+                new_entropy,
             )
             .unwrap();
 
@@ -590,7 +633,7 @@ impl GameRunner {
 
         if self.can_move {
             for i in 0..=1 {
-                eprintln!(
+                debug!(
                     "{i} play state {:?} received_moves {:?} our_move {:?} opponent_message {:?}",
                     self.play_states[i],
                     self.local_uis[i].received_moves,
@@ -733,6 +776,8 @@ async fn alice_word_hash(req: &mut Request) -> Result<String, String> {
         }
         let player_id = arg[0] == b'2';
         let hash = Sha256Input::Bytes(&arg[1..]).hash();
+        let hash_of_alice_hash = Sha256Input::Bytes(hash.bytes()).hash();
+        eprintln!("alice hash is {hash:?} hash of that is {hash_of_alice_hash:?}");
         return pass_on_request(WebRequest::AliceWordHash(hash.bytes().to_vec()));
     }
 
@@ -750,7 +795,7 @@ async fn bob_word_hash(req: &mut Request) -> Result<String, String> {
         let player_id = arg[0] == b'2';
         let hash = Sha256Input::Bytes(&arg[1..]).hash();
         return pass_on_request(WebRequest::BobWord(
-            hash.bytes().iter().take(16).cloned().collect(),
+            hash.bytes().to_vec()
         ));
     }
 
@@ -822,7 +867,7 @@ async fn main() {
             (*channel).recv().unwrap()
         };
 
-        eprintln!("request {request:?}");
+        debug!("request {request:?}");
         let result = {
             let mut locked = MUTEX.lock().unwrap();
             match request {

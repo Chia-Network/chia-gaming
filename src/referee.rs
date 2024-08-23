@@ -7,7 +7,6 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use log::debug;
 
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::{
@@ -816,13 +815,15 @@ impl RefereeMaker {
         Ok(())
     }
 
-    pub fn my_turn_make_move<R: Rng>(
+    // Since we may need to know new_entropy at a higher layer, we'll need to ensure it
+    // gets passed in rather than originating it here.
+    pub fn my_turn_make_move(
         &mut self,
-        rng: &mut R,
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
+        new_entropy: Hash
     ) -> Result<GameMoveWireData, Error> {
-        let new_entropy: Hash = rng.gen();
+        eprintln!("new_entropy {new_entropy:?}");
         let game_handler = self.get_game_handler();
         let (move_data, mover_share, max_move_size, previous_validation_info_hash) =
             match &self.state {

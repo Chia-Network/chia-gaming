@@ -17,7 +17,7 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, Program,
     PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -255,6 +255,7 @@ pub trait FromLocalUI<
         penv: &mut dyn PeerEnv<'a, G, R>,
         id: &GameID,
         readable: &ReadableMove,
+        new_entropy: Hash,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -353,7 +354,7 @@ enum PotatoState {
 }
 
 enum GameAction {
-    Move(GameID, ReadableMove),
+    Move(GameID, ReadableMove, Hash),
     Accept(GameID),
 }
 
@@ -490,6 +491,10 @@ impl PotatoHandler {
             channel_timeout,
             reward_puzzle_hash,
         }
+    }
+
+    pub fn amount(&self) -> Amount {
+        self.my_contribution.clone() + self.their_contribution.clone()
     }
 
     pub fn is_initiator(&self) -> bool {
@@ -760,11 +765,11 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         match self.game_action_queue.pop_front() {
-            Some(GameAction::Move(game_id, readable_move)) => {
+            Some(GameAction::Move(game_id, readable_move, new_entropy)) => {
                 let move_result = {
                     let ch = self.channel_handler_mut()?;
                     let (env, _) = penv.env();
-                    ch.send_potato_move(env, &game_id, &readable_move)?
+                    ch.send_potato_move(env, &game_id, &readable_move, new_entropy)?
                 };
 
                 let (_, system_interface) = penv.env();
@@ -1336,12 +1341,13 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         penv: &mut dyn PeerEnv<'a, G, R>,
         id: &GameID,
         readable: &ReadableMove,
+        new_entropy: Hash,
     ) -> Result<(), Error>
     where
         G: 'a,
         R: 'a,
     {
-        self.do_game_action(penv, GameAction::Move(id.clone(), readable.clone()))
+        self.do_game_action(penv, GameAction::Move(id.clone(), readable.clone(), new_entropy))
     }
 
     fn accept<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
