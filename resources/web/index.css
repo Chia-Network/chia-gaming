@@ -40,7 +40,7 @@ body {
     margin: 0;
     position: relative;
     height: 40vh;
-    width: 98vw;
+    width: 68vw;
     background: #fcc;
 }
 
@@ -49,7 +49,7 @@ body {
     margin-top: 1rem;
     position: relative;
     height: 40vh;
-    width: 98vw;
+    width: 68vw;
     background: #cfc;
 }
 
@@ -81,4 +81,31 @@ body {
 
 #player-body {
     font-size: 0.6rem;
+    overflow-y: auto;
+}
+
+.card {
+    display: inline-block;
+    width: 3rem;
+    height: 5rem;
+    box-sizing: border-box;
+    background: white;
+    border: 1px solid black;
+    border-radius: 0.5em;
+    font-size: 2rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+}
+
+.card_bot {
+    width: 100%;
+    text-align: right;
+}
+
+.suit2 {
+    color: red;
+}
+
+.suit4 {
+    color: red;
 }
