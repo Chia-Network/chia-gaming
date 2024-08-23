@@ -1347,7 +1347,10 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
-        self.do_game_action(penv, GameAction::Move(id.clone(), readable.clone(), new_entropy))
+        self.do_game_action(
+            penv,
+            GameAction::Move(id.clone(), readable.clone(), new_entropy),
+        )
     }
 
     fn accept<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
