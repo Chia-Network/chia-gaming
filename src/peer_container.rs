@@ -12,7 +12,7 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, Program, PuzzleHash,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
     Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::outside::{
@@ -254,6 +254,7 @@ pub trait GameCradle {
         rng: &mut R,
         id: &GameID,
         readable: Vec<u8>,
+        new_entropy: Hash,
     ) -> Result<(), Error>;
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
@@ -486,6 +487,10 @@ impl SynchronousGameCradle {
         self.peer.has_potato()
     }
 
+    pub fn amount(&self) -> Amount {
+        self.peer.amount()
+    }
+
     fn create_partial_spend_for_channel_coin<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -655,6 +660,7 @@ impl GameCradle for SynchronousGameCradle {
         rng: &mut R,
         id: &GameID,
         readable: Vec<u8>,
+        new_entropy: Hash,
     ) -> Result<(), Error> {
         let mut env = channel_handler_env(allocator, rng);
         let rehydrated_move = Program::from_bytes(&readable);
@@ -663,7 +669,7 @@ impl GameCradle for SynchronousGameCradle {
             env: &mut env,
             system_interface: &mut self.state,
         };
-        self.peer.make_move(&mut penv, id, &readable)
+        self.peer.make_move(&mut penv, id, &readable, new_entropy)
     }
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.

@@ -9,7 +9,8 @@ let auto_moves = {
 };
 let ui_wait = false;
 let eat_toggle = false;
-let label_by_rank = "0123456789JQKA";
+let bob_word = null;
+let label_by_rank = "0A23456789\u{2469}JQK";
 let label_by_suit = "Y\u{2660}\u{2665}\u{2663}\u{2666}";
 
 function clear(elt) {
@@ -40,20 +41,6 @@ function get_player_id() {
 function auto_move() {
     let params = get_params();
     return params['auto'];
-}
-
-function send_alice_word() {
-    let word = Math.random().toString();
-    return fetch(`alice_word_hash?word=${word}`, {
-        "method": "POST"
-    });
-}
-
-function send_bob_word() {
-    let word = Math.random().toString();
-    return fetch(`bob_word_hash?word=${word}`, {
-        "method": "POST"
-    });
 }
 
 function update_card_after_toggle(label) {
@@ -90,7 +77,8 @@ function take_auto_action(player_id, json) {
 }
 
 function generate_alice_entropy(player_id) {
-    return fetch(`alice_word_hash?arg=${player_id}${Math.random()}`, {
+    let alice_entropy = 'hithere'; // Math.random().toString();
+    return fetch(`alice_word_hash?arg=${player_id}${alice_entropy}`, {
         "method": "POST"
     }).then((response) => {
         return response.json();
@@ -101,13 +89,14 @@ function generate_alice_entropy(player_id) {
 }
 
 function generate_bob_entropy(player_id) {
-    return fetch(`bob_word_hash?arg=${player_id}${Math.random()}`, {
+    bob_word = 'test'; // Math.random().toString();
+    return fetch(`bob_word_hash?arg=${player_id}${bob_word}`, {
         "method": "POST"
     }).then((response) => {
         return response.json();
     }).then((json) => {
         latched_in_move_state = null;
-        made_move = true;
+        most_recent_state = null;
     });
 }
 
@@ -146,12 +135,32 @@ function submit_alice_picks() {
 
 function allow_manual_move(player_id, move, json) {
     let element = document.getElementById('playspace');
+    let show_cards = false;
+    let have_card_data = typeof(json.readable) !== 'string' && json.readable.length == 2;
+
     if (move === 'BeforeAliceWord') {
         element.innerHTML = `<h2>You must generate a secret value and send a hash commitment</h2><div><button onclick="generate_alice_entropy(${player_id})">Generate secret value</button>"`;
     } else if (move === 'WaitingForAlicePicks') {
-        element.innerHTML = `<h2>You must generate a secret value and send part of a hash commitment</h2><div><button onclick="generate_bob_entropy(${player_id})">Generate secret value</button>"`;
-    } else if (move === 'BeforeAlicePicks' && typeof(json.readable) !== 'string' && json.readable.length == 2) {
-        element.innerHTML = "<h2>You must choose four of these cards</h2><div id='picks-submit-div'><button id='submit-picks' onclick='submit_alice_picks()'>Submit picks</button></div><div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>";
+        let move_button =
+            bob_word ?
+            '' :
+            `<button onclick="generate_bob_entropy(${player_id})">Generate secret value</button>`;
+
+        element.innerHTML = `<h2>You must generate a secret value and send part of a hash commitment</h2><div>${move_button}</div><div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>"`;
+        show_cards = true;
+    } else if (move === 'BeforeAlicePicks') {
+        let submit_button =
+            have_card_data ?
+            `<button id='submit-picks' onclick='submit_alice_picks()'>Submit picks</button>` :
+            '';
+
+        element.innerHTML = `<h2>You must choose four of these cards</h2><div id='picks-submit-div'>${submit_button}</div><div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
+        show_cards = true;
+    } else {
+        element.innerHTML = `unhandled state ${move}`;
+    }
+
+    if (show_cards && have_card_data) {
         $("#card-choices").sortable({
             update: function() {
                 eat_toggle = true;
@@ -159,14 +168,14 @@ function allow_manual_move(player_id, move, json) {
         });
         $("#opponent-choices").sortable();
 
-        ui_wait = true;
+        if (typeof(json.readable) !== 'string' && json.readable.length == 2 && json.readable[0].length > 0) {
+            ui_wait = true;
+        }
 
         let choices = document.getElementById('card-choices');
         make_card_row(choices, json.readable[0], '_', true);
         let opponent = document.getElementById('opponent-choices');
         make_card_row(opponent, json.readable[1], 'opponent', false);
-    } else {
-        element.innerHTML = `unhandled state ${move}`;
     }
 }
 
@@ -183,15 +192,13 @@ function take_update(player_id, auto, json) {
                 take_auto_action(player_id, json);
             } else {
                 latched_in_move_state = first_time_seeing_state;
+                console.log('made move', made_move);
                 made_move = false;
             }
         }
     }
 
-    if (made_move || json.our_move.length) {
-        let element = document.getElementById('playspace');
-        element.innerHTML = "Sent move waiting for state change.";
-    } else if (latched_in_move_state && !made_move) {
+    if (latched_in_move_state) {
         allow_manual_move(player_id, latched_in_move_state, json);
     }
 
