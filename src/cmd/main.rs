@@ -31,8 +31,8 @@ use serde_json::{json, Map, Value};
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
-    atom_from_clvm, usize_from_atom, AllocEncoder, Amount, CoinString, Error, GameID, Hash, PrivateKey,
-    Program, Sha256Input, Timeout,
+    atom_from_clvm, usize_from_atom, AllocEncoder, Amount, CoinString, Error, GameID, Hash,
+    PrivateKey, Program, Sha256Input, Timeout,
 };
 use chia_gaming::games::poker_collection;
 use chia_gaming::outside::{GameStart, GameType, ToLocalUI};
@@ -251,7 +251,11 @@ fn cards_to_hand(cards: &[usize]) -> Vec<(usize, usize)> {
 
 // Does the same thing as make_cards so bob can see the card display that alice can see once
 // the message of alice' preimage (alice_hash) goes through.
-fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+fn make_cards(
+    alice_hash: &[u8],
+    bob_hash: &[u8],
+    amount: Amount,
+) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
     let amount_bigint = amount.to_u64().to_bigint().unwrap();
     let (_, mut amount_bytes) = amount_bigint.to_bytes_be();
     if &amount_bytes == &[0] {
@@ -260,7 +264,9 @@ fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<(usize
     if amount_bytes[0] & 0x80 != 0 {
         amount_bytes.insert(0, 0);
     }
-    eprintln!("make cards with alice_hash {alice_hash:?} bob_hash {bob_hash:?} amount {amount_bytes:?}");
+    eprintln!(
+        "make cards with alice_hash {alice_hash:?} bob_hash {bob_hash:?} amount {amount_bytes:?}"
+    );
     let randomness = BigInt::from_bytes_be(
         Sign::Plus,
         Sha256Input::Array(vec![
@@ -273,7 +279,10 @@ fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<(usize
     );
     let (handa, newrandomness) = choose(52, 8, randomness);
     let (handb, _) = choose(52 - 8, 8, newrandomness);
-    (cards_to_hand(&handa), cards_to_hand(&mergeover(&handa, &handb, 0)))
+    (
+        cards_to_hand(&handa),
+        cards_to_hand(&mergeover(&handa, &handb, 0)),
+    )
 }
 
 impl GameRunner {
@@ -442,9 +451,9 @@ impl GameRunner {
             serde_json::to_value(make_cards(
                 &self.local_uis[id as usize].remote_message,
                 &self.preimage[id as usize],
-                self.cradles[id as usize].amount()
+                self.cradles[id as usize].amount(),
             ))
-                .map_err(|e| format!("failed make cards: {:?}", e))
+            .map_err(|e| format!("failed make cards: {:?}", e))
         } else {
             let empty_vec: Vec<(usize, usize)> = vec![];
             serde_json::to_value((
@@ -456,7 +465,7 @@ impl GameRunner {
                 empty_vec.clone(),
                 empty_vec,
             ))
-                .map_err(|e| format!("couldn't make basic bob result: {e:?}"))
+            .map_err(|e| format!("couldn't make basic bob result: {e:?}"))
         }
     }
 
@@ -477,9 +486,7 @@ impl GameRunner {
 
                 serde_json::to_value(cardlist).map_err(|e| format!("couldn't make json: {e:?}"))
             }
-            PlayState::WaitingForAlicePicks => {
-                self.bob_readable(id)
-            }
+            PlayState::WaitingForAlicePicks => self.bob_readable(id),
             _ => Ok(Value::String(disassemble(
                 self.allocator.allocator(),
                 self.local_uis[id as usize]
@@ -514,7 +521,7 @@ impl GameRunner {
                 &mut self.rng,
                 &self.game_ids[0],
                 encoded,
-                Hash::from_slice(hash)
+                Hash::from_slice(hash),
             )
             .unwrap();
 
@@ -794,9 +801,7 @@ async fn bob_word_hash(req: &mut Request) -> Result<String, String> {
         }
         let player_id = arg[0] == b'2';
         let hash = Sha256Input::Bytes(&arg[1..]).hash();
-        return pass_on_request(WebRequest::BobWord(
-            hash.bytes().to_vec()
-        ));
+        return pass_on_request(WebRequest::BobWord(hash.bytes().to_vec()));
     }
 
     Err("no argument".to_string())

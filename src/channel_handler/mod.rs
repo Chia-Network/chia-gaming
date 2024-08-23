@@ -747,11 +747,7 @@ impl ChannelHandler {
 
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
         let referee_result =
-            referee_maker.my_turn_make_move(
-                env.allocator,
-                readable_move,
-                new_entropy
-            )?;
+            referee_maker.my_turn_make_move(env.allocator, readable_move, new_entropy)?;
         debug!("move_result {referee_result:?}");
         self.live_games[game_idx].last_referee_puzzle_hash =
             referee_result.puzzle_hash_for_unroll.clone();
