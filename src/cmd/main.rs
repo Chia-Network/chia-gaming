@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::stdin;
+use std::mem::swap;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
@@ -99,6 +100,7 @@ enum PlayState {
     BeforeAliceWord,
     BeforeAlicePicks,
     BeforeFinish,
+    AliceFinish,
 
     BobWaiting,
     WaitingForAliceWord,
@@ -130,6 +132,8 @@ struct GameRunner {
 
     fund_coins: [CoinString; 2],
     preimage: [Vec<u8>; 2],
+    bob_word: [Vec<u8>; 2],
+    picks: [Vec<bool>; 2],
     handshake_done: bool,
     can_move: bool,
     funded: bool,
@@ -155,6 +159,7 @@ struct PlayerResult {
 #[derive(Debug, Clone)]
 enum WebRequest {
     Idle,
+    Reset,
     Player(bool),
     AliceWordHash(Vec<u8>),
     BobWord(Vec<u8>),
@@ -385,6 +390,8 @@ impl GameRunner {
             fund_coins: [parent_coin_0.clone(), parent_coin_1.clone()],
             play_states: [PlayState::BeforeAliceWord, PlayState::BobWaiting],
             preimage: [vec![], vec![]],
+            bob_word: [vec![], vec![]],
+            picks: [vec![], vec![]],
             auto: false,
         })
     }
@@ -515,6 +522,7 @@ impl GameRunner {
 
         let encoded_node = self.allocator.encode_atom(hash).unwrap();
         let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
+        eprintln!("alice word hash");
         self.cradles[0]
             .make_move(
                 &mut self.allocator,
@@ -528,21 +536,30 @@ impl GameRunner {
         self.move_state()
     }
 
+    fn enact_bob_word(&mut self) {
+        if !self.bob_word[1].is_empty() {
+            let encoded_node = self.allocator.encode_atom(&self.bob_word[1]).unwrap();
+            let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
+            let new_entropy = Hash::from_slice(&self.bob_word[1]);
+            self.bob_word[1].clear();
+            eprintln!("enact_bob_word");
+            self.cradles[1]
+                .make_move(
+                    &mut self.allocator,
+                    &mut self.rng,
+                    &self.game_ids[0],
+                    encoded,
+                    new_entropy,
+                )
+                .unwrap();
+        }
+    }
+
     fn bob_word_hash(&mut self, word: &[u8]) -> String {
         self.preimage[1] = word.to_vec();
+        self.bob_word[1] = word.to_vec();
 
-        let encoded_node = self.allocator.encode_atom(word).unwrap();
-        let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
-        let new_entropy = Hash::from_slice(word);
-        self.cradles[1]
-            .make_move(
-                &mut self.allocator,
-                &mut self.rng,
-                &self.game_ids[0],
-                encoded,
-                new_entropy,
-            )
-            .unwrap();
+        self.enact_bob_word();
 
         self.move_state()
     }
@@ -550,7 +567,8 @@ impl GameRunner {
     fn alice_picks(&mut self, picks: &[bool]) -> String {
         let encoded_node = picks.to_clvm(&mut self.allocator).unwrap();
         let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
-        let new_entropy: Hash = self.rng.gen();
+        let new_entropy = self.rng.gen();
+        eprintln!("alice picks");
         self.cradles[0]
             .make_move(
                 &mut self.allocator,
@@ -564,7 +582,33 @@ impl GameRunner {
         self.move_state()
     }
 
-    fn idle(&mut self) -> String {
+    fn enact_bob_picks(&mut self) {
+        if !self.picks[1].is_empty() && matches!(self.play_states[1], PlayState::FinishGame) {
+            let encoded_node = self.picks[1].to_clvm(&mut self.allocator).unwrap();
+            let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
+            let mut work: Vec<bool> = vec![];
+            swap(&mut work, &mut self.picks[1]);
+            let new_entropy = self.rng.gen();
+            eprintln!("enact_bob_picks");
+            self.cradles[1]
+                .make_move(
+                    &mut self.allocator,
+                    &mut self.rng,
+                    &self.game_ids[0],
+                    encoded,
+                    new_entropy,
+                )
+                .unwrap();
+        }
+    }
+
+    fn bob_picks(&mut self, picks: &[bool]) -> String {
+        self.picks[1] = picks.to_vec();
+        self.enact_bob_picks();
+        "{}".to_string()
+    }
+
+    fn idle(&mut self) -> Result<String, String> {
         self.simulator
             .farm_block(&self.neutral_identity.puzzle_hash);
 
@@ -588,7 +632,7 @@ impl GameRunner {
             loop {
                 let result = self.cradles[i]
                     .idle(&mut self.allocator, &mut self.rng, &mut self.local_uis[i])
-                    .expect("should work");
+                    .map_err(|e| format!("{e:?}"))?;
                 debug!(
                     "cradle {i}: continue_on {} outbound {}",
                     result.continue_on,
@@ -635,7 +679,8 @@ impl GameRunner {
 
             self.funded = true;
 
-            return serde_json::to_string(&UpdateResult { info: self.info() }).unwrap();
+            return serde_json::to_string(&UpdateResult { info: self.info() })
+                .map_err(|e| format!("{e:?}"));
         }
 
         if self.can_move {
@@ -654,15 +699,23 @@ impl GameRunner {
                 } else if i == 1 && self.local_uis[i].received_moves == 1 {
                     self.play_states[i] = PlayState::WaitingForAlicePicks;
                 } else if i == 0 && self.local_uis[i].received_moves == 2 {
-                    todo!();
+                    self.play_states[i] = PlayState::AliceFinish;
                 } else if i == 1 && self.local_uis[i].received_moves == 2 {
                     self.play_states[i] = PlayState::FinishGame;
+                    self.enact_bob_picks();
                 } else {
                     todo!();
                 }
             }
 
-            return self.move_state();
+            // Release bob word if we're at the right state.
+            if matches!(self.play_states[1], PlayState::WaitingForAlicePicks)
+                && self.cradles[1].has_potato()
+            {
+                self.enact_bob_word();
+            }
+
+            return Ok(self.move_state());
         }
 
         if !self.handshake_done
@@ -705,7 +758,7 @@ impl GameRunner {
             self.handshake_done = true;
         }
 
-        serde_json::to_string(&UpdateResult { info: self.info() }).unwrap()
+        serde_json::to_string(&UpdateResult { info: self.info() }).map_err(|e| format!("{e:?}"))
     }
 }
 
@@ -843,13 +896,24 @@ async fn exit(_req: &mut Request) -> Result<String, String> {
     Ok("done".to_string())
 }
 
+#[handler]
+async fn reset(_req: &mut Request) -> Result<String, String> {
+    return pass_on_request(WebRequest::Reset);
+}
+
+fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, String> {
+    let mut new_game = GameRunner::new().map_err(|e| format!("{e:?}"))?;
+    if auto {
+        new_game.set_auto(true);
+    }
+    swap(sim, &mut new_game);
+    Ok("{}".to_string())
+}
+
 #[tokio::main]
 async fn main() {
     let mut args = std::env::args();
-    if args.any(|x| x == "auto") {
-        let mut locked = MUTEX.lock().unwrap();
-        (*locked).set_auto(true);
-    }
+    let auto = args.any(|x| x == "auto");
 
     let router = Router::new()
         .get(index)
@@ -858,6 +922,7 @@ async fn main() {
         .push(Router::with_path("player.html").get(player_html))
         .push(Router::with_path("player.js").get(player_js))
         .push(Router::with_path("exit").post(exit))
+        .push(Router::with_path("reset").post(reset))
         .push(Router::with_path("idle.json").post(idle))
         .push(Router::with_path("player.json").post(player))
         .push(Router::with_path("alice_word_hash").post(alice_word_hash))
@@ -866,29 +931,37 @@ async fn main() {
         .push(Router::with_path("bob_picks").post(bob_picks));
     let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
-    let s = std::thread::spawn(|| loop {
-        let request = {
-            let channel = TO_WEB.1.lock().unwrap();
-            (*channel).recv().unwrap()
-        };
-
-        debug!("request {request:?}");
-        let result = {
+    let s = std::thread::spawn(move || {
+        if auto {
             let mut locked = MUTEX.lock().unwrap();
-            match request {
-                WebRequest::Idle => Ok((*locked).idle()),
-                WebRequest::Player(id) => (*locked).player(id),
-                WebRequest::AliceWordHash(hash) => Ok((*locked).alice_word_hash(&hash)),
-                WebRequest::BobWord(bytes) => Ok((*locked).bob_word_hash(&bytes)),
-                WebRequest::AlicePicks(picks) => Ok((*locked).alice_picks(&picks)),
-                // WebRequest::BobPicks(picks) => (*locked).bob_picks(&picks),
-                _ => todo!(),
-            }
-        };
+            (*locked).set_auto(true);
+        }
 
-        {
-            let channel = FROM_WEB.0.lock().unwrap();
-            (*channel).send(result).unwrap();
+        loop {
+            let request = {
+                let channel = TO_WEB.1.lock().unwrap();
+                (*channel).recv().unwrap()
+            };
+
+            debug!("request {request:?}");
+            let result = {
+                let mut locked = MUTEX.lock().unwrap();
+                match request {
+                    WebRequest::Idle => (*locked).idle(),
+                    WebRequest::Player(id) => (*locked).player(id),
+                    WebRequest::AliceWordHash(hash) => Ok((*locked).alice_word_hash(&hash)),
+                    WebRequest::BobWord(bytes) => Ok((*locked).bob_word_hash(&bytes)),
+                    WebRequest::AlicePicks(picks) => Ok((*locked).alice_picks(&picks)),
+                    WebRequest::BobPicks(picks) => Ok((*locked).bob_picks(&picks)),
+                    WebRequest::Reset => reset_sim(&mut (*locked), auto),
+                    _ => todo!(),
+                }
+            };
+
+            {
+                let channel = FROM_WEB.0.lock().unwrap();
+                (*channel).send(result).unwrap();
+            }
         }
     });
 

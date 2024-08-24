@@ -114,3 +114,7 @@ body {
 .suit4 {
     color: red;
 }
+
+.sent_picks_true {
+    display: none;
+}
