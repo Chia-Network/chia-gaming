@@ -823,7 +823,6 @@ impl RefereeMaker {
         readable_move: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<GameMoveWireData, Error> {
-        eprintln!("new_entropy {new_entropy:?}");
         let game_handler = self.get_game_handler();
         let (move_data, mover_share, max_move_size, previous_validation_info_hash) =
             match &self.state {

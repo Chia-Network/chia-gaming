@@ -29,6 +29,12 @@ function check() {
     });
 }
 
+function reset() {
+    return fetch("reset", {"method": "POST"}).then((response) => {
+        console.log("reset...");
+    });
+}
+
 function exitapp() {
     return fetch("exit", {"method": "POST"}).then((response) => {
         console.log("exiting...");
