@@ -1,3 +1,4 @@
+pub mod calpoker;
 pub mod channel_handler;
 pub mod common;
 pub mod games;
