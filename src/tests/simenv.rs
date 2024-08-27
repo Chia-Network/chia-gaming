@@ -27,38 +27,6 @@ use crate::tests::game::new_channel_handler_game;
 use crate::tests::referee::{make_debug_game_handler, RefereeTest};
 
 #[derive(Debug, Clone)]
-pub enum GameAction {
-    /// Do a timeout
-    #[allow(dead_code)]
-    Timeout(usize),
-    /// Move (player, clvm readable move, was received)
-    Move(usize, NodePtr, bool),
-    /// Fake move, just calls receive on the indicated side.
-    #[allow(dead_code)]
-    FakeMove(usize, NodePtr, Vec<u8>),
-    /// Go on chain
-    GoOnChain(usize),
-}
-
-impl GameAction {
-    pub fn lose(&self) -> GameAction {
-        if let GameAction::Move(p, m, _r) = self {
-            return GameAction::Move(*p, *m, false);
-        }
-
-        self.clone()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum GameActionResult {
-    #[allow(dead_code)]
-    MoveResult(NodePtr, Vec<u8>),
-    BrokenMove,
-    MoveToOnChain,
-}
-
-#[derive(Debug, Clone)]
 pub enum OnChainState {
     OffChain(CoinString),
     OnChain(Vec<CoinString>),
