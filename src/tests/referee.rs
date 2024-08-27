@@ -215,9 +215,9 @@ fn test_referee_smoke() {
     let my_move_wire_data = reftest
         .my_referee
         .my_turn_make_move(
-            &mut rng,
             &mut allocator,
             &ReadableMove::from_nodeptr(readable_move),
+            rng.gen(),
         )
         .expect("should move");
 

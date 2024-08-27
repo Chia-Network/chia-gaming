@@ -697,6 +697,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         };
 
         {
+            let entropy = rng.gen();
             let mut env = channel_handler_env(allocator, &mut rng);
             let mut penv = SimulatedPeerSystem::new(
                 &mut env,
@@ -705,7 +706,12 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
                 &mut simulator,
             );
             handlers[who ^ 1]
-                .make_move(&mut penv, &game_ids[0], &ReadableMove::from_nodeptr(*what))
+                .make_move(
+                    &mut penv,
+                    &game_ids[0],
+                    &ReadableMove::from_nodeptr(*what),
+                    entropy,
+                )
                 .expect("should work");
         }
 
@@ -967,12 +973,14 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                         let readable_program =
                             Program::from_nodeptr(allocator, *readable).expect("should convert");
                         let encoded_readable_move = readable_program.bytes();
+                        let entropy = rng.gen();
                         cradles[*who]
                             .make_move(
                                 allocator,
                                 &mut rng,
                                 &game_ids[0],
                                 encoded_readable_move.to_vec(),
+                                entropy,
                             )
                             .expect("should work");
                     }

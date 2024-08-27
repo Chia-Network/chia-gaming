@@ -4,7 +4,7 @@ use std::ops::{Add, AddAssign, Sub, SubAssign};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use num_bigint::{BigInt, Sign};
+use num_bigint::{BigInt, Sign, ToBigInt};
 use num_traits::cast::ToPrimitive;
 
 use rand::distributions::Standard;
@@ -977,6 +977,11 @@ pub fn usize_from_atom(a: &[u8]) -> Option<usize> {
     bi.to_usize()
 }
 
+pub fn i32_from_atom(a: &[u8]) -> Option<i32> {
+    let bi = BigInt::from_signed_bytes_be(a);
+    bi.to_i32()
+}
+
 pub fn u64_from_atom(a: &[u8]) -> Option<u64> {
     let bi = BigInt::from_bytes_be(Sign::Plus, a);
     bi.to_u64()
@@ -996,4 +1001,35 @@ pub struct BrokenOutCoinSpendInfo {
     pub conditions: NodePtr,
     pub message: Vec<u8>,
     pub signature: Aggsig,
+}
+
+pub fn divmod(a: BigInt, b: BigInt) -> (BigInt, BigInt) {
+    let d = a.clone() / b.clone();
+    let r = a.clone() % b.clone();
+    let zero = 0.to_bigint().unwrap();
+    if d < zero && r != zero {
+        (d - 1.to_bigint().unwrap(), r + b)
+    } else {
+        (d, r)
+    }
+}
+
+#[test]
+fn test_local_divmod() {
+    assert_eq!(
+        divmod(-7.to_bigint().unwrap(), 2.to_bigint().unwrap()),
+        (-4.to_bigint().unwrap(), 1.to_bigint().unwrap())
+    );
+    assert_eq!(
+        divmod(7.to_bigint().unwrap(), -2.to_bigint().unwrap()),
+        (-4.to_bigint().unwrap(), -1.to_bigint().unwrap())
+    );
+    assert_eq!(
+        divmod(-7.to_bigint().unwrap(), -2.to_bigint().unwrap()),
+        (3.to_bigint().unwrap(), -1.to_bigint().unwrap())
+    );
+    assert_eq!(
+        divmod(7.to_bigint().unwrap(), 2.to_bigint().unwrap()),
+        (3.to_bigint().unwrap(), 1.to_bigint().unwrap())
+    );
 }
