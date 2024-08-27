@@ -31,7 +31,7 @@ use crate::peer_container::{
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::peer::outside::{quiesce, run_move};
-use crate::tests::simenv::GameAction;
+use crate::tests::game::{GameAction, GameActionResult};
 
 // potato handler tests with simulator.
 #[derive(Default)]
