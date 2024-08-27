@@ -513,13 +513,19 @@ fn test_peer_smoke() {
         };
 
         {
+            let entropy = rng.gen();
             let mut env = channel_handler_env(&mut allocator, &mut rng);
             let mut penv = TestPeerEnv {
                 env: &mut env,
                 system_interface: &mut pipe_sender[who ^ 1],
             };
             peers[who ^ 1]
-                .make_move(&mut penv, &game_ids[0], &ReadableMove::from_nodeptr(*what))
+                .make_move(
+                    &mut penv,
+                    &game_ids[0],
+                    &ReadableMove::from_nodeptr(*what),
+                    entropy,
+                )
                 .expect("should work");
         }
 
