@@ -31,6 +31,13 @@ impl PartialOrd for RawCalpokerHandValue {
     }
 }
 
+#[derive(Eq, PartialEq, Debug)]
+pub enum CalpokerWinResult {
+    Alice,
+    Tie,
+    Bob
+}
+
 /// A decoded version of the calpoker result.
 #[derive(Eq, PartialEq, Debug)]
 pub struct CalpokerResult {
@@ -39,7 +46,7 @@ pub struct CalpokerResult {
     raw_alice_picks: usize,
     bob_hand_value: RawCalpokerHandValue,
     alice_hand_value: RawCalpokerHandValue,
-    win_direction: i32
+    win_direction: CalpokerWinResult
 }
 
 fn mergein(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
@@ -193,7 +200,13 @@ pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr)
 
     let win_direction =
         if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i32_from_atom) {
-            o
+            if o < 0 {
+                CalpokerWinResult::Alice
+            } else if o == 0 {
+                CalpokerWinResult::Tie
+            } else {
+                CalpokerWinResult::Bob
+            }
         } else {
             return Err(Error::StrErr("could not convert final outcome".to_string()));
         };
@@ -221,7 +234,7 @@ fn test_decode_calpoker_readable() {
             raw_alice_picks: 91,
             bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2,2,1,12,11,8]),
             alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2,2,1,14,5,2]),
-            win_direction: -1
+            win_direction: CalpokerWinResult::Alice
         }
     );
 }
