@@ -157,6 +157,7 @@ fn run_code(
 
         convert_to_clvm_rs(allocator.allocator(), result).into_gen()
     } else {
+        debug!("running handler code with args {}", disassemble(allocator.allocator(), env, None));
         run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
             .into_gen()
             .map(|r| r.1)

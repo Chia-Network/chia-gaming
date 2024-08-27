@@ -1,4 +1,3 @@
-#[cfg(feature = "sim-tests")]
 pub mod calpoker;
 pub mod channel_handler;
 pub mod chialisp;
