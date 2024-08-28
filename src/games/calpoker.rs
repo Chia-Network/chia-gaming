@@ -13,7 +13,9 @@ use crate::common::types::{
     Sha256Input,
 };
 
-#[derive(Ord, Eq, PartialEq, Debug)]
+pub type Card = (usize, usize);
+
+#[derive(Eq, PartialEq, Debug)]
 pub enum RawCalpokerHandValue {
     SimpleList(Vec<usize>),
     PrefixList(Vec<usize>, Vec<usize>),
@@ -22,8 +24,8 @@ pub enum RawCalpokerHandValue {
 impl RawCalpokerHandValue {
     fn first_list(&self) -> &[usize] {
         match self {
-            RawCalpokerHandValue::SimpleList(x) => &x,
-            RawCalpokerHandValue::PrefixList(x, _) => &x,
+            RawCalpokerHandValue::SimpleList(x) => x,
+            RawCalpokerHandValue::PrefixList(x, _) => x,
         }
     }
 }
@@ -105,7 +107,7 @@ fn choose(numcards: usize, numchoose: usize, randomness: BigInt) -> (Vec<usize>,
     }
 }
 
-fn cards_to_hand(cards: &[usize]) -> Vec<(usize, usize)> {
+fn cards_to_hand(cards: &[usize]) -> Vec<Card> {
     cards
         .iter()
         .map(|val| {
@@ -122,11 +124,7 @@ fn cards_to_hand(cards: &[usize]) -> Vec<(usize, usize)> {
 
 // Does the same thing as make_cards so bob can see the card display that alice can see once
 // the message of alice' preimage (alice_hash) goes through.
-pub fn make_cards(
-    alice_hash: &[u8],
-    bob_hash: &[u8],
-    amount: Amount,
-) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+pub fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<Card>, Vec<Card>) {
     let amount_bigint = amount.to_u64().to_bigint().unwrap();
     let (_, mut amount_bytes) = amount_bigint.to_bytes_be();
     if amount_bytes == [0] {
@@ -179,12 +177,10 @@ pub fn decode_hand_result(
                 result_list,
                 result_sublist,
             ));
+        } else if let Some(i) = atom_from_clvm(allocator, *item).and_then(usize_from_atom) {
+            result_list.push(i);
         } else {
-            if let Some(i) = atom_from_clvm(allocator, *item).and_then(usize_from_atom) {
-                result_list.push(i);
-            } else {
-                return Err(Error::StrErr("decode error, can't make usize".to_string()));
-            }
+            return Err(Error::StrErr("decode error, can't make usize".to_string()));
         }
     }
 
@@ -224,12 +220,10 @@ pub fn decode_calpoker_readable(
 
     let win_direction =
         if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i32_from_atom) {
-            if o < 0 {
-                CalpokerWinResult::Alice
-            } else if o == 0 {
-                CalpokerWinResult::Tie
-            } else {
-                CalpokerWinResult::Bob
+            match o.cmp(&0) {
+                Ordering::Less => CalpokerWinResult::Alice,
+                Ordering::Equal => CalpokerWinResult::Tie,
+                _ => CalpokerWinResult::Bob,
             }
         } else {
             return Err(Error::StrErr("could not convert final outcome".to_string()));
