@@ -4,6 +4,10 @@ function clear(elt) {
     }
 }
 
+function reload() {
+    window.location.reload();
+}
+
 function check() {
     return fetch("idle.json", {
         "method": "POST"
@@ -32,6 +36,7 @@ function check() {
 function reset() {
     return fetch("reset", {"method": "POST"}).then((response) => {
         console.log("reset...");
+        setTimeout(reload, 2000);
     });
 }
 

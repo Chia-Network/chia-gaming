@@ -36,7 +36,7 @@ use chia_gaming::common::types::{
     Error, GameID, Hash, PrivateKey, Program, Sha256Input, Timeout,
 };
 use chia_gaming::games::poker_collection;
-use chia_gaming::games::calpoker::make_cards;
+use chia_gaming::games::calpoker::{CalpokerResult, make_cards, decode_calpoker_readable};
 use chia_gaming::outside::{GameStart, GameType, ToLocalUI};
 use chia_gaming::peer_container::{
     FullCoinSetAdapter, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig,
@@ -101,12 +101,14 @@ enum PlayState {
     BeforeAliceWord,
     BeforeAlicePicks,
     BeforeFinish,
-    AliceFinish,
+    AliceFinish1,
+    AliceEnd,
 
     BobWaiting,
     WaitingForAliceWord,
     WaitingForAlicePicks,
-    FinishGame,
+    BobFinish1,
+    BobEnd,
 }
 
 struct CardsDescription {
@@ -135,6 +137,8 @@ struct GameRunner {
     preimage: [Vec<u8>; 2],
     bob_word: [Vec<u8>; 2],
     picks: [Vec<bool>; 2],
+    finish_move: [bool; 2],
+    game_outcomes: [CalpokerResult; 2],
     handshake_done: bool,
     can_move: bool,
     funded: bool,
@@ -166,7 +170,7 @@ enum WebRequest {
     BobWord(Vec<u8>),
     AlicePicks(Vec<bool>),
     BobPicks(Vec<bool>),
-    FinishMove,
+    FinishMove(bool),
 }
 
 lazy_static! {
@@ -286,6 +290,8 @@ impl GameRunner {
             preimage: [vec![], vec![]],
             bob_word: [vec![], vec![]],
             picks: [vec![], vec![]],
+            game_outcomes: [CalpokerResult::default(), CalpokerResult::default()],
+            finish_move: [false, false],
             auto: false,
         })
     }
@@ -391,6 +397,15 @@ impl GameRunner {
                 serde_json::to_value(cardlist).map_err(|e| format!("couldn't make json: {e:?}"))
             }
             PlayState::WaitingForAlicePicks => self.bob_readable(id),
+            PlayState::AliceFinish1 => {
+                serde_json::to_value(&self.game_outcomes[id as usize]).map_err(|e| format!("couldn't make json: {e:?}"))
+            },
+            PlayState::AliceEnd => {
+                serde_json::to_value(&self.game_outcomes[id as usize]).map_err(|e| format!("couldn't make json: {e:?}"))
+            },
+            PlayState::BobEnd => {
+                serde_json::to_value(&self.game_outcomes[id as usize]).map_err(|e| format!("couldn't make json: {e:?}"))
+            },
             _ => Ok(Value::String(disassemble(
                 self.allocator.allocator(),
                 self.local_uis[id as usize]
@@ -480,7 +495,7 @@ impl GameRunner {
     }
 
     fn enact_bob_picks(&mut self) {
-        if !self.picks[1].is_empty() && matches!(self.play_states[1], PlayState::FinishGame) {
+        if !self.picks[1].is_empty() && matches!(self.play_states[1], PlayState::BobFinish1) {
             let encoded_node = self.picks[1].to_clvm(&mut self.allocator).unwrap();
             let encoded = node_to_bytes(self.allocator.allocator(), encoded_node).unwrap();
             let mut work: Vec<bool> = vec![];
@@ -502,6 +517,12 @@ impl GameRunner {
     fn bob_picks(&mut self, picks: &[bool]) -> String {
         self.picks[1] = picks.to_vec();
         self.enact_bob_picks();
+        "{}".to_string()
+    }
+
+    fn finish_move(&mut self, pid: bool) -> String {
+        eprintln!("enable finish move {pid}");
+        self.finish_move[pid as usize] = true;
         "{}".to_string()
     }
 
@@ -589,6 +610,7 @@ impl GameRunner {
                     self.local_uis[i].our_readable_move,
                     self.local_uis[i].remote_message
                 );
+
                 if self.local_uis[i].received_moves == 0 {
                     continue;
                 } else if i == 0 && self.local_uis[i].received_moves == 1 {
@@ -596,12 +618,37 @@ impl GameRunner {
                 } else if i == 1 && self.local_uis[i].received_moves == 1 {
                     self.play_states[i] = PlayState::WaitingForAlicePicks;
                 } else if i == 0 && self.local_uis[i].received_moves == 2 {
-                    self.play_states[i] = PlayState::AliceFinish;
+                    self.play_states[i] = PlayState::AliceFinish1;
+                    // Decode our win state.
+                    self.game_outcomes[i] = decode_calpoker_readable(&mut self.allocator, self.local_uis[i].opponent_readable_move.to_nodeptr(), self.cradles[i].amount(), i == 0).unwrap();
+                    if self.finish_move[i] {
+                        eprintln!("enacting alice finish move");
+                        self.finish_move[i] = false;
+                        let new_entropy = self.rng.gen();
+                        self.cradles[i]
+                            .make_move(
+                                &mut self.allocator,
+                                &mut self.rng,
+                                &self.game_ids[0],
+                                vec![0x80],
+                                new_entropy,
+                            )
+                            .unwrap();
+                    }
                 } else if i == 1 && self.local_uis[i].received_moves == 2 {
-                    self.play_states[i] = PlayState::FinishGame;
-                    self.enact_bob_picks();
+                    self.play_states[i] = PlayState::BobFinish1;
+                } else if i == 0 && self.local_uis[i].received_moves == 3 {
+                    self.play_states[i] = PlayState::AliceEnd;
+                    // Decode our win state.
+                } else if i == 1 && self.local_uis[i].received_moves == 3 {
+                    self.play_states[i] = PlayState::BobEnd;
+                    if let Some(res) = decode_calpoker_readable(&mut self.allocator, self.local_uis[i].opponent_readable_move.to_nodeptr(), self.cradles[i].amount(), i == 0).ok() {
+                        if res.raw_alice_selects != 0 {
+                            self.game_outcomes[i] = res;
+                        }
+                    }
                 } else {
-                    todo!();
+                    debug!("unknown state?");
                 }
             }
 
@@ -707,85 +754,70 @@ async fn idle(_req: &mut Request) -> Result<String, String> {
     pass_on_request(WebRequest::Idle)
 }
 
-#[handler]
-async fn player(req: &mut Request) -> Result<String, String> {
+fn get_arg_bytes(req: &mut Request) -> Result<Vec<u8>, String> {
     let uri_string = req.uri().to_string();
     if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
         let arg: Vec<u8> = uri_string.bytes().skip(found_eq + 1).collect();
-        let pid = if arg.is_empty() {
-            false
-        } else {
-            arg[0] == b'2'
-        };
-        return pass_on_request(WebRequest::Player(pid));
-    };
+        return Ok(arg);
+    }
 
     Err("no argument".to_string())
+}
+
+#[handler]
+async fn player(req: &mut Request) -> Result<String, String> {
+    let arg = get_arg_bytes(req)?;
+    let pid = if arg.is_empty() {
+        false
+    } else {
+        arg[0] == b'2'
+    };
+    pass_on_request(WebRequest::Player(pid))
 }
 
 #[handler]
 async fn alice_word_hash(req: &mut Request) -> Result<String, String> {
-    let uri_string = req.uri().to_string();
-    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
-        let arg: Vec<u8> = uri_string.bytes().skip(found_eq + 1).collect();
-        if arg.is_empty() {
-            return Err("empty arg".to_string());
-        }
-        let player_id = arg[0] == b'2';
-        let hash = Sha256Input::Bytes(&arg[1..]).hash();
-        let hash_of_alice_hash = Sha256Input::Bytes(hash.bytes()).hash();
-        eprintln!("alice hash is {hash:?} hash of that is {hash_of_alice_hash:?}");
-        return pass_on_request(WebRequest::AliceWordHash(hash.bytes().to_vec()));
+    let arg = get_arg_bytes(req)?;
+    if arg.is_empty() {
+        return Err("empty arg".to_string());
     }
-
-    Err("no argument".to_string())
+    let player_id = arg[0] == b'2';
+    let hash = Sha256Input::Bytes(&arg[1..]).hash();
+    let hash_of_alice_hash = Sha256Input::Bytes(hash.bytes()).hash();
+    eprintln!("alice hash is {hash:?} hash of that is {hash_of_alice_hash:?}");
+    pass_on_request(WebRequest::AliceWordHash(hash.bytes().to_vec()))
 }
 
 #[handler]
 async fn bob_word_hash(req: &mut Request) -> Result<String, String> {
-    let uri_string = req.uri().to_string();
-    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
-        let arg: Vec<u8> = uri_string.bytes().skip(found_eq + 1).collect();
-        if arg.is_empty() {
-            return Err("empty arg".to_string());
-        }
-        let player_id = arg[0] == b'2';
-        let hash = Sha256Input::Bytes(&arg[1..]).hash();
-        eprintln!("bob hash is {hash:?}");
-        return pass_on_request(WebRequest::BobWord(hash.bytes().to_vec()));
+    let arg = get_arg_bytes(req)?;
+    if arg.is_empty() {
+        return Err("empty arg".to_string());
     }
-
-    Err("no argument".to_string())
+    let player_id = arg[0] == b'2';
+    let hash = Sha256Input::Bytes(&arg[1..]).hash();
+    eprintln!("bob hash is {hash:?}");
+    pass_on_request(WebRequest::BobWord(hash.bytes().to_vec()))
 }
 
 #[handler]
 async fn alice_picks(req: &mut Request) -> Result<String, String> {
-    let uri_string = req.uri().to_string();
-    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
-        let arg: Vec<bool> = uri_string
-            .bytes()
-            .skip(found_eq + 1)
-            .map(|b| b == b'1')
-            .collect();
-        return pass_on_request(WebRequest::AlicePicks(arg));
-    }
-
-    Err("no argument".to_string())
+    let arg = get_arg_bytes(req)?;
+    let bool_arg: Vec<bool> = arg.iter()
+        .skip(1)
+        .map(|b| *b == b'1')
+        .collect();
+    pass_on_request(WebRequest::AlicePicks(bool_arg))
 }
 
 #[handler]
 async fn bob_picks(req: &mut Request) -> Result<String, String> {
-    let uri_string = req.uri().to_string();
-    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
-        let arg: Vec<bool> = uri_string
-            .bytes()
-            .skip(found_eq + 1)
-            .map(|b| b == b'1')
-            .collect();
-        return pass_on_request(WebRequest::BobPicks(arg));
-    }
-
-    Err("no argument".to_string())
+    let arg = get_arg_bytes(req)?;
+    let bool_arg: Vec<bool> = arg.iter()
+        .skip(1)
+        .map(|b| *b == b'1')
+        .collect();
+    pass_on_request(WebRequest::BobPicks(bool_arg))
 }
 
 #[handler]
@@ -797,6 +829,18 @@ async fn exit(_req: &mut Request) -> Result<String, String> {
 #[handler]
 async fn reset(_req: &mut Request) -> Result<String, String> {
     return pass_on_request(WebRequest::Reset);
+}
+
+#[handler]
+async fn finish(req: &mut Request) -> Result<String, String> {
+    let arg = get_arg_bytes(req)?;
+    let player_id =
+        if arg.is_empty() {
+            false
+        } else {
+            arg[0] == b'2'
+        };
+    pass_on_request(WebRequest::FinishMove(player_id))
 }
 
 fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, String> {
@@ -826,7 +870,8 @@ async fn main() {
         .push(Router::with_path("alice_word_hash").post(alice_word_hash))
         .push(Router::with_path("bob_word_hash").post(bob_word_hash))
         .push(Router::with_path("alice_picks").post(alice_picks))
-        .push(Router::with_path("bob_picks").post(bob_picks));
+        .push(Router::with_path("bob_picks").post(bob_picks))
+        .push(Router::with_path("finish").post(finish));
     let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
     let s = std::thread::spawn(move || {
@@ -851,6 +896,7 @@ async fn main() {
                     WebRequest::BobWord(bytes) => Ok((*locked).bob_word_hash(&bytes)),
                     WebRequest::AlicePicks(picks) => Ok((*locked).alice_picks(&picks)),
                     WebRequest::BobPicks(picks) => Ok((*locked).bob_picks(&picks)),
+                    WebRequest::FinishMove(id) => Ok((*locked).finish_move(id)),
                     WebRequest::Reset => reset_sim(&mut (*locked), auto),
                     _ => todo!(),
                 }

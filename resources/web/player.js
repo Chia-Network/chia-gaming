@@ -8,6 +8,7 @@ let eat_toggle = false;
 let bob_word = null;
 let sent_word = false;
 let sent_picks = false;
+let sent_end = false;
 let label_by_rank = "0A23456789\u{2469}JQK";
 let label_by_suit = "Y\u{2660}\u{2665}\u{2663}\u{2666}";
 
@@ -111,8 +112,22 @@ function take_auto_action(player_id, json) {
     } else if (json.state == 'WaitingForAlicePicks' && !sent_word) {
         sent_word = true;
         generate_bob_entropy(player_id);
+    } else if ((json.state == 'AliceFinish1' || json.state == 'BobFinish1' || json.state == 'BobEnd') && !sent_end) {
+        sent_end = true;
+        console.error('end game');
+        end_game(player_id);
     }
 }
+
+function end_game(id) {
+    return fetch(`finish?id=${id}`, {
+        "method": "POST"
+    }).then((response) => {
+        sent_end = true;
+        return response.json();
+    });
+}
+
 
 function maybe_selected(label) {
     return !!all_selected_cards[label];
@@ -152,6 +167,25 @@ function submit_picks(name) {
     }).catch((e) => {
         console.error('submit_picks', e);
     });
+}
+
+function game_outcome(player_id, json) {
+    if (!json.readable || typeof(json.readable) === 'string') {
+        return 'Waiting...';
+    }
+
+    let winner = json.readable.win_direction * ((player_id == 1) ? 1 : -1);
+    let winner_text;
+
+    if (winner == -1) {
+        winner_text = "You win";
+    } else if (json.readable.win_direction == 0) {
+        winner_text = "Draw";
+    } else {
+        winner_text = "Opponent wins";
+    }
+
+    return winner_text;
 }
 
 function allow_manual_move(player_id, move, json) {
@@ -198,6 +232,17 @@ function allow_manual_move(player_id, move, json) {
 
         element.innerHTML = `<h2>You must choose four of these cards</h2><div id='picks-submit-div'>${submit_button}</div><div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
         show_cards = 'alice';
+    } else if (move === 'AliceFinish1' || move === 'AliceEnd' || move === 'BobFinish1' || move === 'BobEnd') {
+        let submit_button =
+            !sent_end ?
+            `<button id='submit-finish' onclick='end_game(${player_id})'>Click to finish game</button>` : '';
+
+        element.innerHTML = `<h2>Game outcome</h2><div id='finish-submit'>${submit_button}</div><div>${game_outcome(player_id, json)}</div><div>${JSON.stringify(json.readable)}</div>`;
+
+        if (!sent_end && auto_move(json) && !made_move) {
+            made_move = true;
+            take_auto_action(player_id, json);
+        }
     } else {
         element.innerHTML = `unhandled state ${move}`;
     }

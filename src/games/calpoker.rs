@@ -1,19 +1,29 @@
 use std::cmp::Ordering;
+
 use clvmr::NodePtr;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 #[cfg(test)]
 use clvm_tools_rs::classic::clvm_tools::binutils::assemble;
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use num_bigint::{BigInt, ToBigInt};
 use num_traits::ToPrimitive;
 
-use crate::common::types::{AllocEncoder, Amount, atom_from_clvm, divmod, Error, Sha256Input, usize_from_atom, i32_from_atom};
+use serde::{Serialize, Deserialize};
 
-#[derive(Ord, Eq, PartialEq, Debug)]
+use crate::common::types::{AllocEncoder, Amount, atom_from_clvm, divmod, Error, Sha256Input, usize_from_atom, i64_from_atom};
+
+#[derive(Ord, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum RawCalpokerHandValue {
     SimpleList(Vec<usize>),
     PrefixList(Vec<usize>, Vec<usize>)
+}
+
+impl Default for RawCalpokerHandValue {
+    fn default() -> Self {
+        RawCalpokerHandValue::SimpleList(vec![])
+    }
 }
 
 impl RawCalpokerHandValue {
@@ -31,22 +41,17 @@ impl PartialOrd for RawCalpokerHandValue {
     }
 }
 
-#[derive(Eq, PartialEq, Debug)]
-pub enum CalpokerWinResult {
-    Alice,
-    Tie,
-    Bob
-}
-
 /// A decoded version of the calpoker result.
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Default)]
 pub struct CalpokerResult {
-    raw_alice_selects: usize,
-    raw_bob_picks: usize,
-    raw_alice_picks: usize,
-    bob_hand_value: RawCalpokerHandValue,
-    alice_hand_value: RawCalpokerHandValue,
-    win_direction: CalpokerWinResult
+    pub raw_alice_selects: usize,
+    pub raw_bob_picks: usize,
+    pub raw_alice_picks: usize,
+    pub bob_hand_value: RawCalpokerHandValue,
+    pub alice_hand_value: RawCalpokerHandValue,
+    pub win_direction: i64,
+    pub game_amount: u64,
+    pub your_share: u64,
 }
 
 fn mergein(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
@@ -178,7 +183,7 @@ pub fn decode_hand_result(allocator: &mut AllocEncoder, readable: NodePtr) -> Re
 }
 
 /// Given a readable move, decode it as a calpoker outcome.
-pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr) -> Result<CalpokerResult, Error> {
+pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr, amount: Amount, am_alice: bool) -> Result<CalpokerResult, Error> {
     let as_list =
         if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
             as_list
@@ -198,14 +203,24 @@ pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr)
     let bob_hand_value = decode_hand_result(allocator, as_list[3])?;
     let alice_hand_value = decode_hand_result(allocator, as_list[4])?;
 
-    let win_direction =
-        if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i32_from_atom) {
-            if o < 0 {
-                CalpokerWinResult::Alice
-            } else if o == 0 {
-                CalpokerWinResult::Tie
+    let (your_share, win_direction) =
+        if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i64_from_atom) {
+            if am_alice {
+                if o == -1 {
+                    (amount.clone(), o)
+                } else if o == 0 {
+                    (amount.half(), o)
+                } else {
+                    (Amount::default(), o)
+                }
             } else {
-                CalpokerWinResult::Bob
+                if o == amount.to_u64() as i64 {
+                    (Amount::default(), -1)
+                } else if o == 0 {
+                    (amount.clone(), 1)
+                } else {
+                    (Amount::new((o as u64) / 2), 0)
+                }
             }
         } else {
             return Err(Error::StrErr("could not convert final outcome".to_string()));
@@ -215,9 +230,11 @@ pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr)
         raw_alice_selects: bitmasks[0],
         raw_bob_picks: bitmasks[1],
         raw_alice_picks: bitmasks[2],
+        game_amount: amount.to_u64(),
+        your_share: your_share.to_u64(),
         bob_hand_value,
         alice_hand_value,
-        win_direction
+        win_direction,
     })
 }
 
@@ -225,7 +242,7 @@ pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr)
 fn test_decode_calpoker_readable() {
     let mut allocator = AllocEncoder::new();
     let assembled = assemble(allocator.allocator(), "(60 59 91 (2 2 1 12 11 8) (2 2 1 14 5 2) -1)").expect("should work");
-    let decoded = decode_calpoker_readable(&mut allocator, assembled).expect("should work");
+    let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), true).expect("should work");
     assert_eq!(
         decoded,
         CalpokerResult {
@@ -234,7 +251,9 @@ fn test_decode_calpoker_readable() {
             raw_alice_picks: 91,
             bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2,2,1,12,11,8]),
             alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2,2,1,14,5,2]),
-            win_direction: CalpokerWinResult::Alice
+            your_share: 200,
+            game_amount: 200,
+            win_direction: -1
         }
     );
 }
