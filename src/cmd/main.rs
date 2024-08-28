@@ -35,8 +35,8 @@ use chia_gaming::common::types::{
     atom_from_clvm, divmod, i32_from_atom, usize_from_atom, AllocEncoder, Amount, CoinString,
     Error, GameID, Hash, PrivateKey, Program, Sha256Input, Timeout,
 };
+use chia_gaming::games::calpoker::{decode_calpoker_readable, make_cards, CalpokerResult};
 use chia_gaming::games::poker_collection;
-use chia_gaming::games::calpoker::{CalpokerResult, make_cards, decode_calpoker_readable};
 use chia_gaming::outside::{GameStart, GameType, ToLocalUI};
 use chia_gaming::peer_container::{
     FullCoinSetAdapter, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig,
@@ -397,15 +397,12 @@ impl GameRunner {
                 serde_json::to_value(cardlist).map_err(|e| format!("couldn't make json: {e:?}"))
             }
             PlayState::WaitingForAlicePicks => self.bob_readable(id),
-            PlayState::AliceFinish1 => {
-                serde_json::to_value(&self.game_outcomes[id as usize]).map_err(|e| format!("couldn't make json: {e:?}"))
-            },
-            PlayState::AliceEnd => {
-                serde_json::to_value(&self.game_outcomes[id as usize]).map_err(|e| format!("couldn't make json: {e:?}"))
-            },
-            PlayState::BobEnd => {
-                serde_json::to_value(&self.game_outcomes[id as usize]).map_err(|e| format!("couldn't make json: {e:?}"))
-            },
+            PlayState::AliceFinish1 => serde_json::to_value(&self.game_outcomes[id as usize])
+                .map_err(|e| format!("couldn't make json: {e:?}")),
+            PlayState::AliceEnd => serde_json::to_value(&self.game_outcomes[id as usize])
+                .map_err(|e| format!("couldn't make json: {e:?}")),
+            PlayState::BobEnd => serde_json::to_value(&self.game_outcomes[id as usize])
+                .map_err(|e| format!("couldn't make json: {e:?}")),
             _ => Ok(Value::String(disassemble(
                 self.allocator.allocator(),
                 self.local_uis[id as usize]
@@ -620,7 +617,13 @@ impl GameRunner {
                 } else if i == 0 && self.local_uis[i].received_moves == 2 {
                     self.play_states[i] = PlayState::AliceFinish1;
                     // Decode our win state.
-                    self.game_outcomes[i] = decode_calpoker_readable(&mut self.allocator, self.local_uis[i].opponent_readable_move.to_nodeptr(), self.cradles[i].amount(), i == 0).unwrap();
+                    self.game_outcomes[i] = decode_calpoker_readable(
+                        &mut self.allocator,
+                        self.local_uis[i].opponent_readable_move.to_nodeptr(),
+                        self.cradles[i].amount(),
+                        i == 0,
+                    )
+                    .unwrap();
                     if self.finish_move[i] {
                         eprintln!("enacting alice finish move");
                         self.finish_move[i] = false;
@@ -642,7 +645,14 @@ impl GameRunner {
                     // Decode our win state.
                 } else if i == 1 && self.local_uis[i].received_moves == 3 {
                     self.play_states[i] = PlayState::BobEnd;
-                    if let Some(res) = decode_calpoker_readable(&mut self.allocator, self.local_uis[i].opponent_readable_move.to_nodeptr(), self.cradles[i].amount(), i == 0).ok() {
+                    if let Some(res) = decode_calpoker_readable(
+                        &mut self.allocator,
+                        self.local_uis[i].opponent_readable_move.to_nodeptr(),
+                        self.cradles[i].amount(),
+                        i == 0,
+                    )
+                    .ok()
+                    {
                         if res.raw_alice_selects != 0 {
                             self.game_outcomes[i] = res;
                         }
@@ -803,20 +813,14 @@ async fn bob_word_hash(req: &mut Request) -> Result<String, String> {
 #[handler]
 async fn alice_picks(req: &mut Request) -> Result<String, String> {
     let arg = get_arg_bytes(req)?;
-    let bool_arg: Vec<bool> = arg.iter()
-        .skip(1)
-        .map(|b| *b == b'1')
-        .collect();
+    let bool_arg: Vec<bool> = arg.iter().skip(1).map(|b| *b == b'1').collect();
     pass_on_request(WebRequest::AlicePicks(bool_arg))
 }
 
 #[handler]
 async fn bob_picks(req: &mut Request) -> Result<String, String> {
     let arg = get_arg_bytes(req)?;
-    let bool_arg: Vec<bool> = arg.iter()
-        .skip(1)
-        .map(|b| *b == b'1')
-        .collect();
+    let bool_arg: Vec<bool> = arg.iter().skip(1).map(|b| *b == b'1').collect();
     pass_on_request(WebRequest::BobPicks(bool_arg))
 }
 
@@ -834,12 +838,11 @@ async fn reset(_req: &mut Request) -> Result<String, String> {
 #[handler]
 async fn finish(req: &mut Request) -> Result<String, String> {
     let arg = get_arg_bytes(req)?;
-    let player_id =
-        if arg.is_empty() {
-            false
-        } else {
-            arg[0] == b'2'
-        };
+    let player_id = if arg.is_empty() {
+        false
+    } else {
+        arg[0] == b'2'
+    };
     pass_on_request(WebRequest::FinishMove(player_id))
 }
 

@@ -5,18 +5,20 @@ use clvmr::NodePtr;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 #[cfg(test)]
 use clvm_tools_rs::classic::clvm_tools::binutils::assemble;
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use num_bigint::{BigInt, ToBigInt};
 use num_traits::ToPrimitive;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use crate::common::types::{AllocEncoder, Amount, atom_from_clvm, divmod, Error, Sha256Input, usize_from_atom, i64_from_atom};
+use crate::common::types::{
+    atom_from_clvm, divmod, i64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
+    Sha256Input,
+};
 
 pub type Card = (usize, usize);
 
-#[derive(Ord, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum RawCalpokerHandValue {
     SimpleList(Vec<usize>),
     PrefixList(Vec<usize>, Vec<usize>),
@@ -190,13 +192,19 @@ pub fn decode_hand_result(
 }
 
 /// Given a readable move, decode it as a calpoker outcome.
-pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr, amount: Amount, am_alice: bool) -> Result<CalpokerResult, Error> {
-    let as_list =
-        if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
-            as_list
-        } else {
-            return Err(Error::StrErr("decode calpoker readable: non-list".to_string()));
-        };
+pub fn decode_calpoker_readable(
+    allocator: &mut AllocEncoder,
+    readable: NodePtr,
+    amount: Amount,
+    am_alice: bool,
+) -> Result<CalpokerResult, Error> {
+    let as_list = if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
+        as_list
+    } else {
+        return Err(Error::StrErr(
+            "decode calpoker readable: non-list".to_string(),
+        ));
+    };
 
     if as_list.len() != 6 {
         return Err(Error::StrErr(
@@ -219,20 +227,16 @@ pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr,
     let (your_share, win_direction) =
         if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i64_from_atom) {
             if am_alice {
-                if o == -1 {
-                    (amount.clone(), o)
-                } else if o == 0 {
-                    (amount.half(), o)
-                } else {
-                    (Amount::default(), o)
+                match o.cmp(&0) {
+                    Ordering::Less => (amount.clone(), o),
+                    Ordering::Equal => (amount.half(), o),
+                    _ => (Amount::default(), o)
                 }
             } else {
-                if o == amount.to_u64() as i64 {
-                    (Amount::default(), -1)
-                } else if o == 0 {
-                    (amount.clone(), 1)
-                } else {
-                    (Amount::new((o as u64) / 2), 0)
+                match (o as u64).cmp(&(amount.to_u64() / 2)) {
+                    Ordering::Greater => (Amount::default(), -1),
+                    Ordering::Less => (amount.clone(), 1),
+                    _ => (Amount::new((o as u64) / 2), 0)
                 }
             }
         } else {
@@ -254,16 +258,21 @@ pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr,
 #[test]
 fn test_decode_calpoker_readable() {
     let mut allocator = AllocEncoder::new();
-    let assembled = assemble(allocator.allocator(), "(60 59 91 (2 2 1 12 11 8) (2 2 1 14 5 2) -1)").expect("should work");
-    let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), true).expect("should work");
+    let assembled = assemble(
+        allocator.allocator(),
+        "(60 59 91 (2 2 1 12 11 8) (2 2 1 14 5 2) -1)",
+    )
+    .expect("should work");
+    let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), true)
+        .expect("should work");
     assert_eq!(
         decoded,
         CalpokerResult {
             raw_alice_selects: 60,
             raw_bob_picks: 59,
             raw_alice_picks: 91,
-            bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2,2,1,12,11,8]),
-            alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2,2,1,14,5,2]),
+            bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 12, 11, 8]),
+            alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 5, 2]),
             your_share: 200,
             game_amount: 200,
             win_direction: -1
