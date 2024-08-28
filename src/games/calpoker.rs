@@ -1,7 +1,6 @@
 use std::cmp::Ordering;
 
 use clvmr::NodePtr;
-use std::cmp::Ordering;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 #[cfg(test)]
@@ -14,6 +13,8 @@ use num_traits::ToPrimitive;
 use serde::{Serialize, Deserialize};
 
 use crate::common::types::{AllocEncoder, Amount, atom_from_clvm, divmod, Error, Sha256Input, usize_from_atom, i64_from_atom};
+
+pub type Card = (usize, usize);
 
 #[derive(Ord, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum RawCalpokerHandValue {
