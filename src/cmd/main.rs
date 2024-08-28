@@ -35,8 +35,8 @@ use chia_gaming::common::types::{
     atom_from_clvm, divmod, i32_from_atom, usize_from_atom, AllocEncoder, Amount, CoinString,
     Error, GameID, Hash, PrivateKey, Program, Sha256Input, Timeout,
 };
-use chia_gaming::games::poker_collection;
 use chia_gaming::games::calpoker::make_cards;
+use chia_gaming::games::poker_collection;
 use chia_gaming::outside::{GameStart, GameType, ToLocalUI};
 use chia_gaming::peer_container::{
     FullCoinSetAdapter, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig,

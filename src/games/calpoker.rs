@@ -1,5 +1,5 @@
-use std::cmp::Ordering;
 use clvmr::NodePtr;
+use std::cmp::Ordering;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 #[cfg(test)]
@@ -8,19 +8,22 @@ use clvm_tools_rs::classic::clvm_tools::binutils::assemble;
 use num_bigint::{BigInt, ToBigInt};
 use num_traits::ToPrimitive;
 
-use crate::common::types::{AllocEncoder, Amount, atom_from_clvm, divmod, Error, Sha256Input, usize_from_atom, i32_from_atom};
+use crate::common::types::{
+    atom_from_clvm, divmod, i32_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
+    Sha256Input,
+};
 
 #[derive(Ord, Eq, PartialEq, Debug)]
 pub enum RawCalpokerHandValue {
     SimpleList(Vec<usize>),
-    PrefixList(Vec<usize>, Vec<usize>)
+    PrefixList(Vec<usize>, Vec<usize>),
 }
 
 impl RawCalpokerHandValue {
     fn first_list(&self) -> &[usize] {
         match self {
             RawCalpokerHandValue::SimpleList(x) => &x,
-            RawCalpokerHandValue::PrefixList(x, _) => &x
+            RawCalpokerHandValue::PrefixList(x, _) => &x,
         }
     }
 }
@@ -35,7 +38,7 @@ impl PartialOrd for RawCalpokerHandValue {
 pub enum CalpokerWinResult {
     Alice,
     Tie,
-    Bob
+    Bob,
 }
 
 /// A decoded version of the calpoker result.
@@ -46,7 +49,7 @@ pub struct CalpokerResult {
     raw_alice_picks: usize,
     bob_hand_value: RawCalpokerHandValue,
     alice_hand_value: RawCalpokerHandValue,
-    win_direction: CalpokerWinResult
+    win_direction: CalpokerWinResult,
 }
 
 fn mergein(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
@@ -152,19 +155,30 @@ pub fn make_cards(
     )
 }
 
-pub fn decode_hand_result(allocator: &mut AllocEncoder, readable: NodePtr) -> Result<RawCalpokerHandValue, Error> {
+pub fn decode_hand_result(
+    allocator: &mut AllocEncoder,
+    readable: NodePtr,
+) -> Result<RawCalpokerHandValue, Error> {
     let mut result_list = Vec::new();
     let as_list: Vec<NodePtr> =
         if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
             as_list
         } else {
-            return Err(Error::StrErr("decode calpoker hand type: non-list".to_string()));
+            return Err(Error::StrErr(
+                "decode calpoker hand type: non-list".to_string(),
+            ));
         };
 
     for item in as_list.iter() {
         if let Some(sublist) = proper_list(allocator.allocator(), *item, true) {
-            let result_sublist = sublist.iter().filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom)).collect();
-            return Ok(RawCalpokerHandValue::PrefixList(result_list, result_sublist));
+            let result_sublist = sublist
+                .iter()
+                .filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom))
+                .collect();
+            return Ok(RawCalpokerHandValue::PrefixList(
+                result_list,
+                result_sublist,
+            ));
         } else {
             if let Some(i) = atom_from_clvm(allocator, *item).and_then(usize_from_atom) {
                 result_list.push(i);
@@ -178,19 +192,29 @@ pub fn decode_hand_result(allocator: &mut AllocEncoder, readable: NodePtr) -> Re
 }
 
 /// Given a readable move, decode it as a calpoker outcome.
-pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr) -> Result<CalpokerResult, Error> {
-    let as_list =
-        if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
-            as_list
-        } else {
-            return Err(Error::StrErr("decode calpoker readable: non-list".to_string()));
-        };
+pub fn decode_calpoker_readable(
+    allocator: &mut AllocEncoder,
+    readable: NodePtr,
+) -> Result<CalpokerResult, Error> {
+    let as_list = if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
+        as_list
+    } else {
+        return Err(Error::StrErr(
+            "decode calpoker readable: non-list".to_string(),
+        ));
+    };
 
     if as_list.len() != 6 {
-        return Err(Error::StrErr("decode calpoker readable: wrong result size".to_string()));
+        return Err(Error::StrErr(
+            "decode calpoker readable: wrong result size".to_string(),
+        ));
     }
 
-    let bitmasks: Vec<usize> = as_list.iter().take(3).filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom)).collect();
+    let bitmasks: Vec<usize> = as_list
+        .iter()
+        .take(3)
+        .filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom))
+        .collect();
     if bitmasks.len() != 3 {
         return Err(Error::StrErr("not all bitmasks converted".to_string()));
     }
@@ -217,14 +241,18 @@ pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr)
         raw_alice_picks: bitmasks[2],
         bob_hand_value,
         alice_hand_value,
-        win_direction
+        win_direction,
     })
 }
 
 #[test]
 fn test_decode_calpoker_readable() {
     let mut allocator = AllocEncoder::new();
-    let assembled = assemble(allocator.allocator(), "(60 59 91 (2 2 1 12 11 8) (2 2 1 14 5 2) -1)").expect("should work");
+    let assembled = assemble(
+        allocator.allocator(),
+        "(60 59 91 (2 2 1 12 11 8) (2 2 1 14 5 2) -1)",
+    )
+    .expect("should work");
     let decoded = decode_calpoker_readable(&mut allocator, assembled).expect("should work");
     assert_eq!(
         decoded,
@@ -232,8 +260,8 @@ fn test_decode_calpoker_readable() {
             raw_alice_selects: 60,
             raw_bob_picks: 59,
             raw_alice_picks: 91,
-            bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2,2,1,12,11,8]),
-            alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2,2,1,14,5,2]),
+            bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 12, 11, 8]),
+            alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 5, 2]),
             win_direction: CalpokerWinResult::Alice
         }
     );
