@@ -23,7 +23,7 @@ use crate::common::types::{
     PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::simulator::Simulator;
-use crate::tests::game::{GameAction, GameActionResult, new_channel_handler_game};
+use crate::tests::game::{new_channel_handler_game, GameAction, GameActionResult};
 use crate::tests::referee::{make_debug_game_handler, RefereeTest};
 
 #[derive(Debug, Clone)]

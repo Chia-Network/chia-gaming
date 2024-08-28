@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 
 use clvmr::NodePtr;
+use std::cmp::Ordering;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 #[cfg(test)]
@@ -17,7 +18,7 @@ use crate::common::types::{AllocEncoder, Amount, atom_from_clvm, divmod, Error, 
 #[derive(Ord, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum RawCalpokerHandValue {
     SimpleList(Vec<usize>),
-    PrefixList(Vec<usize>, Vec<usize>)
+    PrefixList(Vec<usize>, Vec<usize>),
 }
 
 impl Default for RawCalpokerHandValue {
@@ -29,8 +30,8 @@ impl Default for RawCalpokerHandValue {
 impl RawCalpokerHandValue {
     fn first_list(&self) -> &[usize] {
         match self {
-            RawCalpokerHandValue::SimpleList(x) => &x,
-            RawCalpokerHandValue::PrefixList(x, _) => &x
+            RawCalpokerHandValue::SimpleList(x) => x,
+            RawCalpokerHandValue::PrefixList(x, _) => x,
         }
     }
 }
@@ -107,7 +108,7 @@ fn choose(numcards: usize, numchoose: usize, randomness: BigInt) -> (Vec<usize>,
     }
 }
 
-fn cards_to_hand(cards: &[usize]) -> Vec<(usize, usize)> {
+fn cards_to_hand(cards: &[usize]) -> Vec<Card> {
     cards
         .iter()
         .map(|val| {
@@ -124,11 +125,7 @@ fn cards_to_hand(cards: &[usize]) -> Vec<(usize, usize)> {
 
 // Does the same thing as make_cards so bob can see the card display that alice can see once
 // the message of alice' preimage (alice_hash) goes through.
-pub fn make_cards(
-    alice_hash: &[u8],
-    bob_hash: &[u8],
-    amount: Amount,
-) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+pub fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<Card>, Vec<Card>) {
     let amount_bigint = amount.to_u64().to_bigint().unwrap();
     let (_, mut amount_bytes) = amount_bigint.to_bytes_be();
     if amount_bytes == [0] {
@@ -157,25 +154,34 @@ pub fn make_cards(
     )
 }
 
-pub fn decode_hand_result(allocator: &mut AllocEncoder, readable: NodePtr) -> Result<RawCalpokerHandValue, Error> {
+pub fn decode_hand_result(
+    allocator: &mut AllocEncoder,
+    readable: NodePtr,
+) -> Result<RawCalpokerHandValue, Error> {
     let mut result_list = Vec::new();
     let as_list: Vec<NodePtr> =
         if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
             as_list
         } else {
-            return Err(Error::StrErr("decode calpoker hand type: non-list".to_string()));
+            return Err(Error::StrErr(
+                "decode calpoker hand type: non-list".to_string(),
+            ));
         };
 
     for item in as_list.iter() {
         if let Some(sublist) = proper_list(allocator.allocator(), *item, true) {
-            let result_sublist = sublist.iter().filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom)).collect();
-            return Ok(RawCalpokerHandValue::PrefixList(result_list, result_sublist));
+            let result_sublist = sublist
+                .iter()
+                .filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom))
+                .collect();
+            return Ok(RawCalpokerHandValue::PrefixList(
+                result_list,
+                result_sublist,
+            ));
+        } else if let Some(i) = atom_from_clvm(allocator, *item).and_then(usize_from_atom) {
+            result_list.push(i);
         } else {
-            if let Some(i) = atom_from_clvm(allocator, *item).and_then(usize_from_atom) {
-                result_list.push(i);
-            } else {
-                return Err(Error::StrErr("decode error, can't make usize".to_string()));
-            }
+            return Err(Error::StrErr("decode error, can't make usize".to_string()));
         }
     }
 
@@ -192,10 +198,16 @@ pub fn decode_calpoker_readable(allocator: &mut AllocEncoder, readable: NodePtr,
         };
 
     if as_list.len() != 6 {
-        return Err(Error::StrErr("decode calpoker readable: wrong result size".to_string()));
+        return Err(Error::StrErr(
+            "decode calpoker readable: wrong result size".to_string(),
+        ));
     }
 
-    let bitmasks: Vec<usize> = as_list.iter().take(3).filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom)).collect();
+    let bitmasks: Vec<usize> = as_list
+        .iter()
+        .take(3)
+        .filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom))
+        .collect();
     if bitmasks.len() != 3 {
         return Err(Error::StrErr("not all bitmasks converted".to_string()));
     }
