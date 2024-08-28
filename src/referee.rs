@@ -1339,6 +1339,9 @@ impl RefereeMaker {
                 // holding coin spendable by us.
                 self.accept_their_move(allocator, Some(handler), details)?;
 
+                debug!("readable_move {}", disassemble(allocator.allocator(), readable_move, None));
+                debug!("message {message:?}");
+
                 (readable_move, message)
             }
             // Slash can't be used when we're off chain.

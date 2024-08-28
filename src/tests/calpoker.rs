@@ -8,7 +8,6 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 use crate::channel_handler::game::Game;
 use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, Sha256Input};
 use crate::tests::game::{GameAction, GameActionResult};
-
 #[cfg(feature = "sim-tests")]
 use crate::tests::simenv::SimulatorEnvironment;
 
@@ -20,7 +19,7 @@ pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Ga
     )
 }
 
-#[cfg(feature = "sim-tests")]
+#[cfg(geature = "sim-tests")]
 #[test]
 fn test_load_calpoker() {
     let mut allocator = AllocEncoder::new();
