@@ -230,13 +230,13 @@ pub fn decode_calpoker_readable(
                 match o.cmp(&0) {
                     Ordering::Less => (amount.clone(), o),
                     Ordering::Equal => (amount.half(), o),
-                    _ => (Amount::default(), o)
+                    _ => (Amount::default(), o),
                 }
             } else {
                 match (o as u64).cmp(&(amount.to_u64() / 2)) {
                     Ordering::Greater => (Amount::default(), -1),
                     Ordering::Less => (amount.clone(), 1),
-                    _ => (Amount::new((o as u64) / 2), 0)
+                    _ => (Amount::new((o as u64) / 2), 0),
                 }
             }
         } else {
