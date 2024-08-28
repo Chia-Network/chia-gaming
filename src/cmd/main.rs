@@ -601,7 +601,7 @@ impl GameRunner {
                     self.play_states[i] = PlayState::FinishGame;
                     self.enact_bob_picks();
                 } else {
-                    todo!();
+                    debug!("unknown state?");
                 }
             }
 

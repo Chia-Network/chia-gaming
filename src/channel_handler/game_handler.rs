@@ -389,6 +389,7 @@ impl GameHandler {
                     disassemble(allocator.allocator(), run_result, None)
                 )))
             } else if pl.len() < 3 {
+                debug!("final move with data {}", disassemble(allocator.allocator(), pl[1], None));
                 Ok(TheirTurnResult::FinalMove(pl[1]))
             } else {
                 let message_data = if pl.len() == 4 {

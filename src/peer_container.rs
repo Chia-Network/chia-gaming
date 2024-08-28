@@ -742,6 +742,11 @@ impl GameCradle for SynchronousGameCradle {
         );
         self.state.outbound_messages.clear();
 
+        if let Some((id, msg)) = self.state.our_moves.pop_front() {
+            local_ui.self_move(&id, &msg)?;
+            return Ok(result);
+        }
+
         if let Some((id, msg)) = self.state.game_messages.pop_front() {
             local_ui.game_message(&id, &msg)?;
             return Ok(result);
