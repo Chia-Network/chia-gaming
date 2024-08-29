@@ -224,8 +224,10 @@ pub fn decode_calpoker_readable(
     let start_index = 1;
     let offset_for_player = !am_alice as usize;
 
-    let bob_hand_value = decode_hand_result(allocator, as_list[start_index + (2 ^ offset_for_player)])?;
-    let alice_hand_value = decode_hand_result(allocator, as_list[start_index + (3 ^ offset_for_player)])?;
+    let bob_hand_value =
+        decode_hand_result(allocator, as_list[start_index + (2 ^ offset_for_player)])?;
+    let alice_hand_value =
+        decode_hand_result(allocator, as_list[start_index + (3 ^ offset_for_player)])?;
 
     let (your_share, win_direction) =
         if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i64_from_atom) {
