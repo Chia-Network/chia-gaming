@@ -1,14 +1,3 @@
-let all_selected_cards = {};
-let have_made_move_in_current_state = false;
-let most_recent_state = null;
-let latched_in_move_state = null;
-let made_move = false;
-let ui_wait = false;
-let eat_toggle = false;
-let bob_word = null;
-let sent_word = false;
-let sent_picks = false;
-let sent_end = false;
 let label_by_rank = "0A23456789\u{2469}JQK";
 let label_by_suit = "Y\u{2660}\u{2665}\u{2663}\u{2666}";
 
@@ -37,6 +26,26 @@ function get_player_id() {
     return params['id'];
 }
 
+class PlayerController {
+    constructor() {
+        this.params = get_params();
+        this.player_id = get_player_id();
+        this.all_selected_cards = {};
+        this.have_made_move_in_current_state = false;
+        this.most_recent_state = null;
+        this.latched_in_move_state = null;
+        this.made_move = false;
+        this.ui_wait = false;
+        this.eat_toggle = false;
+        this.bob_word = null;
+        this.sent_word = false;
+        this.sent_picks = false;
+        this.sent_end = false;
+    }
+}
+
+let controller = new PlayerController();
+
 function auto_move(json) {
     return json.auto;
 }
@@ -50,15 +59,15 @@ function update_card_after_toggle(label) {
     let classes = card.getAttribute('class').split(' ');
     for (let i = 0; i < classes.length; i++) {
         if (classes[i].startsWith('selected_')) {
-            classes[i] = `selected_${!!all_selected_cards[label]}`;
+            classes[i] = `selected_${!!controller.all_selected_cards[label]}`;
         }
     }
     card.setAttribute('class', classes.join(" "));
 }
 
 function toggle_card(label, selected_cards, n) {
-    if (eat_toggle) {
-        eat_toggle = false;
+    if (controller.eat_toggle) {
+        controller.eat_toggle = false;
         return;
     }
     if (selected_cards[label]) {
@@ -87,33 +96,33 @@ function generate_alice_entropy(player_id) {
     }).then((response) => {
         return response.json();
     }).then((json) => {
-        latched_in_move_state = null;
-        made_move = true;
+        controller.latched_in_move_state = null;
+        controller.made_move = true;
     });
 }
 
 function generate_bob_entropy(player_id) {
-    bob_word = Math.random().toString();
-    return fetch(`word_hash?arg=${player_id}${bob_word}`, {
+    controller.bob_word = Math.random().toString();
+    return fetch(`word_hash?arg=${player_id}${controller.bob_word}`, {
         "method": "POST"
     }).then((response) => {
         return response.json();
     }).then((json) => {
-        latched_in_move_state = null;
-        most_recent_state = null;
+        controller.latched_in_move_state = null;
+        controller.most_recent_state = null;
     });
 }
 
 function take_auto_action(player_id, json) {
     console.log(`take auto action ${player_id} ${JSON.stringify(json)}`);
-    if (json.state == 'BeforeAliceWord' && !sent_word) {
-        sent_word = true;
+    if (json.state == 'BeforeAliceWord' && !controller.sent_word) {
+        controller.sent_word = true;
         generate_alice_entropy(player_id);
-    } else if (json.state == 'WaitingForAlicePicks' && !sent_word) {
-        sent_word = true;
+    } else if (json.state == 'WaitingForAlicePicks' && !controller.sent_word) {
+        controller.sent_word = true;
         generate_bob_entropy(player_id);
-    } else if ((json.state == 'AliceFinish1' || json.state == 'BobFinish1' || json.state == 'BobEnd') && !sent_end) {
-        sent_end = true;
+    } else if ((json.state == 'AliceFinish1' || json.state == 'BobFinish1' || json.state == 'BobEnd') && !controller.sent_end) {
+        controller.sent_end = true;
         console.error('end game');
         end_game(player_id);
     }
@@ -123,21 +132,21 @@ function end_game(id) {
     return fetch(`finish?id=${id}`, {
         "method": "POST"
     }).then((response) => {
-        sent_end = true;
+        controller.sent_end = true;
         return response.json();
     });
 }
 
 
 function maybe_selected(label) {
-    return !!all_selected_cards[label];
+    return !!controller.all_selected_cards[label];
 }
 
 function render_card(card, n, label, toggleable) {
     let card_span = document.createElement('span');
     card_span.setAttribute('id', label);
     card_span.setAttribute('class',`card selected_${maybe_selected(label)}`);
-    let toggle_string = toggleable ? `onclick="toggle_card('${label}',all_selected_cards,${n})"` : '';
+    let toggle_string = toggleable ? `onclick="toggle_card('${label}',controller.all_selected_cards,${n})"` : '';
     card_span.innerHTML = `<div class='rank${card[0]} suit${card[1]}' ${toggle_string}><div class='card_top'>${label_by_suit[card[1]]}</div><div class='card_bot'>${label_by_rank[card[0]]}</div>`;
     return card_span;
 }
@@ -154,16 +163,16 @@ function submit_bob_picks() { submit_picks('bob'); }
 function submit_picks(name) {
     let picks = '';
     for (let i = 0; i < 8; i++) {
-        picks += (all_selected_cards[`_${i}`]) ? '1' : '0';
+        picks += (controller.all_selected_cards[`_${i}`]) ? '1' : '0';
     }
     fetch(`${name}_picks?arg=${picks}`, {
         "method": "POST"
     }).then((response) => {
         return response.json();
     }).then((json) => {
-        ui_wait = false;
-        made_move = true;
-        sent_picks = true;
+        controller.ui_wait = false;
+        controller.made_move = true;
+        controller.sent_picks = true;
     }).catch((e) => {
         console.error('submit_picks', e);
     });
@@ -195,52 +204,52 @@ function allow_manual_move(player_id, move, json) {
 
     if (move === 'BeforeAliceWord') {
         element.innerHTML = `<h2>You must generate a secret value and send a hash commitment</h2><div><button onclick="generate_alice_entropy(${player_id})">Generate secret value</button>"`;
-        if (auto_move(json) && !made_move) {
-            made_move = true;
+        if (auto_move(json) && !controller.made_move) {
+            controller.made_move = true;
             take_auto_action(player_id, json);
         }
     } else if (move === 'WaitingForAlicePicks') {
         if (have_card_data) {
-            let num_selected_cards = Object.keys(all_selected_cards).length;
+            let num_selected_cards = Object.keys(controller.all_selected_cards).length;
             let submit_disabled = (num_selected_cards !== 4) ? 'disabled' : '';
             let submit_button =
                 have_card_data ?
-                `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${sent_picks}' onclick='submit_bob_picks()' ${submit_disabled}>Submit picks</button></div>` :
+                `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${controller.sent_picks}' onclick='submit_bob_picks()' ${submit_disabled}>Submit picks</button></div>` :
                 '';
-            element.innerHTML = `${submit_button}<h2>You must choose four of these cards</h2><div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
+            element.innerHTML = `<h2>You must choose four of these cards</h2>${submit_button}<div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
             show_cards = 'bob';
         } else {
             let move_button =
-                bob_word ?
+                controller.bob_word ?
                 '' :
                 `<button onclick="generate_bob_entropy(${player_id})">Generate secret value</button>`;
 
             element.innerHTML = `<h2>You must generate a secret value and send part of a hash commitment</h2><div>${move_button}</div>"`;
 
-            if (auto_move(json) && !made_move) {
-                made_move = true;
+            if (auto_move(json) && !controller.made_move) {
+                controller.made_move = true;
                 take_auto_action(player_id, json);
             }
         }
     } else if (move === 'BeforeAlicePicks') {
-        let num_selected_cards = Object.keys(all_selected_cards).length;
+        let num_selected_cards = Object.keys(controller.all_selected_cards).length;
         let submit_disabled = (num_selected_cards !== 4) ? 'disabled' : '';
         let submit_button =
             have_card_data ?
-            `<button id='submit-picks' class='sent_picks_${sent_picks}' onclick='submit_alice_picks()' ${submit_disabled}>Submit picks</button>` :
+            `<button id='submit-picks' class='sent_picks_${controller.sent_picks}' onclick='submit_alice_picks()' ${submit_disabled}>Submit picks</button>` :
             '';
 
         element.innerHTML = `<h2>You must choose four of these cards</h2><div id='picks-submit-div'>${submit_button}</div><div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
         show_cards = 'alice';
     } else if (move === 'AliceFinish1' || move === 'AliceEnd' || move === 'BobFinish1' || move === 'BobEnd') {
         let submit_button =
-            !sent_end ?
+            !controller.sent_end ?
             `<button id='submit-finish' onclick='end_game(${player_id})'>Click to finish game</button>` : '';
 
         element.innerHTML = `<h2>Game outcome</h2><div id='finish-submit'>${submit_button}</div><div>${game_outcome(player_id, json)}</div><div>${JSON.stringify(json.readable)}</div>`;
 
-        if (!sent_end && auto_move(json) && !made_move) {
-            made_move = true;
+        if (!controller.sent_end && auto_move(json) && !controller.made_move) {
+            controller.made_move = true;
             take_auto_action(player_id, json);
         }
     } else {
@@ -250,13 +259,13 @@ function allow_manual_move(player_id, move, json) {
     if (show_cards && have_card_data) {
         $("#card-choices").sortable({
             update: function() {
-                eat_toggle = true;
+                controller.eat_toggle = true;
             }
         });
         $("#opponent-choices").sortable();
 
-        if (!sent_picks && typeof(json.readable) !== 'string' && json.readable.length == 2 && json.readable[0].length > 0) {
-            ui_wait = true;
+        if (!controller.sent_picks && typeof(json.readable) !== 'string' && json.readable.length == 2 && json.readable[0].length > 0) {
+            controller.ui_wait = true;
         }
 
         let our_cards = show_cards == 'alice' ? 0 : 1;
@@ -271,20 +280,20 @@ function allow_manual_move(player_id, move, json) {
 function take_update(player_id, json) {
     if (json.can_move) {
         let first_time_seeing_state = null;
-        if (json.state !== most_recent_state) {
+        if (json.state !== controller.most_recent_state) {
             first_time_seeing_state = json.state;
-            most_recent_state = json.state;
+            controller.most_recent_state = json.state;
         }
 
         if (first_time_seeing_state) {
-            latched_in_move_state = first_time_seeing_state;
-            console.log('made move', made_move);
-            made_move = false;
+            controller.latched_in_move_state = first_time_seeing_state;
+            console.log('made move', controller.made_move);
+            controller.made_move = false;
         }
     }
 
-    if (latched_in_move_state) {
-        allow_manual_move(player_id, latched_in_move_state, json);
+    if (controller.latched_in_move_state) {
+        allow_manual_move(player_id, controller.latched_in_move_state, json);
     }
 
     let info = document.getElementById('player-info');
@@ -310,7 +319,7 @@ function check() {
     }).then((response) => {
         return response.json();
     }).then((json) => {
-        if (!ui_wait) {
+        if (!controller.ui_wait) {
             let do_auto_move = auto_move(json) ? 'automatic default moves' : 'manual moves';
 
             let h1 = document.getElementById('player-heading');
