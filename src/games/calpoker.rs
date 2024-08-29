@@ -221,8 +221,11 @@ pub fn decode_calpoker_readable(
         return Err(Error::StrErr("not all bitmasks converted".to_string()));
     }
 
-    let bob_hand_value = decode_hand_result(allocator, as_list[3])?;
-    let alice_hand_value = decode_hand_result(allocator, as_list[4])?;
+    let start_index = 1;
+    let offset_for_player = !am_alice as usize;
+
+    let bob_hand_value = decode_hand_result(allocator, as_list[start_index + (2 ^ offset_for_player)])?;
+    let alice_hand_value = decode_hand_result(allocator, as_list[start_index + (3 ^ offset_for_player)])?;
 
     let (your_share, win_direction) =
         if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i64_from_atom) {
@@ -245,8 +248,8 @@ pub fn decode_calpoker_readable(
 
     Ok(CalpokerResult {
         raw_alice_selects: bitmasks[0],
-        raw_bob_picks: bitmasks[1],
-        raw_alice_picks: bitmasks[2],
+        raw_bob_picks: bitmasks[start_index + (0 ^ offset_for_player)],
+        raw_alice_picks: bitmasks[start_index + (1 ^ offset_for_player)],
         game_amount: amount.to_u64(),
         your_share: your_share.to_u64(),
         bob_hand_value,
