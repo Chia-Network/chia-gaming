@@ -250,7 +250,7 @@ pub fn decode_calpoker_readable(
 
     Ok(CalpokerResult {
         raw_alice_selects: bitmasks[0],
-        raw_bob_picks: bitmasks[start_index + (0 ^ offset_for_player)],
+        raw_bob_picks: bitmasks[start_index + offset_for_player],
         raw_alice_picks: bitmasks[start_index + (1 ^ offset_for_player)],
         game_amount: amount.to_u64(),
         your_share: your_share.to_u64(),
