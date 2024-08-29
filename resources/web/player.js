@@ -82,7 +82,7 @@ function toggle_card(label, selected_cards, n) {
 
 function generate_alice_entropy(player_id) {
     let alice_entropy = Math.random().toString();
-    return fetch(`alice_word_hash?arg=${player_id}${alice_entropy}`, {
+    return fetch(`word_hash?arg=${player_id}${alice_entropy}`, {
         "method": "POST"
     }).then((response) => {
         return response.json();
@@ -94,7 +94,7 @@ function generate_alice_entropy(player_id) {
 
 function generate_bob_entropy(player_id) {
     bob_word = Math.random().toString();
-    return fetch(`bob_word_hash?arg=${player_id}${bob_word}`, {
+    return fetch(`word_hash?arg=${player_id}${bob_word}`, {
         "method": "POST"
     }).then((response) => {
         return response.json();
