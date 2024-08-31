@@ -142,15 +142,12 @@ function make_card_row(div, cards, label_prefix, toggleable) {
     }
 }
 
-function submit_alice_picks() { submit_picks('alice'); }
-function submit_bob_picks() { submit_picks('bob'); }
-
-function submit_picks(name) {
+function submit_picks(player_id) {
     let picks = '';
     for (let i = 0; i < 8; i++) {
         picks += (controller.all_selected_cards[`_${i}`]) ? '1' : '0';
     }
-    fetch(`${name}_picks?arg=${picks}`, {
+    fetch(`picks?arg=${player_id}${picks}`, {
         "method": "POST"
     }).then((response) => {
         return response.json();
@@ -199,12 +196,12 @@ function allow_manual_move(player_id, move, json) {
             let submit_disabled = (num_selected_cards !== 4) ? 'disabled' : '';
             let submit_button =
                 have_card_data ?
-                `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${controller.sent_picks}' onclick='submit_bob_picks()' ${submit_disabled}>Submit picks</button></div>` :
+                `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${controller.sent_picks}' onclick='submit_picks(${player_id})' ${submit_disabled}>Submit picks</button></div>` :
                 '';
             element.innerHTML = `<h2>You must choose four of these cards</h2>${submit_button}<div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
-            show_cards = player_id ? 'bob' : 'alice';
+            show_cards = player_id == 2 ? 'bob' : 'alice';
         }
-    } else if (move === 'AliceFinish1' || move === 'AliceEnd' || move === 'BobFinish1' || move === 'BobEnd') {
+    } else if (move === 'BeforeAliceFinish' || move === 'BeforeBobFinish') {
         let submit_button =
             !controller.sent_end ?
             `<button id='submit-finish' onclick='end_game(${player_id})'>Click to finish game</button>` : '';

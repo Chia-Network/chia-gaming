@@ -182,6 +182,39 @@ pub struct PerPlayerInfo {
     game_outcome: CalpokerResult,
 }
 
+struct ReleaseObject<'a, T: Clone> {
+    ob: T,
+    released: bool,
+    deq: &'a mut VecDeque<T>
+}
+
+impl<'a, T: Clone> ReleaseObject<'a, T> {
+    fn value(&self) -> T { self.ob.clone() }
+
+    fn release(&mut self) {
+        self.released = true;
+    }
+
+    fn new(deq: &'a mut VecDeque<T>) -> Option<Self> {
+        deq.pop_front().map(|res| {
+            ReleaseObject {
+                ob: res,
+                released: false,
+                deq
+            }
+        })
+    }
+}
+
+impl<'a, T: Clone> Drop for ReleaseObject<'a, T> {
+    fn drop(&mut self) {
+        if !self.released {
+            self.released = true;
+            self.deq.push_front(self.ob.clone());
+        }
+    }
+}
+
 impl PerPlayerInfo {
     fn new(allocator: &mut AllocEncoder, player_id: bool, fund_coin: CoinString, cradle: SynchronousGameCradle, play_state: PlayState) -> Self {
         PerPlayerInfo {
@@ -209,6 +242,7 @@ impl PerPlayerInfo {
     }
 
     fn enqueue_outbound_move(&mut self, incoming_action: IncomingAction) {
+        eprintln!("enqueue outbound move: {incoming_action:?}");
         self.incoming_actions.push_back(incoming_action);
         self.num_incoming_actions += 1;
     }
@@ -292,18 +326,20 @@ impl PerPlayerInfo {
         rng: &mut R,
         game_ids: &[GameID],
     ) -> Result<(), Error> {
-        let move_to_make = self.incoming_actions.pop_front();
+        let mut g =
+            if let Some(g) = ReleaseObject::new(&mut self.incoming_actions) {
+                g
+            } else {
+                return Ok(());
+            };
 
-        if move_to_make.is_some() {
-            eprintln!("{} pass on move {move_to_make:?}", self.player_id);
-        }
-
-        match move_to_make {
-            Some(IncomingAction::Word(hash)) => {
+        match g.value() {
+            IncomingAction::Word(hash) => {
                 if !matches!(self.play_state, PlayState::BeforeAliceWord | PlayState::BeforeBobWord) {
                     return Ok(());
                 }
 
+                g.release();
                 self.play_state = self.play_state.incr();
 
                 let encoded_node = allocator.encode_atom(&hash).unwrap();
@@ -319,17 +355,18 @@ impl PerPlayerInfo {
                         Hash::from_slice(&hash),
                     )
             }
-            Some(IncomingAction::Picks(other_picks)) => {
+            IncomingAction::Picks(other_picks) => {
                 if !matches!(self.play_state, PlayState::BeforeAlicePicks | PlayState::BeforeBobPicks) {
                     return Ok(());
                 }
 
+                g.release();
                 self.play_state = self.play_state.incr();
 
                 let encoded_node = other_picks.to_clvm(allocator).unwrap();
                 let encoded = node_to_bytes(allocator.allocator(), encoded_node).unwrap();
                 let new_entropy = rng.gen();
-                eprintln!("alice picks");
+                eprintln!("picks {other_picks:?}");
                 self.cradle
                     .make_move(
                         allocator,
@@ -339,11 +376,12 @@ impl PerPlayerInfo {
                         new_entropy,
                     )
             }
-            Some(IncomingAction::Finish) => {
+            IncomingAction::Finish => {
                 if !matches!(self.play_state, PlayState::BeforeAliceFinish | PlayState::BeforeBobFinish) {
                     return Ok(());
                 }
 
+                g.release();
                 self.play_state = self.play_state.incr();
                 let new_entropy = rng.gen();
                 self.cradle
@@ -354,9 +392,6 @@ impl PerPlayerInfo {
                         vec![0x80],
                         new_entropy,
                     )
-            }
-            _ => {
-                Ok(())
             }
         }
     }
@@ -369,6 +404,8 @@ impl PerPlayerInfo {
     ) -> Result<(), Error> {
         let prev = self.play_state.clone();
 
+        eprintln!("{} idle waiting {} incoming {} state {:?}", self.player_id, self.incoming_actions.len(), self.local_ui.received_moves, self.play_state);
+
         match (self.local_ui.received_moves, &self.play_state) {
             (1, PlayState::BobWaiting) => {
                 self.play_state = self.play_state.incr();
@@ -377,9 +414,15 @@ impl PerPlayerInfo {
                 self.play_state = self.play_state.incr();
             }
             (2, PlayState::AfterBobWord) => {
+                self.play_state = self.play_state.incr();
+            }
+            (2, PlayState::AfterAlicePicks) => {
+                self.play_state = self.play_state.incr();
+            }
+            (2, PlayState::AfterBobPicks) => {
+                self.play_state = self.play_state.incr();
             }
             _ => {
-                eprintln!("unhandled idle {} incoming {} state {:?}", self.player_id, self.local_ui.received_moves, self.play_state);
             }
         }
 
@@ -413,6 +456,8 @@ struct GameRunner {
     handshake_done: bool,
     can_move: bool,
     funded: bool,
+
+    tick_count: usize,
 
     auto: bool,
 }
@@ -559,6 +604,7 @@ impl GameRunner {
             can_move,
             funded: false,
             auto: false,
+            tick_count: 0,
             player_info: [ player1, player2 ],
         })
     }
@@ -639,8 +685,12 @@ impl GameRunner {
     }
 
     fn idle(&mut self) -> Result<String, Error> {
-        self.simulator
-            .farm_block(&self.neutral_identity.puzzle_hash);
+        self.tick_count += 1;
+
+        if self.tick_count % 10 == 0 {
+            self.simulator
+                .farm_block(&self.neutral_identity.puzzle_hash);
+        }
 
         let current_height = self.simulator.get_current_height();
         let current_coins = self.simulator.get_all_coins().expect("should work");
@@ -722,7 +772,6 @@ impl GameRunner {
 
         if self.can_move {
             for i in 0..=1 {
-                eprintln!("idle {i}");
                 self.player_info[i].idle(
                     &mut self.allocator,
                     &mut self.rng,
