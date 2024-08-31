@@ -137,9 +137,6 @@ pub fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<Ca
     if amount_bytes[0] & 0x80 != 0 {
         amount_bytes.insert(0, 0);
     }
-    eprintln!(
-        "make cards with alice_hash {alice_hash:?} bob_hash {bob_hash:?} amount {amount_bytes:?}"
-    );
     let rand_input = Sha256Input::Array(vec![
         Sha256Input::Bytes(&alice_hash[..16]),
         Sha256Input::Bytes(&bob_hash[..16]),

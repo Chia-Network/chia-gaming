@@ -89,7 +89,7 @@ function toggle_card(label, selected_cards, n) {
     }
 }
 
-function generate_alice_entropy(player_id) {
+function generate_entropy(player_id) {
     let alice_entropy = Math.random().toString();
     return fetch(`word_hash?arg=${player_id}${alice_entropy}`, {
         "method": "POST"
@@ -101,26 +101,11 @@ function generate_alice_entropy(player_id) {
     });
 }
 
-function generate_bob_entropy(player_id) {
-    controller.bob_word = Math.random().toString();
-    return fetch(`word_hash?arg=${player_id}${controller.bob_word}`, {
-        "method": "POST"
-    }).then((response) => {
-        return response.json();
-    }).then((json) => {
-        controller.latched_in_move_state = null;
-        controller.most_recent_state = null;
-    });
-}
-
 function take_auto_action(player_id, json) {
     console.log(`take auto action ${player_id} ${JSON.stringify(json)}`);
-    if (json.state == 'BeforeAliceWord' && !controller.sent_word) {
+    if ((json.state == 'BeforeAliceWord' || json.state == 'BeforeBobWord') && !controller.sent_word) {
         controller.sent_word = true;
-        generate_alice_entropy(player_id);
-    } else if (json.state == 'WaitingForAlicePicks' && !controller.sent_word) {
-        controller.sent_word = true;
-        generate_bob_entropy(player_id);
+        generate_entropy(player_id);
     } else if ((json.state == 'AliceFinish1' || json.state == 'BobFinish1' || json.state == 'BobEnd') && !controller.sent_end) {
         controller.sent_end = true;
         console.error('end game');
@@ -202,13 +187,13 @@ function allow_manual_move(player_id, move, json) {
     let show_cards = false;
     let have_card_data = typeof(json.readable) !== 'string' && json.readable.length == 2 && json.readable[0].length > 0;
 
-    if (move === 'BeforeAliceWord') {
-        element.innerHTML = `<h2>You must generate a secret value and send a hash commitment</h2><div><button onclick="generate_alice_entropy(${player_id})">Generate secret value</button>"`;
+    if (move === 'BeforeAliceWord' || move === 'BeforeBobWord') {
+        element.innerHTML = `<h2>You must generate a secret value and send a hash commitment</h2><div><button onclick="generate_entropy(${player_id})">Generate secret value</button>"`;
         if (auto_move(json) && !controller.made_move) {
             controller.made_move = true;
             take_auto_action(player_id, json);
         }
-    } else if (move === 'WaitingForAlicePicks') {
+    } else if (move === 'BeforeAlicePicks' || move === 'BeforeBobPicks' || move === 'AfterBobWord') {
         if (have_card_data) {
             let num_selected_cards = Object.keys(controller.all_selected_cards).length;
             let submit_disabled = (num_selected_cards !== 4) ? 'disabled' : '';
@@ -217,30 +202,8 @@ function allow_manual_move(player_id, move, json) {
                 `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${controller.sent_picks}' onclick='submit_bob_picks()' ${submit_disabled}>Submit picks</button></div>` :
                 '';
             element.innerHTML = `<h2>You must choose four of these cards</h2>${submit_button}<div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
-            show_cards = 'bob';
-        } else {
-            let move_button =
-                controller.bob_word ?
-                '' :
-                `<button onclick="generate_bob_entropy(${player_id})">Generate secret value</button>`;
-
-            element.innerHTML = `<h2>You must generate a secret value and send part of a hash commitment</h2><div>${move_button}</div>"`;
-
-            if (auto_move(json) && !controller.made_move) {
-                controller.made_move = true;
-                take_auto_action(player_id, json);
-            }
+            show_cards = player_id ? 'bob' : 'alice';
         }
-    } else if (move === 'BeforeAlicePicks') {
-        let num_selected_cards = Object.keys(controller.all_selected_cards).length;
-        let submit_disabled = (num_selected_cards !== 4) ? 'disabled' : '';
-        let submit_button =
-            have_card_data ?
-            `<button id='submit-picks' class='sent_picks_${controller.sent_picks}' onclick='submit_alice_picks()' ${submit_disabled}>Submit picks</button>` :
-            '';
-
-        element.innerHTML = `<h2>You must choose four of these cards</h2><div id='picks-submit-div'>${submit_button}</div><div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
-        show_cards = 'alice';
     } else if (move === 'AliceFinish1' || move === 'AliceEnd' || move === 'BobFinish1' || move === 'BobEnd') {
         let submit_button =
             !controller.sent_end ?

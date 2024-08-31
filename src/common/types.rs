@@ -564,6 +564,7 @@ pub enum Error {
     StrErr(String),
     BlsErr(chia_bls::Error),
     BsonErr(bson::de::Error),
+    JsonErr(serde_json::Error),
     Channel(String),
 }
 
@@ -835,6 +836,12 @@ impl ErrToError for ToClvmError {
 impl ErrToError for bson::de::Error {
     fn into_gen(self) -> Error {
         Error::BsonErr(self)
+    }
+}
+
+impl ErrToError for serde_json::Error {
+    fn into_gen(self) -> Error {
+        Error::JsonErr(self)
     }
 }
 
