@@ -112,24 +112,21 @@ impl Default for Simulator {
         // https://github.com/PyO3/pyo3/issues/1741
         #[cfg(target_os = "macos")]
         if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
-            // Safety: the GIL is already held because of the Py_IntializeEx call.
-            let pool = GILPool::new();
-            let py = pool.python();
-
-            let version_info = py.version_info();
-            let sys = py.import("sys").unwrap();
-            let sys_path = sys.getattr("path").unwrap();
-            sys_path
-                .call_method1(
-                    "append",
-                    (format!(
-                        "{}/lib/python{}.{}/site-packages",
-                        venv, version_info.major, version_info.minor
-                    ),),
-                )
-                .unwrap();
-
-            drop(pool);
+            Python::with_gil(|py| -> PyResult<_> {
+                let version_info = py.version_info();
+                let sys = py.import("sys").unwrap();
+                let sys_path = sys.getattr("path").unwrap();
+                sys_path
+                    .call_method1(
+                        "append",
+                        (format!(
+                            "{}/lib/python{}.{}/site-packages",
+                            venv, version_info.major, version_info.minor
+                        ),),
+                    )
+                    .unwrap();
+                Ok(())
+            }).unwrap();
         }
 
         Python::with_gil(|py| -> PyResult<_> {
