@@ -30,7 +30,7 @@ use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
     atom_from_clvm, usize_from_atom, AllocEncoder, Amount, CoinString, Error, GameID, Hash,
-    PrivateKey, Program, Sha256Input, Timeout, IntoErr,
+    IntoErr, PrivateKey, Program, Sha256Input, Timeout,
 };
 use chia_gaming::games::calpoker::{decode_calpoker_readable, make_cards, CalpokerResult};
 use chia_gaming::games::poker_collection;
@@ -97,7 +97,7 @@ impl ToLocalUI for UIReceiver {
 enum IncomingAction {
     Word(Vec<u8>),
     Picks(Vec<bool>),
-    Finish
+    Finish,
 }
 
 //
@@ -184,23 +184,23 @@ pub struct PerPlayerInfo {
 struct ReleaseObject<'a, T: Clone> {
     ob: T,
     released: bool,
-    deq: &'a mut VecDeque<T>
+    deq: &'a mut VecDeque<T>,
 }
 
 impl<'a, T: Clone> ReleaseObject<'a, T> {
-    fn value(&self) -> T { self.ob.clone() }
+    fn value(&self) -> T {
+        self.ob.clone()
+    }
 
     fn release(&mut self) {
         self.released = true;
     }
 
     fn new(deq: &'a mut VecDeque<T>) -> Option<Self> {
-        deq.pop_front().map(|res| {
-            ReleaseObject {
-                ob: res,
-                released: false,
-                deq
-            }
+        deq.pop_front().map(|res| ReleaseObject {
+            ob: res,
+            released: false,
+            deq,
         })
     }
 }
@@ -215,7 +215,13 @@ impl<'a, T: Clone> Drop for ReleaseObject<'a, T> {
 }
 
 impl PerPlayerInfo {
-    fn new(allocator: &mut AllocEncoder, player_id: bool, fund_coin: CoinString, cradle: SynchronousGameCradle, play_state: PlayState) -> Self {
+    fn new(
+        allocator: &mut AllocEncoder,
+        player_id: bool,
+        fund_coin: CoinString,
+        cradle: SynchronousGameCradle,
+        play_state: PlayState,
+    ) -> Self {
         PerPlayerInfo {
             player_id,
             fund_coin,
@@ -270,13 +276,13 @@ impl PerPlayerInfo {
             PlayState::BeforeAlicePicks => {
                 let cardlist: Vec<Vec<(usize, usize)>> = if let Some(cardlist) = proper_list(
                     allocator.allocator(),
-                    self
-                        .local_ui
-                        .opponent_readable_move
-                        .to_nodeptr(),
+                    self.local_ui.opponent_readable_move.to_nodeptr(),
                     true,
                 ) {
-                    cardlist.iter().map(|c| convert_cards(allocator, *c)).collect()
+                    cardlist
+                        .iter()
+                        .map(|c| convert_cards(allocator, *c))
+                        .collect()
                 } else {
                     return Err("wrong decode of two card sets".to_string());
                 };
@@ -285,26 +291,17 @@ impl PerPlayerInfo {
             }
             PlayState::AfterBobWord => self.bob_readable(allocator),
             PlayState::BeforeBobPicks => self.bob_readable(allocator),
-            PlayState::AfterAlicePicks => {
-                serde_json::to_value(&self.game_outcome)
-                    .map_err(|e| format!("couldn't make json: {e:?}"))
-            }
-            PlayState::BeforeAliceFinish => {
-                serde_json::to_value(&self.game_outcome)
-                    .map_err(|e| format!("couldn't make json: {e:?}"))
-            }
-            PlayState::AliceEnd => {
-                serde_json::to_value(&self.game_outcome)
-                    .map_err(|e| format!("couldn't make json: {e:?}"))
-            }
+            PlayState::AfterAlicePicks => serde_json::to_value(&self.game_outcome)
+                .map_err(|e| format!("couldn't make json: {e:?}")),
+            PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome)
+                .map_err(|e| format!("couldn't make json: {e:?}")),
+            PlayState::AliceEnd => serde_json::to_value(&self.game_outcome)
+                .map_err(|e| format!("couldn't make json: {e:?}")),
             PlayState::BobEnd => serde_json::to_value(&self.game_outcome)
                 .map_err(|e| format!("couldn't make json: {e:?}")),
             _ => Ok(Value::String(disassemble(
                 allocator.allocator(),
-                self
-                    .local_ui
-                    .opponent_readable_move
-                    .to_nodeptr(),
+                self.local_ui.opponent_readable_move.to_nodeptr(),
                 None,
             ))),
         }
@@ -316,16 +313,18 @@ impl PerPlayerInfo {
         rng: &mut R,
         game_ids: &[GameID],
     ) -> Result<(), Error> {
-        let mut g =
-            if let Some(g) = ReleaseObject::new(&mut self.incoming_actions) {
-                g
-            } else {
-                return Ok(());
-            };
+        let mut g = if let Some(g) = ReleaseObject::new(&mut self.incoming_actions) {
+            g
+        } else {
+            return Ok(());
+        };
 
         match g.value() {
             IncomingAction::Word(hash) => {
-                if !matches!(self.play_state, PlayState::BeforeAliceWord | PlayState::BeforeBobWord) {
+                if !matches!(
+                    self.play_state,
+                    PlayState::BeforeAliceWord | PlayState::BeforeBobWord
+                ) {
                     return Ok(());
                 }
 
@@ -336,17 +335,19 @@ impl PerPlayerInfo {
                 let encoded = node_to_bytes(allocator.allocator(), encoded_node).unwrap();
                 eprintln!("word hash {hash:?}");
 
-                self.cradle
-                    .make_move(
-                        allocator,
-                        rng,
-                        &game_ids[0],
-                        encoded,
-                        Hash::from_slice(&hash),
-                    )
+                self.cradle.make_move(
+                    allocator,
+                    rng,
+                    &game_ids[0],
+                    encoded,
+                    Hash::from_slice(&hash),
+                )
             }
             IncomingAction::Picks(other_picks) => {
-                if !matches!(self.play_state, PlayState::BeforeAlicePicks | PlayState::BeforeBobPicks) {
+                if !matches!(
+                    self.play_state,
+                    PlayState::BeforeAlicePicks | PlayState::BeforeBobPicks
+                ) {
                     return Ok(());
                 }
 
@@ -358,16 +359,13 @@ impl PerPlayerInfo {
                 let new_entropy = rng.gen();
                 eprintln!("picks {other_picks:?}");
                 self.cradle
-                    .make_move(
-                        allocator,
-                        rng,
-                        &game_ids[0],
-                        encoded,
-                        new_entropy,
-                    )
+                    .make_move(allocator, rng, &game_ids[0], encoded, new_entropy)
             }
             IncomingAction::Finish => {
-                if !matches!(self.play_state, PlayState::BeforeAliceFinish | PlayState::BeforeBobFinish) {
+                if !matches!(
+                    self.play_state,
+                    PlayState::BeforeAliceFinish | PlayState::BeforeBobFinish
+                ) {
                     return Ok(());
                 }
 
@@ -375,13 +373,7 @@ impl PerPlayerInfo {
                 self.play_state = self.play_state.incr();
                 let new_entropy = rng.gen();
                 self.cradle
-                    .make_move(
-                        allocator,
-                        rng,
-                        &game_ids[0],
-                        vec![0x80],
-                        new_entropy,
-                    )
+                    .make_move(allocator, rng, &game_ids[0], vec![0x80], new_entropy)
             }
         }
     }
@@ -394,7 +386,13 @@ impl PerPlayerInfo {
     ) -> Result<(), Error> {
         let prev = self.play_state.clone();
 
-        eprintln!("{} idle waiting {} incoming {} state {:?}", self.player_id, self.incoming_actions.len(), self.local_ui.received_moves, self.play_state);
+        eprintln!(
+            "{} idle waiting {} incoming {} state {:?}",
+            self.player_id,
+            self.incoming_actions.len(),
+            self.local_ui.received_moves,
+            self.play_state
+        );
 
         match (self.local_ui.received_moves, &self.play_state) {
             (1, PlayState::BobWaiting) => {
@@ -412,19 +410,17 @@ impl PerPlayerInfo {
             (2, PlayState::AfterBobPicks) => {
                 self.play_state = self.play_state.incr();
             }
-            _ => {
-            }
+            _ => {}
         }
 
         if prev != self.play_state {
-            eprintln!("{} R {} transition {prev:?} to {:?}", self.player_id, self.local_ui.received_moves, self.play_state);
+            eprintln!(
+                "{} R {} transition {prev:?} to {:?}",
+                self.player_id, self.local_ui.received_moves, self.play_state
+            );
         }
 
-        self.pass_on_move(
-            allocator,
-            rng,
-            game_ids
-        )
+        self.pass_on_move(allocator, rng, game_ids)
     }
 }
 
@@ -579,8 +575,20 @@ impl GameRunner {
         let handshake_done = false;
         let can_move = false;
 
-        let player1 = PerPlayerInfo::new(&mut allocator, false, parent_coin_0.clone(), cradle1, PlayState::BeforeAliceWord);
-        let player2 = PerPlayerInfo::new(&mut allocator, true, parent_coin_1.clone(), cradle2, PlayState::BobWaiting);
+        let player1 = PerPlayerInfo::new(
+            &mut allocator,
+            false,
+            parent_coin_0.clone(),
+            cradle1,
+            PlayState::BeforeAliceWord,
+        );
+        let player2 = PerPlayerInfo::new(
+            &mut allocator,
+            true,
+            parent_coin_1.clone(),
+            cradle2,
+            PlayState::BobWaiting,
+        );
 
         Ok(GameRunner {
             allocator,
@@ -595,7 +603,7 @@ impl GameRunner {
             funded: false,
             auto: false,
             tick_count: 0,
-            player_info: [ player1, player2 ],
+            player_info: [player1, player2],
         })
     }
 
@@ -700,13 +708,11 @@ impl GameRunner {
                 .expect("should work");
 
             loop {
-                let result = self.player_info[i]
-                    .cradle
-                    .idle(
-                        &mut self.allocator,
-                        &mut self.rng,
-                        &mut self.player_info[i].local_ui,
-                    )?;
+                let result = self.player_info[i].cradle.idle(
+                    &mut self.allocator,
+                    &mut self.rng,
+                    &mut self.player_info[i].local_ui,
+                )?;
                 debug!(
                     "cradle {i}: continue_on {} outbound {}",
                     result.continue_on,
@@ -761,11 +767,7 @@ impl GameRunner {
 
         if self.can_move {
             for i in 0..=1 {
-                self.player_info[i].idle(
-                    &mut self.allocator,
-                    &mut self.rng,
-                    &self.game_ids
-                )?;
+                self.player_info[i].idle(&mut self.allocator, &mut self.rng, &self.game_ids)?;
             }
 
             return Ok(self.move_state());
