@@ -176,7 +176,6 @@ pub struct PerPlayerInfo {
     preimage: Vec<u8>,
     use_word: Vec<u8>,
     picks: Vec<bool>,
-    finish_move: bool,
     incoming_actions: VecDeque<IncomingAction>,
     num_incoming_actions: usize,
     game_outcome: CalpokerResult,
@@ -229,16 +228,7 @@ impl PerPlayerInfo {
             game_outcome: CalpokerResult::default(),
             incoming_actions: VecDeque::default(),
             num_incoming_actions: 0,
-            finish_move: false,
         }
-    }
-
-    fn get_player_id(&self) -> bool { self.player_id }
-    fn num_incoming_actions(&self) -> usize { self.num_incoming_actions }
-    fn num_received_moves(&self) -> usize { self.local_ui.received_moves }
-
-    fn deque_incoming_move(&mut self) -> Option<IncomingAction> {
-        self.incoming_actions.pop_back()
     }
 
     fn enqueue_outbound_move(&mut self, incoming_action: IncomingAction) {
@@ -678,10 +668,9 @@ impl GameRunner {
         self.move_state()
     }
 
-    fn finish_move(&mut self, pid: bool) -> String {
-        eprintln!("enable finish move {pid}");
-        self.player_info[pid as usize].finish_move = true;
-        "{}".to_string()
+    fn finish_move(&mut self, id: bool) -> String {
+        self.player_info[id as usize].enqueue_outbound_move(IncomingAction::Finish);
+        self.move_state()
     }
 
     fn idle(&mut self) -> Result<String, Error> {
