@@ -119,10 +119,13 @@ impl Default for Simulator {
                 sys_path
                     .call_method1(
                         "insert",
-                        (0, format!(
-                            "{}/lib/python{}.{}/site-packages",
-                            venv, version_info.major, version_info.minor
-                        ),),
+                        (
+                            0,
+                            format!(
+                                "{}/lib/python{}.{}/site-packages",
+                                venv, version_info.major, version_info.minor
+                            ),
+                        ),
                     )
                     .unwrap();
                 Ok(())
