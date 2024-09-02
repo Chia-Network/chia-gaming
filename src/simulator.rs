@@ -118,11 +118,14 @@ impl Default for Simulator {
                 let sys_path = sys.getattr("path").unwrap();
                 sys_path
                     .call_method1(
-                        "append",
-                        (format!(
-                            "{}/lib/python{}.{}/site-packages",
-                            venv, version_info.major, version_info.minor
-                        ),),
+                        "insert",
+                        (
+                            0,
+                            format!(
+                                "{}/lib/python{}.{}/site-packages",
+                                venv, version_info.major, version_info.minor
+                            ),
+                        ),
                     )
                     .unwrap();
                 Ok(())
