@@ -23,7 +23,7 @@ use clvmr::{run_program, ChiaDialect};
 use log::debug;
 
 use crate::channel_handler::types::{
-    Evidence, ReadableMove, ReadableUX, ValidationInfo, ValidationProgram,
+    Evidence, ReadableMove, ValidationInfo, ValidationProgram,
 };
 use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
@@ -444,9 +444,22 @@ impl MessageHandler {
     }
     pub fn run(
         &self,
-        _allocator: &mut AllocEncoder,
-        _inputs: &MessageInputs,
-    ) -> Result<ReadableUX, Error> {
-        todo!();
+        allocator: &mut AllocEncoder,
+        inputs: &MessageInputs,
+    ) -> Result<ReadableMove, Error> {
+        let args = (
+            inputs.message.clone(),
+            (Node(inputs.state),
+             (inputs.amount.clone(), ())
+            )
+        ).to_clvm(allocator).into_gen()?;
+        let run_result = run_code(
+            allocator,
+            self.0,
+            args,
+            false
+        )?;
+
+        Ok(ReadableMove::from_nodeptr(run_result))
     }
 }

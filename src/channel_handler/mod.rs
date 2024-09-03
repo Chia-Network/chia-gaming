@@ -19,7 +19,7 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult,
     GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData,
-    PotatoMoveCachedData, PotatoSignatures, ReadableMove, ReadableUX, UnrollCoin,
+    PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
     UnrollCoinConditionInputs,
 };
 use crate::common::constants::CREATE_COIN;
@@ -820,7 +820,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         message: &[u8],
-    ) -> Result<ReadableUX, Error> {
+    ) -> Result<ReadableMove, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
         self.live_games[game_idx]
