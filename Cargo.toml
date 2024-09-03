@@ -8,6 +8,7 @@ sim-tests = ["dep:pyo3"]
 simulator = ["dep:pyo3"]
 
 [dependencies]
+exec = "0.3.1"
 clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "ec75759377791c9b785123d2d3e2457d08ac6621" }
 clvmr = { version = "=0.3.2", features = ["pre-eval"] }
 serde_json = "1.0"

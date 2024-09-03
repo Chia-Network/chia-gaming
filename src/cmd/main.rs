@@ -1,4 +1,6 @@
+use exec::execvp;
 use std::collections::{BTreeMap, VecDeque};
+use std::ffi::OsString;
 use std::fs;
 use std::io::stdin;
 use std::mem::swap;
@@ -953,66 +955,92 @@ fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, String> {
     Ok("{}".to_string())
 }
 
-#[tokio::main]
-async fn main() {
+fn detect_run_as_python(args: &[String]) -> bool {
+    args.iter().any(|x: &String| x == "-c")
+}
+
+fn main() {
     let mut args = std::env::args();
-    let auto = args.any(|x| x == "auto");
+    let args_vec: Vec<String> = args.collect();
+    if detect_run_as_python(&args_vec) {
+        let new_args: Vec<OsString> = args_vec
+            .iter()
+            .enumerate()
+            .map(
+                |(i, arg)| {
+                    if i == 0 {
+                        "python3".into()
+                    } else {
+                        arg.into()
+                    }
+                },
+            )
+            .collect();
+        let exec_err = execvp("python3", &new_args);
+        eprintln!("Error Running: {:?}\n{:?}\n", new_args, exec_err);
+        return;
+    }
+    let mut rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        eprintln!("ARGS: {:?}", args_vec);
+        let auto = args_vec.iter().any(|x| x == "auto");
 
-    let router = Router::new()
-        .get(index)
-        .push(Router::with_path("index.css").get(index_css))
-        .push(Router::with_path("index.js").get(index_js))
-        .push(Router::with_path("player.html").get(player_html))
-        .push(Router::with_path("player.js").get(player_js))
-        .push(Router::with_path("exit").post(exit))
-        .push(Router::with_path("reset").post(reset))
-        .push(Router::with_path("idle.json").post(idle))
-        .push(Router::with_path("player.json").post(player))
-        .push(Router::with_path("word_hash").post(word_hash))
-        .push(Router::with_path("picks").post(do_picks))
-        .push(Router::with_path("finish").post(finish));
-    let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
+        let router = Router::new()
+            .get(index)
+            .push(Router::with_path("index.css").get(index_css))
+            .push(Router::with_path("index.js").get(index_js))
+            .push(Router::with_path("player.html").get(player_html))
+            .push(Router::with_path("player.js").get(player_js))
+            .push(Router::with_path("exit").post(exit))
+            .push(Router::with_path("reset").post(reset))
+            .push(Router::with_path("idle.json").post(idle))
+            .push(Router::with_path("player.json").post(player))
+            .push(Router::with_path("word_hash").post(word_hash))
+            .push(Router::with_path("picks").post(do_picks))
+            .push(Router::with_path("finish").post(finish));
+        let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
-    let s = std::thread::spawn(move || {
-        if auto {
-            let mut locked = MUTEX.lock().unwrap();
-            (*locked).set_auto(true);
-        }
-
-        loop {
-            let request = {
-                let channel = TO_WEB.1.lock().unwrap();
-                (*channel).recv().unwrap()
-            };
-
-            debug!("request {request:?}");
-            let result = {
+        let s = std::thread::spawn(move || {
+            if auto {
                 let mut locked = MUTEX.lock().unwrap();
-                match request {
-                    WebRequest::Idle => (*locked).idle().map_err(|e| format!("{e:?}")),
-                    WebRequest::Player(id) => (*locked).player(id),
-                    WebRequest::WordHash(id, hash) => Ok((*locked).word_hash(id, &hash)),
-                    WebRequest::Picks(id, picks) => Ok((*locked).do_picks(id, &picks)),
-                    WebRequest::FinishMove(id) => Ok((*locked).finish_move(id)),
-                    WebRequest::Reset => reset_sim(&mut (*locked), auto),
-                }
-            };
-
-            {
-                let channel = FROM_WEB.0.lock().unwrap();
-                (*channel).send(result).unwrap();
+                (*locked).set_auto(true);
             }
-        }
-    });
 
-    println!("port 5800.  press return to exit gracefully...");
-    let t = std::thread::spawn(|| {
-        let mut buffer = String::default();
-        stdin().read_line(&mut buffer).ok();
-        std::process::exit(0);
-    });
+            loop {
+                let request = {
+                    let channel = TO_WEB.1.lock().unwrap();
+                    (*channel).recv().unwrap()
+                };
 
-    Server::new(acceptor).serve(router).await;
-    s.join().unwrap();
-    t.join().unwrap();
+                debug!("request {request:?}");
+                let result = {
+                    let mut locked = MUTEX.lock().unwrap();
+                    match request {
+                        WebRequest::Idle => (*locked).idle().map_err(|e| format!("{e:?}")),
+                        WebRequest::Player(id) => (*locked).player(id),
+                        WebRequest::WordHash(id, hash) => Ok((*locked).word_hash(id, &hash)),
+                        WebRequest::Picks(id, picks) => Ok((*locked).do_picks(id, &picks)),
+                        WebRequest::FinishMove(id) => Ok((*locked).finish_move(id)),
+                        WebRequest::Reset => reset_sim(&mut (*locked), auto),
+                    }
+                };
+
+                {
+                    let channel = FROM_WEB.0.lock().unwrap();
+                    (*channel).send(result).unwrap();
+                }
+            }
+        });
+
+        println!("port 5800.  press return to exit gracefully...");
+        let t = std::thread::spawn(|| {
+            let mut buffer = String::default();
+            stdin().read_line(&mut buffer).ok();
+            std::process::exit(0);
+        });
+
+        Server::new(acceptor).serve(router).await;
+        s.join().unwrap();
+        t.join().unwrap();
+    })
 }
