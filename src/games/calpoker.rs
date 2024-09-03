@@ -265,7 +265,7 @@ fn test_decode_calpoker_readable() {
         "(60 59 91 (2 2 1 12 11 8) (2 2 1 14 5 2) -1)",
     )
     .expect("should work");
-    let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), true)
+    let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), false)
         .expect("should work");
     assert_eq!(
         decoded,
