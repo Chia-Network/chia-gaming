@@ -131,7 +131,8 @@ impl ToLocalUI for Pipe {
         Ok(())
     }
     fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.opponent_raw_messages.push((id.clone(), readable.to_vec()));
+        self.opponent_raw_messages
+            .push((id.clone(), readable.to_vec()));
         Ok(())
     }
     fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
