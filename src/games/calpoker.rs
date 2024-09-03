@@ -193,7 +193,7 @@ pub fn decode_calpoker_readable(
     allocator: &mut AllocEncoder,
     readable: NodePtr,
     amount: Amount,
-    am_alice: bool,
+    am_bob: bool,
 ) -> Result<CalpokerResult, Error> {
     let as_list = if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
         as_list
@@ -219,7 +219,7 @@ pub fn decode_calpoker_readable(
     }
 
     let start_index = 1;
-    let offset_for_player = !am_alice as usize;
+    let offset_for_player = am_bob as usize;
 
     let bob_hand_value =
         decode_hand_result(allocator, as_list[start_index + (2 ^ offset_for_player)])?;
@@ -228,7 +228,7 @@ pub fn decode_calpoker_readable(
 
     let (your_share, win_direction) =
         if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i64_from_atom) {
-            if am_alice {
+            if !am_bob {
                 match o.cmp(&0) {
                     Ordering::Less => (amount.clone(), o),
                     Ordering::Equal => (amount.half(), o),
