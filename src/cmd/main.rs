@@ -371,6 +371,7 @@ impl PerPlayerInfo {
                     return Ok(());
                 }
 
+                eprintln!("{} doing finish move", self.player_id);
                 g.release();
                 self.play_state = self.play_state.incr();
                 let new_entropy = rng.gen();
@@ -411,6 +412,20 @@ impl PerPlayerInfo {
             }
             (2, PlayState::AfterBobPicks) => {
                 self.play_state = self.play_state.incr();
+            }
+            (_, PlayState::AliceEnd | PlayState::BobEnd) => {
+                if let Some(res) = decode_calpoker_readable(
+                    allocator,
+                    self.local_ui.opponent_readable_move.to_nodeptr(),
+                    self.cradle.amount(),
+                    self.player_id,
+                )
+                .ok()
+                {
+                    if res.raw_alice_selects != 0 {
+                        self.game_outcome = res;
+                    }
+                }
             }
             _ => {}
         }
