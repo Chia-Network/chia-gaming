@@ -371,8 +371,7 @@ impl ToLocalUI for SynchronousGameCradleState {
         Ok(())
     }
     fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
-        self.game_messages
-            .push_back((id.clone(), readable.clone()));
+        self.game_messages.push_back((id.clone(), readable.clone()));
         Ok(())
     }
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {

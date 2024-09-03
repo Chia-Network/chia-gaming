@@ -19,8 +19,7 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult,
     GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData,
-    PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
-    UnrollCoinConditionInputs,
+    PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
