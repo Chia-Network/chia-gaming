@@ -212,6 +212,8 @@ function allow_manual_move(player_id, move, json) {
             controller.made_move = true;
             take_auto_action(player_id, json);
         }
+    } else if (move === 'AliceEnd' || move === 'BobEnd') {
+        element.innerHTML = `<h2>Game outcome</h2><div>${JSON.stringify(json.readable)}</div>`;
     } else {
         element.innerHTML = `unhandled state ${move}`;
     }
@@ -277,7 +279,11 @@ function check() {
     return fetch(`player.json?id=${player_id}`, {
         "method": "POST"
     }).then((response) => {
-        return response.json();
+        return response.json().catch((e) => {
+            let error = document.getElementById('player-error');
+            error.innerHTML = JSON.stringify(e);
+            return {};
+        });
     }).then((json) => {
         if (!controller.ui_wait) {
             let do_auto_move = auto_move(json) ? 'automatic default moves' : 'manual moves';

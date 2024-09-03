@@ -12,7 +12,9 @@ function check() {
     return fetch("idle.json", {
         "method": "POST"
     }).then((response) => {
-        return response.json();
+        return response.json().catch((e) => {
+            return {"error": JSON.stringify(e)};
+        });
     }).then((json) => {
         if (json.info) {
             const info = document.getElementById('info');
