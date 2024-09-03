@@ -93,6 +93,9 @@ struct SimulatedPeer {
     unfunded_offer: Option<SpendBundle>,
     outbound_transactions: Vec<Spend>,
 
+    raw_messages: Vec<Vec<u8>>,
+    messages: Vec<ReadableMove>,
+
     simulated_wallet_spend: SimulatedWalletSpend,
 }
 
@@ -217,17 +220,18 @@ impl BootstrapTowardWallet for SimulatedPeer {
 }
 
 impl ToLocalUI for SimulatedPeer {
-    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        Ok(())
-    }
-
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         // We can record stuff here and check that we got what was expected, but there's
         // no effect on the game mechanics.
         Ok(())
     }
-    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+    fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.raw_messages.push(readable.to_vec());
+        Ok(())
+    }
+    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         // Record for testing, but doens't affect the game.
+        self.messages.push(readable);
         Ok(())
     }
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
@@ -744,17 +748,12 @@ struct LocalTestUIReceiver {
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
-    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.we_moved = true;
-        Ok(())
-    }
-
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moved = true;
         Ok(())
     }
 
-    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         Ok(())
     }
 

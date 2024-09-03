@@ -40,7 +40,8 @@ struct Pipe {
 
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove)>,
-    opponent_messages: Vec<(GameID, Vec<u8>)>,
+    opponent_raw_messages: Vec<(GameID, Vec<u8>)>,
+    opponent_messages: Vec<(GameID, ReadableMove)>,
     our_moves: Vec<(GameID, Vec<u8>)>,
 
     // Bootstrap info
@@ -129,8 +130,12 @@ impl ToLocalUI for Pipe {
         self.opponent_moves.push((id.clone(), readable));
         Ok(())
     }
-    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.opponent_messages.push((id.clone(), readable.to_vec()));
+    fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.opponent_raw_messages.push((id.clone(), readable.to_vec()));
+        Ok(())
+    }
+    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.opponent_messages.push((id.clone(), readable));
         Ok(())
     }
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
