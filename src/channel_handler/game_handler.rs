@@ -452,7 +452,10 @@ impl MessageHandler {
         )
             .to_clvm(allocator)
             .into_gen()?;
-        eprintln!("running message handler on args {}", disassemble(allocator.allocator(), args, None));
+        eprintln!(
+            "running message handler on args {}",
+            disassemble(allocator.allocator(), args, None)
+        );
         let run_result = run_code(allocator, self.0, args, false)?;
 
         Ok(ReadableMove::from_nodeptr(run_result))
