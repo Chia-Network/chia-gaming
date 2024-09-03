@@ -137,9 +137,6 @@ pub fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<Ca
     if amount_bytes[0] & 0x80 != 0 {
         amount_bytes.insert(0, 0);
     }
-    eprintln!(
-        "make cards with alice_hash {alice_hash:?} bob_hash {bob_hash:?} amount {amount_bytes:?}"
-    );
     let rand_input = Sha256Input::Array(vec![
         Sha256Input::Bytes(&alice_hash[..16]),
         Sha256Input::Bytes(&bob_hash[..16]),
@@ -196,7 +193,7 @@ pub fn decode_calpoker_readable(
     allocator: &mut AllocEncoder,
     readable: NodePtr,
     amount: Amount,
-    am_alice: bool,
+    am_bob: bool,
 ) -> Result<CalpokerResult, Error> {
     let as_list = if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
         as_list
@@ -222,7 +219,7 @@ pub fn decode_calpoker_readable(
     }
 
     let start_index = 1;
-    let offset_for_player = !am_alice as usize;
+    let offset_for_player = am_bob as usize;
 
     let bob_hand_value =
         decode_hand_result(allocator, as_list[start_index + (2 ^ offset_for_player)])?;
@@ -231,7 +228,7 @@ pub fn decode_calpoker_readable(
 
     let (your_share, win_direction) =
         if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i64_from_atom) {
-            if am_alice {
+            if !am_bob {
                 match o.cmp(&0) {
                     Ordering::Less => (amount.clone(), o),
                     Ordering::Equal => (amount.half(), o),
@@ -268,7 +265,7 @@ fn test_decode_calpoker_readable() {
         "(60 59 91 (2 2 1 12 11 8) (2 2 1 14 5 2) -1)",
     )
     .expect("should work");
-    let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), true)
+    let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), false)
         .expect("should work");
     assert_eq!(
         decoded,
