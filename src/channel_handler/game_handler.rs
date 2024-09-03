@@ -445,12 +445,14 @@ impl MessageHandler {
         allocator: &mut AllocEncoder,
         inputs: &MessageInputs,
     ) -> Result<ReadableMove, Error> {
+        let input_msg_atom = allocator.encode_atom(&inputs.message).into_gen()?;
         let args = (
-            inputs.message.clone(),
+            Node(input_msg_atom),
             (Node(inputs.state), (inputs.amount.clone(), ())),
         )
             .to_clvm(allocator)
             .into_gen()?;
+        eprintln!("running message handler on args {}", disassemble(allocator.allocator(), args, None));
         let run_result = run_code(allocator, self.0, args, false)?;
 
         Ok(ReadableMove::from_nodeptr(run_result))
