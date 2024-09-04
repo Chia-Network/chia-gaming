@@ -135,7 +135,7 @@
             seed
             pokerc
             pokerc_hash
-            ALICE_COMMIT
+            (list ALICE_COMMIT local_move)
             48
             0
             (curry calpoker_bob_driver_c seed)
@@ -144,12 +144,10 @@
     )
 )
 
-(defun parse_message (message bob_seed amount)
+(defun parse_message (message (alice_commit bob_seed) amount)
     (assert
-;; XXX Check in test whether this is correct.  We might not have enough information to
-;; verify alice commit here.
-;;        (= (sha256 message) alice_commit)
-        (make_cards_readable (sha256 message bob_seed amount))
+        (= (sha256 message) alice_commit)
+        (make_cards_readable (sha256 (substr message 0 16) (substr bob_seed 0 16) amount))
     )
 )
 
