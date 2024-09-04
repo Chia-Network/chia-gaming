@@ -34,13 +34,10 @@ class PlayerController {
         this.have_made_move_in_current_state = false;
         this.most_recent_state = null;
         this.latched_in_move_state = null;
-        this.made_move = false;
         this.ui_wait = false;
         this.eat_toggle = false;
         this.bob_word = null;
-        this.sent_word = false;
-        this.sent_picks = false;
-        this.sent_end = false;
+        this.move_number = 0;
     }
 }
 
@@ -96,18 +93,17 @@ function generate_entropy(player_id) {
     }).then((response) => {
         return response.json();
     }).then((json) => {
+        controller.move_number += 1;
         controller.latched_in_move_state = null;
-        controller.made_move = true;
     });
 }
 
 function take_auto_action(player_id, json) {
     console.log(`take auto action ${player_id} ${JSON.stringify(json)}`);
-    if ((json.state == 'BeforeAliceWord' || json.state == 'BeforeBobWord') && !controller.sent_word) {
+    if ((json.state == 'BeforeAliceWord' || json.state == 'BeforeBobWord') && controller.move_number < 1) {
         controller.sent_word = true;
         generate_entropy(player_id);
-    } else if ((json.state == 'AliceFinish1' || json.state == 'BobFinish1' || json.state == 'BobEnd') && !controller.sent_end) {
-        controller.sent_end = true;
+    } else if ((json.state == 'AliceFinish1' || json.state == 'BobFinish1' || json.state == 'BobEnd') && controller.move_number < 3) {
         console.error('end game');
         end_game(player_id);
     }
@@ -117,7 +113,7 @@ function end_game(id) {
     return fetch(`finish?id=${id}`, {
         "method": "POST"
     }).then((response) => {
-        controller.sent_end = true;
+        controller.move_number += 1;
         return response.json();
     });
 }
@@ -152,9 +148,8 @@ function submit_picks(player_id) {
     }).then((response) => {
         return response.json();
     }).then((json) => {
+        controller.move_number += 1;
         controller.ui_wait = false;
-        controller.made_move = true;
-        controller.sent_picks = true;
     }).catch((e) => {
         console.error('submit_picks', e);
     });
@@ -179,37 +174,36 @@ function game_outcome(player_id, json) {
     return winner_text;
 }
 
-function allow_manual_move(player_id, move, json) {
+function allow_manual_move(player_id, json) {
+    let move = json.state;
     let element = document.getElementById('playspace');
     let show_cards = false;
     let have_card_data = typeof(json.readable) !== 'string' && json.readable.length == 2 && json.readable[0].length > 0;
 
     if (move === 'BeforeAliceWord' || move === 'BeforeBobWord') {
         element.innerHTML = `<h2>You must generate a secret value and send a hash commitment</h2><div><button onclick="generate_entropy(${player_id})">Generate secret value</button>"`;
-        if (auto_move(json) && !controller.made_move) {
-            controller.made_move = true;
+        if (auto_move(json) && controller.move_number < 1) {
             take_auto_action(player_id, json);
         }
-    } else if (move === 'BeforeAlicePicks' || move === 'BeforeBobPicks' || move === 'AfterBobWord') {
+    } else if (move === 'AfterAliceWord' || move === 'BeforeAlicePicks' || move === 'BeforeBobPicks' || move === 'AfterBobWord') {
         if (have_card_data) {
             let num_selected_cards = Object.keys(controller.all_selected_cards).length;
             let submit_disabled = (num_selected_cards !== 4) ? 'disabled' : '';
             let submit_button =
                 have_card_data ?
-                `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${controller.sent_picks}' onclick='submit_picks(${player_id})' ${submit_disabled}>Submit picks</button></div>` :
+                `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${controller.move_number > 1}' onclick='submit_picks(${player_id})' ${submit_disabled}>Submit picks</button></div>` :
                 '';
             element.innerHTML = `<h2>You must choose four of these cards</h2>${submit_button}<div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
             show_cards = player_id == 2 ? 'bob' : 'alice';
         }
     } else if (move === 'BeforeAliceFinish' || move === 'BeforeBobFinish') {
         let submit_button =
-            !controller.sent_end ?
+            controller.move_number < 3 ?
             `<button id='submit-finish' onclick='end_game(${player_id})'>Click to finish game</button>` : '';
 
         element.innerHTML = `<h2>Game outcome</h2><div id='finish-submit'>${submit_button}</div><div>${game_outcome(player_id, json)}</div><div>${JSON.stringify(json.readable)}</div>`;
 
-        if (!controller.sent_end && auto_move(json) && !controller.made_move) {
-            controller.made_move = true;
+        if (controller.move_number < 3) {
             take_auto_action(player_id, json);
         }
     } else if (move === 'AliceEnd' || move === 'BobEnd') {
@@ -226,7 +220,7 @@ function allow_manual_move(player_id, move, json) {
         });
         $("#opponent-choices").sortable();
 
-        if (!controller.sent_picks && typeof(json.readable) !== 'string' && json.readable.length == 2 && json.readable[0].length > 0) {
+        if ((controller.move_number < 1) && typeof(json.readable) !== 'string' && json.readable.length == 2 && json.readable[0].length > 0) {
             controller.ui_wait = true;
         }
 
@@ -249,13 +243,11 @@ function take_update(player_id, json) {
 
         if (first_time_seeing_state) {
             controller.latched_in_move_state = first_time_seeing_state;
-            console.log('made move', controller.made_move);
-            controller.made_move = false;
         }
     }
 
     if (controller.latched_in_move_state) {
-        allow_manual_move(player_id, controller.latched_in_move_state, json);
+        allow_manual_move(player_id, json);
     }
 
     let info = document.getElementById('player-info');

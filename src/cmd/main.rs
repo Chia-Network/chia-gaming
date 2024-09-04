@@ -265,10 +265,18 @@ impl PerPlayerInfo {
         self.num_incoming_actions += 1;
     }
 
-    fn bob_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, String> {
+    fn player_cards_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, String> {
         // See if we have enough info to get the cardlists.
+        let decode_input =
+            if self.player_id {
+                // bob
+                self.local_ui.remote_message.clone()
+            } else {
+                // alice
+                self.local_ui.opponent_readable_move.clone()
+            };
         let cardlist_result =
-            decode_readable_card_choices(allocator, self.local_ui.remote_message.clone()).ok();
+            decode_readable_card_choices(allocator, decode_input).ok();
         if let Some(player_hands) = cardlist_result {
             // make_cards
             serde_json::to_value(player_hands).map_err(|e| format!("failed make cards: {:?}", e))
@@ -281,9 +289,9 @@ impl PerPlayerInfo {
 
     fn player_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, String> {
         match &self.play_state {
-            PlayState::BeforeAlicePicks => self.bob_readable(allocator),
-            PlayState::AfterBobWord => self.bob_readable(allocator),
-            PlayState::BeforeBobPicks => self.bob_readable(allocator),
+            PlayState::BeforeAlicePicks => self.player_cards_readable(allocator),
+            PlayState::AfterBobWord => self.player_cards_readable(allocator),
+            PlayState::BeforeBobPicks => self.player_cards_readable(allocator),
             PlayState::AfterAlicePicks => serde_json::to_value(&self.game_outcome)
                 .map_err(|e| format!("couldn't make json: {e:?}")),
             PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome)
