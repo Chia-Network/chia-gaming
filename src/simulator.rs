@@ -130,7 +130,7 @@ impl Default for Simulator {
                     .unwrap();
                 Ok(())
             })
-                .unwrap();
+            .unwrap();
         }
 
         Python::with_gil(|py| -> PyResult<_> {

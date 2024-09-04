@@ -1,3 +1,6 @@
+use std::ffi::OsString;
+use exec::execvp;
+
 pub mod calpoker;
 pub mod channel_handler;
 pub mod chialisp;
@@ -9,7 +12,6 @@ pub mod referee;
 #[cfg(feature = "sim-tests")]
 pub mod simenv;
 pub mod standard_coin;
-
 
 fn detect_run_as_python(args: &[String]) -> bool {
     args.iter().any(|x: &String| x == "-c")
@@ -36,6 +38,5 @@ fn init() {
             .collect();
         let exec_err = execvp("python3", &new_args);
         eprintln!("Error Running: {:?}\n{:?}\n", new_args, exec_err);
-        return;
     }
 }
