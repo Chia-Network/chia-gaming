@@ -47,6 +47,10 @@ jobs:
         ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
         rm rustup-init checksum.txt
 
+    - name: Install virtualenv
+      run: |
+        pip install virtualenv
+
     - name: Set up a venv for chia-blockchain
       run: |
         virtualenv test
