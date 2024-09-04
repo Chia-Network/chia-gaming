@@ -109,6 +109,30 @@ fn to_spend_result(py: Python<'_>, spend_res: PyObject) -> PyResult<IncludeTrans
 
 impl Default for Simulator {
     fn default() -> Self {
+        // https://github.com/PyO3/pyo3/issues/1741
+        #[cfg(target_os = "macos")]
+        if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
+            Python::with_gil(|py| -> PyResult<_> {
+                let version_info = py.version_info();
+                let sys = py.import("sys").unwrap();
+                let sys_path = sys.getattr("path").unwrap();
+                sys_path
+                    .call_method1(
+                        "insert",
+                        (
+                            0,
+                            format!(
+                                "{}/lib/python{}.{}/site-packages",
+                                venv, version_info.major, version_info.minor
+                            ),
+                        ),
+                    )
+                    .unwrap();
+                Ok(())
+            })
+                .unwrap();
+        }
+
         Python::with_gil(|py| -> PyResult<_> {
             let module = PyModule::from_code(
                 py,
