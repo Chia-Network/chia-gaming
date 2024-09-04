@@ -45,17 +45,18 @@ use chia_gaming::simulator::Simulator;
 struct UIReceiver {
     received_moves: usize,
     our_readable_move: Vec<u8>,
-    remote_message: Vec<u8>,
+    remote_message: ReadableMove,
     opponent_readable_move: ReadableMove,
 }
 
 impl UIReceiver {
     fn new(allocator: &mut AllocEncoder) -> Self {
+        let nil_readable = ReadableMove::from_nodeptr(allocator.encode_atom(&[]).unwrap());
         UIReceiver {
             received_moves: 0,
             our_readable_move: Vec::default(),
-            remote_message: Vec::default(),
-            opponent_readable_move: ReadableMove::from_nodeptr(allocator.encode_atom(&[]).unwrap()),
+            remote_message: nil_readable.clone(),
+            opponent_readable_move: nil_readable,
         }
     }
 }
@@ -73,8 +74,8 @@ impl ToLocalUI for UIReceiver {
         Ok(())
     }
 
-    fn game_message(&mut self, _id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.remote_message = readable.to_vec();
+    fn game_message(&mut self, _id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.remote_message = readable;
         Ok(())
     }
 
@@ -216,6 +217,25 @@ impl<'a, T: Clone> Drop for ReleaseObject<'a, T> {
     }
 }
 
+type CardList = Vec<(usize, usize)>;
+
+fn decode_readable_card_choices(
+    allocator: &mut AllocEncoder,
+    opponent_readable_move: ReadableMove,
+) -> Result<Vec<CardList>, Error> {
+    if let Some(cardlist) = proper_list(
+        allocator.allocator(),
+        opponent_readable_move.to_nodeptr(),
+        true,
+    ) {
+        Ok(cardlist
+            .iter()
+            .map(|c| convert_cards(allocator, *c))
+            .collect())
+    } else {
+        Err(Error::StrErr("wrong decode of two card sets".to_string()))
+    }
+}
 impl PerPlayerInfo {
     fn new(
         allocator: &mut AllocEncoder,
@@ -245,54 +265,33 @@ impl PerPlayerInfo {
         self.num_incoming_actions += 1;
     }
 
-    fn bob_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, String> {
+    fn player_cards_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, String> {
         // See if we have enough info to get the cardlists.
-        if !self.local_ui.remote_message.is_empty() && !self.preimage.is_empty() {
+        let decode_input =
+            if self.player_id {
+                // bob
+                self.local_ui.remote_message.clone()
+            } else {
+                // alice
+                self.local_ui.opponent_readable_move.clone()
+            };
+        let cardlist_result =
+            decode_readable_card_choices(allocator, decode_input).ok();
+        if let Some(player_hands) = cardlist_result {
             // make_cards
-            serde_json::to_value(make_cards(
-                &self.local_ui.remote_message,
-                &self.preimage,
-                self.cradle.amount(),
-            ))
-            .map_err(|e| format!("failed make cards: {:?}", e))
+            serde_json::to_value(player_hands).map_err(|e| format!("failed make cards: {:?}", e))
         } else {
             let empty_vec: Vec<(usize, usize)> = vec![];
-            serde_json::to_value(
-                // (
-                // self.convert_cards(
-                //     self.local_ui
-                //         .opponent_readable_move
-                //         .to_nodeptr(),
-                // ),
-                // empty_vec.clone(),
-                // empty_vec,
-                // )
-                empty_vec,
-            )
-            .map_err(|e| format!("couldn't make basic bob result: {e:?}"))
+            serde_json::to_value(empty_vec)
+                .map_err(|e| format!("couldn't make basic bob result: {e:?}"))
         }
     }
 
     fn player_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, String> {
         match &self.play_state {
-            PlayState::BeforeAlicePicks => {
-                let cardlist: Vec<Vec<(usize, usize)>> = if let Some(cardlist) = proper_list(
-                    allocator.allocator(),
-                    self.local_ui.opponent_readable_move.to_nodeptr(),
-                    true,
-                ) {
-                    cardlist
-                        .iter()
-                        .map(|c| convert_cards(allocator, *c))
-                        .collect()
-                } else {
-                    return Err("wrong decode of two card sets".to_string());
-                };
-
-                serde_json::to_value(cardlist).map_err(|e| format!("couldn't make json: {e:?}"))
-            }
-            PlayState::AfterBobWord => self.bob_readable(allocator),
-            PlayState::BeforeBobPicks => self.bob_readable(allocator),
+            PlayState::BeforeAlicePicks => self.player_cards_readable(allocator),
+            PlayState::AfterBobWord => self.player_cards_readable(allocator),
+            PlayState::BeforeBobPicks => self.player_cards_readable(allocator),
             PlayState::AfterAlicePicks => serde_json::to_value(&self.game_outcome)
                 .map_err(|e| format!("couldn't make json: {e:?}")),
             PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome)
@@ -470,13 +469,13 @@ struct UpdateResult {
     info: Value,
 }
 
+// TODO: Check if still using Serialize, Deserialize
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PlayerResult {
     can_move: bool,
     state: String,
     auto: bool,
     our_move: Vec<u8>,
-    opponent_message: Vec<u8>,
     readable: Value,
 }
 
@@ -672,10 +671,6 @@ impl GameRunner {
                 .our_readable_move
                 .to_vec(),
             auto: self.auto,
-            opponent_message: self.player_info[id as usize]
-                .local_ui
-                .remote_message
-                .clone(),
             readable: player_readable,
         })
         .map_err(|e| format!("error serializing player state: {e:?}"))

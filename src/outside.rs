@@ -215,9 +215,14 @@ pub trait WalletSpendInterface {
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
-    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error>;
+    fn self_move(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
-    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error>;
+    fn raw_game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
+    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
@@ -622,8 +627,14 @@ impl PotatoHandler {
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             PeerMessage::Message(game_id, message) => {
+                let decoded_message = {
+                    let (env, _) = penv.env();
+                    ch.received_message(env, &game_id, &message)?
+                };
+
                 let (_, system_interface) = penv.env();
-                system_interface.game_message(&game_id, &message)?;
+                system_interface.raw_game_message(&game_id, &message)?;
+                system_interface.game_message(&game_id, decoded_message)?;
                 // Does not affect potato.
             }
             PeerMessage::Accept(game_id, amount, sigs) => {

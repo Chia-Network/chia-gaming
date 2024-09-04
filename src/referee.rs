@@ -14,7 +14,7 @@ use crate::channel_handler::game_handler::{
     TheirTurnResult,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, PrintableGameStartInfo, ReadableMove, ReadableUX, ValidationInfo,
+    Evidence, GameStartInfo, PrintableGameStartInfo, ReadableMove, ValidationInfo,
     ValidationProgram,
 };
 use crate::common::constants::CREATE_COIN;
@@ -909,7 +909,7 @@ impl RefereeMaker {
         &mut self,
         allocator: &mut AllocEncoder,
         message: &[u8],
-    ) -> Result<ReadableUX, Error> {
+    ) -> Result<ReadableMove, Error> {
         // Do stuff with message handler.
         let (state, move_data, mover_share) = match &self.state {
             RefereeMakerGameState::Initial {

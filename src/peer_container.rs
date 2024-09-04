@@ -250,7 +250,8 @@ struct SynchronousGameCradleState {
     outbound_transactions: VecDeque<SpendBundle>,
     our_moves: VecDeque<(GameID, Vec<u8>)>,
     opponent_moves: VecDeque<(GameID, ReadableMove)>,
-    game_messages: VecDeque<(GameID, Vec<u8>)>,
+    raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
+    game_messages: VecDeque<(GameID, ReadableMove)>,
     game_finished: VecDeque<(GameID, Amount)>,
     identity: ChiaIdentity,
 }
@@ -315,6 +316,7 @@ impl SynchronousGameCradle {
                 our_moves: VecDeque::default(),
                 opponent_moves: VecDeque::default(),
                 game_messages: VecDeque::default(),
+                raw_game_messages: VecDeque::default(),
                 game_finished: VecDeque::default(),
                 channel_puzzle_hash: None,
                 funding_coin: None,
@@ -363,9 +365,13 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.opponent_moves.push_back((id.clone(), readable));
         Ok(())
     }
-    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.game_messages
+    fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.raw_game_messages
             .push_back((id.clone(), readable.to_vec()));
+        Ok(())
+    }
+    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.game_messages.push_back((id.clone(), readable.clone()));
         Ok(())
     }
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
@@ -693,7 +699,7 @@ impl GameCradle for SynchronousGameCradle {
         }
 
         if let Some((id, msg)) = self.state.game_messages.pop_front() {
-            local_ui.game_message(&id, &msg)?;
+            local_ui.game_message(&id, msg)?;
             return Ok(result);
         }
 
