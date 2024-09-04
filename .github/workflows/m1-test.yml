@@ -53,11 +53,11 @@ jobs:
 
     - name: Set up a venv for chia-blockchain
       run: |
-        virtualenv test
-        . ./test/bin/activate
+        python3 -m venv ./test
+        source ./test/bin/activate
         pip install chia-blockchain
 
     - name: Run tests
       run: |
-        . ./test/bin/activate
+        source ./test/bin/activate
         cargo test --features=sim-tests
