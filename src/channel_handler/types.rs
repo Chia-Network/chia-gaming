@@ -298,6 +298,9 @@ impl ToClvm<NodePtr> for ReadableMove {
     }
 }
 
+#[derive(Clone)]
+pub struct ReadableUX(/*NodePtr*/);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MoveResult {
     pub signatures: PotatoSignatures,

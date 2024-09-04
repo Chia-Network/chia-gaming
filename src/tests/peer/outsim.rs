@@ -30,7 +30,7 @@ use crate::peer_container::{
 
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
-use crate::tests::game::{GameAction, GameActionResult};
+use crate::tests::game::GameAction;
 use crate::tests::peer::outside::{quiesce, run_move};
 
 // potato handler tests with simulator.
@@ -92,9 +92,6 @@ struct SimulatedPeer {
 
     unfunded_offer: Option<SpendBundle>,
     outbound_transactions: Vec<Spend>,
-
-    raw_messages: Vec<Vec<u8>>,
-    messages: Vec<ReadableMove>,
 
     simulated_wallet_spend: SimulatedWalletSpend,
 }
@@ -225,13 +222,8 @@ impl ToLocalUI for SimulatedPeer {
         // no effect on the game mechanics.
         Ok(())
     }
-    fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.raw_messages.push(readable.to_vec());
-        Ok(())
-    }
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
         // Record for testing, but doens't affect the game.
-        self.messages.push(readable);
         Ok(())
     }
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
@@ -701,7 +693,6 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         };
 
         {
-            let entropy = rng.gen();
             let mut env = channel_handler_env(allocator, &mut rng);
             let mut penv = SimulatedPeerSystem::new(
                 &mut env,
@@ -710,12 +701,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
                 &mut simulator,
             );
             handlers[who ^ 1]
-                .make_move(
-                    &mut penv,
-                    &game_ids[0],
-                    &ReadableMove::from_nodeptr(*what),
-                    entropy,
-                )
+                .make_move(&mut penv, &game_ids[0], &ReadableMove::from_nodeptr(*what))
                 .expect("should work");
         }
 
@@ -744,7 +730,6 @@ struct LocalTestUIReceiver {
     shutdown_complete: bool,
     game_finished: Option<Amount>,
     opponent_moved: bool,
-    we_moved: bool,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -753,7 +738,7 @@ impl ToLocalUI for LocalTestUIReceiver {
         Ok(())
     }
 
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
         Ok(())
     }
 
@@ -972,14 +957,12 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                         let readable_program =
                             Program::from_nodeptr(allocator, *readable).expect("should convert");
                         let encoded_readable_move = readable_program.bytes();
-                        let entropy = rng.gen();
                         cradles[*who]
                             .make_move(
                                 allocator,
                                 &mut rng,
                                 &game_ids[0],
                                 encoded_readable_move.to_vec(),
-                                entropy,
                             )
                             .expect("should work");
                     }

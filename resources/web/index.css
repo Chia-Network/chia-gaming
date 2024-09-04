@@ -37,99 +37,23 @@ body {
 }
 
 #p1 {
-    display: inline-block;
-    top: 0;
     margin: 0;
     position: relative;
-    height: 80vh;
-    width: 30vw;
+    height: 40vh;
+    width: 98vw;
     background: #fcc;
 }
 
 #p2 {
-    display: inline-block;
-    top: 0;
     margin: 0;
     margin-top: 1rem;
     position: relative;
-    height: 80vh;
-    width: 30vw;
+    height: 40vh;
+    width: 98vw;
     background: #cfc;
 }
 
 .cardspan {
     margin-left: 0.5em;
     border: 1px solid black;
-}
-
-#p1frame {
-    display: block;
-    position: relative;
-    background: #fcc;
-    left: 0;
-    top: 0;
-    width: 30vw;
-    height: 80vh;
-}
-
-#p2frame {
-    display: block;
-    position: relative;
-    background: #cfc;
-    left: 0;
-    top: 0;
-    width: 30vw;
-    height: 80vh;
-}
-
-#player-heading {
-    margin: 0;
-}
-
-#player-info {
-    position: relative;
-}
-
-.player-attr {
-    margin-left: 1em;
-}
-
-#player-body {
-    font-size: 0.6rem;
-    overflow-y: auto;
-}
-
-.card {
-    display: inline-block;
-    width: 3rem;
-    height: 5rem;
-    box-sizing: border-box;
-    background: white;
-    border: 1px solid black;
-    border-radius: 0.5em;
-    font-size: 2rem;
-    padding-left: 0.5rem;
-    padding-right: 0.5rem;
-    cursor: pointer;
-}
-
-.selected_true {
-    background: #aca !important;
-}
-
-.card_bot {
-    width: 100%;
-    text-align: right;
-}
-
-.suit2 {
-    color: red;
-}
-
-.suit4 {
-    color: red;
-}
-
-.sent_picks_true {
-    display: none;
 }

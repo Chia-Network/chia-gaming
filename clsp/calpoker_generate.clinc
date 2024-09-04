@@ -144,11 +144,9 @@
     )
 )
 
-(defun parse_message (message bob_seed amount)
-    (assert
-;; XXX Check in test whether this is correct.  We might not have enough information to
-;; verify alice commit here.
-;;        (= (sha256 message) alice_commit)
+(defun parse_message (message (alice_commit bob_seed) amount)
+    (assert 
+        (= (sha256 message) alice_commit)
         (make_cards_readable (sha256 message bob_seed amount))
     )
 )

@@ -7,6 +7,7 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use log::debug;
 
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::{
@@ -14,7 +15,7 @@ use crate::channel_handler::game_handler::{
     TheirTurnResult,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, PrintableGameStartInfo, ReadableMove, ValidationInfo,
+    Evidence, GameStartInfo, PrintableGameStartInfo, ReadableMove, ReadableUX, ValidationInfo,
     ValidationProgram,
 };
 use crate::common::constants::CREATE_COIN;
@@ -815,14 +816,13 @@ impl RefereeMaker {
         Ok(())
     }
 
-    // Since we may need to know new_entropy at a higher layer, we'll need to ensure it
-    // gets passed in rather than originating it here.
-    pub fn my_turn_make_move(
+    pub fn my_turn_make_move<R: Rng>(
         &mut self,
+        rng: &mut R,
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
-        new_entropy: Hash,
     ) -> Result<GameMoveWireData, Error> {
+        let new_entropy: Hash = rng.gen();
         let game_handler = self.get_game_handler();
         let (move_data, mover_share, max_move_size, previous_validation_info_hash) =
             match &self.state {
@@ -909,7 +909,7 @@ impl RefereeMaker {
         &mut self,
         allocator: &mut AllocEncoder,
         message: &[u8],
-    ) -> Result<ReadableMove, Error> {
+    ) -> Result<ReadableUX, Error> {
         // Do stuff with message handler.
         let (state, move_data, mover_share) = match &self.state {
             RefereeMakerGameState::Initial {
@@ -1338,12 +1338,6 @@ impl RefereeMaker {
                 // puzzle, which sets our identity for the game and is a value-
                 // holding coin spendable by us.
                 self.accept_their_move(allocator, Some(handler), details)?;
-
-                debug!(
-                    "readable_move {}",
-                    disassemble(allocator.allocator(), readable_move, None)
-                );
-                debug!("message {message:?}");
 
                 (readable_move, message)
             }

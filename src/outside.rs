@@ -17,7 +17,7 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, Program,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, Node, Program,
     PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -215,14 +215,8 @@ pub trait WalletSpendInterface {
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
-    fn self_move(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
-        Ok(())
-    }
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
-    fn raw_game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
-        Ok(())
-    }
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
+    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
@@ -260,7 +254,6 @@ pub trait FromLocalUI<
         penv: &mut dyn PeerEnv<'a, G, R>,
         id: &GameID,
         readable: &ReadableMove,
-        new_entropy: Hash,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -304,7 +297,6 @@ pub enum PeerMessage {
 
     Nil(PotatoSignatures),
     Move(GameID, MoveResult),
-    Message(GameID, Vec<u8>),
     Accept(GameID, Amount, PotatoSignatures),
     Shutdown(Aggsig),
     RequestPotato(()),
@@ -359,7 +351,7 @@ enum PotatoState {
 }
 
 enum GameAction {
-    Move(GameID, ReadableMove, Hash),
+    Move(GameID, ReadableMove),
     Accept(GameID),
 }
 
@@ -498,10 +490,6 @@ impl PotatoHandler {
         }
     }
 
-    pub fn amount(&self) -> Amount {
-        self.my_contribution.clone() + self.their_contribution.clone()
-    }
-
     pub fn is_initiator(&self) -> bool {
         self.initiator
     }
@@ -621,21 +609,10 @@ impl PotatoHandler {
                     system_interface
                         .opponent_moved(&game_id, ReadableMove::from_nodeptr(readable_move))?;
                     if !message.is_empty() {
-                        system_interface.send_message(&PeerMessage::Message(game_id, message))?;
+                        system_interface.game_message(&game_id, &message)?;
                     }
                 }
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
-            }
-            PeerMessage::Message(game_id, message) => {
-                let decoded_message = {
-                    let (env, _) = penv.env();
-                    ch.received_message(env, &game_id, &message)?
-                };
-
-                let (_, system_interface) = penv.env();
-                system_interface.raw_game_message(&game_id, &message)?;
-                system_interface.game_message(&game_id, decoded_message)?;
-                // Does not affect potato.
             }
             PeerMessage::Accept(game_id, amount, sigs) => {
                 let spend_info = {
@@ -776,16 +753,14 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         match self.game_action_queue.pop_front() {
-            Some(GameAction::Move(game_id, readable_move, new_entropy)) => {
+            Some(GameAction::Move(game_id, readable_move)) => {
                 let move_result = {
                     let ch = self.channel_handler_mut()?;
                     let (env, _) = penv.env();
-                    ch.send_potato_move(env, &game_id, &readable_move, new_entropy)?
+                    ch.send_potato_move(env, &game_id, &readable_move)?
                 };
 
                 let (_, system_interface) = penv.env();
-                system_interface.self_move(&game_id, &move_result.game_move.basic.move_made)?;
-
                 system_interface.send_message(&PeerMessage::Move(game_id, move_result))?;
                 self.have_potato = PotatoState::Absent;
 
@@ -1352,16 +1327,12 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         penv: &mut dyn PeerEnv<'a, G, R>,
         id: &GameID,
         readable: &ReadableMove,
-        new_entropy: Hash,
     ) -> Result<(), Error>
     where
         G: 'a,
         R: 'a,
     {
-        self.do_game_action(
-            penv,
-            GameAction::Move(id.clone(), readable.clone(), new_entropy),
-        )
+        self.do_game_action(penv, GameAction::Move(id.clone(), readable.clone()))
     }
 
     fn accept<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
