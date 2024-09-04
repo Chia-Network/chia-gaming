@@ -267,16 +267,14 @@ impl PerPlayerInfo {
 
     fn player_cards_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, String> {
         // See if we have enough info to get the cardlists.
-        let decode_input =
-            if self.player_id {
-                // bob
-                self.local_ui.remote_message.clone()
-            } else {
-                // alice
-                self.local_ui.opponent_readable_move.clone()
-            };
-        let cardlist_result =
-            decode_readable_card_choices(allocator, decode_input).ok();
+        let decode_input = if self.player_id {
+            // bob
+            self.local_ui.remote_message.clone()
+        } else {
+            // alice
+            self.local_ui.opponent_readable_move.clone()
+        };
+        let cardlist_result = decode_readable_card_choices(allocator, decode_input).ok();
         if let Some(player_hands) = cardlist_result {
             // make_cards
             serde_json::to_value(player_hands).map_err(|e| format!("failed make cards: {:?}", e))
