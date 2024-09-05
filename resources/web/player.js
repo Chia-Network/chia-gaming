@@ -35,12 +35,8 @@ class PlayerController {
         this.params = get_params();
         this.player_id = get_player_id();
         this.all_selected_cards = {};
-        this.have_made_move_in_current_state = false;
-        this.most_recent_state = null;
-        this.latched_in_move_state = null;
         this.ui_wait = false;
         this.eat_toggle = false;
-        this.bob_word = null;
         this.move_number = 0;
     }
 
@@ -142,17 +138,20 @@ function update_card_after_toggle(label) {
     card.setAttribute('class', classes.join(" "));
 }
 
+function post(url) {
+    return fetch(url, {
+        "method": "POST"
+    }).then((response) => {
+        return response.json();
+    });
+}
 
 function submit_picks(player_id) {
     let picks = '';
     for (let i = 0; i < 8; i++) {
         picks += (controller.all_selected_cards[`_${i}`]) ? '1' : '0';
     }
-    fetch(`picks?arg=${player_id}${picks}`, {
-        "method": "POST"
-    }).then((response) => {
-        return response.json();
-    }).then((json) => {
+    return post(`picks?arg=${player_id}${picks}`).then((json) => {
         controller.move_number += 1;
         controller.ui_wait = false;
     }).catch((e) => {
@@ -162,19 +161,13 @@ function submit_picks(player_id) {
 
 function generate_entropy(player_id) {
     let alice_entropy = Math.random().toString();
-    return fetch(`word_hash?arg=${player_id}${alice_entropy}`, {
-        "method": "POST"
-    }).then((response) => {
-        return response.json();
-    }).then((json) => {
+    return post(`word_hash?arg=${player_id}${alice_entropy}`).then((json) => {
         controller.move_number += 1;
     });
 }
 
 function end_game(id) {
-    return fetch(`finish?id=${id}`, {
-        "method": "POST"
-    }).then((response) => {
+    return post(`finish?id=${id}`).then((json) => {
         controller.move_number += 1;
     });
 }
@@ -257,21 +250,7 @@ function allow_manual_move(player_id, json) {
 }
 
 function take_update(player_id, json) {
-    if (json.can_move) {
-        let first_time_seeing_state = null;
-        if (json.state !== controller.most_recent_state) {
-            first_time_seeing_state = json.state;
-            controller.most_recent_state = json.state;
-        }
-
-        if (first_time_seeing_state) {
-            controller.latched_in_move_state = first_time_seeing_state;
-        }
-    }
-
-    if (controller.latched_in_move_state) {
-        allow_manual_move(player_id, json);
-    }
+    allow_manual_move(player_id, json);
 
     let info = document.getElementById('player-info');
     clear(info);

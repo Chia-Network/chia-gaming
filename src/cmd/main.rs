@@ -7,8 +7,6 @@ use std::mem::swap;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
-#[cfg(feature = "simulator")]
-use std::thread;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
@@ -34,7 +32,7 @@ use chia_gaming::common::types::{
     atom_from_clvm, usize_from_atom, AllocEncoder, Amount, CoinString, Error, GameID, Hash,
     IntoErr, PrivateKey, Program, Sha256Input, Timeout,
 };
-use chia_gaming::games::calpoker::{decode_calpoker_readable, make_cards, CalpokerResult};
+use chia_gaming::games::calpoker::{decode_calpoker_readable, CalpokerResult};
 use chia_gaming::games::poker_collection;
 use chia_gaming::outside::{GameStart, GameType, ToLocalUI};
 use chia_gaming::peer_container::{
@@ -176,9 +174,6 @@ pub struct PerPlayerInfo {
     cradle: SynchronousGameCradle,
     play_state: PlayState,
     fund_coin: CoinString,
-    preimage: Vec<u8>,
-    use_word: Vec<u8>,
-    picks: Vec<bool>,
     incoming_actions: VecDeque<IncomingAction>,
     num_incoming_actions: usize,
     game_outcome: CalpokerResult,
@@ -217,6 +212,25 @@ impl<'a, T: Clone> Drop for ReleaseObject<'a, T> {
     }
 }
 
+trait HttpError<V> {
+    fn report_err(self) -> Result<V, String>;
+}
+
+impl<V> HttpError<V> for Result<V, Error> {
+    fn report_err(self) -> Result<V, String> {
+        match self {
+            Ok(x) => Ok(x),
+            Err(e) => {
+                let mut error = Map::default();
+                error.insert("error".to_string(), Value::String(format!("{e:?}")));
+                let as_string = serde_json::to_string(&Value::Object(error))
+                    .map_err(|_| format!("\"bad json conversion\""))?;
+                Err(as_string)
+            }
+        }
+    }
+}
+
 type CardList = Vec<(usize, usize)>;
 
 fn decode_readable_card_choices(
@@ -250,9 +264,6 @@ impl PerPlayerInfo {
             cradle: cradle,
             play_state,
             local_ui: UIReceiver::new(allocator),
-            preimage: vec![],
-            use_word: vec![],
-            picks: vec![],
             game_outcome: CalpokerResult::default(),
             incoming_actions: VecDeque::default(),
             num_incoming_actions: 0,
@@ -265,7 +276,7 @@ impl PerPlayerInfo {
         self.num_incoming_actions += 1;
     }
 
-    fn player_cards_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, String> {
+    fn player_cards_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
         // See if we have enough info to get the cardlists.
         let decode_input = if self.player_id {
             // bob
@@ -277,27 +288,22 @@ impl PerPlayerInfo {
         let cardlist_result = decode_readable_card_choices(allocator, decode_input).ok();
         if let Some(player_hands) = cardlist_result {
             // make_cards
-            serde_json::to_value(player_hands).map_err(|e| format!("failed make cards: {:?}", e))
+            serde_json::to_value(player_hands).into_gen()
         } else {
             let empty_vec: Vec<(usize, usize)> = vec![];
-            serde_json::to_value(empty_vec)
-                .map_err(|e| format!("couldn't make basic bob result: {e:?}"))
+            serde_json::to_value(empty_vec).into_gen()
         }
     }
 
-    fn player_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, String> {
+    fn player_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
         match &self.play_state {
             PlayState::BeforeAlicePicks => self.player_cards_readable(allocator),
             PlayState::AfterBobWord => self.player_cards_readable(allocator),
             PlayState::BeforeBobPicks => self.player_cards_readable(allocator),
-            PlayState::AfterAlicePicks => serde_json::to_value(&self.game_outcome)
-                .map_err(|e| format!("couldn't make json: {e:?}")),
-            PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome)
-                .map_err(|e| format!("couldn't make json: {e:?}")),
-            PlayState::AliceEnd => serde_json::to_value(&self.game_outcome)
-                .map_err(|e| format!("couldn't make json: {e:?}")),
-            PlayState::BobEnd => serde_json::to_value(&self.game_outcome)
-                .map_err(|e| format!("couldn't make json: {e:?}")),
+            PlayState::AfterAlicePicks => serde_json::to_value(&self.game_outcome).into_gen(),
+            PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome).into_gen(),
+            PlayState::AliceEnd => serde_json::to_value(&self.game_outcome).into_gen(),
+            PlayState::BobEnd => serde_json::to_value(&self.game_outcome).into_gen(),
             _ => Ok(Value::String(disassemble(
                 allocator.allocator(),
                 self.local_ui.opponent_readable_move.to_nodeptr(),
@@ -356,7 +362,6 @@ impl PerPlayerInfo {
                 let encoded_node = other_picks.to_clvm(allocator).unwrap();
                 let encoded = node_to_bytes(allocator.allocator(), encoded_node).unwrap();
                 let new_entropy = rng.gen();
-                eprintln!("picks {other_picks:?}");
                 self.cradle
                     .make_move(allocator, rng, &game_ids[0], encoded, new_entropy)
             }
@@ -494,8 +499,8 @@ lazy_static! {
         (tx.into(), rx.into())
     };
     static ref FROM_WEB: (
-        Mutex<Sender<Result<String, String>>>,
-        Mutex<Receiver<Result<String, String>>>
+        Mutex<Sender<Result<String, Error>>>,
+        Mutex<Receiver<Result<String, Error>>>
     ) = {
         let (tx, rx) = mpsc::channel();
         (tx.into(), rx.into())
@@ -655,11 +660,11 @@ impl GameRunner {
         serde_json::to_string(&UpdateResult { info: self.info() }).unwrap()
     }
 
-    fn player_readable(&mut self, id: bool) -> Result<Value, String> {
+    fn player_readable(&mut self, id: bool) -> Result<Value, Error> {
         self.player_info[id as usize].player_readable(&mut self.allocator)
     }
 
-    fn player(&mut self, id: bool) -> Result<String, String> {
+    fn player(&mut self, id: bool) -> Result<String, Error> {
         let player_readable = self.player_readable(id)?;
         serde_json::to_string(&PlayerResult {
             can_move: self.can_move,
@@ -671,11 +676,10 @@ impl GameRunner {
             auto: self.auto,
             readable: player_readable,
         })
-        .map_err(|e| format!("error serializing player state: {e:?}"))
+        .into_gen()
     }
 
     fn word_hash(&mut self, id: bool, hash: &[u8]) -> String {
-        self.player_info[id as usize].preimage = hash.to_vec();
         self.player_info[id as usize].enqueue_outbound_move(IncomingAction::Word(hash.to_vec()));
 
         self.move_state()
@@ -863,44 +867,44 @@ async fn index_css(response: &mut Response) -> Result<(), String> {
     get_file("resources/web/index.css", "text/css", response)
 }
 
-fn pass_on_request(wr: WebRequest) -> Result<String, String> {
+fn pass_on_request(wr: WebRequest) -> Result<String, Error> {
     {
         let to_web = TO_WEB.0.lock().unwrap();
         (*to_web).send(wr).unwrap();
     }
     let from_web = FROM_WEB.1.lock().unwrap();
-    (*from_web).recv().map_err(|e| format!("{e:?}"))?
+    (*from_web).recv().unwrap()
 }
 
 #[handler]
 async fn idle(_req: &mut Request) -> Result<String, String> {
-    pass_on_request(WebRequest::Idle)
+    pass_on_request(WebRequest::Idle).report_err()
 }
 
-fn get_arg_bytes(req: &mut Request) -> Result<Vec<u8>, String> {
+fn get_arg_bytes(req: &mut Request) -> Result<Vec<u8>, Error> {
     let uri_string = req.uri().to_string();
     if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
         let arg: Vec<u8> = uri_string.bytes().skip(found_eq + 1).collect();
         return Ok(arg);
     }
 
-    Err("no argument".to_string())
+    Err(Error::StrErr("no argument".to_string()))
 }
 
 #[handler]
 async fn player(req: &mut Request) -> Result<String, String> {
-    let arg = get_arg_bytes(req)?;
+    let arg = get_arg_bytes(req).report_err()?;
     let pid = if arg.is_empty() {
         false
     } else {
         arg[0] == b'2'
     };
-    pass_on_request(WebRequest::Player(pid))
+    pass_on_request(WebRequest::Player(pid)).report_err()
 }
 
 #[handler]
 async fn word_hash(req: &mut Request) -> Result<String, String> {
-    let arg = get_arg_bytes(req)?;
+    let arg = get_arg_bytes(req).report_err()?;
     if arg.is_empty() {
         return Err("empty arg".to_string());
     }
@@ -908,14 +912,14 @@ async fn word_hash(req: &mut Request) -> Result<String, String> {
     let hash = Sha256Input::Bytes(&arg[1..]).hash();
     let hash_of_alice_hash = Sha256Input::Bytes(hash.bytes()).hash();
     eprintln!("{player_id} hash is {hash:?} hash of that is {hash_of_alice_hash:?}");
-    pass_on_request(WebRequest::WordHash(player_id, hash.bytes().to_vec()))
+    pass_on_request(WebRequest::WordHash(player_id, hash.bytes().to_vec())).report_err()
 }
 
 #[handler]
 async fn do_picks(req: &mut Request) -> Result<String, String> {
-    let arg = get_arg_bytes(req)?;
+    let arg = get_arg_bytes(req).report_err()?;
     let bool_arg: Vec<bool> = arg.iter().skip(1).map(|b| *b == b'1').collect();
-    pass_on_request(WebRequest::Picks(arg[0] == b'2', bool_arg))
+    pass_on_request(WebRequest::Picks(arg[0] == b'2', bool_arg)).report_err()
 }
 
 #[handler]
@@ -925,22 +929,22 @@ async fn exit(_req: &mut Request) -> Result<String, String> {
 
 #[handler]
 async fn reset(_req: &mut Request) -> Result<String, String> {
-    return pass_on_request(WebRequest::Reset);
+    pass_on_request(WebRequest::Reset).report_err()
 }
 
 #[handler]
 async fn finish(req: &mut Request) -> Result<String, String> {
-    let arg = get_arg_bytes(req)?;
+    let arg = get_arg_bytes(req).report_err()?;
     let player_id = if arg.is_empty() {
         false
     } else {
         arg[0] == b'2'
     };
-    pass_on_request(WebRequest::FinishMove(player_id))
+    pass_on_request(WebRequest::FinishMove(player_id)).report_err()
 }
 
-fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, String> {
-    let mut new_game = GameRunner::new().map_err(|e| format!("{e:?}"))?;
+fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, Error> {
+    let mut new_game = GameRunner::new()?;
     if auto {
         new_game.set_auto(true);
     }
@@ -953,7 +957,7 @@ fn detect_run_as_python(args: &[String]) -> bool {
 }
 
 fn main() {
-    let mut args = std::env::args();
+    let args = std::env::args();
     let args_vec: Vec<String> = args.collect();
     if detect_run_as_python(&args_vec) {
         let new_args: Vec<OsString> = args_vec
@@ -973,7 +977,7 @@ fn main() {
         eprintln!("Error Running: {:?}\n{:?}\n", new_args, exec_err);
         return;
     }
-    let mut rt = tokio::runtime::Runtime::new().unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         eprintln!("ARGS: {:?}", args_vec);
         let auto = args_vec.iter().any(|x| x == "auto");
@@ -1009,7 +1013,7 @@ fn main() {
                 let result = {
                     let mut locked = MUTEX.lock().unwrap();
                     match request {
-                        WebRequest::Idle => (*locked).idle().map_err(|e| format!("{e:?}")),
+                        WebRequest::Idle => (*locked).idle(),
                         WebRequest::Player(id) => (*locked).player(id),
                         WebRequest::WordHash(id, hash) => Ok((*locked).word_hash(id, &hash)),
                         WebRequest::Picks(id, picks) => Ok((*locked).do_picks(id, &picks)),
