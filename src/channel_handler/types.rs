@@ -276,7 +276,7 @@ impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ReadableMove(NodePtr);
 
 impl ReadableMove {

@@ -1,3 +1,5 @@
+use crate::channel_handler::types::ReadableMove;
+use crate::common::types::Hash;
 use clvmr::NodePtr;
 
 #[cfg(feature = "sim-tests")]
@@ -48,7 +50,7 @@ impl GameAction {
 #[derive(Debug, Clone)]
 pub enum GameActionResult {
     #[allow(dead_code)]
-    MoveResult(NodePtr, Vec<u8>),
+    MoveResult(NodePtr, Vec<u8>, Option<ReadableMove>, Hash),
     BrokenMove,
     MoveToOnChain,
 }

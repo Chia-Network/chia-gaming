@@ -135,7 +135,7 @@
             seed
             pokerc
             pokerc_hash
-            (list ALICE_COMMIT local_move)
+            (list ALICE_COMMIT seed)
             48
             0
             (curry calpoker_bob_driver_c seed)
