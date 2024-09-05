@@ -70,9 +70,9 @@ pub struct PotatoSignatures {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GenericGameStartInfo<
-    H: std::fmt::Debug + Clone + ?Sized,
-    VP: std::fmt::Debug + Clone + ?Sized,
-    S: std::fmt::Debug + Clone + ?Sized,
+    H: std::fmt::Debug + Clone,
+    VP: std::fmt::Debug + Clone,
+    S: std::fmt::Debug + Clone,
 > {
     pub game_id: GameID,
     pub amount: Amount,
@@ -297,9 +297,6 @@ impl ToClvm<NodePtr> for ReadableMove {
         Ok(self.0)
     }
 }
-
-#[derive(Clone)]
-pub struct ReadableUX(/*NodePtr*/);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MoveResult {

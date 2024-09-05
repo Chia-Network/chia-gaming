@@ -12,7 +12,7 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, Program, PuzzleHash,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
     Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::outside::{
@@ -199,6 +199,7 @@ pub trait GameCradle {
         rng: &mut R,
         id: &GameID,
         readable: Vec<u8>,
+        new_entropy: Hash,
     ) -> Result<(), Error>;
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
@@ -247,8 +248,10 @@ struct SynchronousGameCradleState {
     inbound_messages: VecDeque<Vec<u8>>,
     outbound_messages: VecDeque<Vec<u8>>,
     outbound_transactions: VecDeque<SpendBundle>,
+    our_moves: VecDeque<(GameID, Vec<u8>)>,
     opponent_moves: VecDeque<(GameID, ReadableMove)>,
-    game_messages: VecDeque<(GameID, Vec<u8>)>,
+    raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
+    game_messages: VecDeque<(GameID, ReadableMove)>,
     game_finished: VecDeque<(GameID, Amount)>,
     identity: ChiaIdentity,
 }
@@ -310,8 +313,10 @@ impl SynchronousGameCradle {
                 inbound_messages: VecDeque::default(),
                 outbound_transactions: VecDeque::default(),
                 outbound_messages: VecDeque::default(),
+                our_moves: VecDeque::default(),
                 opponent_moves: VecDeque::default(),
                 game_messages: VecDeque::default(),
+                raw_game_messages: VecDeque::default(),
                 game_finished: VecDeque::default(),
                 channel_puzzle_hash: None,
                 funding_coin: None,
@@ -351,13 +356,22 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
+    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.our_moves.push_back((id.clone(), readable.to_vec()));
+        Ok(())
+    }
+
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moves.push_back((id.clone(), readable));
         Ok(())
     }
-    fn game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.game_messages
+    fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.raw_game_messages
             .push_back((id.clone(), readable.to_vec()));
+        Ok(())
+    }
+    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+        self.game_messages.push_back((id.clone(), readable.clone()));
         Ok(())
     }
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
@@ -422,6 +436,10 @@ where
 impl SynchronousGameCradle {
     pub fn has_potato(&self) -> bool {
         self.peer.has_potato()
+    }
+
+    pub fn amount(&self) -> Amount {
+        self.peer.amount()
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(
@@ -593,6 +611,7 @@ impl GameCradle for SynchronousGameCradle {
         rng: &mut R,
         id: &GameID,
         readable: Vec<u8>,
+        new_entropy: Hash,
     ) -> Result<(), Error> {
         let mut env = channel_handler_env(allocator, rng);
         let rehydrated_move = Program::from_bytes(&readable);
@@ -601,7 +620,7 @@ impl GameCradle for SynchronousGameCradle {
             env: &mut env,
             system_interface: &mut self.state,
         };
-        self.peer.make_move(&mut penv, id, &readable)
+        self.peer.make_move(&mut penv, id, &readable, new_entropy)
     }
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
@@ -674,8 +693,13 @@ impl GameCradle for SynchronousGameCradle {
         );
         self.state.outbound_messages.clear();
 
+        if let Some((id, msg)) = self.state.our_moves.pop_front() {
+            local_ui.self_move(&id, &msg)?;
+            return Ok(result);
+        }
+
         if let Some((id, msg)) = self.state.game_messages.pop_front() {
-            local_ui.game_message(&id, &msg)?;
+            local_ui.game_message(&id, msg)?;
             return Ok(result);
         }
 

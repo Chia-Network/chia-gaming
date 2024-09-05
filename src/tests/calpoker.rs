@@ -91,8 +91,8 @@ fn test_play_calpoker_happy_path() {
     debug!("play_result {test1:?}");
 }
 
-#[test]
 #[cfg(feature = "sim-tests")]
+#[test]
 fn test_play_calpoker_on_chain_after_1_move_p1() {
     let mut allocator = AllocEncoder::new();
 
@@ -106,8 +106,8 @@ fn test_play_calpoker_on_chain_after_1_move_p1() {
     debug!("play_result {test2:?}");
 }
 
-#[test]
 #[cfg(feature = "sim-tests")]
+#[test]
 fn test_play_calpoker_on_chain_after_1_move_p0_lost_message() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
@@ -118,8 +118,8 @@ fn test_play_calpoker_on_chain_after_1_move_p0_lost_message() {
     debug!("play_result {test3:?}");
 }
 
-#[test]
 #[cfg(feature = "sim-tests")]
+#[test]
 fn test_play_calpoker_on_chain_after_1_move_p0() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
@@ -129,8 +129,8 @@ fn test_play_calpoker_on_chain_after_1_move_p0() {
     debug!("play_result {test3:?}");
 }
 
-#[test]
 #[cfg(feature = "sim-tests")]
+#[test]
 fn test_play_calpoker_on_chain_after_2_moves_p0() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);
@@ -141,8 +141,8 @@ fn test_play_calpoker_on_chain_after_2_moves_p0() {
     debug!("play_result {test4:?}");
 }
 
-#[test]
 #[cfg(feature = "sim-tests")]
+#[test]
 fn test_play_calpoker_on_chain_after_2_moves_p1() {
     let mut allocator = AllocEncoder::new();
     let moves = test_moves_1(&mut allocator);

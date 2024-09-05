@@ -7,12 +7,17 @@
         <div>
             <h1 id="heading">Calpoker</h1>
             <button onclick="exitapp()">Terminate</button>
+            <button onclick="reset()">Reset Simulator</button>
         </div>
         <div id="container">
             <div id="info"> </div>
             <div id="app">
-                <div id="p1"></div>
-                <div id="p2"></div>
+                <div id="p1">
+                    <iframe id="p1frame" src="player.html?id=1"></iframe>
+                </div>
+                <div id="p2">
+                    <iframe id="p2frame" src="player.html?id=2"></iframe>
+                </div>
             </div>
         </div>
     </body>
