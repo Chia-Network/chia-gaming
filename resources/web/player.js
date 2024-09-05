@@ -225,7 +225,7 @@ function allow_manual_move(player_id, json) {
             this.take_auto_action(this.player_id, json);
         }
     } else if (move === 'AliceEnd' || move === 'BobEnd') {
-        element.innerHTML = `<h2>Game outcome</h2><div>${game_outcome(json)}</div><div>${JSON.stringify(json.readable)}</div>`;
+        element.innerHTML = `<h2>Game outcome</h2><div>${game_outcome(player_id, json)}</div><div>${JSON.stringify(json.readable)}</div>`;
     } else {
         element.innerHTML = `unhandled state ${move}`;
     }
