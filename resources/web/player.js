@@ -117,7 +117,7 @@ class PlayerController {
             this.move_number < 3 ?
             `<button id='submit-finish' onclick='end_game(${this.player_id})'>Click to finish game</button>` : '';
 
-        return `<h2>Game outcome</h2><div id='finish-submit'>${submit_button}</div><div>${game_outcome(this.player_id, json)}</div><div>${JSON.stringify(json.readable)}</div>`;
+        return `<h2>Waiting to finish game</h2><div id='finish-submit'>${submit_button}</div>`;
     }
 }
 
@@ -225,7 +225,7 @@ function allow_manual_move(player_id, json) {
             this.take_auto_action(this.player_id, json);
         }
     } else if (move === 'AliceEnd' || move === 'BobEnd') {
-        element.innerHTML = `<h2>Game outcome</h2><div>${JSON.stringify(json.readable)}</div>`;
+        element.innerHTML = `<h2>Game outcome</h2><div>${game_outcome(json)}</div><div>${JSON.stringify(json.readable)}</div>`;
     } else {
         element.innerHTML = `unhandled state ${move}`;
     }
