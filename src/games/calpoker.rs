@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 
+use crate::channel_handler::types::ReadableMove;
 use clvmr::NodePtr;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -152,6 +153,54 @@ pub fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<Ca
         cards_to_hand(&handa),
         cards_to_hand(&mergeover(&handa, &handb, 0)),
     )
+}
+
+pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> Vec<(usize, usize)> {
+    if let Some(cards_nodeptrs) = proper_list(allocator.allocator(), card_list, true) {
+        return cards_nodeptrs
+            .iter()
+            .filter_map(|elt| {
+                proper_list(allocator.allocator(), *elt, true).map(|card| {
+                    let rank: usize = atom_from_clvm(allocator, card[0])
+                        .and_then(usize_from_atom)
+                        .unwrap_or_default();
+                    let suit: usize = atom_from_clvm(allocator, card[1])
+                        .and_then(usize_from_atom)
+                        .unwrap_or_default();
+                    (rank, suit)
+                })
+            })
+            .collect();
+    }
+
+    Vec::new()
+}
+
+pub type CardList = Vec<(usize, usize)>;
+
+pub fn decode_readable_card_choices(
+    allocator: &mut AllocEncoder,
+    opponent_readable_move: ReadableMove,
+) -> Result<(CardList, CardList), Error> {
+    if let Some(cardlist) = proper_list(
+        allocator.allocator(),
+        opponent_readable_move.to_nodeptr(),
+        true,
+    ) {
+        let tmp: Vec<_> = cardlist
+            .iter()
+            .map(|c| convert_cards(allocator, *c))
+            .collect();
+        if tmp.len() != 2 {
+            return Err(Error::StrErr(format!(
+                "Unexpected cardlist length: {}",
+                tmp.len()
+            )));
+        }
+        Ok((tmp[0].clone(), tmp[1].clone()))
+    } else {
+        Err(Error::StrErr("wrong decode of two card sets".to_string()))
+    }
 }
 
 pub fn decode_hand_result(

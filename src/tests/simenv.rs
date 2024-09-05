@@ -178,7 +178,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             &mut self.env,
             &game_id,
             &ReadableMove::from_nodeptr(readable),
-            entropy,
+            entropy.clone(),
         )?;
 
         // XXX allow verification of ui result and message.
@@ -190,7 +190,21 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 .received_potato_move(&mut self.env, &game_id, &move_result)?;
             self.parties
                 .update_channel_coin_after_receive(player ^ 1, &spend)?;
-            Ok(GameActionResult::MoveResult(ui_result, message))
+            let decoded_message = if message.is_empty() {
+                None
+            } else {
+                self.parties
+                    .player(player)
+                    .ch
+                    .received_message(&mut self.env, &game_id, &message)?
+                    .into()
+            };
+            Ok(GameActionResult::MoveResult(
+                ui_result,
+                message,
+                decoded_message,
+                entropy,
+            ))
         } else {
             Ok(GameActionResult::BrokenMove)
         }
