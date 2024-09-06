@@ -125,7 +125,7 @@ class PlayerController {
         }
 
         let submit_button =
-            this.move_number < 3 ?
+            this.move_number < 3 && (this.player_id == 1 || json.received_moves > 2) ?
             `<button id='submit-finish' onclick='end_game(${this.player_id})'>Click to finish game</button>` : '';
 
         return `<h2>Waiting to finish game</h2><div id='finish-submit'>${submit_button}</div>`;
