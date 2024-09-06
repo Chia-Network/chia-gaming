@@ -19,19 +19,19 @@ use crate::common::types::{
     Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::poker_collection;
-use crate::outside::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
-};
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
+};
+use crate::potato_handler::{
+    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
+    PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::game::{GameAction, GameActionResult};
-use crate::tests::peer::outside::{quiesce, run_move};
+use crate::tests::peer::potato_handler::{quiesce, run_move};
 
 // potato handler tests with simulator.
 #[derive(Default)]

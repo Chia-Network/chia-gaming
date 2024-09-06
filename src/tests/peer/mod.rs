@@ -1,3 +1,3 @@
-pub mod outside;
+pub mod potato_handler;
 #[cfg(feature = "sim-tests")]
-pub mod outsim;
+pub mod potato_handler_sim;
