@@ -367,6 +367,7 @@ impl PerPlayerInfo {
         let player_readable = self.player_readable(allocator)?;
         serde_json::to_string(&PlayerResult {
             can_move: self.cradle.handshake_finished(),
+            received_moves: self.local_ui.received_moves,
             state: format!("{:?}", self.play_state),
             our_move: self.local_ui.our_readable_move.to_vec(),
             auto,
@@ -466,6 +467,7 @@ struct UpdateResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PlayerResult {
     can_move: bool,
+    received_moves: usize,
     state: String,
     auto: bool,
     our_move: Vec<u8>,
@@ -480,6 +482,7 @@ enum WebRequest {
     WordHash(bool, Vec<u8>),
     Picks(bool, Vec<bool>),
     FinishMove(bool),
+    SetAuto(bool),
 }
 
 type StringWithError = Result<String, Error>;
@@ -899,6 +902,17 @@ async fn finish(req: &mut Request) -> Result<String, String> {
     pass_on_request(WebRequest::FinishMove(player_id)).report_err()
 }
 
+#[handler]
+fn set_auto(req: &mut Request) -> Result<String, String> {
+    let arg = get_arg_bytes(req).report_err()?;
+    let do_auto = if arg.is_empty() {
+        false
+    } else {
+        arg[0] == b'1'
+    };
+    pass_on_request(WebRequest::SetAuto(do_auto)).report_err()
+}
+
 fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, Error> {
     let mut new_game = GameRunner::new()?;
     if auto {
@@ -950,6 +964,7 @@ fn main() {
             .push(Router::with_path("player.json").post(player))
             .push(Router::with_path("word_hash").post(word_hash))
             .push(Router::with_path("picks").post(do_picks))
+            .push(Router::with_path("set_auto").post(set_auto))
             .push(Router::with_path("finish").post(finish));
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
@@ -975,6 +990,10 @@ fn main() {
                         WebRequest::Picks(id, picks) => Ok((*locked).do_picks(id, &picks)),
                         WebRequest::FinishMove(id) => Ok((*locked).finish_move(id)),
                         WebRequest::Reset => reset_sim(&mut locked, auto),
+                        WebRequest::SetAuto(auto) => {
+                            (*locked).set_auto(auto);
+                            Ok("{}".to_string())
+                        }
                     }
                 };
 
