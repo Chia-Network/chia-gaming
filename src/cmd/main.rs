@@ -256,7 +256,7 @@ impl PerPlayerInfo {
         self.num_incoming_actions += 1;
     }
 
-    fn player_cards_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
+    fn player_cards_readable(&self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
         // See if we have enough info to get the cardlists.
         let decode_input = if self.player_id {
             // bob
@@ -275,7 +275,7 @@ impl PerPlayerInfo {
         }
     }
 
-    fn player_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
+    fn player_readable(&self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
         match &self.play_state {
             PlayState::BeforeAlicePicks => self.player_cards_readable(allocator),
             PlayState::AfterBobWord => self.player_cards_readable(allocator),
@@ -361,6 +361,21 @@ impl PerPlayerInfo {
                     .make_move(allocator, rng, &game_ids[0], vec![0x80], new_entropy)
             }
         }
+    }
+
+    fn report(&self, allocator: &mut AllocEncoder, auto: bool) -> Result<String, Error> {
+        let player_readable = self.player_readable(allocator)?;
+        serde_json::to_string(&PlayerResult {
+            can_move: self.cradle.handshake_finished(),
+            state: format!("{:?}", self.play_state),
+            our_move: self
+                .local_ui
+                .our_readable_move
+                .to_vec(),
+            auto,
+            readable: player_readable,
+        })
+            .into_gen()
     }
 
     fn idle<R: Rng>(
@@ -619,23 +634,8 @@ impl GameRunner {
         serde_json::to_string(&UpdateResult { info: self.info() }).unwrap()
     }
 
-    fn player_readable(&mut self, id: bool) -> Result<Value, Error> {
-        self.player_info[id as usize].player_readable(&mut self.allocator)
-    }
-
     fn player(&mut self, id: bool) -> Result<String, Error> {
-        let player_readable = self.player_readable(id)?;
-        serde_json::to_string(&PlayerResult {
-            can_move: self.can_move,
-            state: format!("{:?}", self.player_info[id as usize].play_state),
-            our_move: self.player_info[id as usize]
-                .local_ui
-                .our_readable_move
-                .to_vec(),
-            auto: self.auto,
-            readable: player_readable,
-        })
-        .into_gen()
+        self.player_info[id as usize].report(&mut self.allocator, self.auto)
     }
 
     fn word_hash(&mut self, id: bool, hash: &[u8]) -> String {
