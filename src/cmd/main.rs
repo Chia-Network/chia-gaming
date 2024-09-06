@@ -368,14 +368,11 @@ impl PerPlayerInfo {
         serde_json::to_string(&PlayerResult {
             can_move: self.cradle.handshake_finished(),
             state: format!("{:?}", self.play_state),
-            our_move: self
-                .local_ui
-                .our_readable_move
-                .to_vec(),
+            our_move: self.local_ui.our_readable_move.to_vec(),
             auto,
             readable: player_readable,
         })
-            .into_gen()
+        .into_gen()
     }
 
     fn idle<R: Rng>(
