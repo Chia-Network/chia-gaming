@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use clvm_traits::{ClvmEncoder, ToClvm};
-use clvmr::NodePtr;
+use clvm_traits::ToClvm;
 
 use log::debug;
 
@@ -9,13 +8,11 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, ReadableMove,
-};
+use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
-    Sha256Input, Spend, SpendBundle, Timeout,
+    Spend, SpendBundle, Timeout,
 };
 use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
 use crate::potato_handler::{
@@ -27,7 +24,7 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::{CoinSpend, Program};
 
-use crate::tests::calpoker::{load_calpoker, test_moves_1};
+use crate::tests::calpoker::test_moves_1;
 use crate::tests::game::GameAction;
 
 #[derive(Default)]
@@ -240,7 +237,7 @@ where
 
 pub fn run_move<'a, P, R: Rng>(
     env: &'a mut ChannelHandlerEnv<'a, R>,
-    amount: Amount,
+    _amount: Amount,
     pipe: &'a mut [P; 2],
     peer: &mut PotatoHandler,
     who: usize,
@@ -320,7 +317,6 @@ where
         + 'a,
 {
     let mut i = 0;
-    let mut messages = 0;
 
     while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
         if i > 50 {
@@ -331,11 +327,7 @@ where
 
         {
             let mut env = channel_handler_env(allocator, rng);
-            if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who)
-                .expect("should send")
-            {
-                messages += 1;
-            }
+            run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
         }
 
         i += 1;
