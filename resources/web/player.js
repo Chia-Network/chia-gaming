@@ -69,7 +69,7 @@ class PlayerController {
         if ((json.state == 'BeforeAliceWord' || json.state == 'BeforeBobWord') && this.move_number < 1) {
             this.sent_word = true;
             generate_entropy(this.player_id);
-        } else if ((json.state == 'AliceFinish1' || json.state == 'BobFinish1' || json.state == 'BobEnd') && this.move_number < 3) {
+        } else if ((json.state == 'BeforeAliceFinish' || json.state == 'BeforeBobFinish' || json.state == 'BobEnd') && this.move_number < 3) {
             console.error('end game');
             end_game(this.player_id);
         }

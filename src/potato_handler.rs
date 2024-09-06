@@ -1242,7 +1242,6 @@ impl PotatoHandler {
                         system_interface.received_channel_offer(&bundle)?;
                     }
                     PeerMessage::RequestPotato(_) => {
-                        assert!(matches!(self.have_potato, PotatoState::Present));
                         {
                             let (env, system_interface) = penv.env();
                             let ch = self.channel_handler_mut()?;
