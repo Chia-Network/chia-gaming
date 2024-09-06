@@ -1,12 +1,14 @@
 use log::debug;
-
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::channel_handler::game::Game;
+use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, Sha256Input};
+use crate::games::calpoker::decode_readable_card_choices;
+use crate::games::calpoker::make_cards;
 use crate::tests::game::{GameAction, GameActionResult};
 
 #[cfg(feature = "sim-tests")]
@@ -68,17 +70,17 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
     let bob_picks = [1, 0, 1, 0, 1, 0, 1, 0]
         .to_clvm(allocator)
         .expect("should work");
-    let alice_win_move = ().to_clvm(allocator).expect("should work");
+    let win_move = ().to_clvm(allocator).expect("should work");
 
     [
         GameAction::Move(0, alice_word_hash, true),
         GameAction::Move(1, bob_word, true),
-        // Alice's reaveal of her card generating seed and her commit to which
+        // Alice's reveal of her card generating seed and her commit to which
         // cards she's picking.
         GameAction::Move(0, alice_picks, true),
         GameAction::Move(1, bob_picks, true),
         // Move is a declared split.
-        GameAction::Move(0, alice_win_move, true),
+        GameAction::Move(0, win_move, true),
     ]
 }
 
@@ -89,6 +91,92 @@ fn test_play_calpoker_happy_path() {
     let moves = test_moves_1(&mut allocator);
     let test1 = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
     debug!("play_result {test1:?}");
+}
+
+fn test_make_cards_vs_message_handler() {
+    let left = (
+        [
+            (3, 3),
+            (6, 4),
+            (7, 1),
+            (7, 4),
+            (8, 1),
+            (10, 2),
+            (11, 1),
+            (12, 2),
+        ],
+        [
+            (5, 1),
+            (6, 2),
+            (9, 1),
+            (9, 3),
+            (10, 3),
+            (11, 4),
+            (12, 1),
+            (12, 3),
+        ],
+    );
+    let right = (
+        [
+            (2, 1),
+            (3, 4),
+            (4, 3),
+            (4, 4),
+            (10, 1),
+            (11, 1),
+            (12, 2),
+            (1, 2),
+        ],
+        [
+            (2, 3),
+            (3, 3),
+            (4, 2),
+            (5, 2),
+            (6, 3),
+            (6, 4),
+            (7, 4),
+            (13, 4),
+        ],
+    );
+
+    let alice_message_bytes = hex::decode("eb04c21e3ee58d1b494e0b5be68ee5e5");
+    let x = hex::decode("5192272f4a71debcc8b317095bec6673");
+    // let entropy =
+    //let make_cards_output = make_cards(&alice_message_bytes, entropy.bytes(), Amount::new(200));
+}
+
+fn extract_info_from_game(game_results: &[GameActionResult]) -> (Hash, ReadableMove, Vec<u8>) {
+    if let GameActionResult::MoveResult(_, _, _, entropy) = &game_results[1] {
+        game_results.iter().find_map(|x| {
+            if let GameActionResult::MoveResult(_, message_bytes, Some(clvm_data), _) = x {
+                // Alice: message_bytes
+                // Bob: entropy
+                Some((entropy.clone(), clvm_data.clone(), message_bytes.clone()))
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    }
+    .unwrap()
+}
+
+#[cfg(feature = "sim-tests")]
+#[test]
+fn test_verify_bob_message() {
+    // Ensure the bytes being passed on are structured correctly
+    // Verify message decoding
+    let mut allocator = AllocEncoder::new();
+    let moves = test_moves_1(&mut allocator);
+    let game_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+
+    let (entropy, bob_clvm_data, alice_message_bytes) = extract_info_from_game(&game_results);
+    let got = decode_readable_card_choices(&mut allocator, bob_clvm_data).unwrap();
+    let expected = make_cards(&alice_message_bytes, entropy.bytes(), Amount::new(200));
+
+    debug!("play_result {game_results:?}");
+    assert_eq!(got, expected);
 }
 
 #[cfg(feature = "sim-tests")]

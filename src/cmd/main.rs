@@ -32,6 +32,7 @@ use chia_gaming::common::types::{
     atom_from_clvm, usize_from_atom, AllocEncoder, Amount, CoinString, Error, GameID, Hash,
     IntoErr, PrivateKey, Program, Sha256Input, Timeout,
 };
+use chia_gaming::games::calpoker::decode_readable_card_choices;
 use chia_gaming::games::calpoker::{decode_calpoker_readable, CalpokerResult};
 use chia_gaming::games::poker_collection;
 use chia_gaming::outside::{GameStart, GameType, ToLocalUI};
@@ -231,25 +232,6 @@ impl<V> HttpError<V> for Result<V, Error> {
     }
 }
 
-type CardList = Vec<(usize, usize)>;
-
-fn decode_readable_card_choices(
-    allocator: &mut AllocEncoder,
-    opponent_readable_move: ReadableMove,
-) -> Result<Vec<CardList>, Error> {
-    if let Some(cardlist) = proper_list(
-        allocator.allocator(),
-        opponent_readable_move.to_nodeptr(),
-        true,
-    ) {
-        Ok(cardlist
-            .iter()
-            .map(|c| convert_cards(allocator, *c))
-            .collect())
-    } else {
-        Err(Error::StrErr("wrong decode of two card sets".to_string()))
-    }
-}
 impl PerPlayerInfo {
     fn new(
         allocator: &mut AllocEncoder,
@@ -505,27 +487,6 @@ lazy_static! {
         let (tx, rx) = mpsc::channel();
         (tx.into(), rx.into())
     };
-}
-
-fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> Vec<(usize, usize)> {
-    if let Some(cards_nodeptrs) = proper_list(allocator.allocator(), card_list, true) {
-        return cards_nodeptrs
-            .iter()
-            .filter_map(|elt| {
-                proper_list(allocator.allocator(), *elt, true).map(|card| {
-                    let rank: usize = atom_from_clvm(allocator, card[0])
-                        .and_then(usize_from_atom)
-                        .unwrap_or_default();
-                    let suit: usize = atom_from_clvm(allocator, card[1])
-                        .and_then(usize_from_atom)
-                        .unwrap_or_default();
-                    (rank, suit)
-                })
-            })
-            .collect();
-    }
-
-    Vec::new()
 }
 
 impl GameRunner {
