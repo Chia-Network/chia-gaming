@@ -20,7 +20,7 @@ fn detect_run_as_python(args: &[String]) -> bool {
 // Catch attempts on macos to run the test rig as 'python' and run python code in it.
 #[ctor::ctor]
 fn init() {
-    let mut args = std::env::args();
+    let args = std::env::args();
     let args_vec: Vec<String> = args.collect();
     if detect_run_as_python(&args_vec) {
         let new_args: Vec<OsString> = args_vec
