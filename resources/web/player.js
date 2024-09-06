@@ -80,10 +80,16 @@ class PlayerController {
     }
 
     pick_word(json) {
-        return `<h2>You must generate a secret value and send a hash commitment</h2><div><button onclick="generate_entropy(${this.player_id})">Generate secret value</button>"`;
-        if (auto_move(json) && this.move_number < 1) {
-            this.take_auto_action(this.player_id, json);
+        let button = '';
+        if (json.can_move && !auto_move(json)) {
+            button = `<button onclick="generate_entropy(${this.player_id})">Generate secret value</button>`;
         }
+
+        if (auto_move(json) && this.move_number < 1) {
+            this.take_auto_action(json);
+        }
+
+        return `<h2>You must generate a secret value and send a hash commitment</h2><div>${button}"`;
     }
 
     after_word(json) {
@@ -99,7 +105,7 @@ class PlayerController {
                 have_card_data ?
                 `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${this.move_number > 1}' onclick='submit_picks(${this.player_id})' ${submit_disabled}>Submit picks</button></div>` :
                 '';
-            html_result = `<h2>You must choose four of these cards</h2>${submit_button}<div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
+            html_result = `<h2>Choose 4 cards to give your opponent</h2><h3>You'll receive 4 cards from them</h3>${submit_button}<div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
             if (this.player_id == 2) {
                 card_result = [json.readable[1], json.readable[0]];
             } else {
@@ -113,6 +119,11 @@ class PlayerController {
     }
 
     finish_move(json) {
+        if (auto_move(json)) {
+            this.take_auto_action(json);
+            return `<h2>Finishing game</h2>`;
+        }
+
         let submit_button =
             this.move_number < 3 ?
             `<button id='submit-finish' onclick='end_game(${this.player_id})'>Click to finish game</button>` : '';
@@ -151,9 +162,11 @@ function submit_picks(player_id) {
     for (let i = 0; i < 8; i++) {
         picks += (controller.all_selected_cards[`_${i}`]) ? '1' : '0';
     }
+    console.log('doing picks for',player_id);
     return post(`picks?arg=${player_id}${picks}`).then((json) => {
         controller.move_number += 1;
         controller.ui_wait = false;
+        console.log('ui_wait off');
     }).catch((e) => {
         console.error('submit_picks', e);
     });
@@ -220,12 +233,12 @@ function allow_manual_move(player_id, json) {
         card_data = picks_result[1];
     } else if (move === 'BeforeAliceFinish' || move === 'BeforeBobFinish') {
         element.innerHTML = controller.finish_move(json);
-
-        if (this.move_number < 3) {
-            this.take_auto_action(this.player_id, json);
-        }
     } else if (move === 'AliceEnd' || move === 'BobEnd') {
-        element.innerHTML = `<h2>Game outcome</h2><div>${game_outcome(player_id, json)}</div><div>${JSON.stringify(json.readable)}</div>`;
+        if (typeof(json.readable) !== 'string' && json.readable.raw_alice_selects) {
+            element.innerHTML = `<h2>Game outcome</h2><div>${game_outcome(player_id, json)}</div><div>${JSON.stringify(json.readable)}</div>`;
+        } else {
+            element.innerHTML = '<h2>Waiting for game outcome</h2>';
+        }
     } else {
         element.innerHTML = `unhandled state ${move}`;
     }
