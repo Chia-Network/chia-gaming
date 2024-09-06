@@ -106,9 +106,13 @@ fn test_verify_endgame_data() {
         game_action_results[game_action_results.len() - 1]
     {
         let is_bob_move: bool = true;
-        let decoded =
-            decode_calpoker_readable(&mut allocator, penultimate_game_data, Amount::new(200), is_bob_move)
-                .expect("should work");
+        let decoded = decode_calpoker_readable(
+            &mut allocator,
+            penultimate_game_data,
+            Amount::new(200),
+            is_bob_move,
+        )
+        .expect("should work");
         // decoded is a description of Alice's result, from Bob's point of view
         // Bob won this game
         // Bob should get a reward coin for 200
@@ -118,7 +122,7 @@ fn test_verify_endgame_data() {
             CalpokerResult {
                 raw_alice_selects: 170, // me.raw_selects
                 raw_bob_picks: 205,
-                raw_alice_picks:185,
+                raw_alice_picks: 185,
                 bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 4, 2, 12]),
                 alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 1, 1, 1, 3, 14, 13, 11]),
                 your_share: 200,
