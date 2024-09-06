@@ -502,6 +502,14 @@ lazy_static! {
     };
 }
 
+#[derive(Serialize)]
+struct GlobalInfo {
+    auto: bool,
+    block_height: usize,
+    handshake_done: bool,
+    can_move: bool,
+}
+
 impl GameRunner {
     fn new() -> Result<Self, Error> {
         let mut allocator = AllocEncoder::new();
@@ -606,27 +614,12 @@ impl GameRunner {
 
     fn info(&self) -> Value {
         let mut r = Map::default();
-        r.insert(
-            "block_height".to_string(),
-            serde_json::to_value(self.coinset_adapter.current_height).unwrap(),
-        );
-        r.insert(
-            "handshake_done".to_string(),
-            serde_json::to_value(self.handshake_done).unwrap(),
-        );
-        r.insert(
-            "can_move".to_string(),
-            serde_json::to_value(self.can_move).unwrap(),
-        );
-        r.insert(
-            "alice_state".to_string(),
-            serde_json::to_value(&self.player_info[0].play_state).unwrap(),
-        );
-        r.insert(
-            "bob_state".to_string(),
-            serde_json::to_value(&self.player_info[1].play_state).unwrap(),
-        );
-        Value::Object(r)
+        serde_json::to_value(GlobalInfo {
+            auto: self.auto,
+            block_height: self.coinset_adapter.current_height as usize,
+            handshake_done: self.handshake_done,
+            can_move: self.can_move,
+        }).unwrap()
     }
 
     // Produce the state result for when a move is possible.
