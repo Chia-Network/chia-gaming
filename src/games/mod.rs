@@ -2,7 +2,7 @@ pub mod calpoker;
 
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{AllocEncoder, Program};
-use crate::outside::GameType;
+use crate::potato_handler::GameType;
 use std::collections::BTreeMap;
 
 pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Program> {
