@@ -8,11 +8,9 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 
-use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::serde::node_to_bytes;
-use clvmr::NodePtr;
 
 use lazy_static::lazy_static;
 use log::debug;
@@ -29,7 +27,7 @@ use serde_json::{Map, Value};
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
-    atom_from_clvm, usize_from_atom, AllocEncoder, Amount, CoinString, Error, GameID, Hash,
+    AllocEncoder, Amount, CoinString, Error, GameID, Hash,
     IntoErr, PrivateKey, Program, Sha256Input, Timeout,
 };
 use chia_gaming::games::calpoker::decode_readable_card_choices;
@@ -225,7 +223,7 @@ impl<V> HttpError<V> for Result<V, Error> {
                 let mut error = Map::default();
                 error.insert("error".to_string(), Value::String(format!("{e:?}")));
                 let as_string = serde_json::to_string(&Value::Object(error))
-                    .map_err(|_| format!("\"bad json conversion\""))?;
+                    .map_err(|_| "\"bad json conversion\"".to_string())?;
                 Err(as_string)
             }
         }
@@ -243,7 +241,7 @@ impl PerPlayerInfo {
         PerPlayerInfo {
             player_id,
             fund_coin,
-            cradle: cradle,
+            cradle,
             play_state,
             local_ui: UIReceiver::new(allocator),
             game_outcome: CalpokerResult::default(),
@@ -398,13 +396,12 @@ impl PerPlayerInfo {
                 self.play_state = self.play_state.incr();
             }
             (_, PlayState::AliceEnd | PlayState::BobEnd) => {
-                if let Some(res) = decode_calpoker_readable(
+                if let Ok(res) = decode_calpoker_readable(
                     allocator,
                     self.local_ui.opponent_readable_move.to_nodeptr(),
                     self.cradle.amount(),
                     self.player_id,
                 )
-                .ok()
                 {
                     if res.raw_alice_selects != 0 {
                         self.game_outcome = res;
@@ -474,6 +471,8 @@ enum WebRequest {
     FinishMove(bool),
 }
 
+type StringWithError = Result<String, Error>;
+
 lazy_static! {
     static ref MUTEX: Mutex<GameRunner> = Mutex::new(GameRunner::new().unwrap());
     static ref TO_WEB: (Mutex<Sender<WebRequest>>, Mutex<Receiver<WebRequest>>) = {
@@ -481,8 +480,8 @@ lazy_static! {
         (tx.into(), rx.into())
     };
     static ref FROM_WEB: (
-        Mutex<Sender<Result<String, Error>>>,
-        Mutex<Receiver<Result<String, Error>>>
+        Mutex<Sender<StringWithError>>,
+        Mutex<Receiver<StringWithError>>
     ) = {
         let (tx, rx) = mpsc::channel();
         (tx.into(), rx.into())
@@ -706,7 +705,7 @@ impl GameRunner {
                 for msg in result.outbound_messages.iter() {
                     self.player_info[i ^ 1]
                         .cradle
-                        .deliver_message(&msg)
+                        .deliver_message(msg)
                         .expect("should work");
                 }
 
@@ -979,7 +978,7 @@ fn main() {
                         WebRequest::WordHash(id, hash) => Ok((*locked).word_hash(id, &hash)),
                         WebRequest::Picks(id, picks) => Ok((*locked).do_picks(id, &picks)),
                         WebRequest::FinishMove(id) => Ok((*locked).finish_move(id)),
-                        WebRequest::Reset => reset_sim(&mut (*locked), auto),
+                        WebRequest::Reset => reset_sim(&mut locked, auto),
                     }
                 };
 
