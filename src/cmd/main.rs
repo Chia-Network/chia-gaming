@@ -27,8 +27,8 @@ use serde_json::{Map, Value};
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
-    AllocEncoder, Amount, CoinString, Error, GameID, Hash,
-    IntoErr, PrivateKey, Program, Sha256Input, Timeout,
+    AllocEncoder, Amount, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
+    Sha256Input, Timeout,
 };
 use chia_gaming::games::calpoker::decode_readable_card_choices;
 use chia_gaming::games::calpoker::{decode_calpoker_readable, CalpokerResult};
@@ -401,8 +401,7 @@ impl PerPlayerInfo {
                     self.local_ui.opponent_readable_move.to_nodeptr(),
                     self.cradle.amount(),
                     self.player_id,
-                )
-                {
+                ) {
                     if res.raw_alice_selects != 0 {
                         self.game_outcome = res;
                     }
