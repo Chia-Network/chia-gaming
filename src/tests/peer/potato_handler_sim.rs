@@ -1,22 +1,20 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use clvm_traits::ToClvm;
 use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
-
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    agg_sig_me_message, private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle,
-    sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
+    private_to_public_key, puzzle_hash_for_pk, sign_agg_sig_me, solution_for_conditions,
+    standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, IntoErr, PrivateKey,
-    Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, PrivateKey, Program,
+    PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::poker_collection;
 use crate::peer_container::{
@@ -25,12 +23,12 @@ use crate::peer_container::{
 };
 use crate::potato_handler::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface,
 };
 
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
-use crate::tests::game::{GameAction, GameActionResult};
+use crate::tests::game::GameAction;
 use crate::tests::peer::potato_handler::{quiesce, run_move};
 
 // potato handler tests with simulator.
@@ -41,6 +39,7 @@ struct SimulatedWalletSpend {
 }
 
 impl SimulatedWalletSpend {
+    #[allow(dead_code)]
     pub fn watch_and_report_coins(
         &mut self,
         current_height: u64,
@@ -84,7 +83,7 @@ impl SimulatedWalletSpend {
 }
 
 #[derive(Default)]
-struct SimulatedPeer {
+pub struct SimulatedPeer {
     message_pipe: MessagePipe,
 
     // Bootstrap info
@@ -115,6 +114,7 @@ impl MessagePeerQueue for SimulatedPeer {
 }
 
 impl SimulatedPeer {
+    #[allow(dead_code)]
     pub fn watch_and_report_coins(
         &mut self,
         current_height: u64,
@@ -129,7 +129,6 @@ impl SimulatedPeer {
 pub fn update_and_report_coins<'a, 'b, R: Rng>(
     allocator: &mut AllocEncoder,
     rng: &mut R,
-    identities: &'a [ChiaIdentity; 2],
     coinset_adapter: &mut FullCoinSetAdapter,
     peers: &mut [PotatoHandler; 2],
     pipes: &'a mut [SimulatedPeer; 2],
@@ -146,7 +145,7 @@ pub fn update_and_report_coins<'a, 'b, R: Rng>(
     for who in 0..=1 {
         let mut env = channel_handler_env(allocator, rng);
         let mut penv: SimulatedPeerSystem<'_, '_, R> =
-            SimulatedPeerSystem::new(&mut env, &identities[who], &mut pipes[who], simulator);
+            SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
 
         report_coin_changes_to_peer(&mut penv, &mut peers[who], &watch_report)?;
     }
@@ -156,9 +155,9 @@ pub fn update_and_report_coins<'a, 'b, R: Rng>(
 
 struct SimulatedPeerSystem<'a, 'b: 'a, R: Rng> {
     env: &'b mut ChannelHandlerEnv<'a, R>,
-    identity: &'b ChiaIdentity,
+    // identity: &'b ChiaIdentity,
     peer: &'b mut SimulatedPeer,
-    simulator: &'b mut Simulator,
+    // simulator: &'b mut Simulator,
 }
 
 impl PacketSender for SimulatedPeer {
@@ -212,7 +211,7 @@ impl BootstrapTowardWallet for SimulatedPeer {
 
     fn received_channel_transaction_completion(
         &mut self,
-        bundle: &SpendBundle,
+        _bundle: &SpendBundle,
     ) -> Result<(), Error> {
         debug!("received channel transaction completion");
         todo!();
@@ -220,27 +219,27 @@ impl BootstrapTowardWallet for SimulatedPeer {
 }
 
 impl ToLocalUI for SimulatedPeer {
-    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
         // We can record stuff here and check that we got what was expected, but there's
         // no effect on the game mechanics.
         Ok(())
     }
-    fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+    fn raw_game_message(&mut self, _id: &GameID, readable: &[u8]) -> Result<(), Error> {
         self.raw_messages.push(readable.to_vec());
         Ok(())
     }
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(&mut self, _id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         // Record for testing, but doens't affect the game.
         self.messages.push(readable);
         Ok(())
     }
-    fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
+    fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
         todo!();
     }
-    fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error> {
+    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
     }
-    fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error> {
+    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
         todo!();
     }
     fn going_on_chain(&mut self) -> Result<(), Error> {
@@ -258,27 +257,13 @@ where
 }
 
 impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
-    pub fn new(
-        env: &'a mut ChannelHandlerEnv<'a, R>,
-        identity: &'a ChiaIdentity,
-        peer: &'a mut SimulatedPeer,
-        simulator: &'a mut Simulator,
-    ) -> Self {
+    pub fn new(env: &'a mut ChannelHandlerEnv<'a, R>, peer: &'a mut SimulatedPeer) -> Self {
         SimulatedPeerSystem {
             env,
-            identity,
+            // identity,
             peer,
-            simulator,
+            // simulator,
         }
-    }
-
-    /// For each spend in the outbound transaction queue, push it to the blockchain.
-    pub fn push_outbound_spends(&mut self) -> Result<(), Error> {
-        todo!();
-    }
-
-    pub fn run_full_cycle(&mut self) {
-        todo!();
     }
 
     pub fn test_handle_received_channel_puzzle_hash(
@@ -334,12 +319,10 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
 
 fn do_first_game_start<'a, 'b: 'a>(
     env: &'b mut ChannelHandlerEnv<'a, ChaCha8Rng>,
-    identity: &'b ChiaIdentity,
     peer: &'b mut SimulatedPeer,
     handler: &'b mut PotatoHandler,
-    simulator: &'b mut Simulator,
 ) -> Vec<GameID> {
-    let mut penv = SimulatedPeerSystem::new(env, &identity, peer, simulator);
+    let mut penv = SimulatedPeerSystem::new(env, peer);
 
     let game_ids: Vec<GameID> = handler
         .start_games(
@@ -361,12 +344,10 @@ fn do_first_game_start<'a, 'b: 'a>(
 
 fn do_second_game_start<'a, 'b: 'a>(
     env: &'b mut ChannelHandlerEnv<'a, ChaCha8Rng>,
-    identity: &'b ChiaIdentity,
     peer: &'b mut SimulatedPeer,
     handler: &'b mut PotatoHandler,
-    simulator: &'b mut Simulator,
 ) {
-    let mut penv = SimulatedPeerSystem::new(env, &identity, peer, simulator);
+    let mut penv = SimulatedPeerSystem::new(env, peer);
 
     handler
         .start_games(
@@ -394,19 +375,12 @@ fn check_watch_report<'a, 'b: 'a, R: Rng>(
     simulator: &'b mut Simulator,
 ) {
     let mut env = channel_handler_env(allocator, rng);
-    let mut simenv0 = SimulatedPeerSystem::new(&mut env, &identities[0], &mut pipes[0], simulator);
+    let mut _simenv0 = SimulatedPeerSystem::new(&mut env, &mut pipes[0]);
     simulator.farm_block(&identities[0].puzzle_hash);
 
-    let watch_report = update_and_report_coins(
-        allocator,
-        rng,
-        identities,
-        coinset_adapter,
-        peers,
-        pipes,
-        simulator,
-    )
-    .expect("should work");
+    let watch_report =
+        update_and_report_coins(allocator, rng, coinset_adapter, peers, pipes, simulator)
+            .expect("should work");
 
     debug!("{watch_report:?}");
     let wanted_coin: Vec<CoinString> = watch_report
@@ -421,7 +395,7 @@ fn check_watch_report<'a, 'b: 'a, R: Rng>(
 pub fn handshake<'a, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
-    amount: Amount,
+    _amount: Amount,
     coinset_adapter: &'a mut FullCoinSetAdapter,
     identities: &'a [ChiaIdentity; 2],
     peers: &'a mut [PotatoHandler; 2],
@@ -430,7 +404,6 @@ pub fn handshake<'a, R: Rng + 'a>(
     simulator: &'a mut Simulator,
 ) -> Result<(), Error> {
     let mut i = 0;
-    let mut messages = 0;
     let mut steps = 0;
 
     while !peers[0].handshake_finished() || !peers[1].handshake_finished() {
@@ -441,19 +414,14 @@ pub fn handshake<'a, R: Rng + 'a>(
         debug!("handshake iterate {who}");
         {
             let mut env = channel_handler_env(allocator, rng);
-            if run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who)
-                .expect("should send")
-            {
-                messages += 1;
-            }
+            run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
         }
 
         if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
             debug!("puzzle hash");
             pipes[who].channel_puzzle_hash = None;
             let mut env = channel_handler_env(allocator, rng);
-            let mut penv =
-                SimulatedPeerSystem::new(&mut env, &identities[who], &mut pipes[who], simulator);
+            let mut penv = SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
             penv.test_handle_received_channel_puzzle_hash(
                 &identities[who],
                 &mut peers[who],
@@ -470,16 +438,11 @@ pub fn handshake<'a, R: Rng + 'a>(
 
             {
                 let mut env = channel_handler_env(allocator, rng);
-                let mut penv = SimulatedPeerSystem::new(
-                    &mut env,
-                    &identities[who],
-                    &mut pipes[who],
-                    simulator,
-                );
+                let mut penv = SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
                 peers[who].channel_transaction_completion(&mut penv, &u)?;
             }
 
-            let mut env = channel_handler_env(allocator, rng);
+            let env = channel_handler_env(allocator, rng);
             let mut spends = u.clone();
             // Create no coins.  The target is already created in the partially funded
             // transaction.
@@ -513,15 +476,7 @@ pub fn handshake<'a, R: Rng + 'a>(
             simulator.farm_block(&identities[who].puzzle_hash);
             simulator.farm_block(&identities[who].puzzle_hash);
 
-            update_and_report_coins(
-                allocator,
-                rng,
-                identities,
-                coinset_adapter,
-                peers,
-                pipes,
-                simulator,
-            )?;
+            update_and_report_coins(allocator, rng, coinset_adapter, peers, pipes, simulator)?;
         }
 
         if !pipes[who].outbound_transactions.is_empty() {
@@ -589,7 +544,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
     assert!(!coins1.is_empty());
 
     // Make a 100 coin for each player (and test the deleted and created events).
-    let (parent_coin_0, rest_0) = simulator
+    let (parent_coin_0, _rest_0) = simulator
         .transfer_coin_amount(
             allocator,
             &identities[0],
@@ -598,7 +553,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
             Amount::new(100),
         )
         .expect("should work");
-    let (parent_coin_1, rest_1) = simulator
+    let (parent_coin_1, _rest_1) = simulator
         .transfer_coin_amount(
             allocator,
             &identities[1],
@@ -612,7 +567,6 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         .expect("should work");
 
     {
-        let mut env = channel_handler_env(allocator, &mut rng);
         check_watch_report(
             allocator,
             &mut rng,
@@ -629,8 +583,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
 
     {
         let mut env = channel_handler_env(allocator, &mut rng);
-        let mut penv =
-            SimulatedPeerSystem::new(&mut env, &identities[1], &mut peers[1], &mut simulator);
+        let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[1]);
         handlers[1]
             .start(&mut penv, parent_coin_1.clone())
             .expect("should work");
@@ -661,24 +614,12 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
     // Start game
     let game_ids = {
         let mut env = channel_handler_env(allocator, &mut rng);
-        do_first_game_start(
-            &mut env,
-            &identities[1],
-            &mut peers[1],
-            &mut handlers[1],
-            &mut simulator,
-        )
+        do_first_game_start(&mut env, &mut peers[1], &mut handlers[1])
     };
 
     {
         let mut env = channel_handler_env(allocator, &mut rng);
-        do_second_game_start(
-            &mut env,
-            &identities[0],
-            &mut peers[0],
-            &mut handlers[0],
-            &mut simulator,
-        );
+        do_second_game_start(&mut env, &mut peers[0], &mut handlers[0]);
     }
 
     quiesce(
@@ -703,12 +644,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         {
             let entropy = rng.gen();
             let mut env = channel_handler_env(allocator, &mut rng);
-            let mut penv = SimulatedPeerSystem::new(
-                &mut env,
-                &identities[who ^ 1],
-                &mut peers[who ^ 1],
-                &mut simulator,
-            );
+            let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
             handlers[who ^ 1]
                 .make_move(
                     &mut penv,
@@ -744,29 +680,28 @@ struct LocalTestUIReceiver {
     shutdown_complete: bool,
     game_finished: Option<Amount>,
     opponent_moved: bool,
-    we_moved: bool,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
-    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moved = true;
         Ok(())
     }
 
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
         Ok(())
     }
 
-    fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {
+    fn game_finished(&mut self, _id: &GameID, my_share: Amount) -> Result<(), Error> {
         self.game_finished = Some(my_share);
         Ok(())
     }
 
-    fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error> {
+    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
     }
 
-    fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error> {
+    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
         self.shutdown_complete = true;
         Ok(())
     }
@@ -795,7 +730,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
         LocalTestUIReceiver::default(),
         LocalTestUIReceiver::default(),
     ];
-    let mut simulator = Simulator::default();
+    let simulator = Simulator::default();
 
     // Give some money to the users.
     simulator.farm_block(&identities[0].puzzle_hash);
@@ -809,7 +744,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
         .expect("should work");
 
     // Make a 100 coin for each player (and test the deleted and created events).
-    let (parent_coin_0, rest_0) = simulator
+    let (parent_coin_0, _rest_0) = simulator
         .transfer_coin_amount(
             allocator,
             &identities[0],
@@ -818,7 +753,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
             Amount::new(100),
         )
         .expect("should work");
-    let (parent_coin_1, rest_1) = simulator
+    let (parent_coin_1, _rest_1) = simulator
         .transfer_coin_amount(
             allocator,
             &identities[1],
