@@ -33,10 +33,10 @@ use chia_gaming::common::types::{
 use chia_gaming::games::calpoker::decode_readable_card_choices;
 use chia_gaming::games::calpoker::{decode_calpoker_readable, CalpokerResult};
 use chia_gaming::games::poker_collection;
-use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
 use chia_gaming::peer_container::{
     FullCoinSetAdapter, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig,
 };
+use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
 use chia_gaming::simulator::Simulator;
 
 struct UIReceiver {
