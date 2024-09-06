@@ -7,8 +7,11 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 use crate::channel_handler::game::Game;
 use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, Sha256Input};
+use crate::games::calpoker::decode_calpoker_readable;
 use crate::games::calpoker::decode_readable_card_choices;
 use crate::games::calpoker::make_cards;
+use crate::games::calpoker::CalpokerResult;
+use crate::games::calpoker::RawCalpokerHandValue;
 use crate::tests::game::{GameAction, GameActionResult};
 
 #[cfg(feature = "sim-tests")]
@@ -91,6 +94,45 @@ fn test_play_calpoker_happy_path() {
     let moves = test_moves_1(&mut allocator);
     let test1 = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
     debug!("play_result {test1:?}");
+}
+#[cfg(feature = "sim-tests")]
+#[test]
+fn test_verify_endgame_data() {
+    let mut allocator = AllocEncoder::new();
+    let moves = test_moves_1(&mut allocator);
+    let game_action_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+    debug!("play_result {game_action_results:?}");
+    if let GameActionResult::MoveResult(penultimate_game_data, _, _, _) =
+        game_action_results[game_action_results.len() - 1]
+    {
+        let is_bob_move: bool = true;
+        let decoded = decode_calpoker_readable(
+            &mut allocator,
+            penultimate_game_data,
+            Amount::new(200),
+            is_bob_move,
+        )
+        .expect("should work");
+        // decoded is a description of Alice's result, from Bob's point of view
+        // Bob won this game
+        // Bob should get a reward coin for 200
+        // Alice should get 0
+        assert_eq!(
+            decoded,
+            CalpokerResult {
+                raw_alice_selects: 170, // me.raw_selects
+                raw_bob_picks: 205,
+                raw_alice_picks: 185,
+                bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 4, 2, 12]),
+                alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 1, 1, 1, 3, 14, 13, 11]),
+                your_share: 200,
+                game_amount: 200,
+                win_direction: 1
+            }
+        );
+    } else {
+        panic!("{:?}", game_action_results);
+    };
 }
 
 fn extract_info_from_game(game_results: &[GameActionResult]) -> (Hash, ReadableMove, Vec<u8>) {
