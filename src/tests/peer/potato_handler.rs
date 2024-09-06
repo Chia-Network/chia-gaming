@@ -17,11 +17,11 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
     Sha256Input, Spend, SpendBundle, Timeout,
 };
-use crate::outside::{
+use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
+use crate::potato_handler::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
     PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
-use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
 
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
