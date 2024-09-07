@@ -613,13 +613,13 @@ impl GameRunner {
     }
 
     fn info(&self) -> Value {
-        let mut r = Map::default();
         serde_json::to_value(GlobalInfo {
             auto: self.auto,
             block_height: self.coinset_adapter.current_height as usize,
             handshake_done: self.handshake_done,
             can_move: self.can_move,
-        }).unwrap()
+        })
+        .unwrap()
     }
 
     // Produce the state result for when a move is possible.
@@ -911,6 +911,9 @@ fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, Error> {
     if auto {
         new_game.set_auto(true);
     }
+    // Ensure we can continue from the same simulator.
+    // swap(&mut sim.simulator, &mut new_game.simulator);
+    // swap(&mut sim.coinset_adapter, &mut new_game.coinset_adapter);
     swap(sim, &mut new_game);
     Ok("{}".to_string())
 }
