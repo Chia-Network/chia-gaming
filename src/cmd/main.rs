@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_traits::{ClvmEncoder, ToClvm};
+use clvmr::allocator::SExp;
 use clvmr::serde::node_to_bytes;
 
 use lazy_static::lazy_static;
@@ -173,6 +174,8 @@ pub struct PerPlayerInfo {
     cradle: SynchronousGameCradle,
     play_state: PlayState,
     fund_coin: CoinString,
+    // Demonstration purposes: allows the optional message delivery to be gated.
+    allow_remote_message: bool,
     incoming_actions: VecDeque<IncomingAction>,
     num_incoming_actions: usize,
     game_outcome: CalpokerResult,
@@ -237,6 +240,7 @@ impl PerPlayerInfo {
         fund_coin: CoinString,
         cradle: SynchronousGameCradle,
         play_state: PlayState,
+        allow_remote_message: bool,
     ) -> Self {
         PerPlayerInfo {
             player_id,
@@ -246,19 +250,46 @@ impl PerPlayerInfo {
             local_ui: UIReceiver::new(allocator),
             game_outcome: CalpokerResult::default(),
             incoming_actions: VecDeque::default(),
+            allow_remote_message,
             num_incoming_actions: 0,
         }
     }
 
+    // Check whether the message we hold is non-nil and allow_remote_message is false.
+    fn gated_messages(&self, allocator: &mut AllocEncoder) -> usize {
+        if let SExp::Pair(_, _) = allocator
+            .allocator()
+            .sexp(self.local_ui.remote_message.to_nodeptr())
+        {
+            !self.allow_remote_message as usize
+        } else {
+            0
+        }
+    }
+
+    fn set_allow_messages(&mut self, new_auto: bool) {
+        self.allow_remote_message = new_auto;
+    }
+
     fn enqueue_outbound_move(&mut self, incoming_action: IncomingAction) {
         eprintln!("enqueue outbound move: {incoming_action:?}");
+        // Ensure we skip already made moves in case of multiple posts.
+        // We can make moves idempotent in this way.
+        match (self.num_incoming_actions, &incoming_action) {
+            (0, IncomingAction::Word(_)) => {}
+            (1, IncomingAction::Picks(_)) => {}
+            (2, IncomingAction::Finish) => {}
+            _ => {
+                return;
+            }
+        }
         self.incoming_actions.push_back(incoming_action);
         self.num_incoming_actions += 1;
     }
 
     fn player_cards_readable(&self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
         // See if we have enough info to get the cardlists.
-        let decode_input = if self.player_id {
+        let decode_input = if self.player_id && self.allow_remote_message {
             // bob
             self.local_ui.remote_message.clone()
         } else {
@@ -483,6 +514,7 @@ enum WebRequest {
     Picks(bool, Vec<bool>),
     FinishMove(bool),
     SetAuto(bool),
+    AllowMessage,
 }
 
 type StringWithError = Result<String, Error>;
@@ -508,6 +540,7 @@ struct GlobalInfo {
     block_height: usize,
     handshake_done: bool,
     can_move: bool,
+    gated_messages: usize,
 }
 
 impl GameRunner {
@@ -582,6 +615,7 @@ impl GameRunner {
             parent_coin_0.clone(),
             cradle1,
             PlayState::BeforeAliceWord,
+            false,
         );
         let player2 = PerPlayerInfo::new(
             &mut allocator,
@@ -589,6 +623,7 @@ impl GameRunner {
             parent_coin_1.clone(),
             cradle2,
             PlayState::BobWaiting,
+            false,
         );
 
         Ok(GameRunner {
@@ -608,22 +643,31 @@ impl GameRunner {
         })
     }
 
-    fn set_auto(&mut self, new_auto: bool) {
-        self.auto = new_auto;
+    fn set_allow_messages(&mut self) {
+        self.player_info[0].set_allow_messages(true);
+        self.player_info[1].set_allow_messages(true);
     }
 
-    fn info(&self) -> Value {
+    fn set_auto(&mut self, new_auto: bool) {
+        self.auto = new_auto;
+        self.set_allow_messages();
+    }
+
+    fn info(&mut self) -> Value {
+        let p1_gated = self.player_info[0].gated_messages(&mut self.allocator);
+        let p2_gated = self.player_info[1].gated_messages(&mut self.allocator);
         serde_json::to_value(GlobalInfo {
             auto: self.auto,
             block_height: self.coinset_adapter.current_height as usize,
             handshake_done: self.handshake_done,
             can_move: self.can_move,
+            gated_messages: p1_gated + p2_gated,
         })
         .unwrap()
     }
 
     // Produce the state result for when a move is possible.
-    fn move_state(&self) -> String {
+    fn move_state(&mut self) -> String {
         serde_json::to_string(&UpdateResult { info: self.info() }).unwrap()
     }
 
@@ -906,6 +950,11 @@ fn set_auto(req: &mut Request) -> Result<String, String> {
     pass_on_request(WebRequest::SetAuto(do_auto)).report_err()
 }
 
+#[handler]
+fn allow_message(_req: &mut Request) -> Result<String, String> {
+    pass_on_request(WebRequest::AllowMessage).report_err()
+}
+
 fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, Error> {
     let mut new_game = GameRunner::new()?;
     if auto {
@@ -961,6 +1010,7 @@ fn main() {
             .push(Router::with_path("word_hash").post(word_hash))
             .push(Router::with_path("picks").post(do_picks))
             .push(Router::with_path("set_auto").post(set_auto))
+            .push(Router::with_path("allow_message").post(allow_message))
             .push(Router::with_path("finish").post(finish));
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
@@ -986,6 +1036,10 @@ fn main() {
                         WebRequest::Picks(id, picks) => Ok((*locked).do_picks(id, &picks)),
                         WebRequest::FinishMove(id) => Ok((*locked).finish_move(id)),
                         WebRequest::Reset => reset_sim(&mut locked, auto),
+                        WebRequest::AllowMessage => {
+                            (*locked).set_allow_messages();
+                            Ok("{}".to_string())
+                        }
                         WebRequest::SetAuto(auto) => {
                             (*locked).set_auto(auto);
                             Ok("{}".to_string())
