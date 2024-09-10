@@ -55,7 +55,7 @@ impl RawCalpokerHandValue {
                     ));
                 } else if lst.starts_with(&[2, 1, 1]) {
                     // Two of a kind
-                    if let Some(card) = lst.iter().nth(3) {
+                    if let Some(card) = lst.get(3) {
                         return Ok(CalpokerHandValue::Pair(
                             *card,
                             lst.iter().skip(4).copied().collect(),
@@ -75,7 +75,7 @@ impl RawCalpokerHandValue {
                     }
                 } else if lst.starts_with(&[3, 1, 2]) {
                     // Straight
-                    if let Some(straight_high) = lst.iter().nth(3) {
+                    if let Some(straight_high) = lst.get(3) {
                         return Ok(CalpokerHandValue::Straight(*straight_high));
                     }
                 } else if lst.starts_with(&[3, 1, 3]) {
@@ -90,7 +90,7 @@ impl RawCalpokerHandValue {
                     }
                 } else if lst.starts_with(&[5]) {
                     // Straight Flush
-                    if let Some(card) = lst.iter().nth(1) {
+                    if let Some(card) = lst.get(1) {
                         return Ok(CalpokerHandValue::StraightFlush(*card));
                     }
                 }
