@@ -381,10 +381,7 @@ impl PerPlayerInfo {
                     .make_move(allocator, rng, &game_ids[0], encoded, new_entropy)
             }
             IncomingAction::Finish => {
-                if !matches!(
-                    self.play_state,
-                    PlayState::BeforeAliceFinish
-                ) {
+                if !matches!(self.play_state, PlayState::BeforeAliceFinish) {
                     return Ok(());
                 }
 
