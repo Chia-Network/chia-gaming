@@ -123,10 +123,10 @@ fn test_verify_endgame_data() {
                 raw_alice_selects: 170, // me.raw_selects
                 raw_bob_picks: 205,
                 raw_alice_picks: 185,
-                bob_hand_result: CalpokerHandValue::TwoPair(4, 2, 12),
-                bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 4, 2, 12]),
-                alice_hand_result: CalpokerHandValue::Pair(3, vec![14, 13, 11]),
-                alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 1, 1, 1, 3, 14, 13, 11]),
+                alice_hand_result: CalpokerHandValue::TwoPair(4, 2, 12),
+                alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 4, 2, 12]),
+                bob_hand_result: CalpokerHandValue::Pair(1, vec![3, 14, 13, 11]),
+                bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 1, 1, 1, 3, 14, 13, 11]),
                 your_share: 200,
                 game_amount: 200,
                 win_direction: 1
