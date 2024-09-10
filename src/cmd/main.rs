@@ -410,6 +410,7 @@ impl PerPlayerInfo {
             our_move: self.local_ui.our_readable_move.to_vec(),
             auto,
             readable: player_readable,
+            move_number: self.num_incoming_actions,
             debug_state: format!("{:?}", self.local_ui),
         })
         .into_gen()
@@ -473,11 +474,12 @@ struct GameRunner {
     game_type_map: BTreeMap<GameType, Program>,
 
     neutral_identity: ChiaIdentity,
+
+    simulator: Simulator,
     coinset_adapter: FullCoinSetAdapter,
 
     player_info: [PerPlayerInfo; 2],
 
-    simulator: Simulator,
     game_ids: Vec<GameID>,
 
     handshake_done: bool,
@@ -505,6 +507,7 @@ struct PlayerResult {
     our_move: Vec<u8>,
     readable: Value,
     debug_state: String,
+    move_number: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -522,7 +525,8 @@ enum WebRequest {
 type StringWithError = Result<String, Error>;
 
 lazy_static! {
-    static ref MUTEX: Mutex<GameRunner> = Mutex::new(GameRunner::new().unwrap());
+    static ref MUTEX: Mutex<GameRunner> =
+        Mutex::new(GameRunner::new(Simulator::default(), FullCoinSetAdapter::default()).unwrap());
     static ref TO_WEB: (Mutex<Sender<WebRequest>>, Mutex<Receiver<WebRequest>>) = {
         let (tx, rx) = mpsc::channel();
         (tx.into(), rx.into())
@@ -546,7 +550,7 @@ struct GlobalInfo {
 }
 
 impl GameRunner {
-    fn new() -> Result<Self, Error> {
+    fn new(simulator: Simulator, coinset_adapter: FullCoinSetAdapter) -> Result<Self, Error> {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
         let game_type_map = poker_collection(&mut allocator);
@@ -558,9 +562,6 @@ impl GameRunner {
         let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("should work");
         let pk2: PrivateKey = rng.gen();
         let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("should work");
-
-        let coinset_adapter = FullCoinSetAdapter::default();
-        let simulator = Simulator::default();
 
         // Give some money to the users.
         simulator.farm_block(&id1.puzzle_hash);
@@ -643,6 +644,17 @@ impl GameRunner {
             tick_count: 0,
             player_info: [player1, player2],
         })
+    }
+
+    fn detach_simulator(
+        &mut self,
+        mut simulator: Simulator,
+        mut coinset_adapter: FullCoinSetAdapter,
+    ) -> (Simulator, FullCoinSetAdapter) {
+        swap(&mut simulator, &mut self.simulator);
+        swap(&mut coinset_adapter, &mut self.coinset_adapter);
+
+        (simulator, coinset_adapter)
     }
 
     fn set_allow_messages(&mut self) {
@@ -956,13 +968,15 @@ fn allow_message(_req: &mut Request) -> Result<String, String> {
 }
 
 fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, Error> {
-    let mut new_game = GameRunner::new()?;
-    if auto {
-        new_game.set_auto(true);
-    }
+    let empty_simulator = Simulator::default();
+    let empty_coinset_adapter = FullCoinSetAdapter::default();
+
+    let (simulator, adapter) = sim.detach_simulator(empty_simulator, empty_coinset_adapter);
+
+    let mut new_game = GameRunner::new(simulator, adapter)?;
+    new_game.set_auto(auto);
+
     // Ensure we can continue from the same simulator.
-    // swap(&mut sim.simulator, &mut new_game.simulator);
-    // swap(&mut sim.coinset_adapter, &mut new_game.coinset_adapter);
     swap(sim, &mut new_game);
     Ok("{}".to_string())
 }

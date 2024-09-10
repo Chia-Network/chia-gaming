@@ -1,5 +1,6 @@
 body {
     overflow: hidden;
+    font-size: x-large;
 }
 
 #heading {
@@ -86,16 +87,28 @@ body {
     margin: 0;
 }
 
+.player-heading-wait {
+    color: darkblue;
+}
+
 #player-info {
     position: relative;
 }
 
 .player-attr {
     margin-left: 1em;
+    background: #ddffdd;
+    padding: 0.25em;
+    border: 1px solid black;
+    
+    box-sizing: border-box;
+    position: relative;
+    display: inline-block;
 }
 
 #player-body {
-    font-size: 0.6rem;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: medium;
     overflow-y: auto;
 }
 
@@ -143,11 +156,11 @@ body {
 }
 
 .player-info-false {
-    height: 1.5rem;
+    height: 2rem;
 }
 
 .player_info-true {
-    height: 4rem;
+    height: 12rem;
 }
 
 .outcome-heading {
