@@ -18,7 +18,7 @@ function describe_hand(description, cards) {
     };
     let keys_of_description = Object.keys(description);
     let hand_type = keys_of_description[0];
-    let hand_data = description[keys_of_description];
+    let hand_data = description[hand_type];
     if (hand_type === 'Flush') {
         return `Flush of ${convert_ranks(hand_data)}`;
     } else if (hand_type == 'Straight') {
