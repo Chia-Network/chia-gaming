@@ -34,6 +34,14 @@ body {
     position: absolute;
     width: 20vw;
     height: 85vh;
+
+}
+
+.info-auto {
+    background: #54b166;
+}
+
+.info-manual {
     background: #bbb;
 }
 
