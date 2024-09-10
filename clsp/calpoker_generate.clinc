@@ -163,7 +163,7 @@
         (make_readable_card_descriptions bob_cards)
 
         (list MAKE_MOVE
-            readable_bob_cards
+            (list (make_readable_card_descriptions alice_cards) readable_bob_cards)
             (curry calpoker_bob_driver_d
                    alice_cards
                    bob_cards
