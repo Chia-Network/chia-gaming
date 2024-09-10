@@ -31,7 +31,9 @@ use chia_gaming::common::types::{
     AllocEncoder, Amount, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
     Sha256Input, Timeout,
 };
-use chia_gaming::games::calpoker::{CalpokerResult, Card, decode_readable_card_choices, decode_calpoker_readable};
+use chia_gaming::games::calpoker::{
+    decode_calpoker_readable, decode_readable_card_choices, CalpokerResult, Card,
+};
 use chia_gaming::games::poker_collection;
 use chia_gaming::peer_container::{
     FullCoinSetAdapter, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig,

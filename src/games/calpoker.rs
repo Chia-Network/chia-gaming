@@ -48,35 +48,42 @@ impl RawCalpokerHandValue {
     pub fn hand_value(&self) -> Result<CalpokerHandValue, Error> {
         match self {
             RawCalpokerHandValue::SimpleList(lst) => {
-                if lst.starts_with(&[1,1,1,1,1]) {
+                if lst.starts_with(&[1, 1, 1, 1, 1]) {
                     // High card
-                    return Ok(CalpokerHandValue::HighCard(lst.iter().skip(5).copied().collect()));
-                } else if lst.starts_with(&[2,1,1]) {
+                    return Ok(CalpokerHandValue::HighCard(
+                        lst.iter().skip(5).copied().collect(),
+                    ));
+                } else if lst.starts_with(&[2, 1, 1]) {
                     // Two of a kind
                     if let Some(card) = lst.iter().skip(3).copied().next() {
-                        return Ok(CalpokerHandValue::Pair(card, lst.iter().skip(4).copied().collect()));
+                        return Ok(CalpokerHandValue::Pair(
+                            card,
+                            lst.iter().skip(4).copied().collect(),
+                        ));
                     }
-                } else if lst.starts_with(&[2,2,1]) {
+                } else if lst.starts_with(&[2, 2, 1]) {
                     // Two pair
                     let first_two: Vec<_> = lst.iter().skip(3).copied().collect();
                     if let [c1, c2, other] = &first_two[..] {
                         return Ok(CalpokerHandValue::TwoPair(*c1, *c2, *other));
                     }
-                } else if lst.starts_with(&[3,1,1]) {
+                } else if lst.starts_with(&[3, 1, 1]) {
                     // Three of a kind
                     let first_three: Vec<_> = lst.iter().skip(3).copied().collect();
                     if let [trio, o1, o2] = &first_three[..] {
                         return Ok(CalpokerHandValue::ThreeOfAKind(*trio, *o1, *o2));
                     }
-                } else if lst.starts_with(&[3,1,2]) {
+                } else if lst.starts_with(&[3, 1, 2]) {
                     // Straight
                     if let Some(straight_high) = lst.iter().skip(3).copied().next() {
                         return Ok(CalpokerHandValue::Straight(straight_high));
                     }
-                } else if lst.starts_with(&[3,1,3]) {
+                } else if lst.starts_with(&[3, 1, 3]) {
                     // Flush
-                    return Ok(CalpokerHandValue::Flush(lst.iter().skip(3).copied().collect()));
-                } else if lst.starts_with(&[3,2]) {
+                    return Ok(CalpokerHandValue::Flush(
+                        lst.iter().skip(3).copied().collect(),
+                    ));
+                } else if lst.starts_with(&[3, 2]) {
                     // Full house
                     if let [_, _, high, low] = &lst[..] {
                         return Ok(CalpokerHandValue::FullHouse(*high, *low));
@@ -95,15 +102,19 @@ impl RawCalpokerHandValue {
             }
         }
 
-        Err(Error::StrErr(format!("unable to translate hand value: {self:?}")))
+        Err(Error::StrErr(format!(
+            "unable to translate hand value: {self:?}"
+        )))
     }
 }
 
 #[test]
 fn test_simple_hand_values() {
     assert_eq!(
-        RawCalpokerHandValue::SimpleList(vec![3,1,3,13,10,9,6,3]).hand_value().unwrap(),
-        CalpokerHandValue::Flush(vec![13,10,9,6,3])
+        RawCalpokerHandValue::SimpleList(vec![3, 1, 3, 13, 10, 9, 6, 3])
+            .hand_value()
+            .unwrap(),
+        CalpokerHandValue::Flush(vec![13, 10, 9, 6, 3])
     );
 }
 
