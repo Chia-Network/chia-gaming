@@ -76,7 +76,6 @@ class PlayerController {
         this.eat_toggle = false;
         this.move_number = 0;
         this.player_info = false;
-        this.cards = [[], []];
     }
 
     toggle_card(label, selected_cards, n) {
@@ -149,7 +148,6 @@ class PlayerController {
             } else {
                 card_result = json.readable;
             }
-            this.cards = card_result;
             html_result = `<h2>Choose 4 cards to give your opponent</h2><h3>You'll receive 4 cards from them</h3>${submit_button}<div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
 } else {
             html_result = '<h2>Waiting for cards<h2>';
@@ -175,12 +173,12 @@ class PlayerController {
         let result;
 
         if (typeof(json.readable) !== 'string' && json.readable.raw_alice_selects) {
-            result = `<h2>Game outcome</h2><div>${game_outcome(this.player_id, json, this.cards)}</div><div id='card-choices'></div><div id='opponent-choices'></div>`;
+            result = `<h2>Game outcome</h2><div>${game_outcome(this.player_id, json, json.known_cards)}</div><div id='card-choices'></div><div id='opponent-choices'></div>`;
         } else {
             result = '<h2>Waiting for game outcome</h2>';
         }
 
-        return [result, this.cards];
+        return [result, json.known_cards];
     }
 
 
