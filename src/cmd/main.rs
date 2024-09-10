@@ -320,6 +320,7 @@ impl PerPlayerInfo {
             PlayState::BeforeBobPicks => self.player_cards_readable(allocator),
             PlayState::AfterAlicePicks => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome).into_gen(),
+            PlayState::BeforeBobFinish => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::AliceEnd => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::BobEnd => serde_json::to_value(&self.game_outcome).into_gen(),
             _ => Ok(Value::String(disassemble(
@@ -994,7 +995,7 @@ fn main() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     rt.block_on(async {
-        let mut auto = args_vec.iter().any(|x| x == "auto");
+        let auto = args_vec.iter().any(|x| x == "auto");
 
         let router = Router::new()
             .get(index)
