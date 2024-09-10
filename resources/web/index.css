@@ -133,3 +133,19 @@ body {
 .sent_picks_true {
     display: none;
 }
+
+#player-info {
+    display: block;
+    position: relative;
+    overflow: auto;
+    background: #ccf;
+    border: 1px solid black;
+}
+
+.player-info-false {
+    height: 1.5rem;
+}
+
+.player_info-true {
+    height: 4rem;
+}

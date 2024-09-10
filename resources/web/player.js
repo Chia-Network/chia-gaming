@@ -75,6 +75,7 @@ class PlayerController {
         this.ui_wait = false;
         this.eat_toggle = false;
         this.move_number = 0;
+        this.player_info = false;
         this.cards = [[], []];
     }
 
@@ -180,6 +181,15 @@ class PlayerController {
         }
 
         return [result, this.cards];
+    }
+
+
+    toggle_player_info() {
+        let pi = document.getElementById('player-info');
+        if (pi) {
+            this.player_info = !this.player_info;
+            pi.setAttribute('class', `player-info-${this.player_info}`);
+        }
     }
 }
 
