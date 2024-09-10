@@ -351,6 +351,8 @@ function take_update(player_id, json) {
     }
 }
 
+let last_update = '';
+
 function check() {
     let player_id = get_player_id();
 
@@ -363,6 +365,14 @@ function check() {
             return {};
         });
     }).then((json) => {
+        let this_str = JSON.stringify(json);
+
+        setTimeout(check, 500);
+        if (this_str === last_update) {
+            return;
+        }
+
+        last_update = this_str;
         if (!controller.ui_wait) {
             let do_auto_move = auto_move(json) ? 'automatic default moves' : 'manual moves';
 
@@ -372,7 +382,6 @@ function check() {
 
             take_update(player_id, json);
         }
-        setTimeout(check, 500);
     });
 }
 
