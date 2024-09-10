@@ -321,6 +321,7 @@ function allow_manual_move(player_id, json) {
                 controller.eat_toggle = true;
             }
         });
+
         $("#opponent-choices").sortable();
 
         let our_cards = card_data[0];
