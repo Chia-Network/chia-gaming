@@ -31,8 +31,7 @@ use chia_gaming::common::types::{
     AllocEncoder, Amount, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
     Sha256Input, Timeout,
 };
-use chia_gaming::games::calpoker::decode_readable_card_choices;
-use chia_gaming::games::calpoker::{decode_calpoker_readable, CalpokerResult};
+use chia_gaming::games::calpoker::{CalpokerResult, Card, decode_readable_card_choices, decode_calpoker_readable};
 use chia_gaming::games::poker_collection;
 use chia_gaming::peer_container::{
     FullCoinSetAdapter, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig,
@@ -40,6 +39,7 @@ use chia_gaming::peer_container::{
 use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
 use chia_gaming::simulator::Simulator;
 
+#[derive(Debug)]
 struct UIReceiver {
     received_moves: usize,
     our_readable_move: Vec<u8>,
@@ -179,6 +179,7 @@ pub struct PerPlayerInfo {
     incoming_actions: VecDeque<IncomingAction>,
     num_incoming_actions: usize,
     game_outcome: CalpokerResult,
+    known_cards: (Vec<Card>, Vec<Card>),
 }
 
 struct ReleaseObject<'a, T: Clone> {
@@ -249,6 +250,7 @@ impl PerPlayerInfo {
             play_state,
             local_ui: UIReceiver::new(allocator),
             game_outcome: CalpokerResult::default(),
+            known_cards: (Vec::default(), Vec::default()),
             incoming_actions: VecDeque::default(),
             allow_remote_message,
             num_incoming_actions: 0,
@@ -287,11 +289,13 @@ impl PerPlayerInfo {
         self.num_incoming_actions += 1;
     }
 
-    fn player_cards_readable(&self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
+    fn player_cards_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
         // See if we have enough info to get the cardlists.
         let decode_input = if self.player_id && self.allow_remote_message {
             // bob
             self.local_ui.remote_message.clone()
+        } else if matches!(self.play_state, PlayState::BeforeBobPicks) {
+            self.local_ui.opponent_readable_move.clone()
         } else {
             // alice
             self.local_ui.opponent_readable_move.clone()
@@ -299,6 +303,7 @@ impl PerPlayerInfo {
         let cardlist_result = decode_readable_card_choices(allocator, decode_input).ok();
         if let Some(player_hands) = cardlist_result {
             // make_cards
+            self.known_cards = player_hands.clone();
             serde_json::to_value(player_hands).into_gen()
         } else {
             let empty_vec: Vec<(usize, usize)> = vec![];
@@ -306,7 +311,7 @@ impl PerPlayerInfo {
         }
     }
 
-    fn player_readable(&self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
+    fn player_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
         match &self.play_state {
             PlayState::BeforeAlicePicks => self.player_cards_readable(allocator),
             PlayState::AfterBobWord => self.player_cards_readable(allocator),
@@ -349,7 +354,6 @@ impl PerPlayerInfo {
 
                 let encoded_node = allocator.encode_atom(&hash).unwrap();
                 let encoded = node_to_bytes(allocator.allocator(), encoded_node).unwrap();
-                eprintln!("word hash {hash:?}");
 
                 self.cradle.make_move(
                     allocator,
@@ -384,7 +388,6 @@ impl PerPlayerInfo {
                     return Ok(());
                 }
 
-                eprintln!("{} doing finish move", self.player_id);
                 g.release();
                 self.play_state = self.play_state.incr();
                 let new_entropy = rng.gen();
@@ -394,15 +397,17 @@ impl PerPlayerInfo {
         }
     }
 
-    fn report(&self, allocator: &mut AllocEncoder, auto: bool) -> Result<String, Error> {
+    fn report(&mut self, allocator: &mut AllocEncoder, auto: bool) -> Result<String, Error> {
         let player_readable = self.player_readable(allocator)?;
         serde_json::to_string(&PlayerResult {
             can_move: self.cradle.handshake_finished(),
+            known_cards: self.known_cards.clone(),
             received_moves: self.local_ui.received_moves,
             state: format!("{:?}", self.play_state),
             our_move: self.local_ui.our_readable_move.to_vec(),
             auto,
             readable: player_readable,
+            debug_state: format!("{:?}", self.local_ui),
         })
         .into_gen()
     }
@@ -414,14 +419,6 @@ impl PerPlayerInfo {
         game_ids: &[GameID],
     ) -> Result<(), Error> {
         let prev = self.play_state.clone();
-
-        eprintln!(
-            "{} idle waiting {} incoming {} state {:?}",
-            self.player_id,
-            self.incoming_actions.len(),
-            self.local_ui.received_moves,
-            self.play_state
-        );
 
         match (self.local_ui.received_moves, &self.play_state) {
             (1, PlayState::BobWaiting) => {
@@ -499,10 +496,12 @@ struct UpdateResult {
 struct PlayerResult {
     can_move: bool,
     received_moves: usize,
+    known_cards: (Vec<Card>, Vec<Card>),
     state: String,
     auto: bool,
     our_move: Vec<u8>,
     readable: Value,
+    debug_state: String,
 }
 
 #[derive(Debug, Clone)]
@@ -906,8 +905,6 @@ async fn word_hash(req: &mut Request) -> Result<String, String> {
     }
     let player_id = arg[0] == b'2';
     let hash = Sha256Input::Bytes(&arg[1..]).hash();
-    let hash_of_alice_hash = Sha256Input::Bytes(hash.bytes()).hash();
-    eprintln!("{player_id} hash is {hash:?} hash of that is {hash_of_alice_hash:?}");
     pass_on_request(WebRequest::WordHash(player_id, hash.bytes().to_vec())).report_err()
 }
 
@@ -993,8 +990,8 @@ fn main() {
         return;
     }
     let rt = tokio::runtime::Runtime::new().unwrap();
+
     rt.block_on(async {
-        eprintln!("ARGS: {:?}", args_vec);
         let auto = args_vec.iter().any(|x| x == "auto");
 
         let router = Router::new()
@@ -1021,6 +1018,7 @@ fn main() {
             }
 
             loop {
+                let mut locked = MUTEX.lock().unwrap();
                 let request = {
                     let channel = TO_WEB.1.lock().unwrap();
                     (*channel).recv().unwrap()
@@ -1028,7 +1026,6 @@ fn main() {
 
                 debug!("request {request:?}");
                 let result = {
-                    let mut locked = MUTEX.lock().unwrap();
                     match request {
                         WebRequest::Idle => (*locked).idle(),
                         WebRequest::Player(id) => (*locked).player(id),
