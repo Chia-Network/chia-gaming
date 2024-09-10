@@ -410,6 +410,7 @@ impl PerPlayerInfo {
             our_move: self.local_ui.our_readable_move.to_vec(),
             auto,
             readable: player_readable,
+            move_number: self.num_incoming_actions,
             debug_state: format!("{:?}", self.local_ui),
         })
         .into_gen()
@@ -505,6 +506,7 @@ struct PlayerResult {
     our_move: Vec<u8>,
     readable: Value,
     debug_state: String,
+    move_number: usize,
 }
 
 #[derive(Debug, Clone)]

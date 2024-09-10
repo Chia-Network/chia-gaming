@@ -74,7 +74,6 @@ class PlayerController {
         this.all_selected_cards = {};
         this.ui_wait = false;
         this.eat_toggle = false;
-        this.move_number = 0;
         this.player_info = false;
     }
 
@@ -104,10 +103,10 @@ class PlayerController {
 
     take_auto_action(json) {
         console.log(`take auto action ${this.player_id} ${JSON.stringify(json)}`);
-        if ((json.state == 'BeforeAliceWord' || json.state == 'BeforeBobWord') && this.move_number < 1) {
+        if ((json.state == 'BeforeAliceWord' || json.state == 'BeforeBobWord') && json.move_number < 1) {
             this.sent_word = true;
             generate_entropy(this.player_id);
-        } else if ((json.state == 'BeforeAliceFinish' || json.state == 'BeforeBobFinish' || json.state == 'BobEnd') && this.move_number < 3 && typeof(json.readable) !== 'string' ) {
+        } else if ((json.state == 'BeforeAliceFinish' || json.state == 'BeforeBobFinish' || json.state == 'BobEnd') && json.move_number < 3 && typeof(json.readable) !== 'string' ) {
             console.error('end game');
             end_game(this.player_id);
         }
@@ -123,7 +122,7 @@ class PlayerController {
             button = `<button onclick="generate_entropy(${this.player_id})">Generate secret value</button>`;
         }
 
-        if (auto_move(json) && this.move_number < 1) {
+        if (auto_move(json) && json.move_number < 1) {
             this.take_auto_action(json);
         }
 
@@ -141,7 +140,7 @@ class PlayerController {
 
             let submit_button =
                 have_card_data ?
-                `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${this.move_number > 1}' onclick='submit_picks(${this.player_id})' ${submit_disabled}>Submit picks</button></div>` :
+                `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${json.move_number > 1}' onclick='submit_picks(${this.player_id})' ${submit_disabled}>Submit picks</button></div>` :
                 '';
             if (this.player_id == 2) {
                 card_result = [json.readable[1], json.readable[0]];
@@ -163,7 +162,7 @@ class PlayerController {
         }
 
         let submit_button =
-            this.move_number < 3 && (this.player_id == 1 || json.received_moves > 2) ?
+            json.move_number < 3 && (this.player_id == 1 || json.received_moves > 2) ?
             `<button id='submit-finish' onclick='end_game(${this.player_id})'>Click to finish game</button>` : '';
 
         return `<h2>Waiting to finish game</h2><div id='finish-submit'>${submit_button}</div>`;
@@ -223,7 +222,6 @@ function submit_picks(player_id) {
     }
     console.log('doing picks for',player_id);
     return post(`picks?arg=${player_id}${picks}`).then((json) => {
-        controller.move_number += 1;
         controller.ui_wait = false;
         console.log('ui_wait off');
     }).catch((e) => {
@@ -234,13 +232,11 @@ function submit_picks(player_id) {
 function generate_entropy(player_id) {
     let alice_entropy = Math.random().toString();
     return post(`word_hash?arg=${player_id}${alice_entropy}`).then((json) => {
-        controller.move_number += 1;
     });
 }
 
 function end_game(id) {
     return post(`finish?id=${id}`).then((json) => {
-        controller.move_number += 1;
     });
 }
 
@@ -296,7 +292,7 @@ function allow_manual_move(player_id, json) {
 
     if (move === 'BeforeAliceWord' || move === 'BeforeBobWord') {
         element.innerHTML = controller.pick_word(json);
-    } else if (move === 'AfterAliceWord' || move === 'BeforeAlicePicks' || move === 'BeforeBobPicks' || move === 'AfterBobWord' && controller.move_number < 2) {
+    } else if (move === 'AfterAliceWord' || move === 'BeforeAlicePicks' || move === 'BeforeBobPicks' || move === 'AfterBobWord' && json.move_number < 2) {
         let picks_result = controller.after_word(json);
         element.innerHTML = picks_result[0];
         card_data = picks_result[1];
@@ -324,7 +320,6 @@ function allow_manual_move(player_id, json) {
         let choices = document.getElementById('card-choices');
         let opponent = document.getElementById('opponent-choices');
         if (choices) {
-            controller.ui_wait = true;
             make_card_row(choices, our_cards, '_', true);
         }
         if (opponent) {
@@ -373,15 +368,17 @@ function check() {
         }
 
         last_update = this_str;
-        if (!controller.ui_wait) {
-            let do_auto_move = auto_move(json) ? 'automatic default moves' : 'manual moves';
+        // Color the text of the player field when waiting for a message
+        let heading = document.getElementById('player-heading');
+        heading.setAttribute("class", controller.ui_wait ? "player-heading-wait" : "player-heading");
+        let do_auto_move = auto_move(json) ? 'automatic default moves' : 'manual moves';
 
-            let h1 = document.getElementById('player-heading');
-            clear(h1);
-            h1.appendChild(document.createTextNode(`Player ${player_id} - ${do_auto_move}`));
+        let h1 = document.getElementById('player-heading');
+        clear(h1);
+        h1.appendChild(document.createTextNode(`Player ${player_id} - ${do_auto_move}`));
 
-            take_update(player_id, json);
-        }
+        take_update(player_id, json);
+
     });
 }
 
