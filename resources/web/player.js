@@ -300,7 +300,7 @@ function allow_manual_move(player_id, json) {
         let picks_result = controller.after_word(json);
         element.innerHTML = picks_result[0];
         card_data = picks_result[1];
-    } else if (move === 'BeforeAliceFinish' || move === 'BeforeBobFinish') {
+    } else if (move === 'BeforeAliceFinish') {
         element.innerHTML = controller.finish_move(json);
     } else if (move === 'AliceEnd' || move === 'BobEnd') {
         let result = controller.end_game_state(json);

@@ -145,7 +145,6 @@ enum PlayState {
     AfterBobWord,
     BeforeBobPicks,
     AfterBobPicks,
-    BeforeBobFinish,
     BobEnd,
 }
 
@@ -163,8 +162,7 @@ impl PlayState {
             PlayState::BeforeBobWord => PlayState::AfterBobWord,
             PlayState::AfterBobWord => PlayState::BeforeBobPicks,
             PlayState::BeforeBobPicks => PlayState::AfterBobPicks,
-            PlayState::AfterBobPicks => PlayState::BeforeBobFinish,
-            PlayState::BeforeBobFinish => PlayState::BobEnd,
+            PlayState::AfterBobPicks => PlayState::BobEnd,
             PlayState::BobEnd => PlayState::BobEnd,
         }
     }
@@ -320,7 +318,6 @@ impl PerPlayerInfo {
             PlayState::BeforeBobPicks => self.player_cards_readable(allocator),
             PlayState::AfterAlicePicks => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome).into_gen(),
-            PlayState::BeforeBobFinish => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::AliceEnd => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::BobEnd => serde_json::to_value(&self.game_outcome).into_gen(),
             _ => Ok(Value::String(disassemble(
@@ -386,7 +383,7 @@ impl PerPlayerInfo {
             IncomingAction::Finish => {
                 if !matches!(
                     self.play_state,
-                    PlayState::BeforeAliceFinish | PlayState::BeforeBobFinish
+                    PlayState::BeforeAliceFinish
                 ) {
                     return Ok(());
                 }
