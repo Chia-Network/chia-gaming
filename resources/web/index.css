@@ -149,3 +149,28 @@ body {
 .player_info-true {
     height: 4rem;
 }
+
+.outcome-heading {
+    font-weight: 900;
+    font-size: 1.5rem;
+}
+
+#outcome-line-1 {
+    font-size: 1.2rem;
+}
+
+#outcome-line-2 {
+    font-size: 1.2rem;
+}
+
+.winner--1 {
+    color: green;
+}
+
+.winner-1 {
+    color: red;
+}
+
+.winner-0 {
+    color: #333;
+}
