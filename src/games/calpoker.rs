@@ -53,9 +53,9 @@ impl RawCalpokerHandValue {
                     return Ok(CalpokerHandValue::HighCard(
                         lst.iter().skip(5).copied().collect(),
                     ));
-                } else if lst.starts_with(&[2, 1, 1]) {
+                } else if lst.starts_with(&[2, 1, 1, 1]) {
                     // Two of a kind
-                    if let Some(card) = lst.get(3) {
+                    if let Some(card) = lst.get(4) {
                         return Ok(CalpokerHandValue::Pair(
                             *card,
                             lst.iter().skip(4).copied().collect(),

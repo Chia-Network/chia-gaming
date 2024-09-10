@@ -995,7 +995,7 @@ fn main() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     rt.block_on(async {
-        let auto = args_vec.iter().any(|x| x == "auto");
+        let mut auto = args_vec.iter().any(|x| x == "auto");
 
         let router = Router::new()
             .get(index)
@@ -1040,7 +1040,8 @@ fn main() {
                             (*locked).set_allow_messages();
                             Ok("{}".to_string())
                         }
-                        WebRequest::SetAuto(auto) => {
+                        WebRequest::SetAuto(new_auto) => {
+                            auto = new_auto;
                             (*locked).set_auto(auto);
                             Ok("{}".to_string())
                         }
