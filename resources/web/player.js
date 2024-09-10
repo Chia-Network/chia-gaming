@@ -175,7 +175,7 @@ class PlayerController {
         let result;
 
         if (typeof(json.readable) !== 'string' && json.readable.raw_alice_selects) {
-            result = `<h2>Game outcome</h2><div>${game_outcome(this.player_id, json, this.cards)}</div><div id='card-choices'></div>`;
+            result = `<h2>Game outcome</h2><div>${game_outcome(this.player_id, json, this.cards)}</div><div id='card-choices'></div><div id='opponent-choices'></div>`;
         } else {
             result = '<h2>Waiting for game outcome</h2>';
         }
@@ -284,9 +284,6 @@ function game_outcome(player_id, json, cards) {
         let hand_desc = player_id == '1' ? 'alice_hand_result' : 'bob_hand_result';
         let oppo_desc = player_id == '1' ? 'bob_hand_result' : 'alice_hand_result';
         let hand_cards = cards[0];
-        for (let i = 0; i < cards[1].length; i++) {
-            hand_cards.push(cards[1][i]);
-        }
 
         card_outcome = `<div id='outcome-line-1'>Your hand ${describe_hand(json.readable[hand_desc], cards)}</div><div id='outcome-line-2'>Opponent hand ${describe_hand(json.readable[oppo_desc])}</div>`;
     }
