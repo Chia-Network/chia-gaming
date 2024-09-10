@@ -288,10 +288,10 @@ function game_outcome(player_id, json, cards) {
             hand_cards.push(cards[1][i]);
         }
 
-        card_outcome = `<div>Your hand ${describe_hand(json.readable[hand_desc], cards)}</div><div>Opponent hand ${describe_hand(json.readable[oppo_desc])}</div>`;
+        card_outcome = `<div id='outcome-line-1'>Your hand ${describe_hand(json.readable[hand_desc], cards)}</div><div id='outcome-line-2'>Opponent hand ${describe_hand(json.readable[oppo_desc])}</div>`;
     }
 
-    return `${winner_text}${card_outcome}`;
+    return `<div class='outcome-heading winner-${winner}'>${winner_text}</div>${card_outcome}`;
 }
 
 function allow_manual_move(player_id, json) {

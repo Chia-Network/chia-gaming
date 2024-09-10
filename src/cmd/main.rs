@@ -994,7 +994,7 @@ fn main() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     rt.block_on(async {
-        let auto = args_vec.iter().any(|x| x == "auto");
+        let mut auto = args_vec.iter().any(|x| x == "auto");
 
         let router = Router::new()
             .get(index)
@@ -1014,9 +1014,9 @@ fn main() {
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
         let s = std::thread::spawn(move || {
-            if auto {
+            {
                 let mut locked = MUTEX.lock().unwrap();
-                (*locked).set_auto(true);
+                (*locked).set_auto(auto);
             }
 
             loop {
