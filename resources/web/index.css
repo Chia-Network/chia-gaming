@@ -15,7 +15,7 @@ body {
 
 #app {
     top: 0;
-    left: 30vw;
+    left: 22vw;
     display: inline-block;
     margin: 0;
     position: absolute;
@@ -31,7 +31,7 @@ body {
     display: inline-block;
     margin: 0;
     position: absolute;
-    width: 28vw;
+    width: 20vw;
     height: 85vh;
     background: #bbb;
 }
@@ -42,7 +42,7 @@ body {
     margin: 0;
     position: relative;
     height: 80vh;
-    width: 30vw;
+    width: 36vw;
     background: #fcc;
 }
 
@@ -53,7 +53,7 @@ body {
     margin-top: 1rem;
     position: relative;
     height: 80vh;
-    width: 30vw;
+    width: 36vw;
     background: #cfc;
 }
 
@@ -68,7 +68,7 @@ body {
     background: #fcc;
     left: 0;
     top: 0;
-    width: 30vw;
+    width: 36vw;
     height: 80vh;
 }
 
@@ -78,7 +78,7 @@ body {
     background: #cfc;
     left: 0;
     top: 0;
-    width: 30vw;
+    width: 36vw;
     height: 80vh;
 }
 
@@ -132,4 +132,46 @@ body {
 
 .sent_picks_true {
     display: none;
+}
+
+#player-info {
+    display: block;
+    position: relative;
+    overflow: auto;
+    background: #ccf;
+    border: 1px solid black;
+}
+
+.player-info-false {
+    height: 1.5rem;
+}
+
+.player_info-true {
+    height: 4rem;
+}
+
+.outcome-heading {
+    font-weight: 900;
+    font-size: 1.5rem;
+}
+
+#outcome-line-1 {
+    font-size: 1.2rem;
+}
+
+#outcome-line-2 {
+    font-size: 1.2rem;
+    margin-bottom: 0.5rem;
+}
+
+.winner--1 {
+    color: green;
+}
+
+.winner-1 {
+    color: red;
+}
+
+.winner-0 {
+    color: #333;
 }

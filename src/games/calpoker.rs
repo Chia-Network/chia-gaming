@@ -25,6 +25,99 @@ pub enum RawCalpokerHandValue {
     PrefixList(Vec<usize>, Vec<usize>),
 }
 
+#[derive(Eq, PartialEq, Debug, Serialize, Deserialize)]
+pub enum CalpokerHandValue {
+    HighCard(Vec<usize>),
+    Pair(usize, Vec<usize>),
+    TwoPair(usize, usize, usize),
+    ThreeOfAKind(usize, usize, usize),
+    Straight(usize),
+    Flush(Vec<usize>),
+    FullHouse(usize, usize),
+    FourOfAKind(usize, usize),
+    StraightFlush(usize),
+}
+
+impl Default for CalpokerHandValue {
+    fn default() -> Self {
+        CalpokerHandValue::Straight(0)
+    }
+}
+
+impl RawCalpokerHandValue {
+    pub fn hand_value(&self) -> Result<CalpokerHandValue, Error> {
+        match self {
+            RawCalpokerHandValue::SimpleList(lst) => {
+                if lst.starts_with(&[1, 1, 1, 1, 1]) {
+                    // High card
+                    return Ok(CalpokerHandValue::HighCard(
+                        lst.iter().skip(5).copied().collect(),
+                    ));
+                } else if lst.starts_with(&[2, 1, 1, 1]) {
+                    // Two of a kind
+                    if let Some(card) = lst.get(4) {
+                        return Ok(CalpokerHandValue::Pair(
+                            *card,
+                            lst.iter().skip(4).copied().collect(),
+                        ));
+                    }
+                } else if lst.starts_with(&[2, 2, 1]) {
+                    // Two pair
+                    let first_two: Vec<_> = lst.iter().skip(3).copied().collect();
+                    if let [c1, c2, other] = &first_two[..] {
+                        return Ok(CalpokerHandValue::TwoPair(*c1, *c2, *other));
+                    }
+                } else if lst.starts_with(&[3, 1, 1]) {
+                    // Three of a kind
+                    let first_three: Vec<_> = lst.iter().skip(3).copied().collect();
+                    if let [trio, o1, o2] = &first_three[..] {
+                        return Ok(CalpokerHandValue::ThreeOfAKind(*trio, *o1, *o2));
+                    }
+                } else if lst.starts_with(&[3, 1, 2]) {
+                    // Straight
+                    if let Some(straight_high) = lst.get(3) {
+                        return Ok(CalpokerHandValue::Straight(*straight_high));
+                    }
+                } else if lst.starts_with(&[3, 1, 3]) {
+                    // Flush
+                    return Ok(CalpokerHandValue::Flush(
+                        lst.iter().skip(3).copied().collect(),
+                    ));
+                } else if lst.starts_with(&[3, 2]) {
+                    // Full house
+                    if let [_, _, high, low] = &lst[..] {
+                        return Ok(CalpokerHandValue::FullHouse(*high, *low));
+                    }
+                } else if lst.starts_with(&[5]) {
+                    // Straight Flush
+                    if let Some(card) = lst.get(1) {
+                        return Ok(CalpokerHandValue::StraightFlush(*card));
+                    }
+                }
+            }
+            RawCalpokerHandValue::PrefixList(prefix, suffix) => {
+                let mut pfx = prefix.clone();
+                pfx.append(&mut suffix.clone());
+                return RawCalpokerHandValue::SimpleList(pfx).hand_value();
+            }
+        }
+
+        Err(Error::StrErr(format!(
+            "unable to translate hand value: {self:?}"
+        )))
+    }
+}
+
+#[test]
+fn test_simple_hand_values() {
+    assert_eq!(
+        RawCalpokerHandValue::SimpleList(vec![3, 1, 3, 13, 10, 9, 6, 3])
+            .hand_value()
+            .unwrap(),
+        CalpokerHandValue::Flush(vec![13, 10, 9, 6, 3])
+    );
+}
+
 impl Default for RawCalpokerHandValue {
     fn default() -> Self {
         RawCalpokerHandValue::SimpleList(vec![])
@@ -53,7 +146,9 @@ pub struct CalpokerResult {
     pub raw_bob_picks: usize,
     pub raw_alice_picks: usize,
     pub bob_hand_value: RawCalpokerHandValue,
+    pub bob_hand_result: CalpokerHandValue,
     pub alice_hand_value: RawCalpokerHandValue,
+    pub alice_hand_result: CalpokerHandValue,
     pub win_direction: i64,
     pub game_amount: u64,
     pub your_share: u64,
@@ -270,9 +365,9 @@ pub fn decode_calpoker_readable(
     let start_index = 1;
     let offset_for_player = am_bob as usize;
 
-    let bob_hand_value =
-        decode_hand_result(allocator, as_list[start_index + (2 ^ offset_for_player)])?;
     let alice_hand_value =
+        decode_hand_result(allocator, as_list[start_index + (2 ^ offset_for_player)])?;
+    let bob_hand_value =
         decode_hand_result(allocator, as_list[start_index + (3 ^ offset_for_player)])?;
 
     let (your_share, win_direction) =
@@ -294,12 +389,17 @@ pub fn decode_calpoker_readable(
             return Err(Error::StrErr("could not convert final outcome".to_string()));
         };
 
+    let hva = alice_hand_value.hand_value();
+    let hvb = bob_hand_value.hand_value();
+
     Ok(CalpokerResult {
         raw_alice_selects: bitmasks[0],
         raw_bob_picks: bitmasks[start_index + offset_for_player],
         raw_alice_picks: bitmasks[start_index + (1 ^ offset_for_player)],
         game_amount: amount.to_u64(),
         your_share: your_share.to_u64(),
+        bob_hand_result: hvb?,
+        alice_hand_result: hva?,
         bob_hand_value,
         alice_hand_value,
         win_direction,
@@ -316,14 +416,20 @@ fn test_decode_calpoker_readable() {
     .expect("should work");
     let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), false)
         .expect("should work");
+    let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 12, 11, 8]);
+    let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 5, 2]);
+    let alicer = alicev.hand_value().unwrap();
+    let bobr = bobv.hand_value().unwrap();
     assert_eq!(
         decoded,
         CalpokerResult {
             raw_alice_selects: 60,
             raw_bob_picks: 59,
             raw_alice_picks: 91,
-            bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 12, 11, 8]),
-            alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 5, 2]),
+            alice_hand_result: alicer,
+            bob_hand_result: bobr,
+            alice_hand_value: alicev,
+            bob_hand_value: bobv,
             your_share: 200,
             game_amount: 200,
             win_direction: -1

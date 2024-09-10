@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_traits::{ClvmEncoder, ToClvm};
+use clvmr::allocator::SExp;
 use clvmr::serde::node_to_bytes;
 
 use lazy_static::lazy_static;
@@ -30,8 +31,9 @@ use chia_gaming::common::types::{
     AllocEncoder, Amount, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
     Sha256Input, Timeout,
 };
-use chia_gaming::games::calpoker::decode_readable_card_choices;
-use chia_gaming::games::calpoker::{decode_calpoker_readable, CalpokerResult};
+use chia_gaming::games::calpoker::{
+    decode_calpoker_readable, decode_readable_card_choices, CalpokerResult, Card,
+};
 use chia_gaming::games::poker_collection;
 use chia_gaming::peer_container::{
     FullCoinSetAdapter, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig,
@@ -39,6 +41,7 @@ use chia_gaming::peer_container::{
 use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
 use chia_gaming::simulator::Simulator;
 
+#[derive(Debug)]
 struct UIReceiver {
     received_moves: usize,
     our_readable_move: Vec<u8>,
@@ -173,9 +176,12 @@ pub struct PerPlayerInfo {
     cradle: SynchronousGameCradle,
     play_state: PlayState,
     fund_coin: CoinString,
+    // Demonstration purposes: allows the optional message delivery to be gated.
+    allow_remote_message: bool,
     incoming_actions: VecDeque<IncomingAction>,
     num_incoming_actions: usize,
     game_outcome: CalpokerResult,
+    known_cards: (Vec<Card>, Vec<Card>),
 }
 
 struct ReleaseObject<'a, T: Clone> {
@@ -237,6 +243,7 @@ impl PerPlayerInfo {
         fund_coin: CoinString,
         cradle: SynchronousGameCradle,
         play_state: PlayState,
+        allow_remote_message: bool,
     ) -> Self {
         PerPlayerInfo {
             player_id,
@@ -245,22 +252,52 @@ impl PerPlayerInfo {
             play_state,
             local_ui: UIReceiver::new(allocator),
             game_outcome: CalpokerResult::default(),
+            known_cards: (Vec::default(), Vec::default()),
             incoming_actions: VecDeque::default(),
+            allow_remote_message,
             num_incoming_actions: 0,
         }
     }
 
+    // Check whether the message we hold is non-nil and allow_remote_message is false.
+    fn gated_messages(&self, allocator: &mut AllocEncoder) -> usize {
+        if let SExp::Pair(_, _) = allocator
+            .allocator()
+            .sexp(self.local_ui.remote_message.to_nodeptr())
+        {
+            !self.allow_remote_message as usize
+        } else {
+            0
+        }
+    }
+
+    fn set_allow_messages(&mut self, new_auto: bool) {
+        self.allow_remote_message = new_auto;
+    }
+
     fn enqueue_outbound_move(&mut self, incoming_action: IncomingAction) {
         eprintln!("enqueue outbound move: {incoming_action:?}");
+        // Ensure we skip already made moves in case of multiple posts.
+        // We can make moves idempotent in this way.
+        match (self.num_incoming_actions, &incoming_action) {
+            (0, IncomingAction::Word(_)) => {}
+            (1, IncomingAction::Picks(_)) => {}
+            (2, IncomingAction::Finish) => {}
+            _ => {
+                return;
+            }
+        }
         self.incoming_actions.push_back(incoming_action);
         self.num_incoming_actions += 1;
     }
 
-    fn player_cards_readable(&self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
+    fn player_cards_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
         // See if we have enough info to get the cardlists.
-        let decode_input = if self.player_id {
+        let decode_input = if self.player_id && self.allow_remote_message {
             // bob
             self.local_ui.remote_message.clone()
+        } else if matches!(self.play_state, PlayState::BeforeBobPicks) {
+            self.local_ui.opponent_readable_move.clone()
         } else {
             // alice
             self.local_ui.opponent_readable_move.clone()
@@ -268,6 +305,7 @@ impl PerPlayerInfo {
         let cardlist_result = decode_readable_card_choices(allocator, decode_input).ok();
         if let Some(player_hands) = cardlist_result {
             // make_cards
+            self.known_cards = player_hands.clone();
             serde_json::to_value(player_hands).into_gen()
         } else {
             let empty_vec: Vec<(usize, usize)> = vec![];
@@ -275,13 +313,14 @@ impl PerPlayerInfo {
         }
     }
 
-    fn player_readable(&self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
+    fn player_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
         match &self.play_state {
             PlayState::BeforeAlicePicks => self.player_cards_readable(allocator),
             PlayState::AfterBobWord => self.player_cards_readable(allocator),
             PlayState::BeforeBobPicks => self.player_cards_readable(allocator),
             PlayState::AfterAlicePicks => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome).into_gen(),
+            PlayState::BeforeBobFinish => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::AliceEnd => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::BobEnd => serde_json::to_value(&self.game_outcome).into_gen(),
             _ => Ok(Value::String(disassemble(
@@ -318,7 +357,6 @@ impl PerPlayerInfo {
 
                 let encoded_node = allocator.encode_atom(&hash).unwrap();
                 let encoded = node_to_bytes(allocator.allocator(), encoded_node).unwrap();
-                eprintln!("word hash {hash:?}");
 
                 self.cradle.make_move(
                     allocator,
@@ -353,7 +391,6 @@ impl PerPlayerInfo {
                     return Ok(());
                 }
 
-                eprintln!("{} doing finish move", self.player_id);
                 g.release();
                 self.play_state = self.play_state.incr();
                 let new_entropy = rng.gen();
@@ -363,14 +400,17 @@ impl PerPlayerInfo {
         }
     }
 
-    fn report(&self, allocator: &mut AllocEncoder, auto: bool) -> Result<String, Error> {
+    fn report(&mut self, allocator: &mut AllocEncoder, auto: bool) -> Result<String, Error> {
         let player_readable = self.player_readable(allocator)?;
         serde_json::to_string(&PlayerResult {
             can_move: self.cradle.handshake_finished(),
+            known_cards: self.known_cards.clone(),
+            received_moves: self.local_ui.received_moves,
             state: format!("{:?}", self.play_state),
             our_move: self.local_ui.our_readable_move.to_vec(),
             auto,
             readable: player_readable,
+            debug_state: format!("{:?}", self.local_ui),
         })
         .into_gen()
     }
@@ -382,14 +422,6 @@ impl PerPlayerInfo {
         game_ids: &[GameID],
     ) -> Result<(), Error> {
         let prev = self.play_state.clone();
-
-        eprintln!(
-            "{} idle waiting {} incoming {} state {:?}",
-            self.player_id,
-            self.incoming_actions.len(),
-            self.local_ui.received_moves,
-            self.play_state
-        );
 
         match (self.local_ui.received_moves, &self.play_state) {
             (1, PlayState::BobWaiting) => {
@@ -466,10 +498,13 @@ struct UpdateResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PlayerResult {
     can_move: bool,
+    received_moves: usize,
+    known_cards: (Vec<Card>, Vec<Card>),
     state: String,
     auto: bool,
     our_move: Vec<u8>,
     readable: Value,
+    debug_state: String,
 }
 
 #[derive(Debug, Clone)]
@@ -480,6 +515,8 @@ enum WebRequest {
     WordHash(bool, Vec<u8>),
     Picks(bool, Vec<bool>),
     FinishMove(bool),
+    SetAuto(bool),
+    AllowMessage,
 }
 
 type StringWithError = Result<String, Error>;
@@ -497,6 +534,15 @@ lazy_static! {
         let (tx, rx) = mpsc::channel();
         (tx.into(), rx.into())
     };
+}
+
+#[derive(Serialize)]
+struct GlobalInfo {
+    auto: bool,
+    block_height: usize,
+    handshake_done: bool,
+    can_move: bool,
+    gated_messages: usize,
 }
 
 impl GameRunner {
@@ -571,6 +617,7 @@ impl GameRunner {
             parent_coin_0.clone(),
             cradle1,
             PlayState::BeforeAliceWord,
+            false,
         );
         let player2 = PerPlayerInfo::new(
             &mut allocator,
@@ -578,6 +625,7 @@ impl GameRunner {
             parent_coin_1.clone(),
             cradle2,
             PlayState::BobWaiting,
+            false,
         );
 
         Ok(GameRunner {
@@ -597,37 +645,31 @@ impl GameRunner {
         })
     }
 
-    fn set_auto(&mut self, new_auto: bool) {
-        self.auto = new_auto;
+    fn set_allow_messages(&mut self) {
+        self.player_info[0].set_allow_messages(true);
+        self.player_info[1].set_allow_messages(true);
     }
 
-    fn info(&self) -> Value {
-        let mut r = Map::default();
-        r.insert(
-            "block_height".to_string(),
-            serde_json::to_value(self.coinset_adapter.current_height).unwrap(),
-        );
-        r.insert(
-            "handshake_done".to_string(),
-            serde_json::to_value(self.handshake_done).unwrap(),
-        );
-        r.insert(
-            "can_move".to_string(),
-            serde_json::to_value(self.can_move).unwrap(),
-        );
-        r.insert(
-            "alice_state".to_string(),
-            serde_json::to_value(&self.player_info[0].play_state).unwrap(),
-        );
-        r.insert(
-            "bob_state".to_string(),
-            serde_json::to_value(&self.player_info[1].play_state).unwrap(),
-        );
-        Value::Object(r)
+    fn set_auto(&mut self, new_auto: bool) {
+        self.auto = new_auto;
+        self.set_allow_messages();
+    }
+
+    fn info(&mut self) -> Value {
+        let p1_gated = self.player_info[0].gated_messages(&mut self.allocator);
+        let p2_gated = self.player_info[1].gated_messages(&mut self.allocator);
+        serde_json::to_value(GlobalInfo {
+            auto: self.auto,
+            block_height: self.coinset_adapter.current_height as usize,
+            handshake_done: self.handshake_done,
+            can_move: self.can_move,
+            gated_messages: p1_gated + p2_gated,
+        })
+        .unwrap()
     }
 
     // Produce the state result for when a move is possible.
-    fn move_state(&self) -> String {
+    fn move_state(&mut self) -> String {
         serde_json::to_string(&UpdateResult { info: self.info() }).unwrap()
     }
 
@@ -866,8 +908,6 @@ async fn word_hash(req: &mut Request) -> Result<String, String> {
     }
     let player_id = arg[0] == b'2';
     let hash = Sha256Input::Bytes(&arg[1..]).hash();
-    let hash_of_alice_hash = Sha256Input::Bytes(hash.bytes()).hash();
-    eprintln!("{player_id} hash is {hash:?} hash of that is {hash_of_alice_hash:?}");
     pass_on_request(WebRequest::WordHash(player_id, hash.bytes().to_vec())).report_err()
 }
 
@@ -899,11 +939,30 @@ async fn finish(req: &mut Request) -> Result<String, String> {
     pass_on_request(WebRequest::FinishMove(player_id)).report_err()
 }
 
+#[handler]
+fn set_auto(req: &mut Request) -> Result<String, String> {
+    let arg = get_arg_bytes(req).report_err()?;
+    let do_auto = if arg.is_empty() {
+        false
+    } else {
+        arg[0] == b'1'
+    };
+    pass_on_request(WebRequest::SetAuto(do_auto)).report_err()
+}
+
+#[handler]
+fn allow_message(_req: &mut Request) -> Result<String, String> {
+    pass_on_request(WebRequest::AllowMessage).report_err()
+}
+
 fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, Error> {
     let mut new_game = GameRunner::new()?;
     if auto {
         new_game.set_auto(true);
     }
+    // Ensure we can continue from the same simulator.
+    // swap(&mut sim.simulator, &mut new_game.simulator);
+    // swap(&mut sim.coinset_adapter, &mut new_game.coinset_adapter);
     swap(sim, &mut new_game);
     Ok("{}".to_string())
 }
@@ -934,9 +993,9 @@ fn main() {
         return;
     }
     let rt = tokio::runtime::Runtime::new().unwrap();
+
     rt.block_on(async {
-        eprintln!("ARGS: {:?}", args_vec);
-        let auto = args_vec.iter().any(|x| x == "auto");
+        let mut auto = args_vec.iter().any(|x| x == "auto");
 
         let router = Router::new()
             .get(index)
@@ -950,16 +1009,19 @@ fn main() {
             .push(Router::with_path("player.json").post(player))
             .push(Router::with_path("word_hash").post(word_hash))
             .push(Router::with_path("picks").post(do_picks))
+            .push(Router::with_path("set_auto").post(set_auto))
+            .push(Router::with_path("allow_message").post(allow_message))
             .push(Router::with_path("finish").post(finish));
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
         let s = std::thread::spawn(move || {
-            if auto {
+            {
                 let mut locked = MUTEX.lock().unwrap();
-                (*locked).set_auto(true);
+                (*locked).set_auto(auto);
             }
 
             loop {
+                let mut locked = MUTEX.lock().unwrap();
                 let request = {
                     let channel = TO_WEB.1.lock().unwrap();
                     (*channel).recv().unwrap()
@@ -967,7 +1029,6 @@ fn main() {
 
                 debug!("request {request:?}");
                 let result = {
-                    let mut locked = MUTEX.lock().unwrap();
                     match request {
                         WebRequest::Idle => (*locked).idle(),
                         WebRequest::Player(id) => (*locked).player(id),
@@ -975,6 +1036,15 @@ fn main() {
                         WebRequest::Picks(id, picks) => Ok((*locked).do_picks(id, &picks)),
                         WebRequest::FinishMove(id) => Ok((*locked).finish_move(id)),
                         WebRequest::Reset => reset_sim(&mut locked, auto),
+                        WebRequest::AllowMessage => {
+                            (*locked).set_allow_messages();
+                            Ok("{}".to_string())
+                        }
+                        WebRequest::SetAuto(new_auto) => {
+                            auto = new_auto;
+                            (*locked).set_auto(auto);
+                            Ok("{}".to_string())
+                        }
                     }
                 };
 

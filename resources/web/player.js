@@ -7,6 +7,39 @@ function clear(elt) {
     }
 }
 
+function describe_hand(description, cards) {
+    let convert_ranks = (ranks) => {
+        return ranks.map((card) => {
+            if (card === 14) {
+                card = 1;
+            }
+            return label_by_rank[card];
+        });
+    };
+    let keys_of_description = Object.keys(description);
+    let hand_type = keys_of_description[0];
+    let hand_data = description[hand_type];
+    if (hand_type === 'Flush') {
+        return `Flush of ${convert_ranks(hand_data)}`;
+    } else if (hand_type == 'Straight') {
+        return `Straight high ${convert_ranks([hand_data])}`;
+    } else if (hand_type == 'FullHouse') {
+        let ranks = convert_ranks([hand_data[0], hand_data[1]]);
+        return `Full House of ${ranks[1]} and ${ranks[0]}`;
+    } else if (hand_type === 'Pair') {
+        let rank = convert_ranks([hand_data[0]]);
+        return `Pair of ${rank}s`;
+    } else if (hand_type === 'ThreeOfAKind') {
+        let rank = convert_ranks([hand_data[0]]);
+        return `Three ${rank}s`;
+    } else if (hand_type === 'TwoPair') {
+        let ranks = convert_ranks([hand_data[0], hand_data[1]]);
+        return `Pairs of ${ranks[0]} and ${ranks[1]}`;
+    } else {
+        return `${hand_type} ${hand_data}`;
+    };
+}
+
 function get_params() {
     let param_str = window.location.search.substring(1);
     let pssplit = param_str.split('&');
@@ -30,6 +63,10 @@ function auto_move(json) {
     return json.auto;
 }
 
+function is_outcome(readable) {
+    return typeof(readable) !== 'string';
+}
+
 class PlayerController {
     constructor() {
         this.params = get_params();
@@ -38,6 +75,8 @@ class PlayerController {
         this.ui_wait = false;
         this.eat_toggle = false;
         this.move_number = 0;
+        this.player_info = false;
+        this.cards = [[], []];
     }
 
     toggle_card(label, selected_cards, n) {
@@ -69,7 +108,7 @@ class PlayerController {
         if ((json.state == 'BeforeAliceWord' || json.state == 'BeforeBobWord') && this.move_number < 1) {
             this.sent_word = true;
             generate_entropy(this.player_id);
-        } else if ((json.state == 'AliceFinish1' || json.state == 'BobFinish1' || json.state == 'BobEnd') && this.move_number < 3) {
+        } else if ((json.state == 'BeforeAliceFinish' || json.state == 'BeforeBobFinish' || json.state == 'BobEnd') && this.move_number < 3 && typeof(json.readable) !== 'string' ) {
             console.error('end game');
             end_game(this.player_id);
         }
@@ -105,13 +144,14 @@ class PlayerController {
                 have_card_data ?
                 `<div id='picks-submit-div'><button id='submit-picks' class='sent_picks_${this.move_number > 1}' onclick='submit_picks(${this.player_id})' ${submit_disabled}>Submit picks</button></div>` :
                 '';
-            html_result = `<h2>Choose 4 cards to give your opponent</h2><h3>You'll receive 4 cards from them</h3>${submit_button}<div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
             if (this.player_id == 2) {
                 card_result = [json.readable[1], json.readable[0]];
             } else {
                 card_result = json.readable;
             }
-        } else {
+            this.cards = card_result;
+            html_result = `<h2>Choose 4 cards to give your opponent</h2><h3>You'll receive 4 cards from them</h3>${submit_button}<div id='card-choices'></div><h2>Your opponent is being shown these cards</h2><div id='opponent-choices'></div>`;
+} else {
             html_result = '<h2>Waiting for cards<h2>';
         }
 
@@ -125,10 +165,31 @@ class PlayerController {
         }
 
         let submit_button =
-            this.move_number < 3 ?
+            this.move_number < 3 && (this.player_id == 1 || json.received_moves > 2) ?
             `<button id='submit-finish' onclick='end_game(${this.player_id})'>Click to finish game</button>` : '';
 
         return `<h2>Waiting to finish game</h2><div id='finish-submit'>${submit_button}</div>`;
+    }
+
+    end_game_state(json) {
+        let result;
+
+        if (typeof(json.readable) !== 'string' && json.readable.raw_alice_selects) {
+            result = `<h2>Game outcome</h2><div>${game_outcome(this.player_id, json, this.cards)}</div><div id='card-choices'></div><div id='opponent-choices'></div>`;
+        } else {
+            result = '<h2>Waiting for game outcome</h2>';
+        }
+
+        return [result, this.cards];
+    }
+
+
+    toggle_player_info() {
+        let pi = document.getElementById('player-info');
+        if (pi) {
+            this.player_info = !this.player_info;
+            pi.setAttribute('class', `player-info-${this.player_info}`);
+        }
     }
 }
 
@@ -201,7 +262,9 @@ function make_card_row(div, cards, label_prefix, toggleable) {
     }
 }
 
-function game_outcome(player_id, json) {
+function game_outcome(player_id, json, cards) {
+    let card_outcome = '';
+
     if (!json.readable || typeof(json.readable) === 'string') {
         return 'Waiting...';
     }
@@ -209,7 +272,7 @@ function game_outcome(player_id, json) {
     let winner = json.readable.win_direction * ((player_id == 1) ? 1 : -1);
     let winner_text;
 
-    if (winner == -1) {
+    if (winner == 1) {
         winner_text = "You win";
     } else if (json.readable.win_direction == 0) {
         winner_text = "Draw";
@@ -217,7 +280,15 @@ function game_outcome(player_id, json) {
         winner_text = "Opponent wins";
     }
 
-    return winner_text;
+    if (is_outcome(json.readable)) {
+        let hand_desc = player_id == '1' ? 'alice_hand_result' : 'bob_hand_result';
+        let oppo_desc = player_id == '1' ? 'bob_hand_result' : 'alice_hand_result';
+        let hand_cards = cards[0];
+
+        card_outcome = `<div id='outcome-line-1'>Your hand ${describe_hand(json.readable[hand_desc], cards)}</div><div id='outcome-line-2'>Opponent hand ${describe_hand(json.readable[oppo_desc])}</div>`;
+    }
+
+    return `<div class='outcome-heading winner-${winner}'>${winner_text}</div>${card_outcome}`;
 }
 
 function allow_manual_move(player_id, json) {
@@ -234,31 +305,33 @@ function allow_manual_move(player_id, json) {
     } else if (move === 'BeforeAliceFinish' || move === 'BeforeBobFinish') {
         element.innerHTML = controller.finish_move(json);
     } else if (move === 'AliceEnd' || move === 'BobEnd') {
-        if (typeof(json.readable) !== 'string' && json.readable.raw_alice_selects) {
-            element.innerHTML = `<h2>Game outcome</h2><div>${game_outcome(player_id, json)}</div><div>${JSON.stringify(json.readable)}</div>`;
-        } else {
-            element.innerHTML = '<h2>Waiting for game outcome</h2>';
-        }
+        let result = controller.end_game_state(json);
+        element.innerHTML = result[0];
+        card_data = result[1];
     } else {
         element.innerHTML = `unhandled state ${move}`;
     }
 
-    if (card_data) {
+    if (card_data && card_data.length === 2 && card_data[0].length > 0) {
         $("#card-choices").sortable({
             update: function() {
                 controller.eat_toggle = true;
             }
         });
-        $("#opponent-choices").sortable();
 
-        controller.ui_wait = true;
+        $("#opponent-choices").sortable();
 
         let our_cards = card_data[0];
         let their_cards = card_data[1];
         let choices = document.getElementById('card-choices');
-        make_card_row(choices, our_cards, '_', true);
         let opponent = document.getElementById('opponent-choices');
-        make_card_row(opponent, their_cards, 'opponent', false);
+        if (choices) {
+            controller.ui_wait = true;
+            make_card_row(choices, our_cards, '_', true);
+        }
+        if (opponent) {
+            make_card_row(opponent, their_cards, 'opponent', false);
+        }
     }
 }
 
