@@ -188,3 +188,15 @@ body {
 .winner-0 {
     color: #333;
 }
+
+#card-choices-end-label {
+    margin-top: 0.25em;
+    font-size: 1.1em;
+    font-weight: 900;
+}
+
+#other-choices-end-label {
+    margin-top: 0.25em;
+    font-size: 1.1em;
+    font-weight: 900;
+}
