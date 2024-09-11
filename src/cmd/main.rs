@@ -519,6 +519,7 @@ enum WebRequest {
 type StringWithError = Result<String, Error>;
 
 lazy_static! {
+    static ref ONE_REQUEST: Mutex<()> = Mutex::new(());
     static ref MUTEX: Mutex<GameRunner> =
         Mutex::new(GameRunner::new(Simulator::default(), FullCoinSetAdapter::default()).unwrap());
     static ref TO_WEB: (Mutex<Sender<WebRequest>>, Mutex<Receiver<WebRequest>>) = {
@@ -874,12 +875,18 @@ async fn index_css(response: &mut Response) -> Result<(), String> {
 }
 
 fn pass_on_request(wr: WebRequest) -> Result<String, Error> {
+    let locked = ONE_REQUEST.lock().unwrap();
+
     {
         let to_web = TO_WEB.0.lock().unwrap();
         (*to_web).send(wr).unwrap();
     }
+
     let from_web = FROM_WEB.1.lock().unwrap();
-    (*from_web).recv().unwrap()
+    let result = (*from_web).recv().unwrap();
+    drop(locked);
+
+    result
 }
 
 #[handler]
