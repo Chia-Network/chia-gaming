@@ -186,11 +186,11 @@ body {
 }
 
 .winner--1 {
-    color: green;
+    color: red;
 }
 
 .winner-1 {
-    color: red;
+    color: green;
 }
 
 .winner-0 {

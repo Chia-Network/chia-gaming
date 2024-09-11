@@ -658,7 +658,9 @@ impl GameRunner {
 
     fn set_auto(&mut self, new_auto: bool) {
         self.auto = new_auto;
-        self.set_allow_messages();
+        if new_auto {
+            self.set_allow_messages();
+        }
     }
 
     fn info(&mut self) -> Value {
