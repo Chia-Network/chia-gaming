@@ -1,0 +1,19 @@
+(import std.and)
+(import std.reverse)
+
+(defun get_last_two (conds lst)
+  (if (r (r lst))
+    (get_last_two (c (f lst) conds) (r lst))
+    (list conds (f lst) (f (r lst)))
+    )
+  )
+
+(defmac if_any_fail CONDS
+  (assign
+    (rev_conds iftrue iffalse) (get_last_two () CONDS)
+
+    conds (reverse rev_conds)
+
+    (qq (if (not (unquote (c (q . and) conds))) (unquote iftrue) (unquote iffalse)))
+    )
+  )

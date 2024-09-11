@@ -1,0 +1,41 @@
+
+; The actual state channel coin is a vanilla coin which does 2-of-2 aggregation at the signature level and
+; unrolls to the unrolling puzzle. Unrolls to the unrolling puzzle are signed in tandem with sequence number 
+; updates to the unrolling puzzle. The keys of the state channel puzzle and the unrolling puzzle don't 
+; have to be related
+
+(include *standard-cl-23*)
+(import std.isthere)
+(import std.assert)
+(import std.shatree)
+
+;; XXX Fix @ form interpretation below for solution.  Worked around for now.
+(defun state_channel_unrolling (SHARED_PUZZLE_HASH OLD_SEQUENCE_NUMBER DEFAULT_CONDITIONS_HASH reveal . (@ solution-present (solution)))
+    (if (not solution-present) ;; (@ solution 1))
+        ; These probably contain a relative timelock
+        (assert (= DEFAULT_CONDITIONS_HASH (shatree reveal))
+            reveal
+        )
+        (assign
+            conditions (a reveal (list solution))
+            new_sequence_number (extract_sequence_number conditions)
+            (assert
+                (> new_sequence_number OLD_SEQUENCE_NUMBER)
+                (logand 1 (logxor new_sequence_number OLD_SEQUENCE_NUMBER))
+                (= SHARED_PUZZLE_HASH (shatree reveal))
+                conditions
+            )
+        )
+    )
+)
+
+(defun extract_sequence_number (conditions)
+    (assign ((cond_type arg)) conditions
+        (if (= cond_type 1)
+            arg
+            (extract_sequence_number (r conditions))
+        )
+    )
+)
+
+(export state_channel_unrolling)

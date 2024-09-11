@@ -1,0 +1,59 @@
+name: Run tests on MacOS
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  release:
+    types: [published]
+  pull_request:
+    branches:
+      - '**'
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build_wheels:
+    name: Build wheel on Mac M1
+    runs-on: [MacOS, ARM64]
+    strategy:
+      fail-fast: false
+
+    steps:
+    - uses: Chia-Network/actions/clean-workspace@main
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Set up rust
+      run: |
+        curl https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init.sha256 | awk '{print $1 " *rustup-init"}' > checksum.txt
+        curl -O https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
+        cat checksum.txt
+        shasum -a 256 -c checksum.txt
+
+    - name: Install rust
+      run: |
+        chmod +x rustup-init
+        ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
+        rm rustup-init checksum.txt
+
+    - name: Set up a venv for chia-blockchain
+      run: |
+        python3 -m venv ./test
+        source ./test/bin/activate
+        pip install chia-blockchain
+
+    - name: Run tests
+      run: |
+        source ./test/bin/activate
+        cargo test --features=sim-tests

@@ -1,0 +1,10 @@
+(include *standard-cl-23*)
+(import std.map)
+(import std.deep_compare)
+
+(export (inlist)
+  (map_enumerate
+    (lambda (x idx) (list x idx))
+    inlist
+    )
+  )

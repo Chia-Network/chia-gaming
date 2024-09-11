@@ -1,0 +1,82 @@
+
+Outer layer responsible for handling peer connection
+
+Constructor(launcher_coin_string (nil if they initiate), my_reward_puzzle_hash, my_stake, 
+    their stake, {game_type: game_factory})
+
+game_factory takes amount and whether_I_initiated and parameters and returns 
+    (my_contribution, [game_info_my_turn], [game_info_their_turn])
+
+game_info_my_turn is
+    (id, my_turn_game_handler, validation_info_hash, move, max_move_size, mover_share)
+game_info_their_turn is
+    (id, their_turn_game_handler, validation_program, 
+    validation_program_hash, state, move, max_move_size, mover_share)
+
+Peer
+<- send_message (message)
+-> received_message (message)
+
+Wallet/Full Node bootstrap
+<- channel_puzzle_hash (channel_puzzle_hash)
+-> channel_offer (transaction_bundle)
+<- received_channel_offer (transaction_bundle)
+-> channel_transaction_completion (transaction_bundle)
+<- received_channel_transaction_completion (transation_bundle)
+# No need to inform about channel creation failure so it should just drop
+# the peer object.
+
+Wallet/Full Node unroll
+<- spend transaction and add fee (transation_bundle)
+<- register_coin (coin_id, timeout)
+-> coin_created (coin_id)
+-> coin_spent (coin_id, conditions)
+-> coin_timeout_reached (coin_id)
+
+UX
+-> start_games (whether_I_initiated, [game_type, first_turn_me, parameters])
+    returns [game_id]
+    -- Bram: start_games should take one parameter set and return a set of games from the
+    -- factory.
+    -- Bram: amount and contribution belong here.
+    -- More like start_games(
+    --   whether_i_initiated, amount, my_contribution, game_type, first_turn_me, parameters
+    -- )
+    -- And the factory returns a list of games based on this info.
+-> move (id, readable)
+-> accept (id)
+<- opponent_moved (id, readable)
+<- game_message (id, readable)
+<- game_finished (id, my_share)
+<- game_cancelled (id)
+-> shut_down()
+<- shutdown_complete(reward_coin_string)
+<- going_on_chain()
+
+
+Messages
+
+Handshake
+Alice A: launcher_coin_string, public_keys, reward_puzzle_hash -> Sends msg A
+Bob   B: public_keys, reward_puzzle_hash                       -> Sends msg B
+Alice C: send potato state 0                                   -> Sends potato nil
+Bob   D: send potato state 1                                   -> Sends potato nil
+Alice E: channel initiation offer                              -> alice sends msg E when
+                                                                  channel_offer callback
+                                                                  arrives.
+Bob   F: channel initiation full transaction                   -> bob calls
+                                                                  received_channel_offer
+                                                                  and replies with msg F
+                                                                  when
+                                                                  channel_transaction_completion
+                                                                  arrives.
+
+send_potato_nil: unroll_signatures
+send_potato_start_game: unroll_signatures
+    The receiving side has to have been given warning of the other side initiating before this
+    is received so it has the appropriate arguments. Those must happen in order and may be queued up.
+send_potato_move: id, move, unroll_signatures
+send_potato_accept: id, unroll_signatures
+game_message: id, message
+shut_down: clean_shutdown_spend_half_signature
+request_potato: nil [no potato]

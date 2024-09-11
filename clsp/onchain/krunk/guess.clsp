@@ -1,0 +1,20 @@
+(include *standard-cl-23*)
+
+(import onchain.krunk.clue exposing (program_hash as cluehash))
+(import std.assert)
+
+
+; state is (image gusses clues)
+; move is a word guess
+(export (quine_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    (image guesses clues) me mover_puzzle solution evidence)
+
+    (if_any_fail
+        (= new_validation hash (sha256 cluehash (shatree (li quine_hash image (c move guesses) clues))))
+        (= (strlen move) 5)
+        (= max_move_size 21)
+        0
+        (x)
+    )
+)

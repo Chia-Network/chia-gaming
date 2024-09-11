@@ -1,0 +1,22 @@
+(import std.li)
+
+; returns (count inner_list)
+(defun prepend_count_inner (last_value last_count (@ mylist ((@ first (compare other)) . rest)))
+    (if (not mylist)
+        (li last_count 0)
+        (if (= compare last_value)
+            (assign
+                (my_count inner_list) (prepend_count_inner last_value (+ 1 last_count) rest)
+                (li my_count (c (c my_count first) inner_list))
+            )
+            (assign
+                (my_count inner_list) (prepend_count_inner compare 1 rest)
+                (li last_count (c (c my_count first) inner_list))
+            )
+        )
+    )
+)
+
+(defun prepend_count (mylist)
+    (f (r (prepend_count_inner 0 0 mylist)))
+)

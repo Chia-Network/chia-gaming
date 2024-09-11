@@ -1,0 +1,8 @@
+(defun and_ (CLAUSES)
+  (if (r CLAUSES)
+    (qq (if (unquote (f CLAUSES)) (unquote (and_ (r CLAUSES))) ()))
+    (f CLAUSES)
+    )
+  )
+
+(defmac and CLAUSES (if CLAUSES (and_ CLAUSES) 1))
