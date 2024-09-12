@@ -134,7 +134,11 @@ body {
     cursor: pointer;
 }
 
-.selected_true {
+.player1.selected_true {
+    background: #caa !important;
+}
+
+.player2.selected_true {
     background: #aca !important;
 }
 
