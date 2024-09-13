@@ -135,11 +135,11 @@ body {
 }
 
 .player1.selected_true {
-    background: #caa !important;
+    background: #aca !important;
 }
 
 .player2.selected_true {
-    background: #aca !important;
+    background: #caa !important;
 }
 
 .card_bot {
