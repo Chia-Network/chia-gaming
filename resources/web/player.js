@@ -245,18 +245,18 @@ function end_game(id) {
 }
 
 
-function render_card(card, n, label, toggleable) {
+function render_card(player_id, card, n, label, toggleable) {
     let card_span = document.createElement('span');
     card_span.setAttribute('id', label);
-    card_span.setAttribute('class',`card selected_${controller.maybe_selected(label)}`);
+    card_span.setAttribute('class',`player${player_id} card selected_${controller.maybe_selected(label)}`);
     let toggle_string = toggleable ? `onclick="controller.toggle_card('${label}',controller.all_selected_cards,${n})"` : '';
     card_span.innerHTML = `<div class='rank${card[0]} suit${card[1]}' ${toggle_string}><div class='card_top'>${label_by_suit[card[1]]}</div><div class='card_bot'>${label_by_rank[card[0]]}</div>`;
     return card_span;
 }
 
-function make_card_row(div, cards, label_prefix, toggleable) {
+function make_card_row(player_id, div, cards, label_prefix, toggleable) {
     for (let ci = 0; ci < cards.length; ci++) {
-        div.appendChild(render_card(cards[ci], ci, `${label_prefix}${ci}`, toggleable));
+        div.appendChild(render_card(player_id, cards[ci], ci, `${label_prefix}${ci}`, toggleable));
     }
 }
 
@@ -324,10 +324,10 @@ function allow_manual_move(player_id, json) {
         let choices = document.getElementById('card-choices');
         let opponent = document.getElementById('opponent-choices');
         if (choices) {
-            make_card_row(choices, our_cards, '_', true);
+            make_card_row(player_id, choices, our_cards, '_', true);
         }
         if (opponent) {
-            make_card_row(opponent, their_cards, 'opponent', false);
+            make_card_row(player_id, opponent, their_cards, 'opponent', false);
         }
     }
 }
