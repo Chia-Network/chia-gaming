@@ -1,0 +1,11 @@
+(
+    (defun busy (myfunc mylist returnval)
+        (if mylist
+            (last
+                (a myfunc (list (f mylist)))
+                (busy myfunc (r mylist) returnval)
+            )
+            returnval
+        )
+    )
+)
