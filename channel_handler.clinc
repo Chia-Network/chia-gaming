@@ -148,41 +148,31 @@
 ;       (SLASH evidence aggsig)
 
 
-;; All this stuff belongs in src/common/standard_coin.rs
 
 ; returns puzzle
-;; [X]
 (defun make_standard_puzzle (public_key))
 
 ; returns puzzle_hash
 ; equivalent to (shatree (standard_puzzle public_key)) but much more efficient
-;; [X]
 (defun make_standard_puzzle_hash (public_key))
 
 ; returns (solution aggsig)
-;; [X]
 (defun standard_solution (private_key coin_id conditions))
 
 ; returns (solution aggsig)
-;; [X]
 (defun standard_solution_partial (private_key coin_id conditions aggregate_public_key))
 
 ; returns signature
-;; [X]
 (defun unsafe_sign (private_key value))
 
 ; returns signature
-;; [X]
 (defun unsafe_sign_partial (private_key value aggregate_public_key))
 
 ; returns public_key
-;; [X]
 (defun private_to_public_key (mykey))
 
 ; returns public_key
-;; [X]
 (defun aggregate_public_keys (key1 key2))
 
 ; returns signature
-;; [X]
 (defun aggregate_signatures (signature_1 signature_2))
