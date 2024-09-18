@@ -1,8 +1,63 @@
-(mod (X)
-  (include *standard-cl-21*)
-  (include map.clinc)
-  (include prepend.clinc)
-  (include permutations.clinc)
+(mod (M N)
+    (include *standard-cl-21*)
+    (include prepend.clinc)
+    (include reverse.clinc)
+    (include map.clinc)
+    (include len.clinc)
+    (include range.clinc)
+    (include sort.clinc)
+    (include assert.clinc)
+    (include deep_compare.clinc)
+    (include permutations.clinc)
+    (include last.clinc)
+    (include busy.clinc)
+    (include all-in-list.clinc)
+    (include print.clinc)
 
-  (permutations X)
-  )
+    (defun ! (x)
+        (if x
+            (* x (! (- x 1)))
+            1
+        )
+    )
+    (defun no_repeats_inner ((first . remainder))
+        (if remainder
+            (if (deep= first (f remainder))
+                0
+                (no_repeats_inner remainder)
+            )
+            1
+        )
+    )
+    (defun no_repeats (mylist)
+      (if mylist
+        (no_repeats_inner (sort (lambda (a b) (= (deep_compare a b) -1)) mylist))
+        1
+      )
+    )
+    (assert
+        ;; Is permutations expected to collapse equal alternatives when two of
+        ;; the items to shuffle are equal?
+        (= (* (! M) 4) (len (permutations (c 0 (range M)))))
+        (busy
+            (lambda (listlen)
+                (assign 
+                    mylist (range listlen)
+                    permed (permutations mylist)
+                    (assert
+                        (= (len permed) (! listlen))
+                        ;; ensure we didn't produce any permutations that have
+                        ;; repeated elements in them, which would indicate that
+                        ;; the permutation function misbehaved
+                        (all-in-list (map (lambda (L) (no_repeats L)) permed))
+                        (no_repeats permed)
+                    )
+                )
+            )
+            (reverse (range N))
+            1
+        )
+        (deep= (permutations 0) (q ()))
+        0
+    )
+)
