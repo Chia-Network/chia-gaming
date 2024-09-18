@@ -16,7 +16,7 @@ use crate::common::types::{
 };
 use crate::outside::{
     BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage, PotatoHandler,
-    ToLocalUI, WalletSpendInterface,
+    ToLocalUI, WalletSpendInterface, FromLocalUI, GameType,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -317,5 +317,20 @@ fn test_peer_smoke() {
         i += 1;
 
         assert!(messages + 2 >= i);
+    }
+
+    // Start a game
+    {
+        let mut env = channel_handler_env(&mut allocator, &mut rng);
+        let nil = env.allocator.allocator().null();
+        let mut penv = TestPeerEnv {
+            env: &mut env,
+            system_interface: &mut pipe_sender[0],
+        };
+        peers[0].start_games(
+            &mut penv,
+            true,
+            &[(GameType(b"calpoker".to_vec()), true, nil)]
+        ).expect("should run");
     }
 }
