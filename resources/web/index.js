@@ -19,8 +19,6 @@ function update_ungate_button(json) {
     }
 }
 
-let last_update = "";
-
 function check() {
     return fetch("idle.json", {
         "method": "POST"
@@ -30,19 +28,10 @@ function check() {
         });
     }).then((json) => {
         if (json.info) {
-            let this_str = JSON.stringify(json);
-            setTimeout(check, 500);
-            if (this_str === last_update) {
-                return;
-            } else {
-                last_update = this_str;
-            }
-
-            info = document.getElementById('info');
+            const info = document.getElementById('info');
             clear(info);
-            auto = json.info.auto;
+            auto = json.auto;
 
-            info.setAttribute("class", json.info.auto ? "info-auto" : "info-manual");
             update_ungate_button(json);
 
             let keys = Object.keys(json.info);
@@ -57,7 +46,7 @@ function check() {
             info.appendChild(ul);
         }
 
-
+        setTimeout(check, 500);
     });
 }
 
