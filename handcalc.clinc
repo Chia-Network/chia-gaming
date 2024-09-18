@@ -14,7 +14,7 @@
 (import std.append)
 (import std.reverse)
 
-(import onehandcalc exposing atomsort flatten_card unflatten_card group_by_count_inner)
+(import onchain.calpoker.onehandcalc exposing atomsort flatten_card unflatten_card group_by_count_inner)
 
 (defun find_flush (suits)
     (assign

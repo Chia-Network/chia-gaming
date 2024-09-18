@@ -1,1 +1,5 @@
-(mod () (include *standard-cl-23*) (include calpoker_generate.clinc) ())
+(include *standard-cl-23*)
+
+(import calpoker_generate exposing calpoker_template)
+
+(export calpoker_template)

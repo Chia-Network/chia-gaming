@@ -16,6 +16,7 @@
 (import std.map)
 (import std.relops)
 (import std.isthere)
+(import std.print)
 
 (defun hand_compare (a b)
     (if (= (f a) (f b))
@@ -48,7 +49,7 @@
 ; This is optimized for sorting short lists
 ; A more general function would return a list of lists of ascending sizes
 ; to be merged
-(defun atomsort (@ whole_list (first second third . remaining))
+(defun atomsort ((@ whole_list (first second third . remaining)))
     (if (not whole_list)
         0
         (not (isthere second))

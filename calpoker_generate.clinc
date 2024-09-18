@@ -1,8 +1,27 @@
-(
+
+(import onchain.calpoker.a exposing (program as pokera) (program_hash as pokera_hash))
+(import onchain.calpoker.b exposing (program as pokerb) (program_hash as pokerb_hash))
+(import onchain.calpoker.c exposing (program as pokerc) (program_hash as pokerc_hash))
+(import onchain.calpoker.d exposing (program as pokerd) (program_hash as pokerd_hash))
+(import onchain.calpoker.e exposing (program as pokere) (program_hash as pokere_hash))
+
+(import std.li)
+(import std.curry)
+(import std.map)
+(import std.assert)
+(import std.append)
+(import std.relops)
+(import handcalc exposing handcalc to_bitfield)
+(import onchain.calpoker.onehandcalc exposing onehandcalc extract_cards hand_compare)
+
+(defconst MAKE_MOVE 0)
+(defconst ACCEPT 1)
+(defconst SLASH 2)
+
 ; initial_mover_handler initial_waiter_handler initial_move required_size_factor
 ; initial_max_move_size initial_validator initial_validator_hash 
 ; initial_previous_puzzle_hash initial_mover_share_proportion
-(defconst calpoker_template (li calpoker_alice_driver_a calpoker_bob_driver_a 0 200 32 calpokera AHASH 0 100))
+(defconst calpoker_template (li calpoker_alice_driver_a calpoker_bob_driver_a 0 200 32 pokera pokera_hash 0 100))
 
 ; state is empty
 ; local_move is nil
@@ -13,8 +32,8 @@
         image (sha256 preimage)
         (list
             image
-            calpokerb
-            calpokerb_hash
+            pokerb
+            pokerb_hash
             image
             16
             0
@@ -49,9 +68,9 @@
         new_commit (sha256 (concat salt my_picks))
         (list 
             new_commit
-            calpokerd
-            calpokerd_hash
-            (list CARDS new_commit)
+            pokerd
+            pokerd_hash
+            (list cards new_commit)
             1
             0
             (curry calpoker_alice_driver_d salt my_picks)
@@ -112,8 +131,8 @@
         seed (substr entropy 0 16)
         (list
             seed
-            calpokerc
-            calpokerc_hash
+            pokerc
+            pokerc_hash
             (list alice_commit seed)
             48
             0
@@ -156,8 +175,8 @@
         my_move (bitify local_move)
         (list
             my_move
-            calpokere
-            calpokere_hash
+            pokere
+            pokere_hash
             (list my_move (list alice_cards bob_cards) alice_commit_2)
             17
             0
@@ -193,4 +212,93 @@
         )
     )
 )
+
+(defun make_cards_readable ((cardsa cardsb))
+    (list (map make_card_readable cardsa) (map make_card cardsb))
+)
+
+(defun make_card_readable (val)
+    (assign
+        (rank . suit) (divmod val 4)
+        (if (= rank 12)
+            (list 1 (+ 1 suit))
+            (list (+ 2 rank) (+ 1 suit))
+        )
+    )
+)
+
+(defun make_card (val)
+    (assign
+        (rank . suit) (divmod val 4)
+        (list (+ 2 rank) (+ 1 suit))
+    )
+)
+
+(defun make_cards (randomness)
+    (assign
+        (handa newrandomness) (choose 52 8 randomness)
+        (handb newrandomness2) (choose (- 52 8) newrandomness)
+        (list handa (mergeover handa handb))
+    )
+)
+
+; pick numchoose things out of numcards options with randomness extracted from vals
+; returns (cards newvals) cards are always in sorted order
+(defun choose (numcards numchoose randomness)
+    (if (= numchoose 1)
+        (assign (newrandomness card) (divmod randomness numcards)
+            (list (list card) newrandomness)
+        )
+        (assign 
+            half (lsh numchoose -1)
+            (cards1 newrandomness2) (choose numcards half randomness)
+            (cards2 newrandomness3) (choose (- numcards half) (- numchoose half) newrandomness2)
+            (list (mergein cards1 cards2 0) newrandomness3)
+        )
+    )
+)
+
+; like mergein but only calculates the contents of inner with offsets
+; applied and doesn't interleave the contents of outer
+(defun mergeover (outer inner offset)
+    (if (not inner)
+        0
+        (assign first (+ (f inner) offset)
+            (if (not outer)
+                (c first (mergeover 0 (r inner) offset))
+                (if (<= (f outer) first)
+                    (mergeover (r outer) inner (+ offset 1))
+                    (c first (mergeover outer (r inner) offset))
+                )
+            )
+        )
+    )
+)
+
+; slide the things in inner in between the things in outer assuming 
+; things in inner are already bumped up by offset things from outer which 
+; came before
+(defun mergein (outer inner offset)
+    (if (not inner)
+        outer
+        (assign first (+ (f inner) offset)
+            (if (not outer)
+                (c first (mergein 0 (r inner) offset))
+                (if (<= (f outer) first)
+                    (c (f outer) (mergein (r outer) inner (+ offset 1)))
+                    (c first (mergein outer (r inner) offset))
+                )
+            )
+        )
+    )
+)
+
+(defun pull_out_cards (selections cards)
+    (if (not cards)
+        0
+        (if (logand selections 1)
+            (c (f cards) (pull_out_cards (lsh -1 selections) (r cards)))
+            (pull_out_cards (lsh -1 selections) (r cards))
+        )
+    )
 )

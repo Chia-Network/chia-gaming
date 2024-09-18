@@ -1,0 +1,25 @@
+--- state_channel.clinc
++++ resources/unroll_puzzle.clsp
+@@ -4,8 +4,14 @@
+ ; updates to the unrolling puzzle. The keys of the state channel puzzle and the unrolling puzzle don't 
+ ; have to be related
+ 
+-(defun state_channel_unrolling (SHARED_PUZZLE_HASH OLD_SEQUENCE_NUMBER DEFAULT_CONDITIONS_HASH reveal solution)
+-    (if (not (isthere solution))
++(include *standard-cl-23*)
++(import std.isthere)
++(import std.assert)
++(import std.shatree)
++
++;; XXX Fix @ form interpretation below for solution.  Worked around for now.
++(defun state_channel_unrolling (SHARED_PUZZLE_HASH OLD_SEQUENCE_NUMBER DEFAULT_CONDITIONS_HASH reveal . (@ solution-present (solution)))
++    (if (not solution-present) ;; (@ solution 1))
+         ; These probably contain a relative timelock
+         (assert (= DEFAULT_CONDITIONS_HASH (shatree reveal))
+             reveal
+@@ -31,3 +37,5 @@
+         )
+     )
+ )
++
++(export state_channel_unrolling)
