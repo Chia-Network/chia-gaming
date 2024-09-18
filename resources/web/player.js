@@ -126,7 +126,7 @@ class PlayerController {
             this.take_auto_action(json);
         }
 
-        return `<h2>You must generate a secret value and send a hash commitment</h2><div>${button}`;
+        return `<h2>You must generate a secret value and send a hash commitment</h2><div>${button}"`;
     }
 
     after_word(json) {
@@ -172,16 +172,12 @@ class PlayerController {
         let result;
 
         if (typeof(json.readable) !== 'string' && json.readable.raw_alice_selects) {
-            result = `<h2>Game outcome</h2><div>${game_outcome(this.player_id, json, json.known_cards)}</div><div id='card-choices-end-label'>Your cards</div><div id='card-choices'></div><div id='other-choices-end-label'>Their cards</div><div id='opponent-choices'></div>`;
+            result = `<h2>Game outcome</h2><div>${game_outcome(this.player_id, json, json.known_cards)}</div><div id='card-choices'></div><div id='opponent-choices'></div>`;
         } else {
             result = '<h2>Waiting for game outcome</h2>';
         }
 
-        if (this.player_id == 1) {
-            return [result, json.known_cards];
-        } else {
-            return [result, [json.known_cards[1], json.known_cards[0]]];
-        };
+        return [result, json.known_cards];
     }
 
 
