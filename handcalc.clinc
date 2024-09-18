@@ -7,9 +7,9 @@
 ; all sorting is done highest to lowest
 (
     (defun find_flush (suits)
-        (assign 
+        (assign
             ((count1 . suit1)) (group_by_count_clean (atomsort suits))
-            (* suit1 (>= 5 count1))
+            (* suit1 (>= count1 5))
         )
     )
 
@@ -41,7 +41,7 @@
     ; returns the high card of a straight or 0 if there isn't any
     ; ranks must be sorted in descending order
     (defun straight_high_extended (ranks)
-        (assign 
+        (assign
             high (straight_high_inner ranks 0 0)
             (if (= high 5)
                 (* (= (f ranks) 14) 5)
@@ -58,11 +58,27 @@
     )
 
     (defun find_straight_flush_indices (flush_suit straight_flush_high (@ cards ((first_rank . first_suit) . remaining)))
-        (if (not cards)
+      (if (not cards)
             0
             (assign
-                hit (logand (= first_suit flush_suit) (logior (logand (= straight_flush_high 5) (= first_rank 14))
-                    (logand (<= first_rank straight_flush_high) (> first_rank (- straight_flush_high 5)))))
+                straight_to_ace_match
+                    (logand
+                        (= straight_flush_high 5)
+                        (= first_rank 14)
+                     )
+
+                rank_in_range
+                    (logand
+                        (<= first_rank straight_flush_high)
+                        (> first_rank (- straight_flush_high 5))
+                    )
+
+                hit
+                    (logand
+                        (= first_suit flush_suit)
+                        (logior straight_to_ace_match rank_in_range)
+                    )
+
                 (logior (lsh (find_straight_flush_indices flush_suit straight_flush_high remaining) 1) hit)
             )
         )
@@ -72,7 +88,7 @@
         (if (not cards)
             0
             (if (= flush_suit first_suit)
-                (c (flatten_card first_rank index) (flush_cards_with_index flush_suit (+ index 1) (r cards)))
+                (c (flatten_card (c first_rank index)) (flush_cards_with_index flush_suit (+ index 1) (r cards)))
                 (flush_cards_with_index flush_suit (+ index 1) (r cards))
             )
         )
@@ -97,18 +113,30 @@
     )
 
     (defun find_straight_includes (ranks with_index)
-        (if (= (f ranks) (lsh (f with_index) -4))
-            (c (logand 15 (f with_index)) (find_straight_includes (r ranks) (r with_index)))
-            (find_straight_includes ranks (r with_index))
+        (if (all ranks with_index)
+            (if (= (f ranks) (lsh (f with_index) -4))
+                (c (logand 15 (f with_index)) (find_straight_includes (r ranks) (r with_index)))
+                (find_straight_includes ranks (r with_index))
+            )
+            0
         )
     )
 
     (defun find_straight_indices (my_straight_high cards)
         (assign
             with_index (atomsort (ranks_with_indices 0 cards))
-            my_ranks (if (= my_straight_high 5) (list 14 5 4 3 2) 
-                (list my_straight_high (- my_straight_high 1) (- my_straight_high 2) 
-                (- my_straight_high 3) (- my_straight_high 4)))
+            my_ranks
+                (if (= my_straight_high 5)
+                    (list 14 5 4 3 2)
+                    (list
+                        my_straight_high
+                        (- my_straight_high 1)
+                        (- my_straight_high 2)
+                        (- my_straight_high 3)
+                        (- my_straight_high 4)
+                    )
+                )
+
             includes (reverse (atomsort (find_straight_includes my_ranks with_index)))
             (to_bitfield 0 includes)
         )
@@ -121,23 +149,55 @@
         )
     )
 
-    (defun find_hand_indices (cards)
-        (assign
-            flattened_cards (truncate 5 (atomsort (ranks_with_indices 0 cards)))
-            indices (reverse (atomsort (map (lambda (x) (logand x 15)) flattened_cards)))
-            (to_bitfield 0 indices)
+    (defun find_hand_indices ((@ numbered-cards ((number . card) . rest)))
+        (if numbered-cards
+            (logior (lsh 1 number) (find_hand_indices rest))
+            0
         )
     )
 
+    (defun number_cards (num cards)
+        (if cards
+            (c (c num (f cards)) (number_cards (+ num 1) (r cards)))
+            ()
+        )
+    )
+
+    ;; Sorts the cards by group size according to hand.
+    ;; Hand has pairs of count and rank.  We pull out cards based on their rank
+    ;; until each bucket is empty in hand and then give the remaining cards.
+    (defun bucket_cards_by_frequency_groups (hand cards)
+        (if hand
+            (assign
+                (hand_freq . want_rank) (f hand)
+
+                (cards_with_rank . cards_without_rank) (partition (lambda ((& want_rank) (num . (rank . suit))) (= rank want_rank)) cards)
+
+                ;; We have the cards with this rank... go to the next wanted rank.
+                (append cards_with_rank (bucket_cards_by_frequency_groups (r hand) cards_without_rank))
+            )
+            cards
+        )
+    )
+
+    (defun normal_full_house (firstcount secondcount hand cards)
+      (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
+    )
+
     (defun handcalc (cards)
-        (assign
+        (assign-lambda
             first (lambda (x) (f x))
             rest (lambda (x) (r x))
             sorted_ranks (atomsort (map first cards))
-            hand (group_by_count_clean (truncate 5 sorted_ranks))
+            hand (group_by_count_clean sorted_ranks)
             ((firstcount . firstrank) (secondcount . secondrank)) hand
             flush_suit (find_flush (map rest cards))
-            (if flush_suit
+            (if ;; Full house
+                (logand (= firstcount 3) (= secondcount 2))
+                (normal_full_house firstcount secondcount hand cards)
+
+                ;; Flush
+                flush_suit
                 (assign-lambda
                     flush_cards (filtermap (lambda ((& flush_suit) (@ thecard (rank . suit))) (if (= suit flush_suit) rank 0)) cards)
                     straight_flush_high (straight_high_extended (atomsort flush_cards))
@@ -145,15 +205,25 @@
                         (find_straight_flush_indices flush_suit straight_flush_high cards)
                         (if (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1)))
                             (find_flush_indices flush_suit cards)
-                            (find_hand_indices hand cards)
+                            (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
                         )
                     )
                 )
-                (assign 
+
+                ;; Else
+                (assign
                     my_straight_high (straight_high_extended sorted_ranks)
-                    (if (logand my_straight_high (logior (< firstcount 3) (logand (= firstcount 3) (= secondcount 1))))
+                    (if (all
+                            my_straight_high
+                            (logior
+                                (< firstcount 3)
+                                (logand (= firstcount 3) (= secondcount 1))
+                            )
+                        )
+
                         (find_straight_indices my_straight_high cards)
-                        (find_hand_indices hand cards)
+
+                        (find_hand_indices (truncate 5 (bucket_cards_by_frequency_groups hand (number_cards 0 cards))))
                     )
                 )
             )
