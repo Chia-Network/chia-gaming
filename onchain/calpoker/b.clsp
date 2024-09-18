@@ -1,7 +1,9 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.c exposing (program_hash as chash))
+(import std.and)
 (import std.assert)
+(import std.if_any_fail)
 (import std.shatree)
 
 ; Alice challenging
@@ -11,14 +13,11 @@
 (export (mod_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     alice_commit me mover_puzzle solution evidence)
-    (assert
-        (not
-            (all
-                (= new_validation_hash (sha256 chash (shatree (list alice_commit move))))
-                (= (strlen move) 16)
-                (= max_move_size 48)
-            )
-        )
+    (if_any_fail
+        (= new_validation_hash (sha256 chash (shatree (list alice_commit move))))
+        (= (strlen move) 16)
+        (= max_move_size 48)
         0
+        (x)
     )
 )

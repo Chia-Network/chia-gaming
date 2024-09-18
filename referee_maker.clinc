@@ -55,21 +55,33 @@
         (not (isthere new_move))
         (li SLASHED)
         (assign
+
             new_puzzle (curry referee MY_INNER_PUZZLE_HASH THEIR_INNER_PUZZLE_HASH TIMEOUT AMOUNT referee_hash NONCE
                 new_move new_max_move_size new_validation_info_hash new_mover_share NEW_VALIDATION_INFO_HASH)
+
             new_puzzle_hash (curry_unhashed_args referee_hash MY_INNER_PUZZLE_HASH THEIR_INNER_PUZZLE_HASH TIMEOUT AMOUNT referee_hash NONCE
                 new_move new_max_move_size new_validation_info_hash new_mover_share NEW_VALIDATION_INFO_HASH)
+
             (slash_solution slash_aggsig) (a my_inner_solution_maker (li (li CREATE_COIN my_target_puzzle AMOUNT)))
+
             full_slash_solution (li STATE VALIDATION_PROGRAM my_inner_puzzle slash_solution 0)
+
             (returnval . exception) (run new_puzzle full_slash_solution)
+
             (if (not exception)
+
                 (li SLASH new_puzzle full_slash_solution slash_aggsig)
+
                 (assign
+
                     (move_type readable_info moving_driver message) (a (li AMOUNT STATE new_move
                         new_validation_info_hash new_max_move_size new_mover_share) DRIVER)
+
                     (if (= move_type SLASH)
+
                         (li SLASH new_puzzle (li STATE VALIDATION_PROGRAM my_inner_puzzle
                                 slash_solution readable_info) (point_add slash_aggsig moving_driver))
+
                         (li MAKE_MOVE readable_info new_puzzle_hash moving_driver message)
                     )
                 )

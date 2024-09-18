@@ -2,7 +2,8 @@
 
 (import onchain.calpoker.b exposing (program_hash as bhash))
 (import std.assert)
-
+(import std.and)
+(import std.if_any_fail)
 
 ; Bob challenging
 ; state is empty
@@ -12,15 +13,12 @@
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     state me mover_puzzle solution evidence)
 
-    (assert
-        (not
-            (all
-                (= new_validation_hash (sha256 bhash (sha256 1 move)))
-                (= (strlen move) 32)
-                (= max_move_size 16)
-            )
-        )
+    (if_any_fail
+        (= new_validation_hash (sha256 bhash (sha256 1 move)))
+        (= (strlen move) 32)
+        (= max_move_size 16)
         0
+        (x)
     )
 )
 
