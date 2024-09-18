@@ -93,58 +93,6 @@ fn test_play_calpoker_happy_path() {
     debug!("play_result {test1:?}");
 }
 
-fn test_make_cards_vs_message_handler() {
-    let left = (
-        [
-            (3, 3),
-            (6, 4),
-            (7, 1),
-            (7, 4),
-            (8, 1),
-            (10, 2),
-            (11, 1),
-            (12, 2),
-        ],
-        [
-            (5, 1),
-            (6, 2),
-            (9, 1),
-            (9, 3),
-            (10, 3),
-            (11, 4),
-            (12, 1),
-            (12, 3),
-        ],
-    );
-    let right = (
-        [
-            (2, 1),
-            (3, 4),
-            (4, 3),
-            (4, 4),
-            (10, 1),
-            (11, 1),
-            (12, 2),
-            (1, 2),
-        ],
-        [
-            (2, 3),
-            (3, 3),
-            (4, 2),
-            (5, 2),
-            (6, 3),
-            (6, 4),
-            (7, 4),
-            (13, 4),
-        ],
-    );
-
-    let alice_message_bytes = hex::decode("eb04c21e3ee58d1b494e0b5be68ee5e5");
-    let x = hex::decode("5192272f4a71debcc8b317095bec6673");
-    // let entropy =
-    //let make_cards_output = make_cards(&alice_message_bytes, entropy.bytes(), Amount::new(200));
-}
-
 fn extract_info_from_game(game_results: &[GameActionResult]) -> (Hash, ReadableMove, Vec<u8>) {
     if let GameActionResult::MoveResult(_, _, _, entropy) = &game_results[1] {
         game_results.iter().find_map(|x| {

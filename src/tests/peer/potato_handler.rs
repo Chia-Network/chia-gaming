@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use clvm_traits::{ClvmEncoder, ToClvm};
+use clvm_traits::ToClvm;
 use clvmr::NodePtr;
 
 use log::debug;

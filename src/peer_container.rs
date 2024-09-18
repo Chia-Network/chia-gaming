@@ -93,9 +93,12 @@ impl FullCoinSetAdapter {
 #[derive(Default)]
 #[cfg(test)]
 pub struct SimulatedWalletSpend {
+    #[allow(dead_code)]
     watching_coins: HashMap<CoinString, WatchEntry>,
 
+    #[allow(dead_code)]
     outbound_transactions: Vec<Spend>,
+    #[allow(dead_code)]
     channel_puzzle_hash: Option<PuzzleHash>,
 }
 
@@ -125,29 +128,6 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
     fn get_unfunded_offer(&self) -> Option<SpendBundle> {
         self.unfunded_offer.clone()
     }
-}
-
-#[derive(Default)]
-#[cfg(test)]
-struct Pipe {
-    message_pipe: MessagePipe,
-
-    // WalletSpendInterface
-    outgoing_transactions: VecDeque<Spend>,
-    registered_coins: HashMap<CoinString, Timeout>,
-
-    // Opponent moves
-    opponent_moves: Vec<(GameID, ReadableMove)>,
-    opponent_messages: Vec<(GameID, Vec<u8>)>,
-
-    // Bootstrap info
-    channel_puzzle_hash: Option<PuzzleHash>,
-
-    // Have other side's offer
-    unfunded_offer: Option<SpendBundle>,
-
-    #[allow(dead_code)]
-    bootstrap_state: Option<WalletBootstrapState>,
 }
 
 pub struct RegisteredCoinsIterator<'a> {
