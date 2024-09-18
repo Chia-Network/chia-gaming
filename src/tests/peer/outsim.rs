@@ -30,6 +30,7 @@ use crate::peer_container::{
 
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
+use crate::tests::game::GameAction;
 use crate::tests::peer::outside::{quiesce, run_move};
 use crate::tests::game::{GameAction, GameActionResult};
 

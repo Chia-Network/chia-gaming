@@ -92,6 +92,9 @@ jobs:
       - name: cargo test
         run: |
           python -m pip install chia-blockchain
+          # Try tests without sim-tests to ensure we're tracking build failures in that
+          # configuration.  Also it's a lot shorter.
+          cargo test
           cargo test --features=sim-tests
 
   coverage:
