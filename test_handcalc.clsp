@@ -11,8 +11,6 @@
     (include filtermap.clinc)
     (include slice.clinc)
     (include print.clinc)
-    (include partition.clinc)
-    (include append.clinc)
     (include onehandcalc.clinc)
     (include handcalc.clinc)
 
@@ -54,38 +52,18 @@
         )
     )
 
-    (defun generate_handcalc_and_reverse_response (cards)
-        (assign
-            reversed-cards (reverse cards)
-
-            handcalc-result (print (list "handcalc fwd result for cards" cards) (handcalc cards))
-
-            reverse-handcalc-result (print (list "handcalc rev result for cards" reversed-cards) (handcalc reversed-cards))
-
-            chosen-cards (cards-by-bitmask (must-have-bits 5 handcalc-result) cards)
-
-            reverse-chosen-cards (cards-by-bitmask (must-have-bits 5 reverse-handcalc-result) reversed-cards)
-
-            (c (must-be-len 5 chosen-cards) (must-be-len 5 reverse-chosen-cards))
-        )
-    )
-
     (defun runtests_inner ((myfunc firstarg secondarg . remaining))
         (assign-lambda
-            (first-chosen-cards . first-rev-cards) (generate_handcalc_and_reverse_response firstarg)
-
-            (second-chosen-cards . second-rev-cards) (generate_handcalc_and_reverse_response secondarg)
-
-            first-ohc (print (list "first onehandcalc from " first-chosen-cards) (onehandcalc (must-be-len 5 first-chosen-cards)))
-            second-ohc (print (list "second onehandcalc from " second-chosen-cards) (onehandcalc (must-be-len 5 second-chosen-cards)))
-
-            first-rev-ohc (print (list "first rev onehandcalc from " first-rev-cards) (onehandcalc (must-be-len 5 first-rev-cards)))
-            second-rev-ohc (print (list "second rev onehandcalc from " second-rev-cards) (onehandcalc (must-be-len 5 second-rev-cards)))
-
+            firstval (print "first handcalc" (handcalc (print "first-handcalc arg" firstarg)))
+            secondval (print "second handcalc" (handcalc (print "second-handcalc arg" secondarg)))
+            first-chosen-cards (cards-by-bitmask (must-have-bits 5 firstval) firstarg)
+            second-chosen-cards (cards-by-bitmask (must-have-bits 5 secondval) secondarg)
+            first-ohc (print "first onehandcalc" (onehandcalc (print "pre-first-ohc" (must-be-len 5 first-chosen-cards))))
+            second-ohc (print "second onehandcalc" (onehandcalc (print "pre-second-ohc" (must-be-len 5 second-chosen-cards))))
             (assert
-                (print (list "======== compare hands ========" first-ohc second-ohc) (a myfunc (list first-ohc second-ohc)))
-                (print (list "======== first equal ==========" first-ohc first-rev-ohc) (deep= first-ohc first-rev-ohc))
-                (print (list "======== second equal =========" second-ohc second-rev-ohc) (deep= second-ohc second-rev-ohc))
+                (a myfunc (list first-ohc second-ohc))
+                (deep= firstval (handcalc (reverse firstarg)))
+                (deep= secondval (handcalc (reverse secondarg)))
                 (if remaining
                     (runtests_inner remaining)
                     0
@@ -174,7 +152,7 @@
         deep>
         (list (c 2 1) (c 2 2) (c 2 3) (c 2 4) (c 3 1))
         (list (c 14 1) (c 14 2) (c 14 3) (c 13 1) (c 13 2))
-        ; four of a kind equality: 21 22 23 24 A1 A2 A3 = 21 22 23 24 A2
+        ; 21 22 23 24 A1 A2 A3 = 21 22 23 24 A2
         deep=
         (list (c 2 1) (c 2 2) (c 2 3) (c 2 4) (c 14 1) (c 14 2) (c 14 3))
         (list (c 2 1) (c 2 2) (c 2 3) (c 2 4) (c 14 2))
