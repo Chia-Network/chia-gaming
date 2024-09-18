@@ -17,6 +17,7 @@ fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {
         "include".to_string(),
         ArgumentValue::ArgArray(vec![
             ArgumentValue::ArgString(None, "clsp".to_string()),
+            ArgumentValue::ArgString(None, ".".to_string()),
         ]),
     );
 

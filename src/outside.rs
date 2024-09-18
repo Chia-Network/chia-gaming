@@ -4,9 +4,6 @@ use clvmr::NodePtr;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use clvm_tools_rs::classic::clvm::__type_compatibility__::Stream;
-use clvm_tools_rs::classic::clvm::serialize::sexp_to_stream;
-
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerPrivateKeys, PotatoSignatures, ReadableMove,
@@ -18,12 +15,9 @@ use crate::common::types::{
     SpendBundle, Timeout,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GameStart {
-    pub game_type: GameType,
-    pub my_turn: bool,
-    pub parameters: Vec<u8>,
-}
+struct LocalGameStart {}
+
+struct RemoteGameStart {}
 
 // struct GameInfoMyTurn {
 //     id: GameID,
@@ -186,8 +180,8 @@ pub trait WalletSpendInterface {
     fn register_coin(&mut self, coin_id: &CoinID, timeout: &Timeout) -> Result<(), Error>;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GameType(pub Vec<u8>);
+#[allow(dead_code)]
+pub struct GameType(Vec<u8>);
 
 pub trait ToLocalUI {
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
@@ -199,10 +193,8 @@ pub trait ToLocalUI {
     fn going_on_chain(&mut self) -> Result<(), Error>;
 }
 
-pub trait FromLocalUI<
-    G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
-    R: Rng,
-> {
+#[allow(dead_code)]
+trait FromLocalUI {
     /// Start games requires queueing so that we handle them one at a time only
     /// when the previous start game.
     ///
@@ -213,16 +205,11 @@ pub trait FromLocalUI<
     /// General flow:
     ///
     /// Have queues of games we're starting and other side is starting.
-    fn start_games<'a>(
+    fn start_games(
         &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
         i_initiated: bool,
         games: &[(GameType, bool, NodePtr)],
-    ) -> Result<GameID, Error>
-    where
-        G: 'a,
-        R: 'a;
-
+    ) -> Result<GameID, Error>;
     fn make_move(&mut self, id: GameID, readable: ReadableMove) -> Result<(), Error>;
     fn accept(&mut self, id: GameID) -> Result<(), Error>;
     fn shut_down(&mut self) -> Result<(), Error>;
@@ -260,9 +247,9 @@ pub enum PeerMessage {
     },
 
     Nil(PotatoSignatures),
-    StartGames(Vec<GameStart>),
     Move(GameID, Vec<u8>, PotatoSignatures),
     Accept(GameID, PotatoSignatures),
+    DataMessage(GameID, Vec<u8>),
     Shutdown(Aggsig),
     RequestPotato,
 }
@@ -328,8 +315,8 @@ pub struct PotatoHandler {
 
     handshake_state: HandshakeState,
 
-    their_start_queue: VecDeque<Vec<GameStart>>,
-    my_start_queue: VecDeque<Vec<GameStart>>,
+    their_start_queue: VecDeque<RemoteGameStart>,
+    my_start_queue: VecDeque<LocalGameStart>,
 
     channel_handler: Option<ChannelHandler>,
     channel_initiation_transaction: Option<SpendBundle>,
@@ -771,34 +758,20 @@ impl PotatoHandler {
 
                 self.handshake_state = HandshakeState::PostStepF(info.clone());
 
-                self.have_potato = true;
                 self.try_complete_step_f(penv, first_player_hs, second_player_hs)?;
             }
 
             HandshakeState::Finished(_) => {
                 let msg_envelope: PeerMessage =
                     bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+                let spend = if let PeerMessage::HandshakeF { bundle } = msg_envelope {
+                    bundle
+                } else {
+                    self.pass_on_channel_handler_message(penv, msg)?;
+                    return Ok(());
+                };
 
-                match msg_envelope {
-                    PeerMessage::HandshakeF { bundle } => {
-                        self.channel_finished_transaction = Some(bundle.clone());
-                    }
-                    PeerMessage::RequestPotato => {
-                        assert!(self.have_potato);
-                        {
-                            let (env, system_interface) = penv.env();
-                            let ch = self.channel_handler_mut()?;
-                            let nil_msg = ch.send_empty_potato(env)?;
-                            system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
-                        }
-                        self.have_potato = false;
-                    }
-                    _ => {
-                        self.pass_on_channel_handler_message(penv, msg)?;
-                    }
-                }
-
-                return Ok(());
+                self.channel_finished_transaction = Some(spend);
             }
 
             _ => {
@@ -810,70 +783,6 @@ impl PotatoHandler {
         }
 
         Ok(())
-    }
-}
-
-impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender, R: Rng>
-    FromLocalUI<G, R> for PotatoHandler
-{
-    fn start_games<'a>(
-        &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        i_initiated: bool,
-        games: &[(GameType, bool, NodePtr)],
-    ) -> Result<GameID, Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: 'a
-    {
-        if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr("start games without finishing handshake".to_string()));
-        }
-
-        let game_starts =
-        {
-            let (env, _) = penv.env();
-            games.iter().map(|(gt, start, params)| {
-                let mut stream = Stream::new(None);
-                sexp_to_stream(env.allocator.allocator(), *params, &mut stream);
-                GameStart {
-                    game_type: gt.clone(),
-                    my_turn: *start,
-                    parameters: stream.get_value().data().clone()
-                }
-            }).collect()
-        };
-
-        self.my_start_queue.push_back(game_starts);
-
-        if !have_potato {
-            
-        }
-        todo!();
-    }
-
-    fn make_move(&mut self, id: GameID, readable: ReadableMove) -> Result<(), Error> {
-        if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr("move without finishing handshake".to_string()));
-        }
-
-        todo!();
-    }
-
-    fn accept(&mut self, id: GameID) -> Result<(), Error> {
-        if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr("accept without finishing handshake".to_string()));
-        }
-
-        todo!();
-    }
-
-    fn shut_down(&mut self) -> Result<(), Error> {
-        if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr("shut_down without finishing handshake".to_string()));
-        }
-
-        todo!();
     }
 }
 
