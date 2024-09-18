@@ -1,0 +1,18 @@
+(
+    (defun last_inner (next . remainder)
+        (if remainder
+            (a last_inner remainder)
+            next
+        )
+    )
+
+    (defmacro last ARGS
+      (if ARGS
+        (if (r ARGS)
+          (qq (a last_inner (unquote (c "list" ARGS))))
+          (qq (a last_inner (unquote (f ARGS))))
+          )
+        (x "Last takes at least one argument")
+        )
+      )
+)
