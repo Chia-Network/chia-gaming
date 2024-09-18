@@ -31,7 +31,7 @@ use crate::common::standard_coin::{
 use crate::common::types::Node;
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
-    CoinString, Error, GameID, IntoErr, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash,
+    CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash,
     Sha256tree, Spend, SpendRewardResult, ToQuotedProgram,
 };
 use crate::referee::RefereeMaker;
@@ -740,13 +740,14 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         readable_move: &ReadableMove,
+        new_entropy: Hash,
     ) -> Result<MoveResult, Error> {
         debug!("SEND_POTATO_MOVE");
         let game_idx = self.get_game_by_id(game_id)?;
 
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
         let referee_result =
-            referee_maker.my_turn_make_move(env.rng, env.allocator, readable_move)?;
+            referee_maker.my_turn_make_move(env.allocator, readable_move, new_entropy)?;
         debug!("move_result {referee_result:?}");
         self.live_games[game_idx].last_referee_puzzle_hash =
             referee_result.puzzle_hash_for_unroll.clone();

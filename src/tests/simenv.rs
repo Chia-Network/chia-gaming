@@ -173,10 +173,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         received: bool,
     ) -> Result<GameActionResult, Error> {
         let game_id = self.parties.game_id.clone();
+        let entropy: Hash = self.env.rng.gen();
         let move_result = self.parties.player(player).ch.send_potato_move(
             &mut self.env,
             &game_id,
             &ReadableMove::from_nodeptr(readable),
+            entropy,
         )?;
 
         // XXX allow verification of ui result and message.
@@ -271,10 +273,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     ) -> Result<GameActionResult, Error> {
         let game_id = self.parties.game_id.clone();
         let player_ch = &mut self.parties.player(player).ch;
+        let entropy = self.env.rng.gen();
         let _move_result = player_ch.send_potato_move(
             &mut self.env,
             &game_id,
             &ReadableMove::from_nodeptr(readable),
+            entropy,
         )?;
         let post_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env)?;
         debug!("post_unroll_data {post_unroll_data:?}");
@@ -507,9 +511,9 @@ fn test_referee_can_slash_on_chain() {
     let _my_move_wire_data = reftest
         .my_referee
         .my_turn_make_move(
-            &mut rng,
             &mut allocator,
             &ReadableMove::from_nodeptr(readable_move),
+            rng.gen(),
         )
         .expect("should move");
 
@@ -637,9 +641,9 @@ fn test_referee_can_move_on_chain() {
     let _my_move_wire_data = reftest
         .my_referee
         .my_turn_make_move(
-            &mut rng,
             &mut allocator,
             &ReadableMove::from_nodeptr(readable_move),
+            rng.gen(),
         )
         .expect("should move");
 

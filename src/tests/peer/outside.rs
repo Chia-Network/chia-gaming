@@ -41,6 +41,7 @@ struct Pipe {
     // Opponent moves
     opponent_moves: Vec<(GameID, ReadableMove)>,
     opponent_messages: Vec<(GameID, Vec<u8>)>,
+    our_moves: Vec<(GameID, Vec<u8>)>,
 
     // Bootstrap info
     channel_puzzle_hash: Option<PuzzleHash>,
@@ -119,6 +120,11 @@ impl BootstrapTowardWallet for Pipe {
 }
 
 impl ToLocalUI for Pipe {
+    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
+        self.our_moves.push((id.clone(), readable.to_vec()));
+        Ok(())
+    }
+
     fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moves.push((id.clone(), readable));
         Ok(())
@@ -507,13 +513,19 @@ fn test_peer_smoke() {
         };
 
         {
+            let entropy = rng.gen();
             let mut env = channel_handler_env(&mut allocator, &mut rng);
             let mut penv = TestPeerEnv {
                 env: &mut env,
                 system_interface: &mut pipe_sender[who ^ 1],
             };
             peers[who ^ 1]
-                .make_move(&mut penv, &game_ids[0], &ReadableMove::from_nodeptr(*what))
+                .make_move(
+                    &mut penv,
+                    &game_ids[0],
+                    &ReadableMove::from_nodeptr(*what),
+                    entropy,
+                )
                 .expect("should work");
         }
 

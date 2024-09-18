@@ -157,6 +157,10 @@ fn run_code(
 
         convert_to_clvm_rs(allocator.allocator(), result).into_gen()
     } else {
+        debug!(
+            "running handler code with args {}",
+            disassemble(allocator.allocator(), env, None)
+        );
         run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
             .into_gen()
             .map(|r| r.1)
@@ -388,6 +392,10 @@ impl GameHandler {
                     disassemble(allocator.allocator(), run_result, None)
                 )))
             } else if pl.len() < 3 {
+                debug!(
+                    "final move with data {}",
+                    disassemble(allocator.allocator(), pl[1], None)
+                );
                 Ok(TheirTurnResult::FinalMove(pl[1]))
             } else {
                 let message_data = if pl.len() == 4 {

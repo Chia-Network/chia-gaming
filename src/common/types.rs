@@ -4,7 +4,7 @@ use std::ops::{Add, AddAssign, Sub, SubAssign};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use num_bigint::{BigInt, Sign};
+use num_bigint::{BigInt, Sign, ToBigInt};
 use num_traits::cast::ToPrimitive;
 
 use rand::distributions::Standard;
@@ -389,6 +389,10 @@ impl Amount {
         Amount::new(self.0 / 2)
     }
 
+    pub fn to_u64(&self) -> u64 {
+        self.0
+    }
+
     pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Amount, Error> {
         if let Some(val) = atom_from_clvm(allocator, clvm).and_then(u64_from_atom) {
             Ok(Amount::new(val))
@@ -560,6 +564,7 @@ pub enum Error {
     StrErr(String),
     BlsErr(chia_bls::Error),
     BsonErr(bson::de::Error),
+    JsonErr(serde_json::Error),
     Channel(String),
 }
 
@@ -834,6 +839,12 @@ impl ErrToError for bson::de::Error {
     }
 }
 
+impl ErrToError for serde_json::Error {
+    fn into_gen(self) -> Error {
+        Error::JsonErr(self)
+    }
+}
+
 pub trait IntoErr<X> {
     fn into_gen(self) -> Result<X, Error>;
 }
@@ -973,6 +984,16 @@ pub fn usize_from_atom(a: &[u8]) -> Option<usize> {
     bi.to_usize()
 }
 
+pub fn i32_from_atom(a: &[u8]) -> Option<i32> {
+    let bi = BigInt::from_signed_bytes_be(a);
+    bi.to_i32()
+}
+
+pub fn i64_from_atom(a: &[u8]) -> Option<i64> {
+    let bi = BigInt::from_signed_bytes_be(a);
+    bi.to_i64()
+}
+
 pub fn u64_from_atom(a: &[u8]) -> Option<u64> {
     let bi = BigInt::from_bytes_be(Sign::Plus, a);
     bi.to_u64()
@@ -992,4 +1013,35 @@ pub struct BrokenOutCoinSpendInfo {
     pub conditions: NodePtr,
     pub message: Vec<u8>,
     pub signature: Aggsig,
+}
+
+pub fn divmod(a: BigInt, b: BigInt) -> (BigInt, BigInt) {
+    let d = a.clone() / b.clone();
+    let r = a.clone() % b.clone();
+    let zero = 0.to_bigint().unwrap();
+    if d < zero && r != zero {
+        (d - 1.to_bigint().unwrap(), r + b)
+    } else {
+        (d, r)
+    }
+}
+
+#[test]
+fn test_local_divmod() {
+    assert_eq!(
+        divmod(-7.to_bigint().unwrap(), 2.to_bigint().unwrap()),
+        (-4.to_bigint().unwrap(), 1.to_bigint().unwrap())
+    );
+    assert_eq!(
+        divmod(7.to_bigint().unwrap(), -2.to_bigint().unwrap()),
+        (-4.to_bigint().unwrap(), -1.to_bigint().unwrap())
+    );
+    assert_eq!(
+        divmod(-7.to_bigint().unwrap(), -2.to_bigint().unwrap()),
+        (3.to_bigint().unwrap(), -1.to_bigint().unwrap())
+    );
+    assert_eq!(
+        divmod(7.to_bigint().unwrap(), 2.to_bigint().unwrap()),
+        (3.to_bigint().unwrap(), 1.to_bigint().unwrap())
+    );
 }
