@@ -55,5 +55,6 @@ jobs:
 
     - name: Run tests
       run: |
+        echo "PWD=$(pwd)"
         source ./test/bin/activate
         cargo test --features=sim-tests
