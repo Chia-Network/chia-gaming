@@ -1,0 +1,114 @@
+(include *standard-cl-23*)
+
+(import std.and)
+(import std.assert)
+(import calpoker_generate exposing calpoker_template)
+
+(export calpoker_template)
+
+(defun find-key-in-params (key params)
+  (if (and params (= (f (f params)) key))
+      (r (f params))
+      (find-key-in-params key (r params))
+      )
+  )
+
+(defun maybe-default (setting default-setting)
+  (i setting setting default-setting)
+  )
+
+(defun validation-program-of-template ((_ _ _ _ _ p)) p)
+
+(defun max-move-size-of-template ((_ _ _ _ m)) m)
+
+(defun calpoker_factory (amount my_contribution params)
+  (assign
+
+   template (calpoker_template)
+
+   their-contribution (- amount my_contribution)
+
+   (assert
+
+    (= my_contribution (/ amount 2))
+
+    (list
+     ;; My turn games
+     (list
+      ;; One game
+      (list
+       ;; GameID - will be replaced by caller
+       ()
+       ;; Amount
+       amount
+
+       ;; Handler
+       (f template)
+
+       ;; Timeout, specified as 0 since we'll populate it above
+       ()
+
+       ;; My contribution this game
+       my_contribution
+       ;; Their contribution
+       their-contribution
+
+       ;; Initial validation program
+       (validation-program-of-template template)
+
+       ;; Initial state
+       ()
+
+       ;; Initial move
+       ()
+
+       ;; Initial max move size
+       (max-move-size-of-template template)
+
+       ;; Initial mover share
+       amount
+       )
+      )
+
+     ;; Their turn games
+     (list
+      ;; One game
+      (list
+       ;; GameID - will be replaced by caller
+       ()
+       ;; Amount
+       amount
+
+       ;; Handler
+       (f (r template))
+
+       ;; Timeout - specified as zero here since we'll fix it above.
+       ()
+
+       ;; My contribution this game
+       their-contribution
+       ;; Their contribution
+       my_contribution
+
+       ;; Initial validation program
+       (validation-program-of-template template)
+
+       ;; Initial state
+       ()
+
+       ;; Initial move
+       ()
+
+       ;; Initial max move size
+       (max-move-size-of-template template)
+
+       ;; Initial mover share
+       ()
+       )
+      )
+     )
+    )
+   )
+  )
+
+(export calpoker_factory)

@@ -1,0 +1,61 @@
+(include *standard-cl-23*)
+(import std.prepend)
+(import std.reverse)
+(import std.map)
+(import std.len)
+(import std.range)
+(import std.sort)
+(import std.assert)
+(import std.deep_compare)
+(import std.permutations)
+(import std.last)
+(import std.busy)
+(import std.all_in_list)
+(import std.factorial)
+(import std.print)
+
+(export (M N)
+    (assert
+        ;; Is permutations expected to collapse equal alternatives when two of
+        ;; the items to shuffle are equal?
+        (= (! (+ M 1)) (len (permutations (c 0 (range M)))))
+        (busy
+            (lambda (listlen)
+                (assign 
+                    mylist (print "mylist is" (range (print "range-of-listlen" listlen)))
+                    permed (print "work-on-permutations" (permutations mylist))
+                    (assert
+                        (= (len permed) (! listlen))
+                        ;; ensure we didn't produce any permutations that have
+                        ;; repeated elements in them, which would indicate that
+                        ;; the permutation function misbehaved
+                        (all-in-list (map no_repeats permed))
+                        (no_repeats permed)
+                    )
+                )
+            )
+            (print "reverse-range-N" (reverse (range N)))
+            1
+        )
+        (deep= (permutations 0) (list 0))
+        0
+    )
+)
+
+(defun no_repeats_inner ((first . remainder))
+    (if remainder
+        (if (deep= first (f remainder))
+            0
+            (no_repeats_inner remainder)
+        )
+        1
+    )
+)
+
+(defun no_repeats (mylist)
+    (if (print "sort-input" mylist)
+        (no_repeats_inner (sort (lambda (a b) (= (print "nri" (deep_compare (print "dca" a) (print "dcb" b))) -1)) mylist))
+        1
+    )
+)
+

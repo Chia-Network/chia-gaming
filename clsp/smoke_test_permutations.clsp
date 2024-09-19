@@ -1,0 +1,7 @@
+(include *standard-cl-23*)
+(import std.map)
+(import std.prepend)
+(import std.print)
+(import std.permutations)
+
+(export (X) (permutations X))

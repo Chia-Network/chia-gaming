@@ -1,0 +1,210 @@
+body {
+    overflow: hidden;
+    font-size: x-large;
+}
+
+#heading {
+    display: inline-block;
+}
+
+#container {
+    position: relative;
+    width: 300vw;
+    height: 85vw;
+    overflow: hidden;
+}
+
+#app {
+    top: 0;
+    left: 22vw;
+    display: inline-block;
+    margin: 0;
+    position: absolute;
+    padding: 0;
+    width: 78vw;
+    height: 85vh;
+    background: #ccc;
+}
+
+#info {
+    left: 0;
+    top: 0;
+    display: inline-block;
+    margin: 0;
+    position: absolute;
+    width: 20vw;
+    height: 85vh;
+
+}
+
+.info-auto {
+    background: #54b166;
+}
+
+.info-manual {
+    background: #bbb;
+}
+
+#p1 {
+    display: inline-block;
+    top: 0;
+    margin: 0;
+    position: relative;
+    height: 80vh;
+    width: 36vw;
+    background: #fcc;
+}
+
+#p2 {
+    display: inline-block;
+    top: 0;
+    margin: 0;
+    margin-top: 1rem;
+    position: relative;
+    height: 80vh;
+    width: 36vw;
+    background: #cfc;
+}
+
+.cardspan {
+    margin-left: 0.5em;
+    border: 1px solid black;
+}
+
+#p1frame {
+    display: block;
+    position: relative;
+    background: #fcc;
+    left: 0;
+    top: 0;
+    width: 36vw;
+    height: 80vh;
+}
+
+#p2frame {
+    display: block;
+    position: relative;
+    background: #cfc;
+    left: 0;
+    top: 0;
+    width: 36vw;
+    height: 80vh;
+}
+
+#player-heading {
+    margin: 0;
+}
+
+.player-heading-wait {
+    color: darkblue;
+}
+
+#player-info {
+    position: relative;
+}
+
+.player-attr {
+    margin-left: 1em;
+    background: #ddffdd;
+    padding: 0.25em;
+    border: 1px solid black;
+    
+    box-sizing: border-box;
+    position: relative;
+    display: inline-block;
+}
+
+#player-body {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: medium;
+    overflow-y: auto;
+}
+
+.card {
+    display: inline-block;
+    width: 3rem;
+    height: 5rem;
+    box-sizing: border-box;
+    background: white;
+    border: 1px solid black;
+    border-radius: 0.5em;
+    font-size: 2rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    cursor: pointer;
+}
+
+.selected_true {
+    background: #aca !important;
+}
+
+.card_bot {
+    width: 100%;
+    text-align: right;
+}
+
+.suit2 {
+    color: red;
+}
+
+.suit4 {
+    color: red;
+}
+
+.sent_picks_true {
+    display: none;
+}
+
+#player-info {
+    display: block;
+    position: relative;
+    overflow: auto;
+    background: #ccf;
+    border: 1px solid black;
+}
+
+.player-info-false {
+    height: 2rem;
+}
+
+.player_info-true {
+    height: 12rem;
+}
+
+.outcome-heading {
+    font-weight: 900;
+    font-size: 1.5rem;
+}
+
+#outcome-line-1 {
+    font-size: 1.2rem;
+}
+
+#outcome-line-2 {
+    font-size: 1.2rem;
+    margin-bottom: 0.5rem;
+}
+
+.winner--1 {
+    color: red;
+}
+
+.winner-1 {
+    color: green;
+}
+
+.winner-0 {
+    color: #333;
+}
+
+#card-choices-end-label {
+    margin-top: 0.25em;
+    font-size: 1.1em;
+    font-weight: 900;
+}
+
+#other-choices-end-label {
+    margin-top: 0.25em;
+    font-size: 1.1em;
+    font-weight: 900;
+}

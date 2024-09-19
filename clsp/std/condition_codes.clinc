@@ -1,0 +1,47 @@
+; See chia/types/condition_opcodes.py
+
+(defconst AGG_SIG_UNSAFE 49)
+(defconst AGG_SIG_ME 50)
+
+; the conditions below reserve coin amounts and have to be accounted for in output totals
+
+(defconst CREATE_COIN 51)
+(defconst RESERVE_FEE 52)
+
+; the conditions below deal with announcements, for inter-coin communication
+
+; coin announcements
+(defconst CREATE_COIN_ANNOUNCEMENT 60)
+(defconst ASSERT_COIN_ANNOUNCEMENT 61)
+
+; puzzle announcements
+(defconst CREATE_PUZZLE_ANNOUNCEMENT 62)
+(defconst ASSERT_PUZZLE_ANNOUNCEMENT 63)
+
+; the conditions below let coins inquire about themselves
+
+(defconst ASSERT_MY_COIN_ID 70)
+(defconst ASSERT_MY_PARENT_ID 71)
+(defconst ASSERT_MY_PUZZLEHASH 72)
+(defconst ASSERT_MY_AMOUNT 73)
+
+; the conditions below ensure that we're "far enough" in the future
+
+; wall-clock time
+(defconst ASSERT_SECONDS_RELATIVE 80)
+(defconst ASSERT_SECONDS_ABSOLUTE 81)
+
+; block index
+(defconst ASSERT_HEIGHT_RELATIVE 82)
+(defconst ASSERT_HEIGHT_ABSOLUTE 83)
+
+; wall-clock time
+(defconst ASSERT_BEFORE_SECONDS_RELATIVE 84)
+(defconst ASSERT_BEFORE_SECONDS_ABSOLUTE 85)
+
+; block index
+(defconst ASSERT_BEFORE_HEIGHT_RELATIVE 86)
+(defconst ASSERT_BEFORE_HEIGHT_ABSOLUTE 87)
+
+; A condition that is always true and always ignore all arguments
+(defconst REMARK 1)

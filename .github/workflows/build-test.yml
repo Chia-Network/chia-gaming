@@ -1,0 +1,130 @@
+# Thanks: clvm_rs' github actions.
+name: Build
+
+on:
+  push:
+    branches:
+      - base
+      - dev
+  release:
+    types: [published]
+  pull_request:
+    branches:
+      - '**'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build_and_test:
+    name: Build code on ${{ matrix.os }} py-${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        python: [3.8, 3.9, '3.10', 3.11]
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - uses: actions/setup-python@v4
+      name: Install Python ${{ matrix.python }}
+      with:
+        python-version: ${{ matrix.python }}
+
+    - name: Update pip
+      run: |
+          python -m pip install --upgrade pip
+
+    - name: Set up rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+
+  fmt:
+    runs-on: ubuntu-20.04
+    name: cargo fmt
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            override: true
+            components: rustfmt, clippy
+      - name: fmt
+        run: cargo fmt -- --files-with-diff --check
+
+  clippy:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+          override: true
+      - name: clippy
+        run: |
+          cargo clippy --all --features=sim-tests,simulator -- -D warnings
+          cargo check --features=sim-tests,simulator --tests
+      - uses: giraffate/clippy-action@v1
+        with:
+          reporter: 'github-pr-review'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  unit_tests:
+    runs-on: ubuntu-20.04
+    name: Unit tests
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            components: rustfmt, clippy
+      - name: cargo test
+        run: |
+          python -m pip install chia-blockchain
+          # Try tests without sim-tests to ensure we're tracking build failures in that
+          # configuration.  Also it's a lot shorter.
+          cargo test
+          cargo test --features=sim-tests
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+      - name: Run for coverage
+        run: |
+          sudo apt-get update
+          sudo apt-get install lcov -y
+          rustup component add llvm-tools-preview
+          cargo install grcov
+          export RUSTFLAGS="-Cinstrument-coverage"
+          export LLVM_PROFILE_FILE=$(pwd)/target/clvm_tools_rs-%p-%m.profraw
+          export CARGO_TARGET_DIR=$(pwd)/target
+          python -m venv venv
+          source venv/bin/activate
+          pip install chia-blockchain
+          cargo test --release --workspace --features=sim-tests
+          grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
+          python -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
+      - name: Upload to Coveralls
+        uses: coverallsapp/github-action@v2
+        if: always()
+        env:
+          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+        with:
+          path-to-lcov: './lcov.info'

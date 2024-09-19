@@ -1,0 +1,6 @@
+(defun make_card (val)
+    (assign
+        (rank . suit) (divmod val 4)
+        (list (+ 2 rank) (+ 1 suit))
+    )
+)
