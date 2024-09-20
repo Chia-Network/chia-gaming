@@ -46,4 +46,8 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '16.x'
+      - name: yarn install
+        run: cd wasm/tests && yarn install
+
+      - name: wasm tests
         run: cd wasm/tests && yarn test
