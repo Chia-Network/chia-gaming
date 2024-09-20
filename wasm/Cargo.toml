@@ -1,0 +1,26 @@
+[package]
+name = "chia_gaming_wasm"
+version = "0.1.0"
+edition = "2018"
+authors = ["Art Yerkes <art.yerkes@gmail.com>"]
+description = "tools for working with chialisp language; compiler, repl, python and wasm bindings"
+homepage = "https://prozacchiwawa.github.io/clvm_tools_rs/"
+readme = "README.md"
+repository = "https://github.com/Chia-Network/clvm_tools_rs"
+license = "MIT"
+keywords = ["chia", "chialisp", "clvm"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "chia_gaming_wasm"
+crate-type = ["cdylib"]
+path = "src/mod.rs"
+
+[dependencies]
+chia_gaming = { path= "..", features = [] }
+clvmr = { version = "0.3.0", features = ["pre-eval"] }
+wasm-bindgen = "=0.2.83"
+wasm-bindgen-test = "=0.3.25"
+js-sys = "0.3.60"
+num-bigint = "0.4.0"
+num-traits = "0.2.15"

@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 sim-tests = ["dep:pyo3"]
 simulator = ["dep:pyo3"]
+server = ["dep:tokio","dep:salvo","dep:exec"]
 
 [dependencies]
 clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "ec75759377791c9b785123d2d3e2457d08ac6621" }
@@ -26,18 +27,19 @@ sha2 = "0.10.8"
 indoc = "2.0.5"
 serde = "1.0.203"
 hex = "0.4.3"
-salvo = "0.64.0"
-tokio = { version = "1", features = ["macros"] }
+salvo = { version = "0.64.0", optional = true }
+tokio = { version = "1", features = ["macros"], optional = true }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 ctor = "0.2.8"
 log = "0.4.22"
+exec = { version = "0.3.1", optional = true }
 env_logger = "0.11.3"
-exec = "0.3.1"
 pyo3 = { version = "0.20.0", features = ["auto-initialize"], optional = true }
 
 [dev-dependencies]
 bls12_381 = { version = "=0.8.0", features = ["experimental"] }
+exec = "0.3.1"
 
 [build-dependencies]
 serde = "1.0.203"
@@ -52,4 +54,4 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "chia-gaming"
 path = "src/cmd/main.rs"
-required-features = ["simulator"]
+required-features = ["simulator","server"]
