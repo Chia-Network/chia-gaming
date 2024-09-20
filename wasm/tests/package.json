@@ -28,6 +28,9 @@
     "starter",
     "es6"
   ],
+  "resolutions": {
+    "@babel/traverse": "^7.23.2"
+  },
   "devDependencies": {
     "@babel/cli": "^7.22.9",
     "@babel/core": "^7.22.10",
