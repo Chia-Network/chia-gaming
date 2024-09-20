@@ -235,6 +235,17 @@ fn test_play_calpoker_on_chain_after_2_moves_p1() {
     debug!("play_result {test4:?}");
 }
 
+#[cfg(feature = "sim-tests")]
+#[test]
+fn test_play_calpoker_end_game_reward() {
+    let mut allocator = AllocEncoder::new();
+    let mut moves = test_moves_1(&mut allocator).to_vec();
+    moves.push(GameAction::Accept(1));
+    moves.push(GameAction::Shutdown(0, Amount::new(200)));
+    debug!("running moves {moves:?}");
+    let game_action_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+}
+
 // Bram: slashing tests
 //
 // I think this is a decent list of slashing tests: Alice attempts to give

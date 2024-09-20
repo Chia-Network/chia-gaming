@@ -35,6 +35,10 @@ pub enum GameAction {
     FakeMove(usize, NodePtr, Vec<u8>),
     /// Go on chain
     GoOnChain(usize),
+    /// Accept
+    Accept(usize),
+    /// Shut down
+    Shutdown(usize, Amount),
 }
 
 impl GameAction {
@@ -53,6 +57,8 @@ pub enum GameActionResult {
     MoveResult(NodePtr, Vec<u8>, Option<ReadableMove>, Hash),
     BrokenMove,
     MoveToOnChain,
+    Accepted,
+    Shutdown,
 }
 
 #[cfg(feature = "sim-tests")]

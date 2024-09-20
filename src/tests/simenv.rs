@@ -361,6 +361,35 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 self.on_chain = OnChainState::OnChain(game_coins);
                 Ok(GameActionResult::MoveToOnChain)
             }
+            GameAction::Accept(player) => {
+                let game_id = self.parties.game_id.clone();
+                let (signatures, amount) =
+                    self.parties.player(*player).ch.send_potato_accept(
+                        &mut self.env,
+                        &game_id
+                    )?;
+
+                let spend = self.parties.player(*player ^ 1).ch.received_potato_accept(
+                    &mut self.env,
+                    &signatures,
+                    &game_id
+                )?;
+
+                self.parties
+                    .update_channel_coin_after_receive(*player ^ 1, &spend)?;
+
+                Ok(GameActionResult::Accepted)
+            }
+            GameAction::Shutdown(player, amount) => {
+                let target_conditions = [
+                    ()
+                ].to_clvm(self.env.allocator).into_gen()?;
+                let spend = self.parties.player(*player).ch.send_potato_clean_shutdown(&mut self.env, target_conditions)?;
+
+                self.parties.player(*player ^ 1).ch.received_potato_clean_shutdown(&mut self.env, &spend.signature, target_conditions)?;
+
+                Ok(GameActionResult::Shutdown)
+            }
             _ => {
                 todo!();
             }

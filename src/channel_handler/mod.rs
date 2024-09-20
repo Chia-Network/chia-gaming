@@ -919,6 +919,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
+        debug!("SEND_POTATO_CLEAN_SHUTDOWN");
         assert!(self.have_potato);
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
@@ -960,6 +961,7 @@ impl ChannelHandler {
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
+        debug!("RECEIVED_POTATO_CLEAN_SHUTDOWN");
         let aggregate_public_key = self.get_aggregate_channel_public_key();
 
         assert!(!self.have_potato);
