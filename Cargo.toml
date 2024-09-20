@@ -52,4 +52,4 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "chia-gaming"
 path = "src/cmd/main.rs"
-required-features = ["simulator"]
+required-features = ["simulator","server"]
