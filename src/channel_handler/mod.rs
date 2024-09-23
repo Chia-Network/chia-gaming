@@ -11,6 +11,7 @@ use log::debug;
 use rand::prelude::*;
 
 use clvm_traits::ToClvm;
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvmr::allocator::NodePtr;
 
 use crate::channel_handler::types::{
@@ -912,6 +913,23 @@ impl ChannelHandler {
         })
     }
 
+    pub fn state_channel_coin_solution_and_signature<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+        conditions: NodePtr,
+    ) -> Result<(NodePtr, Aggsig), Error> {
+        let aggregate_public_key = self.get_aggregate_channel_public_key();
+        let spend = self.state_channel_coin();
+        let channel_coin_spend = spend.get_solution_and_signature_from_conditions(
+            env,
+            &self.private_keys.my_channel_coin_private_key,
+            &aggregate_public_key,
+            conditions,
+        )?;
+
+        Ok((channel_coin_spend.solution, channel_coin_spend.signature))
+    }
+
     /// Uses the channel coin key to post standard format coin generation to the
     /// real blockchain via a Spend.
     pub fn send_potato_clean_shutdown<R: Rng>(
@@ -931,28 +949,13 @@ impl ChannelHandler {
             conditions,
         )?;
 
+        debug!("send_potato_clean_shutdown {}", disassemble(env.allocator.allocator(), channel_coin_spend.solution, None));
+
         Ok(Spend {
             solution: Program::from_nodeptr(env.allocator, channel_coin_spend.solution)?,
             signature: channel_coin_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
-    }
-
-    pub fn state_channel_coin_solution_and_signature<R: Rng>(
-        &self,
-        env: &mut ChannelHandlerEnv<R>,
-        conditions: NodePtr,
-    ) -> Result<(NodePtr, Aggsig), Error> {
-        let aggregate_public_key = self.get_aggregate_channel_public_key();
-        let spend = self.state_channel_coin();
-        let channel_coin_spend = spend.get_solution_and_signature_from_conditions(
-            env,
-            &self.private_keys.my_channel_coin_private_key,
-            &aggregate_public_key,
-            conditions,
-        )?;
-
-        Ok((channel_coin_spend.solution, channel_coin_spend.signature))
     }
 
     pub fn received_potato_clean_shutdown<R: Rng>(
@@ -970,6 +973,8 @@ impl ChannelHandler {
             their_channel_half_signature,
             conditions,
         )?;
+
+        debug!("received_potato_clean_shutdown {}", disassemble(env.allocator.allocator(), channel_spend.solution, None));
 
         Ok(Spend {
             solution: Program::from_nodeptr(env.allocator, channel_spend.solution)?,

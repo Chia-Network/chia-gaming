@@ -378,15 +378,26 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 self.parties
                     .update_channel_coin_after_receive(*player ^ 1, &spend)?;
 
-                Ok(GameActionResult::Accepted)
+                Ok(GameActionResult::Accepted(amount))
             }
-            GameAction::Shutdown(player, amount) => {
-                let target_conditions = [
-                    ()
-                ].to_clvm(self.env.allocator).into_gen()?;
-                let spend = self.parties.player(*player).ch.send_potato_clean_shutdown(&mut self.env, target_conditions)?;
+            GameAction::Shutdown(player, target_conditions) => {
+                let spend = self.parties.player(*player).ch.send_potato_clean_shutdown(&mut self.env, *target_conditions)?;
 
-                self.parties.player(*player ^ 1).ch.received_potato_clean_shutdown(&mut self.env, &spend.signature, target_conditions)?;
+                let full_spend = self.parties.player(*player ^ 1).ch.received_potato_clean_shutdown(&mut self.env, &spend.signature, *target_conditions)?;
+
+                // The shutdown gives a spend, which we need to do here.
+                let channel_coin = self.parties.player(*player).ch.state_channel_coin().coin_string();
+
+                let full_spend_sol = full_spend.solution.to_nodeptr(self.env.allocator).unwrap();
+                debug!("solution in full spend: {}", disassemble(self.env.allocator.allocator(), full_spend_sol, None));
+
+                let included = self.simulator.push_tx(self.env.allocator, &[CoinSpend {
+                    coin: channel_coin.clone(),
+                    bundle: full_spend,
+                }]).unwrap();
+
+                debug!("included {included:?}");
+                assert_eq!(included.code, 1);
 
                 Ok(GameActionResult::Shutdown)
             }

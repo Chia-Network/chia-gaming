@@ -38,7 +38,7 @@ pub enum GameAction {
     /// Accept
     Accept(usize),
     /// Shut down
-    Shutdown(usize, Amount),
+    Shutdown(usize, NodePtr),
 }
 
 impl GameAction {
@@ -57,7 +57,7 @@ pub enum GameActionResult {
     MoveResult(NodePtr, Vec<u8>, Option<ReadableMove>, Hash),
     BrokenMove,
     MoveToOnChain,
-    Accepted,
+    Accepted(Amount),
     Shutdown,
 }
 
