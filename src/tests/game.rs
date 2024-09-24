@@ -17,8 +17,9 @@ use crate::channel_handler::types::{ChannelHandlerEnv, PrintableGameStartInfo};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
 };
+use crate::common::types::Amount;
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Amount, CoinString, Error, IntoErr, Timeout};
+use crate::common::types::{CoinString, Error, IntoErr, Timeout};
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::Simulator;
