@@ -386,14 +386,25 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 let full_spend = self.parties.player(*player ^ 1).ch.received_potato_clean_shutdown(&mut self.env, &spend.signature, *target_conditions)?;
 
                 // The shutdown gives a spend, which we need to do here.
-                let channel_coin = self.parties.player(*player).ch.state_channel_coin().coin_string();
+                let channel_coin = self.parties.player(*player).ch.state_channel_coin().coin_string().clone();
 
-                let full_spend_sol = full_spend.solution.to_nodeptr(self.env.allocator).unwrap();
+                let full_spend_sol = full_spend.solution;
                 debug!("solution in full spend: {}", disassemble(self.env.allocator.allocator(), full_spend_sol, None));
 
+                let channel_puzzle_public_key = self.parties.player(*player).ch.get_aggregate_channel_public_key();
+                let puzzle = puzzle_for_synthetic_public_key(
+                    self.env.allocator,
+                    &self.env.standard_puzzle,
+                    &channel_puzzle_public_key,
+                )?;
+                let solution = Program::from_nodeptr(self.env.allocator, full_spend.solution)?;
                 let included = self.simulator.push_tx(self.env.allocator, &[CoinSpend {
-                    coin: channel_coin.clone(),
-                    bundle: full_spend,
+                    coin: channel_coin,
+                    bundle: Spend {
+                        solution,
+                        puzzle,
+                        signature: full_spend.signature.clone()
+                    }
                 }]).unwrap();
 
                 debug!("included {included:?}");

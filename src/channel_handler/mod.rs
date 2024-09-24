@@ -963,7 +963,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
-    ) -> Result<Spend, Error> {
+    ) -> Result<BrokenOutCoinSpendInfo, Error> {
         debug!("RECEIVED_POTATO_CLEAN_SHUTDOWN");
         let aggregate_public_key = self.get_aggregate_channel_public_key();
 
@@ -976,11 +976,7 @@ impl ChannelHandler {
 
         debug!("received_potato_clean_shutdown {}", disassemble(env.allocator.allocator(), channel_spend.solution, None));
 
-        Ok(Spend {
-            solution: Program::from_nodeptr(env.allocator, channel_spend.solution)?,
-            signature: channel_spend.signature,
-            puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
-        })
+        Ok(channel_spend)
     }
 
     fn break_out_conditions_for_spent_coin<R: Rng>(
