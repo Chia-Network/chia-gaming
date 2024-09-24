@@ -10,8 +10,8 @@ use log::debug;
 
 use rand::prelude::*;
 
-use clvm_traits::ToClvm;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
 
 use crate::channel_handler::types::{
@@ -949,7 +949,10 @@ impl ChannelHandler {
             conditions,
         )?;
 
-        debug!("send_potato_clean_shutdown {}", disassemble(env.allocator.allocator(), channel_coin_spend.solution, None));
+        debug!(
+            "send_potato_clean_shutdown {}",
+            disassemble(env.allocator.allocator(), channel_coin_spend.solution, None)
+        );
 
         Ok(Spend {
             solution: Program::from_nodeptr(env.allocator, channel_coin_spend.solution)?,
@@ -974,7 +977,10 @@ impl ChannelHandler {
             conditions,
         )?;
 
-        debug!("received_potato_clean_shutdown {}", disassemble(env.allocator.allocator(), channel_spend.solution, None));
+        debug!(
+            "received_potato_clean_shutdown {}",
+            disassemble(env.allocator.allocator(), channel_spend.solution, None)
+        );
 
         Ok(channel_spend)
     }

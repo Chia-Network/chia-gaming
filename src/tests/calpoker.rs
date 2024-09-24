@@ -249,9 +249,12 @@ fn test_play_calpoker_end_game_reward() {
 
     let mut moves = test_moves_1(&mut allocator).to_vec();
     moves.push(GameAction::Accept(1));
-    let win_conditions = [
-        (CREATE_COIN, (output_identity.puzzle_hash.clone(), (Amount::new(200), ())))
-    ].to_clvm(&mut allocator).unwrap();
+    let win_conditions = [(
+        CREATE_COIN,
+        (output_identity.puzzle_hash.clone(), (Amount::new(200), ())),
+    )]
+    .to_clvm(&mut allocator)
+    .unwrap();
     moves.push(GameAction::Shutdown(0, win_conditions));
 
     debug!("running moves {moves:?}");
