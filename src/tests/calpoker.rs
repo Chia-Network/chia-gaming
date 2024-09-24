@@ -258,7 +258,7 @@ fn test_play_calpoker_end_game_reward() {
     moves.push(GameAction::Shutdown(0, win_conditions));
 
     debug!("running moves {moves:?}");
-    let game_action_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+    let _game_action_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
 }
 
 // Bram: slashing tests

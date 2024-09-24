@@ -968,8 +968,6 @@ impl ChannelHandler {
         conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         debug!("RECEIVED_POTATO_CLEAN_SHUTDOWN");
-        let aggregate_public_key = self.get_aggregate_channel_public_key();
-
         assert!(!self.have_potato);
         let channel_spend = self.verify_channel_coin_from_peer_signatures(
             env,
