@@ -1,5 +1,6 @@
 use std::fs::read_to_string;
 
+use log::debug;
 use num_bigint::{BigInt, Sign};
 
 use chia_bls;
@@ -430,6 +431,7 @@ pub fn standard_solution_partial(
     let quoted_conds = conditions.to_quoted_program(allocator)?;
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
+    debug!("standard signing with parent coin {parent_coin:?}");
     let coin_agg_sig_me_message = agg_sig_me_message(
         quoted_conds_hash.bytes(),
         parent_coin,
@@ -454,6 +456,7 @@ pub fn standard_solution_partial(
     for cond in conds.iter() {
         match cond {
             CoinCondition::CreateCoin(_, _) => {
+                debug!("adding signature based on create coin: {aggregate_public_key:?} {coin_agg_sig_me_message:?}");
                 add_signature(
                     &mut aggregated_signature,
                     if partial {

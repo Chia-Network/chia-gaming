@@ -6,7 +6,9 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, Sha256Input};
+use crate::common::constants::CREATE_COIN;
+use crate::common::standard_coin::ChiaIdentity;
+use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Sha256Input};
 use crate::games::calpoker::decode_calpoker_readable;
 use crate::games::calpoker::decode_readable_card_choices;
 use crate::games::calpoker::make_cards;
@@ -233,6 +235,30 @@ fn test_play_calpoker_on_chain_after_2_moves_p1() {
     assert!(test4.is_err());
     assert!(format!("{:?}", test4).contains("from the past"));
     debug!("play_result {test4:?}");
+}
+
+#[cfg(feature = "sim-tests")]
+#[test]
+fn test_play_calpoker_end_game_reward() {
+    let mut allocator = AllocEncoder::new();
+
+    let seed: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed);
+    let output_private_key: PrivateKey = rng.gen();
+    let output_identity = ChiaIdentity::new(&mut allocator, output_private_key).unwrap();
+
+    let mut moves = test_moves_1(&mut allocator).to_vec();
+    moves.push(GameAction::Accept(1));
+    let win_conditions = [(
+        CREATE_COIN,
+        (output_identity.puzzle_hash.clone(), (Amount::new(200), ())),
+    )]
+    .to_clvm(&mut allocator)
+    .unwrap();
+    moves.push(GameAction::Shutdown(0, win_conditions));
+
+    debug!("running moves {moves:?}");
+    let _game_action_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
 }
 
 // Bram: slashing tests
