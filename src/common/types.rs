@@ -568,6 +568,22 @@ pub enum Error {
     Channel(String),
 }
 
+#[derive(Serialize, Deserialize)]
+struct SerializedError {
+    error: String
+}
+
+impl Serialize for Error {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        SerializedError {
+            error: format!("{self:?}")
+        }.serialize(serializer)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Node(pub NodePtr);
 

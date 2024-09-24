@@ -19,6 +19,12 @@ path = "src/mod.rs"
 [dependencies]
 chia_gaming = { path= "..", features = [] }
 clvmr = { version = "0.3.0", features = ["pre-eval"] }
+serde = "1.0.203"
+serde_json = "1.0"
+serde-wasm-bindgen = "0.4"
+hex = "0.4.3"
+rand = "0.8.5"
+rand_chacha = "0.3.1"
 wasm-bindgen = "=0.2.83"
 wasm-bindgen-test = "=0.3.25"
 js-sys = "0.3.60"
