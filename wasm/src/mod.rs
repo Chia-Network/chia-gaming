@@ -84,7 +84,13 @@ struct JsGameCradleConfig {
 }
 
 fn convert_game_types(collection: &BTreeMap<String, String>) -> Result<BTreeMap<GameType, Program>, JsValue> {
-    todo!();
+    let mut result = BTreeMap::new();
+    for (name, hex) in collection.iter() {
+        let name_data = GameType(name.bytes().collect());
+        let byte_data = hex::decode(&hex).into_js()?;
+        result.insert(name_data, Program::from_bytes(&byte_data));
+    }
+    Ok(result)
 }
 
 // return a collection of clvm factory programs indexed by byte strings used to identify
@@ -163,21 +169,17 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
 
     let random_private_key: PrivateKey = rng.gen();
     let mut identity = ChiaIdentity::new(&mut allocator, random_private_key).into_js()?;
-    return Ok(500);
     let synchronous_game_cradle_config = get_game_config(&mut allocator, &mut identity, js_config.clone())?;
-    return Ok(600);
     let game_cradle = SynchronousGameCradle::new(
         &mut rng,
         synchronous_game_cradle_config
     );
-    return Ok(700);
     let cradle = JsCradle {
         allocator,
         rng,
         cradle: game_cradle
     };
 
-    return Ok(800);
     insert_cradle(new_id, cradle);
 
     Ok(new_id)

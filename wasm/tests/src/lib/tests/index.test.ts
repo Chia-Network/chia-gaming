@@ -18,7 +18,7 @@ it('loads', async () => {
     preset_file("resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex");
     preset_file("clsp/unroll/unroll_meta_puzzle.hex");
     preset_file("clsp/unroll/unroll_puzzle_state_channel_unrolling.hex");
-    let calpoker_hex = fs.readFileSync(rooted('clsp/calpoker_include_calpoker_factory.hex'));
+    let calpoker_hex = fs.readFileSync(rooted('clsp/calpoker_include_calpoker_factory.hex'),'utf8');
     let cradle = create_game_cradle({
         seed: "3579",
         game_types: {
