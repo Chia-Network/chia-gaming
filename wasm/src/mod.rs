@@ -14,7 +14,7 @@ use chia_gaming::log::wasm_init;
 use chia_gaming::common::types::{AllocEncoder, Amount, Error, Hash, PrivateKey, Program, PuzzleHash, Timeout};
 use chia_gaming::potato_handler::GameType;
 use chia_gaming::peer_container::{SynchronousGameCradle, SynchronousGameCradleConfig};
-use chia_gaming::common::standard_coin::ChiaIdentity;
+use chia_gaming::common::standard_coin::{ChiaIdentity, wasm_deposit_file};
 
 #[cfg(feature = "wee_alloc")]
 #[global_allocator]
@@ -43,6 +43,11 @@ thread_local! {
 #[wasm_bindgen]
 pub fn init() {
     wasm_init();
+}
+
+#[wasm_bindgen]
+pub fn deposit_file(name: &str, data: &str) {
+    wasm_deposit_file(name, data);
 }
 
 fn get_next_id() -> i32 {
