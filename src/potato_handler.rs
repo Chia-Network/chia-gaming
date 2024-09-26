@@ -15,10 +15,12 @@ use crate::channel_handler::types::{
     PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, puzzle_for_synthetic_public_key};
+use crate::common::standard_coin::{
+    private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
+};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID,
+    Hash, IntoErr, Node, Program, PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -205,7 +207,11 @@ pub trait SpendWalletReceiver<
 /// Unroll time wallet interface.
 pub trait WalletSpendInterface {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend, parent: Option<&CoinString>) -> Result<(), Error>;
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &Spend,
+        parent: Option<&CoinString>,
+    ) -> Result<(), Error>;
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
     fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error>;
@@ -346,7 +352,7 @@ pub enum HandshakeState {
     PostStepF(Box<HandshakeStepInfo>),
     Finished(Box<HandshakeStepWithSpend>),
     WaitingForShutdown(CoinString, CoinString),
-    Completed
+    Completed,
 }
 
 pub trait PacketSender {
@@ -682,41 +688,34 @@ impl PotatoHandler {
                     ));
                 }
 
-                let my_reward = CoinString::from_parts(
-                    &coin.to_coin_id(),
-                    &want_puzzle_hash,
-                    &want_amount
-                );
+                let my_reward =
+                    CoinString::from_parts(&coin.to_coin_id(), &want_puzzle_hash, &want_amount);
                 system_interface.register_coin(&my_reward, &timeout)?;
 
                 system_interface.register_coin(&coin, &timeout)?;
-                let full_spend = ch.received_potato_clean_shutdown(
-                    env,
-                    &sig,
-                    clvm_conditions,
-                )?;
+                let full_spend = ch.received_potato_clean_shutdown(env, &sig, clvm_conditions)?;
 
-                let solution = Program::from_nodeptr(
-                    env.allocator,
-                    full_spend.solution
-                )?;
+                let solution = Program::from_nodeptr(env.allocator, full_spend.solution)?;
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
                 let puzzle = puzzle_for_synthetic_public_key(
                     env.allocator,
                     &env.standard_puzzle,
                     &channel_puzzle_public_key,
                 )?;
-                system_interface.spend_transaction_and_add_fee(&Spend {
-                    solution,
-                    puzzle,
-                    signature: full_spend.signature.clone()
-                }, Some(coin))?;
+                system_interface.spend_transaction_and_add_fee(
+                    &Spend {
+                        solution,
+                        puzzle,
+                        signature: full_spend.signature.clone(),
+                    },
+                    Some(coin),
+                )?;
 
                 // Expected reward coin is shutdown amount + puzzle hash of referee
                 // coin and parent is the reported reward coin.
                 return Ok(Some(HandshakeState::WaitingForShutdown(
                     my_reward,
-                    coin.clone()
+                    coin.clone(),
                 )));
             }
             _ => {
@@ -894,22 +893,24 @@ impl PotatoHandler {
                     let want_public_key = private_to_public_key(&ch.referee_private_key());
                     let want_puzzle_hash = puzzle_hash_for_pk(env.allocator, &want_public_key)?;
                     let want_amount = ch.clean_shutdown_amount();
-                    (ch.state_channel_coin().coin_string(), spend, want_puzzle_hash, want_amount)
+                    (
+                        ch.state_channel_coin().coin_string(),
+                        spend,
+                        want_puzzle_hash,
+                        want_amount,
+                    )
                 };
-
 
                 let my_reward = CoinString::from_parts(
                     &state_channel_coin.to_coin_id(),
                     &want_puzzle_hash,
-                    &want_amount
+                    &want_amount,
                 );
 
                 let (env, system_interface) = penv.env();
                 system_interface.register_coin(&my_reward, &timeout)?;
-                self.handshake_state = HandshakeState::WaitingForShutdown(
-                    my_reward,
-                    state_channel_coin.clone()
-                );
+                self.handshake_state =
+                    HandshakeState::WaitingForShutdown(my_reward, state_channel_coin.clone());
 
                 // If the state channel coin is spent, then we signal full shutdown.
                 let shutdown_condition_program = Program::from_nodeptr(env.allocator, conditions)?;

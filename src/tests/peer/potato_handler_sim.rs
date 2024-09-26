@@ -82,6 +82,12 @@ impl SimulatedWalletSpend {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SpendSpec {
+    spend: Spend,
+    parent: Option<CoinString>,
+}
+
 #[derive(Default)]
 pub struct SimulatedPeer {
     message_pipe: MessagePipe,
@@ -90,7 +96,7 @@ pub struct SimulatedPeer {
     channel_puzzle_hash: Option<PuzzleHash>,
 
     unfunded_offer: Option<SpendBundle>,
-    outbound_transactions: Vec<Spend>,
+    outbound_transactions: Vec<SpendSpec>,
 
     raw_messages: Vec<Vec<u8>>,
     messages: Vec<ReadableMove>,
@@ -183,9 +189,16 @@ impl SimulatedWalletSpend {
 
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &Spend,
+        parent: Option<&CoinString>,
+    ) -> Result<(), Error> {
         debug!("waiting to spend transaction");
-        self.outbound_transactions.push(bundle.clone());
+        self.outbound_transactions.push(SpendSpec {
+            spend: bundle.clone(),
+            parent: parent.cloned(),
+        });
         Ok(())
     }
     /// Coin should report its lifecycle until it gets spent, then should be

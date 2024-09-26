@@ -247,7 +247,11 @@ impl PacketSender for SynchronousGameCradleState {
 
 impl WalletSpendInterface for SynchronousGameCradleState {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, _bundle: &Spend, _parent: Option<&CoinString>) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        _bundle: &Spend,
+        _parent: Option<&CoinString>,
+    ) -> Result<(), Error> {
         todo!();
     }
     /// Coin should report its lifecycle until it gets spent, then should be
