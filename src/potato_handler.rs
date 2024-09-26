@@ -692,7 +692,7 @@ impl PotatoHandler {
                     CoinString::from_parts(&coin.to_coin_id(), &want_puzzle_hash, &want_amount);
                 system_interface.register_coin(&my_reward, &timeout)?;
 
-                system_interface.register_coin(&coin, &timeout)?;
+                system_interface.register_coin(coin, &timeout)?;
                 let full_spend = ch.received_potato_clean_shutdown(env, &sig, clvm_conditions)?;
 
                 let solution = Program::from_nodeptr(env.allocator, full_spend.solution)?;
