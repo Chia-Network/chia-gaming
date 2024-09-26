@@ -17,8 +17,8 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, Program,
-    PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GameID, Hash, IntoErr,
+    Node, Program, PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -271,7 +271,14 @@ pub trait FromLocalUI<
         G: 'a,
         R: 'a;
 
-    fn shut_down(&mut self) -> Result<(), Error>;
+    fn shut_down<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        condition: NodePtr,
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a;
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -306,7 +313,7 @@ pub enum PeerMessage {
     Move(GameID, MoveResult),
     Message(GameID, Vec<u8>),
     Accept(GameID, Amount, PotatoSignatures),
-    Shutdown(Aggsig),
+    Shutdown(PotatoSignatures, Program),
     RequestPotato(()),
     StartGames(PotatoSignatures, Vec<FlatGameStartInfo>),
 }
@@ -361,6 +368,7 @@ enum PotatoState {
 enum GameAction {
     Move(GameID, ReadableMove, Hash),
     Accept(GameID),
+    Shutdown(NodePtr),
 }
 
 /// Handle potato in flight when I request potato:
@@ -646,6 +654,37 @@ impl PotatoHandler {
                 }?;
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
+            PeerMessage::Shutdown(sigs, conditions) => {
+                let (env, system_interface) = penv.env();
+                let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
+                // conditions must have a reward coin targeted at our referee_public_key.
+                // this is how we'll know we're being paid.
+                let want_public_key = private_to_public_key(&ch.referee_private_key());
+                let want_puzzle_hash = puzzle_hash_for_pk(env.allocator, &want_public_key)?;
+                let want_amount = ch.clean_shutdown_amount();
+                let condition_list = CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
+                let found_conditions = condition_list.iter().any(|cond| {
+                    if let CoinCondition::CreateCoin(ph, amt) = cond {
+                        *ph == want_puzzle_hash && *amt >= want_amount
+                    } else {
+                        false
+                    }
+                });
+
+                if !found_conditions {
+                    return Err(Error::StrErr(
+                        "given conditions don't pay our referee puzzle hash what's expected"
+                            .to_string(),
+                    ));
+                }
+
+                let result = ch.received_potato_clean_shutdown(
+                    env,
+                    &sigs.my_channel_half_signature_peer,
+                    clvm_conditions,
+                )?;
+                self.have_potato = PotatoState::Present;
+            }
             _ => {
                 todo!("unhandled passthrough message {msg_envelope:?}");
             }
@@ -808,6 +847,15 @@ impl PotatoHandler {
                 self.have_potato = PotatoState::Absent;
 
                 Ok(true)
+            }
+            Some(GameAction::Shutdown(conditions)) => {
+                let spend = {
+                    let ch = self.channel_handler_mut()?;
+                    let (env, _) = penv.env();
+                    ch.send_potato_clean_shutdown(env, conditions)?
+                };
+
+                todo!();
             }
             None => Ok(false),
         }
@@ -1371,14 +1419,22 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         self.do_game_action(penv, GameAction::Accept(id.clone()))
     }
 
-    fn shut_down(&mut self) -> Result<(), Error> {
+    fn shut_down<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        conditions: NodePtr,
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a,
+    {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
             return Err(Error::StrErr(
                 "shut_down without finishing handshake".to_string(),
             ));
         }
 
-        todo!();
+        self.do_game_action(penv, GameAction::Shutdown(conditions))
     }
 }
 

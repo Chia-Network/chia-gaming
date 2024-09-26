@@ -52,12 +52,11 @@ pub fn hex_to_sexp(
 }
 
 pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, types::Error> {
-    let hex_data =
-        if let Some(data) = PRESET_FILES.with(|p| p.borrow().get(name).cloned()) {
-            data
-        } else {
-            read_to_string(name).into_gen()?
-        };
+    let hex_data = if let Some(data) = PRESET_FILES.with(|p| p.borrow().get(name).cloned()) {
+        data
+    } else {
+        read_to_string(name).into_gen()?
+    };
     let hex_sexp = hex_to_sexp(allocator, hex_data)?;
     Puzzle::from_nodeptr(allocator, hex_sexp)
 }

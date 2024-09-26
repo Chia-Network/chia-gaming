@@ -570,7 +570,7 @@ pub enum Error {
 
 #[derive(Serialize, Deserialize)]
 struct SerializedError {
-    error: String
+    error: String,
 }
 
 impl Serialize for Error {
@@ -579,8 +579,9 @@ impl Serialize for Error {
         S: Serializer,
     {
         SerializedError {
-            error: format!("{self:?}")
-        }.serialize(serializer)
+            error: format!("{self:?}"),
+        }
+        .serialize(serializer)
     }
 }
 
