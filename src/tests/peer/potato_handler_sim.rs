@@ -84,7 +84,9 @@ impl SimulatedWalletSpend {
 
 #[derive(Debug, Clone)]
 struct SpendSpec {
+    #[allow(dead_code)]
     spend: Spend,
+    #[allow(dead_code)]
     parent: Option<CoinString>,
 }
 

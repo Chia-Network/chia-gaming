@@ -58,7 +58,7 @@ pub enum GameActionResult {
     MoveResult(NodePtr, Vec<u8>, Option<ReadableMove>, Hash),
     BrokenMove,
     MoveToOnChain,
-    Accepted(Amount),
+    Accepted,
     Shutdown,
 }
 

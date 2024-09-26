@@ -19,8 +19,8 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID,
-    Hash, IntoErr, Node, Program, PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GameID, Hash, IntoErr,
+    Node, Program, PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -1582,7 +1582,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         }
 
         if let Some(reward) =
-            if let HandshakeState::WaitingForShutdown(reward, state) = &self.handshake_state {
+            if let HandshakeState::WaitingForShutdown(reward, _state) = &self.handshake_state {
                 Some(reward.clone())
             } else {
                 None
@@ -1616,7 +1616,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             }
         {
             if *coin_id == state_coin {
-                if let Some((parent, ph, amount)) = reward.to_parts() {
+                if let Some((_parent, _ph, amount)) = reward.to_parts() {
                     if amount == Amount::default() {
                         // 0 reward so spending the state channel coin means the game is over.
                         self.handshake_state = HandshakeState::Completed;
