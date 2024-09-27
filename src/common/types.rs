@@ -578,7 +578,6 @@ pub enum Error {
     BsonErr(bson::de::Error),
     JsonErr(serde_json::Error),
     HexErr(hex::FromHexError),
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     Channel(String),
 }
 

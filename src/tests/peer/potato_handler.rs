@@ -138,7 +138,7 @@ impl ToLocalUI for Pipe {
         Ok(())
     }
 
-    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(&mut self, _allocator: &mut AllocEncoder, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_moves.push((id.clone(), readable));
         Ok(())
     }
@@ -147,7 +147,7 @@ impl ToLocalUI for Pipe {
             .push((id.clone(), readable.to_vec()));
         Ok(())
     }
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(&mut self, _allocator: &mut AllocEncoder, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
         self.opponent_messages.push((id.clone(), readable));
         Ok(())
     }
