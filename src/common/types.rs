@@ -62,6 +62,14 @@ impl std::fmt::Debug for CoinString {
 }
 
 impl CoinString {
+    pub fn from_bytes(bytes: &[u8]) -> CoinString {
+        CoinString(bytes.to_vec())
+    }
+
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
     pub fn from_parts(parent: &CoinID, puzzle_hash: &PuzzleHash, amount: &Amount) -> CoinString {
         let mut allocator = AllocEncoder::new();
         let amount_clvm = amount.to_clvm(&mut allocator).unwrap();
@@ -365,6 +373,10 @@ impl GameID {
     pub fn from_bytes(s: &[u8]) -> GameID {
         GameID(s.to_vec())
     }
+
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 impl ToClvm<NodePtr> for GameID {
@@ -565,6 +577,8 @@ pub enum Error {
     BlsErr(chia_bls::Error),
     BsonErr(bson::de::Error),
     JsonErr(serde_json::Error),
+    HexErr(hex::FromHexError),
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     Channel(String),
 }
 
@@ -859,6 +873,12 @@ impl ErrToError for bson::de::Error {
 impl ErrToError for serde_json::Error {
     fn into_gen(self) -> Error {
         Error::JsonErr(self)
+    }
+}
+
+impl ErrToError for hex::FromHexError {
+    fn into_gen(self) -> Error {
+        Error::HexErr(self)
     }
 }
 
