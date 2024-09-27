@@ -234,7 +234,12 @@ impl BootstrapTowardWallet for SimulatedPeer {
 }
 
 impl ToLocalUI for SimulatedPeer {
-    fn opponent_moved(&mut self, _allocator: &mut AllocEncoder, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        _readable: ReadableMove,
+    ) -> Result<(), Error> {
         // We can record stuff here and check that we got what was expected, but there's
         // no effect on the game mechanics.
         Ok(())
@@ -243,7 +248,12 @@ impl ToLocalUI for SimulatedPeer {
         self.raw_messages.push(readable.to_vec());
         Ok(())
     }
-    fn game_message(&mut self, _allocator: &mut AllocEncoder, _id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error> {
         // Record for testing, but doens't affect the game.
         self.messages.push(readable);
         Ok(())
@@ -698,12 +708,22 @@ struct LocalTestUIReceiver {
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
-    fn opponent_moved(&mut self, _allocator: &mut AllocEncoder, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        _readable: ReadableMove,
+    ) -> Result<(), Error> {
         self.opponent_moved = true;
         Ok(())
     }
 
-    fn game_message(&mut self, _allocator: &mut AllocEncoder, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        _readable: ReadableMove,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
