@@ -1,4 +1,4 @@
-import { init, config_scaffold, create_game_cradle, deposit_file, opening_coin, idle } from '../../../../pkg/chia_gaming_wasm.js';
+import { init, config_scaffold, create_game_cradle, deposit_file, opening_coin, idle, chia_identity } from '../../../../pkg/chia_gaming_wasm.js';
 
 import * as fs from 'fs';
 import { resolve } from 'path';
@@ -23,6 +23,10 @@ it('loads', async () => {
     preset_file("clsp/unroll/unroll_meta_puzzle.hex");
     preset_file("clsp/unroll/unroll_puzzle_state_channel_unrolling.hex");
     preset_file("clsp/onchain/referee.hex");
+
+    let identity = chia_identity('test');
+    console.log(identity);
+
     let calpoker_hex = fs.readFileSync(rooted('clsp/calpoker_include_calpoker_factory.hex'),'utf8');
     const cradle = create_game_cradle({
         seed: "3579",

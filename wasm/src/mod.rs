@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use chia_gaming::log::wasm_init;
-use chia_gaming::common::types::{AllocEncoder, Amount, CoinSpend, CoinString, GameID, Hash, PrivateKey, Program, PuzzleHash, Spend, SpendBundle, Timeout, IntoErr};
+use chia_gaming::common::types::{AllocEncoder, Amount, CoinSpend, CoinString, GameID, Hash, PrivateKey, Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, IntoErr};
 use chia_gaming::common::types;
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
@@ -193,7 +193,7 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     Ok(new_id)
 }
 
-pub fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
+fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
 where
     F: FnOnce(&mut JsCradle) -> Result<T, types::Error>
 {
@@ -420,7 +420,7 @@ impl ToLocalUI for JsLocalUI {
     }
 
     fn going_on_chain(&mut self) -> Result<(), chia_gaming::common::types::Error> {
-        call_javascript_from_collection(&self.callbacks, "going_on_chain", |args_array| {
+        call_javascript_from_collection(&self.callbacks, "going_on_chain", |_args_array| {
             Ok(())
         })
     }
@@ -565,4 +565,38 @@ pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
         idle_result_to_js(&mut cradle.allocator, &idle_result)
     })
 
+}
+
+#[derive(Serialize, Deserialize)]
+struct JsChiaIdentity {
+    pub private_key: String,
+    pub synthetic_private_key: String,
+    pub public_key: String,
+    pub synthetic_public_key: String,
+    pub puzzle: String,
+    pub puzzle_hash: String,
+}
+
+impl From<ChiaIdentity> for JsChiaIdentity {
+    fn from(value: ChiaIdentity) -> JsChiaIdentity {
+        JsChiaIdentity {
+            private_key: hex::encode(&value.private_key.bytes()),
+            synthetic_private_key: hex::encode(&value.synthetic_private_key.bytes()),
+            public_key: hex::encode(&value.public_key.bytes()),
+            synthetic_public_key: hex::encode(&value.synthetic_public_key.bytes()),
+            puzzle: value.puzzle.to_hex(),
+            puzzle_hash: hex::encode(&value.puzzle_hash.bytes()),
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub fn chia_identity(seed: &str) -> Result<JsValue, JsValue> {
+    let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
+    let mut rng = ChaCha8Rng::from_seed(*hashed.bytes());
+    let mut allocator = AllocEncoder::new();
+    let private_key = rng.gen();
+    let identity = ChiaIdentity::new(&mut allocator, private_key).into_js()?;
+    let js_identity: JsChiaIdentity = identity.into();
+    serde_wasm_bindgen::to_value(&js_identity).into_js()
 }
