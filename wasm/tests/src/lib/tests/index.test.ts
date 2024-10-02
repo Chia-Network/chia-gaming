@@ -1,4 +1,4 @@
-import { init, config_scaffold, create_game_cradle, deposit_file, opening_coin, idle, chia_identity } from '../../../../pkg/chia_gaming_wasm.js';
+import { init, config_scaffold, create_game_cradle, deliver_message, deposit_file, opening_coin, idle, chia_identity } from '../../../../pkg/chia_gaming_wasm.js';
 
 import * as fs from 'fs';
 import { resolve } from 'path';
@@ -13,9 +13,85 @@ function preset_file(name: string) {
     deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
 }
 
-const fake_identity = "112233441122334411223344112233441122334411223344112233441122334411223344112233441122334411223344";
-const fake_reward_puzzle_hash = "1122334411223344112233441122334411223344112233441122334411223344";
-const fake_coin = fake_reward_puzzle_hash + fake_reward_puzzle_hash + "64";
+class ChiaGame {
+    waiting_messages: Array<string>;
+    private_key: string;
+    cradle: number;
+    have_potato: boolean;
+
+    constructor(env: any, seed: string, identity: any, have_potato: boolean, my_contribution: number, their_contribution: number) {
+        this.waiting_messages = [];
+        this.private_key = identity.private_key;
+        this.have_potato = have_potato;
+        this.cradle = create_game_cradle({
+            seed: seed,
+            game_types: env.game_types,
+            identity: identity.private_key,
+            have_potato: have_potato,
+            my_contribution: {amt: my_contribution},
+            their_contribution: {amt: their_contribution},
+            channel_timeout: env.timeout,
+            reward_puzzle_hash: identity.puzzle_hash,
+        });
+        console.log(`constructed ${have_potato}`);
+    }
+
+    deliver_message(msg: string) {
+        deliver_message(this.cradle, msg);
+    }
+
+    opening_coin(coin_string: string) {
+        opening_coin(this.cradle, coin_string);
+    }
+
+    quiet(): boolean {
+        return this.waiting_messages.length === 0;
+    }
+
+    outbound_messages(): Array<string> {
+        let w = this.waiting_messages;
+        this.waiting_messages = [];
+        return w;
+    }
+
+    idle(arg: any) : any {
+        let result = idle(this.cradle, arg);
+        console.log('idle', result);
+        this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
+        return result;
+    }
+}
+
+function all_quiet(cradles: Array<any>) {
+    for (let c = 0; c < 2; c++) {
+        if (!cradles[c].quiet()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function action_with_messages(cradle1: any, cradle2: any) {
+    let cradles = [cradle1, cradle2];
+
+    for (let c = 0; c < 2; c++) {
+        cradles[c].idle({});
+    }
+
+    while (!all_quiet(cradles)) {
+        for (let c = 0; c < 2; c++) {
+            let outbound = cradles[c].outbound_messages();
+            for (let i = 0; i < outbound.length; i++) {
+                console.log(`delivering message from cradle ${i}: ${outbound[i]}`);
+                cradles[c ^ 1].deliver_message(outbound[i]);
+            }
+        }
+
+        for (let c = 0; c < 2; c++) {
+            cradles[c].idle({});
+        }
+    }
+}
 
 it('loads', async () => {
     init();
@@ -23,26 +99,26 @@ it('loads', async () => {
     preset_file("clsp/unroll/unroll_meta_puzzle.hex");
     preset_file("clsp/unroll/unroll_puzzle_state_channel_unrolling.hex");
     preset_file("clsp/onchain/referee.hex");
-
-    let identity = chia_identity('test');
-    console.log(identity);
+    let identity1 = chia_identity('test1');
+    let identity2 = chia_identity('test2');
+    console.log(identity1, identity2);
 
     let calpoker_hex = fs.readFileSync(rooted('clsp/calpoker_include_calpoker_factory.hex'),'utf8');
-    const cradle = create_game_cradle({
-        seed: "3579",
+    let env = {
         game_types: {
             "calpoker": calpoker_hex
         },
-        identity: fake_identity,
-        have_potato: true,
-        my_contribution: {amt: 100},
-        their_contribution: {amt: 100},
-        channel_timeout: 99,
-        reward_puzzle_hash: fake_reward_puzzle_hash,
-    });
+        timeout: 99
+    };
 
-    opening_coin(cradle, fake_coin);
+    let fake_coin1 = identity1.puzzle_hash + identity1.puzzle_hash + '64';
+    let fake_coin2 = identity2.puzzle_hash + identity2.puzzle_hash + '64';
 
-    let idle_result = idle(cradle, {});
-    console.log(idle_result);
+    const cradle1 = new ChiaGame(env, "3579", identity1, true, 100, 100);
+    const cradle2 = new ChiaGame(env, "3589", identity2, false, 100, 100);
+
+    cradle1.opening_coin(fake_coin1);
+    cradle2.opening_coin(fake_coin2);
+
+    action_with_messages(cradle1, cradle2);
 });
