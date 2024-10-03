@@ -363,7 +363,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             }
             GameAction::Accept(player) => {
                 let game_id = self.parties.game_id.clone();
-                let (signatures, amount) = self
+                let (signatures, _amount) = self
                     .parties
                     .player(*player)
                     .ch
@@ -378,7 +378,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 self.parties
                     .update_channel_coin_after_receive(*player ^ 1, &spend)?;
 
-                Ok(GameActionResult::Accepted(amount))
+                Ok(GameActionResult::Accepted)
             }
             GameAction::Shutdown(player, target_conditions) => {
                 let spend = self
