@@ -28,6 +28,70 @@ use crate::map_m::map_m;
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
+#[wasm_bindgen(typescript_custom_section)]
+const TS_APPEND_CONTENT: &'static str = r#"
+export type Amount = {
+    "amt": number,
+};
+
+export type Spend = {
+    "puzzle": string,
+    "solution": string,
+    "signature": string
+};
+
+export type CoinSpend = {
+    "coin": string,
+    "bundle": Spend
+};
+
+export type SpendBundle = {
+    "spends": Array<CoinSpend>
+};
+
+export type IChiaIdentity = {
+    "private_key": string,
+    "synthetic_private_key": string,
+    "public_key": string,
+    "synthetic_public_key": string,
+    "puzzle": string,
+    "puzzle_hash": string,
+};
+
+export type OpponentMove = [string, string];
+export type GameFinished = [string, number];
+
+export type IdleResult = {
+    "continue_on": boolean,
+    "outbound_transactions": Array<SpendBundle>,
+    "outbound_messages": Array<string>,
+    "opponent_move": OpponentMove | undefined,
+    "game_finished": GameFinished | undefined
+};
+
+export type GameCradleConfig = {
+    "seed": string | undefined,
+    "game_types": Map<string, string>,
+    "identity": string | undefined,
+    "have_potato": boolean,
+    "my_contribution": Amount,
+    "their_contribution": Amount,
+    "channel_timeout": number,
+    "reward_puzzle_hash": string
+};
+
+export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
+
+export type IdleCallbacks = {
+    "self_move": ((game_id: string, move_hex: string) => void) | undefined,
+    "opponent_moved": ((game_id: string, readable_move_hex: string) => void) | undefined,
+    "game_message": ((game_id: string, readable_move_hex: string) => void) | undefined,
+    "game_finished": ((game_id: string) => void) | undefined,
+    "shutdown_complete": ((coin: string) => void) | undefined,
+    "going_on_chain": (() => void) | undefined
+};
+"#;
+
 #[derive(Serialize, Deserialize, Default)]
 struct JsAmount {
     amt: Amount
@@ -104,13 +168,12 @@ fn convert_game_types(collection: &BTreeMap<String, String>) -> Result<BTreeMap<
 // return a collection of clvm factory programs indexed by byte strings used to identify
 // them.  probably the indexes should be hashes, thinking about it, but can be anything.
 fn get_game_config<'b>(
-    allocator: &mut AllocEncoder,
     identity: &'b mut ChiaIdentity,
     js_config: JsValue
 ) -> Result<SynchronousGameCradleConfig<'b>, JsValue> {
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
 
-    let mut game_types = convert_game_types(&jsconfig.game_types)?;
+    let game_types = convert_game_types(&jsconfig.game_types)?;
     let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).into_js()?;
     Ok(SynchronousGameCradleConfig {
         game_types,
@@ -161,7 +224,7 @@ pub fn config_scaffold() -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&JsGameCradleConfig::default()).into_js()
 }
 
-#[wasm_bindgen]
+#[wasm_bindgen(typescript_type = "ICreateGameCradle")]
 pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     let new_id = get_next_id();
 
@@ -177,7 +240,7 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
 
     let random_private_key: PrivateKey = rng.gen();
     let mut identity = ChiaIdentity::new(&mut allocator, random_private_key).into_js()?;
-    let synchronous_game_cradle_config = get_game_config(&mut allocator, &mut identity, js_config.clone())?;
+    let synchronous_game_cradle_config = get_game_config(&mut identity, js_config.clone())?;
     let game_cradle = SynchronousGameCradle::new(
         &mut rng,
         synchronous_game_cradle_config
@@ -590,7 +653,7 @@ impl From<ChiaIdentity> for JsChiaIdentity {
     }
 }
 
-#[wasm_bindgen]
+#[wasm_bindgen(typescript_type = "IChiaIdentityFun")]
 pub fn chia_identity(seed: &str) -> Result<JsValue, JsValue> {
     let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
     let mut rng = ChaCha8Rng::from_seed(*hashed.bytes());

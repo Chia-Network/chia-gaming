@@ -1,4 +1,4 @@
-import { init, config_scaffold, create_game_cradle, deliver_message, deposit_file, opening_coin, idle, chia_identity } from '../../../../pkg/chia_gaming_wasm.js';
+import { init, config_scaffold, create_game_cradle, deliver_message, deposit_file, opening_coin, idle, chia_identity, Spend, CoinSpend, SpendBundle, IChiaIdentity, IdleCallbacks, IdleResult } from '../../../../pkg/chia_gaming_wasm.js';
 
 import * as fs from 'fs';
 import { resolve } from 'path';
@@ -19,7 +19,7 @@ class ChiaGame {
     cradle: number;
     have_potato: boolean;
 
-    constructor(env: any, seed: string, identity: any, have_potato: boolean, my_contribution: number, their_contribution: number) {
+    constructor(env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number) {
         this.waiting_messages = [];
         this.private_key = identity.private_key;
         this.have_potato = have_potato;
@@ -54,15 +54,15 @@ class ChiaGame {
         return w;
     }
 
-    idle(arg: any) : any {
-        let result = idle(this.cradle, arg);
+    idle(callbacks: IdleCallbacks) : IdleResult {
+        let result = idle(this.cradle, callbacks);
         console.log('idle', result);
         this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
         return result;
     }
 }
 
-function all_quiet(cradles: Array<any>) {
+function all_quiet(cradles: Array<ChiaGame>) {
     for (let c = 0; c < 2; c++) {
         if (!cradles[c].quiet()) {
             return false;
@@ -71,11 +71,15 @@ function all_quiet(cradles: Array<any>) {
     return true;
 }
 
-function action_with_messages(cradle1: any, cradle2: any) {
+function empty_callbacks(): IdleCallbacks {
+    return <IdleCallbacks>{};
+}
+
+function action_with_messages(cradle1: ChiaGame, cradle2: ChiaGame) {
     let cradles = [cradle1, cradle2];
 
     for (let c = 0; c < 2; c++) {
-        cradles[c].idle({});
+        cradles[c].idle(empty_callbacks());
     }
 
     while (!all_quiet(cradles)) {
@@ -88,7 +92,7 @@ function action_with_messages(cradle1: any, cradle2: any) {
         }
 
         for (let c = 0; c < 2; c++) {
-            cradles[c].idle({});
+            cradles[c].idle(empty_callbacks());
         }
     }
 }
