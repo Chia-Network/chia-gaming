@@ -18,30 +18,21 @@ use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
-    CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult,
+    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult,
     GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData,
-    PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
+    PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
     puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
 };
-#[cfg(test)]
-use crate::common::types::Node;
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash,
+    CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash,
     Sha256tree, Spend, SpendRewardResult, ToQuotedProgram,
 };
 use crate::referee::RefereeMaker;
-
-pub struct CoinDataForReward {
-    coin_string: CoinString,
-    // parent: CoinID,
-    // puzzle_hash: PuzzleHash,
-    // amount: Amount,
-}
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -1434,21 +1425,20 @@ impl ChannelHandler {
     // Inititate a simple on chain spend.
     //
     // Currently used for testing but might be used elsewhere.
-    #[cfg(test)]
     pub fn get_unroll_target<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
-    ) -> Result<(usize, PuzzleHash, Amount, Amount), Error> {
+    ) -> Result<UnrollTarget, Error> {
         let use_unroll = self.get_finished_unroll_coin();
         let curried_unroll_puzzle = use_unroll
             .coin
             .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())?;
 
-        Ok((
-            use_unroll.coin.state_number,
-            Node(curried_unroll_puzzle).sha256tree(&mut env.allocator),
-            self.my_out_of_game_balance.clone(),
-            self.their_out_of_game_balance.clone(),
-        ))
+        Ok(UnrollTarget {
+            state_number: use_unroll.coin.state_number,
+            unroll_puzzle_hash: Node(curried_unroll_puzzle).sha256tree(&mut env.allocator),
+            my_amount: self.my_out_of_game_balance.clone(),
+            their_amount: self.their_out_of_game_balance.clone(),
+        })
     }
 }

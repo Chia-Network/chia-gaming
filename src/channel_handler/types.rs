@@ -931,3 +931,17 @@ impl UnrollCoin {
         ))
     }
 }
+
+pub struct CoinDataForReward {
+    pub coin_string: CoinString,
+    // parent: CoinID,
+    // puzzle_hash: PuzzleHash,
+    // amount: Amount,
+}
+
+pub struct UnrollTarget {
+    pub state_number: usize,
+    pub unroll_puzzle_hash: PuzzleHash,
+    pub my_amount: Amount,
+    pub their_amount: Amount,
+}

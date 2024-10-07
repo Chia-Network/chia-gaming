@@ -953,6 +953,10 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                             )
                             .expect("should work");
                     }
+                    GameAction::GoOnChain(who) => {
+                        debug!("go on chain");
+                        todo!();
+                    }
                     _ => todo!(),
                 }
             } else {

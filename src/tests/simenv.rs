@@ -314,12 +314,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 }
             }
             GameAction::GoOnChain(player) => {
-                let (state_number, unroll_target, my_amount, their_amount) = self
+                let unroll_target = self
                     .parties
                     .player(*player)
                     .ch
                     .get_unroll_target(&mut self.env)?;
-                debug!("GO ON CHAIN: {state_number} {my_amount:?} {their_amount:?}");
+                debug!("GO ON CHAIN: {} {:?} {:?}", unroll_target.state_number, unroll_target.my_amount, unroll_target.their_amount);
                 let state_channel_coin = match self.on_chain.clone() {
                     OnChainState::OffChain(coin) => coin.clone(),
                     _ => {
@@ -333,7 +333,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 debug!("going on chain: aggregate public key is: {aggregate_public_key:?}",);
 
                 let (channel_coin_conditions, unroll_coin) =
-                    self.spend_channel_coin(*player, state_channel_coin, &unroll_target)?;
+                    self.spend_channel_coin(*player, state_channel_coin, &unroll_target.unroll_puzzle_hash)?;
                 debug!("unroll_coin {unroll_coin:?}");
 
                 let _channel_spent_result_1 = self
