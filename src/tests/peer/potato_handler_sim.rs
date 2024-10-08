@@ -957,6 +957,40 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                         debug!("go on chain");
                         todo!();
                     }
+                    GameAction::FakeMove(who, readable, move_data) => {
+                        last_move = *who;
+                        // This is a fake move.  We give that move to the given target channel
+                        // handler as a their move.
+                        debug!("make move");
+                        let readable_program =
+                            Program::from_nodeptr(allocator, *readable).expect("should convert");
+                        let encoded_readable_move = readable_program.bytes();
+                        let entropy = rng.gen();
+                        // Do like we're sending a real message.
+                        cradles[*who]
+                            .make_move(
+                                allocator,
+                                &mut rng,
+                                &game_ids[0],
+                                encoded_readable_move.to_vec(),
+                                entropy,
+                            )
+                            .expect("should work");
+
+                        cradles[*who].replace_last_message(|msg_envelope| {
+                            debug!("sabotage envelope = {msg_envelope:?}");
+                            let (game_id, m) =
+                                if let PeerMessage::Move(game_id, m) = msg_envelope {
+                                    (game_id, m)
+                                } else {
+                                    todo!();
+                                };
+
+                            let mut fake_move = m.clone();
+                            fake_move.game_move.basic.move_made = move_data.clone();
+                            Ok(PeerMessage::Move(game_id.clone(), fake_move))
+                        }).expect("should be able to sabotage");
+                    }
                     _ => todo!(),
                 }
             } else {
@@ -973,6 +1007,19 @@ fn sim_test_with_peer_container() {
     let mut allocator = AllocEncoder::new();
 
     // Play moves
-    let moves = test_moves_1(&mut allocator);
+    let mut moves = test_moves_1(&mut allocator);
+    run_calpoker_container_with_action_list(&mut allocator, &moves);
+}
+
+#[test]
+fn sim_test_with_peer_container_piss_off_peer() {
+    let mut allocator = AllocEncoder::new();
+
+    let mut moves = test_moves_1(&mut allocator);
+    if let GameAction::Move(player, readable, _) = moves[2].clone() {
+        moves[3] = GameAction::FakeMove(1, readable, vec![0; 500]);
+    } else {
+        panic!("no move 1 to replace");
+    }
     run_calpoker_container_with_action_list(&mut allocator, &moves);
 }

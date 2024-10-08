@@ -558,6 +558,28 @@ impl SynchronousGameCradle {
     }
 }
 
+impl SynchronousGameCradle {
+    #[cfg(test)]
+    pub fn replace_last_message<F>(&mut self, f: F) -> Result<(), Error>
+    where
+        F: FnOnce(&PeerMessage) -> Result<PeerMessage, Error>
+    {
+        // Grab and decode the message.
+        let msg =
+            if let Some(msg) = self.state.outbound_messages.pop_back() {
+                msg
+            } else {
+                todo!();
+            };
+
+        let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
+        let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+        let fake_move = f(&msg_envelope)?;
+
+        self.state.send_message(&fake_move)
+    }
+}
+
 impl GameCradle for SynchronousGameCradle {
     fn opening_coin<R: Rng>(
         &mut self,
