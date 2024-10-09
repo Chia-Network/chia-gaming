@@ -82,14 +82,6 @@ impl SimulatedWalletSpend {
     }
 }
 
-#[derive(Debug, Clone)]
-struct SpendSpec {
-    #[allow(dead_code)]
-    spend: Spend,
-    #[allow(dead_code)]
-    parent: Option<CoinString>,
-}
-
 #[derive(Default)]
 pub struct SimulatedPeer {
     message_pipe: MessagePipe,
@@ -98,7 +90,7 @@ pub struct SimulatedPeer {
     channel_puzzle_hash: Option<PuzzleHash>,
 
     unfunded_offer: Option<SpendBundle>,
-    outbound_transactions: Vec<SpendSpec>,
+    outbound_transactions: Vec<SpendBundle>,
 
     raw_messages: Vec<Vec<u8>>,
     messages: Vec<ReadableMove>,
@@ -193,14 +185,10 @@ impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
     fn spend_transaction_and_add_fee(
         &mut self,
-        bundle: &Spend,
-        parent: Option<&CoinString>,
+        bundle: &SpendBundle,
     ) -> Result<(), Error> {
         debug!("waiting to spend transaction");
-        self.outbound_transactions.push(SpendSpec {
-            spend: bundle.clone(),
-            parent: parent.cloned(),
-        });
+        self.outbound_transactions.push(bundle.clone());
         Ok(())
     }
     /// Coin should report its lifecycle until it gets spent, then should be
@@ -705,6 +693,7 @@ struct LocalTestUIReceiver {
     shutdown_complete: bool,
     game_finished: Option<Amount>,
     opponent_moved: bool,
+    go_on_chain: bool,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -742,7 +731,8 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn going_on_chain(&mut self) -> Result<(), Error> {
-        todo!();
+        self.go_on_chain = true;
+        Ok(())
     }
 }
 
@@ -856,6 +846,13 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
             .expect("should work");
 
         for i in 0..=1 {
+            if local_uis[i].go_on_chain {
+                // Perform on chain move.
+                // Turn off the flag to go on chain.
+                local_uis[i].go_on_chain = false;
+                cradles[i].go_on_chain(allocator, &mut rng, &mut local_uis[i]).expect("should work");
+            }
+
             cradles[i]
                 .new_block(allocator, &mut rng, current_height, &watch_report)
                 .expect("should work");

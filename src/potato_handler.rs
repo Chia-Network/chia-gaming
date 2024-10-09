@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult, PotatoSignatures,
+    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult, OnChainGameCoin, PotatoSignatures,
     PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
@@ -20,7 +20,7 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GameID, Hash, IntoErr,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
     Node, Program, PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -211,8 +211,7 @@ pub trait WalletSpendInterface {
     /// Enqueue an outbound transaction.
     fn spend_transaction_and_add_fee(
         &mut self,
-        bundle: &Spend,
-        parent: Option<&CoinString>,
+        bundle: &SpendBundle,
     ) -> Result<(), Error>;
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
@@ -720,12 +719,16 @@ impl PotatoHandler {
                     &channel_puzzle_public_key,
                 )?;
                 system_interface.spend_transaction_and_add_fee(
-                    &Spend {
-                        solution,
-                        puzzle,
-                        signature: full_spend.signature.clone(),
-                    },
-                    Some(coin),
+                    &SpendBundle {
+                        spends: vec![CoinSpend {
+                            coin: coin.clone(),
+                            bundle: Spend {
+                                solution,
+                                puzzle,
+                                signature: full_spend.signature.clone(),
+                            },
+                        }]
+                    }
                 )?;
 
                 // Expected reward coin is shutdown amount + puzzle hash of referee
@@ -1405,7 +1408,7 @@ impl PotatoHandler {
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         unroll_coin: CoinString
-    ) -> Result<Vec<CoinString>, Error>
+    ) -> Result<Vec<OnChainGameCoin>, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
@@ -1436,10 +1439,12 @@ impl PotatoHandler {
                 .into_gen()?;
 
             debug!("doing transaction");
-            system_interface.spend_transaction_and_add_fee(
-                &pre_unroll_data.transaction,
-                Some(&unroll_coin)
-            )?;
+            system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                spends: vec![CoinSpend {
+                    coin: unroll_coin.clone(),
+                    bundle: pre_unroll_data.transaction.clone()
+                }]
+            })?;
 
             puzzle_result
         };
@@ -1467,11 +1472,14 @@ impl PotatoHandler {
         swap(&mut hs, &mut self.handshake_state);
         match hs {
             HandshakeState::Finished(with_spend) => {
-                let (_, system_interface) = penv.env();
+                let (env, system_interface) = penv.env();
                 // We have everything needed so let's register for the spend
                 self.handshake_state = HandshakeState::OnChainTransition(unroll_result.clone(), with_spend.clone());
+                // We'll wait for the unroll result to be spent, which means we're on chain.
                 system_interface.register_coin(&unroll_result, &self.channel_timeout)?;
-                todo!();
+                // The coin outputs represent the ongoing games if any and the reward coins.
+                let ch = self.channel_handler_mut()?;
+                ch.get_game_coins(env)
             }
             hs => {
                 self.handshake_state = hs;
@@ -1489,7 +1497,7 @@ impl PotatoHandler {
     pub fn go_on_chain<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-    ) -> Result<(), Error>
+    ) -> Result<Vec<OnChainGameCoin>, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
@@ -1507,9 +1515,7 @@ impl PotatoHandler {
             &unroll_target.unroll_puzzle_hash,
             &(unroll_target.my_amount + unroll_target.their_amount)
         );
-        let game_coins = self.do_unroll_spend_to_games(penv, unroll_coin)?;
-
-        todo!();
+        self.do_unroll_spend_to_games(penv, unroll_coin)
     }
 
 fn do_game_action<'a, G, R: Rng + 'a>(

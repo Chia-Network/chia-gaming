@@ -27,20 +27,12 @@ use crate::common::types::{CoinSpend, Program};
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::game::GameAction;
 
-#[derive(Debug, Clone)]
-struct SpendSpec {
-    #[allow(dead_code)]
-    spend: Spend,
-    #[allow(dead_code)]
-    parent: Option<CoinString>,
-}
-
 #[derive(Default)]
 struct Pipe {
     message_pipe: MessagePipe,
 
     // WalletSpendInterface
-    outgoing_transactions: VecDeque<SpendSpec>,
+    outgoing_transactions: VecDeque<SpendBundle>,
     registered_coins: HashMap<CoinString, Timeout>,
 
     // Opponent moves
@@ -94,14 +86,9 @@ impl PacketSender for Pipe {
 impl WalletSpendInterface for Pipe {
     fn spend_transaction_and_add_fee(
         &mut self,
-        bundle: &Spend,
-        parent: Option<&CoinString>,
+        bundle: &SpendBundle,
     ) -> Result<(), Error> {
-        self.outgoing_transactions.push_back(SpendSpec {
-            spend: bundle.clone(),
-            parent: parent.cloned(),
-        });
-
+        self.outgoing_transactions.push_back(bundle.clone());
         Ok(())
     }
 

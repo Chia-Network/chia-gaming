@@ -1250,13 +1250,49 @@ impl ChannelHandler {
         }
     }
 
-    pub fn get_new_game_coins_on_chain(
+    fn get_new_game_coins_on_chain(
         &self,
         unroll_coin: Option<&CoinID>,
         skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
     ) -> Result<Vec<OnChainGameCoin>, Error> {
         self.compute_game_coin_unroll_data(unroll_coin, skip_game, skip_coin_id, &self.live_games)
+    }
+
+    pub fn get_game_coins<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<Vec<OnChainGameCoin>, Error> {
+        let state_number = self.unroll.coin.state_number;
+        // We need the view of the system as of the most recent timeout.
+        // I made a move, they have the potato, so we need to reconstruct the
+        // game states from the most recent their turn.  If there's a move in the
+        // state cache then that game uses that puzzle hash and amount, otherwise
+        // it uses the one from the live game object.  Once on chain, we'll need
+        // the actual puzzle, but that's a problem for a comment other than this
+        // one.
+        let unroll_puzzle = self.unroll.coin.make_curried_unroll_puzzle(
+            env,
+            &self.get_aggregate_unroll_public_key()
+        )?;
+        let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
+        let parent_coin = self.state_channel_coin().coin_string();
+        let unroll_coin = CoinString::from_parts(
+            &parent_coin.to_coin_id(),
+            &unroll_puzzle_hash,
+            &(self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone())
+        );
+
+        let disposition =
+            self.get_cached_disposition_for_spent_result(env, &unroll_coin, state_number)?;
+        self.get_new_game_coins_on_chain(
+            Some(&unroll_coin.to_coin_id()),
+            &disposition
+                .as_ref()
+                .map(|d| d.skip_game.clone())
+                .unwrap_or_default(),
+            disposition.as_ref().and_then(|d| d.skip_coin_id.as_ref()),
+        )
     }
 
     // what our vanilla coin string is
