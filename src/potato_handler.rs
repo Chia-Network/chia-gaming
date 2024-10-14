@@ -16,8 +16,9 @@ use crate::channel_handler::types::{
     PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
+use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
+    private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk, puzzle_for_pk
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
@@ -599,7 +600,7 @@ impl PotatoHandler {
     fn update_channel_coin_after_receive<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        _spend: &ChannelCoinSpendInfo,
+        spend: &ChannelCoinSpendInfo,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
@@ -612,6 +613,32 @@ impl PotatoHandler {
 
         if self.have_potato_move(penv)? {
             return Ok(());
+        }
+
+        let (channel_coin, channel_public_key) =
+            {
+                let ch = self.channel_handler()?;
+                let cc = ch.state_channel_coin().coin_string().clone();
+                (cc, ch.get_aggregate_channel_public_key())
+            };
+
+        if let HandshakeState::Finished(hs) = &mut self.handshake_state {
+            let (env, _) = penv.env();
+            debug!("hs spend is {:?}", hs.spend);
+            let channel_coin_puzzle = puzzle_for_synthetic_public_key(
+                env.allocator,
+                &env.standard_puzzle,
+                &channel_public_key
+            )?;
+            hs.spend.spends = vec![CoinSpend {
+                coin: channel_coin,
+                bundle: Spend {
+                    solution: Program::from_nodeptr(env.allocator, spend.solution)?,
+                    signature: spend.aggsig.clone(),
+                    puzzle: channel_coin_puzzle,
+                }
+            }];
+            debug!("updated spend to {:?}", hs.spend.spends[0]);
         }
 
         Ok(())
@@ -1407,49 +1434,53 @@ impl PotatoHandler {
     pub fn do_unroll_spend_to_games<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        unroll_coin: CoinString
+        channel_coin: &CoinString,
+        unroll_puzzle_hash: &PuzzleHash,
+        amount: &Amount,
+        unroll_coin: &CoinString,
     ) -> Result<Vec<OnChainGameCoin>, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let puzzle_result =
-        {
-            let (env, system_interface) = penv.env();
-            let player_ch = self.channel_handler()?;
-            let pre_unroll_data = player_ch.get_unroll_coin_transaction(env)?;
+        let spend =
+            match &self.handshake_state {
+                HandshakeState::Finished(with_spend) => {
+                    with_spend.spend.clone()
+                }
+                _ => {
+                    return Err(Error::StrErr("unroll spend to games before handshake".to_string()));
+                }
+            };
 
-            let run_puzzle = pre_unroll_data
-                .transaction
-                .puzzle
-                .to_clvm(env.allocator)
-                .into_gen()?;
-            let run_args = pre_unroll_data
-                .transaction
-                .solution
-                .to_clvm(env.allocator)
-                .into_gen()?;
+        let (env, system_interface) = penv.env();
+        let player_ch = self.channel_handler()?;
+        // Channel coin
+        let pre_unroll_data = player_ch.get_unroll_coin_transaction(env)?;
 
-            let puzzle_result = run_program(
-                env.allocator.allocator(),
-                &chia_dialect(),
-                run_puzzle,
-                run_args,
-                0,
-            )
-                .into_gen()?;
+        let run_puzzle = pre_unroll_data
+            .transaction
+            .puzzle
+            .to_clvm(env.allocator)
+            .into_gen()?;
+        let run_args = pre_unroll_data
+            .transaction
+            .solution
+            .to_clvm(env.allocator)
+            .into_gen()?;
 
-            debug!("doing transaction");
-            system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                spends: vec![CoinSpend {
-                    coin: unroll_coin.clone(),
-                    bundle: pre_unroll_data.transaction.clone()
-                }]
-            })?;
+        let puzzle_result = run_program(
+            env.allocator.allocator(),
+            &chia_dialect(),
+            run_puzzle,
+            run_args,
+            0,
+        )
+            .into_gen()?;
 
-            puzzle_result
-        };
+        debug!("Spending channel coin {channel_coin:?}");
+        // debug!("doing transaction {pre_unroll_data:?}");
+        system_interface.spend_transaction_and_add_fee(&spend)?;
 
-        let (env, _) = penv.env();
         let condition_list = CoinCondition::from_nodeptr(env.allocator, puzzle_result.1);
         let unroll_result =
             if let Some(unroll_coin) = condition_list
@@ -1510,12 +1541,22 @@ impl PotatoHandler {
                 return Err(Error::StrErr("go on chain before handshake finished".to_string()));
             };
 
+        let channel_coin = ch.state_channel_coin().coin_string();
+        debug!("the channel_coin is {channel_coin:?}");
+        let amount = unroll_target.my_amount + unroll_target.their_amount;
         let unroll_coin = CoinString::from_parts(
-            &ch.state_channel_coin().coin_string().to_coin_id(),
+            &channel_coin.to_coin_id(),
             &unroll_target.unroll_puzzle_hash,
-            &(unroll_target.my_amount + unroll_target.their_amount)
+            &amount,
         );
-        self.do_unroll_spend_to_games(penv, unroll_coin)
+        debug!("the unroll_coin is {unroll_coin:?}");
+        self.do_unroll_spend_to_games(
+            penv,
+            &channel_coin.clone(),
+            &unroll_target.unroll_puzzle_hash,
+            &amount,
+            &unroll_coin,
+        )
     }
 
 fn do_game_action<'a, G, R: Rng + 'a>(

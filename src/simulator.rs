@@ -309,11 +309,13 @@ impl Simulator {
                 let amount: u64 = as_list[2].extract(py)?;
                 let parent_coin_hash = Hash::from_slice(parent_coin_info_slice);
                 let puzzle_hash = Hash::from_slice(puzzle_hash_slice);
-                result_coins.push(CoinString::from_parts(
+                let new_coin = CoinString::from_parts(
                     &CoinID::new(parent_coin_hash),
                     &PuzzleHash::from_hash(puzzle_hash),
                     &Amount::new(amount),
-                ));
+                );
+                debug!("coin with id {:?}", new_coin.to_coin_id());
+                result_coins.push(new_coin);
             }
             Ok(result_coins)
         })

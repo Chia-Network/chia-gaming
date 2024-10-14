@@ -444,6 +444,7 @@ pub fn handshake<'a, R: Rng + 'a>(
         }
 
         if let Some(u) = pipes[who].unfunded_offer.clone() {
+            todo!();
             debug!(
                 "unfunded offer received by {:?}",
                 identities[who].synthetic_private_key
@@ -482,6 +483,7 @@ pub fn handshake<'a, R: Rng + 'a>(
             let included_result = simulator
                 .push_tx(env.allocator, &spends.spends)
                 .into_gen()?;
+            todo!();
             pipes[who].unfunded_offer = None;
             debug!("included_result {included_result:?}");
             assert_eq!(included_result.code, 1);
@@ -868,6 +870,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                 );
 
                 for tx in result.outbound_transactions.iter() {
+                    debug!("PROCESS TX {tx:?}");
                     let included_result = simulator
                         .push_tx(allocator, &tx.spends)
                         .expect("should work");

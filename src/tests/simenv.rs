@@ -236,7 +236,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             run_args,
             0,
         )
-        .into_gen()?;
+            .into_gen()?;
 
         self.simulator.farm_block(&self.identities[0].puzzle_hash);
 
