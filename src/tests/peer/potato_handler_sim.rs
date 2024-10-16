@@ -183,10 +183,7 @@ impl SimulatedWalletSpend {
 
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(
-        &mut self,
-        bundle: &SpendBundle,
-    ) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
         debug!("waiting to spend transaction");
         self.outbound_transactions.push(bundle.clone());
         Ok(())
@@ -852,7 +849,9 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                 // Perform on chain move.
                 // Turn off the flag to go on chain.
                 local_uis[i].go_on_chain = false;
-                cradles[i].go_on_chain(allocator, &mut rng, &mut local_uis[i]).expect("should work");
+                cradles[i]
+                    .go_on_chain(allocator, &mut rng, &mut local_uis[i])
+                    .expect("should work");
             }
 
             cradles[i]
@@ -977,19 +976,21 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                             )
                             .expect("should work");
 
-                        cradles[*who].replace_last_message(|msg_envelope| {
-                            debug!("sabotage envelope = {msg_envelope:?}");
-                            let (game_id, m) =
-                                if let PeerMessage::Move(game_id, m) = msg_envelope {
-                                    (game_id, m)
-                                } else {
-                                    todo!();
-                                };
+                        cradles[*who]
+                            .replace_last_message(|msg_envelope| {
+                                debug!("sabotage envelope = {msg_envelope:?}");
+                                let (game_id, m) =
+                                    if let PeerMessage::Move(game_id, m) = msg_envelope {
+                                        (game_id, m)
+                                    } else {
+                                        todo!();
+                                    };
 
-                            let mut fake_move = m.clone();
-                            fake_move.game_move.basic.move_made = move_data.clone();
-                            Ok(PeerMessage::Move(game_id.clone(), fake_move))
-                        }).expect("should be able to sabotage");
+                                let mut fake_move = m.clone();
+                                fake_move.game_move.basic.move_made = move_data.clone();
+                                Ok(PeerMessage::Move(game_id.clone(), fake_move))
+                            })
+                            .expect("should be able to sabotage");
                     }
                     _ => todo!(),
                 }

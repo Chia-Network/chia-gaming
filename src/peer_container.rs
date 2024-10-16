@@ -6,7 +6,9 @@ use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, OnChainGameCoin, ReadableMove};
+use crate::channel_handler::types::{
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, OnChainGameCoin, ReadableMove,
+};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
@@ -258,10 +260,7 @@ impl PacketSender for SynchronousGameCradleState {
 
 impl WalletSpendInterface for SynchronousGameCradleState {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(
-        &mut self,
-        bundle: &SpendBundle,
-    ) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
         self.outbound_transactions.push_back(bundle.clone());
         Ok(())
     }
@@ -468,14 +467,15 @@ impl SynchronousGameCradle {
 
         let ch = self.peer.channel_handler()?;
         let channel_coin = ch.state_channel_coin();
-        let channel_coin_amt = if let Some((ch_parent, ph, amt)) = channel_coin.coin_string().to_parts() {
-            // We can be sure we've got the right puzzle hash separately.
-            assert_eq!(ph, channel_puzzle_hash);
-            assert_eq!(ch_parent, parent.to_coin_id());
-            amt
-        } else {
-            return Err(Error::StrErr("no channel coin".to_string()));
-        };
+        let channel_coin_amt =
+            if let Some((ch_parent, ph, amt)) = channel_coin.coin_string().to_parts() {
+                // We can be sure we've got the right puzzle hash separately.
+                assert_eq!(ph, channel_puzzle_hash);
+                assert_eq!(ch_parent, parent.to_coin_id());
+                amt
+            } else {
+                return Err(Error::StrErr("no channel coin".to_string()));
+            };
 
         let conditions_clvm = [(
             CREATE_COIN,
@@ -576,15 +576,14 @@ impl SynchronousGameCradle {
     #[cfg(test)]
     pub fn replace_last_message<F>(&mut self, f: F) -> Result<(), Error>
     where
-        F: FnOnce(&PeerMessage) -> Result<PeerMessage, Error>
+        F: FnOnce(&PeerMessage) -> Result<PeerMessage, Error>,
     {
         // Grab and decode the message.
-        let msg =
-            if let Some(msg) = self.state.outbound_messages.pop_back() {
-                msg
-            } else {
-                todo!();
-            };
+        let msg = if let Some(msg) = self.state.outbound_messages.pop_back() {
+            msg
+        } else {
+            todo!();
+        };
 
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
         let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
@@ -769,7 +768,6 @@ impl GameCradle for SynchronousGameCradle {
                     return Ok(result);
                 }
             }
-
         }
 
         if let Some(ph) = self.state.channel_puzzle_hash.clone() {

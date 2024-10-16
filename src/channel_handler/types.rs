@@ -630,7 +630,16 @@ impl ChannelCoin {
         );
         let unroll_puzzle =
             unroll_coin.make_curried_unroll_puzzle(env, aggregate_unroll_public_key)?;
+        debug!(
+            "unroll_puzzle {}",
+            disassemble(env.allocator.allocator(), unroll_puzzle, None)
+        );
+
         let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
+        debug!(
+            "state number {} unroll_puzzle_hash {unroll_puzzle_hash:?}",
+            unroll_coin.state_number
+        );
         let create_conditions = vec![Node(
             (
                 CREATE_COIN,
@@ -667,7 +676,7 @@ pub struct UnrollCoinConditionInputs {
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UnrollCoinOutcome {
     pub conditions: NodePtr,
     pub conditions_without_hash: NodePtr,
@@ -726,44 +735,32 @@ pub fn prepend_rem_conditions<R: Rng>(
 }
 
 impl UnrollCoin {
-    fn get_internal_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
+    fn get_outcome(&self) -> Result<&UnrollCoinOutcome, Error> {
         if let Some(r) = self.outcome.as_ref() {
-            Ok(r.conditions_without_hash)
+            Ok(r)
         } else {
             Err(Error::StrErr("no default setup".to_string()))
         }
+    }
+
+    fn get_internal_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
+        Ok(self.get_outcome()?.conditions_without_hash)
     }
 
     fn get_old_state_number(&self) -> Result<usize, Error> {
-        if let Some(r) = self.outcome.as_ref() {
-            Ok(r.old_state_number)
-        } else {
-            Err(Error::StrErr("no default setup".to_string()))
-        }
+        Ok(self.get_outcome()?.old_state_number)
     }
 
     pub fn get_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
-        if let Some(r) = self.outcome.as_ref() {
-            Ok(r.conditions)
-        } else {
-            Err(Error::StrErr("no default setup".to_string()))
-        }
+        Ok(self.get_outcome()?.conditions)
     }
 
     pub fn get_conditions_hash_for_unroll_puzzle(&self) -> Result<PuzzleHash, Error> {
-        if let Some(r) = self.outcome.as_ref() {
-            Ok(r.hash.clone())
-        } else {
-            Err(Error::StrErr("no default setup".to_string()))
-        }
+        Ok(self.get_outcome()?.hash.clone())
     }
 
     pub fn get_unroll_coin_signature(&self) -> Result<Aggsig, Error> {
-        if let Some(r) = self.outcome.as_ref() {
-            Ok(r.signature.clone())
-        } else {
-            Err(Error::StrErr("no default setup".to_string()))
-        }
+        Ok(self.get_outcome()?.signature.clone())
     }
 
     /// What a spend can bring:

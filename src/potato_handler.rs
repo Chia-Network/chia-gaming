@@ -12,17 +12,18 @@ use serde::{Deserialize, Serialize};
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult, OnChainGameCoin, PotatoSignatures,
-    PrintableGameStartInfo, ReadableMove,
+    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult, OnChainGameCoin,
+    PotatoSignatures, PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk, puzzle_for_pk
+    private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID,
+    Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
+    SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
@@ -210,10 +211,7 @@ pub trait SpendWalletReceiver<
 /// Unroll time wallet interface.
 pub trait WalletSpendInterface {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(
-        &mut self,
-        bundle: &SpendBundle,
-    ) -> Result<(), Error>;
+    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error>;
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
     fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error>;
@@ -615,12 +613,11 @@ impl PotatoHandler {
             return Ok(());
         }
 
-        let (channel_coin, channel_public_key) =
-            {
-                let ch = self.channel_handler()?;
-                let cc = ch.state_channel_coin().coin_string().clone();
-                (cc, ch.get_aggregate_channel_public_key())
-            };
+        let (channel_coin, channel_public_key) = {
+            let ch = self.channel_handler()?;
+            let cc = ch.state_channel_coin().coin_string().clone();
+            (cc, ch.get_aggregate_channel_public_key())
+        };
 
         if let HandshakeState::Finished(hs) = &mut self.handshake_state {
             let (env, _) = penv.env();
@@ -628,7 +625,7 @@ impl PotatoHandler {
             let channel_coin_puzzle = puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
-                &channel_public_key
+                &channel_public_key,
             )?;
             hs.spend.spends = vec![CoinSpend {
                 coin: channel_coin,
@@ -636,7 +633,7 @@ impl PotatoHandler {
                     solution: Program::from_nodeptr(env.allocator, spend.solution)?,
                     signature: spend.aggsig.clone(),
                     puzzle: channel_coin_puzzle,
-                }
+                },
             }];
             debug!("updated spend to {:?}", hs.spend.spends[0]);
         }
@@ -745,18 +742,16 @@ impl PotatoHandler {
                     &env.standard_puzzle,
                     &channel_puzzle_public_key,
                 )?;
-                system_interface.spend_transaction_and_add_fee(
-                    &SpendBundle {
-                        spends: vec![CoinSpend {
-                            coin: coin.clone(),
-                            bundle: Spend {
-                                solution,
-                                puzzle,
-                                signature: full_spend.signature.clone(),
-                            },
-                        }]
-                    }
-                )?;
+                system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                    spends: vec![CoinSpend {
+                        coin: coin.clone(),
+                        bundle: Spend {
+                            solution,
+                            puzzle,
+                            signature: full_spend.signature.clone(),
+                        },
+                    }],
+                })?;
 
                 // Expected reward coin is shutdown amount + puzzle hash of referee
                 // coin and parent is the reported reward coin.
@@ -1442,15 +1437,14 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let spend =
-            match &self.handshake_state {
-                HandshakeState::Finished(with_spend) => {
-                    with_spend.spend.clone()
-                }
-                _ => {
-                    return Err(Error::StrErr("unroll spend to games before handshake".to_string()));
-                }
-            };
+        let mut spend = match &self.handshake_state {
+            HandshakeState::Finished(with_spend) => with_spend.spend.clone(),
+            _ => {
+                return Err(Error::StrErr(
+                    "unroll spend to games before handshake".to_string(),
+                ));
+            }
+        };
 
         let (env, system_interface) = penv.env();
         let player_ch = self.channel_handler()?;
@@ -1467,7 +1461,6 @@ impl PotatoHandler {
             .solution
             .to_clvm(env.allocator)
             .into_gen()?;
-
         let puzzle_result = run_program(
             env.allocator.allocator(),
             &chia_dialect(),
@@ -1475,19 +1468,16 @@ impl PotatoHandler {
             run_args,
             0,
         )
-            .into_gen()?;
-
-        debug!("Spending channel coin {channel_coin:?}");
-        // debug!("doing transaction {pre_unroll_data:?}");
-        system_interface.spend_transaction_and_add_fee(&spend)?;
+        .into_gen()?;
 
         let condition_list = CoinCondition::from_nodeptr(env.allocator, puzzle_result.1);
-        let unroll_result =
-            if let Some(unroll_coin) = condition_list
+        let unroll_result = if let Some(unroll_coin) = condition_list
             .iter()
             .filter_map(|cond| {
                 if let CoinCondition::CreateCoin(ph, amt) = cond {
-                    return Some(CoinString::from_parts(&unroll_coin.to_coin_id(), ph, amt));
+                    if *amt > Amount::default() {
+                        return Some(CoinString::from_parts(&unroll_coin.to_coin_id(), ph, amt));
+                    }
                 }
 
                 None
@@ -1499,13 +1489,43 @@ impl PotatoHandler {
             return Err(Error::StrErr("no unroll coin created".to_string()));
         };
 
+        // The first coin spend here spends the channel coin into the unroll coin.
+        // We should add additional spends here:
+        //
+        // 1) Spend the unroll coin to the game coins.
+        // 2) Replay the most recent our action if channel handler remembers one.
+        let unroll_aggregate_public_key = player_ch.get_aggregate_unroll_public_key();
+        let unroll_puzzle_nodeptr = player_ch.get_curried_unroll_puzzle(env)?;
+        let unroll_signature = player_ch.get_signature_for_unroll_spend(env)?;
+        let unroll_puzzle = Puzzle::from_nodeptr(env.allocator, unroll_puzzle_nodeptr)?;
+        let unroll_puzzle_hash = Node(unroll_puzzle_nodeptr).sha256tree(env.allocator);
+        let unroll_solution_nodeptr = player_ch.get_unroll_solution(env)?;
+        debug!(
+            "unroll solution data {}",
+            disassemble(env.allocator.allocator(), unroll_solution_nodeptr, None)
+        );
+
+        let unroll_solution = Program::from_nodeptr(env.allocator, unroll_solution_nodeptr)?;
+        let unroll_spend = CoinSpend {
+            bundle: Spend {
+                puzzle: unroll_puzzle,
+                signature: unroll_signature,
+                solution: unroll_solution,
+            },
+            coin: unroll_coin.clone(),
+        };
+        spend.spends.push(unroll_spend);
+
+        system_interface.spend_transaction_and_add_fee(&spend)?;
+
         let mut hs = HandshakeState::StepA;
         swap(&mut hs, &mut self.handshake_state);
         match hs {
             HandshakeState::Finished(with_spend) => {
                 let (env, system_interface) = penv.env();
                 // We have everything needed so let's register for the spend
-                self.handshake_state = HandshakeState::OnChainTransition(unroll_result.clone(), with_spend.clone());
+                self.handshake_state =
+                    HandshakeState::OnChainTransition(unroll_result.clone(), with_spend.clone());
                 // We'll wait for the unroll result to be spent, which means we're on chain.
                 system_interface.register_coin(&unroll_result, &self.channel_timeout)?;
                 // The coin outputs represent the ongoing games if any and the reward coins.
@@ -1514,7 +1534,9 @@ impl PotatoHandler {
             }
             hs => {
                 self.handshake_state = hs;
-                Err(Error::StrErr("tried to go on chain without handshake".to_string()))
+                Err(Error::StrErr(
+                    "tried to go on chain without handshake".to_string(),
+                ))
             }
         }
     }
@@ -1533,13 +1555,14 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let ch = self.channel_handler()?;
-        let unroll_target =
-            if let HandshakeState::Finished(hs) = &self.handshake_state {
-                let (env, _) = penv.env();
-                ch.get_unroll_target(env)?
-            } else {
-                return Err(Error::StrErr("go on chain before handshake finished".to_string()));
-            };
+        let unroll_target = if let HandshakeState::Finished(hs) = &self.handshake_state {
+            let (env, _) = penv.env();
+            ch.get_unroll_target(env)?
+        } else {
+            return Err(Error::StrErr(
+                "go on chain before handshake finished".to_string(),
+            ));
+        };
 
         let channel_coin = ch.state_channel_coin().coin_string();
         debug!("the channel_coin is {channel_coin:?}");
@@ -1559,12 +1582,12 @@ impl PotatoHandler {
         )
     }
 
-fn do_game_action<'a, G, R: Rng + 'a>(
+    fn do_game_action<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         action: GameAction,
     ) -> Result<(), Error>
-where
+    where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
@@ -1809,7 +1832,22 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             let channel_coin = ch.state_channel_coin();
             if coin_id == channel_coin.coin_string() {
                 // Channel coin was spent so we're going on chain.
-                todo!();
+                let mut hs = HandshakeState::StepA;
+                swap(&mut hs, &mut self.handshake_state);
+                match hs {
+                    HandshakeState::OnChainTransition(cs, t) => {
+                        debug!("notified of channel coin spend in on chain transition state");
+                        self.handshake_state = HandshakeState::OnChain(cs, t);
+                    }
+                    HandshakeState::Finished(hs) => {
+                        debug!("notified of channel coin spend in run state");
+                        self.handshake_state =
+                            HandshakeState::OnChain(channel_coin.coin_string().clone(), hs);
+                    }
+                    _ => {
+                        todo!();
+                    }
+                }
             }
         }
 

@@ -18,9 +18,10 @@ use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
-    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult,
-    GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData,
-    PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget
+    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult,
+    DispositionResult, GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
+    PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
+    UnrollCoinConditionInputs, UnrollTarget,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -29,8 +30,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash,
-    Sha256tree, Spend, SpendRewardResult, ToQuotedProgram,
+    CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
+    PuzzleHash, Sha256tree, Spend, SpendRewardResult, ToQuotedProgram,
 };
 use crate::referee::RefereeMaker;
 
@@ -132,6 +133,15 @@ impl ChannelHandler {
         } else {
             &self.unroll
         }
+    }
+
+    fn make_curried_unroll_puzzle<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<NodePtr, Error> {
+        self.unroll
+            .coin
+            .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())
     }
 
     fn unroll_coin_condition_inputs(
@@ -534,6 +544,7 @@ impl ChannelHandler {
         }
 
         self.current_state_number += 1;
+        debug!("test_unroll updated {:?}", test_unroll.outcome);
         self.timeout = Some(ChannelHandlerUnrollSpendInfo {
             coin: test_unroll.clone(),
             signatures: signatures.clone(),
@@ -1002,6 +1013,37 @@ impl ChannelHandler {
         Ok(rem_conditions)
     }
 
+    pub fn get_signature_for_unroll_spend<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<Aggsig, Error> {
+        let use_unroll = self.get_finished_unroll_coin();
+
+        use_unroll.coin.get_unroll_coin_signature()
+    }
+
+    pub fn get_unroll_solution<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<NodePtr, Error> {
+        let use_unroll = self.get_finished_unroll_coin();
+
+        use_unroll
+            .coin
+            .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())
+    }
+
+    pub fn get_curried_unroll_puzzle<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<NodePtr, Error> {
+        let use_unroll = self.get_finished_unroll_coin();
+
+        use_unroll
+            .coin
+            .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())
+    }
+
     pub fn get_unroll_coin_transaction<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
@@ -1017,17 +1059,20 @@ impl ChannelHandler {
         // Should have a cached signature for unrolling
 
         // Full unroll puzzle reveal includes the curried info,
-        let curried_unroll_puzzle = use_unroll
-            .coin
-            .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())?;
+        let curried_unroll_puzzle = self.get_curried_unroll_puzzle(env)?;
         let unroll_puzzle_solution = use_unroll
             .coin
             .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
+        let solution_program = Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?;
 
+        debug!(
+            "get_unroll_coin_transaction {:?}",
+            solution_program.to_hex()
+        );
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
                 puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
-                solution: Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?,
+                solution: solution_program,
                 signature: use_unroll.coin.get_unroll_coin_signature()?
                     + use_unroll.signatures.my_unroll_half_signature_peer.clone(),
             },
@@ -1271,16 +1316,13 @@ impl ChannelHandler {
         // it uses the one from the live game object.  Once on chain, we'll need
         // the actual puzzle, but that's a problem for a comment other than this
         // one.
-        let unroll_puzzle = self.unroll.coin.make_curried_unroll_puzzle(
-            env,
-            &self.get_aggregate_unroll_public_key()
-        )?;
+        let unroll_puzzle = self.make_curried_unroll_puzzle(env)?;
         let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
         let parent_coin = self.state_channel_coin().coin_string();
         let unroll_coin = CoinString::from_parts(
             &parent_coin.to_coin_id(),
             &unroll_puzzle_hash,
-            &(self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone())
+            &(self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone()),
         );
 
         let disposition =
