@@ -667,11 +667,11 @@ pub struct UnrollCoinConditionInputs {
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UnrollCoinOutcome {
     pub conditions: NodePtr,
     pub conditions_without_hash: NodePtr,
-    pub old_state_number: usize,
+    pub state_number: usize,
     pub hash: PuzzleHash,
     pub signature: Aggsig,
 }
@@ -736,7 +736,7 @@ impl UnrollCoin {
 
     fn get_old_state_number(&self) -> Result<usize, Error> {
         if let Some(r) = self.outcome.as_ref() {
-            Ok(r.old_state_number)
+            Ok(r.state_number)
         } else {
             Err(Error::StrErr("no default setup".to_string()))
         }
@@ -788,7 +788,7 @@ impl UnrollCoin {
             program: env.unroll_puzzle.clone(),
             args: clvm_curried_args!(
                 shared_puzzle_hash,
-                self.get_old_state_number()?,
+                self.get_old_state_number()? - 1,
                 conditions_hash
             ),
         }
@@ -894,7 +894,7 @@ impl UnrollCoin {
         self.outcome = Some(UnrollCoinOutcome {
             conditions: unroll_conditions,
             conditions_without_hash: unroll_conditions,
-            old_state_number: self.state_number - 1,
+            state_number: self.state_number,
             hash: conditions_hash,
             signature: unroll_signature.clone(),
         });

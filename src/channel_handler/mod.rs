@@ -134,6 +134,16 @@ impl ChannelHandler {
         }
     }
 
+    fn make_curried_unroll_puzzle<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<NodePtr, Error> {
+        self.unroll.coin.make_curried_unroll_puzzle(
+            env,
+            &self.get_aggregate_unroll_public_key()
+        )
+    }
+
     fn unroll_coin_condition_inputs(
         &self,
         my_ending_game_value: Amount,
@@ -534,6 +544,8 @@ impl ChannelHandler {
         }
 
         self.current_state_number += 1;
+        debug!("current state number now {}", self.current_state_number);
+        debug!("test_unroll updated {:?}", test_unroll.outcome);
         self.timeout = Some(ChannelHandlerUnrollSpendInfo {
             coin: test_unroll.clone(),
             signatures: signatures.clone(),
@@ -1023,11 +1035,13 @@ impl ChannelHandler {
         let unroll_puzzle_solution = use_unroll
             .coin
             .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
+        let solution_program = Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?;
 
+        debug!("get_unroll_coin_transaction {:?}", solution_program.to_hex());
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
                 puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
-                solution: Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?,
+                solution: solution_program,
                 signature: use_unroll.coin.get_unroll_coin_signature()?
                     + use_unroll.signatures.my_unroll_half_signature_peer.clone(),
             },
@@ -1271,10 +1285,7 @@ impl ChannelHandler {
         // it uses the one from the live game object.  Once on chain, we'll need
         // the actual puzzle, but that's a problem for a comment other than this
         // one.
-        let unroll_puzzle = self.unroll.coin.make_curried_unroll_puzzle(
-            env,
-            &self.get_aggregate_unroll_public_key()
-        )?;
+        let unroll_puzzle = self.make_curried_unroll_puzzle(env)?;
         let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
         let parent_coin = self.state_channel_coin().coin_string();
         let unroll_coin = CoinString::from_parts(
