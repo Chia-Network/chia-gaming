@@ -1214,17 +1214,21 @@ impl RefereeMaker {
 
         debug!("get_transaction_for_move: target curry");
         let game_move = self.get_our_most_recent_game_move()?;
-        let target_args = RefereePuzzleArgs {
+        let check_target_args = RefereePuzzleArgs {
             mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
-            game_move,
+            game_move: game_move.clone(),
             nonce: self.nonce,
             previous_validation_info_hash: self.get_our_most_recent_validation_info_hash(),
         };
+        let check_target_referee_puzzle_hash =
+            curry_referee_puzzle_hash(allocator, &self.referee_coin_puzzle_hash, &check_target_args)?;
+        let target_args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions { checked: true, inverted: false, game_move: Some(game_move), previous_validation_info_hash: Some(self.get_our_most_recent_validation_info_hash()) })?;
         let target_referee_puzzle_hash =
-            curry_referee_puzzle_hash(allocator, &self.referee_coin_puzzle_hash, &target_args)?;
+            curry_referee_puzzle_hash(allocator, &self.referee_coin_puzzle_hash, &check_target_args)?;
+        assert_eq!(check_target_referee_puzzle_hash, target_referee_puzzle_hash);
         let target_referee_puzzle = curry_referee_puzzle(
             allocator,
             &self.referee_coin_puzzle,
