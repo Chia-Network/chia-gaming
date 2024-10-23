@@ -84,6 +84,14 @@ pub enum TheirTurnCoinSpentResult {
     Slash(Box<SlashOutcome>),
 }
 
+#[derive(Default)]
+pub struct RefereeMakerArgsOptions {
+    checked: bool,
+    inverted: bool,
+    game_move: Option<GameMoveDetails>,
+    previous_validation_info_hash: Option<Option<Hash>>,
+}
+
 /// Adjudicates a two player turn based game
 ///
 /// MOVE, VALIDATION_HASH and MOVER_SHARE were all accepted optimistically from the
@@ -899,7 +907,7 @@ impl RefereeMaker {
             game_move: result.game_move.clone(),
             previous_validation_info_hash,
         };
-        let check_ref_puzzle_args = self.curried_referee_args_for_validator(&self.state, false, true)?;
+        let check_ref_puzzle_args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions { checked: true, .. Default::default() })?;
         let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
@@ -978,9 +986,9 @@ impl RefereeMaker {
         Ok(result)
     }
 
-    fn curried_referee_args_for_validator(&self, state: &RefereeMakerGameState, invert_sides: bool, checked: bool) -> Result<RefereePuzzleArgs, Error> {
-        assert!(checked);
-        let direction = state.is_my_turn() ^ invert_sides;
+    fn curried_referee_args_for_validator(&self, state: &RefereeMakerGameState, options: RefereeMakerArgsOptions) -> Result<RefereePuzzleArgs, Error> {
+        assert!(options.checked);
+        let direction = state.is_my_turn() ^ options.inverted;
         let (previous_validation_info_hash, game_move, validation_info_hash) = match state {
             RefereeMakerGameState::Initial { .. } => {
                 return Err(Error::StrErr(
@@ -1021,31 +1029,31 @@ impl RefereeMaker {
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
             nonce: self.nonce,
-            game_move: GameMoveDetails {
+            game_move: options.game_move.unwrap_or_else(|| GameMoveDetails {
                 basic: game_move,
                 validation_info_hash: validation_info_hash.clone(),
-            },
-            previous_validation_info_hash: previous_validation_info_hash.clone(),
+            }),
+            previous_validation_info_hash: options.previous_validation_info_hash.unwrap_or_else(|| previous_validation_info_hash.clone()),
         })
     }
 
     pub fn curried_referee_puzzle_hash_for_validator(
         &self,
         allocator: &mut AllocEncoder,
-        invert: bool,
+        inverted: bool,
         checked: bool,
     ) -> Result<PuzzleHash, Error> {
-        let args = self.curried_referee_args_for_validator(&self.state, invert, checked)?;
+        let args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions { inverted, checked, .. Default::default() })?;
         curry_referee_puzzle_hash(allocator, &self.referee_coin_puzzle_hash, &args)
     }
 
     pub fn curried_referee_puzzle_for_validator(
         &self,
         allocator: &mut AllocEncoder,
-        invert: bool,
+        inverted: bool,
         checked: bool,
     ) -> Result<Puzzle, Error> {
-        let args = self.curried_referee_args_for_validator(&self.state, invert, checked)?;
+        let args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions { inverted, checked, .. Default::default() })?;
         curry_referee_puzzle(
             allocator,
             &self.referee_coin_puzzle,
@@ -1164,20 +1172,28 @@ impl RefereeMaker {
         let (their_most_recent_game_move, previous_validation_info_hash) =
             self.get_their_move_and_validation_info_for_onchain_move()?;
 
-        let existing_curry_args = RefereePuzzleArgs {
+        let check_existing_curry_args = RefereePuzzleArgs {
             mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
             waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
             game_move: their_most_recent_game_move.clone(),
             nonce: self.nonce,
-            previous_validation_info_hash,
+            previous_validation_info_hash: previous_validation_info_hash.clone(),
         };
+        let existing_curry_args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions { checked: true, inverted: true, game_move: Some(their_most_recent_game_move.clone()), previous_validation_info_hash: Some(previous_validation_info_hash) })?;
+        let check_current_referee_puzzle_hash = curry_referee_puzzle_hash(
+            allocator,
+            &self.referee_coin_puzzle_hash,
+            &check_existing_curry_args,
+        )?;
         let current_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
             &existing_curry_args,
         )?;
+        assert_eq!(check_current_referee_puzzle_hash, current_referee_puzzle_hash);
+
         debug!("actual puzzle reveal");
         let spend_puzzle = curry_referee_puzzle(
             allocator,
