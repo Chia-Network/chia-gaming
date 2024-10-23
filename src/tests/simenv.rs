@@ -618,7 +618,7 @@ fn test_referee_can_slash_on_chain() {
     let (_, _, amt) = coins[0].to_parts().unwrap();
     let spend_to_referee = reftest
         .my_referee
-        .curried_referee_puzzle_for_validator(&mut allocator)
+        .curried_referee_puzzle_for_validator(&mut allocator, true, true)
         .expect("should work");
     let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
 
@@ -759,7 +759,7 @@ fn test_referee_can_move_on_chain() {
     debug!("state at start of referee object");
     let spend_to_referee = reftest
         .my_referee
-        .curried_referee_puzzle_for_validator(&mut allocator)
+        .curried_referee_puzzle_for_validator(&mut allocator, true, true)
         .expect("should work");
     let spend_to_referee_clvm = spend_to_referee
         .to_clvm(&mut allocator)

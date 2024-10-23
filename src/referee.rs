@@ -293,7 +293,7 @@ pub enum Validation {
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
 #[derive(Clone, Debug)]
-enum RefereeMakerGameState {
+pub enum RefereeMakerGameState {
     Initial {
         initial_state: NodePtr,
         initial_validation_program: ValidationProgram,
@@ -323,6 +323,18 @@ enum RefereeMakerGameState {
         most_recent_our_move: GameMoveStateInfo,
         most_recent_their_move: GameMoveDetails,
     },
+}
+
+impl RefereeMakerGameState {
+    pub fn is_my_turn(&self) -> bool {
+        match self {
+            RefereeMakerGameState::Initial { game_handler, .. } => {
+                matches!(game_handler, GameHandler::MyTurnHandler(_))
+            }
+            RefereeMakerGameState::AfterOurTurn { .. } => true,
+            RefereeMakerGameState::AfterTheirTurn { .. } => false,
+        }
+    }
 }
 
 /// A puzzle for a coin that will be run inside the referee to generate
@@ -565,13 +577,7 @@ impl RefereeMaker {
     }
 
     pub fn is_my_turn(&self) -> bool {
-        match &self.state {
-            RefereeMakerGameState::Initial { game_handler, .. } => {
-                matches!(game_handler, GameHandler::MyTurnHandler(_))
-            }
-            RefereeMakerGameState::AfterOurTurn { .. } => true,
-            RefereeMakerGameState::AfterTheirTurn { .. } => false,
-        }
+        self.state.is_my_turn()
     }
 
     pub fn get_game_handler(&self) -> GameHandler {
@@ -884,19 +890,27 @@ impl RefereeMaker {
         //
         // Validation_info_hash is hashed together the state and the validation
         // puzzle.
+        let pre_ref_puzzle_args = RefereePuzzleArgs {
+            mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
+            timeout: self.timeout.clone(),
+            amount: self.amount.clone(),
+            nonce: self.nonce,
+            game_move: result.game_move.clone(),
+            previous_validation_info_hash,
+        };
+        let check_ref_puzzle_args = self.curried_referee_args_for_validator(&self.state, false, true)?;
         let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
-            &RefereePuzzleArgs {
-                mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-                waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
-                timeout: self.timeout.clone(),
-                amount: self.amount.clone(),
-                nonce: self.nonce,
-                game_move: result.game_move.clone(),
-                previous_validation_info_hash,
-            },
+            &pre_ref_puzzle_args,
         )?;
+        let check_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
+            allocator,
+            &self.referee_coin_puzzle_hash,
+            &check_ref_puzzle_args,
+        )?;
+        assert_eq!(new_curried_referee_puzzle_hash, check_curried_referee_puzzle_hash);
 
         debug!("new_curried_referee_puzzle_hash (our turn) {new_curried_referee_puzzle_hash:?}");
         Ok(GameMoveWireData {
@@ -964,8 +978,10 @@ impl RefereeMaker {
         Ok(result)
     }
 
-    fn curried_referee_args_for_validator(&self) -> Result<RefereePuzzleArgs, Error> {
-        let (previous_validation_info_hash, game_move, validation_info_hash) = match &self.state {
+    fn curried_referee_args_for_validator(&self, state: &RefereeMakerGameState, invert_sides: bool, checked: bool) -> Result<RefereePuzzleArgs, Error> {
+        assert!(checked);
+        let direction = state.is_my_turn() ^ invert_sides;
+        let (previous_validation_info_hash, game_move, validation_info_hash) = match state {
             RefereeMakerGameState::Initial { .. } => {
                 return Err(Error::StrErr(
                     "can't challenge before a move is made".to_string(),
@@ -992,15 +1008,15 @@ impl RefereeMaker {
         };
 
         Ok(RefereePuzzleArgs {
-            mover_puzzle_hash: if self.is_my_turn() {
-                self.my_identity.puzzle_hash.clone()
-            } else {
+            mover_puzzle_hash: if direction {
                 self.their_referee_puzzle_hash.clone()
+            } else {
+                self.my_identity.puzzle_hash.clone()
             },
-            waiter_puzzle_hash: if self.is_my_turn() {
-                self.their_referee_puzzle_hash.clone()
-            } else {
+            waiter_puzzle_hash: if direction {
                 self.my_identity.puzzle_hash.clone()
+            } else {
+                self.their_referee_puzzle_hash.clone()
             },
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
@@ -1016,16 +1032,20 @@ impl RefereeMaker {
     pub fn curried_referee_puzzle_hash_for_validator(
         &self,
         allocator: &mut AllocEncoder,
+        invert: bool,
+        checked: bool,
     ) -> Result<PuzzleHash, Error> {
-        let args = self.curried_referee_args_for_validator()?;
+        let args = self.curried_referee_args_for_validator(&self.state, invert, checked)?;
         curry_referee_puzzle_hash(allocator, &self.referee_coin_puzzle_hash, &args)
     }
 
     pub fn curried_referee_puzzle_for_validator(
         &self,
         allocator: &mut AllocEncoder,
+        invert: bool,
+        checked: bool,
     ) -> Result<Puzzle, Error> {
-        let args = self.curried_referee_args_for_validator()?;
+        let args = self.curried_referee_args_for_validator(&self.state, invert, checked)?;
         curry_referee_puzzle(
             allocator,
             &self.referee_coin_puzzle,
@@ -1085,7 +1105,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let spend_puzzle = self.curried_referee_puzzle_for_validator(allocator)?;
+        let spend_puzzle = self.curried_referee_puzzle_for_validator(allocator, true, true)?;
         self.get_transaction(
             allocator,
             coin_string,
