@@ -898,7 +898,7 @@ impl RefereeMaker {
         //
         // Validation_info_hash is hashed together the state and the validation
         // puzzle.
-        let pre_ref_puzzle_args = RefereePuzzleArgs {
+        let check_ref_puzzle_args = RefereePuzzleArgs {
             mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
             timeout: self.timeout.clone(),
@@ -908,12 +908,12 @@ impl RefereeMaker {
             previous_validation_info_hash,
         };
         let puzzle_args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions { checked: true, .. Default::default() })?;
-        let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
+        let check_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
-            &pre_ref_puzzle_args,
+            &check_ref_puzzle_args,
         )?;
-        let check_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
+        let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
             &puzzle_args,
@@ -1569,30 +1569,49 @@ impl RefereeMaker {
         };
 
         let our_previous_move = self.get_our_most_recent_game_move()?;
-        let ref_puzzle_args = RefereePuzzleArgs {
+        let new_game_move = GameMoveDetails {
+            basic: GameMoveStateInfo {
+                move_made: new_move.clone(),
+                max_move_size: new_max_move_size,
+                mover_share: new_mover_share.clone(),
+            },
+            validation_info_hash: new_validation_info_hash.clone(),
+        };
+        let new_pvih = Some(our_previous_move.validation_info_hash.clone());
+        let check_puzzle_args = RefereePuzzleArgs {
             mover_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             waiter_puzzle_hash: self.my_identity.puzzle_hash.clone(),
             timeout: self.timeout.clone(),
             amount: self.amount.clone(),
             nonce: self.nonce,
-            game_move: GameMoveDetails {
-                basic: GameMoveStateInfo {
-                    move_made: new_move.clone(),
-                    max_move_size: new_max_move_size,
-                    mover_share: new_mover_share.clone(),
-                },
-                validation_info_hash: new_validation_info_hash.clone(),
-            },
-            previous_validation_info_hash: Some(our_previous_move.validation_info_hash.clone()),
+            game_move: new_game_move.clone(),
+            previous_validation_info_hash: new_pvih.clone(),
         };
+        let check_puzzle_hash =
+            curry_referee_puzzle_hash(allocator, &self.referee_coin_puzzle_hash, &check_puzzle_args)?;
+        let check_puzzle = curry_referee_puzzle(
+            allocator,
+            &self.referee_coin_puzzle,
+            &self.referee_coin_puzzle_hash,
+            &check_puzzle_args,
+        )?;
+
+        let puzzle_args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions {
+            inverted: true,
+            checked: false,
+            game_move: Some(new_game_move),
+            previous_validation_info_hash: Some(new_pvih)
+        })?;
+        let new_puzzle_hash =
+            curry_referee_puzzle_hash(allocator, &self.referee_coin_puzzle_hash, &puzzle_args)?;
         let new_puzzle = curry_referee_puzzle(
             allocator,
             &self.referee_coin_puzzle,
             &self.referee_coin_puzzle_hash,
-            &ref_puzzle_args,
+            &puzzle_args,
         )?;
-        let new_puzzle_hash =
-            curry_referee_puzzle_hash(allocator, &self.referee_coin_puzzle_hash, &ref_puzzle_args)?;
+
+        assert_eq!(check_puzzle_hash, new_puzzle_hash);
 
         let game_handler = self.get_game_handler();
 
