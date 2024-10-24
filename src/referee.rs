@@ -907,7 +907,7 @@ impl RefereeMaker {
             game_move: result.game_move.clone(),
             previous_validation_info_hash,
         };
-        let check_ref_puzzle_args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions { checked: true, .. Default::default() })?;
+        let puzzle_args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions { checked: true, .. Default::default() })?;
         let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
@@ -916,7 +916,7 @@ impl RefereeMaker {
         let check_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
-            &check_ref_puzzle_args,
+            &puzzle_args,
         )?;
         assert_eq!(new_curried_referee_puzzle_hash, check_curried_referee_puzzle_hash);
 
@@ -1393,20 +1393,28 @@ impl RefereeMaker {
             }
         };
 
+        let check_puzzle_args = RefereePuzzleArgs {
+            mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
+            waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+            timeout: self.timeout.clone(),
+            amount: self.amount.clone(),
+            game_move: details.clone(),
+            nonce: self.nonce,
+
+            previous_validation_info_hash: previous_validation_info_hash.clone(),
+        };
+        let puzzle_args = self.curried_referee_args_for_validator(&self.state, RefereeMakerArgsOptions { inverted: false, checked: true, game_move: Some(details.clone()), previous_validation_info_hash: Some(previous_validation_info_hash) })?;
+        let check_puzzle_hash_for_unroll = curry_referee_puzzle_hash(
+            allocator,
+            &self.referee_coin_puzzle_hash,
+            &check_puzzle_args,
+        )?;
         let puzzle_hash_for_unroll = curry_referee_puzzle_hash(
             allocator,
             &self.referee_coin_puzzle_hash,
-            &RefereePuzzleArgs {
-                mover_puzzle_hash: self.my_identity.puzzle_hash.clone(),
-                waiter_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-                timeout: self.timeout.clone(),
-                amount: self.amount.clone(),
-                game_move: details.clone(),
-                nonce: self.nonce,
-
-                previous_validation_info_hash,
-            },
+            &puzzle_args
         )?;
+        assert_eq!(check_puzzle_hash_for_unroll, puzzle_hash_for_unroll);
         debug!(
             "new_curried_referee_puzzle_hash (their turn): {:?}",
             puzzle_hash_for_unroll
