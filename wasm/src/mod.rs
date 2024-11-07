@@ -663,3 +663,11 @@ pub fn chia_identity(seed: &str) -> Result<JsValue, JsValue> {
     let js_identity: JsChiaIdentity = identity.into();
     serde_wasm_bindgen::to_value(&js_identity).into_js()
 }
+
+#[wasm_bindgen]
+pub fn sha256bytes(bytes_str: &str) -> Result<JsValue, JsValue> {
+    let hashed = Sha256Input::Bytes(bytes_str.as_bytes()).hash();
+    //let hashed = Sha256Input::Bytes("".as_bytes()).hash();
+    //let hashed = bytes_str.as_bytes();
+    serde_wasm_bindgen::to_value(&hashed).into_js()
+}
