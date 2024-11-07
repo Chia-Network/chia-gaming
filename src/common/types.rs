@@ -669,6 +669,11 @@ impl Program {
         Ok(Program(bytes))
     }
 
+    pub fn from_hex(s: &str) -> Result<Program, Error> {
+        let bytes = hex::decode(s).into_gen()?;
+        Ok(Program::from_bytes(&bytes))
+    }
+
     pub fn from_bytes(by: &[u8]) -> Program {
         Program(by.to_vec())
     }

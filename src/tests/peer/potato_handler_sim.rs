@@ -197,6 +197,10 @@ impl WalletSpendInterface for SimulatedPeer {
         debug!("register coin {coin_id:?}");
         self.simulated_wallet_spend.register_coin(coin_id, timeout)
     }
+
+    fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
+        todo!();
+    }
 }
 
 impl BootstrapTowardWallet for SimulatedPeer {
@@ -867,6 +871,18 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                     result.continue_on,
                     result.outbound_messages.len()
                 );
+
+                for coin in result.coin_solution_requests.iter() {
+                    let ps_res = simulator.get_puzzle_and_solution(coin).expect("should work");
+                    for i in 0..=1 {
+                        cradles[i].report_puzzle_and_solution(
+                            allocator,
+                            &mut rng,
+                            &coin,
+                            ps_res.as_ref().map(|ps| (&ps.0, &ps.1))
+                        ).expect("should succeed");
+                    }
+                }
 
                 for tx in result.outbound_transactions.iter() {
                     debug!("PROCESS TX {tx:?}");

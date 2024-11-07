@@ -337,6 +337,30 @@ impl Simulator {
         })
     }
 
+    pub fn get_puzzle_and_solution(&self, coin_string: &CoinString) -> PyResult<Option<(Program, Program)>> {
+        Python::with_gil(|py| -> PyResult<_> {
+            let hash_bytes = PyBytes::new(py, coin_string.to_coin_id().bytes());
+            let record =
+                self.async_client(py, "get_coin_record_by_name", (&hash_bytes,))?;
+            let height_of_spend =
+                if let Ok(height_of_spend) = record.getattr(py, "spent_block_index") {
+                    height_of_spend
+                } else {
+                    return Ok(None);
+                };
+            let puzzle_and_solution =
+                self.async_client(py, "get_puzzle_and_solution", (hash_bytes, height_of_spend))?;
+            let puzzle_reveal: PyObject =
+                puzzle_and_solution.getattr(py, "puzzle_reveal")?;
+            let solution: PyObject =
+                puzzle_and_solution.getattr(py, "solution")?;
+
+            let puzzle_str: Vec<u8> = puzzle_reveal.call_method0(py, "__bytes__")?.extract(py)?;
+            let solution_str: Vec<u8> = solution.call_method0(py, "__bytes__")?.extract(py)?;
+            Ok(Some((Program::from_bytes(&puzzle_str), Program::from_bytes(&solution_str))))
+       })
+    }
+
     pub fn g2_element(&self, aggsig: &Aggsig) -> PyResult<PyObject> {
         Python::with_gil(|py| -> PyResult<_> {
             let bytes = PyBytes::new(py, &aggsig.bytes());

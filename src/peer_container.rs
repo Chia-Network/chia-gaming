@@ -146,6 +146,7 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
 pub struct IdleResult {
     pub continue_on: bool,
     pub outbound_transactions: VecDeque<SpendBundle>,
+    pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
     pub opponent_move: Option<(GameID, ReadableMove)>,
     pub game_finished: Option<(GameID, Amount)>,
@@ -217,6 +218,9 @@ pub trait GameCradle {
         local_ui: &mut dyn ToLocalUI,
     ) -> Result<IdleResult, Error>;
 
+    /// Check whether we're on chain.
+    fn is_on_chain(&self) -> bool;
+
     /// Trigger going on chain.
     fn go_on_chain<R: Rng>(
         &mut self,
@@ -224,6 +228,15 @@ pub trait GameCradle {
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
     ) -> Result<Vec<OnChainGameCoin>, Error>;
+
+    /// Report a puzzle and solution for a spent coin.
+    fn report_puzzle_and_solution<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        coin_id: &CoinString,
+        puzzle_and_solution: Option<(&Program, &Program)>,
+    ) -> Result<(), Error>;
 }
 
 struct SynchronousGameCradleState {
@@ -237,6 +250,7 @@ struct SynchronousGameCradleState {
     inbound_messages: VecDeque<Vec<u8>>,
     outbound_messages: VecDeque<Vec<u8>>,
     outbound_transactions: VecDeque<SpendBundle>,
+    coin_solution_requests: VecDeque<CoinString>,
     our_moves: VecDeque<(GameID, Vec<u8>)>,
     opponent_moves: VecDeque<(GameID, ReadableMove)>,
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
@@ -277,6 +291,11 @@ impl WalletSpendInterface for SynchronousGameCradleState {
 
         Ok(())
     }
+    /// Request the puzzle and solution from a coin spend.
+    fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
+        self.coin_solution_requests.push_back(coin_id.clone());
+        Ok(())
+    }
 }
 
 /// A game cradle that operates synchronously.  It can be composed with a game cradle that
@@ -308,6 +327,7 @@ impl SynchronousGameCradle {
                 inbound_messages: VecDeque::default(),
                 outbound_transactions: VecDeque::default(),
                 outbound_messages: VecDeque::default(),
+                coin_solution_requests: VecDeque::default(),
                 our_moves: VecDeque::default(),
                 opponent_moves: VecDeque::default(),
                 game_messages: VecDeque::default(),
@@ -595,6 +615,10 @@ impl SynchronousGameCradle {
 }
 
 impl GameCradle for SynchronousGameCradle {
+    fn is_on_chain(&self) -> bool {
+        self.peer.is_on_chain()
+    }
+
     fn opening_coin<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -726,6 +750,12 @@ impl GameCradle for SynchronousGameCradle {
         );
         self.state.outbound_messages.clear();
 
+        swap(
+            &mut result.coin_solution_requests,
+            &mut self.state.coin_solution_requests
+        );
+        self.state.coin_solution_requests.clear();
+
         if let Some((id, msg)) = self.state.our_moves.pop_front() {
             local_ui.self_move(&id, &msg)?;
             return Ok(result);
@@ -798,5 +828,24 @@ impl GameCradle for SynchronousGameCradle {
             system_interface: &mut self.state,
         };
         self.peer.go_on_chain(&mut penv)
+    }
+
+    fn report_puzzle_and_solution<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        coin_id: &CoinString,
+        puzzle_and_solution: Option<(&Program, &Program)>,
+    ) -> Result<(), Error> {
+        let mut env = channel_handler_env(allocator, rng);
+        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
+            env: &mut env,
+            system_interface: &mut self.state,
+        };
+        self.peer.coin_puzzle_and_solution(
+            &mut penv,
+            coin_id,
+            puzzle_and_solution,
+        )
     }
 }

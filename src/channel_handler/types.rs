@@ -25,7 +25,7 @@ use crate::common::types::{
     CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
     Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
-use crate::referee::{GameMoveDetails, RefereeMaker};
+use crate::referee::{GameMoveDetails, LiveGameReplay, RefereeMaker};
 
 #[derive(Clone)]
 pub struct ChannelHandlerPrivateKeys {
@@ -944,4 +944,43 @@ pub struct UnrollTarget {
     pub unroll_puzzle_hash: PuzzleHash,
     pub my_amount: Amount,
     pub their_amount: Amount,
+}
+
+impl LiveGame {
+    /// Back up the live game state to the state we know so that we can generate the puzzle
+    /// for that state.  We'll return the move needed to advance it fully.
+    pub fn set_state_for_coin(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        coin: &OnChainGameCoin
+    ) -> Result<Vec<LiveGameReplay>, Error> {
+        let want_ph =
+            if let Some((_, ph, _)) = coin.coin_string_up.as_ref().and_then(|cs| cs.to_parts()) {
+                ph.clone()
+            } else {
+                // No coin string given so this game was ended.  We need to ressurect it.
+                todo!();
+            };
+
+        let referee_puzzle_hash = self.referee_maker.curried_referee_puzzle_hash_for_validator(
+            allocator,
+            true,
+        )?;
+
+        if referee_puzzle_hash == want_ph {
+            return Ok(vec![]);
+        }
+
+        while self.referee_maker.rewind()? {
+            let new_puzzle_hash = self.referee_maker.curried_referee_puzzle_hash_for_validator(
+                allocator, true
+            )?;
+
+            if new_puzzle_hash == want_ph {
+                todo!();
+            }
+        }
+
+        todo!();
+    }
 }

@@ -1306,6 +1306,26 @@ impl ChannelHandler {
         )
     }
 
+    // Reset our state so that we generate the indicated puzzles from the live games.
+    pub fn set_state_for_coins<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        coins: &[OnChainGameCoin]
+    ) -> Result<(), Error> {
+        let mut res = Vec::new();
+        for game_coin in coins.iter() {
+            if let Some(live_game) = self.live_games.iter_mut().filter(|f| game_coin.game_id_up == f.game_id).next() {
+                res.append(&mut live_game.set_state_for_coin(env.allocator, game_coin)?);
+            } else {
+                // XXX Used to exist, needs ressurection from the cache to potentially replay
+                // the accept.
+                todo!();
+            }
+        }
+
+        Ok(())
+    }
+
     // what our vanilla coin string is
     // return these triplets for all the active games
     //  (id of game, coin string that's now on chain for it and the referee maker

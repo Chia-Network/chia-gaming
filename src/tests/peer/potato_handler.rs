@@ -98,6 +98,10 @@ impl WalletSpendInterface for Pipe {
 
         Ok(())
     }
+
+    fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
+        todo!();
+    }
 }
 
 impl BootstrapTowardWallet for Pipe {
