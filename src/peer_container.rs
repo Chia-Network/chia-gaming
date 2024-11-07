@@ -233,6 +233,7 @@ struct SynchronousGameCradleState {
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_messages: VecDeque<(GameID, ReadableMove)>,
     game_finished: VecDeque<(GameID, Amount)>,
+    shutdown: Option<CoinString>,
     identity: ChiaIdentity,
 }
 
@@ -247,7 +248,11 @@ impl PacketSender for SynchronousGameCradleState {
 
 impl WalletSpendInterface for SynchronousGameCradleState {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, _bundle: &Spend) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        _bundle: &Spend,
+        _parent: Option<&CoinString>,
+    ) -> Result<(), Error> {
         todo!();
     }
     /// Coin should report its lifecycle until it gets spent, then should be
@@ -301,6 +306,7 @@ impl SynchronousGameCradle {
                 channel_puzzle_hash: None,
                 funding_coin: None,
                 unfunded_offer: None,
+                shutdown: None,
             },
             peer: PotatoHandler::new(
                 config.have_potato,
@@ -341,7 +347,12 @@ impl ToLocalUI for SynchronousGameCradleState {
         Ok(())
     }
 
-    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error> {
         self.opponent_moves.push_back((id.clone(), readable));
         Ok(())
     }
@@ -350,7 +361,12 @@ impl ToLocalUI for SynchronousGameCradleState {
             .push_back((id.clone(), readable.to_vec()));
         Ok(())
     }
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error> {
         self.game_messages.push_back((id.clone(), readable.clone()));
         Ok(())
     }
@@ -361,8 +377,9 @@ impl ToLocalUI for SynchronousGameCradleState {
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
     }
-    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
-        todo!();
+    fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error> {
+        self.shutdown = Some(reward_coin_string.clone());
+        Ok(())
     }
     fn going_on_chain(&mut self) -> Result<(), Error> {
         todo!();
@@ -679,12 +696,12 @@ impl GameCradle for SynchronousGameCradle {
         }
 
         if let Some((id, msg)) = self.state.game_messages.pop_front() {
-            local_ui.game_message(&id, msg)?;
+            local_ui.game_message(allocator, &id, msg)?;
             return Ok(result);
         }
 
         if let Some((id, readable)) = self.state.opponent_moves.pop_front() {
-            local_ui.opponent_moved(&id, readable)?;
+            local_ui.opponent_moved(allocator, &id, readable)?;
             result.continue_on = true;
             return Ok(result);
         }
