@@ -1632,7 +1632,7 @@ impl PotatoHandler {
         penv: &mut dyn PeerEnv<'a, G, R>,
         action: GameAction,
     ) -> Result<(), Error>
-where
+    where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
@@ -1651,6 +1651,40 @@ where
         self.have_potato_move(penv)?;
 
         Ok(())
+    }
+
+    fn handle_channel_coin_spent<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString,
+        puzzle_and_solution: Option<(&Program, &Program)>,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let (puzzle, solution) =
+            if let Some((puzzle, solution)) = puzzle_and_solution {
+                (puzzle, solution)
+            } else {
+                return Err(Error::StrErr("Retrieve of puzzle and solution failed for channel coin".to_string()));
+            };
+
+        let mut ch = self.channel_handler_mut()?;
+        let (env, _) = penv.env();
+        let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
+        let run_args = solution.to_nodeptr(env.allocator)?;
+        let conditions = run_program(
+            env.allocator.allocator(),
+            &chia_dialect(),
+            run_puzzle,
+            run_args,
+            0,
+        ).into_gen()?;
+        let cs_spend_result = ch.channel_coin_spent(
+            env,
+            conditions.1,
+        )?;
+        todo!();
     }
 }
 
@@ -1893,8 +1927,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     fn coin_puzzle_and_solution<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        _coin_id: &CoinString,
-        _puzzle_and_solution: Option<(&Program, &Program)>,
+        coin_id: &CoinString,
+        puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -1907,8 +1941,10 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 return Ok(());
             };
 
-        let mut ch = self.channel_handler_mut()?;
-        let (env, _) = penv.env();
-        todo!();
+        if *coin_id == state_coin_id {
+            return self.handle_channel_coin_spent(penv, coin_id, puzzle_and_solution);
+        }
+
+        Ok(())
     }
 }

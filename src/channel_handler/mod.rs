@@ -1100,7 +1100,7 @@ impl ChannelHandler {
         let state_number = usize_from_atom(&rem_conditions[0])
             .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))?;
 
-        let our_parity = self.unroll.coin.state_number & 1;
+        let our_parity = full_coin.coin.state_number & 1;
         let their_parity = state_number & 1;
 
         debug!(
@@ -1108,7 +1108,7 @@ impl ChannelHandler {
             self.current_state_number, full_coin.coin.state_number
         );
 
-        match state_number.cmp(&self.current_state_number) {
+        match state_number.cmp(&full_coin.coin.state_number) {
             Ordering::Greater => Err(Error::StrErr(format!(
                 "Reply from the future onchain {} (me {}) vs {}",
                 state_number, self.current_state_number, self.unroll.coin.state_number
