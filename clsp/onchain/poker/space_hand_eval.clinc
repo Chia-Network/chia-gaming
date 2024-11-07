@@ -10,6 +10,8 @@
 (import std.map)
 (import std.slice)
 (import std.max)
+; Need to change these to work organically like regular poker hand evaluations do
+; Straight beats full house so it should be (3 3 high_card)
 (defconstant FIVE_OF_A_KIND 8)
 (defconstant FOUR_OF_A_KIND 7)
 (defconstant FULL_HOUSE 6)
