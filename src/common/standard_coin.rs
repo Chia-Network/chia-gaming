@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs::read_to_string;
 
 use log::debug;
@@ -30,6 +32,16 @@ use crate::common::types::{
     ToQuotedProgram,
 };
 
+thread_local! {
+    pub static PRESET_FILES: RefCell<HashMap<String, String>> = RefCell::default();
+}
+
+pub fn wasm_deposit_file(name: &str, data: &str) {
+    PRESET_FILES.with(|p| {
+        p.borrow_mut().insert(name.to_string(), data.to_string());
+    });
+}
+
 pub fn hex_to_sexp(
     allocator: &mut AllocEncoder,
     hex_data: String,
@@ -41,7 +53,11 @@ pub fn hex_to_sexp(
 }
 
 pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, types::Error> {
-    let hex_data = read_to_string(name).into_gen()?;
+    let hex_data = if let Some(data) = PRESET_FILES.with(|p| p.borrow().get(name).cloned()) {
+        data
+    } else {
+        read_to_string(name).into_gen()?
+    };
     let hex_sexp = hex_to_sexp(allocator, hex_data)?;
     Puzzle::from_nodeptr(allocator, hex_sexp)
 }
