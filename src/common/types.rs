@@ -62,6 +62,14 @@ impl std::fmt::Debug for CoinString {
 }
 
 impl CoinString {
+    pub fn from_bytes(bytes: &[u8]) -> CoinString {
+        CoinString(bytes.to_vec())
+    }
+
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
     pub fn from_parts(parent: &CoinID, puzzle_hash: &PuzzleHash, amount: &Amount) -> CoinString {
         let mut allocator = AllocEncoder::new();
         let amount_clvm = amount.to_clvm(&mut allocator).unwrap();
@@ -202,7 +210,7 @@ impl<'de> Deserialize<'de> for PublicKey {
 
 impl PublicKey {
     pub fn to_bls(&self) -> chia_bls::PublicKey {
-        self.0.clone()
+        self.0
     }
 
     pub fn bytes(&self) -> [u8; 48] {
@@ -364,6 +372,10 @@ impl GameID {
 impl GameID {
     pub fn from_bytes(s: &[u8]) -> GameID {
         GameID(s.to_vec())
+    }
+
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -565,7 +577,25 @@ pub enum Error {
     BlsErr(chia_bls::Error),
     BsonErr(bson::de::Error),
     JsonErr(serde_json::Error),
+    HexErr(hex::FromHexError),
     Channel(String),
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializedError {
+    error: String,
+}
+
+impl Serialize for Error {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        SerializedError {
+            error: format!("{self:?}"),
+        }
+        .serialize(serializer)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -842,6 +872,12 @@ impl ErrToError for bson::de::Error {
 impl ErrToError for serde_json::Error {
     fn into_gen(self) -> Error {
         Error::JsonErr(self)
+    }
+}
+
+impl ErrToError for hex::FromHexError {
+    fn into_gen(self) -> Error {
+        Error::HexErr(self)
     }
 }
 

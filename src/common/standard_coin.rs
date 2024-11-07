@@ -1,5 +1,8 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs::read_to_string;
 
+use log::debug;
 use num_bigint::{BigInt, Sign};
 
 use chia_bls;
@@ -29,6 +32,16 @@ use crate::common::types::{
     ToQuotedProgram,
 };
 
+thread_local! {
+    pub static PRESET_FILES: RefCell<HashMap<String, String>> = RefCell::default();
+}
+
+pub fn wasm_deposit_file(name: &str, data: &str) {
+    PRESET_FILES.with(|p| {
+        p.borrow_mut().insert(name.to_string(), data.to_string());
+    });
+}
+
 pub fn hex_to_sexp(
     allocator: &mut AllocEncoder,
     hex_data: String,
@@ -40,7 +53,11 @@ pub fn hex_to_sexp(
 }
 
 pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, types::Error> {
-    let hex_data = read_to_string(name).into_gen()?;
+    let hex_data = if let Some(data) = PRESET_FILES.with(|p| p.borrow().get(name).cloned()) {
+        data
+    } else {
+        read_to_string(name).into_gen()?
+    };
     let hex_sexp = hex_to_sexp(allocator, hex_data)?;
     Puzzle::from_nodeptr(allocator, hex_sexp)
 }
@@ -430,6 +447,7 @@ pub fn standard_solution_partial(
     let quoted_conds = conditions.to_quoted_program(allocator)?;
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
+    debug!("standard signing with parent coin {parent_coin:?}");
     let coin_agg_sig_me_message = agg_sig_me_message(
         quoted_conds_hash.bytes(),
         parent_coin,
@@ -454,6 +472,7 @@ pub fn standard_solution_partial(
     for cond in conds.iter() {
         match cond {
             CoinCondition::CreateCoin(_, _) => {
+                debug!("adding signature based on create coin: {aggregate_public_key:?} {coin_agg_sig_me_message:?}");
                 add_signature(
                     &mut aggregated_signature,
                     if partial {
