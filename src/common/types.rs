@@ -210,7 +210,7 @@ impl<'de> Deserialize<'de> for PublicKey {
 
 impl PublicKey {
     pub fn to_bls(&self) -> chia_bls::PublicKey {
-        self.0.clone()
+        self.0
     }
 
     pub fn bytes(&self) -> [u8; 48] {
