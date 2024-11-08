@@ -1,5 +1,5 @@
 import { init, sha256bytes } from '../../../../pkg/chia_gaming_wasm.js';
-import { to_hex_string, foo } from './common';
+import { to_hex_string } from './common';
 import * as assert from 'assert';
 
 let utf8Encode = new TextEncoder();
