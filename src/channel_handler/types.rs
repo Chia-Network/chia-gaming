@@ -947,7 +947,7 @@ pub struct UnrollTarget {
 }
 
 impl LiveGame {
-    /// Back up the live game state to the state we know so that we can generate the puzzle
+    /// Regress the live game state to the state we know so that we can generate the puzzle
     /// for that state.  We'll return the move needed to advance it fully.
     pub fn set_state_for_coin(
         &mut self,
