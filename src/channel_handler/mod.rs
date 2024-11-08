@@ -18,9 +18,10 @@ use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
-    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult,
-    GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData,
-    PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget
+    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult,
+    DispositionResult, GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
+    PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
+    UnrollCoinConditionInputs, UnrollTarget,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -29,8 +30,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash,
-    Sha256tree, Spend, SpendRewardResult, ToQuotedProgram,
+    CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
+    PuzzleHash, Sha256tree, Spend, SpendRewardResult, ToQuotedProgram,
 };
 use crate::referee::RefereeMaker;
 
@@ -138,10 +139,9 @@ impl ChannelHandler {
         &self,
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<NodePtr, Error> {
-        self.unroll.coin.make_curried_unroll_puzzle(
-            env,
-            &self.get_aggregate_unroll_public_key()
-        )
+        self.unroll
+            .coin
+            .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())
     }
 
     fn unroll_coin_condition_inputs(
@@ -1037,7 +1037,10 @@ impl ChannelHandler {
             .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
         let solution_program = Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?;
 
-        debug!("get_unroll_coin_transaction {:?}", solution_program.to_hex());
+        debug!(
+            "get_unroll_coin_transaction {:?}",
+            solution_program.to_hex()
+        );
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
                 puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
@@ -1291,7 +1294,7 @@ impl ChannelHandler {
         let unroll_coin = CoinString::from_parts(
             &parent_coin.to_coin_id(),
             &unroll_puzzle_hash,
-            &(self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone())
+            &(self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone()),
         );
 
         let disposition =
@@ -1310,11 +1313,16 @@ impl ChannelHandler {
     pub fn set_state_for_coins<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        coins: &[OnChainGameCoin]
+        coins: &[OnChainGameCoin],
     ) -> Result<(), Error> {
         let mut res = Vec::new();
         for game_coin in coins.iter() {
-            if let Some(live_game) = self.live_games.iter_mut().filter(|f| game_coin.game_id_up == f.game_id).next() {
+            if let Some(live_game) = self
+                .live_games
+                .iter_mut()
+                .filter(|f| game_coin.game_id_up == f.game_id)
+                .next()
+            {
                 res.append(&mut live_game.set_state_for_coin(env.allocator, game_coin)?);
             } else {
                 // XXX Used to exist, needs ressurection from the cache to potentially replay

@@ -236,7 +236,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             run_args,
             0,
         )
-            .into_gen()?;
+        .into_gen()?;
 
         self.simulator.farm_block(&self.identities[0].puzzle_hash);
 
@@ -319,7 +319,10 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .player(*player)
                     .ch
                     .get_unroll_target(&mut self.env)?;
-                debug!("GO ON CHAIN: {} {:?} {:?}", unroll_target.state_number, unroll_target.my_amount, unroll_target.their_amount);
+                debug!(
+                    "GO ON CHAIN: {} {:?} {:?}",
+                    unroll_target.state_number, unroll_target.my_amount, unroll_target.their_amount
+                );
                 let state_channel_coin = match self.on_chain.clone() {
                     OnChainState::OffChain(coin) => coin.clone(),
                     _ => {
@@ -332,8 +335,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                         + private_to_public_key(&self.parties.player(1).ch.channel_private_key());
                 debug!("going on chain: aggregate public key is: {aggregate_public_key:?}",);
 
-                let (channel_coin_conditions, unroll_coin) =
-                    self.spend_channel_coin(*player, state_channel_coin, &unroll_target.unroll_puzzle_hash)?;
+                let (channel_coin_conditions, unroll_coin) = self.spend_channel_coin(
+                    *player,
+                    state_channel_coin,
+                    &unroll_target.unroll_puzzle_hash,
+                )?;
                 debug!("unroll_coin {unroll_coin:?}");
 
                 let _channel_spent_result_1 = self
