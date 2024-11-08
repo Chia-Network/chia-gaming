@@ -27,8 +27,7 @@ use crate::tests::constants::{
 #[test]
 fn test_standard_puzzle() {
     let mut allocator = AllocEncoder::new();
-    let test_key =
-        PublicKey::from_bytes(*TEST_PUBLIC_KEY_BYTES).expect("should be a public key");
+    let test_key = PublicKey::from_bytes(*TEST_PUBLIC_KEY_BYTES).expect("should be a public key");
     let puzzle = puzzle_for_pk(&mut allocator, &test_key).expect("should work");
     let puzzle_hash = puzzle.sha256tree(&mut allocator);
     let expected_puzzle =
@@ -183,8 +182,8 @@ fn test_standard_puzzle_solution_maker() {
         50,
         (synthetic_public_key, (quoted_conditions_hash.clone(), ())),
     );
-    let spend_info = standard_solution_unsafe(&mut allocator, &private_key, conditions)
-        .expect("should work");
+    let spend_info =
+        standard_solution_unsafe(&mut allocator, &private_key, conditions).expect("should work");
     let expected_full_conditions = (expected_added_condition, Node(spend_info.conditions))
         .to_clvm(&mut allocator)
         .expect("should work");

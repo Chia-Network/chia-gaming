@@ -67,14 +67,24 @@ impl ToLocalUI for UIReceiver {
         Ok(())
     }
 
-    fn opponent_moved(&mut self, _id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error> {
         self.received_moves += 1;
         self.our_readable_move = Vec::default();
         self.opponent_readable_move = readable;
         Ok(())
     }
 
-    fn game_message(&mut self, _id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error> {
         self.remote_message = readable;
         Ok(())
     }

@@ -992,32 +992,36 @@ impl RefereeMaker {
         Ok(result)
     }
 
-    fn curried_referee_args_for_validator_direction(&self, direction: bool) -> Result<RefereePuzzleArgs, Error> {
-        let (previous_validation_info_hash, game_move, validation_info_hash) = match self.state.borrow() {
-            RefereeMakerGameState::Initial { .. } => {
-                return Err(Error::StrErr(
-                    "can't challenge before a move is made".to_string(),
-                ));
-            }
-            RefereeMakerGameState::AfterOurTurn {
-                most_recent_our_move,
-                their_previous_validation_info_hash,
-                ..
-            } => (
-                their_previous_validation_info_hash,
-                most_recent_our_move.basic.clone(),
-                most_recent_our_move.validation_info_hash.clone(),
-            ),
-            RefereeMakerGameState::AfterTheirTurn {
-                most_recent_their_move,
-                our_previous_validation_info_hash,
-                ..
-            } => (
-                our_previous_validation_info_hash,
-                most_recent_their_move.basic.clone(),
-                most_recent_their_move.validation_info_hash.clone(),
-            ),
-        };
+    fn curried_referee_args_for_validator_direction(
+        &self,
+        direction: bool,
+    ) -> Result<RefereePuzzleArgs, Error> {
+        let (previous_validation_info_hash, game_move, validation_info_hash) =
+            match self.state.borrow() {
+                RefereeMakerGameState::Initial { .. } => {
+                    return Err(Error::StrErr(
+                        "can't challenge before a move is made".to_string(),
+                    ));
+                }
+                RefereeMakerGameState::AfterOurTurn {
+                    most_recent_our_move,
+                    their_previous_validation_info_hash,
+                    ..
+                } => (
+                    their_previous_validation_info_hash,
+                    most_recent_our_move.basic.clone(),
+                    most_recent_our_move.validation_info_hash.clone(),
+                ),
+                RefereeMakerGameState::AfterTheirTurn {
+                    most_recent_their_move,
+                    our_previous_validation_info_hash,
+                    ..
+                } => (
+                    our_previous_validation_info_hash,
+                    most_recent_their_move.basic.clone(),
+                    most_recent_their_move.validation_info_hash.clone(),
+                ),
+            };
 
         Ok(RefereePuzzleArgs {
             mover_puzzle_hash: if self.is_my_turn() ^ direction {

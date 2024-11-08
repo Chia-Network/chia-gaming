@@ -52,11 +52,9 @@ fn test_smoke_can_initiate_channel_handler() {
     )
     .expect("should build");
 
-    game
-        .finish_handshake(&mut env, 1)
+    game.finish_handshake(&mut env, 1)
         .expect("should finish handshake");
-    game
-        .finish_handshake(&mut env, 0)
+    game.finish_handshake(&mut env, 0)
         .expect("should finish handshake");
 
     // Set up for the spend.
@@ -115,12 +113,10 @@ fn test_smoke_can_start_game() {
     )
     .expect("should work");
 
-    game
-        .finish_handshake(&mut env, 1)
+    game.finish_handshake(&mut env, 1)
         .expect("should finish handshake");
 
-    game
-        .finish_handshake(&mut env, 0)
+    game.finish_handshake(&mut env, 0)
         .expect("should finish handshake");
 
     // Set up for the spend.

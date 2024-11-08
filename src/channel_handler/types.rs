@@ -952,7 +952,7 @@ impl LiveGame {
     pub fn set_state_for_coin(
         &mut self,
         allocator: &mut AllocEncoder,
-        coin: &OnChainGameCoin
+        coin: &OnChainGameCoin,
     ) -> Result<Vec<LiveGameReplay>, Error> {
         let want_ph =
             if let Some((_, ph, _)) = coin.coin_string_up.as_ref().and_then(|cs| cs.to_parts()) {
@@ -962,19 +962,18 @@ impl LiveGame {
                 todo!();
             };
 
-        let referee_puzzle_hash = self.referee_maker.curried_referee_puzzle_hash_for_validator(
-            allocator,
-            true,
-        )?;
+        let referee_puzzle_hash = self
+            .referee_maker
+            .curried_referee_puzzle_hash_for_validator(allocator, true)?;
 
         if referee_puzzle_hash == want_ph {
             return Ok(vec![]);
         }
 
         while self.referee_maker.rewind()? {
-            let new_puzzle_hash = self.referee_maker.curried_referee_puzzle_hash_for_validator(
-                allocator, true
-            )?;
+            let new_puzzle_hash = self
+                .referee_maker
+                .curried_referee_puzzle_hash_for_validator(allocator, true)?;
 
             if new_puzzle_hash == want_ph {
                 todo!();

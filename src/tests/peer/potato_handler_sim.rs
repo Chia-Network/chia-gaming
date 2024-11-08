@@ -183,10 +183,7 @@ impl SimulatedWalletSpend {
 
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(
-        &mut self,
-        bundle: &SpendBundle,
-    ) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
         debug!("waiting to spend transaction");
         self.outbound_transactions.push(bundle.clone());
         Ok(())
@@ -315,8 +312,7 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
             false,
         )
         .expect("ssp 1");
-        let spend_solution_program =
-            Program::from_nodeptr(self.env.allocator, spend.solution)?;
+        let spend_solution_program = Program::from_nodeptr(self.env.allocator, spend.solution)?;
 
         peer.channel_offer(
             self,
@@ -856,7 +852,9 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                 // Perform on chain move.
                 // Turn off the flag to go on chain.
                 local_uis[i].go_on_chain = false;
-                cradles[i].go_on_chain(allocator, &mut rng, &mut local_uis[i]).expect("should work");
+                cradles[i]
+                    .go_on_chain(allocator, &mut rng, &mut local_uis[i])
+                    .expect("should work");
             }
 
             cradles[i]
@@ -874,14 +872,18 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                 );
 
                 for coin in result.coin_solution_requests.iter() {
-                    let ps_res = simulator.get_puzzle_and_solution(coin).expect("should work");
+                    let ps_res = simulator
+                        .get_puzzle_and_solution(coin)
+                        .expect("should work");
                     for cradle in cradles.iter_mut() {
-                        cradle.report_puzzle_and_solution(
-                            allocator,
-                            &mut rng,
-                            coin,
-                            ps_res.as_ref().map(|ps| (&ps.0, &ps.1))
-                        ).expect("should succeed");
+                        cradle
+                            .report_puzzle_and_solution(
+                                allocator,
+                                &mut rng,
+                                coin,
+                                ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
+                            )
+                            .expect("should succeed");
                     }
                 }
 
@@ -993,19 +995,21 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                             )
                             .expect("should work");
 
-                        cradles[*who].replace_last_message(|msg_envelope| {
-                            debug!("sabotage envelope = {msg_envelope:?}");
-                            let (game_id, m) =
-                                if let PeerMessage::Move(game_id, m) = msg_envelope {
-                                    (game_id, m)
-                                } else {
-                                    todo!();
-                                };
+                        cradles[*who]
+                            .replace_last_message(|msg_envelope| {
+                                debug!("sabotage envelope = {msg_envelope:?}");
+                                let (game_id, m) =
+                                    if let PeerMessage::Move(game_id, m) = msg_envelope {
+                                        (game_id, m)
+                                    } else {
+                                        todo!();
+                                    };
 
-                            let mut fake_move = m.clone();
-                            fake_move.game_move.basic.move_made = move_data.clone();
-                            Ok(PeerMessage::Move(game_id.clone(), fake_move))
-                        }).expect("should be able to sabotage");
+                                let mut fake_move = m.clone();
+                                fake_move.game_move.basic.move_made = move_data.clone();
+                                Ok(PeerMessage::Move(game_id.clone(), fake_move))
+                            })
+                            .expect("should be able to sabotage");
                     }
                     _ => todo!(),
                 }
