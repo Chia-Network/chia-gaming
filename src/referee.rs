@@ -75,7 +75,9 @@ pub struct RefereeOnChainTransaction {
     pub reward_coin: CoinString,
 }
 
+#[allow(dead_code)]
 pub struct LiveGameReplay {
+    #[allow(dead_code)]
     game_id: GameID,
 }
 
@@ -182,11 +184,6 @@ impl RefereePuzzleArgs {
         .map(Node)
         .collect())
     }
-}
-
-pub struct RefereeSnapshot {
-    args: RefereePuzzleArgs,
-    state: RefereeMakerGameState,
 }
 
 fn curry_referee_puzzle_hash(

@@ -61,7 +61,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let (parties, coin) = new_channel_handler_game(
             &simulator,
             &mut env,
-            &game,
+            game,
             &identities,
             contributions.clone(),
         )?;
@@ -139,7 +139,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             coin: state_channel.clone(),
             bundle: Spend {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
-                solution: Program::from_nodeptr(&mut self.env.allocator, cc_spend.spend.solution)?,
+                solution: Program::from_nodeptr(self.env.allocator, cc_spend.spend.solution)?,
                 signature,
             },
         };
@@ -601,7 +601,7 @@ fn test_referee_can_slash_on_chain() {
     let coins = s
         .get_my_coins(&reftest.my_identity.puzzle_hash)
         .expect("got coins");
-    assert!(coins.len() > 0);
+    assert!(!coins.is_empty());
 
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
     let _my_move_wire_data = reftest
@@ -752,7 +752,7 @@ fn test_referee_can_move_on_chain() {
     let coins = s
         .get_my_coins(&reftest.my_identity.puzzle_hash)
         .expect("got coins");
-    assert!(coins.len() > 0);
+    assert!(!coins.is_empty());
 
     // Create the referee coin.
     let (_, _, amt) = coins[0].to_parts().unwrap();

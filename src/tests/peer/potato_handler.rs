@@ -99,7 +99,7 @@ impl WalletSpendInterface for Pipe {
         Ok(())
     }
 
-    fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
+    fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
         todo!();
     }
 }
@@ -224,7 +224,7 @@ where
             false,
         )?;
         let spend_solution_program =
-            Program::from_nodeptr(&mut self.env.allocator, spend.solution.clone())?;
+            Program::from_nodeptr(self.env.allocator, spend.solution)?;
 
         peer.channel_offer(
             self,
@@ -274,7 +274,7 @@ where
     };
 
     let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
-        env: env,
+        env,
         system_interface: &mut pipe[who],
     };
 
@@ -283,7 +283,7 @@ where
     Ok(true)
 }
 
-pub fn quiesce<'a, P: MessagePeerQueue, R: Rng + 'a>(
+pub fn quiesce<'a, P, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
     amount: Amount,
@@ -300,9 +300,9 @@ where
 {
     loop {
         let mut msgs = 0;
-        for who in 0..=1 {
+        for (who, peer) in peers.iter_mut().enumerate() {
             let mut env = channel_handler_env(allocator, rng);
-            msgs += run_move(&mut env, amount.clone(), pipes, &mut peers[who], who)? as usize;
+            msgs += run_move(&mut env, amount.clone(), pipes, peer, who)? as usize;
         }
         if msgs == 0 {
             break;
@@ -317,7 +317,7 @@ fn get_channel_coin_for_peer(p: &PotatoHandler) -> Result<CoinString, Error> {
     Ok(channel_handler.state_channel_coin().coin_string().clone())
 }
 
-pub fn handshake<'a, P: MessagePeerQueue, R: Rng + 'a>(
+pub fn handshake<'a, P, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
     amount: Amount,
@@ -367,7 +367,7 @@ where
             }
         }
 
-        if i >= 10 && i < 12 {
+        if (10..12).contains(&i) {
             let mut env = channel_handler_env(allocator, rng);
             // Ensure that we notify about the channel coin (fake here, but the notification
             // is required).

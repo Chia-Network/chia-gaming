@@ -258,6 +258,7 @@ struct SynchronousGameCradleState {
     game_finished: VecDeque<(GameID, Amount)>,
     shutdown: Option<CoinString>,
     identity: ChiaIdentity,
+    #[allow(dead_code)]
     on_chain_game_coins: Vec<OnChainGameCoin>,
 }
 
@@ -820,7 +821,7 @@ impl GameCradle for SynchronousGameCradle {
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
-        local_ui: &mut dyn ToLocalUI,
+        _local_ui: &mut dyn ToLocalUI,
     ) -> Result<Vec<OnChainGameCoin>, Error> {
         let mut env = channel_handler_env(allocator, rng);
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {

@@ -129,7 +129,7 @@ impl RefereeTest {
             allocator,
             referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash.clone(),
-            &game_start,
+            game_start,
             my_identity.clone(),
             &their_identity.puzzle_hash,
             1,
@@ -239,7 +239,7 @@ fn test_referee_smoke() {
         assert!(s.contains("slash"));
         assert!(s.contains("off chain"));
     } else {
-        assert!(false);
+        unreachable!();
     }
 
     let their_move_local_update = reftest
@@ -261,7 +261,7 @@ fn test_referee_smoke() {
             .expect("should create"),
     };
 
-    let _validator_result = reftest
+    reftest
         .their_referee
         .run_validator_for_their_move(&mut allocator, &validator_move_args)
         .expect("should run");

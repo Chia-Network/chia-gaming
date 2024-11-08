@@ -64,14 +64,14 @@ impl SimulatedWalletSpend {
 
         let mut timeouts = HashSet::new();
         for (k, v) in self.watching_coins.iter_mut() {
-            if Timeout::new(current_height as u64) > v.timeout_height {
+            if Timeout::new(current_height) > v.timeout_height {
                 // No action on this coin in the timeout.
                 timeouts.insert(k.clone());
             }
         }
 
         for t in timeouts.iter() {
-            self.watching_coins.remove(&t);
+            self.watching_coins.remove(t);
         }
 
         Ok(WatchReport {
@@ -126,7 +126,7 @@ impl SimulatedPeer {
 }
 
 /// Check the reported coins vs the current coin set and report changes.
-pub fn update_and_report_coins<'a, 'b, R: Rng>(
+pub fn update_and_report_coins<'a, R: Rng>(
     allocator: &mut AllocEncoder,
     rng: &mut R,
     coinset_adapter: &mut FullCoinSetAdapter,
@@ -198,7 +198,7 @@ impl WalletSpendInterface for SimulatedPeer {
         self.simulated_wallet_spend.register_coin(coin_id, timeout)
     }
 
-    fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
+    fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
         todo!();
     }
 }
@@ -316,7 +316,7 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
         )
         .expect("ssp 1");
         let spend_solution_program =
-            Program::from_nodeptr(&mut self.env.allocator, spend.solution.clone())?;
+            Program::from_nodeptr(self.env.allocator, spend.solution)?;
 
         peer.channel_offer(
             self,
@@ -409,6 +409,7 @@ fn check_watch_report<'a, 'b: 'a, R: Rng>(
     assert_eq!(wanted_coin.len(), 2);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handshake<'a, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
@@ -471,7 +472,7 @@ pub fn handshake<'a, R: Rng + 'a>(
             let quoted_empty_hash = quoted_empty_conditions.sha256tree(env.allocator);
             let signature = sign_agg_sig_me(
                 &identities[who].synthetic_private_key,
-                &quoted_empty_hash.bytes(),
+                quoted_empty_hash.bytes(),
                 &parent_coins[who].to_coin_id(),
                 &env.agg_sig_me_additional_data,
             );
@@ -874,11 +875,11 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
 
                 for coin in result.coin_solution_requests.iter() {
                     let ps_res = simulator.get_puzzle_and_solution(coin).expect("should work");
-                    for i in 0..=1 {
-                        cradles[i].report_puzzle_and_solution(
+                    for cradle in cradles.iter_mut() {
+                        cradle.report_puzzle_and_solution(
                             allocator,
                             &mut rng,
-                            &coin,
+                            coin,
                             ps_res.as_ref().map(|ps| (&ps.0, &ps.1))
                         ).expect("should succeed");
                     }
@@ -894,7 +895,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                 }
 
                 for msg in result.outbound_messages.iter() {
-                    cradles[i ^ 1].deliver_message(&msg).expect("should work");
+                    cradles[i ^ 1].deliver_message(msg).expect("should work");
                 }
 
                 if !result.continue_on {
@@ -968,7 +969,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                             )
                             .expect("should work");
                     }
-                    GameAction::GoOnChain(who) => {
+                    GameAction::GoOnChain(_who) => {
                         debug!("go on chain");
                         todo!();
                     }
@@ -1022,7 +1023,7 @@ fn sim_test_with_peer_container() {
     let mut allocator = AllocEncoder::new();
 
     // Play moves
-    let mut moves = test_moves_1(&mut allocator);
+    let moves = test_moves_1(&mut allocator);
     run_calpoker_container_with_action_list(&mut allocator, &moves);
 }
 
@@ -1031,7 +1032,7 @@ fn sim_test_with_peer_container_piss_off_peer() {
     let mut allocator = AllocEncoder::new();
 
     let mut moves = test_moves_1(&mut allocator);
-    if let GameAction::Move(player, readable, _) = moves[2].clone() {
+    if let GameAction::Move(_player, readable, _) = moves[2].clone() {
         moves[3] = GameAction::FakeMove(1, readable, vec![0; 500]);
     } else {
         panic!("no move 1 to replace");

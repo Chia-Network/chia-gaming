@@ -1314,7 +1314,7 @@ impl ChannelHandler {
     ) -> Result<(), Error> {
         let mut res = Vec::new();
         for game_coin in coins.iter() {
-            if let Some(live_game) = self.live_games.iter_mut().filter(|f| game_coin.game_id_up == f.game_id).next() {
+            if let Some(live_game) = self.live_games.iter_mut().find(|f| game_coin.game_id_up == f.game_id) {
                 res.append(&mut live_game.set_state_for_coin(env.allocator, game_coin)?);
             } else {
                 // XXX Used to exist, needs ressurection from the cache to potentially replay
@@ -1503,7 +1503,7 @@ impl ChannelHandler {
 
         Ok(UnrollTarget {
             state_number: use_unroll.coin.state_number,
-            unroll_puzzle_hash: Node(curried_unroll_puzzle).sha256tree(&mut env.allocator),
+            unroll_puzzle_hash: Node(curried_unroll_puzzle).sha256tree(env.allocator),
             my_amount: self.my_out_of_game_balance.clone(),
             their_amount: self.their_out_of_game_balance.clone(),
         })

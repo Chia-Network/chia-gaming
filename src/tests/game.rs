@@ -93,7 +93,7 @@ pub fn new_channel_handler_game<R: Rng>(
     // Make state channel coin.
     // Spend coin1 to person 0 creating their_amount and change (u1).
     let (u1, _) = simulator.transfer_coin_amount(
-        &mut env.allocator,
+        env.allocator,
         &identities[0],
         &identities[1],
         &coins[1][0],
@@ -103,7 +103,7 @@ pub fn new_channel_handler_game<R: Rng>(
 
     // Spend coin0 to person 0 creating my_amount and change (u0).
     let (u2, _) = simulator.transfer_coin_amount(
-        &mut env.allocator,
+        env.allocator,
         &identities[0],
         &identities[0],
         &coins[0][0],
@@ -123,11 +123,11 @@ pub fn new_channel_handler_game<R: Rng>(
     let aggregate_public_key = private_to_public_key(&party.player(0).ch.channel_private_key())
         + private_to_public_key(&party.player(1).ch.channel_private_key());
 
-    let cc_ph = puzzle_hash_for_synthetic_public_key(&mut env.allocator, &aggregate_public_key)?;
+    let cc_ph = puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
     debug!("puzzle hash for state channel coin: {cc_ph:?}");
 
     let state_channel_coin = simulator.combine_coins(
-        &mut env.allocator,
+        env.allocator,
         &identities[0],
         &party.players[0].init_data.channel_puzzle_hash_up,
         &[u1, u2],

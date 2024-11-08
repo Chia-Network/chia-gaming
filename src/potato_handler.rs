@@ -16,16 +16,14 @@ use crate::channel_handler::types::{
     PrintableGameStartInfo, ReadableMove
 };
 use crate::channel_handler::ChannelHandler;
-use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk, puzzle_for_pk
+    private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
+    Node, Program, PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStart {
@@ -1490,9 +1488,9 @@ impl PotatoHandler {
     pub fn do_unroll_spend_to_games<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        channel_coin: &CoinString,
-        unroll_puzzle_hash: &PuzzleHash,
-        amount: &Amount,
+        _channel_coin: &CoinString,
+        _unroll_puzzle_hash: &PuzzleHash,
+        _amount: &Amount,
         unroll_coin: &CoinString,
     ) -> Result<Vec<OnChainGameCoin>, Error>
     where
@@ -1602,7 +1600,7 @@ impl PotatoHandler {
     {
         let ch = self.channel_handler()?;
         let unroll_target =
-            if let HandshakeState::Finished(hs) = &self.handshake_state {
+            if let HandshakeState::Finished(_hs) = &self.handshake_state {
                 let (env, _) = penv.env();
                 ch.get_unroll_target(env)?
             } else {
@@ -1656,7 +1654,7 @@ impl PotatoHandler {
     fn handle_channel_coin_spent<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        coin_id: &CoinString,
+        _coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error>
     where
@@ -1669,7 +1667,7 @@ impl PotatoHandler {
                 return Err(Error::StrErr("Retrieve of puzzle and solution failed for channel coin".to_string()));
             };
 
-        let mut ch = self.channel_handler_mut()?;
+        let ch = self.channel_handler_mut()?;
         let (env, _) = penv.env();
         let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
         let run_args = solution.to_nodeptr(env.allocator)?;
@@ -1680,7 +1678,7 @@ impl PotatoHandler {
             run_args,
             0,
         ).into_gen()?;
-        let cs_spend_result = ch.channel_coin_spent(
+        let _cs_spend_result = ch.channel_coin_spent(
             env,
             conditions.1,
         )?;
@@ -1935,7 +1933,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         R: 'a,
     {
         let state_coin_id =
-            if let HandshakeState::OnChainWaitForConditions(state_coin_id, data) = &self.handshake_state {
+            if let HandshakeState::OnChainWaitForConditions(state_coin_id, _data) = &self.handshake_state {
                 state_coin_id.clone()
             } else {
                 return Ok(());
