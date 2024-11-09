@@ -89,6 +89,7 @@ pub struct ChannelHandler {
     their_allocated_balance: Amount,
 
     have_potato: bool,
+    initiated_on_chain: bool,
 
     cached_last_action: Option<CachedPotatoRegenerateLastHop>,
 
@@ -125,6 +126,10 @@ impl ChannelHandler {
 
     pub fn get_state_number(&self) -> usize {
         self.current_state_number
+    }
+
+    pub fn initiate_on_chain(&mut self) {
+        self.initiated_on_chain = true;
     }
 
     pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
@@ -266,6 +271,7 @@ impl ChannelHandler {
             their_allocated_balance: Amount::default(),
 
             have_potato: initiation.we_start_with_potato,
+            initiated_on_chain: false,
 
             cached_last_action: None,
 
@@ -1107,11 +1113,14 @@ impl ChannelHandler {
         let their_parity = state_number & 1;
 
         debug!(
-            "CHANNEL COIN SPENT: my state {} coin state {} channel coin state {state_number}",
-            self.current_state_number, full_coin.coin.state_number
+            "{} CHANNEL COIN SPENT: initiated {} my state {} coin state {} channel coin state {state_number}",
+            self.unroll.coin.started_with_potato,
+            self.initiated_on_chain,
+            self.current_state_number,
+            full_coin.coin.state_number
         );
 
-        match state_number.cmp(&full_coin.coin.state_number) {
+        match state_number.cmp(&self.current_state_number) {
             Ordering::Greater => Err(Error::StrErr(format!(
                 "Reply from the future onchain {} (me {}) vs {}",
                 state_number, self.current_state_number, self.unroll.coin.state_number
