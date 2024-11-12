@@ -446,7 +446,7 @@ pub struct HandshakeResult {
 }
 
 /// The channel handler can use these two items to produce a spend on chain.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ChannelHandlerUnrollSpendInfo {
     /// Contains the half signature, puzzle and conditions needed to spend.
     pub coin: UnrollCoin,

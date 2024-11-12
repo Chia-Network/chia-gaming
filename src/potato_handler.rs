@@ -1510,7 +1510,8 @@ impl PotatoHandler {
         let (env, system_interface) = penv.env();
         let player_ch = self.channel_handler()?;
         // Channel coin
-        let pre_unroll_data = player_ch.get_unroll_coin_transaction(env)?;
+        let finished_unroll_coin = player_ch.get_unroll_coin();
+        let pre_unroll_data = player_ch.get_unroll_coin_transaction(env, &finished_unroll_coin)?;
         debug!(
             "unroll to on chain puzzle: {}",
             pre_unroll_data.transaction.puzzle.to_hex()
@@ -1610,7 +1611,8 @@ impl PotatoHandler {
         let ch = self.channel_handler()?;
         let unroll_target = if let HandshakeState::Finished(_hs) = &self.handshake_state {
             let (env, _) = penv.env();
-            ch.get_unroll_target(env)?
+            let use_unroll = ch.get_unroll_coin();
+            ch.get_unroll_target(env, use_unroll)?
         } else {
             return Err(Error::StrErr(
                 "go on chain before handshake finished".to_string(),

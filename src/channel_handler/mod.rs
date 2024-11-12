@@ -140,6 +140,10 @@ impl ChannelHandler {
         }
     }
 
+    pub fn get_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
+        &self.unroll
+    }
+
     fn make_curried_unroll_puzzle<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
@@ -1023,9 +1027,9 @@ impl ChannelHandler {
     pub fn get_unroll_coin_transaction<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
+        use_unroll: &ChannelHandlerUnrollSpendInfo,
     ) -> Result<ChannelCoinSpentResult, Error> {
         assert!(self.timeout.is_some());
-        let use_unroll = self.get_finished_unroll_coin();
 
         debug!("channel handler at {}", self.current_state_number);
 
@@ -1123,7 +1127,7 @@ impl ChannelHandler {
         match state_number.cmp(&self.current_state_number) {
             Ordering::Greater => Err(Error::StrErr(format!(
                 "Reply from the future onchain {} (me {}) vs {}",
-                state_number, self.current_state_number, self.unroll.coin.state_number
+                state_number, self.current_state_number, full_coin.coin.state_number
             ))),
             Ordering::Less => {
                 if our_parity == their_parity {
@@ -1132,7 +1136,7 @@ impl ChannelHandler {
                     ));
                 }
 
-                self.get_unroll_coin_transaction(env)
+                self.get_unroll_coin_transaction(env, &full_coin)
             }
             _ => {
                 // Timeout
@@ -1511,8 +1515,8 @@ impl ChannelHandler {
     pub fn get_unroll_target<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
+        use_unroll: &ChannelHandlerUnrollSpendInfo,
     ) -> Result<UnrollTarget, Error> {
-        let use_unroll = self.get_finished_unroll_coin();
         let curried_unroll_puzzle = use_unroll
             .coin
             .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())?;

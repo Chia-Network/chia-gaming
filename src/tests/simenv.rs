@@ -216,7 +216,8 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         unroll_coin: CoinString,
     ) -> Result<Vec<CoinString>, Error> {
         let player_ch = &mut self.parties.player(player).ch;
-        let pre_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env)?;
+        let finished_unroll_coin = player_ch.get_finished_unroll_coin();
+        let pre_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env, &finished_unroll_coin)?;
 
         let run_puzzle = pre_unroll_data
             .transaction
@@ -294,7 +295,8 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             &ReadableMove::from_nodeptr(readable),
             entropy,
         )?;
-        let post_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env)?;
+        let finished_unroll_coin = player_ch.get_finished_unroll_coin();
+        let post_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env, &finished_unroll_coin)?;
         debug!("post_unroll_data {post_unroll_data:?}");
         todo!();
     }
@@ -314,11 +316,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 }
             }
             GameAction::GoOnChain(player) => {
+                let use_unroll = self.parties.player(*player).ch.get_finished_unroll_coin().clone();
                 let unroll_target = self
                     .parties
                     .player(*player)
                     .ch
-                    .get_unroll_target(&mut self.env)?;
+                    .get_unroll_target(&mut self.env, &use_unroll)?;
                 debug!(
                     "GO ON CHAIN: {} {:?} {:?}",
                     unroll_target.state_number, unroll_target.my_amount, unroll_target.their_amount
