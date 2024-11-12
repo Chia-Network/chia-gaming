@@ -21,7 +21,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID,
-    Hash, IntoErr, Node, Program, PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+    Hash, IntoErr, Node, Program, PublicKey, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -1664,7 +1664,7 @@ impl PotatoHandler {
     fn handle_channel_coin_spent<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        _coin_id: &CoinString,
+        coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error>
     where
@@ -1679,7 +1679,7 @@ impl PotatoHandler {
         };
 
         let ch = self.channel_handler_mut()?;
-        let (env, _) = penv.env();
+        let (env, system_interface) = penv.env();
         let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
         let run_args = solution.to_nodeptr(env.allocator)?;
         let conditions = run_program(
@@ -1690,8 +1690,36 @@ impl PotatoHandler {
             0,
         )
         .into_gen()?;
-        let _cs_spend_result = ch.channel_coin_spent(env, conditions.1)?;
-        todo!();
+        let cs_spend_result = ch.channel_coin_spent(env, conditions.1)?;
+        debug!("cs_spend_result {cs_spend_result:?}");
+
+        // Respond to getting this result by spending the unroll coin
+        // We need to know what the unroll coin would be.  We'll interpret the conditions
+        // and find out.
+        let unroll_coin_string =
+            if let Some(created_unroll_coin) =
+            CoinCondition::from_nodeptr(env.allocator, conditions.1).iter().filter_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    assert_eq!(ph, &cs_spend_result.transaction.puzzle.sha256tree(env.allocator));
+                    Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amt))
+                } else {
+                    None
+                }
+            }).next() {
+                created_unroll_coin
+            } else {
+                return Err(Error::StrErr("no conditions parsed".to_string()));
+            };
+
+        debug!("unroll_coin_string {unroll_coin_string:?}");
+        system_interface.spend_transaction_and_add_fee(&SpendBundle {
+            spends: vec![CoinSpend {
+                coin: unroll_coin_string,
+                bundle: cs_spend_result.transaction.clone()
+            }]
+        })?;
+
+        Ok(())
     }
 }
 
