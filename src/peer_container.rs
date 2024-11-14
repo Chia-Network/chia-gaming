@@ -312,6 +312,7 @@ pub struct SynchronousGameCradleConfig<'a> {
     pub my_contribution: Amount,
     pub their_contribution: Amount,
     pub channel_timeout: Timeout,
+    pub unroll_timeout: Timeout,
     pub reward_puzzle_hash: PuzzleHash,
 }
 
@@ -346,6 +347,7 @@ impl SynchronousGameCradle {
                 config.my_contribution,
                 config.their_contribution,
                 config.channel_timeout,
+                config.unroll_timeout,
                 config.reward_puzzle_hash,
             ),
         }

@@ -415,6 +415,7 @@ fn test_peer_smoke() {
             Amount::new(100),
             Amount::new(100),
             Timeout::new(1000),
+            Timeout::new(5),
             reward_puzzle_hash1.clone(),
         )
     };

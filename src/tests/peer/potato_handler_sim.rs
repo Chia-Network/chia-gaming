@@ -527,6 +527,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
             Amount::new(100),
             Amount::new(100),
             Timeout::new(1000),
+            Timeout::new(5),
             reward_puzzle_hash1.clone(),
         )
     };
@@ -801,6 +802,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
+            unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: id1.puzzle_hash.clone(),
         },
     );
@@ -813,6 +815,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
+            unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: id2.puzzle_hash.clone(),
         },
     );
