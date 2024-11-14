@@ -349,12 +349,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .parties
                     .player(*player)
                     .ch
-                    .channel_coin_spent(&mut self.env, channel_coin_conditions)?;
+                    .channel_coin_spent(&mut self.env, true, channel_coin_conditions)?;
                 let _channel_spent_result_2 = self
                     .parties
                     .player(*player ^ 1)
                     .ch
-                    .channel_coin_spent(&mut self.env, channel_coin_conditions)?;
+                    .channel_coin_spent(&mut self.env, false, channel_coin_conditions)?;
 
                 let game_coins = self.do_unroll_spend_to_games(*player, unroll_coin)?;
 

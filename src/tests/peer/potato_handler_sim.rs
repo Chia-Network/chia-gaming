@@ -38,50 +38,6 @@ struct SimulatedWalletSpend {
     watching_coins: HashMap<CoinString, WatchEntry>,
 }
 
-impl SimulatedWalletSpend {
-    #[allow(dead_code)]
-    pub fn watch_and_report_coins(
-        &mut self,
-        current_height: u64,
-        current_coins: &WatchReport,
-    ) -> Result<WatchReport, Error> {
-        self.current_height = current_height;
-        let created_coins: HashSet<CoinString> = current_coins
-            .created_watched
-            .iter()
-            .filter(|c| {
-                // Report coin if it's being watched.
-                self.watching_coins.contains_key(c)
-            })
-            .cloned()
-            .collect();
-        let deleted_coins: HashSet<CoinString> = current_coins
-            .deleted_watched
-            .iter()
-            .filter(|c| self.watching_coins.contains_key(c))
-            .cloned()
-            .collect();
-
-        let mut timeouts = HashSet::new();
-        for (k, v) in self.watching_coins.iter_mut() {
-            if Timeout::new(current_height) > v.timeout_height {
-                // No action on this coin in the timeout.
-                timeouts.insert(k.clone());
-            }
-        }
-
-        for t in timeouts.iter() {
-            self.watching_coins.remove(t);
-        }
-
-        Ok(WatchReport {
-            created_watched: created_coins,
-            deleted_watched: deleted_coins,
-            timed_out: timeouts,
-        })
-    }
-}
-
 #[derive(Default)]
 pub struct SimulatedPeer {
     message_pipe: MessagePipe,
@@ -110,18 +66,6 @@ impl MessagePeerQueue for SimulatedPeer {
     }
     fn get_unfunded_offer(&self) -> Option<SpendBundle> {
         self.unfunded_offer.clone()
-    }
-}
-
-impl SimulatedPeer {
-    #[allow(dead_code)]
-    pub fn watch_and_report_coins(
-        &mut self,
-        current_height: u64,
-        current_coins: &WatchReport,
-    ) -> Result<WatchReport, Error> {
-        self.simulated_wallet_spend
-            .watch_and_report_coins(current_height, current_coins)
     }
 }
 
@@ -174,7 +118,8 @@ impl SimulatedWalletSpend {
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
-                timeout_height: timeout.clone() + Timeout::new(self.current_height),
+                timeout_blocks: timeout.clone(),
+                timeout_at: Some(timeout.to_u64() + self.current_height),
             },
         );
         Ok(())

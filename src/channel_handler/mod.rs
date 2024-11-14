@@ -114,6 +114,10 @@ pub struct ChannelHandler {
 }
 
 impl ChannelHandler {
+    pub fn is_initial_potato(&self) -> bool {
+        self.unroll.coin.started_with_potato
+    }
+
     pub fn channel_private_key(&self) -> PrivateKey {
         self.private_keys.my_channel_coin_private_key.clone()
     }
@@ -128,10 +132,6 @@ impl ChannelHandler {
 
     pub fn get_state_number(&self) -> usize {
         self.current_state_number
-    }
-
-    pub fn initiate_on_chain(&mut self) {
-        self.initiated_on_chain = true;
     }
 
     pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
@@ -1112,6 +1112,7 @@ impl ChannelHandler {
     pub fn channel_coin_spent<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
+        myself: bool,
         conditions: NodePtr,
     ) -> Result<ChannelCoinSpentResult, Error> {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
@@ -1124,28 +1125,15 @@ impl ChannelHandler {
         let their_parity = state_number & 1;
 
         debug!(
-            "{} CHANNEL COIN SPENT: initiated {} my state {} coin state {} channel coin state {state_number}",
+            "{} CHANNEL COIN SPENT: myself {myself} initiated {} my state {} coin state {} channel coin state {state_number}",
             self.unroll.coin.started_with_potato,
             self.initiated_on_chain,
             self.current_state_number,
             full_coin.coin.state_number
         );
 
-        match state_number.cmp(&self.current_state_number) {
-            Ordering::Greater => Err(Error::StrErr(format!(
-                "Reply from the future onchain {} (me {}) vs {}",
-                state_number, self.current_state_number, full_coin.coin.state_number
-            ))),
-            Ordering::Less => {
-                if our_parity == their_parity {
-                    return Err(Error::StrErr(
-                        "We're superceding ourselves from the past?".to_string(),
-                    ));
-                }
-
-                self.get_create_unroll_coin_transaction(env, &full_coin, true)
-            }
-            _ => {
+        match (myself, state_number.cmp(&self.current_state_number)) {
+            (true, _) | (_, Ordering::Equal) => {
                 // Timeout
                 let curried_unroll_puzzle = self
                     .unroll
@@ -1165,6 +1153,19 @@ impl ChannelHandler {
                     timeout: true,
                     games_canceled: self.get_just_created_games(),
                 })
+            }
+            (_, Ordering::Greater) => Err(Error::StrErr(format!(
+                "Reply from the future onchain {} (me {}) vs {}",
+                state_number, self.current_state_number, full_coin.coin.state_number
+            ))),
+            (_, Ordering::Less) => {
+                if our_parity == their_parity {
+                    return Err(Error::StrErr(
+                        "We're superceding ourselves from the past?".to_string(),
+                    ));
+                }
+
+                self.get_create_unroll_coin_transaction(env, &full_coin, true)
             }
         }
     }

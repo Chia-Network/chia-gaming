@@ -21,7 +21,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID,
-    Hash, IntoErr, Node, Program, PublicKey, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
+    Hash, IntoErr, Node, Program, PublicKey, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, usize_from_atom
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -1552,6 +1552,7 @@ impl PotatoHandler {
     {
         let (env, system_interface) = penv.env();
         let player_ch = self.channel_handler()?;
+        debug!("GO ON CHAIN: initiated {}", player_ch.is_initial_potato());
         // Channel coin
         let finished_unroll_coin = player_ch.get_unroll_coin();
         let pre_unroll_data = player_ch.get_create_unroll_coin_transaction(env, &finished_unroll_coin, false)?;
@@ -1749,6 +1750,19 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        let i_did_channel_spend = matches!(
+            self.handshake_state,
+            HandshakeState::OnChainTransition(_, _) |
+            HandshakeState::OnChainWaitForConditions(_, _)
+        );
+
+        if i_did_channel_spend {
+            // Wait for timeout.
+            return Ok(());
+        }
+
+        todo!();
+
         let (puzzle, solution) = if let Some((puzzle, solution)) = puzzle_and_solution {
             (puzzle, solution)
         } else {
@@ -1769,34 +1783,24 @@ impl PotatoHandler {
             0,
         )
         .into_gen()?;
-        let cs_spend_result = ch.channel_coin_spent(env, conditions.1)?;
-        debug!("cs_spend_result {cs_spend_result:?}");
 
-        // Respond to getting this result by spending the unroll coin
-        // We need to know what the unroll coin would be.  We'll interpret the conditions
-        // and find out.
-        let unroll_coin_string =
-            if let Some(created_unroll_coin) =
-            CoinCondition::from_nodeptr(env.allocator, conditions.1).iter().filter_map(|c| {
-                if let CoinCondition::CreateCoin(ph, amt) = c {
-                    // assert_eq!(ph, &cs_spend_result.transaction.puzzle.sha256tree(env.allocator));
-                    Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amt))
-                } else {
-                    None
+        // If I wasn't the one who initiated the on chain transition, determine whether
+        // to bump the unroll coin.
+        let channel_sequence_number =
+            if let Some(rem) = CoinCondition::from_nodeptr(env.allocator, conditions.1).iter().filter_map(|c| {
+                if let CoinCondition::Rem(data) = c {
+                    return data.first().and_then(|a| usize_from_atom(a));
                 }
+
+                None
             }).next() {
-                created_unroll_coin
+                rem
             } else {
-                return Err(Error::StrErr("no conditions parsed".to_string()));
+                return Err(Error::StrErr("channel conditions didn't include a rem".to_string()));
             };
 
-        debug!("unroll_coin_string {unroll_coin_string:?}");
-        system_interface.spend_transaction_and_add_fee(&SpendBundle {
-            spends: vec![CoinSpend {
-                coin: unroll_coin_string,
-                bundle: cs_spend_result.transaction.clone()
-            }]
-        })?;
+        // Check with channel handler to see what we need to do.
+        todo!();
 
         Ok(())
     }

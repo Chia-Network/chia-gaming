@@ -38,7 +38,8 @@ pub trait MessagePeerQueue {
 }
 
 pub struct WatchEntry {
-    pub timeout_height: Timeout,
+    pub timeout_blocks: Timeout,
+    pub timeout_at: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -285,7 +286,8 @@ impl WalletSpendInterface for SynchronousGameCradleState {
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
-                timeout_height: timeout.clone() + Timeout::new(self.current_height),
+                timeout_at: Some(timeout.to_u64() + self.current_height),
+                timeout_blocks: timeout.clone(),
             },
         );
 
@@ -614,6 +616,37 @@ impl SynchronousGameCradle {
 
         self.state.send_message(&fake_move)
     }
+
+    fn filter_coin_report(&mut self, block: u64, watch_report: &WatchReport) -> WatchReport {
+        // Pass on creates and deletes that are being watched.
+        let deleted_watched: HashSet<CoinString> = watch_report.deleted_watched.iter().filter(|c| self.state.watching_coins.contains_key(c)).cloned().collect();
+        for d in deleted_watched.iter() {
+            self.state.watching_coins.remove(d);
+        }
+        let created_watched: HashSet<CoinString> = watch_report.created_watched.iter().filter(|c| self.state.watching_coins.contains_key(c)).cloned().collect();
+        for c in created_watched.iter() {
+            if let Some(w) = self.state.watching_coins.get_mut(c) {
+                w.timeout_at = Some(w.timeout_blocks.to_u64() + block);
+            }
+        }
+
+        // Get timeouts
+        let mut timed_out = HashSet::new();
+        for (k, w) in self.state.watching_coins.iter_mut() {
+            if let Some(t) = w.timeout_at.clone() {
+                if t >= block {
+                    w.timeout_at = None;
+                    timed_out.insert(k.clone());
+                }
+            }
+        }
+
+        WatchReport {
+            created_watched,
+            deleted_watched,
+            timed_out,
+        }
+    }
 }
 
 impl GameCradle for SynchronousGameCradle {
@@ -713,12 +746,13 @@ impl GameCradle for SynchronousGameCradle {
         report: &WatchReport,
     ) -> Result<(), Error> {
         self.state.current_height = height as u64;
+        let filtered_report = self.filter_coin_report(self.state.current_height, report);
         let mut env = channel_handler_env(allocator, rng);
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
         };
-        report_coin_changes_to_peer(&mut penv, &mut self.peer, report)?;
+        report_coin_changes_to_peer(&mut penv, &mut self.peer, &filtered_report)?;
         Ok(())
     }
 
