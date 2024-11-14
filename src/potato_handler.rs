@@ -793,14 +793,16 @@ impl PotatoHandler {
         Ok(None)
     }
 
-    pub fn try_complete_step_e<'a, G, R: Rng + 'a>(
+    pub fn try_complete_step_body<'a, G, R: Rng + 'a, F>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         first_player_hs_info: HandshakeA,
         second_player_hs_info: HandshakeB,
+        ctor: F,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+        F: FnOnce(&SpendBundle) -> Result<PeerMessage, Error>
     {
         if let Some(spend) = self.channel_initiation_transaction.as_ref() {
             self.handshake_state = HandshakeState::Finished(Box::new(HandshakeStepWithSpend {
@@ -817,13 +819,33 @@ impl PotatoHandler {
             // it replies with the channel puzzle hash
             {
                 let (_env, system_interface) = penv.env();
-                system_interface.send_message(&PeerMessage::HandshakeE {
-                    bundle: spend.clone(),
-                })?;
+                system_interface.send_message(&ctor(spend)?)?;
             }
         }
 
         Ok(())
+    }
+
+
+    pub fn try_complete_step_e<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        first_player_hs_info: HandshakeA,
+        second_player_hs_info: HandshakeB,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        self.try_complete_step_body(
+            penv,
+            first_player_hs_info,
+            second_player_hs_info,
+            |spend| {
+                Ok(PeerMessage::HandshakeE {
+                    bundle: spend.clone(),
+                })
+            }
+        )
     }
 
     pub fn try_complete_step_f<'a, G, R: Rng + 'a>(
@@ -841,28 +863,16 @@ impl PotatoHandler {
             return Ok(());
         }
 
-        if let Some(spend) = self.channel_finished_transaction.as_ref() {
-            self.handshake_state = HandshakeState::Finished(Box::new(HandshakeStepWithSpend {
-                info: HandshakeStepInfo {
-                    first_player_hs_info,
-                    second_player_hs_info,
-                },
-                spend: spend.clone(),
-            }));
-
-            // Outer layer already knows the launcher coin string.
-            //
-            // Provide the channel puzzle hash to the full node bootstrap and
-            // it replies with the channel puzzle hash
-            {
-                let (_env, system_interface) = penv.env();
-                system_interface.send_message(&PeerMessage::HandshakeF {
+        self.try_complete_step_body(
+            penv,
+            first_player_hs_info,
+            second_player_hs_info,
+            |spend| {
+                Ok(PeerMessage::HandshakeF {
                     bundle: spend.clone(),
-                })?;
+                })
             }
-        }
-
-        Ok(())
+        )
     }
 
     // We have the potato so we can send a message that starts a game if there are games
