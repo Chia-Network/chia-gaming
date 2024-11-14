@@ -702,6 +702,8 @@ pub struct UnrollCoinOutcome {
 /// The unrolling player will have to trigger the "reveal" part as below after a time
 /// if the other player doesn't successfully challenge by providing another program that
 /// produces new conditions that match the parity criteria.
+///
+/// XXX TODO: Add time lock
 #[derive(Default, Clone)]
 pub struct UnrollCoin {
     pub started_with_potato: bool,

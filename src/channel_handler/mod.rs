@@ -90,6 +90,7 @@ pub struct ChannelHandler {
 
     have_potato: bool,
     initiated_on_chain: bool,
+    // Specifies the time lock that should be used in the unroll coin's conditions.
     unroll_advance_timeout: Timeout,
 
     cached_last_action: Option<CachedPotatoRegenerateLastHop>,

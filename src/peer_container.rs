@@ -229,7 +229,7 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
-    ) -> Result<Vec<OnChainGameCoin>, Error>;
+    ) -> Result<(), Error>;
 
     /// Report a puzzle and solution for a spent coin.
     fn report_puzzle_and_solution<R: Rng>(
@@ -820,7 +820,7 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         _local_ui: &mut dyn ToLocalUI,
-    ) -> Result<Vec<OnChainGameCoin>, Error> {
+    ) -> Result<(), Error> {
         let mut env = channel_handler_env(allocator, rng);
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
