@@ -31,7 +31,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
-    PuzzleHash, Sha256tree, Spend, SpendRewardResult, ToQuotedProgram,
+    PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::referee::RefereeMaker;
 
@@ -90,7 +90,7 @@ pub struct ChannelHandler {
 
     have_potato: bool,
     initiated_on_chain: bool,
-    unroll_advance_timeout: usize,
+    unroll_advance_timeout: Timeout,
 
     cached_last_action: Option<CachedPotatoRegenerateLastHop>,
 
@@ -271,7 +271,7 @@ impl ChannelHandler {
             their_referee_puzzle_hash: initiation.their_referee_puzzle_hash.clone(),
             my_out_of_game_balance: initiation.my_contribution.clone(),
             their_out_of_game_balance: initiation.their_contribution.clone(),
-            unroll_advance_timeout: initiation.unroll_advance_timeout,
+            unroll_advance_timeout: initiation.unroll_advance_timeout.clone(),
 
             my_allocated_balance: Amount::default(),
             their_allocated_balance: Amount::default(),

@@ -1,13 +1,16 @@
 use crate::channel_handler::types::ReadableMove;
 use crate::common::types::Hash;
 use clvmr::NodePtr;
+use lazy_static::lazy_static;
 
 #[cfg(feature = "sim-tests")]
 use rand::prelude::*;
 
 use log::debug;
 
-pub const DEFAULT_UNROLL_TIME_LOCK: usize = 5;
+lazy_static! {
+    pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
+}
 
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
@@ -118,7 +121,7 @@ pub fn new_channel_handler_game<R: Rng>(
         game.id.clone(),
         &u2.to_coin_id(),
         &contributions.clone(),
-        DEFAULT_UNROLL_TIME_LOCK,
+        DEFAULT_UNROLL_TIME_LOCK.clone(),
     )
     .expect("should work");
 

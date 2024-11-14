@@ -371,8 +371,12 @@ pub enum HandshakeState {
     StepF(Box<HandshakeStepInfo>),
     PostStepF(Box<HandshakeStepInfo>),
     Finished(Box<HandshakeStepWithSpend>),
+    // Going on chain ourselves route.
     OnChainTransition(CoinString, Box<HandshakeStepWithSpend>),
+    OnChainWaitingForUnrollTimeoutOrSpend(CoinString, Box<HandshakeStepWithSpend>),
+    // Other party went on chain, we're catching up route.
     OnChainWaitForConditions(CoinString, Box<HandshakeStepWithSpend>),
+    // Converge here to on chain state.
     OnChain(CoinString, Box<HandshakeStepWithSpend>),
     WaitingForShutdown(CoinString, CoinString),
     Completed,
@@ -1186,7 +1190,7 @@ impl PotatoHandler {
                 their_referee_puzzle_hash: msg.referee_puzzle_hash.clone(),
                 my_contribution: self.my_contribution.clone(),
                 their_contribution: self.their_contribution.clone(),
-                unroll_advance_timeout: self.channel_timeout.to_u64() as usize,
+                unroll_advance_timeout: self.channel_timeout.clone(),
             };
 
         match &self.handshake_state {
@@ -1466,7 +1470,18 @@ impl PotatoHandler {
                 match hs {
                     HandshakeState::OnChainTransition(cs, t) => {
                         debug!("notified of channel coin spend in on chain transition state");
-                        self.handshake_state = HandshakeState::OnChain(cs, t);
+                        // We must wait for the unroll coin to time out or be spent.
+                        // First find the unroll coin id.
+                        let ch = self.channel_handler()?;
+                        let (env, _) = penv.env();
+                        let use_unroll = ch.get_unroll_coin();
+                        let puzzle = use_unroll.coin.make_curried_unroll_puzzle(
+                            env,
+                            &ch.get_aggregate_unroll_public_key()
+                        )?;
+                        let puzzle_hash = Node(puzzle).sha256tree(env.allocator);
+                        let amt = 
+                        self.handshake_state = HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(cs, t);
                     }
                     HandshakeState::Finished(hs) => {
                         debug!("notified of channel coin spend in run state");

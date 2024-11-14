@@ -52,7 +52,7 @@ pub struct ChannelHandlerInitiationData {
     pub their_referee_puzzle_hash: PuzzleHash,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
-    pub unroll_advance_timeout: usize,
+    pub unroll_advance_timeout: Timeout,
 }
 
 #[derive(Clone)]
