@@ -1026,7 +1026,7 @@ impl ChannelHandler {
         Ok(rem_conditions)
     }
 
-    pub fn get_unroll_coin_transaction<R: Rng>(
+    pub fn get_create_unroll_coin_transaction<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
         use_unroll: &ChannelHandlerUnrollSpendInfo,
@@ -1142,7 +1142,7 @@ impl ChannelHandler {
                     ));
                 }
 
-                self.get_unroll_coin_transaction(env, &full_coin, true)
+                self.get_create_unroll_coin_transaction(env, &full_coin, true)
             }
             _ => {
                 // Timeout
