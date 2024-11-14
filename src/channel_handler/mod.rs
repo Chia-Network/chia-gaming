@@ -90,6 +90,7 @@ pub struct ChannelHandler {
 
     have_potato: bool,
     initiated_on_chain: bool,
+    unroll_advance_timeout: usize,
 
     cached_last_action: Option<CachedPotatoRegenerateLastHop>,
 
@@ -270,6 +271,7 @@ impl ChannelHandler {
             their_referee_puzzle_hash: initiation.their_referee_puzzle_hash.clone(),
             my_out_of_game_balance: initiation.my_contribution.clone(),
             their_out_of_game_balance: initiation.their_contribution.clone(),
+            unroll_advance_timeout: initiation.unroll_advance_timeout,
 
             my_allocated_balance: Amount::default(),
             their_allocated_balance: Amount::default(),

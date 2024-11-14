@@ -52,6 +52,7 @@ pub struct ChannelHandlerInitiationData {
     pub their_referee_puzzle_hash: PuzzleHash,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
+    pub unroll_advance_timeout: usize,
 }
 
 #[derive(Clone)]
@@ -694,6 +695,13 @@ pub struct UnrollCoinOutcome {
 ///
 /// At the end of the day update and verify should produce the same conditions for
 /// a specific generation and verify the same message.
+///
+/// UnrollCoin is responsible for enforcing that a time lock (ASSERT_RELATIVE ...) etc
+/// so that the other player has an opportunity to challenge the unroll.
+///
+/// The unrolling player will have to trigger the "reveal" part as below after a time
+/// if the other player doesn't successfully challenge by providing another program that
+/// produces new conditions that match the parity criteria.
 #[derive(Default, Clone)]
 pub struct UnrollCoin {
     pub started_with_potato: bool,

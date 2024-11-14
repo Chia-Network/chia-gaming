@@ -7,6 +7,8 @@ use rand::prelude::*;
 
 use log::debug;
 
+pub const DEFAULT_UNROLL_TIME_LOCK: usize = 5;
+
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
@@ -116,6 +118,7 @@ pub fn new_channel_handler_game<R: Rng>(
         game.id.clone(),
         &u2.to_coin_id(),
         &contributions.clone(),
+        DEFAULT_UNROLL_TIME_LOCK,
     )
     .expect("should work");
 

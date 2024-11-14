@@ -16,6 +16,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
+use crate::tests::game::DEFAULT_UNROLL_TIME_LOCK;
 
 #[test]
 fn test_smoke_can_initiate_channel_handler() {
@@ -49,6 +50,7 @@ fn test_smoke_can_initiate_channel_handler() {
         game_id,
         &launcher_coin,
         &[Amount::new(100), Amount::new(100)],
+        DEFAULT_UNROLL_TIME_LOCK,
     )
     .expect("should build");
 
@@ -110,6 +112,7 @@ fn test_smoke_can_start_game() {
         game_id,
         &launcher_coin,
         &[Amount::new(100), Amount::new(100)],
+        DEFAULT_UNROLL_TIME_LOCK,
     )
     .expect("should work");
 

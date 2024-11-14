@@ -459,6 +459,8 @@ pub struct PotatoHandler {
     reward_puzzle_hash: PuzzleHash,
 
     waiting_to_start: bool,
+    // This is also given to unroll coin to set a timelock based on it.
+    // We'll be notified by the timeout handler when we can spend the unroll coin.
     channel_timeout: Timeout,
 }
 
@@ -1184,6 +1186,7 @@ impl PotatoHandler {
                 their_referee_puzzle_hash: msg.referee_puzzle_hash.clone(),
                 my_contribution: self.my_contribution.clone(),
                 their_contribution: self.their_contribution.clone(),
+                unroll_advance_timeout: self.channel_timeout.to_u64() as usize,
             };
 
         match &self.handshake_state {

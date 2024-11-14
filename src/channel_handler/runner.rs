@@ -52,6 +52,7 @@ impl ChannelHandlerGame {
         game_id: GameID,
         launcher_coin_id: &CoinID,
         contributions: &[Amount; 2],
+        unroll_advance_timeout: usize,
     ) -> Result<ChannelHandlerGame, Error> {
         let private_keys: [ChannelHandlerPrivateKeys; 2] = env.rng.gen();
 
@@ -81,6 +82,7 @@ impl ChannelHandlerGame {
                     their_referee_puzzle_hash: referees[id ^ 1].1.clone(),
                     my_contribution: contributions[id].clone(),
                     their_contribution: contributions[id ^ 1].clone(),
+                    unroll_advance_timeout,
                 };
 
                 ChannelHandlerParty::new(
