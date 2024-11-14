@@ -217,7 +217,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     ) -> Result<Vec<CoinString>, Error> {
         let player_ch = &mut self.parties.player(player).ch;
         let finished_unroll_coin = player_ch.get_finished_unroll_coin();
-        let pre_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env, &finished_unroll_coin)?;
+        let pre_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env, &finished_unroll_coin, true)?;
 
         let run_puzzle = pre_unroll_data
             .transaction
@@ -296,7 +296,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             entropy,
         )?;
         let finished_unroll_coin = player_ch.get_finished_unroll_coin();
-        let post_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env, &finished_unroll_coin)?;
+        let post_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env, &finished_unroll_coin, true)?;
         debug!("post_unroll_data {post_unroll_data:?}");
         todo!();
     }

@@ -1511,7 +1511,7 @@ impl PotatoHandler {
         let player_ch = self.channel_handler()?;
         // Channel coin
         let finished_unroll_coin = player_ch.get_unroll_coin();
-        let pre_unroll_data = player_ch.get_unroll_coin_transaction(env, &finished_unroll_coin)?;
+        let pre_unroll_data = player_ch.get_unroll_coin_transaction(env, &finished_unroll_coin, false)?;
         debug!(
             "unroll to on chain puzzle: {}",
             pre_unroll_data.transaction.puzzle.to_hex()

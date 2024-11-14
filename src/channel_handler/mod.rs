@@ -1028,6 +1028,7 @@ impl ChannelHandler {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         use_unroll: &ChannelHandlerUnrollSpendInfo,
+        add_sigs: bool,
     ) -> Result<ChannelCoinSpentResult, Error> {
         assert!(self.timeout.is_some());
 
@@ -1051,12 +1052,15 @@ impl ChannelHandler {
             "get_unroll_coin_transaction {:?}",
             solution_program.to_hex()
         );
+        let mut signature = use_unroll.coin.get_unroll_coin_signature()?;
+        if add_sigs {
+            signature += use_unroll.signatures.my_unroll_half_signature_peer.clone();
+        }
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
                 puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
                 solution: solution_program,
-                signature: use_unroll.coin.get_unroll_coin_signature()?
-                    + use_unroll.signatures.my_unroll_half_signature_peer.clone(),
+                signature,
             },
             timeout: false,
             games_canceled: self.get_just_created_games(),
@@ -1136,7 +1140,7 @@ impl ChannelHandler {
                     ));
                 }
 
-                self.get_unroll_coin_transaction(env, &full_coin)
+                self.get_unroll_coin_transaction(env, &full_coin, true)
             }
             _ => {
                 // Timeout
