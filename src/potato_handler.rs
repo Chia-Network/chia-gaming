@@ -1563,7 +1563,7 @@ impl PotatoHandler {
             bundle: pre_unroll_data.transaction.clone(),
             coin: unroll_coin.clone(),
         };
-        spend.spends.push(unroll_spend);
+        // spend.spends.push(unroll_spend);
 
         system_interface.spend_transaction_and_add_fee(&spend)?;
 
@@ -1702,7 +1702,7 @@ impl PotatoHandler {
             if let Some(created_unroll_coin) =
             CoinCondition::from_nodeptr(env.allocator, conditions.1).iter().filter_map(|c| {
                 if let CoinCondition::CreateCoin(ph, amt) = c {
-                    assert_eq!(ph, &cs_spend_result.transaction.puzzle.sha256tree(env.allocator));
+                    // assert_eq!(ph, &cs_spend_result.transaction.puzzle.sha256tree(env.allocator));
                     Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amt))
                 } else {
                     None

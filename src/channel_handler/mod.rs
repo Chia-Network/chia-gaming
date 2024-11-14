@@ -1108,7 +1108,7 @@ impl ChannelHandler {
         conditions: NodePtr,
     ) -> Result<ChannelCoinSpentResult, Error> {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
-        let full_coin = self.get_finished_unroll_coin();
+        let full_coin = self.get_unroll_coin();
 
         let state_number = usize_from_atom(&rem_conditions[0])
             .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))?;
