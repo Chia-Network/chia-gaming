@@ -736,7 +736,7 @@ pub fn prepend_rem_conditions<R: Rng>(
 }
 
 impl UnrollCoin {
-    fn get_internal_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
+    pub fn get_internal_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
         if let Some(r) = self.outcome.as_ref() {
             Ok(r.conditions_without_hash)
         } else {
@@ -934,6 +934,7 @@ impl UnrollCoin {
         let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
 
         let aggregate_unroll_signature = signature.clone() + self.get_unroll_coin_signature()?;
+        debug!("{} VERIFY: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", self.started_with_potato);
 
         Ok(aggregate_unroll_signature.verify(
             aggregate_unroll_public_key,

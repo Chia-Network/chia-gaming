@@ -5,6 +5,8 @@ use clvm_traits::ToClvm;
 use clvmr::serde::node_from_bytes;
 use clvmr::{run_program, Allocator, NodePtr};
 
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+
 use log::debug;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -21,7 +23,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID,
-    Hash, IntoErr, Node, Program, PublicKey, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, usize_from_atom
+    Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, usize_from_atom
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -1554,27 +1556,17 @@ impl PotatoHandler {
         let player_ch = self.channel_handler()?;
         debug!("GO ON CHAIN: initiated {}", player_ch.is_initial_potato());
         // Channel coin
-        let finished_unroll_coin = player_ch.get_unroll_coin();
-        let pre_unroll_data = player_ch.get_create_unroll_coin_transaction(env, &finished_unroll_coin, false)?;
-        debug!(
-            "channel unroll to on chain puzzle: {}",
-            pre_unroll_data.transaction.puzzle.to_hex()
-        );
-        debug!(
-            "unroll to on chain solution: {}",
-            pre_unroll_data.transaction.solution.to_hex()
-        );
+        let finished_unroll_coin = player_ch.get_finished_unroll_coin();
 
-        let run_puzzle = pre_unroll_data
-            .transaction
-            .puzzle
-            .to_clvm(env.allocator)
-            .into_gen()?;
-        let run_args = pre_unroll_data
-            .transaction
-            .solution
-            .to_clvm(env.allocator)
-            .into_gen()?;
+        // For debugging: get internal idea of what's signed.
+        let unroll_puzzle_solution = finished_unroll_coin.coin.get_internal_conditions_for_unroll_coin_spend()?;
+        let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
+        let aggregate_unroll_signature = finished_unroll_coin.coin.get_unroll_coin_signature()? + finished_unroll_coin.signatures.my_unroll_half_signature_peer.clone();
+
+        debug!("{} CHANNEL: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", player_ch.is_initial_potato());
+
+        let run_puzzle = spend.spend.spends[0].bundle.puzzle.to_program().to_nodeptr(env.allocator)?;
+        let run_args = spend.spend.spends[0].bundle.solution.to_nodeptr(env.allocator)?;
         let puzzle_result = run_program(
             env.allocator.allocator(),
             &chia_dialect(),
@@ -1589,7 +1581,9 @@ impl PotatoHandler {
             .filter_map(|cond| {
                 if let CoinCondition::CreateCoin(ph, amt) = cond {
                     if *amt > Amount::default() {
-                        return Some(CoinString::from_parts(&player_ch.state_channel_coin().to_coin_id(), ph, amt));
+                        let coin_id = CoinString::from_parts(&player_ch.state_channel_coin().to_coin_id(), ph, amt);
+                        debug!("spend to unroll coin {coin_id:?}");
+                        return Some(coin_id);
                     }
                 }
 
@@ -1622,70 +1616,51 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        debug!("spend from unroll coin {unroll_coin:?}");
         let (env, system_interface) = penv.env();
         let player_ch = self.channel_handler()?;
         // Channel coin
-        let finished_unroll_coin = player_ch.get_unroll_coin();
-        let pre_unroll_data = player_ch.get_create_unroll_coin_transaction(env, &finished_unroll_coin, false)?;
-        debug!(
-            "unroll to on chain puzzle: {}",
-            pre_unroll_data.transaction.puzzle.to_hex()
-        );
-        debug!(
-            "unroll to on chain solution: {}",
-            pre_unroll_data.transaction.solution.to_hex()
-        );
-
-        let run_puzzle = pre_unroll_data
-            .transaction
-            .puzzle
-            .to_clvm(env.allocator)
-            .into_gen()?;
-        let run_args = pre_unroll_data
-            .transaction
-            .solution
-            .to_clvm(env.allocator)
-            .into_gen()?;
-        let puzzle_result = run_program(
-            env.allocator.allocator(),
-            &chia_dialect(),
-            run_puzzle,
-            run_args,
-            0,
-        )
-        .into_gen()?;
-
-        let condition_list = CoinCondition::from_nodeptr(env.allocator, puzzle_result.1);
-        let unroll_result = if let Some(unroll_coin) = condition_list
-            .iter()
-            .filter_map(|cond| {
-                if let CoinCondition::CreateCoin(ph, amt) = cond {
-                    if *amt > Amount::default() {
-                        return Some(CoinString::from_parts(&unroll_coin.to_coin_id(), ph, amt));
-                    }
-                }
-
-                None
-            })
-            .next()
-        {
-            unroll_coin.clone()
-        } else {
-            return Err(Error::StrErr("no unroll coin created".to_string()));
-        };
+        let finished_unroll_coin = player_ch.get_finished_unroll_coin();
+        let curried_unroll_puzzle = finished_unroll_coin.coin.make_curried_unroll_puzzle(
+            env,
+            &player_ch.get_aggregate_unroll_public_key(),
+        )?;
+        let curried_unroll_program = Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?;
+        let unroll_solution = finished_unroll_coin.coin.make_unroll_puzzle_solution(
+            env,
+            &player_ch.get_aggregate_unroll_public_key(),
+        )?;
+        let unroll_solution_program = Program::from_nodeptr(env.allocator, unroll_solution)?;
 
         // We'll wait for the unroll result to be spent, which means we're on chain
         // or timed out, which means we must spend it.
-        system_interface.register_coin(&unroll_result, &self.unroll_timeout)?;
+        // system_interface.register_coin(&unroll_result, &self.unroll_timeout)?;
+
+        // For debugging: get internal idea of what's signed.
+        let unroll_puzzle_solution = finished_unroll_coin.coin.get_internal_conditions_for_unroll_coin_spend()?;
+        let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
+        let aggregate_unroll_signature =
+            finished_unroll_coin.signatures.my_unroll_half_signature_peer.clone() +
+            finished_unroll_coin.coin.get_unroll_coin_signature()?;
+        assert!(aggregate_unroll_signature.verify(&player_ch.get_aggregate_unroll_public_key(), &unroll_puzzle_solution_hash.bytes()));
+
+        debug!("{} SPEND: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", player_ch.is_initial_potato());
+        debug!("Internal solution {}", disassemble(env.allocator.allocator(), unroll_puzzle_solution, None));
+        debug!("Given solution {}", disassemble(env.allocator.allocator(), unroll_solution, None));
+
         system_interface.spend_transaction_and_add_fee(&SpendBundle {
             spends: vec![CoinSpend {
-                bundle: pre_unroll_data.transaction.clone(),
+                bundle: Spend {
+                    puzzle: curried_unroll_program,
+                    solution: unroll_solution_program,
+                    signature: aggregate_unroll_signature,
+                },
                 coin: unroll_coin.clone(),
             }]
         })?;
 
         self.handshake_state =
-            HandshakeState::OnChainWaitingForUnrollSpend(unroll_result.clone());
+            HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin.clone());
 
         Ok(())
     }
@@ -2035,8 +2010,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
     fn coin_timeout_reached<'a>(
         &mut self,
-        _penv: &mut dyn PeerEnv<'a, G, R>,
-        _coin_id: &CoinString,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -2046,7 +2021,22 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         // We'll spend the unroll coin via do_unroll_spend_to_games with the default
         // reveal and go to OnChainWaitingForUnrollSpend, transitioning to OnChain when
         // we receive the unroll coin spend.
-        todo!();
+        let unroll_timed_out =
+            if let HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll, hs) = &self.handshake_state {
+                coin_id == unroll
+            } else {
+                false
+            };
+
+        // out from under the immutable borrow.
+        if unroll_timed_out {
+            return self.do_unroll_spend_to_games(
+                penv,
+                coin_id
+            );
+        }
+
+        Ok(())
     }
 
     fn coin_puzzle_and_solution<'a>(
