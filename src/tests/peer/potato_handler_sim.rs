@@ -113,13 +113,14 @@ impl PacketSender for SimulatedPeer {
 impl SimulatedWalletSpend {
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
+    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout, name: Option<&'static str>) -> Result<(), Error> {
         debug!("register coin");
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
                 timeout_blocks: timeout.clone(),
                 timeout_at: Some(timeout.to_u64() + self.current_height),
+                name,
             },
         );
         Ok(())
@@ -135,9 +136,9 @@ impl WalletSpendInterface for SimulatedPeer {
     }
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
+    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout, name: Option<&'static str>) -> Result<(), Error> {
         debug!("register coin {coin_id:?}");
-        self.simulated_wallet_spend.register_coin(coin_id, timeout)
+        self.simulated_wallet_spend.register_coin(coin_id, timeout, name)
     }
 
     fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
@@ -524,7 +525,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         )
         .expect("should work");
     peers[0]
-        .register_coin(&parent_coin_0, &Timeout::new(100))
+        .register_coin(&parent_coin_0, &Timeout::new(100), Some("parent"))
         .expect("should work");
 
     {

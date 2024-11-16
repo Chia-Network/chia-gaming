@@ -37,9 +37,11 @@ pub trait MessagePeerQueue {
     fn get_unfunded_offer(&self) -> Option<SpendBundle>;
 }
 
+#[derive(Debug)]
 pub struct WatchEntry {
     pub timeout_blocks: Timeout,
     pub timeout_at: Option<u64>,
+    pub name: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -282,12 +284,14 @@ impl WalletSpendInterface for SynchronousGameCradleState {
     }
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
+    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout, name: Option<&'static str>) -> Result<(), Error> {
+        debug!("register coin {coin_id:?} as {name:?}");
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
                 timeout_at: Some(timeout.to_u64() + self.current_height),
                 timeout_blocks: timeout.clone(),
+                name,
             },
         );
 
@@ -295,6 +299,7 @@ impl WalletSpendInterface for SynchronousGameCradleState {
     }
     /// Request the puzzle and solution from a coin spend.
     fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
+        debug!("request puzzle and solution for {coin_id:?}");
         self.coin_solution_requests.push_back(coin_id.clone());
         Ok(())
     }
@@ -621,11 +626,13 @@ impl SynchronousGameCradle {
         // Pass on creates and deletes that are being watched.
         let deleted_watched: HashSet<CoinString> = watch_report.deleted_watched.iter().filter(|c| self.state.watching_coins.contains_key(c)).cloned().collect();
         for d in deleted_watched.iter() {
+            debug!("filter: spent coin {:?}", self.state.watching_coins.get(d));
             self.state.watching_coins.remove(d);
         }
         let created_watched: HashSet<CoinString> = watch_report.created_watched.iter().filter(|c| self.state.watching_coins.contains_key(c)).cloned().collect();
         for c in created_watched.iter() {
             if let Some(w) = self.state.watching_coins.get_mut(c) {
+                debug!("filter: created coin {w:?}");
                 w.timeout_at = Some(w.timeout_blocks.to_u64() + block);
             }
         }
@@ -634,7 +641,8 @@ impl SynchronousGameCradle {
         let mut timed_out = HashSet::new();
         for (k, w) in self.state.watching_coins.iter_mut() {
             if let Some(t) = w.timeout_at.clone() {
-                if t >= block {
+                if t <= block {
+                    debug!("filter: timeout on coin: {w:?}");
                     w.timeout_at = None;
                     timed_out.insert(k.clone());
                 }
