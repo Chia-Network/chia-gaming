@@ -17,7 +17,8 @@ use crate::common::types::{
 use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
 use crate::potato_handler::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
+    WalletSpendInterface,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -93,7 +94,7 @@ impl WalletSpendInterface for Pipe {
         &mut self,
         coin_id: &CoinString,
         timeout: &Timeout,
-        name: Option<&'static str>,
+        _name: Option<&'static str>,
     ) -> Result<(), Error> {
         self.registered_coins
             .insert(coin_id.clone(), timeout.clone());
@@ -413,16 +414,16 @@ fn test_peer_smoke() {
         let reward_puzzle_hash1 =
             puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
 
-        PotatoHandler::new(
+        PotatoHandler::new(PotatoHandlerInit {
             have_potato,
-            private_keys1,
-            game_type_map.clone(),
-            Amount::new(100),
-            Amount::new(100),
-            Timeout::new(1000),
-            Timeout::new(5),
-            reward_puzzle_hash1.clone(),
-        )
+            private_keys: private_keys1,
+            game_types: game_type_map.clone(),
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+            channel_timeout: Timeout::new(1000),
+            unroll_timeout: Timeout::new(5),
+            reward_puzzle_hash: reward_puzzle_hash1.clone(),
+        })
     };
 
     let parent_private_key: PrivateKey = rng.gen();

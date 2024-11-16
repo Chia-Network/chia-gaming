@@ -1070,16 +1070,16 @@ pub fn divmod(a: BigInt, b: BigInt) -> (BigInt, BigInt) {
 #[test]
 fn test_local_divmod() {
     assert_eq!(
-        divmod(-7.to_bigint().unwrap(), 2.to_bigint().unwrap()),
-        (-4.to_bigint().unwrap(), 1.to_bigint().unwrap())
+        divmod((-7).to_bigint().unwrap(), 2.to_bigint().unwrap()),
+        ((-4).to_bigint().unwrap(), 1.to_bigint().unwrap())
     );
     assert_eq!(
-        divmod(7.to_bigint().unwrap(), -2.to_bigint().unwrap()),
-        (-4.to_bigint().unwrap(), -1.to_bigint().unwrap())
+        divmod(7.to_bigint().unwrap(), (-2).to_bigint().unwrap()),
+        ((-4).to_bigint().unwrap(), (-1).to_bigint().unwrap())
     );
     assert_eq!(
-        divmod(-7.to_bigint().unwrap(), -2.to_bigint().unwrap()),
-        (3.to_bigint().unwrap(), -1.to_bigint().unwrap())
+        divmod((-7).to_bigint().unwrap(), (-2).to_bigint().unwrap()),
+        (3.to_bigint().unwrap(), (-1).to_bigint().unwrap())
     );
     assert_eq!(
         divmod(7.to_bigint().unwrap(), 2.to_bigint().unwrap()),

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use clvm_traits::ToClvm;
 use log::debug;
@@ -23,7 +23,7 @@ use crate::peer_container::{
 };
 use crate::potato_handler::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, ToLocalUI, WalletSpendInterface,
 };
 
 use crate::simulator::Simulator;
@@ -477,16 +477,16 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         let reward_puzzle_hash1 =
             puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
 
-        PotatoHandler::new(
+        PotatoHandler::new(PotatoHandlerInit {
             have_potato,
-            private_keys1,
-            game_type_map.clone(),
-            Amount::new(100),
-            Amount::new(100),
-            Timeout::new(1000),
-            Timeout::new(5),
-            reward_puzzle_hash1.clone(),
-        )
+            private_keys: private_keys1,
+            game_types: game_type_map.clone(),
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+            channel_timeout: Timeout::new(1000),
+            unroll_timeout: Timeout::new(5),
+            reward_puzzle_hash: reward_puzzle_hash1.clone(),
+        })
     };
 
     let ph1 = new_peer(allocator, &mut rng, false);
@@ -696,10 +696,12 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 }
 
+type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(&[SynchronousGameCradle]) -> bool>;
+
 fn run_calpoker_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
-    pred: Option<&dyn Fn(&[SynchronousGameCradle]) -> bool>,
+    pred: GameRunEarlySuccessPredicate,
 ) {
     // Coinset adapter for each side.
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
@@ -1019,6 +1021,6 @@ fn sim_test_with_peer_container_piss_off_peer() {
     run_calpoker_container_with_action_list_with_success_predicate(
         &mut allocator,
         &moves,
-        Some(&mut |cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+        Some(&|cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
     );
 }

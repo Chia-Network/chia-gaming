@@ -219,7 +219,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let finished_unroll_coin = player_ch.get_finished_unroll_coin();
         let pre_unroll_data = player_ch.get_create_unroll_coin_transaction(
             &mut self.env,
-            &finished_unroll_coin,
+            finished_unroll_coin,
             true,
         )?;
 
@@ -302,7 +302,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let finished_unroll_coin = player_ch.get_finished_unroll_coin();
         let post_unroll_data = player_ch.get_create_unroll_coin_transaction(
             &mut self.env,
-            &finished_unroll_coin,
+            finished_unroll_coin,
             true,
         )?;
         debug!("post_unroll_data {post_unroll_data:?}");

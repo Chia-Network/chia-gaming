@@ -19,7 +19,8 @@ use crate::common::types::{
 };
 use crate::potato_handler::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
+    WalletSpendInterface,
 };
 
 #[derive(Default)]
@@ -352,16 +353,16 @@ impl SynchronousGameCradle {
                 shutdown: None,
                 on_chain_game_coins: Vec::default(),
             },
-            peer: PotatoHandler::new(
-                config.have_potato,
+            peer: PotatoHandler::new(PotatoHandlerInit {
+                have_potato: config.have_potato,
                 private_keys,
-                config.game_types,
-                config.my_contribution,
-                config.their_contribution,
-                config.channel_timeout,
-                config.unroll_timeout,
-                config.reward_puzzle_hash,
-            ),
+                game_types: config.game_types,
+                my_contribution: config.my_contribution,
+                their_contribution: config.their_contribution,
+                channel_timeout: config.channel_timeout,
+                unroll_timeout: config.unroll_timeout,
+                reward_puzzle_hash: config.reward_puzzle_hash,
+            }),
         }
     }
 }
@@ -655,7 +656,7 @@ impl SynchronousGameCradle {
         // Get timeouts
         let mut timed_out = HashSet::new();
         for (k, w) in self.state.watching_coins.iter_mut() {
-            if let Some(t) = w.timeout_at.clone() {
+            if let Some(t) = w.timeout_at {
                 if t <= block {
                     debug!("filter: timeout on coin: {w:?}");
                     w.timeout_at = None;
