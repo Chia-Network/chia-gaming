@@ -15,7 +15,9 @@ use crate::channel_handler::types::ReadableMove;
 use crate::common::constants::CREATE_COIN;
 #[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::ChiaIdentity;
-use crate::common::types::{AllocEncoder, Error, GameID, Hash, Sha256Input};
+use crate::common::types::{AllocEncoder, Sha256Input};
+#[cfg(feature = "sim-tests")]
+use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Amount, PrivateKey};
 #[cfg(feature = "sim-tests")]
@@ -28,7 +30,9 @@ use crate::games::calpoker::make_cards;
 use crate::games::calpoker::CalpokerResult;
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
-use crate::tests::game::{GameAction, GameActionResult};
+use crate::tests::game::GameAction;
+#[cfg(feature = "sim-tests")]
+use crate::tests::game::GameActionResult;
 
 #[cfg(feature = "sim-tests")]
 use crate::tests::simenv::SimulatorEnvironment;
