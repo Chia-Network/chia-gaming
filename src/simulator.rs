@@ -309,11 +309,13 @@ impl Simulator {
                 let amount: u64 = as_list[2].extract(py)?;
                 let parent_coin_hash = Hash::from_slice(parent_coin_info_slice);
                 let puzzle_hash = Hash::from_slice(puzzle_hash_slice);
-                result_coins.push(CoinString::from_parts(
+                let new_coin = CoinString::from_parts(
                     &CoinID::new(parent_coin_hash),
                     &PuzzleHash::from_hash(puzzle_hash),
                     &Amount::new(amount),
-                ));
+                );
+                debug!("coin with id {:?}", new_coin.to_coin_id());
+                result_coins.push(new_coin);
             }
             Ok(result_coins)
         })
@@ -332,6 +334,33 @@ impl Simulator {
             let coins =
                 self.async_client(py, "get_coin_records_by_puzzle_hash", (hash_bytes, false))?;
             self.convert_coin_list_to_coin_strings(py, &coins)
+        })
+    }
+
+    pub fn get_puzzle_and_solution(
+        &self,
+        coin_string: &CoinString,
+    ) -> PyResult<Option<(Program, Program)>> {
+        Python::with_gil(|py| -> PyResult<_> {
+            let hash_bytes = PyBytes::new(py, coin_string.to_coin_id().bytes());
+            let record = self.async_client(py, "get_coin_record_by_name", (&hash_bytes,))?;
+            let height_of_spend =
+                if let Ok(height_of_spend) = record.getattr(py, "spent_block_index") {
+                    height_of_spend
+                } else {
+                    return Ok(None);
+                };
+            let puzzle_and_solution =
+                self.async_client(py, "get_puzzle_and_solution", (hash_bytes, height_of_spend))?;
+            let puzzle_reveal: PyObject = puzzle_and_solution.getattr(py, "puzzle_reveal")?;
+            let solution: PyObject = puzzle_and_solution.getattr(py, "solution")?;
+
+            let puzzle_str: Vec<u8> = puzzle_reveal.call_method0(py, "__bytes__")?.extract(py)?;
+            let solution_str: Vec<u8> = solution.call_method0(py, "__bytes__")?.extract(py)?;
+            Ok(Some((
+                Program::from_bytes(&puzzle_str),
+                Program::from_bytes(&solution_str),
+            )))
         })
     }
 

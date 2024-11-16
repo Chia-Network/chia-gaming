@@ -92,7 +92,7 @@ fn test_make_cards() {
 #[test]
 fn test_mergein() {
     let mut allocator = AllocEncoder::new();
-    let tests = vec![
+    let tests = [
         ([vec![1, 2, 9], vec![], vec![]], "(q 2 9)"),
         ([vec![1, 2, 9], vec![3], vec![]], "(q 2 5 9)"),
     ];

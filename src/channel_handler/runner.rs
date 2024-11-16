@@ -10,7 +10,7 @@ use crate::common::standard_coin::{
     get_standard_coin_puzzle, private_to_public_key, puzzle_for_pk, read_hex_puzzle,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree,
+    AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 
 pub struct ChannelHandlerParty {
@@ -52,6 +52,7 @@ impl ChannelHandlerGame {
         game_id: GameID,
         launcher_coin_id: &CoinID,
         contributions: &[Amount; 2],
+        unroll_advance_timeout: Timeout,
     ) -> Result<ChannelHandlerGame, Error> {
         let private_keys: [ChannelHandlerPrivateKeys; 2] = env.rng.gen();
 
@@ -81,6 +82,7 @@ impl ChannelHandlerGame {
                     their_referee_puzzle_hash: referees[id ^ 1].1.clone(),
                     my_contribution: contributions[id].clone(),
                     their_contribution: contributions[id ^ 1].clone(),
+                    unroll_advance_timeout: unroll_advance_timeout.clone(),
                 };
 
                 ChannelHandlerParty::new(

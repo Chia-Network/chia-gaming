@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use clvm_traits::ToClvm;
 use log::debug;
@@ -23,7 +23,7 @@ use crate::peer_container::{
 };
 use crate::potato_handler::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, ToLocalUI, WalletSpendInterface,
 };
 
 use crate::simulator::Simulator;
@@ -38,58 +38,6 @@ struct SimulatedWalletSpend {
     watching_coins: HashMap<CoinString, WatchEntry>,
 }
 
-impl SimulatedWalletSpend {
-    #[allow(dead_code)]
-    pub fn watch_and_report_coins(
-        &mut self,
-        current_height: u64,
-        current_coins: &WatchReport,
-    ) -> Result<WatchReport, Error> {
-        self.current_height = current_height;
-        let created_coins: HashSet<CoinString> = current_coins
-            .created_watched
-            .iter()
-            .filter(|c| {
-                // Report coin if it's being watched.
-                self.watching_coins.contains_key(c)
-            })
-            .cloned()
-            .collect();
-        let deleted_coins: HashSet<CoinString> = current_coins
-            .deleted_watched
-            .iter()
-            .filter(|c| self.watching_coins.contains_key(c))
-            .cloned()
-            .collect();
-
-        let mut timeouts = HashSet::new();
-        for (k, v) in self.watching_coins.iter_mut() {
-            if Timeout::new(current_height as u64) > v.timeout_height {
-                // No action on this coin in the timeout.
-                timeouts.insert(k.clone());
-            }
-        }
-
-        for t in timeouts.iter() {
-            self.watching_coins.remove(&t);
-        }
-
-        Ok(WatchReport {
-            created_watched: created_coins,
-            deleted_watched: deleted_coins,
-            timed_out: timeouts,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct SpendSpec {
-    #[allow(dead_code)]
-    spend: Spend,
-    #[allow(dead_code)]
-    parent: Option<CoinString>,
-}
-
 #[derive(Default)]
 pub struct SimulatedPeer {
     message_pipe: MessagePipe,
@@ -98,7 +46,7 @@ pub struct SimulatedPeer {
     channel_puzzle_hash: Option<PuzzleHash>,
 
     unfunded_offer: Option<SpendBundle>,
-    outbound_transactions: Vec<SpendSpec>,
+    outbound_transactions: Vec<SpendBundle>,
 
     raw_messages: Vec<Vec<u8>>,
     messages: Vec<ReadableMove>,
@@ -121,20 +69,8 @@ impl MessagePeerQueue for SimulatedPeer {
     }
 }
 
-impl SimulatedPeer {
-    #[allow(dead_code)]
-    pub fn watch_and_report_coins(
-        &mut self,
-        current_height: u64,
-        current_coins: &WatchReport,
-    ) -> Result<WatchReport, Error> {
-        self.simulated_wallet_spend
-            .watch_and_report_coins(current_height, current_coins)
-    }
-}
-
 /// Check the reported coins vs the current coin set and report changes.
-pub fn update_and_report_coins<'a, 'b, R: Rng>(
+pub fn update_and_report_coins<'a, R: Rng>(
     allocator: &mut AllocEncoder,
     rng: &mut R,
     coinset_adapter: &mut FullCoinSetAdapter,
@@ -177,12 +113,19 @@ impl PacketSender for SimulatedPeer {
 impl SimulatedWalletSpend {
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
+    fn register_coin(
+        &mut self,
+        coin_id: &CoinString,
+        timeout: &Timeout,
+        name: Option<&'static str>,
+    ) -> Result<(), Error> {
         debug!("register coin");
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
-                timeout_height: timeout.clone() + Timeout::new(self.current_height),
+                timeout_blocks: timeout.clone(),
+                timeout_at: Some(timeout.to_u64() + self.current_height),
+                name,
             },
         );
         Ok(())
@@ -191,23 +134,26 @@ impl SimulatedWalletSpend {
 
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(
-        &mut self,
-        bundle: &Spend,
-        parent: Option<&CoinString>,
-    ) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
         debug!("waiting to spend transaction");
-        self.outbound_transactions.push(SpendSpec {
-            spend: bundle.clone(),
-            parent: parent.cloned(),
-        });
+        self.outbound_transactions.push(bundle.clone());
         Ok(())
     }
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
+    fn register_coin(
+        &mut self,
+        coin_id: &CoinString,
+        timeout: &Timeout,
+        name: Option<&'static str>,
+    ) -> Result<(), Error> {
         debug!("register coin {coin_id:?}");
-        self.simulated_wallet_spend.register_coin(coin_id, timeout)
+        self.simulated_wallet_spend
+            .register_coin(coin_id, timeout, name)
+    }
+
+    fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
+        todo!();
     }
 }
 
@@ -323,8 +269,7 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
             false,
         )
         .expect("ssp 1");
-        let spend_solution_program =
-            Program::from_nodeptr(&mut self.env.allocator, spend.solution.clone())?;
+        let spend_solution_program = Program::from_nodeptr(self.env.allocator, spend.solution)?;
 
         peer.channel_offer(
             self,
@@ -417,6 +362,7 @@ fn check_watch_report<'a, 'b: 'a, R: Rng>(
     assert_eq!(wanted_coin.len(), 2);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handshake<'a, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
@@ -479,7 +425,7 @@ pub fn handshake<'a, R: Rng + 'a>(
             let quoted_empty_hash = quoted_empty_conditions.sha256tree(env.allocator);
             let signature = sign_agg_sig_me(
                 &identities[who].synthetic_private_key,
-                &quoted_empty_hash.bytes(),
+                quoted_empty_hash.bytes(),
                 &parent_coins[who].to_coin_id(),
                 &env.agg_sig_me_additional_data,
             );
@@ -494,6 +440,7 @@ pub fn handshake<'a, R: Rng + 'a>(
             let included_result = simulator
                 .push_tx(env.allocator, &spends.spends)
                 .into_gen()?;
+
             pipes[who].unfunded_offer = None;
             debug!("included_result {included_result:?}");
             assert_eq!(included_result.code, 1);
@@ -530,15 +477,16 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         let reward_puzzle_hash1 =
             puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
 
-        PotatoHandler::new(
+        PotatoHandler::new(PotatoHandlerInit {
             have_potato,
-            private_keys1,
-            game_type_map.clone(),
-            Amount::new(100),
-            Amount::new(100),
-            Timeout::new(1000),
-            reward_puzzle_hash1.clone(),
-        )
+            private_keys: private_keys1,
+            game_types: game_type_map.clone(),
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+            channel_timeout: Timeout::new(1000),
+            unroll_timeout: Timeout::new(5),
+            reward_puzzle_hash: reward_puzzle_hash1.clone(),
+        })
     };
 
     let ph1 = new_peer(allocator, &mut rng, false);
@@ -588,7 +536,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         )
         .expect("should work");
     peers[0]
-        .register_coin(&parent_coin_0, &Timeout::new(100))
+        .register_coin(&parent_coin_0, &Timeout::new(100), Some("parent"))
         .expect("should work");
 
     {
@@ -705,6 +653,7 @@ struct LocalTestUIReceiver {
     shutdown_complete: bool,
     game_finished: Option<Amount>,
     opponent_moved: bool,
+    go_on_chain: bool,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -742,11 +691,18 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn going_on_chain(&mut self) -> Result<(), Error> {
-        todo!();
+        self.go_on_chain = true;
+        Ok(())
     }
 }
 
-fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
+type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(&[SynchronousGameCradle]) -> bool>;
+
+fn run_calpoker_container_with_action_list_with_success_predicate(
+    allocator: &mut AllocEncoder,
+    moves: &[GameAction],
+    pred: GameRunEarlySuccessPredicate,
+) {
     // Coinset adapter for each side.
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let game_type_map = poker_collection(allocator);
@@ -809,6 +765,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
+            unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: id1.puzzle_hash.clone(),
         },
     );
@@ -821,6 +778,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
+            unroll_timeout: Timeout::new(5),
             reward_puzzle_hash: id2.puzzle_hash.clone(),
         },
     );
@@ -855,7 +813,23 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
             .make_report_from_coin_set_update(current_height as u64, &current_coins)
             .expect("should work");
 
+        if let Some(p) = &pred {
+            if p(&cradles) {
+                // Success.
+                return;
+            }
+        }
+
         for i in 0..=1 {
+            if local_uis[i].go_on_chain {
+                // Perform on chain move.
+                // Turn off the flag to go on chain.
+                local_uis[i].go_on_chain = false;
+                cradles[i]
+                    .go_on_chain(allocator, &mut rng, &mut local_uis[i])
+                    .expect("should work");
+            }
+
             cradles[i]
                 .new_block(allocator, &mut rng, current_height, &watch_report)
                 .expect("should work");
@@ -870,7 +844,24 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                     result.outbound_messages.len()
                 );
 
+                for coin in result.coin_solution_requests.iter() {
+                    let ps_res = simulator
+                        .get_puzzle_and_solution(coin)
+                        .expect("should work");
+                    for cradle in cradles.iter_mut() {
+                        cradle
+                            .report_puzzle_and_solution(
+                                allocator,
+                                &mut rng,
+                                coin,
+                                ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
+                            )
+                            .expect("should succeed");
+                    }
+                }
+
                 for tx in result.outbound_transactions.iter() {
+                    debug!("PROCESS TX {tx:?}");
                     let included_result = simulator
                         .push_tx(allocator, &tx.spends)
                         .expect("should work");
@@ -879,7 +870,7 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                 }
 
                 for msg in result.outbound_messages.iter() {
-                    cradles[i ^ 1].deliver_message(&msg).expect("should work");
+                    cradles[i ^ 1].deliver_message(msg).expect("should work");
                 }
 
                 if !result.continue_on {
@@ -953,6 +944,46 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
                             )
                             .expect("should work");
                     }
+                    GameAction::GoOnChain(_who) => {
+                        debug!("go on chain");
+                        todo!();
+                    }
+                    GameAction::FakeMove(who, readable, move_data) => {
+                        last_move = *who;
+                        // This is a fake move.  We give that move to the given target channel
+                        // handler as a their move.
+                        debug!("make move");
+                        let readable_program =
+                            Program::from_nodeptr(allocator, *readable).expect("should convert");
+                        let encoded_readable_move = readable_program.bytes();
+                        let entropy = rng.gen();
+                        // Do like we're sending a real message.
+                        cradles[*who]
+                            .make_move(
+                                allocator,
+                                &mut rng,
+                                &game_ids[0],
+                                encoded_readable_move.to_vec(),
+                                entropy,
+                            )
+                            .expect("should work");
+
+                        cradles[*who]
+                            .replace_last_message(|msg_envelope| {
+                                debug!("sabotage envelope = {msg_envelope:?}");
+                                let (game_id, m) =
+                                    if let PeerMessage::Move(game_id, m) = msg_envelope {
+                                        (game_id, m)
+                                    } else {
+                                        todo!();
+                                    };
+
+                                let mut fake_move = m.clone();
+                                fake_move.game_move.basic.move_made = move_data.clone();
+                                Ok(PeerMessage::Move(game_id.clone(), fake_move))
+                            })
+                            .expect("should be able to sabotage");
+                    }
                     _ => todo!(),
                 }
             } else {
@@ -964,6 +995,10 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
     }
 }
 
+fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
+    run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None);
+}
+
 #[test]
 fn sim_test_with_peer_container() {
     let mut allocator = AllocEncoder::new();
@@ -971,4 +1006,21 @@ fn sim_test_with_peer_container() {
     // Play moves
     let moves = test_moves_1(&mut allocator);
     run_calpoker_container_with_action_list(&mut allocator, &moves);
+}
+
+#[test]
+fn sim_test_with_peer_container_piss_off_peer() {
+    let mut allocator = AllocEncoder::new();
+
+    let mut moves = test_moves_1(&mut allocator);
+    if let GameAction::Move(_player, readable, _) = moves[2].clone() {
+        moves[3] = GameAction::FakeMove(1, readable, vec![0; 500]);
+    } else {
+        panic!("no move 1 to replace");
+    }
+    run_calpoker_container_with_action_list_with_success_predicate(
+        &mut allocator,
+        &moves,
+        Some(&|cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+    );
 }

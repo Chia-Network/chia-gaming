@@ -25,7 +25,7 @@ use crate::common::types::{
     CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
     Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
-use crate::referee::{GameMoveDetails, RefereeMaker};
+use crate::referee::{GameMoveDetails, LiveGameReplay, RefereeMaker};
 
 #[derive(Clone)]
 pub struct ChannelHandlerPrivateKeys {
@@ -52,6 +52,7 @@ pub struct ChannelHandlerInitiationData {
     pub their_referee_puzzle_hash: PuzzleHash,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
+    pub unroll_advance_timeout: Timeout,
 }
 
 #[derive(Clone)]
@@ -446,7 +447,7 @@ pub struct HandshakeResult {
 }
 
 /// The channel handler can use these two items to produce a spend on chain.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ChannelHandlerUnrollSpendInfo {
     /// Contains the half signature, puzzle and conditions needed to spend.
     pub coin: UnrollCoin,
@@ -667,11 +668,11 @@ pub struct UnrollCoinConditionInputs {
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UnrollCoinOutcome {
     pub conditions: NodePtr,
     pub conditions_without_hash: NodePtr,
-    pub old_state_number: usize,
+    pub state_number: usize,
     pub hash: PuzzleHash,
     pub signature: Aggsig,
 }
@@ -694,6 +695,15 @@ pub struct UnrollCoinOutcome {
 ///
 /// At the end of the day update and verify should produce the same conditions for
 /// a specific generation and verify the same message.
+///
+/// UnrollCoin is responsible for enforcing that a time lock (ASSERT_RELATIVE ...) etc
+/// so that the other player has an opportunity to challenge the unroll.
+///
+/// The unrolling player will have to trigger the "reveal" part as below after a time
+/// if the other player doesn't successfully challenge by providing another program that
+/// produces new conditions that match the parity criteria.
+///
+/// XXX TODO: Add time lock
 #[derive(Default, Clone)]
 pub struct UnrollCoin {
     pub started_with_potato: bool,
@@ -726,7 +736,7 @@ pub fn prepend_rem_conditions<R: Rng>(
 }
 
 impl UnrollCoin {
-    fn get_internal_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
+    pub fn get_internal_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
         if let Some(r) = self.outcome.as_ref() {
             Ok(r.conditions_without_hash)
         } else {
@@ -736,7 +746,7 @@ impl UnrollCoin {
 
     fn get_old_state_number(&self) -> Result<usize, Error> {
         if let Some(r) = self.outcome.as_ref() {
-            Ok(r.old_state_number)
+            Ok(r.state_number)
         } else {
             Err(Error::StrErr("no default setup".to_string()))
         }
@@ -788,7 +798,7 @@ impl UnrollCoin {
             program: env.unroll_puzzle.clone(),
             args: clvm_curried_args!(
                 shared_puzzle_hash,
-                self.get_old_state_number()?,
+                self.get_old_state_number()? - 1,
                 conditions_hash
             ),
         }
@@ -894,7 +904,7 @@ impl UnrollCoin {
         self.outcome = Some(UnrollCoinOutcome {
             conditions: unroll_conditions,
             conditions_without_hash: unroll_conditions,
-            old_state_number: self.state_number - 1,
+            state_number: self.state_number,
             hash: conditions_hash,
             signature: unroll_signature.clone(),
         });
@@ -924,10 +934,63 @@ impl UnrollCoin {
         let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
 
         let aggregate_unroll_signature = signature.clone() + self.get_unroll_coin_signature()?;
+        debug!("{} VERIFY: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", self.started_with_potato);
 
         Ok(aggregate_unroll_signature.verify(
             aggregate_unroll_public_key,
             unroll_puzzle_solution_hash.bytes(),
         ))
+    }
+}
+
+pub struct CoinDataForReward {
+    pub coin_string: CoinString,
+    // parent: CoinID,
+    // puzzle_hash: PuzzleHash,
+    // amount: Amount,
+}
+
+pub struct UnrollTarget {
+    pub state_number: usize,
+    pub unroll_puzzle_hash: PuzzleHash,
+    pub my_amount: Amount,
+    pub their_amount: Amount,
+}
+
+impl LiveGame {
+    /// Regress the live game state to the state we know so that we can generate the puzzle
+    /// for that state.  We'll return the move needed to advance it fully.
+    pub fn set_state_for_coin(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        coin: &OnChainGameCoin,
+    ) -> Result<Vec<LiveGameReplay>, Error> {
+        let want_ph =
+            if let Some((_, ph, _)) = coin.coin_string_up.as_ref().and_then(|cs| cs.to_parts()) {
+                ph.clone()
+            } else {
+                // No coin string given so this game was ended.  We need to ressurect it.
+                todo!();
+            };
+
+        let referee_puzzle_hash = self
+            .referee_maker
+            .curried_referee_puzzle_hash_for_validator(allocator, true)?;
+
+        if referee_puzzle_hash == want_ph {
+            return Ok(vec![]);
+        }
+
+        while self.referee_maker.rewind()? {
+            let new_puzzle_hash = self
+                .referee_maker
+                .curried_referee_puzzle_hash_for_validator(allocator, true)?;
+
+            if new_puzzle_hash == want_ph {
+                todo!();
+            }
+        }
+
+        todo!();
     }
 }

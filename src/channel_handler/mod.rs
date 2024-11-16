@@ -18,30 +18,22 @@ use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
-    CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult, DispositionResult,
-    GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, PotatoAcceptCachedData,
-    PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs,
+    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult,
+    DispositionResult, GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
+    PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
+    UnrollCoinConditionInputs, UnrollTarget,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
     puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
 };
-#[cfg(test)]
-use crate::common::types::Node;
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash,
-    Sha256tree, Spend, SpendRewardResult, ToQuotedProgram,
+    CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
+    PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::referee::RefereeMaker;
-
-pub struct CoinDataForReward {
-    coin_string: CoinString,
-    // parent: CoinID,
-    // puzzle_hash: PuzzleHash,
-    // amount: Amount,
-}
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -97,6 +89,10 @@ pub struct ChannelHandler {
     their_allocated_balance: Amount,
 
     have_potato: bool,
+    initiated_on_chain: bool,
+    // Specifies the time lock that should be used in the unroll coin's conditions.
+    #[allow(dead_code)]
+    unroll_advance_timeout: Timeout,
 
     cached_last_action: Option<CachedPotatoRegenerateLastHop>,
 
@@ -119,6 +115,10 @@ pub struct ChannelHandler {
 }
 
 impl ChannelHandler {
+    pub fn is_initial_potato(&self) -> bool {
+        self.unroll.coin.started_with_potato
+    }
+
     pub fn channel_private_key(&self) -> PrivateKey {
         self.private_keys.my_channel_coin_private_key.clone()
     }
@@ -141,6 +141,19 @@ impl ChannelHandler {
         } else {
             &self.unroll
         }
+    }
+
+    pub fn get_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
+        &self.unroll
+    }
+
+    fn make_curried_unroll_puzzle<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<NodePtr, Error> {
+        self.unroll
+            .coin
+            .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())
     }
 
     fn unroll_coin_condition_inputs(
@@ -260,11 +273,13 @@ impl ChannelHandler {
             their_referee_puzzle_hash: initiation.their_referee_puzzle_hash.clone(),
             my_out_of_game_balance: initiation.my_contribution.clone(),
             their_out_of_game_balance: initiation.their_contribution.clone(),
+            unroll_advance_timeout: initiation.unroll_advance_timeout.clone(),
 
             my_allocated_balance: Amount::default(),
             their_allocated_balance: Amount::default(),
 
             have_potato: initiation.we_start_with_potato,
+            initiated_on_chain: false,
 
             cached_last_action: None,
 
@@ -543,6 +558,8 @@ impl ChannelHandler {
         }
 
         self.current_state_number += 1;
+        debug!("current state number now {}", self.current_state_number);
+        debug!("test_unroll updated {:?}", test_unroll.outcome);
         self.timeout = Some(ChannelHandlerUnrollSpendInfo {
             coin: test_unroll.clone(),
             signatures: signatures.clone(),
@@ -1011,12 +1028,13 @@ impl ChannelHandler {
         Ok(rem_conditions)
     }
 
-    pub fn get_unroll_coin_transaction<R: Rng>(
+    pub fn get_create_unroll_coin_transaction<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
+        use_unroll: &ChannelHandlerUnrollSpendInfo,
+        add_sigs: bool,
     ) -> Result<ChannelCoinSpentResult, Error> {
         assert!(self.timeout.is_some());
-        let use_unroll = self.get_finished_unroll_coin();
 
         debug!("channel handler at {}", self.current_state_number);
 
@@ -1032,13 +1050,21 @@ impl ChannelHandler {
         let unroll_puzzle_solution = use_unroll
             .coin
             .make_unroll_puzzle_solution(env, &self.get_aggregate_unroll_public_key())?;
+        let solution_program = Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?;
 
+        debug!(
+            "get_unroll_coin_transaction {:?}",
+            solution_program.to_hex()
+        );
+        let mut signature = use_unroll.coin.get_unroll_coin_signature()?;
+        if add_sigs {
+            signature += use_unroll.signatures.my_unroll_half_signature_peer.clone();
+        }
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
                 puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
-                solution: Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?,
-                signature: use_unroll.coin.get_unroll_coin_signature()?
-                    + use_unroll.signatures.my_unroll_half_signature_peer.clone(),
+                solution: solution_program,
+                signature,
             },
             timeout: false,
             games_canceled: self.get_just_created_games(),
@@ -1087,37 +1113,28 @@ impl ChannelHandler {
     pub fn channel_coin_spent<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
+        myself: bool,
         conditions: NodePtr,
     ) -> Result<ChannelCoinSpentResult, Error> {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
-        let full_coin = self.get_finished_unroll_coin();
+        let full_coin = self.get_unroll_coin();
 
         let state_number = usize_from_atom(&rem_conditions[0])
             .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))?;
 
-        let our_parity = self.unroll.coin.state_number & 1;
+        let our_parity = full_coin.coin.state_number & 1;
         let their_parity = state_number & 1;
 
         debug!(
-            "CHANNEL COIN SPENT: my state {} coin state {} channel coin state {state_number}",
-            self.current_state_number, full_coin.coin.state_number
+            "{} CHANNEL COIN SPENT: myself {myself} initiated {} my state {} coin state {} channel coin state {state_number}",
+            self.unroll.coin.started_with_potato,
+            self.initiated_on_chain,
+            self.current_state_number,
+            full_coin.coin.state_number
         );
 
-        match state_number.cmp(&self.current_state_number) {
-            Ordering::Greater => Err(Error::StrErr(format!(
-                "Reply from the future onchain {} (me {}) vs {}",
-                state_number, self.current_state_number, self.unroll.coin.state_number
-            ))),
-            Ordering::Less => {
-                if our_parity == their_parity {
-                    return Err(Error::StrErr(
-                        "We're superceding ourselves from the past?".to_string(),
-                    ));
-                }
-
-                self.get_unroll_coin_transaction(env)
-            }
-            _ => {
+        match (myself, state_number.cmp(&self.current_state_number)) {
+            (true, _) | (_, Ordering::Equal) => {
                 // Timeout
                 let curried_unroll_puzzle = self
                     .unroll
@@ -1137,6 +1154,19 @@ impl ChannelHandler {
                     timeout: true,
                     games_canceled: self.get_just_created_games(),
                 })
+            }
+            (_, Ordering::Greater) => Err(Error::StrErr(format!(
+                "Reply from the future onchain {} (me {}) vs {}",
+                state_number, self.current_state_number, full_coin.coin.state_number
+            ))),
+            (_, Ordering::Less) => {
+                if our_parity == their_parity {
+                    return Err(Error::StrErr(
+                        "We're superceding ourselves from the past?".to_string(),
+                    ));
+                }
+
+                self.get_create_unroll_coin_transaction(env, full_coin, true)
             }
         }
     }
@@ -1259,13 +1289,70 @@ impl ChannelHandler {
         }
     }
 
-    pub fn get_new_game_coins_on_chain(
+    fn get_new_game_coins_on_chain(
         &self,
         unroll_coin: Option<&CoinID>,
         skip_game: &[GameID],
         skip_coin_id: Option<&GameID>,
     ) -> Result<Vec<OnChainGameCoin>, Error> {
         self.compute_game_coin_unroll_data(unroll_coin, skip_game, skip_coin_id, &self.live_games)
+    }
+
+    pub fn get_game_coins<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>,
+    ) -> Result<Vec<OnChainGameCoin>, Error> {
+        let state_number = self.unroll.coin.state_number;
+        // We need the view of the system as of the most recent timeout.
+        // I made a move, they have the potato, so we need to reconstruct the
+        // game states from the most recent their turn.  If there's a move in the
+        // state cache then that game uses that puzzle hash and amount, otherwise
+        // it uses the one from the live game object.  Once on chain, we'll need
+        // the actual puzzle, but that's a problem for a comment other than this
+        // one.
+        let unroll_puzzle = self.make_curried_unroll_puzzle(env)?;
+        let unroll_puzzle_hash = Node(unroll_puzzle).sha256tree(env.allocator);
+        let parent_coin = self.state_channel_coin().coin_string();
+        let unroll_coin = CoinString::from_parts(
+            &parent_coin.to_coin_id(),
+            &unroll_puzzle_hash,
+            &(self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone()),
+        );
+
+        let disposition =
+            self.get_cached_disposition_for_spent_result(env, &unroll_coin, state_number)?;
+        self.get_new_game_coins_on_chain(
+            Some(&unroll_coin.to_coin_id()),
+            &disposition
+                .as_ref()
+                .map(|d| d.skip_game.clone())
+                .unwrap_or_default(),
+            disposition.as_ref().and_then(|d| d.skip_coin_id.as_ref()),
+        )
+    }
+
+    // Reset our state so that we generate the indicated puzzles from the live games.
+    pub fn set_state_for_coins<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        coins: &[OnChainGameCoin],
+    ) -> Result<(), Error> {
+        let mut res = Vec::new();
+        for game_coin in coins.iter() {
+            if let Some(live_game) = self
+                .live_games
+                .iter_mut()
+                .find(|f| game_coin.game_id_up == f.game_id)
+            {
+                res.append(&mut live_game.set_state_for_coin(env.allocator, game_coin)?);
+            } else {
+                // XXX Used to exist, needs ressurection from the cache to potentially replay
+                // the accept.
+                todo!();
+            }
+        }
+
+        Ok(())
     }
 
     // what our vanilla coin string is
@@ -1434,21 +1521,20 @@ impl ChannelHandler {
     // Inititate a simple on chain spend.
     //
     // Currently used for testing but might be used elsewhere.
-    #[cfg(test)]
     pub fn get_unroll_target<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
-    ) -> Result<(usize, PuzzleHash, Amount, Amount), Error> {
-        let use_unroll = self.get_finished_unroll_coin();
+        use_unroll: &ChannelHandlerUnrollSpendInfo,
+    ) -> Result<UnrollTarget, Error> {
         let curried_unroll_puzzle = use_unroll
             .coin
             .make_curried_unroll_puzzle(env, &self.get_aggregate_unroll_public_key())?;
 
-        Ok((
-            use_unroll.coin.state_number,
-            Node(curried_unroll_puzzle).sha256tree(&mut env.allocator),
-            self.my_out_of_game_balance.clone(),
-            self.their_out_of_game_balance.clone(),
-        ))
+        Ok(UnrollTarget {
+            state_number: use_unroll.coin.state_number,
+            unroll_puzzle_hash: Node(curried_unroll_puzzle).sha256tree(env.allocator),
+            my_amount: self.my_out_of_game_balance.clone(),
+            their_amount: self.their_out_of_game_balance.clone(),
+        })
     }
 }

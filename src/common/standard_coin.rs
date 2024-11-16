@@ -89,7 +89,7 @@ fn test_calculate_synthetic_offset() {
         0xe2, 0xce, 0xdb,
     ];
     let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
-    let default_hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
+    let default_hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH);
     let offset = calculate_synthetic_offset(&pk, &default_hidden_puzzle_hash);
     let want_offset_bytes = [
         0x69, 0x51, 0x33, 0xf4, 0x61, 0x0a, 0x5e, 0x50, 0x7b, 0x2f, 0x24, 0x98, 0x22, 0x21, 0x91,
@@ -150,7 +150,7 @@ fn test_calculate_synthetic_public_key() {
         0xe2, 0xce, 0xdb,
     ];
     let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
-    let default_hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
+    let default_hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH);
     let spk =
         calculate_synthetic_public_key(&pk, &default_hidden_puzzle_hash).expect("should be ok");
     let want_spk_bytes: [u8; 48] = [

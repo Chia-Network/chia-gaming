@@ -1,11 +1,22 @@
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
+#[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
+use crate::common::types::Timeout;
+
+#[cfg(test)]
 use clvmr::NodePtr;
+use lazy_static::lazy_static;
 
 #[cfg(feature = "sim-tests")]
 use rand::prelude::*;
 
+#[cfg(feature = "sim-tests")]
 use log::debug;
+
+lazy_static! {
+    pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
+}
 
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
@@ -17,32 +28,39 @@ use crate::channel_handler::types::{ChannelHandlerEnv, PrintableGameStartInfo};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
 };
+#[cfg(feature = "sim-tests")]
 use crate::common::types::Amount;
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{CoinString, Error, IntoErr, Timeout};
+use crate::common::types::{CoinString, Error, IntoErr};
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::Simulator;
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub enum GameAction {
     /// Do a timeout
     #[allow(dead_code)]
     Timeout(usize),
     /// Move (player, clvm readable move, was received)
+    #[allow(dead_code)]
     Move(usize, NodePtr, bool),
     /// Fake move, just calls receive on the indicated side.
-    #[allow(dead_code)]
+    #[cfg(feature = "sim-tests")]
     FakeMove(usize, NodePtr, Vec<u8>),
     /// Go on chain
+    #[cfg(feature = "sim-tests")]
     GoOnChain(usize),
     /// Accept
+    #[cfg(feature = "sim-tests")]
     Accept(usize),
     /// Shut down
+    #[cfg(feature = "sim-tests")]
     Shutdown(usize, NodePtr),
 }
 
 impl GameAction {
+    #[cfg(feature = "sim-tests")]
     pub fn lose(&self) -> GameAction {
         if let GameAction::Move(p, m, _r) = self {
             return GameAction::Move(*p, *m, false);
@@ -53,8 +71,8 @@ impl GameAction {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(feature = "sim-tests")]
 pub enum GameActionResult {
-    #[allow(dead_code)]
     MoveResult(NodePtr, Vec<u8>, Option<ReadableMove>, Hash),
     BrokenMove,
     MoveToOnChain,
@@ -93,7 +111,7 @@ pub fn new_channel_handler_game<R: Rng>(
     // Make state channel coin.
     // Spend coin1 to person 0 creating their_amount and change (u1).
     let (u1, _) = simulator.transfer_coin_amount(
-        &mut env.allocator,
+        env.allocator,
         &identities[0],
         &identities[1],
         &coins[1][0],
@@ -103,7 +121,7 @@ pub fn new_channel_handler_game<R: Rng>(
 
     // Spend coin0 to person 0 creating my_amount and change (u0).
     let (u2, _) = simulator.transfer_coin_amount(
-        &mut env.allocator,
+        env.allocator,
         &identities[0],
         &identities[0],
         &coins[0][0],
@@ -116,6 +134,7 @@ pub fn new_channel_handler_game<R: Rng>(
         game.id.clone(),
         &u2.to_coin_id(),
         &contributions.clone(),
+        (*DEFAULT_UNROLL_TIME_LOCK).clone(),
     )
     .expect("should work");
 
@@ -123,11 +142,11 @@ pub fn new_channel_handler_game<R: Rng>(
     let aggregate_public_key = private_to_public_key(&party.player(0).ch.channel_private_key())
         + private_to_public_key(&party.player(1).ch.channel_private_key());
 
-    let cc_ph = puzzle_hash_for_synthetic_public_key(&mut env.allocator, &aggregate_public_key)?;
+    let cc_ph = puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
     debug!("puzzle hash for state channel coin: {cc_ph:?}");
 
     let state_channel_coin = simulator.combine_coins(
-        &mut env.allocator,
+        env.allocator,
         &identities[0],
         &party.players[0].init_data.channel_puzzle_hash_up,
         &[u1, u2],
