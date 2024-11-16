@@ -89,7 +89,12 @@ impl WalletSpendInterface for Pipe {
         Ok(())
     }
 
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout, name: Option<&'static str>) -> Result<(), Error> {
+    fn register_coin(
+        &mut self,
+        coin_id: &CoinString,
+        timeout: &Timeout,
+        name: Option<&'static str>,
+    ) -> Result<(), Error> {
         self.registered_coins
             .insert(coin_id.clone(), timeout.clone());
 

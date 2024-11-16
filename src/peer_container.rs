@@ -284,7 +284,12 @@ impl WalletSpendInterface for SynchronousGameCradleState {
     }
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout, name: Option<&'static str>) -> Result<(), Error> {
+    fn register_coin(
+        &mut self,
+        coin_id: &CoinString,
+        timeout: &Timeout,
+        name: Option<&'static str>,
+    ) -> Result<(), Error> {
         debug!("register coin {coin_id:?} as {name:?}");
         self.watching_coins.insert(
             coin_id.clone(),
@@ -624,12 +629,22 @@ impl SynchronousGameCradle {
 
     fn filter_coin_report(&mut self, block: u64, watch_report: &WatchReport) -> WatchReport {
         // Pass on creates and deletes that are being watched.
-        let deleted_watched: HashSet<CoinString> = watch_report.deleted_watched.iter().filter(|c| self.state.watching_coins.contains_key(c)).cloned().collect();
+        let deleted_watched: HashSet<CoinString> = watch_report
+            .deleted_watched
+            .iter()
+            .filter(|c| self.state.watching_coins.contains_key(c))
+            .cloned()
+            .collect();
         for d in deleted_watched.iter() {
             debug!("filter: spent coin {:?}", self.state.watching_coins.get(d));
             self.state.watching_coins.remove(d);
         }
-        let created_watched: HashSet<CoinString> = watch_report.created_watched.iter().filter(|c| self.state.watching_coins.contains_key(c)).cloned().collect();
+        let created_watched: HashSet<CoinString> = watch_report
+            .created_watched
+            .iter()
+            .filter(|c| self.state.watching_coins.contains_key(c))
+            .cloned()
+            .collect();
         for c in created_watched.iter() {
             if let Some(w) = self.state.watching_coins.get_mut(c) {
                 debug!("filter: created coin {w:?}");

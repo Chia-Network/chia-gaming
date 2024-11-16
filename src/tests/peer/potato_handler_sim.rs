@@ -113,7 +113,12 @@ impl PacketSender for SimulatedPeer {
 impl SimulatedWalletSpend {
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout, name: Option<&'static str>) -> Result<(), Error> {
+    fn register_coin(
+        &mut self,
+        coin_id: &CoinString,
+        timeout: &Timeout,
+        name: Option<&'static str>,
+    ) -> Result<(), Error> {
         debug!("register coin");
         self.watching_coins.insert(
             coin_id.clone(),
@@ -136,9 +141,15 @@ impl WalletSpendInterface for SimulatedPeer {
     }
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout, name: Option<&'static str>) -> Result<(), Error> {
+    fn register_coin(
+        &mut self,
+        coin_id: &CoinString,
+        timeout: &Timeout,
+        name: Option<&'static str>,
+    ) -> Result<(), Error> {
         debug!("register coin {coin_id:?}");
-        self.simulated_wallet_spend.register_coin(coin_id, timeout, name)
+        self.simulated_wallet_spend
+            .register_coin(coin_id, timeout, name)
     }
 
     fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
@@ -685,8 +696,11 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 }
 
-fn run_calpoker_container_with_action_list_with_success_predicate(allocator: &mut AllocEncoder, moves: &[GameAction], pred: Option<&dyn Fn(&[SynchronousGameCradle]) -> bool>)
-{
+fn run_calpoker_container_with_action_list_with_success_predicate(
+    allocator: &mut AllocEncoder,
+    moves: &[GameAction],
+    pred: Option<&dyn Fn(&[SynchronousGameCradle]) -> bool>,
+) {
     // Coinset adapter for each side.
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let game_type_map = poker_collection(allocator);
@@ -1002,7 +1016,9 @@ fn sim_test_with_peer_container_piss_off_peer() {
     } else {
         panic!("no move 1 to replace");
     }
-    run_calpoker_container_with_action_list_with_success_predicate(&mut allocator, &moves, Some(&mut |cradles| {
-        cradles[0].is_on_chain() && cradles[1].is_on_chain()
-    }));
+    run_calpoker_container_with_action_list_with_success_predicate(
+        &mut allocator,
+        &moves,
+        Some(&mut |cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+    );
 }

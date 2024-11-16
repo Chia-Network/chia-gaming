@@ -10,7 +10,7 @@ use crate::common::standard_coin::{
     get_standard_coin_puzzle, private_to_public_key, puzzle_for_pk, read_hex_puzzle,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout
+    AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 
 pub struct ChannelHandlerParty {
