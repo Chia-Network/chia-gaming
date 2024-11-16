@@ -685,7 +685,8 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 }
 
-fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
+fn run_calpoker_container_with_action_list_with_success_predicate(allocator: &mut AllocEncoder, moves: &[GameAction], pred: Option<&dyn Fn(&[SynchronousGameCradle]) -> bool>)
+{
     // Coinset adapter for each side.
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let game_type_map = poker_collection(allocator);
@@ -795,6 +796,13 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
         let watch_report = coinset_adapter
             .make_report_from_coin_set_update(current_height as u64, &current_coins)
             .expect("should work");
+
+        if let Some(p) = &pred {
+            if p(&cradles) {
+                // Success.
+                return;
+            }
+        }
 
         for i in 0..=1 {
             if local_uis[i].go_on_chain {
@@ -971,6 +979,10 @@ fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: 
     }
 }
 
+fn run_calpoker_container_with_action_list(allocator: &mut AllocEncoder, moves: &[GameAction]) {
+    run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None);
+}
+
 #[test]
 fn sim_test_with_peer_container() {
     let mut allocator = AllocEncoder::new();
@@ -990,5 +1002,7 @@ fn sim_test_with_peer_container_piss_off_peer() {
     } else {
         panic!("no move 1 to replace");
     }
-    run_calpoker_container_with_action_list(&mut allocator, &moves);
+    run_calpoker_container_with_action_list_with_success_predicate(&mut allocator, &moves, Some(&mut |cradles| {
+        cradles[0].is_on_chain() && cradles[1].is_on_chain()
+    }));
 }

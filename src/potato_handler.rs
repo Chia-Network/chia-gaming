@@ -569,10 +569,6 @@ impl PotatoHandler {
     pub fn is_on_chain(&self) -> bool {
         matches!(
             self.handshake_state,
-            HandshakeState::OnChainTransition(_, _) |
-            HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(_, _) |
-            HandshakeState::OnChainWaitForConditions(_, _) |
-            HandshakeState::OnChainWaitingForUnrollSpend(_) |
             HandshakeState::OnChain(_)
         )
     }
