@@ -17,9 +17,9 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Error, GameID, Hash};
-#[cfg(feature = "sim-tests")]
 use crate::common::types::{Amount, PrivateKey};
+#[cfg(feature = "sim-tests")]
+use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::decode_calpoker_readable;
 #[cfg(feature = "sim-tests")]
