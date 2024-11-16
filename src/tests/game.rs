@@ -121,7 +121,7 @@ pub fn new_channel_handler_game<R: Rng>(
         game.id.clone(),
         &u2.to_coin_id(),
         &contributions.clone(),
-        DEFAULT_UNROLL_TIME_LOCK.clone(),
+        (*DEFAULT_UNROLL_TIME_LOCK).clone(),
     )
     .expect("should work");
 

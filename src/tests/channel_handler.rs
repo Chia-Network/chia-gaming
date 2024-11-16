@@ -50,7 +50,7 @@ fn test_smoke_can_initiate_channel_handler() {
         game_id,
         &launcher_coin,
         &[Amount::new(100), Amount::new(100)],
-        DEFAULT_UNROLL_TIME_LOCK.clone(),
+        (*DEFAULT_UNROLL_TIME_LOCK).clone(),
     )
     .expect("should build");
 
