@@ -397,6 +397,7 @@ enum HandshakeState {
     // Converge here to on chain state.
     OnChainWaitingForUnrollSpend(CoinString),
     OnChainWaitingForUnrollConditions(CoinString),
+    #[allow(dead_code)]
     OnChain(HashMap<CoinString, OnChainGameState>),
     WaitingForShutdown(CoinString, CoinString),
     Completed,

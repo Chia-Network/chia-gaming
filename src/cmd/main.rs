@@ -599,6 +599,7 @@ impl GameRunner {
                 their_contribution: Amount::new(100),
                 channel_timeout: Timeout::new(100),
                 reward_puzzle_hash: id1.puzzle_hash.clone(),
+                unroll_timeout: Timeout::new(5),
             },
         );
         let cradle2 = SynchronousGameCradle::new(
@@ -611,6 +612,7 @@ impl GameRunner {
                 their_contribution: Amount::new(100),
                 channel_timeout: Timeout::new(100),
                 reward_puzzle_hash: id2.puzzle_hash.clone(),
+                unroll_timeout: Timeout::new(5),
             },
         );
         let game_ids = Vec::default();
