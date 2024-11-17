@@ -587,13 +587,19 @@ impl RefereeMaker {
         ))
     }
 
-    pub fn rewind(&mut self) -> Result<bool, Error> {
+    pub fn rewind(&mut self, allocator: &mut AllocEncoder, puzzle_hash: &PuzzleHash) -> Result<bool, Error> {
         if let Some(old_state) = &self.old_state {
+            let existing_state = self.state.clone();
             self.state = old_state.clone();
-            Ok(true)
-        } else {
-            Err(Error::StrErr("rewind without an old state".to_string()))
+            let have_puzzle_hash = self.curried_referee_puzzle_hash_for_validator(allocator, true)?;
+            if *puzzle_hash == have_puzzle_hash {
+                return Ok(true);
+            }
+
+            self.state = existing_state;
         }
+
+        Ok(false)
     }
 
     pub fn is_my_turn(&self) -> bool {

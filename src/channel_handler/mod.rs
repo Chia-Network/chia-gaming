@@ -1336,14 +1336,20 @@ impl ChannelHandler {
     pub fn set_state_for_coins<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
+        unroll_coin: &CoinString,
         coins: &[PuzzleHash],
-    ) -> Result<HashMap<GameID, OnChainGameState>, Error> {
+    ) -> Result<HashMap<CoinString, OnChainGameState>, Error> {
         let mut res = HashMap::new();
 
         for game_coin in coins.iter() {
             for live_game in self.live_games.iter_mut() {
                 if live_game.set_state_for_coin(env.allocator, game_coin)? {
-                    res.insert(live_game.game_id.clone(), OnChainGameState {
+                    let coin_id = CoinString::from_parts(
+                        &unroll_coin.to_coin_id(),
+                        &game_coin.clone(),
+                        &live_game.referee_maker.get_amount()
+                    );
+                    res.insert(coin_id, OnChainGameState {
                         game_id: live_game.game_id.clone(),
                         puzzle_hash: game_coin.clone(),
                         our_turn: live_game.referee_maker.is_my_turn(),

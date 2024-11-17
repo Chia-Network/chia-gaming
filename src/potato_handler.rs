@@ -1868,7 +1868,7 @@ impl PotatoHandler {
     fn finish_on_chain_transition<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        coin_id: &CoinString,
+        unroll_coin: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error>
     where
@@ -1914,10 +1914,12 @@ impl PotatoHandler {
         debug!("have unrolled coins {created_coins:?}");
         let game_map = player_ch.set_state_for_coins(
             env,
+            unroll_coin,
             &created_coins
         )?;
 
-        self.handshake_state = HandshakeState::OnChain(HashMap::new());
+        self.handshake_state = HandshakeState::OnChain(game_map);
+        debug!("Game map {:?}", self.handshake_state);
         Ok(())
     }
 }

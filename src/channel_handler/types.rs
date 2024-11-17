@@ -980,16 +980,6 @@ impl LiveGame {
             return Ok(true);
         }
 
-        while self.referee_maker.rewind()? {
-            let new_puzzle_hash = self
-                .referee_maker
-                .curried_referee_puzzle_hash_for_validator(allocator, true)?;
-
-            if new_puzzle_hash == *want_ph {
-                todo!();
-            }
-        }
-
-        todo!();
+        self.referee_maker.rewind(allocator, want_ph)
     }
 }
