@@ -7,7 +7,7 @@ use rand::Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, OnChainGameCoin, ReadableMove,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -264,8 +264,6 @@ struct SynchronousGameCradleState {
     game_finished: VecDeque<(GameID, Amount)>,
     shutdown: Option<CoinString>,
     identity: ChiaIdentity,
-    #[allow(dead_code)]
-    on_chain_game_coins: Vec<OnChainGameCoin>,
 }
 
 impl PacketSender for SynchronousGameCradleState {
@@ -351,7 +349,6 @@ impl SynchronousGameCradle {
                 funding_coin: None,
                 unfunded_offer: None,
                 shutdown: None,
-                on_chain_game_coins: Vec::default(),
             },
             peer: PotatoHandler::new(PotatoHandlerInit {
                 have_potato: config.have_potato,

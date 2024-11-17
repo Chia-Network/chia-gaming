@@ -352,7 +352,7 @@ impl ToClvm<NodePtr> for Aggsig {
 }
 
 /// Game ID
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 pub struct GameID(Vec<u8>);
 
 impl GameID {

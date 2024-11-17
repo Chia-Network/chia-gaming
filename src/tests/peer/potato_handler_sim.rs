@@ -1009,7 +1009,7 @@ fn sim_test_with_peer_container() {
 }
 
 #[test]
-fn sim_test_with_peer_container_piss_off_peer() {
+fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     let mut allocator = AllocEncoder::new();
 
     let mut moves = test_moves_1(&mut allocator);
@@ -1023,4 +1023,17 @@ fn sim_test_with_peer_container_piss_off_peer() {
         &moves,
         Some(&|cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
     );
+}
+
+#[test]
+fn sim_test_with_peer_container_piss_off_peer_complete() {
+    let mut allocator = AllocEncoder::new();
+
+    let mut moves = test_moves_1(&mut allocator);
+    if let GameAction::Move(_player, readable, _) = moves[2].clone() {
+        moves[3] = GameAction::FakeMove(1, readable, vec![0; 500]);
+    } else {
+        panic!("no move 1 to replace");
+    }
+    run_calpoker_container_with_action_list(&mut allocator, &moves);
 }

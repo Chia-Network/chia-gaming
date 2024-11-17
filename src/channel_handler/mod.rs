@@ -5,6 +5,7 @@ pub mod types;
 
 use std::borrow::BorrowMut;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use log::debug;
 
@@ -20,8 +21,8 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult,
     DispositionResult, GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
-    PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
-    UnrollCoinConditionInputs, UnrollTarget,
+    PotatoAcceptCachedData, PotatoMoveCachedData, OnChainGameState, PotatoSignatures,
+    ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -33,7 +34,7 @@ use crate::common::types::{
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
     PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
 };
-use crate::referee::RefereeMaker;
+use crate::referee::{RefereeMaker, TheirTurnCoinSpentResult};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -1335,24 +1336,59 @@ impl ChannelHandler {
     pub fn set_state_for_coins<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        coins: &[OnChainGameCoin],
-    ) -> Result<(), Error> {
-        let mut res = Vec::new();
+        coins: &[PuzzleHash],
+    ) -> Result<HashMap<GameID, OnChainGameState>, Error> {
+        let mut res = HashMap::new();
+
         for game_coin in coins.iter() {
-            if let Some(live_game) = self
-                .live_games
-                .iter_mut()
-                .find(|f| game_coin.game_id_up == f.game_id)
-            {
-                res.append(&mut live_game.set_state_for_coin(env.allocator, game_coin)?);
-            } else {
-                // XXX Used to exist, needs ressurection from the cache to potentially replay
-                // the accept.
-                todo!();
+            for live_game in self.live_games.iter_mut() {
+                if live_game.set_state_for_coin(env.allocator, game_coin)? {
+                    res.insert(live_game.game_id.clone(), OnChainGameState {
+                        game_id: live_game.game_id.clone(),
+                        puzzle_hash: game_coin.clone(),
+                        our_turn: live_game.referee_maker.is_my_turn(),
+                    });
+                }
             }
         }
 
-        Ok(())
+        Ok(res)
+    }
+
+    pub fn on_chain_our_move<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        game_id: &GameID,
+        readable_move: &ReadableMove,
+        entropy: Hash,
+    ) -> Result<(PuzzleHash, MoveResult), Error> {
+        todo!();
+    }
+
+    pub fn their_turn_coin_spent<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        game_id: &GameID,
+        coin_string: &CoinString,
+        conditions: &NodePtr,
+    ) -> Result<TheirTurnCoinSpentResult, Error> {
+        let live_game_idx =
+            if let Some(live_game_idx) = self.live_games.iter().enumerate().filter_map(|(i,l)| {
+                if l.game_id == *game_id {
+                    return Some(i);
+                }
+                None
+            }).next() {
+                live_game_idx
+            } else {
+                return Err(Error::StrErr("on chain move of non-existent game".to_string()));
+            };
+
+        self.live_games[live_game_idx].referee_maker.their_turn_coin_spent(
+            env.allocator,
+            coin_string,
+            conditions
+        )
     }
 
     // what our vanilla coin string is

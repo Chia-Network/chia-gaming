@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult, PotatoSignatures,
-    PrintableGameStartInfo, ReadableMove,
+    ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult, OnChainGameState,
+    PotatoSignatures, PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
@@ -376,9 +376,6 @@ pub struct HandshakeStepWithSpend {
 }
 
 #[derive(Debug)]
-struct OnChainGameState {}
-
-#[derive(Debug)]
 enum HandshakeState {
     StepA,
     StepB,
@@ -397,7 +394,6 @@ enum HandshakeState {
     // Converge here to on chain state.
     OnChainWaitingForUnrollSpend(CoinString),
     OnChainWaitingForUnrollConditions(CoinString),
-    #[allow(dead_code)]
     OnChain(HashMap<CoinString, OnChainGameState>),
     WaitingForShutdown(CoinString, CoinString),
     Completed,
@@ -1677,11 +1673,6 @@ impl PotatoHandler {
         system_interface.spend_transaction_and_add_fee(&spend.spend)?;
         self.handshake_state = HandshakeState::OnChainTransition(unroll_result.clone(), spend);
 
-        // The coin outputs represent the ongoing games if any and the reward coins.
-        let ch = self.channel_handler_mut()?;
-        let coins = ch.get_game_coins(env)?;
-        debug!("game coins {coins:?}");
-
         Ok(())
     }
 
@@ -1840,7 +1831,7 @@ impl PotatoHandler {
             run_args,
             0,
         )
-        .into_gen()?;
+            .into_gen()?;
 
         // XXX If I wasn't the one who initiated the on chain transition, determine whether
         // to bump the unroll coin.
@@ -1876,19 +1867,56 @@ impl PotatoHandler {
     // matches the state system given so on chain play can proceed.
     fn finish_on_chain_transition<'a, G, R: Rng + 'a>(
         &mut self,
-        _penv: &mut dyn PeerEnv<'a, G, R>,
-        _coin_id: &CoinString,
-        _puzzle_and_solution: Option<(&Program, &Program)>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString,
+        puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let player_ch = self.channel_handler()?;
+        let player_ch = self.channel_handler_mut()?;
         debug!(
             "{} FINISH ON CHAIN TRANSITION",
             player_ch.is_initial_potato()
         );
-        // XXX ensure map.
+
+        let (puzzle, solution) =
+            if let Some((puzzle, solution)) = puzzle_and_solution {
+                (puzzle, solution)
+            } else {
+                return Err(Error::StrErr("no conditions for unroll coin".to_string()));
+            };
+
+        let (env, system_interface) = penv.env();
+        let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
+        let run_args = solution.to_nodeptr(env.allocator)?;
+        let conditions = run_program(
+            env.allocator.allocator(),
+            &chia_dialect(),
+            run_puzzle,
+            run_args,
+            0,
+        )
+            .into_gen()?;
+
+        let created_coins: Vec<PuzzleHash> = CoinCondition::from_nodeptr(env.allocator, conditions.1).iter().filter_map(|c| {
+            if let CoinCondition::CreateCoin(ph, amt) = c {
+                if *amt > Amount::default() {
+                    return Some(ph.clone());
+                }
+            }
+
+            None
+        }).collect();
+
+        // We have a collection puzzle hash and amount pairs.  We need to match these to the
+        // games in the channel handler.
+        debug!("have unrolled coins {created_coins:?}");
+        let game_map = player_ch.set_state_for_coins(
+            env,
+            &created_coins
+        )?;
+
         self.handshake_state = HandshakeState::OnChain(HashMap::new());
         Ok(())
     }

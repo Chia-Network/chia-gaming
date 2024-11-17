@@ -957,28 +957,27 @@ pub struct UnrollTarget {
     pub their_amount: Amount,
 }
 
+#[derive(Debug)]
+pub struct OnChainGameState {
+    pub game_id: GameID,
+    pub puzzle_hash: PuzzleHash,
+    pub our_turn: bool,
+}
+
 impl LiveGame {
     /// Regress the live game state to the state we know so that we can generate the puzzle
     /// for that state.  We'll return the move needed to advance it fully.
     pub fn set_state_for_coin(
         &mut self,
         allocator: &mut AllocEncoder,
-        coin: &OnChainGameCoin,
-    ) -> Result<Vec<LiveGameReplay>, Error> {
-        let want_ph =
-            if let Some((_, ph, _)) = coin.coin_string_up.as_ref().and_then(|cs| cs.to_parts()) {
-                ph.clone()
-            } else {
-                // No coin string given so this game was ended.  We need to ressurect it.
-                todo!();
-            };
-
+        want_ph: &PuzzleHash,
+    ) -> Result<bool, Error> {
         let referee_puzzle_hash = self
             .referee_maker
             .curried_referee_puzzle_hash_for_validator(allocator, true)?;
 
-        if referee_puzzle_hash == want_ph {
-            return Ok(vec![]);
+        if referee_puzzle_hash == *want_ph {
+            return Ok(true);
         }
 
         while self.referee_maker.rewind()? {
@@ -986,7 +985,7 @@ impl LiveGame {
                 .referee_maker
                 .curried_referee_puzzle_hash_for_validator(allocator, true)?;
 
-            if new_puzzle_hash == want_ph {
+            if new_puzzle_hash == *want_ph {
                 todo!();
             }
         }
