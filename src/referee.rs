@@ -494,7 +494,7 @@ pub struct RefereeMaker {
     pub finished: bool,
 
     state: Rc<RefereeMakerGameState>,
-    old_state: Option<Rc<RefereeMakerGameState>>,
+    old_states: Vec<Rc<RefereeMakerGameState>>,
 
     pub message_handler: Option<MessageHandler>,
 
@@ -578,7 +578,7 @@ impl RefereeMaker {
                 nonce,
 
                 state,
-                old_state: None,
+                old_states: Vec::new(),
                 message_handler: None,
                 #[cfg(test)]
                 run_debug: false,
@@ -588,10 +588,11 @@ impl RefereeMaker {
     }
 
     pub fn rewind(&mut self, allocator: &mut AllocEncoder, puzzle_hash: &PuzzleHash) -> Result<bool, Error> {
-        if let Some(old_state) = &self.old_state {
+        for old_state in self.old_states.iter().skip(1).rev() {
             let existing_state = self.state.clone();
             self.state = old_state.clone();
             let have_puzzle_hash = self.curried_referee_puzzle_hash_for_validator(allocator, true)?;
+            debug!("referee rewind: try state {have_puzzle_hash:?} want {puzzle_hash:?}");
             if *puzzle_hash == have_puzzle_hash {
                 return Ok(true);
             }
@@ -780,7 +781,7 @@ impl RefereeMaker {
             },
         };
 
-        self.old_state = Some(self.state.clone());
+        self.old_states.push(self.state.clone());
         self.state = Rc::new(new_state);
         Ok(())
     }
@@ -844,7 +845,7 @@ impl RefereeMaker {
         }
 
         debug!("accept their move: {new_state:?}");
-        self.old_state = Some(self.state.clone());
+        self.old_states.push(self.state.clone());
         self.state = Rc::new(new_state);
         Ok(())
     }

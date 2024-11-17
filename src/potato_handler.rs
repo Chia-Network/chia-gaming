@@ -1610,6 +1610,12 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let (env, system_interface) = penv.env();
+
+        {
+            let player_ch = self.channel_handler_mut()?;
+            player_ch.set_initiated_on_chain();
+        }
+
         let player_ch = self.channel_handler()?;
         debug!("GO ON CHAIN: initiated {}", player_ch.is_initial_potato());
         // Channel coin

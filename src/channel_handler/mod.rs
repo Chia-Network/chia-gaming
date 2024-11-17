@@ -132,6 +132,10 @@ impl ChannelHandler {
         self.private_keys.my_referee_private_key.clone()
     }
 
+    pub fn set_initiated_on_chain(&mut self) {
+        self.initiated_on_chain = true;
+    }
+
     pub fn get_state_number(&self) -> usize {
         self.current_state_number
     }
@@ -766,10 +770,10 @@ impl ChannelHandler {
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
         let referee_result =
             referee_maker.my_turn_make_move(env.allocator, readable_move, new_entropy)?;
-        debug!("move_result {referee_result:?}");
         self.live_games[game_idx].last_referee_puzzle_hash =
             referee_result.puzzle_hash_for_unroll.clone();
 
+        debug!("{} move_result {referee_result:?}", self.unroll.coin.started_with_potato);
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
 
@@ -805,7 +809,7 @@ impl ChannelHandler {
         self.live_games[game_idx].last_referee_puzzle_hash =
             their_move_result.puzzle_hash_for_unroll.clone();
 
-        debug!("their_move_result {their_move_result:?}");
+        debug!("{} their_move_result {their_move_result:?}", self.unroll.coin.started_with_potato);
 
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
@@ -1341,8 +1345,17 @@ impl ChannelHandler {
     ) -> Result<HashMap<CoinString, OnChainGameState>, Error> {
         let mut res = HashMap::new();
 
+        debug!(
+            "{} ALIGN GAME STATES: initiated {} my state {} coin state {}",
+            self.unroll.coin.started_with_potato,
+            self.initiated_on_chain,
+            self.current_state_number,
+            self.unroll.coin.state_number,
+        );
+
         for game_coin in coins.iter() {
             for live_game in self.live_games.iter_mut() {
+                debug!("live game id {:?} try to use coin {game_coin:?}", live_game.game_id);
                 if live_game.set_state_for_coin(env.allocator, game_coin)? {
                     let coin_id = CoinString::from_parts(
                         &unroll_coin.to_coin_id(),
@@ -1357,6 +1370,8 @@ impl ChannelHandler {
                 }
             }
         }
+
+        assert_eq!(!res.is_empty(), !self.live_games.is_empty());
 
         Ok(res)
     }
