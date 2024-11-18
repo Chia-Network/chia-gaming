@@ -6,6 +6,7 @@ pub mod types;
 use std::borrow::BorrowMut;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::mem::swap;
 
 use log::debug;
 
@@ -34,7 +35,8 @@ use crate::common::types::{
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
     PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
 };
-use crate::referee::{RefereeMaker, TheirTurnCoinSpentResult};
+use crate::potato_handler::GameAction;
+use crate::referee::{GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -130,6 +132,10 @@ impl ChannelHandler {
 
     pub fn referee_private_key(&self) -> PrivateKey {
         self.private_keys.my_referee_private_key.clone()
+    }
+
+    pub fn initiated_on_chain(&self) -> bool {
+        self.initiated_on_chain
     }
 
     pub fn set_initiated_on_chain(&mut self) {
@@ -757,6 +763,17 @@ impl ChannelHandler {
             })
     }
 
+    fn internal_make_move<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        game_idx: usize,
+        readable_move: &ReadableMove,
+        new_entropy: Hash,
+    ) -> Result<GameMoveWireData, Error> {
+        let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
+        referee_maker.my_turn_make_move(env.allocator, readable_move, new_entropy.clone())
+    }
+
     pub fn send_potato_move<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
@@ -766,10 +783,13 @@ impl ChannelHandler {
     ) -> Result<MoveResult, Error> {
         debug!("SEND_POTATO_MOVE");
         let game_idx = self.get_game_by_id(game_id)?;
+        let referee_result = self.internal_make_move(
+            env,
+            game_idx,
+            readable_move,
+            new_entropy.clone()
+        )?;
 
-        let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
-        let referee_result =
-            referee_maker.my_turn_make_move(env.allocator, readable_move, new_entropy)?;
         self.live_games[game_idx].last_referee_puzzle_hash =
             referee_result.puzzle_hash_for_unroll.clone();
 
@@ -782,6 +802,8 @@ impl ChannelHandler {
             CachedPotatoRegenerateLastHop::PotatoMoveHappening(PotatoMoveCachedData {
                 game_id: game_id.clone(),
                 puzzle_hash,
+                move_data: readable_move.clone(),
+                move_entropy: new_entropy,
                 amount,
             }),
         ));
@@ -1250,17 +1272,7 @@ impl ChannelHandler {
                 }))
             }
             Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(cached)) => {
-                let game_idx = if let Some(game_idx) = self
-                    .live_games
-                    .iter()
-                    .position(|g| g.game_id == cached.game_id)
-                {
-                    game_idx
-                } else {
-                    return Err(Error::StrErr(
-                        "cached move with no matching game left".to_string(),
-                    ));
-                };
+                let game_idx = self.get_game_by_id(&cached.game_id)?;
 
                 let game_coin = CoinString::from_parts(
                     &unroll_coin.to_coin_id(),
@@ -1382,8 +1394,28 @@ impl ChannelHandler {
         game_id: &GameID,
         readable_move: &ReadableMove,
         entropy: Hash,
-    ) -> Result<(PuzzleHash, MoveResult), Error> {
-        todo!();
+        existing_coin: &CoinString,
+    ) -> Result<(PuzzleHash, GameMoveDetails, RefereeOnChainTransaction), Error> {
+        let game_idx = self.get_game_by_id(game_id)?;
+
+        let move_result = self.internal_make_move(
+            env,
+            game_idx,
+            readable_move,
+            entropy
+        )?;
+
+        let tx = self.live_games[game_idx].referee_maker.get_transaction_for_move(
+            env.allocator,
+            existing_coin,
+            &env.agg_sig_me_additional_data,
+        )?;
+
+        Ok((
+            self.live_games[game_idx].last_referee_puzzle_hash.clone(),
+            move_result.details.clone(),
+            tx,
+        ))
     }
 
     pub fn their_turn_coin_spent<R: Rng>(
@@ -1393,23 +1425,35 @@ impl ChannelHandler {
         coin_string: &CoinString,
         conditions: &NodePtr,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        let live_game_idx =
-            if let Some(live_game_idx) = self.live_games.iter().enumerate().filter_map(|(i,l)| {
-                if l.game_id == *game_id {
-                    return Some(i);
-                }
-                None
-            }).next() {
-                live_game_idx
-            } else {
-                return Err(Error::StrErr("on chain move of non-existent game".to_string()));
-            };
+        let live_game_idx = self.get_game_by_id(game_id)?;
 
         self.live_games[live_game_idx].referee_maker.their_turn_coin_spent(
             env.allocator,
             coin_string,
             conditions
         )
+    }
+
+    pub fn get_redo_action(
+        &mut self,
+    ) -> Result<Option<GameAction>, Error> {
+        let mut cla = None;
+        swap(&mut cla, &mut self.cached_last_action);
+        match cla {
+            Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(_, _, _)) => {
+                todo!();
+            }
+            Some(CachedPotatoRegenerateLastHop::PotatoAccept(_)) => {
+                todo!();
+            }
+            Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) => {
+                debug!("redo move data {move_data:?}");
+                Ok(Some(GameAction::Move(move_data.game_id.clone(), move_data.move_data.clone(), move_data.move_entropy.clone())))
+            }
+            _ => {
+                todo!();
+            }
+        }
     }
 
     // what our vanilla coin string is

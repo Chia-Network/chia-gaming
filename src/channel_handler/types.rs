@@ -413,9 +413,12 @@ pub struct PotatoAcceptCachedData {
     pub our_share_amount: Amount,
 }
 
+#[derive(Debug)]
 pub struct PotatoMoveCachedData {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
+    pub move_data: ReadableMove,
+    pub move_entropy: Hash,
     pub amount: Amount,
 }
 
