@@ -632,6 +632,7 @@ fn test_referee_can_slash_on_chain() {
             &mut allocator,
             &ReadableMove::from_nodeptr(readable_move),
             rng.gen(),
+            0,
         )
         .expect("should move");
 
@@ -762,6 +763,7 @@ fn test_referee_can_move_on_chain() {
             &mut allocator,
             &ReadableMove::from_nodeptr(readable_move),
             rng.gen(),
+            0,
         )
         .expect("should move");
 

@@ -22,8 +22,8 @@ use crate::channel_handler::types::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult,
     DispositionResult, GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
-    PotatoAcceptCachedData, PotatoMoveCachedData, OnChainGameState, PotatoSignatures,
-    ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
+    OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
+    UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -36,7 +36,10 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::GameAction;
-use crate::referee::{GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
+use crate::referee::{
+    GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
+    TheirTurnCoinSpentResult,
+};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -103,7 +106,7 @@ pub struct ChannelHandler {
 
     // Has a parity between the two players of whether have_potato means odd
     // or even, but odd-ness = have-potato is arbitrary.
-    current_state_number: usize,
+    current_state_number: usize, //
     // Increments per game started.
     next_nonce_number: usize,
 
@@ -782,7 +785,12 @@ impl ChannelHandler {
         new_entropy: Hash,
     ) -> Result<GameMoveWireData, Error> {
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
-        referee_maker.my_turn_make_move(env.allocator, readable_move, new_entropy.clone())
+        referee_maker.my_turn_make_move(
+            env.allocator,
+            readable_move,
+            new_entropy.clone(),
+            self.current_state_number,
+        )
     }
 
     pub fn send_potato_move<R: Rng>(
@@ -794,17 +802,16 @@ impl ChannelHandler {
     ) -> Result<MoveResult, Error> {
         debug!("{} SEND_POTATO_MOVE", self.unroll.coin.started_with_potato);
         let game_idx = self.get_game_by_id(game_id)?;
-        let referee_result = self.internal_make_move(
-            env,
-            game_idx,
-            readable_move,
-            new_entropy.clone()
-        )?;
+        let referee_result =
+            self.internal_make_move(env, game_idx, readable_move, new_entropy.clone())?;
 
         self.live_games[game_idx].last_referee_puzzle_hash =
             referee_result.puzzle_hash_for_unroll.clone();
 
-        debug!("{} move_result {referee_result:?}", self.unroll.coin.started_with_potato);
+        debug!(
+            "{} move_result {referee_result:?}",
+            self.unroll.coin.started_with_potato
+        );
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
 
@@ -819,6 +826,7 @@ impl ChannelHandler {
             }),
         ));
 
+        //self.live_games[game_idx]
         let signatures = self.update_cached_unroll_state(env)?;
 
         Ok(MoveResult {
@@ -833,16 +841,25 @@ impl ChannelHandler {
         game_id: &GameID,
         move_result: &MoveResult,
     ) -> Result<(ChannelCoinSpendInfo, NodePtr, Vec<u8>), Error> {
-        debug!("{} RECEIVED_POTATO_MOVE", self.unroll.coin.started_with_potato);
+        debug!(
+            "{} RECEIVED_POTATO_MOVE",
+            self.unroll.coin.started_with_potato
+        );
         let game_idx = self.get_game_by_id(game_id)?;
 
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
-        let their_move_result =
-            referee_maker.their_turn_move_off_chain(env.allocator, &move_result.game_move)?;
+        let their_move_result = referee_maker.their_turn_move_off_chain(
+            env.allocator,
+            &move_result.game_move,
+            self.current_state_number,
+        )?;
         self.live_games[game_idx].last_referee_puzzle_hash =
             their_move_result.puzzle_hash_for_unroll.clone();
 
-        debug!("{} their_move_result {their_move_result:?}", self.unroll.coin.started_with_potato);
+        debug!(
+            "{} their_move_result {their_move_result:?}",
+            self.unroll.coin.started_with_potato
+        );
 
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
@@ -1158,21 +1175,25 @@ impl ChannelHandler {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
         let full_coin = self.get_unroll_coin();
 
-        let state_number = usize_from_atom(&rem_conditions[0])
+        let unrolling_state_number = usize_from_atom(&rem_conditions[0])
             .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))?;
 
         let our_parity = full_coin.coin.state_number & 1;
-        let their_parity = state_number & 1;
+        let their_parity = unrolling_state_number & 1;
 
         debug!(
-            "{} CHANNEL COIN SPENT: myself {myself} initiated {} my state {} coin state {} channel coin state {state_number}",
+            "{} CHANNEL COIN SPENT: myself {myself} initiated {} my state {} coin state {} channel coin state {unrolling_state_number}",
             self.unroll.coin.started_with_potato,
             self.initiated_on_chain,
             self.current_state_number,
             full_coin.coin.state_number
         );
 
-        match (myself, state_number.cmp(&self.current_state_number)) {
+        // investigate
+        match (
+            myself,
+            unrolling_state_number.cmp(&self.current_state_number),
+        ) {
             (true, _) | (_, Ordering::Equal) => {
                 // Timeout
                 let curried_unroll_puzzle = self
@@ -1196,7 +1217,7 @@ impl ChannelHandler {
             }
             (_, Ordering::Greater) => Err(Error::StrErr(format!(
                 "Reply from the future onchain {} (me {}) vs {}",
-                state_number, self.current_state_number, full_coin.coin.state_number
+                unrolling_state_number, self.current_state_number, full_coin.coin.state_number
             ))),
             (_, Ordering::Less) => {
                 if our_parity == their_parity {
@@ -1379,18 +1400,28 @@ impl ChannelHandler {
 
         for game_coin in coins.iter() {
             for live_game in self.live_games.iter_mut() {
-                debug!("live game id {:?} try to use coin {game_coin:?}", live_game.game_id);
-                if live_game.set_state_for_coin(env.allocator, game_coin, self.initiated_on_chain)? {
+                debug!(
+                    "live game id {:?} try to use coin {game_coin:?}",
+                    live_game.game_id
+                );
+                if live_game.set_state_for_coin(
+                    env.allocator,
+                    game_coin,
+                    self.initiated_on_chain,
+                )? {
                     let coin_id = CoinString::from_parts(
                         &unroll_coin.to_coin_id(),
                         &game_coin.clone(),
-                        &live_game.referee_maker.get_amount()
+                        &live_game.referee_maker.get_amount(),
                     );
-                    res.insert(coin_id, OnChainGameState {
-                        game_id: live_game.game_id.clone(),
-                        puzzle_hash: game_coin.clone(),
-                        our_turn: live_game.referee_maker.is_my_turn(),
-                    });
+                    res.insert(
+                        coin_id,
+                        OnChainGameState {
+                            game_id: live_game.game_id.clone(),
+                            puzzle_hash: game_coin.clone(),
+                            our_turn: live_game.referee_maker.is_my_turn(),
+                        },
+                    );
                 }
             }
         }
@@ -1410,18 +1441,15 @@ impl ChannelHandler {
     ) -> Result<(PuzzleHash, GameMoveDetails, RefereeOnChainTransaction), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
-        let move_result = self.internal_make_move(
-            env,
-            game_idx,
-            readable_move,
-            entropy
-        )?;
+        let move_result = self.internal_make_move(env, game_idx, readable_move, entropy)?;
 
-        let tx = self.live_games[game_idx].referee_maker.get_transaction_for_move(
-            env.allocator,
-            existing_coin,
-            &env.agg_sig_me_additional_data,
-        )?;
+        let tx = self.live_games[game_idx]
+            .referee_maker
+            .get_transaction_for_move(
+                env.allocator,
+                existing_coin,
+                &env.agg_sig_me_additional_data,
+            )?;
 
         Ok((
             self.live_games[game_idx].last_referee_puzzle_hash.clone(),
@@ -1439,17 +1467,23 @@ impl ChannelHandler {
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         let live_game_idx = self.get_game_by_id(game_id)?;
 
-        self.live_games[live_game_idx].referee_maker.their_turn_coin_spent(
-            env.allocator,
-            coin_string,
-            conditions
-        )
+        self.live_games[live_game_idx]
+            .referee_maker
+            .their_turn_coin_spent(
+                env.allocator,
+                coin_string,
+                conditions,
+                self.current_state_number,
+            )
     }
 
-    pub fn get_redo_action(
-        &mut self,
-    ) -> Result<Option<GameAction>, Error> {
-        debug!("{} GET REDO ACTION {} vs {}", self.is_initial_potato(), self.current_state_number, self.unroll.coin.state_number);
+    pub fn get_redo_action(&mut self) -> Result<Option<GameAction>, Error> {
+        debug!(
+            "{} GET REDO ACTION {} vs {}",
+            self.is_initial_potato(),
+            self.current_state_number,
+            self.unroll.coin.state_number
+        );
 
         // We're on chain due to error.
         let mut cla = None;
@@ -1465,7 +1499,11 @@ impl ChannelHandler {
                 let game_idx = self.get_game_by_id(&move_data.game_id)?;
                 if !self.live_games[game_idx].referee_maker.is_my_turn() {
                     debug!("redo move data {move_data:?}");
-                    return Ok(Some(GameAction::Move(move_data.game_id.clone(), move_data.move_data.clone(), move_data.move_entropy.clone())));
+                    return Ok(Some(GameAction::Move(
+                        move_data.game_id.clone(),
+                        move_data.move_data.clone(),
+                        move_data.move_entropy.clone(),
+                    )));
                 }
 
                 Ok(None)

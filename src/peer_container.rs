@@ -6,9 +6,7 @@ use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove,
-};
+use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,

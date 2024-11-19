@@ -317,7 +317,7 @@ enum RefereeMakerGameState {
         their_turn_game_handler: GameHandler,
         their_previous_validation_info_hash: Option<Hash>,
         validation_program: ValidationProgram,
-        state: NodePtr,
+        state: NodePtr, // GameState, not the "StateNumer"
         most_recent_their_move: GameMoveStateInfo,
         most_recent_our_move: GameMoveDetails,
     },
@@ -475,6 +475,12 @@ impl ToClvm<NodePtr> for OnChainRefereeSolution {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct StoredGameState {
+    state_number: usize,
+    state: Rc<RefereeMakerGameState>,
+}
+
 // XXX break out state so we can have a previous state and easily swap them.
 // Referee coin has two inner puzzles.
 // Throughout channel handler, the one that's ours is the standard format puzzle
@@ -494,7 +500,7 @@ pub struct RefereeMaker {
     pub finished: bool,
 
     state: Rc<RefereeMakerGameState>,
-    old_states: Vec<Rc<RefereeMakerGameState>>,
+    old_states: Vec<StoredGameState>,
 
     pub message_handler: Option<MessageHandler>,
 
@@ -587,14 +593,24 @@ impl RefereeMaker {
         ))
     }
 
-    pub fn rewind(&mut self, allocator: &mut AllocEncoder, puzzle_hash: &PuzzleHash, initiated: bool) -> Result<bool, Error> {
-        for (i,old_state) in self.old_states.iter().enumerate().skip(1).rev() {
+    pub fn rewind(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        puzzle_hash: &PuzzleHash,
+        initiated: bool,
+    ) -> Result<bool, Error> {
+        for (i, old_state) in self.old_states.iter().enumerate().skip(1).rev() {
             let existing_state = self.state.clone();
-            self.state = old_state.clone();
-            let have_puzzle_hash = self.curried_referee_puzzle_hash_for_validator(allocator, true)?;
+            self.state = old_state.state.clone();
+            let have_puzzle_hash =
+                self.curried_referee_puzzle_hash_for_validator(allocator, true)?;
+            debug!(
+                "referee rewind: {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
+                old_state.state_number
+            );
             if *puzzle_hash == have_puzzle_hash {
                 if self.is_my_turn() {
-                    self.state = self.old_states[i-1].clone();
+                    self.state = self.old_states[i - 1].state.clone();
                 }
 
                 debug!("referee rewind: reassume state {:?}", self.state);
@@ -750,6 +766,7 @@ impl RefereeMaker {
         validation_program: &ValidationProgram,
         state: NodePtr,
         details: &GameMoveDetails,
+        state_number: usize,
     ) -> Result<(), Error> {
         debug!("accept move {details:?}");
         let new_state = match self.state.borrow() {
@@ -785,7 +802,10 @@ impl RefereeMaker {
             },
         };
 
-        self.old_states.push(self.state.clone());
+        self.old_states.push(StoredGameState {
+            state: self.state.clone(),
+            state_number,
+        });
         self.state = Rc::new(new_state);
         Ok(())
     }
@@ -795,6 +815,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         game_handler: Option<GameHandler>,
         details: &GameMoveDetails,
+        state_number: usize,
     ) -> Result<(), Error> {
         debug!("accept their move {details:?}");
 
@@ -849,7 +870,10 @@ impl RefereeMaker {
         }
 
         debug!("accept their move: {new_state:?}");
-        self.old_states.push(self.state.clone());
+        self.old_states.push(StoredGameState {
+            state: self.state.clone(),
+            state_number,
+        });
         self.state = Rc::new(new_state);
         Ok(())
     }
@@ -861,6 +885,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
         new_entropy: Hash,
+        state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
         let game_handler = self.get_game_handler();
         let (move_data, mover_share, max_move_size, previous_validation_info_hash) =
@@ -915,10 +940,14 @@ impl RefereeMaker {
             &result.validation_program,
             result.state,
             &result.game_move,
+            state_number,
         )?;
 
         self.message_handler = result.message_parser;
-        debug!("referee my turn referee move details {:?}", result.game_move);
+        debug!(
+            "referee my turn referee move details {:?}",
+            result.game_move
+        );
 
         // To make a puzzle hash for unroll: curry the correct parameters into
         // the referee puzzle.
@@ -1322,6 +1351,7 @@ impl RefereeMaker {
         &mut self,
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
+        state_number: usize,
     ) -> Result<TheirTurnMoveResult, Error> {
         debug!("do their turn {details:?}");
 
@@ -1371,7 +1401,7 @@ impl RefereeMaker {
 
         let (readable_move, message) = match result {
             TheirTurnResult::FinalMove(readable_move) => {
-                self.accept_their_move(allocator, None, details)?;
+                self.accept_their_move(allocator, None, details, state_number)?;
 
                 (readable_move, vec![])
             }
@@ -1388,7 +1418,7 @@ impl RefereeMaker {
                 // In case this succeeds, we'll direct the result to our mover
                 // puzzle, which sets our identity for the game and is a value-
                 // holding coin spendable by us.
-                self.accept_their_move(allocator, Some(handler), details)?;
+                self.accept_their_move(allocator, Some(handler), details, state_number)?;
 
                 debug!(
                     "readable_move {}",
@@ -1516,6 +1546,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
         conditions: &NodePtr,
+        state_number: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         // Read parameters off conditions
         let rem_condition = if let Some(CoinCondition::Rem(rem_condition)) =
@@ -1726,6 +1757,7 @@ impl RefereeMaker {
                         },
                         validation_info_hash: new_validation_info_hash.clone(),
                     },
+                    state_number,
                 )?;
 
                 Ok(TheirTurnCoinSpentResult::Moved {
