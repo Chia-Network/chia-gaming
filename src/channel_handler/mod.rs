@@ -93,6 +93,8 @@ pub struct ChannelHandler {
 
     have_potato: bool,
     initiated_on_chain: bool,
+    on_chain_for_error: bool,
+
     // Specifies the time lock that should be used in the unroll coin's conditions.
     #[allow(dead_code)]
     unroll_advance_timeout: Timeout,
@@ -140,6 +142,14 @@ impl ChannelHandler {
 
     pub fn set_initiated_on_chain(&mut self) {
         self.initiated_on_chain = true;
+    }
+
+    pub fn on_chain_for_error(&self) -> bool {
+        self.on_chain_for_error
+    }
+
+    pub fn set_on_chain_for_error(&mut self) {
+        self.on_chain_for_error = true;
     }
 
     pub fn get_state_number(&self) -> usize {
@@ -291,6 +301,7 @@ impl ChannelHandler {
 
             have_potato: initiation.we_start_with_potato,
             initiated_on_chain: false,
+            on_chain_for_error: false,
 
             cached_last_action: None,
 
@@ -781,7 +792,7 @@ impl ChannelHandler {
         readable_move: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<MoveResult, Error> {
-        debug!("SEND_POTATO_MOVE");
+        debug!("{} SEND_POTATO_MOVE", self.unroll.coin.started_with_potato);
         let game_idx = self.get_game_by_id(game_id)?;
         let referee_result = self.internal_make_move(
             env,
@@ -822,7 +833,7 @@ impl ChannelHandler {
         game_id: &GameID,
         move_result: &MoveResult,
     ) -> Result<(ChannelCoinSpendInfo, NodePtr, Vec<u8>), Error> {
-        debug!("RECEIVED_POTATO_MOVE");
+        debug!("{} RECEIVED_POTATO_MOVE", self.unroll.coin.started_with_potato);
         let game_idx = self.get_game_by_id(game_id)?;
 
         let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
@@ -847,6 +858,7 @@ impl ChannelHandler {
         // Check whether the unroll_puzzle_hash is right.
         // Check whether the spend signed in the Move Result is valid by using
         // the unroll puzzle hash that was given to us.
+        self.cached_last_action = None;
 
         Ok((
             ChannelCoinSpendInfo {
@@ -1368,7 +1380,7 @@ impl ChannelHandler {
         for game_coin in coins.iter() {
             for live_game in self.live_games.iter_mut() {
                 debug!("live game id {:?} try to use coin {game_coin:?}", live_game.game_id);
-                if live_game.set_state_for_coin(env.allocator, game_coin)? {
+                if live_game.set_state_for_coin(env.allocator, game_coin, self.initiated_on_chain)? {
                     let coin_id = CoinString::from_parts(
                         &unroll_coin.to_coin_id(),
                         &game_coin.clone(),
@@ -1437,6 +1449,9 @@ impl ChannelHandler {
     pub fn get_redo_action(
         &mut self,
     ) -> Result<Option<GameAction>, Error> {
+        debug!("{} GET REDO ACTION {} vs {}", self.is_initial_potato(), self.current_state_number, self.unroll.coin.state_number);
+
+        // We're on chain due to error.
         let mut cla = None;
         swap(&mut cla, &mut self.cached_last_action);
         match cla {
@@ -1447,8 +1462,13 @@ impl ChannelHandler {
                 todo!();
             }
             Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) => {
-                debug!("redo move data {move_data:?}");
-                Ok(Some(GameAction::Move(move_data.game_id.clone(), move_data.move_data.clone(), move_data.move_entropy.clone())))
+                let game_idx = self.get_game_by_id(&move_data.game_id)?;
+                if !self.live_games[game_idx].referee_maker.is_my_turn() {
+                    debug!("redo move data {move_data:?}");
+                    return Ok(Some(GameAction::Move(move_data.game_id.clone(), move_data.move_data.clone(), move_data.move_entropy.clone())));
+                }
+
+                Ok(None)
             }
             _ => {
                 todo!();

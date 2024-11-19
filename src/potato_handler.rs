@@ -268,7 +268,7 @@ pub trait ToLocalUI {
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
     fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error>;
-    fn going_on_chain(&mut self) -> Result<(), Error>;
+    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
 }
 
 pub trait FromLocalUI<
@@ -417,6 +417,7 @@ enum PotatoState {
     Present,
 }
 
+#[derive(Debug)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
     Accept(GameID),
@@ -1754,6 +1755,7 @@ impl PotatoHandler {
     pub fn go_on_chain<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
+        got_error: bool,
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
@@ -1762,6 +1764,8 @@ impl PotatoHandler {
         swap(&mut hs_state, &mut self.handshake_state);
         match hs_state {
             HandshakeState::Finished(t) => {
+                let mut player_ch = self.channel_handler_mut()?;
+                player_ch.set_on_chain_for_error();
                 self.do_channel_spend_to_unroll(penv, t)?;
                 Ok(())
             }
@@ -1810,6 +1814,8 @@ impl PotatoHandler {
                 &current
             )?;
 
+        let solution_nodeptr = transaction.bundle.solution.to_nodeptr(env.allocator)?;
+        debug!("referee solution {}", disassemble(env.allocator.allocator(), solution_nodeptr, None));
         system_interface.spend_transaction_and_add_fee(&SpendBundle {
             spends: vec![CoinSpend {
                 coin: current.clone(),
@@ -1982,10 +1988,10 @@ impl PotatoHandler {
         debug!("Game map {:?}", self.handshake_state);
 
         let player_ch = self.channel_handler_mut()?;
-        if player_ch.initiated_on_chain() {
-            if let Some(redo_move) = player_ch.get_redo_action()? {
-                self.do_game_action(penv, redo_move)?;
-            }
+        if let Some(redo_move) = player_ch.get_redo_action()? {
+            debug!("redo move: {redo_move:?}");
+            self.do_game_action(penv, redo_move)?;
+            debug!("we can proceed with game");
         }
 
         Ok(())

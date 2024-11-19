@@ -587,13 +587,17 @@ impl RefereeMaker {
         ))
     }
 
-    pub fn rewind(&mut self, allocator: &mut AllocEncoder, puzzle_hash: &PuzzleHash) -> Result<bool, Error> {
-        for old_state in self.old_states.iter().skip(1).rev() {
+    pub fn rewind(&mut self, allocator: &mut AllocEncoder, puzzle_hash: &PuzzleHash, initiated: bool) -> Result<bool, Error> {
+        for (i,old_state) in self.old_states.iter().enumerate().skip(1).rev() {
             let existing_state = self.state.clone();
             self.state = old_state.clone();
             let have_puzzle_hash = self.curried_referee_puzzle_hash_for_validator(allocator, true)?;
-            debug!("referee rewind: try state {have_puzzle_hash:?} want {puzzle_hash:?}");
             if *puzzle_hash == have_puzzle_hash {
+                if self.is_my_turn() {
+                    self.state = self.old_states[i-1].clone();
+                }
+
+                debug!("referee rewind: reassume state {:?}", self.state);
                 return Ok(true);
             }
 
@@ -868,6 +872,7 @@ impl RefereeMaker {
                     None,
                 ),
                 RefereeMakerGameState::AfterOurTurn { .. } => {
+                    todo!();
                     return Err(Error::StrErr(
                         "trying to make our turn after our turn".to_string(),
                     ));
@@ -913,6 +918,7 @@ impl RefereeMaker {
         )?;
 
         self.message_handler = result.message_parser;
+        debug!("referee my turn referee move details {:?}", result.game_move);
 
         // To make a puzzle hash for unroll: curry the correct parameters into
         // the referee puzzle.
@@ -1344,6 +1350,7 @@ impl RefereeMaker {
         };
 
         debug!("their turn: previous_validation_info_hash {previous_validation_info_hash:?}");
+        debug!("their turn referee move details {details:?}");
 
         // Retrieve evidence from their turn handler.
         let result = handler.call_their_turn_driver(
@@ -1663,6 +1670,15 @@ impl RefereeMaker {
             }
             Err(_) => {
                 // Slash wasn't allowed.  Run the move handler.
+                let details = GameMoveDetails {
+                    basic: GameMoveStateInfo {
+                        move_made: new_move.clone(),
+                        max_move_size: new_max_move_size,
+                        mover_share: new_mover_share.clone(),
+                    },
+                    validation_info_hash: new_validation_info_hash.clone(),
+                };
+                debug!("referee move details {details:?}");
                 let (readable_move, game_handler) = match game_handler.call_their_turn_driver(
                     allocator,
                     &TheirTurnInputs {
@@ -1675,14 +1691,7 @@ impl RefereeMaker {
                             .clone(),
                         last_mover_share: self.get_our_current_share(),
 
-                        new_move: GameMoveDetails {
-                            basic: GameMoveStateInfo {
-                                move_made: new_move.clone(),
-                                max_move_size: new_max_move_size,
-                                mover_share: new_mover_share.clone(),
-                            },
-                            validation_info_hash: new_validation_info_hash.clone(),
-                        },
+                        new_move: details,
 
                         #[cfg(test)]
                         run_debug: self.run_debug,

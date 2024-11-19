@@ -233,6 +233,7 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
+        got_error: bool,
     ) -> Result<(), Error>;
 
     /// Report a puzzle and solution for a spent coin.
@@ -424,7 +425,7 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.shutdown = Some(reward_coin_string.clone());
         Ok(())
     }
-    fn going_on_chain(&mut self) -> Result<(), Error> {
+    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
         todo!();
     }
 }
@@ -852,7 +853,7 @@ impl GameCradle for SynchronousGameCradle {
                 Err(e) => {
                     result.receive_error = Some(e);
                     // Go on chain.
-                    local_ui.going_on_chain()?;
+                    local_ui.going_on_chain(true)?;
                     return Ok(result);
                 }
             }
@@ -877,13 +878,14 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         _local_ui: &mut dyn ToLocalUI,
+        got_error: bool,
     ) -> Result<(), Error> {
         let mut env = channel_handler_env(allocator, rng);
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
         };
-        self.peer.go_on_chain(&mut penv)
+        self.peer.go_on_chain(&mut penv, got_error)
     }
 
     fn report_puzzle_and_solution<R: Rng>(

@@ -974,6 +974,7 @@ impl LiveGame {
         &mut self,
         allocator: &mut AllocEncoder,
         want_ph: &PuzzleHash,
+        initiated: bool,
     ) -> Result<bool, Error> {
         let referee_puzzle_hash = self
             .referee_maker
@@ -984,6 +985,6 @@ impl LiveGame {
             return Ok(true);
         }
 
-        self.referee_maker.rewind(allocator, want_ph)
+        self.referee_maker.rewind(allocator, want_ph, initiated)
     }
 }

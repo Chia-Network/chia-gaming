@@ -213,7 +213,7 @@ impl ToLocalUI for SimulatedPeer {
     fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
         todo!();
     }
-    fn going_on_chain(&mut self) -> Result<(), Error> {
+    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
         todo!();
     }
 }
@@ -654,6 +654,7 @@ struct LocalTestUIReceiver {
     game_finished: Option<Amount>,
     opponent_moved: bool,
     go_on_chain: bool,
+    got_error: bool,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -690,8 +691,9 @@ impl ToLocalUI for LocalTestUIReceiver {
         Ok(())
     }
 
-    fn going_on_chain(&mut self) -> Result<(), Error> {
+    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
         self.go_on_chain = true;
+        self.got_error = got_error;
         Ok(())
     }
 }
@@ -825,8 +827,9 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 // Perform on chain move.
                 // Turn off the flag to go on chain.
                 local_uis[i].go_on_chain = false;
+                let got_error = local_uis[i].got_error;
                 cradles[i]
-                    .go_on_chain(allocator, &mut rng, &mut local_uis[i])
+                    .go_on_chain(allocator, &mut rng, &mut local_uis[i], got_error)
                     .expect("should work");
             }
 
