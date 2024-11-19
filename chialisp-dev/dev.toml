@@ -1,0 +1,5 @@
+[dev]
+clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "ec75759377791c9b785123d2d3e2457d08ac6621" }
+
+[nodev]
+clvm_tools_rs = "0.1.45"
