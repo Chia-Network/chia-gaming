@@ -1,6 +1,6 @@
-use std::rc::Rc;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use clvmr::{run_program, NodePtr};
@@ -99,7 +99,8 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         assert_eq!(aggregate_public_key1, aggregate_public_key2);
 
         debug!("parent coin {:?}", state_channel.to_parts());
-        let cc_spend_conditions_nodeptr = cc_spend.spend.conditions.to_nodeptr(self.env.allocator)?;
+        let cc_spend_conditions_nodeptr =
+            cc_spend.spend.conditions.to_nodeptr(self.env.allocator)?;
         let spend1 = standard_solution_partial(
             self.env.allocator,
             &private_key_1,
@@ -290,12 +291,8 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let player_ch = &mut self.parties.player(player).ch;
         let entropy = self.env.rng.gen();
         let readable_move = ReadableMove::from_nodeptr(self.env.allocator, readable)?;
-        let _move_result = player_ch.send_potato_move(
-            &mut self.env,
-            &game_id,
-            &readable_move,
-            entropy,
-        )?;
+        let _move_result =
+            player_ch.send_potato_move(&mut self.env, &game_id, &readable_move, entropy)?;
         let finished_unroll_coin = player_ch.get_finished_unroll_coin();
         let post_unroll_data = player_ch.get_create_unroll_coin_transaction(
             &mut self.env,
@@ -618,14 +615,11 @@ fn test_referee_can_slash_on_chain() {
     assert!(!coins.is_empty());
 
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
-    let readable_my_move = ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
+    let readable_my_move =
+        ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
     let _my_move_wire_data = reftest
         .my_referee
-        .my_turn_make_move(
-            &mut allocator,
-            &readable_my_move,
-            rng.gen(),
-        )
+        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen())
         .expect("should move");
 
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
@@ -749,14 +743,11 @@ fn test_referee_can_move_on_chain() {
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
     // Make our first move.
-    let readable_my_move = ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
+    let readable_my_move =
+        ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
     let _my_move_wire_data = reftest
         .my_referee
-        .my_turn_make_move(
-            &mut allocator,
-            &readable_my_move,
-            rng.gen(),
-        )
+        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen())
         .expect("should move");
 
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));

@@ -617,15 +617,11 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         {
             let entropy = rng.gen();
             let mut env = channel_handler_env(allocator, &mut rng);
-            let move_readable = ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
+            let move_readable =
+                ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
             handlers[who ^ 1]
-                .make_move(
-                    &mut penv,
-                    &game_ids[0],
-                    &move_readable,
-                    entropy,
-                )
+                .make_move(&mut penv, &game_ids[0], &move_readable, entropy)
                 .expect("should work");
         }
 

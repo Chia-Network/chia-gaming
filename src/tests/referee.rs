@@ -212,14 +212,11 @@ fn test_referee_smoke() {
     );
 
     let readable_move = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
-    let readable_my_move = ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
+    let readable_my_move =
+        ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
     let my_move_wire_data = reftest
         .my_referee
-        .my_turn_make_move(
-            &mut allocator,
-            &readable_my_move,
-            rng.gen(),
-        )
+        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen())
         .expect("should move");
 
     assert!(my_move_wire_data.details.basic.move_made.is_empty());

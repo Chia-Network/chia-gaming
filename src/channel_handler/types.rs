@@ -27,7 +27,10 @@ use crate::common::types::{
     CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
     Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
-use crate::referee::{GameMoveDetails, GameMoveWireData, LiveGameReplay, RefereeMaker, TheirTurnMoveResult, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
+use crate::referee::{
+    GameMoveDetails, GameMoveWireData, LiveGameReplay, RefereeMaker, RefereeOnChainTransaction,
+    TheirTurnCoinSpentResult, TheirTurnMoveResult,
+};
 
 #[derive(Clone)]
 pub struct ChannelHandlerPrivateKeys {
@@ -1000,7 +1003,9 @@ impl LiveGame {
         new_entropy: Hash,
     ) -> Result<GameMoveWireData, Error> {
         assert!(self.referee_maker.is_my_turn());
-        let referee_result = self.referee_maker.my_turn_make_move(allocator, readable_move, new_entropy.clone())?;
+        let referee_result =
+            self.referee_maker
+                .my_turn_make_move(allocator, readable_move, new_entropy.clone())?;
         self.last_referee_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
         Ok(referee_result)
     }
@@ -1011,8 +1016,9 @@ impl LiveGame {
         game_move: &GameMoveDetails,
     ) -> Result<TheirTurnMoveResult, Error> {
         assert!(!self.referee_maker.is_my_turn());
-        let their_move_result =
-            self.referee_maker.their_turn_move_off_chain(allocator, game_move)?;
+        let their_move_result = self
+            .referee_maker
+            .their_turn_move_off_chain(allocator, game_move)?;
         self.last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
         Ok(their_move_result)
     }
@@ -1029,16 +1035,17 @@ impl LiveGame {
         &self,
         allocator: &mut AllocEncoder,
         game_coin: &CoinString,
-        agg_sig_me: &Hash
+        agg_sig_me: &Hash,
     ) -> Result<RefereeOnChainTransaction, Error> {
         assert!(self.referee_maker.processing_my_turn());
-        self.referee_maker.get_transaction_for_move(allocator, game_coin, agg_sig_me)
+        self.referee_maker
+            .get_transaction_for_move(allocator, game_coin, agg_sig_me)
     }
 
     pub fn receive_readable(
         &mut self,
         allocator: &mut AllocEncoder,
-        data: &[u8]
+        data: &[u8],
     ) -> Result<ReadableMove, Error> {
         assert!(!self.referee_maker.is_my_turn());
         self.referee_maker.receive_readable(allocator, data)
@@ -1051,7 +1058,8 @@ impl LiveGame {
         conditions: &NodePtr,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         assert!(!self.referee_maker.is_my_turn());
-        self.referee_maker.their_turn_coin_spent(allocator, coin_string, conditions)
+        self.referee_maker
+            .their_turn_coin_spent(allocator, coin_string, conditions)
     }
 
     /// Regress the live game state to the state we know so that we can generate the puzzle

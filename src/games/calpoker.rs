@@ -278,11 +278,7 @@ pub fn decode_readable_card_choices(
     opponent_readable_move: ReadableMove,
 ) -> Result<(CardList, CardList), Error> {
     let opponent_nodeptr = opponent_readable_move.to_nodeptr(allocator)?;
-    if let Some(cardlist) = proper_list(
-        allocator.allocator(),
-        opponent_nodeptr,
-        true,
-    ) {
+    if let Some(cardlist) = proper_list(allocator.allocator(), opponent_nodeptr, true) {
         let tmp: Vec<_> = cardlist
             .iter()
             .map(|c| convert_cards(allocator, *c))

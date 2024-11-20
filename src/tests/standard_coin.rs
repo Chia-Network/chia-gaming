@@ -18,8 +18,8 @@ use crate::common::standard_coin::{
     puzzle_hash_for_pk, standard_solution_unsafe, unsafe_sign_partial,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Node, PrivateKey, PublicKey, PuzzleHash, Sha256Input, Sha256tree,
-    Program, ToQuotedProgram,
+    Aggsig, AllocEncoder, Node, PrivateKey, Program, PublicKey, PuzzleHash, Sha256Input,
+    Sha256tree, ToQuotedProgram,
 };
 use crate::tests::constants::{
     EXPECTED_PUZZLE_HEX, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, KEY_PAIR_PRIVATE, KEY_PAIR_PUBLIC,
@@ -193,14 +193,12 @@ fn test_standard_puzzle_solution_maker() {
     debug!("solution {:?}", spend_info.solution);
     let runner = DefaultProgramRunner::new();
     let puzzle_node = puzzle.to_clvm(&mut allocator).expect("should convert");
-    let solution_node = spend_info.solution.to_clvm(&mut allocator).expect("should convert");
+    let solution_node = spend_info
+        .solution
+        .to_clvm(&mut allocator)
+        .expect("should convert");
     let res = runner
-        .run_program(
-            allocator.allocator(),
-            puzzle_node,
-            solution_node,
-            None,
-        )
+        .run_program(allocator.allocator(), puzzle_node, solution_node, None)
         .expect("should run");
     assert_eq!(
         disassemble(allocator.allocator(), res.1, None),
