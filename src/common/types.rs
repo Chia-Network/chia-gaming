@@ -1,5 +1,6 @@
 use std::io;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::rc::Rc;
 
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -657,8 +658,14 @@ impl<X: ToClvm<NodePtr>> Sha256tree for X {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Program(pub Vec<u8>);
+
+impl std::fmt::Debug for Program {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "Program({})", hex::encode(&self.0))
+    }
+}
 
 impl Program {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
@@ -990,7 +997,7 @@ impl CoinCondition {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Spend {
     pub puzzle: Puzzle,
-    pub solution: Program,
+    pub solution: Rc<Program>,
     pub signature: Aggsig,
 }
 
@@ -1004,7 +1011,7 @@ impl Default for Spend {
     fn default() -> Self {
         Spend {
             puzzle: Puzzle::from_bytes(&[0x80]),
-            solution: Program::from_bytes(&[0x80]),
+            solution: Rc::new(Program::from_bytes(&[0x80])),
             signature: Aggsig::default(),
         }
     }
@@ -1050,8 +1057,8 @@ pub fn atom_from_clvm(allocator: &mut AllocEncoder, n: NodePtr) -> Option<&[u8]>
 
 /// Maximum information about a coin spend.  Everything one might need downstream.
 pub struct BrokenOutCoinSpendInfo {
-    pub solution: NodePtr,
-    pub conditions: NodePtr,
+    pub solution: Rc<Program>,
+    pub conditions: Rc<Program>,
     pub message: Vec<u8>,
     pub signature: Aggsig,
 }

@@ -7,6 +7,7 @@ use std::borrow::BorrowMut;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::mem::swap;
+use std::rc::Rc;
 
 use log::debug;
 
@@ -364,7 +365,7 @@ impl ChannelHandler {
                 &env.standard_puzzle,
                 &aggregate_public_key,
             )?,
-            solution: Program::from_nodeptr(env.allocator, channel_coin_spend.solution)?,
+            solution: channel_coin_spend.solution.clone(),
             signature: channel_coin_spend.signature.clone(),
         };
 
@@ -408,8 +409,8 @@ impl ChannelHandler {
             amount: self.state_channel.amount.clone(),
             spend: ChannelCoinSpendInfo {
                 aggsig: combined_signature,
-                solution: channel_coin_spend.solution,
-                conditions: channel_coin_spend.conditions,
+                solution: channel_coin_spend.solution.clone(),
+                conditions: channel_coin_spend.conditions.clone(),
             },
         })
     }
@@ -436,7 +437,7 @@ impl ChannelHandler {
                 Some(CoinString::from_parts(
                     &parent_coin_id,
                     &game.last_referee_puzzle_hash,
-                    &game.referee_maker.get_amount(),
+                    &game.get_amount(),
                 ))
             };
 
@@ -512,7 +513,7 @@ impl ChannelHandler {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         their_channel_half_signature: &Aggsig,
-        conditions: NodePtr,
+        conditions: Rc<Program>,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
@@ -570,7 +571,7 @@ impl ChannelHandler {
         self.verify_channel_coin_from_peer_signatures(
             env,
             &signatures.my_channel_half_signature_peer,
-            channel_coin_spend.conditions,
+            channel_coin_spend.conditions.clone(),
         )?;
 
         // If state number is 0 and we're receiving the potato, then we don't
@@ -640,13 +641,13 @@ impl ChannelHandler {
                 &self.their_referee_puzzle_hash,
                 new_game_nonce,
             )?;
-            res.push(LiveGame {
-                game_id: g.game_id.clone(),
-                last_referee_puzzle_hash: puzzle_hash,
-                referee_maker: Box::new(referee_maker),
-                my_contribution: g.my_contribution_this_game.clone(),
-                their_contribution: g.their_contribution_this_game.clone(),
-            });
+            res.push(LiveGame::new(
+                g.game_id.clone(),
+                puzzle_hash,
+                referee_maker,
+                g.my_contribution_this_game.clone(),
+                g.their_contribution_this_game.clone(),
+            ));
         }
 
         Ok(res)
@@ -774,17 +775,6 @@ impl ChannelHandler {
             })
     }
 
-    fn internal_make_move<R: Rng>(
-        &mut self,
-        env: &mut ChannelHandlerEnv<R>,
-        game_idx: usize,
-        readable_move: &ReadableMove,
-        new_entropy: Hash,
-    ) -> Result<GameMoveWireData, Error> {
-        let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
-        referee_maker.my_turn_make_move(env.allocator, readable_move, new_entropy.clone())
-    }
-
     pub fn send_potato_move<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
@@ -794,15 +784,11 @@ impl ChannelHandler {
     ) -> Result<MoveResult, Error> {
         debug!("{} SEND_POTATO_MOVE", self.unroll.coin.started_with_potato);
         let game_idx = self.get_game_by_id(game_id)?;
-        let referee_result = self.internal_make_move(
-            env,
-            game_idx,
+        let referee_result = self.live_games[game_idx].internal_make_move(
+            env.allocator,
             readable_move,
             new_entropy.clone()
         )?;
-
-        self.live_games[game_idx].last_referee_puzzle_hash =
-            referee_result.puzzle_hash_for_unroll.clone();
 
         debug!("{} move_result {referee_result:?}", self.unroll.coin.started_with_potato);
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
@@ -836,11 +822,10 @@ impl ChannelHandler {
         debug!("{} RECEIVED_POTATO_MOVE", self.unroll.coin.started_with_potato);
         let game_idx = self.get_game_by_id(game_id)?;
 
-        let referee_maker: &mut RefereeMaker = self.live_games[game_idx].referee_maker.borrow_mut();
-        let their_move_result =
-            referee_maker.their_turn_move_off_chain(env.allocator, &move_result.game_move)?;
-        self.live_games[game_idx].last_referee_puzzle_hash =
-            their_move_result.puzzle_hash_for_unroll.clone();
+        let their_move_result = self.live_games[game_idx].internal_their_move(
+            env.allocator,
+            &move_result.game_move
+        )?;
 
         debug!("{} their_move_result {their_move_result:?}", self.unroll.coin.started_with_potato);
 
@@ -879,9 +864,7 @@ impl ChannelHandler {
     ) -> Result<ReadableMove, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
-        self.live_games[game_idx]
-            .referee_maker
-            .receive_readable(env.allocator, message)
+        self.live_games[game_idx].receive_readable(env.allocator, message)
     }
 
     pub fn send_potato_accept<R: Rng>(
@@ -899,8 +882,8 @@ impl ChannelHandler {
         self.my_allocated_balance -= live_game.my_contribution.clone();
         self.their_allocated_balance -= live_game.their_contribution.clone();
 
-        let amount = live_game.referee_maker.get_our_current_share();
-        let at_stake = live_game.referee_maker.get_amount();
+        let amount = live_game.get_our_current_share();
+        let at_stake = live_game.get_amount();
 
         self.update_cache_for_potato_send(if amount == Amount::default() {
             None
@@ -972,8 +955,8 @@ impl ChannelHandler {
     pub fn state_channel_coin_solution_and_signature<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
-        conditions: NodePtr,
-    ) -> Result<(NodePtr, Aggsig), Error> {
+        conditions: Rc<Program>,
+    ) -> Result<(Rc<Program>, Aggsig), Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
         let channel_coin_spend = spend.get_solution_and_signature_from_conditions(
@@ -998,20 +981,18 @@ impl ChannelHandler {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
 
+        let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
         let channel_coin_spend = spend.get_solution_and_signature_from_conditions(
             env,
             &self.private_keys.my_channel_coin_private_key,
             &aggregate_public_key,
-            conditions,
+            Rc::new(conditions_program),
         )?;
 
-        debug!(
-            "send_potato_clean_shutdown {}",
-            disassemble(env.allocator.allocator(), channel_coin_spend.solution, None)
-        );
+        debug!("send_potato_clean_shutdown {:?}", channel_coin_spend.solution);
 
         Ok(Spend {
-            solution: Program::from_nodeptr(env.allocator, channel_coin_spend.solution)?,
+            solution: channel_coin_spend.solution.clone(),
             signature: channel_coin_spend.signature,
             puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
@@ -1025,16 +1006,14 @@ impl ChannelHandler {
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
         debug!("RECEIVED_POTATO_CLEAN_SHUTDOWN");
         assert!(!self.have_potato);
+        let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
         let channel_spend = self.verify_channel_coin_from_peer_signatures(
             env,
             their_channel_half_signature,
-            conditions,
+            Rc::new(conditions_program),
         )?;
 
-        debug!(
-            "received_potato_clean_shutdown {}",
-            disassemble(env.allocator.allocator(), channel_spend.solution, None)
-        );
+        debug!("received_potato_clean_shutdown {:?}", channel_spend.solution);
 
         Ok(channel_spend)
     }
@@ -1102,7 +1081,7 @@ impl ChannelHandler {
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
                 puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
-                solution: solution_program,
+                solution: Rc::new(solution_program),
                 signature,
             },
             timeout: false,
@@ -1187,7 +1166,7 @@ impl ChannelHandler {
                 Ok(ChannelCoinSpentResult {
                     transaction: Spend {
                         puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
-                        solution: Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?,
+                        solution: Rc::new(Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?),
                         signature: self.unroll.coin.get_unroll_coin_signature()?,
                     },
                     timeout: true,
@@ -1263,7 +1242,7 @@ impl ChannelHandler {
                     &cached.at_stake_amount,
                 );
 
-                let spend_transaction = cached.live_game.referee_maker.get_transaction_for_move(
+                let spend_transaction = cached.live_game.get_transaction_for_move(
                     env.allocator,
                     &game_coin,
                     &env.agg_sig_me_additional_data,
@@ -1293,7 +1272,6 @@ impl ChannelHandler {
                 );
 
                 let spend_transaction = self.live_games[game_idx]
-                    .referee_maker
                     .get_transaction_for_move(
                         env.allocator,
                         &game_coin,
@@ -1384,12 +1362,12 @@ impl ChannelHandler {
                     let coin_id = CoinString::from_parts(
                         &unroll_coin.to_coin_id(),
                         &game_coin.clone(),
-                        &live_game.referee_maker.get_amount()
+                        &live_game.get_amount()
                     );
                     res.insert(coin_id, OnChainGameState {
                         game_id: live_game.game_id.clone(),
                         puzzle_hash: game_coin.clone(),
-                        our_turn: live_game.referee_maker.is_my_turn(),
+                        our_turn: live_game.processing_my_turn(),
                     });
                 }
             }
@@ -1410,14 +1388,13 @@ impl ChannelHandler {
     ) -> Result<(PuzzleHash, GameMoveDetails, RefereeOnChainTransaction), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
-        let move_result = self.internal_make_move(
-            env,
-            game_idx,
+        let move_result = self.live_games[game_idx].internal_make_move(
+            env.allocator,
             readable_move,
             entropy
         )?;
 
-        let tx = self.live_games[game_idx].referee_maker.get_transaction_for_move(
+        let tx = self.live_games[game_idx].get_transaction_for_move(
             env.allocator,
             existing_coin,
             &env.agg_sig_me_additional_data,
@@ -1439,7 +1416,7 @@ impl ChannelHandler {
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         let live_game_idx = self.get_game_by_id(game_id)?;
 
-        self.live_games[live_game_idx].referee_maker.their_turn_coin_spent(
+        self.live_games[live_game_idx].their_turn_coin_spent(
             env.allocator,
             coin_string,
             conditions
@@ -1463,12 +1440,12 @@ impl ChannelHandler {
             }
             Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) => {
                 let game_idx = self.get_game_by_id(&move_data.game_id)?;
-                if !self.live_games[game_idx].referee_maker.is_my_turn() {
-                    debug!("redo move data {move_data:?}");
-                    return Ok(Some(GameAction::Move(move_data.game_id.clone(), move_data.move_data.clone(), move_data.move_entropy.clone())));
+                if (self.current_state_number + self.unroll.coin.started_with_potato as usize) & 1 == 1 {
+                    return Ok(None);
                 }
 
-                Ok(None)
+                debug!("redo move data {move_data:?}");
+                return Ok(Some(GameAction::Move(move_data.game_id.clone(), move_data.move_data.clone(), move_data.move_entropy.clone())));
             }
             _ => {
                 todo!();
@@ -1618,7 +1595,7 @@ impl ChannelHandler {
                 standard_solution_unsafe(env.allocator, &self.referee_private_key(), conditions)?;
             coins_with_solutions.push(Spend {
                 puzzle: spend_coin_puzzle.clone(),
-                solution: Program::from_nodeptr(env.allocator, standard_solution.solution)?,
+                solution: standard_solution.solution.clone(),
                 signature,
             });
         }

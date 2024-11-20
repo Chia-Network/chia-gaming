@@ -4,7 +4,7 @@ use clvm_traits::ToClvm;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::game_handler::{MyTurnInputs, TheirTurnInputs, TheirTurnResult};
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::{Aggsig, AllocEncoder, Amount, Hash};
+use crate::common::types::{Aggsig, AllocEncoder, Amount, Hash, Program};
 use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 
 #[test]
@@ -112,7 +112,7 @@ fn test_game_handler_my_turn() {
         .call_my_turn_driver(
             &mut allocator,
             &MyTurnInputs {
-                readable_new_move: ReadableMove::from_nodeptr(nil),
+                readable_new_move: ReadableMove::from_program(Program::from_bytes(&[0x80])),
                 amount: Amount::default(),
                 last_move: &[],
                 last_mover_share: Amount::default(),

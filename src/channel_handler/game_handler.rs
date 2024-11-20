@@ -458,6 +458,6 @@ impl MessageHandler {
         );
         let run_result = run_code(allocator, self.0, args, false)?;
 
-        Ok(ReadableMove::from_nodeptr(run_result))
+        Ok(ReadableMove::from_nodeptr(allocator, run_result)?)
     }
 }

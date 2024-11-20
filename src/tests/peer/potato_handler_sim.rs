@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use log::debug;
@@ -269,7 +270,6 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
             false,
         )
         .expect("ssp 1");
-        let spend_solution_program = Program::from_nodeptr(self.env.allocator, spend.solution)?;
 
         peer.channel_offer(
             self,
@@ -278,7 +278,7 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
                     coin: parent.clone(),
                     bundle: Spend {
                         puzzle: identity.puzzle.clone(),
-                        solution: spend_solution_program,
+                        solution: spend.solution.clone(),
                         signature: spend.signature.clone(),
                     },
                 }],
@@ -433,7 +433,7 @@ pub fn handshake<'a, R: Rng + 'a>(
                 coin: parent_coins[who].clone(),
                 bundle: Spend {
                     puzzle: identities[who].puzzle.clone(),
-                    solution: Program::from_nodeptr(env.allocator, solution)?,
+                    solution: Rc::new(Program::from_nodeptr(env.allocator, solution)?),
                     signature,
                 },
             });
@@ -617,12 +617,13 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         {
             let entropy = rng.gen();
             let mut env = channel_handler_env(allocator, &mut rng);
+            let move_readable = ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
             handlers[who ^ 1]
                 .make_move(
                     &mut penv,
                     &game_ids[0],
-                    &ReadableMove::from_nodeptr(*what),
+                    &move_readable,
                     entropy,
                 )
                 .expect("should work");

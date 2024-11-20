@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -89,14 +90,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             .channel_puzzle_reveal
             .sha256tree(self.env.allocator);
         debug!("puzzle hash to spend state channel coin: {cc_ph:?}");
-        debug!(
-            "spend conditions {}",
-            disassemble(
-                self.env.allocator.allocator(),
-                cc_spend.spend.conditions,
-                None
-            )
-        );
+        debug!("spend conditions {:?}", cc_spend.spend.conditions);
 
         let private_key_1 = self.parties.player(0).ch.channel_private_key();
         let private_key_2 = self.parties.player(1).ch.channel_private_key();
@@ -105,11 +99,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         assert_eq!(aggregate_public_key1, aggregate_public_key2);
 
         debug!("parent coin {:?}", state_channel.to_parts());
+        let cc_spend_conditions_nodeptr = cc_spend.spend.conditions.to_nodeptr(self.env.allocator)?;
         let spend1 = standard_solution_partial(
             self.env.allocator,
             &private_key_1,
             &state_channel.to_coin_id(),
-            cc_spend.spend.conditions,
+            cc_spend_conditions_nodeptr,
             &aggregate_public_key1,
             &self.env.agg_sig_me_additional_data,
             true,
@@ -119,7 +114,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             self.env.allocator,
             &private_key_2,
             &state_channel.to_coin_id(),
-            cc_spend.spend.conditions,
+            cc_spend_conditions_nodeptr,
             &aggregate_public_key1,
             &self.env.agg_sig_me_additional_data,
             true,
@@ -139,7 +134,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             coin: state_channel.clone(),
             bundle: Spend {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
-                solution: Program::from_nodeptr(self.env.allocator, cc_spend.spend.solution)?,
+                solution: cc_spend.spend.solution.clone(),
                 signature,
             },
         };
@@ -157,7 +152,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         self.simulator.farm_block(&self.identities[0].puzzle_hash);
 
         Ok((
-            cc_spend.spend.conditions,
+            cc_spend.spend.conditions.to_nodeptr(self.env.allocator)?,
             CoinString::from_parts(
                 &state_channel.to_coin_id(),
                 unroll_coin_puzzle_hash,
@@ -174,10 +169,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     ) -> Result<GameActionResult, Error> {
         let game_id = self.parties.game_id.clone();
         let entropy: Hash = self.env.rng.gen();
+        let readable_move = ReadableMove::from_nodeptr(self.env.allocator, readable)?;
         let move_result = self.parties.player(player).ch.send_potato_move(
             &mut self.env,
             &game_id,
-            &ReadableMove::from_nodeptr(readable),
+            &readable_move,
             entropy.clone(),
         )?;
 
@@ -293,10 +289,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let game_id = self.parties.game_id.clone();
         let player_ch = &mut self.parties.player(player).ch;
         let entropy = self.env.rng.gen();
+        let readable_move = ReadableMove::from_nodeptr(self.env.allocator, readable)?;
         let _move_result = player_ch.send_potato_move(
             &mut self.env,
             &game_id,
-            &ReadableMove::from_nodeptr(readable),
+            &readable_move,
             entropy,
         )?;
         let finished_unroll_coin = player_ch.get_finished_unroll_coin();
@@ -428,11 +425,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .coin_string()
                     .clone();
 
-                let full_spend_sol = full_spend.solution;
-                debug!(
-                    "solution in full spend: {}",
-                    disassemble(self.env.allocator.allocator(), full_spend_sol, None)
-                );
+                debug!("solution in full spend: {:?}", full_spend.solution);
 
                 let channel_puzzle_public_key = self
                     .parties
@@ -444,7 +437,6 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     &self.env.standard_puzzle,
                     &channel_puzzle_public_key,
                 )?;
-                let solution = Program::from_nodeptr(self.env.allocator, full_spend.solution)?;
                 let included = self
                     .simulator
                     .push_tx(
@@ -452,7 +444,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                         &[CoinSpend {
                             coin: channel_coin,
                             bundle: Spend {
-                                solution,
+                                solution: full_spend.solution.clone(),
                                 puzzle,
                                 signature: full_spend.signature.clone(),
                             },
@@ -626,11 +618,12 @@ fn test_referee_can_slash_on_chain() {
     assert!(!coins.is_empty());
 
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
+    let readable_my_move = ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
     let _my_move_wire_data = reftest
         .my_referee
         .my_turn_make_move(
             &mut allocator,
-            &ReadableMove::from_nodeptr(readable_move),
+            &readable_my_move,
             rng.gen(),
         )
         .expect("should move");
@@ -756,11 +749,12 @@ fn test_referee_can_move_on_chain() {
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
     // Make our first move.
+    let readable_my_move = ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
     let _my_move_wire_data = reftest
         .my_referee
         .my_turn_make_move(
             &mut allocator,
-            &ReadableMove::from_nodeptr(readable_move),
+            &readable_my_move,
             rng.gen(),
         )
         .expect("should move");

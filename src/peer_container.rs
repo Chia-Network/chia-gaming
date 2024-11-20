@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::mem::swap;
+use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use log::debug;
@@ -529,14 +530,12 @@ impl SynchronousGameCradle {
             false,
         )?;
 
-        let spend_solution_program = Program::from_nodeptr(env.allocator, spend.solution)?;
-
         let bundle = SpendBundle {
             spends: vec![CoinSpend {
                 coin: parent.clone(),
                 bundle: Spend {
                     puzzle: self.state.identity.puzzle.clone(),
-                    solution: spend_solution_program,
+                    solution: spend.solution.clone(),
                     signature: spend.signature.clone(),
                 },
             }],
@@ -586,7 +585,7 @@ impl SynchronousGameCradle {
             coin: parent_coin.clone(),
             bundle: Spend {
                 puzzle: self.state.identity.puzzle.clone(),
-                solution: Program::from_nodeptr(env.allocator, solution)?,
+                solution: Rc::new(Program::from_nodeptr(env.allocator, solution)?),
                 signature,
             },
         });
@@ -729,7 +728,7 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         let mut env = channel_handler_env(allocator, rng);
         let rehydrated_move = Program::from_bytes(&readable);
-        let readable = ReadableMove::from_nodeptr(rehydrated_move.to_nodeptr(env.allocator)?);
+        let readable = ReadableMove::from_program(rehydrated_move);
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,

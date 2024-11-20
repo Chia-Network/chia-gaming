@@ -226,7 +226,6 @@ where
             &self.env.agg_sig_me_additional_data,
             false,
         )?;
-        let spend_solution_program = Program::from_nodeptr(self.env.allocator, spend.solution)?;
 
         peer.channel_offer(
             self,
@@ -235,7 +234,7 @@ where
                     coin: parent.clone(),
                     bundle: Spend {
                         puzzle: standard_puzzle,
-                        solution: spend_solution_program,
+                        solution: spend.solution.clone(),
                         signature: spend.signature.clone(),
                     },
                 }],
@@ -532,6 +531,7 @@ fn test_peer_smoke() {
         {
             let entropy = rng.gen();
             let mut env = channel_handler_env(&mut allocator, &mut rng);
+            let move_readable = ReadableMove::from_nodeptr(&mut env.allocator, *what).expect("should work");
             let mut penv = TestPeerEnv {
                 env: &mut env,
                 system_interface: &mut pipe_sender[who ^ 1],
@@ -540,7 +540,7 @@ fn test_peer_smoke() {
                 .make_move(
                     &mut penv,
                     &game_ids[0],
-                    &ReadableMove::from_nodeptr(*what),
+                    &move_readable,
                     entropy,
                 )
                 .expect("should work");

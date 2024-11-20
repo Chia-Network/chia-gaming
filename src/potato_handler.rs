@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::mem::swap;
+use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use clvmr::serde::node_from_bytes;
@@ -675,7 +676,7 @@ impl PotatoHandler {
             hs.spend.spends = vec![CoinSpend {
                 coin: channel_coin,
                 bundle: Spend {
-                    solution: Program::from_nodeptr(env.allocator, spend.solution)?,
+                    solution: spend.solution.clone(),
                     signature: spend.aggsig.clone(),
                     puzzle: channel_coin_puzzle,
                 },
@@ -717,10 +718,11 @@ impl PotatoHandler {
                 };
                 {
                     let (env, system_interface) = penv.env();
+                    let opponent_readable = ReadableMove::from_nodeptr(env.allocator, readable_move)?;
                     system_interface.opponent_moved(
                         env.allocator,
                         &game_id,
-                        ReadableMove::from_nodeptr(readable_move),
+                        opponent_readable,
                     )?;
                     if !message.is_empty() {
                         system_interface.send_message(&PeerMessage::Message(game_id, message))?;
@@ -780,7 +782,6 @@ impl PotatoHandler {
                 system_interface.register_coin(coin, &timeout, Some("parent"))?;
                 let full_spend = ch.received_potato_clean_shutdown(env, &sig, clvm_conditions)?;
 
-                let solution = Program::from_nodeptr(env.allocator, full_spend.solution)?;
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
                 let puzzle = puzzle_for_synthetic_public_key(
                     env.allocator,
@@ -791,7 +792,7 @@ impl PotatoHandler {
                     spends: vec![CoinSpend {
                         coin: coin.clone(),
                         bundle: Spend {
-                            solution,
+                            solution: full_spend.solution.clone(),
                             puzzle,
                             signature: full_spend.signature.clone(),
                         },
@@ -1734,7 +1735,7 @@ impl PotatoHandler {
             spends: vec![CoinSpend {
                 bundle: Spend {
                     puzzle: curried_unroll_program,
-                    solution: unroll_solution_program,
+                    solution: Rc::new(unroll_solution_program),
                     signature: aggregate_unroll_signature,
                 },
                 coin: unroll_coin.clone(),
