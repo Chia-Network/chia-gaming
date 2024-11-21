@@ -785,15 +785,18 @@ impl ChannelHandler {
         readable_move: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<MoveResult, Error> {
-        debug!("{} SEND_POTATO_MOVE {}", self.is_initial_potato(), self.current_state_number);
+        debug!(
+            "{} SEND_POTATO_MOVE {}",
+            self.is_initial_potato(),
+            self.current_state_number
+        );
         let game_idx = self.get_game_by_id(game_id)?;
-        let referee_result =
-            self.live_games[game_idx].internal_make_move(
-                env.allocator,
-                readable_move,
-                new_entropy.clone(),
-                self.current_state_number
-            )?;
+        let referee_result = self.live_games[game_idx].internal_make_move(
+            env.allocator,
+            readable_move,
+            new_entropy.clone(),
+            self.current_state_number,
+        )?;
 
         self.live_games[game_idx].last_referee_puzzle_hash =
             referee_result.puzzle_hash_for_unroll.clone();
@@ -1433,9 +1436,19 @@ impl ChannelHandler {
         entropy: Hash,
         existing_coin: &CoinString,
     ) -> Result<(PuzzleHash, GameMoveDetails, RefereeOnChainTransaction), Error> {
-        debug!("{} ON CHAIN OUR MOVE {:?} {:?} {:?}", self.is_initial_potato(), readable_move, entropy, existing_coin);
+        debug!(
+            "{} ON CHAIN OUR MOVE {:?} {:?} {:?}",
+            self.is_initial_potato(),
+            readable_move,
+            entropy,
+            existing_coin
+        );
         let game_idx = self.get_game_by_id(game_id)?;
-        debug!("our turn {} processing our turn {}", self.live_games[game_idx].is_my_turn(), self.live_games[game_idx].processing_my_turn());
+        debug!(
+            "our turn {} processing our turn {}",
+            self.live_games[game_idx].is_my_turn(),
+            self.live_games[game_idx].processing_my_turn()
+        );
 
         assert!(self.live_games[game_idx].is_my_turn());
 
@@ -1450,12 +1463,11 @@ impl ChannelHandler {
             self.unroll.coin.started_with_potato
         );
 
-        let tx = self.live_games[game_idx]
-            .get_transaction_for_move(
-                env.allocator,
-                existing_coin,
-                &env.agg_sig_me_additional_data,
-            )?;
+        let tx = self.live_games[game_idx].get_transaction_for_move(
+            env.allocator,
+            existing_coin,
+            &env.agg_sig_me_additional_data,
+        )?;
 
         Ok((
             self.live_games[game_idx].last_referee_puzzle_hash.clone(),

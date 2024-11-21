@@ -765,10 +765,14 @@ impl RefereeMaker {
 
     pub fn get_our_current_share(&self) -> Amount {
         let (share_for_our_turn, mover_share) = match self.state.borrow() {
-            RefereeMakerGameState::Initial { initial_move, game_handler, .. } => {
-                (matches!(game_handler, GameHandler::MyTurnHandler(_)),
-                 initial_move.mover_share.clone())
-            }
+            RefereeMakerGameState::Initial {
+                initial_move,
+                game_handler,
+                ..
+            } => (
+                matches!(game_handler, GameHandler::MyTurnHandler(_)),
+                initial_move.mover_share.clone(),
+            ),
             RefereeMakerGameState::AfterOurTurn {
                 most_recent_our_move,
                 ..
@@ -778,12 +782,11 @@ impl RefereeMaker {
                 ..
             } => (false, most_recent_their_move.basic.mover_share.clone()),
         };
-        let result =
-            if share_for_our_turn {
-                mover_share.clone()
-            } else {
-                self.fixed.amount.clone() - mover_share.clone()
-            };
+        let result = if share_for_our_turn {
+            mover_share.clone()
+        } else {
+            self.fixed.amount.clone() - mover_share.clone()
+        };
 
         result
     }
