@@ -632,7 +632,7 @@ impl RefereeMaker {
             );
             if *puzzle_hash == have_puzzle_hash {
                 if !old_state.state.is_my_turn() {
-                    self.state = self.old_states[i - 1].state.clone();
+                    self.state = self.old_states[i + 1].state.clone();
                 } else {
                     self.state = old_state.state.clone();
                 }
