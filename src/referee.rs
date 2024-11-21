@@ -33,14 +33,14 @@ use crate::common::types::{
 
 pub const REM_CONDITION_FIELDS: usize = 4;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct GameMoveStateInfo {
     pub move_made: Vec<u8>,
     pub mover_share: Amount,
     pub max_move_size: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct GameMoveDetails {
     pub basic: GameMoveStateInfo,
     /// sha256 of the concatenation of two hashes:
@@ -133,6 +133,7 @@ pub enum TheirTurnCoinSpentResult {
 ///  solution
 ///  evidence
 ///  )
+#[derive(Eq, PartialEq, Debug)]
 struct RefereePuzzleArgs {
     mover_puzzle_hash: PuzzleHash,
     waiter_puzzle_hash: PuzzleHash,
@@ -143,7 +144,48 @@ struct RefereePuzzleArgs {
     previous_validation_info_hash: Option<Hash>,
 }
 
+/*
+        their_puzzle_hash: &PuzzleHash,
+*/
+
 impl RefereePuzzleArgs {
+    fn new(
+        my_identity: &ChiaIdentity,
+        their_puzzle_hash: &PuzzleHash,
+        game_start_info: &GameStartInfo,
+        nonce: usize,
+        initial_move: &GameMoveStateInfo,
+        my_turn: bool,
+    ) -> Self {
+        RefereePuzzleArgs {
+            mover_puzzle_hash: if my_turn {
+                my_identity.puzzle_hash.clone()
+            } else {
+                their_puzzle_hash.clone()
+            },
+            waiter_puzzle_hash: if my_turn {
+                their_puzzle_hash.clone()
+            } else {
+                my_identity.puzzle_hash.clone()
+            },
+            timeout: game_start_info.timeout.clone(),
+            amount: game_start_info.amount.clone(),
+            nonce,
+            game_move: GameMoveDetails {
+                basic: GameMoveStateInfo {
+                    mover_share: if my_turn {
+                        game_start_info.amount.clone() - initial_move.mover_share.clone()
+                    } else {
+                        initial_move.mover_share.clone()
+                    },
+                    ..initial_move.clone()
+                },
+                validation_info_hash: Hash::default(),
+            },
+            previous_validation_info_hash: None,
+        }
+    }
+
     fn to_node_list(
         &self,
         allocator: &mut AllocEncoder,
@@ -558,37 +600,46 @@ impl RefereeMaker {
         let my_turn = game_start_info.game_handler.is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
 
-        let puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &referee_coin_puzzle_hash,
-            &RefereePuzzleArgs {
-                mover_puzzle_hash: if my_turn {
-                    my_identity.puzzle_hash.clone()
-                } else {
-                    their_puzzle_hash.clone()
-                },
-                waiter_puzzle_hash: if my_turn {
-                    their_puzzle_hash.clone()
-                } else {
-                    my_identity.puzzle_hash.clone()
-                },
-                timeout: game_start_info.timeout.clone(),
-                amount: game_start_info.amount.clone(),
-                nonce,
-                game_move: GameMoveDetails {
-                    basic: GameMoveStateInfo {
-                        mover_share: if my_turn {
-                            game_start_info.amount.clone() - initial_move.mover_share.clone()
-                        } else {
-                            initial_move.mover_share.clone()
-                        },
-                        ..initial_move.clone()
-                    },
-                    validation_info_hash: Hash::default(),
-                },
-                previous_validation_info_hash: None,
+        let new_ref_puzzle_args = RefereePuzzleArgs::new(
+            &my_identity,
+            &their_puzzle_hash,
+            &game_start_info,
+            nonce,
+            &initial_move,
+            my_turn,
+        );
+
+        let ref_puzzle_args = RefereePuzzleArgs {
+            mover_puzzle_hash: if my_turn {
+                my_identity.puzzle_hash.clone()
+            } else {
+                their_puzzle_hash.clone()
             },
-        )?;
+            waiter_puzzle_hash: if my_turn {
+                their_puzzle_hash.clone()
+            } else {
+                my_identity.puzzle_hash.clone()
+            },
+            timeout: game_start_info.timeout.clone(),
+            amount: game_start_info.amount.clone(),
+            nonce,
+            game_move: GameMoveDetails {
+                basic: GameMoveStateInfo {
+                    mover_share: if my_turn {
+                        game_start_info.amount.clone() - initial_move.mover_share.clone()
+                    } else {
+                        initial_move.mover_share.clone()
+                    },
+                    ..initial_move.clone()
+                },
+                validation_info_hash: Hash::default(),
+            },
+            previous_validation_info_hash: None,
+        };
+
+        assert_eq!(ref_puzzle_args, new_ref_puzzle_args);
+        let puzzle_hash =
+            curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
 
         Ok((
             RefereeMaker {
