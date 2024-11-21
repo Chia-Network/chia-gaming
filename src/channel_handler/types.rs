@@ -1001,11 +1001,12 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
         new_entropy: Hash,
+        state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
         assert!(self.referee_maker.is_my_turn());
         let referee_result =
             self.referee_maker
-                .my_turn_make_move(allocator, readable_move, new_entropy.clone())?;
+                .my_turn_make_move(allocator, readable_move, new_entropy.clone(), state_number)?;
         self.last_referee_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
         Ok(referee_result)
     }
@@ -1014,11 +1015,12 @@ impl LiveGame {
         &mut self,
         allocator: &mut AllocEncoder,
         game_move: &GameMoveDetails,
+        state_number: usize,
     ) -> Result<TheirTurnMoveResult, Error> {
         assert!(!self.referee_maker.is_my_turn());
         let their_move_result = self
             .referee_maker
-            .their_turn_move_off_chain(allocator, game_move)?;
+            .their_turn_move_off_chain(allocator, game_move, state_number)?;
         self.last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
         Ok(their_move_result)
     }
@@ -1056,10 +1058,11 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
         conditions: &NodePtr,
+        current_state: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         assert!(!self.referee_maker.is_my_turn());
         self.referee_maker
-            .their_turn_coin_spent(allocator, coin_string, conditions)
+            .their_turn_coin_spent(allocator, coin_string, conditions, current_state)
     }
 
     /// Regress the live game state to the state we know so that we can generate the puzzle

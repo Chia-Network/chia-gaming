@@ -107,7 +107,7 @@ pub struct ChannelHandler {
 
     // Has a parity between the two players of whether have_potato means odd
     // or even, but odd-ness = have-potato is arbitrary.
-    current_state_number: usize,
+    current_state_number: usize, //
     // Increments per game started.
     next_nonce_number: usize,
 
@@ -787,11 +787,16 @@ impl ChannelHandler {
     ) -> Result<MoveResult, Error> {
         debug!("{} SEND_POTATO_MOVE", self.unroll.coin.started_with_potato);
         let game_idx = self.get_game_by_id(game_id)?;
-        let referee_result = self.live_games[game_idx].internal_make_move(
-            env.allocator,
-            readable_move,
-            new_entropy.clone(),
-        )?;
+        let referee_result =
+            self.live_games[game_idx].internal_make_move(
+                env.allocator,
+                readable_move,
+                new_entropy.clone(),
+                self.current_state_number
+            )?;
+
+        self.live_games[game_idx].last_referee_puzzle_hash =
+            referee_result.puzzle_hash_for_unroll.clone();
 
         debug!(
             "{} move_result {referee_result:?}",
@@ -811,6 +816,7 @@ impl ChannelHandler {
             }),
         ));
 
+        //self.live_games[game_idx]
         let signatures = self.update_cached_unroll_state(env)?;
 
         Ok(MoveResult {
@@ -831,8 +837,11 @@ impl ChannelHandler {
         );
         let game_idx = self.get_game_by_id(game_id)?;
 
-        let their_move_result =
-            self.live_games[game_idx].internal_their_move(env.allocator, &move_result.game_move)?;
+        let their_move_result = self.live_games[game_idx].internal_their_move(
+            env.allocator,
+            &move_result.game_move,
+            self.current_state_number,
+        )?;
 
         debug!(
             "{} their_move_result {their_move_result:?}",
@@ -1153,21 +1162,25 @@ impl ChannelHandler {
         let rem_conditions = self.break_out_conditions_for_spent_coin(env, conditions)?;
         let full_coin = self.get_unroll_coin();
 
-        let state_number = usize_from_atom(&rem_conditions[0])
+        let unrolling_state_number = usize_from_atom(&rem_conditions[0])
             .ok_or_else(|| Error::StrErr("Unconvertible state number".to_string()))?;
 
         let our_parity = full_coin.coin.state_number & 1;
-        let their_parity = state_number & 1;
+        let their_parity = unrolling_state_number & 1;
 
         debug!(
-            "{} CHANNEL COIN SPENT: myself {myself} initiated {} my state {} coin state {} channel coin state {state_number}",
+            "{} CHANNEL COIN SPENT: myself {myself} initiated {} my state {} coin state {} channel coin state {unrolling_state_number}",
             self.unroll.coin.started_with_potato,
             self.initiated_on_chain,
             self.current_state_number,
             full_coin.coin.state_number
         );
 
-        match (myself, state_number.cmp(&self.current_state_number)) {
+        // investigate
+        match (
+            myself,
+            unrolling_state_number.cmp(&self.current_state_number),
+        ) {
             (true, _) | (_, Ordering::Equal) => {
                 // Timeout
                 let curried_unroll_puzzle = self
@@ -1194,7 +1207,7 @@ impl ChannelHandler {
             }
             (_, Ordering::Greater) => Err(Error::StrErr(format!(
                 "Reply from the future onchain {} (me {}) vs {}",
-                state_number, self.current_state_number, full_coin.coin.state_number
+                unrolling_state_number, self.current_state_number, full_coin.coin.state_number
             ))),
             (_, Ordering::Less) => {
                 if our_parity == their_parity {
@@ -1416,14 +1429,19 @@ impl ChannelHandler {
     ) -> Result<(PuzzleHash, GameMoveDetails, RefereeOnChainTransaction), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
-        let move_result =
-            self.live_games[game_idx].internal_make_move(env.allocator, readable_move, entropy)?;
-
-        let tx = self.live_games[game_idx].get_transaction_for_move(
+        let move_result = self.live_games[game_idx].internal_make_move(
             env.allocator,
-            existing_coin,
-            &env.agg_sig_me_additional_data,
+            readable_move,
+            entropy,
+            self.current_state_number,
         )?;
+
+        let tx = self.live_games[game_idx]
+            .get_transaction_for_move(
+                env.allocator,
+                existing_coin,
+                &env.agg_sig_me_additional_data,
+            )?;
 
         Ok((
             self.live_games[game_idx].last_referee_puzzle_hash.clone(),
@@ -1441,7 +1459,12 @@ impl ChannelHandler {
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         let live_game_idx = self.get_game_by_id(game_id)?;
 
-        self.live_games[live_game_idx].their_turn_coin_spent(env.allocator, coin_string, conditions)
+        self.live_games[live_game_idx].their_turn_coin_spent(
+            env.allocator,
+            coin_string,
+            conditions,
+            self.current_state_number,
+        )
     }
 
     pub fn get_redo_action(&mut self) -> Result<Option<GameAction>, Error> {

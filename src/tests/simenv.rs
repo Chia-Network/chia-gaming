@@ -619,7 +619,7 @@ fn test_referee_can_slash_on_chain() {
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
     let _my_move_wire_data = reftest
         .my_referee
-        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen())
+        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
 
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
@@ -747,7 +747,7 @@ fn test_referee_can_move_on_chain() {
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
     let _my_move_wire_data = reftest
         .my_referee
-        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen())
+        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
 
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));

@@ -216,7 +216,7 @@ fn test_referee_smoke() {
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
     let my_move_wire_data = reftest
         .my_referee
-        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen())
+        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
 
     assert!(my_move_wire_data.details.basic.move_made.is_empty());
@@ -231,6 +231,7 @@ fn test_referee_smoke() {
             },
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
         },
+        0,
     );
     debug!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
@@ -242,7 +243,7 @@ fn test_referee_smoke() {
 
     let their_move_local_update = reftest
         .their_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
         .expect("should move");
 
     debug!("their_move_wire_data {their_move_local_update:?}");
@@ -264,15 +265,15 @@ fn test_referee_smoke() {
         .run_validator_for_their_move(&mut allocator, &validator_move_args)
         .expect("should run");
 
-    assert!(reftest.my_referee.is_my_turn());
+    assert!(reftest.my_referee.processing_my_turn());
     let their_move_result = reftest
         .my_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
         .expect("should run");
     assert_eq!(their_move_result.message, b"message data");
     assert_eq!(
         disassemble(allocator.allocator(), their_move_result.readable_move, None),
         "(())"
     );
-    assert!(!reftest.my_referee.is_my_turn());
+    assert!(!reftest.my_referee.processing_my_turn());
 }
