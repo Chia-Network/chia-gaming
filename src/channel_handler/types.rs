@@ -408,6 +408,7 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
 
 pub struct LiveGame {
     pub game_id: GameID,
+    pub rewind_outcome: Option<usize>,
     pub last_referee_puzzle_hash: PuzzleHash,
     referee_maker: Box<RefereeMaker>,
     pub my_contribution: Amount,
@@ -424,6 +425,7 @@ pub struct PotatoAcceptCachedData {
 
 #[derive(Debug)]
 pub struct PotatoMoveCachedData {
+    pub state_number: usize,
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
     pub move_data: ReadableMove,
@@ -989,7 +991,12 @@ impl LiveGame {
             referee_maker: Box::new(referee_maker),
             my_contribution,
             their_contribution,
+            rewind_outcome: None,
         }
+    }
+
+    pub fn is_my_turn(&self) -> bool {
+        self.referee_maker.is_my_turn()
     }
 
     pub fn processing_my_turn(&self) -> bool {
@@ -1023,6 +1030,10 @@ impl LiveGame {
             .their_turn_move_off_chain(allocator, game_move, state_number)?;
         self.last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
         Ok(their_move_result)
+    }
+
+    pub fn get_rewind_outcome(&self) -> Option<usize> {
+        self.rewind_outcome.clone()
     }
 
     pub fn get_amount(&self) -> Amount {
@@ -1072,16 +1083,23 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         want_ph: &PuzzleHash,
         initiated: bool,
-    ) -> Result<bool, Error> {
+        current_state: usize,
+    ) -> Result<Option<usize>, Error> {
         let referee_puzzle_hash = self
             .referee_maker
             .curried_referee_puzzle_hash_for_validator(allocator, true)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
         if referee_puzzle_hash == *want_ph {
-            return Ok(true);
+            self.rewind_outcome = Some(current_state);
+            return Ok(Some(current_state));
         }
 
-        self.referee_maker.rewind(allocator, want_ph, initiated)
+        let result = self.referee_maker.rewind(allocator, want_ph, initiated)?;
+        if let Some(current_state) = &result {
+            self.rewind_outcome = Some(*current_state);
+        }
+
+        Ok(result)
     }
 }

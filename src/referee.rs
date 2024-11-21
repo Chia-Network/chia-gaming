@@ -619,7 +619,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         puzzle_hash: &PuzzleHash,
         initiated: bool,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<usize>, Error> {
         for (i, old_state) in self.old_states.iter().enumerate().skip(1).rev() {
             let have_puzzle_hash = self.curried_referee_puzzle_hash_for_validator_with_state(
                 allocator,
@@ -631,18 +631,18 @@ impl RefereeMaker {
                 old_state.state_number
             );
             if *puzzle_hash == have_puzzle_hash {
-                if old_state.state.is_my_turn() {
+                if !old_state.state.is_my_turn() {
                     self.state = self.old_states[i - 1].state.clone();
                 } else {
                     self.state = old_state.state.clone();
                 }
 
                 debug!("referee rewind: reassume state {:?}", self.state);
-                return Ok(true);
+                return Ok(Some(old_state.state_number));
             }
         }
 
-        Ok(false)
+        Ok(None)
     }
 
     pub fn is_my_turn(&self) -> bool {
@@ -785,8 +785,6 @@ impl RefereeMaker {
                 self.fixed.amount.clone() - mover_share.clone()
             };
 
-        debug!("get_our_current_share {result:?} <- {share_for_our_turn} {mover_share:?} amount {:?} {:?}", self.fixed.amount, self.state);
-
         result
     }
 
@@ -802,7 +800,7 @@ impl RefereeMaker {
         details: &GameMoveDetails,
         state_number: usize,
     ) -> Result<(), Error> {
-        debug!("accept move {details:?}");
+        debug!("{state_number} accept move {details:?}");
         let new_state = match self.state.borrow() {
             RefereeMakerGameState::Initial { initial_move, .. } => {
                 RefereeMakerGameState::AfterOurTurn {

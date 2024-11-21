@@ -785,7 +785,7 @@ impl ChannelHandler {
         readable_move: &ReadableMove,
         new_entropy: Hash,
     ) -> Result<MoveResult, Error> {
-        debug!("{} SEND_POTATO_MOVE", self.unroll.coin.started_with_potato);
+        debug!("{} SEND_POTATO_MOVE {}", self.is_initial_potato(), self.current_state_number);
         let game_idx = self.get_game_by_id(game_id)?;
         let referee_result =
             self.live_games[game_idx].internal_make_move(
@@ -808,6 +808,7 @@ impl ChannelHandler {
         // We let them spend a state number 1 higher but nothing else changes.
         self.update_cache_for_potato_send(Some(
             CachedPotatoRegenerateLastHop::PotatoMoveHappening(PotatoMoveCachedData {
+                state_number: self.current_state_number,
                 game_id: game_id.clone(),
                 puzzle_hash,
                 move_data: readable_move.clone(),
@@ -832,8 +833,9 @@ impl ChannelHandler {
         move_result: &MoveResult,
     ) -> Result<(ChannelCoinSpendInfo, NodePtr, Vec<u8>), Error> {
         debug!(
-            "{} RECEIVED_POTATO_MOVE",
-            self.unroll.coin.started_with_potato
+            "{} RECEIVED_POTATO_MOVE {}",
+            self.is_initial_potato(),
+            self.current_state_number,
         );
         let game_idx = self.get_game_by_id(game_id)?;
 
@@ -1377,10 +1379,11 @@ impl ChannelHandler {
         coins: &[PuzzleHash],
     ) -> Result<HashMap<CoinString, OnChainGameState>, Error> {
         let mut res = HashMap::new();
+        let initial_potato = self.is_initial_potato();
 
         debug!(
             "{} ALIGN GAME STATES: initiated {} my state {} coin state {}",
-            self.unroll.coin.started_with_potato,
+            initial_potato,
             self.initiated_on_chain,
             self.current_state_number,
             self.unroll.coin.state_number,
@@ -1392,11 +1395,14 @@ impl ChannelHandler {
                     "live game id {:?} try to use coin {game_coin:?}",
                     live_game.game_id
                 );
-                if live_game.set_state_for_coin(
+                let rewind_target = live_game.set_state_for_coin(
                     env.allocator,
                     game_coin,
                     self.initiated_on_chain,
-                )? {
+                    self.current_state_number,
+                )?;
+                if let Some(rewind_state) = rewind_target {
+                    debug!("{} rewind target state was {rewind_state}", initial_potato);
                     let coin_id = CoinString::from_parts(
                         &unroll_coin.to_coin_id(),
                         &game_coin.clone(),
@@ -1427,7 +1433,11 @@ impl ChannelHandler {
         entropy: Hash,
         existing_coin: &CoinString,
     ) -> Result<(PuzzleHash, GameMoveDetails, RefereeOnChainTransaction), Error> {
+        debug!("{} ON CHAIN OUR MOVE {:?} {:?} {:?}", self.is_initial_potato(), readable_move, entropy, existing_coin);
         let game_idx = self.get_game_by_id(game_id)?;
+        debug!("our turn {} processing our turn {}", self.live_games[game_idx].is_my_turn(), self.live_games[game_idx].processing_my_turn());
+
+        assert!(self.live_games[game_idx].is_my_turn());
 
         let move_result = self.live_games[game_idx].internal_make_move(
             env.allocator,
@@ -1435,6 +1445,10 @@ impl ChannelHandler {
             entropy,
             self.current_state_number,
         )?;
+        debug!(
+            "{} move_result {move_result:?}",
+            self.unroll.coin.started_with_potato
+        );
 
         let tx = self.live_games[game_idx]
             .get_transaction_for_move(
@@ -1487,18 +1501,21 @@ impl ChannelHandler {
             }
             Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) => {
                 let game_idx = self.get_game_by_id(&move_data.game_id)?;
-                if (self.current_state_number + self.unroll.coin.started_with_potato as usize) & 1
-                    == 1
-                {
-                    return Ok(None);
+                if let Some(rewind_state) = self.live_games[game_idx].get_rewind_outcome() {
+                    // We should have odd parity between the rewind and the current state.
+                    if (move_data.state_number & 1) == (rewind_state & 1) {
+                        return Ok(None);
+                    }
+
+                    debug!("{} redo move data {move_data:?}", self.is_initial_potato());
+                    return Ok(Some(GameAction::Move(
+                        move_data.game_id.clone(),
+                        move_data.move_data.clone(),
+                        move_data.move_entropy.clone(),
+                    )));
                 }
 
-                debug!("redo move data {move_data:?}");
-                return Ok(Some(GameAction::Move(
-                    move_data.game_id.clone(),
-                    move_data.move_data.clone(),
-                    move_data.move_entropy.clone(),
-                )));
+                Ok(None)
             }
             _ => {
                 todo!();

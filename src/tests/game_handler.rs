@@ -107,7 +107,6 @@ fn test_game_handler_my_turn() {
         ).expect("should assemble");
 
     let my_turn_handler = GameHandler::my_driver_from_nodeptr(program);
-    let nil = allocator.allocator().null();
     let result = my_turn_handler
         .call_my_turn_driver(
             &mut allocator,
