@@ -150,39 +150,41 @@ struct RefereePuzzleArgs {
 
 impl RefereePuzzleArgs {
     fn new(
-        my_identity: &ChiaIdentity,
+        my_puzzle_hash: &PuzzleHash,
         their_puzzle_hash: &PuzzleHash,
-        game_start_info: &GameStartInfo,
-        nonce: usize,
+        fixed_info: &RMFixed,
         initial_move: &GameMoveStateInfo,
+        previous_validation_info_hash: Option<Hash>,
+        validation_info_hash: &Hash,
+        nonce: usize,
         my_turn: bool,
     ) -> Self {
         RefereePuzzleArgs {
             mover_puzzle_hash: if my_turn {
-                my_identity.puzzle_hash.clone()
+                my_puzzle_hash.clone()
             } else {
                 their_puzzle_hash.clone()
             },
             waiter_puzzle_hash: if my_turn {
                 their_puzzle_hash.clone()
             } else {
-                my_identity.puzzle_hash.clone()
+                my_puzzle_hash.clone()
             },
-            timeout: game_start_info.timeout.clone(),
-            amount: game_start_info.amount.clone(),
+            timeout: fixed_info.timeout.clone(),
+            amount: fixed_info.amount.clone(),
             nonce,
             game_move: GameMoveDetails {
                 basic: GameMoveStateInfo {
                     mover_share: if my_turn {
-                        game_start_info.amount.clone() - initial_move.mover_share.clone()
+                        fixed_info.amount.clone() - initial_move.mover_share.clone()
                     } else {
                         initial_move.mover_share.clone()
                     },
                     ..initial_move.clone()
                 },
-                validation_info_hash: Hash::default(),
+                validation_info_hash: validation_info_hash.clone(),
             },
-            previous_validation_info_hash: None,
+            previous_validation_info_hash,
         }
     }
 
@@ -600,12 +602,24 @@ impl RefereeMaker {
         let my_turn = game_start_info.game_handler.is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
 
-        let new_ref_puzzle_args = RefereePuzzleArgs::new(
-            &my_identity,
-            &their_puzzle_hash,
-            &game_start_info,
+        let fixed_info = Rc::new(RMFixed {
+            referee_coin_puzzle,
+            referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
+            their_referee_puzzle_hash: their_puzzle_hash.clone(),
+            my_identity: my_identity.clone(),
+            timeout: game_start_info.timeout.clone(),
+            amount: game_start_info.amount.clone(),
             nonce,
+        });
+
+        let new_ref_puzzle_args = RefereePuzzleArgs::new(
+            &my_identity.puzzle_hash,
+            &their_puzzle_hash,
+            &fixed_info,
             &initial_move,
+            None,
+            &Hash::default(),
+            nonce,
             my_turn,
         );
 
@@ -643,17 +657,7 @@ impl RefereeMaker {
 
         Ok((
             RefereeMaker {
-                fixed: Rc::new(RMFixed {
-                    referee_coin_puzzle,
-                    referee_coin_puzzle_hash,
-
-                    their_referee_puzzle_hash: their_puzzle_hash.clone(),
-                    my_identity,
-                    timeout: game_start_info.timeout.clone(),
-                    amount: game_start_info.amount.clone(),
-                    nonce,
-                }),
-
+                fixed: fixed_info,
                 finished: false,
                 state,
                 old_states: Vec::new(),
@@ -1036,6 +1040,26 @@ impl RefereeMaker {
             result.game_move
         );
 
+        let new_ref_puzzle_args = RefereePuzzleArgs::new(
+            &self.fixed.my_identity.puzzle_hash,
+            &self.fixed.their_referee_puzzle_hash,
+            &self.fixed,
+            &result.game_move.basic,
+            previous_validation_info_hash.clone(),
+            &result.game_move.validation_info_hash,
+            self.fixed.nonce,
+            self.is_my_turn(),
+        );
+        let ref_puzzle_args = RefereePuzzleArgs {
+            mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            timeout: self.fixed.timeout.clone(),
+            amount: self.fixed.amount.clone(),
+            previous_validation_info_hash,
+            nonce: self.fixed.nonce,
+            game_move: result.game_move.clone(),
+        };
+        assert_eq!(ref_puzzle_args, new_ref_puzzle_args);
         // To make a puzzle hash for unroll: curry the correct parameters into
         // the referee puzzle.
         //
@@ -1044,15 +1068,7 @@ impl RefereeMaker {
         let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.fixed.referee_coin_puzzle_hash,
-            &RefereePuzzleArgs {
-                mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
-                waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
-                timeout: self.fixed.timeout.clone(),
-                amount: self.fixed.amount.clone(),
-                nonce: self.fixed.nonce,
-                game_move: result.game_move.clone(),
-                previous_validation_info_hash,
-            },
+            &ref_puzzle_args,
         )?;
 
         debug!("new_curried_referee_puzzle_hash (our turn) {new_curried_referee_puzzle_hash:?}");
