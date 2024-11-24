@@ -1153,10 +1153,6 @@ impl RefereeMaker {
         self.curried_referee_args_for_validator_direction_with_state(self.state.borrow(), direction)
     }
 
-    fn curried_referee_args_for_validator(&self) -> Result<RefereePuzzleArgs, Error> {
-        self.curried_referee_args_for_validator_direction(false)
-    }
-
     pub fn curried_referee_puzzle_hash_for_validator_with_state(
         &self,
         allocator: &mut AllocEncoder,
@@ -1179,8 +1175,9 @@ impl RefereeMaker {
     pub fn curried_referee_puzzle_for_validator(
         &self,
         allocator: &mut AllocEncoder,
+        invert: bool,
     ) -> Result<Puzzle, Error> {
-        let args = self.curried_referee_args_for_validator()?;
+        let args = self.curried_referee_args_for_validator_direction(invert)?;
         curry_referee_puzzle(
             allocator,
             &self.fixed.referee_coin_puzzle,
@@ -1240,7 +1237,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let spend_puzzle = self.curried_referee_puzzle_for_validator(allocator)?;
+        let spend_puzzle = self.curried_referee_puzzle_for_validator(allocator, true)?;
         self.get_transaction(
             allocator,
             coin_string,
