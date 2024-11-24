@@ -1702,7 +1702,7 @@ impl RefereeMaker {
             allocator,
             &self.fixed.referee_coin_puzzle,
             &self.fixed.referee_coin_puzzle_hash,
-            &ref_puzzle_args,
+            &puzzle_args,
         )?;
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
