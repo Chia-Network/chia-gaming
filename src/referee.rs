@@ -134,7 +134,7 @@ pub enum TheirTurnCoinSpentResult {
 ///  evidence
 ///  )
 #[derive(Eq, PartialEq, Debug)]
-struct RefereePuzzleArgs {
+pub struct RefereePuzzleArgs {
     mover_puzzle_hash: PuzzleHash,
     waiter_puzzle_hash: PuzzleHash,
     timeout: Timeout,
@@ -1098,16 +1098,18 @@ impl RefereeMaker {
         Ok(result)
     }
 
-    fn curried_referee_args_for_validator_direction_with_state(
+    pub fn curried_referee_args_for_validator_direction_with_state(
         &self,
         state: &RefereeMakerGameState,
         direction: bool,
     ) -> Result<RefereePuzzleArgs, Error> {
         let (previous_validation_info_hash, game_move, validation_info_hash) = match state {
-            RefereeMakerGameState::Initial { .. } => {
-                return Err(Error::StrErr(
-                    "can't challenge before a move is made".to_string(),
-                ));
+            RefereeMakerGameState::Initial { game_handler, initial_move, .. } => {
+                if matches!(game_handler, GameHandler::MyTurnHandler(_)) {
+                    (&None, initial_move.clone(), Hash::default())
+                } else {
+                    todo!();
+                }
             }
             RefereeMakerGameState::AfterOurTurn {
                 most_recent_our_move,
@@ -1177,7 +1179,21 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         invert: bool,
     ) -> Result<Puzzle, Error> {
+        assert!(invert);
         let args = self.curried_referee_args_for_validator_direction(invert)?;
+        curry_referee_puzzle(
+            allocator,
+            &self.fixed.referee_coin_puzzle,
+            &self.fixed.referee_coin_puzzle_hash,
+            &args,
+        )
+    }
+
+    pub fn on_chain_referee_puzzle_to_replicate_my_move(
+        &self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<Puzzle, Error> {
+        let args = self.curried_referee_args_for_validator_direction(false)?;
         curry_referee_puzzle(
             allocator,
             &self.fixed.referee_coin_puzzle,

@@ -745,6 +745,7 @@ fn test_referee_can_move_on_chain() {
     // Make our first move.
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
+
     let _my_move_wire_data = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
@@ -766,7 +767,7 @@ fn test_referee_can_move_on_chain() {
     debug!("state at start of referee object");
     let spend_to_referee = reftest
         .my_referee
-        .curried_referee_puzzle_for_validator(&mut allocator, false)
+        .on_chain_referee_puzzle_to_replicate_my_move(&mut allocator)
         .expect("should work");
     let spend_to_referee_clvm = spend_to_referee
         .to_clvm(&mut allocator)
