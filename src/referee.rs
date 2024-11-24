@@ -1101,7 +1101,7 @@ impl RefereeMaker {
     fn curried_referee_args_for_validator_direction_with_state(
         &self,
         state: &RefereeMakerGameState,
-        my_turn: bool,
+        direction: bool,
     ) -> Result<RefereePuzzleArgs, Error> {
         let (previous_validation_info_hash, game_move, validation_info_hash) = match state {
             RefereeMakerGameState::Initial { .. } => {
@@ -1133,16 +1133,16 @@ impl RefereeMaker {
             basic: game_move.clone(),
             validation_info_hash: validation_info_hash.clone(),
         };
-
         let ref_puzzle_args = RefereePuzzleArgs::new(
             &self.fixed,
             &game_move,
             previous_validation_info_hash.as_ref(),
             &validation_info_hash,
             None,
-            my_turn,
+            state.processing_my_turn() ^ direction, // xxx
         );
 
+        assert_eq!(ref_puzzle_args, ref_puzzle_args);
         Ok(ref_puzzle_args)
     }
 
@@ -1150,11 +1150,11 @@ impl RefereeMaker {
         &self,
         direction: bool,
     ) -> Result<RefereePuzzleArgs, Error> {
-        self.curried_referee_args_for_validator_direction_with_state(self.state.borrow(), self.is_my_turn() ^ direction)
+        self.curried_referee_args_for_validator_direction_with_state(self.state.borrow(), direction)
     }
 
     fn curried_referee_args_for_validator(&self) -> Result<RefereePuzzleArgs, Error> {
-        self.curried_referee_args_for_validator_direction(self.processing_my_turn())
+        self.curried_referee_args_for_validator_direction(false)
     }
 
     pub fn curried_referee_puzzle_hash_for_validator_with_state(
