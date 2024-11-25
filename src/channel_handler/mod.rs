@@ -32,6 +32,7 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
     puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
+    calculate_synthetic_public_key
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
@@ -43,6 +44,7 @@ use crate::referee::{
     GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
     TheirTurnCoinSpentResult,
 };
+use crate::common::constants::DEFAULT_HIDDEN_PUZZLE_HASH;
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -1394,6 +1396,7 @@ impl ChannelHandler {
             self.unroll.coin.state_number,
         );
 
+        let mover_puzzle_hash = private_to_public_key(&self.referee_private_key());
         for game_coin in coins.iter() {
             for live_game in self.live_games.iter_mut() {
                 debug!(
@@ -1408,11 +1411,13 @@ impl ChannelHandler {
                 )?;
                 if let Some(rewind_state) = rewind_target {
                     debug!("{} rewind target state was {rewind_state}", initial_potato);
+                    debug!("mover puzzle hash is {:?}", mover_puzzle_hash);
                     let coin_id = CoinString::from_parts(
                         &unroll_coin.to_coin_id(),
                         &game_coin.clone(),
                         &live_game.get_amount(),
                     );
+
                     res.insert(
                         coin_id,
                         OnChainGameState {
@@ -1507,6 +1512,12 @@ impl ChannelHandler {
             self.unroll.coin.state_number
         );
 
+        let finished_unroll_state =
+        {
+            let finished_unroll = self.get_finished_unroll_coin();
+            finished_unroll.coin.state_number
+        };
+
         // We're on chain due to error.
         let mut cla = None;
         swap(&mut cla, &mut self.cached_last_action);
@@ -1526,7 +1537,7 @@ impl ChannelHandler {
                 if let Some(rewind_state) = self.live_games[game_idx].get_rewind_outcome() {
                     // We should have odd parity between the rewind and the current state.
                     debug!("{} getting redo move: move_data.state_number {} rewind_state {rewind_state}", self.is_initial_potato(), move_data.state_number);
-                    if (move_data.state_number & 1) == (rewind_state & 1) {
+                    if (move_data.state_number & 1) == (finished_unroll_state & 1) {
                         return Ok(None);
                     }
 

@@ -642,6 +642,12 @@ impl RefereeMaker {
             Some(&mover_share),
             my_turn,
         ));
+        // If this reflects my turn, then we will spend the next parameter set.
+        if my_turn {
+            assert_eq!(fixed_info.my_identity.puzzle_hash, ref_puzzle_args.mover_puzzle_hash);
+        } else {
+            assert_eq!(fixed_info.their_referee_puzzle_hash, ref_puzzle_args.mover_puzzle_hash);
+        }
         let state = Rc::new(RefereeMakerGameState::Initial {
             initial_state: Rc::new(initial_state_program),
             initial_validation_program: game_start_info.initial_validation_program.clone(),
@@ -689,7 +695,7 @@ impl RefereeMaker {
             let have_puzzle_hash = curry_referee_puzzle_hash(
                 allocator,
                 &self.fixed.referee_coin_puzzle_hash,
-                &old_state.state.spend_this_coin(),
+                &old_state.state.args_for_this_coin(),
             )?;
             debug!(
                 "referee rewind: {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
@@ -808,6 +814,9 @@ impl RefereeMaker {
         state_number: usize,
     ) -> Result<(), Error> {
         debug!("{state_number} accept move {details:?}");
+        assert_ne!(current_puzzle_args.mover_puzzle_hash, new_puzzle_args.mover_puzzle_hash);
+        assert_eq!(current_puzzle_args.mover_puzzle_hash, new_puzzle_args.waiter_puzzle_hash);
+        assert_eq!(self.fixed.my_identity.puzzle_hash, current_puzzle_args.mover_puzzle_hash);
         let new_state = RefereeMakerGameState::AfterOurTurn {
             game_handler: game_handler.clone(),
             entropy,
@@ -833,6 +842,9 @@ impl RefereeMaker {
         details: &GameMoveDetails,
         state_number: usize,
     ) -> Result<(), Error> {
+        assert_ne!(old_args.mover_puzzle_hash, referee_args.mover_puzzle_hash);
+        assert_eq!(old_args.mover_puzzle_hash, referee_args.waiter_puzzle_hash);
+        assert_eq!(self.fixed.my_identity.puzzle_hash, referee_args.mover_puzzle_hash);
         debug!("accept their move {details:?}");
 
         // An empty handler if the game ended.
@@ -1182,6 +1194,12 @@ impl RefereeMaker {
         debug!("transaction for move: state {:?}", self.state);
         debug!("get_transaction_for_move: target curry");
         let target_args = self.spend_this_coin();
+        assert_ne!(target_args.mover_puzzle_hash, self.fixed.my_identity.puzzle_hash);
+        assert_ne!(args.mover_puzzle_hash, target_args.mover_puzzle_hash);
+        assert_eq!(args.mover_puzzle_hash, target_args.waiter_puzzle_hash);
+        assert!(matches!(self.state.borrow(), RefereeMakerGameState::AfterOurTurn { .. }));
+        assert!(matches!(self.get_game_handler(), GameHandler::TheirTurnHandler(_)));
+
         assert_eq!(Some(&args.game_move.validation_info_hash), target_args.previous_validation_info_hash.as_ref());
         debug!(
             "transaction for move: from {:?} to {target_args:?}",
@@ -1221,6 +1239,7 @@ impl RefereeMaker {
         // Generalize this once the test is working.  Move out the assumption that
         // referee private key is my_identity.synthetic_private_key.
         debug!("referee spend with parent coin {coin_string:?}");
+        debug!("signing coin with synthetic public key {:?} for public key {:?}", self.fixed.my_identity.synthetic_public_key, self.fixed.my_identity.public_key);
         let referee_spend = standard_solution_partial(
             allocator,
             &self.fixed.my_identity.synthetic_private_key,
