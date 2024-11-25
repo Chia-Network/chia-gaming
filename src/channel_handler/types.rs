@@ -1090,7 +1090,7 @@ impl LiveGame {
     ) -> Result<Option<usize>, Error> {
         let referee_puzzle_hash = self
             .referee_maker
-            .curried_referee_puzzle_hash_for_validator(allocator, true)?;
+            .on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
         if referee_puzzle_hash == *want_ph {

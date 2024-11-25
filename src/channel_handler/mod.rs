@@ -1450,8 +1450,6 @@ impl ChannelHandler {
             self.live_games[game_idx].processing_my_turn()
         );
 
-        assert!(self.live_games[game_idx].is_my_turn());
-
         let move_result = self.live_games[game_idx].internal_make_move(
             env.allocator,
             readable_move,

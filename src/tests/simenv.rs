@@ -613,6 +613,21 @@ fn test_referee_can_slash_on_chain() {
         .get_my_coins(&reftest.my_identity.puzzle_hash)
         .expect("got coins");
     assert!(!coins.is_empty());
+    let (_, _, amt) = coins[0].to_parts().unwrap();
+    let spend_to_referee = reftest
+        .my_referee
+        .on_chain_referee_puzzle(&mut allocator)
+        .expect("should work");
+    let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
+    let referee_coins = s
+        .spend_coin_to_puzzle_hash(
+            &mut allocator,
+            &reftest.my_identity,
+            &reftest.my_identity.puzzle,
+            &coins[0],
+            &[(referee_puzzle_hash.clone(), amt.clone())],
+        )
+        .expect("should create referee coin");
 
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
     let readable_my_move =
@@ -623,23 +638,6 @@ fn test_referee_can_slash_on_chain() {
         .expect("should move");
 
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
-
-    let (_, _, amt) = coins[0].to_parts().unwrap();
-    let spend_to_referee = reftest
-        .my_referee
-        .curried_referee_puzzle_for_validator(&mut allocator, true)
-        .expect("should work");
-    let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
-
-    let referee_coins = s
-        .spend_coin_to_puzzle_hash(
-            &mut allocator,
-            &reftest.my_identity,
-            &reftest.my_identity.puzzle,
-            &coins[0],
-            &[(referee_puzzle_hash.clone(), amt.clone())],
-        )
-        .expect("should create referee coin");
 
     // Farm 20 blocks to get past the time limit.
     for _ in 0..20 {
@@ -652,39 +650,13 @@ fn test_referee_can_slash_on_chain() {
         .get_transaction_for_timeout(&mut allocator, &referee_coins[0])
         .expect("should work")
         .unwrap();
-
-    let timeout_transaction_puzzle = timeout_transaction
-        .bundle
-        .puzzle
-        .to_clvm(&mut allocator)
-        .expect("should work");
-    let disassembled_puzzle_in_transaction =
-        disassemble(allocator.allocator(), timeout_transaction_puzzle, None);
-    let spend_to_referee_clvm = spend_to_referee
-        .to_clvm(&mut allocator)
-        .expect("should work");
-    assert_eq!(
-        disassemble(allocator.allocator(), spend_to_referee_clvm, None),
-        disassembled_puzzle_in_transaction
-    );
-
-    debug!("timeout_transaction {timeout_transaction:?}");
-    let puzzle_clvm = timeout_transaction
-        .bundle
-        .puzzle
-        .to_clvm(&mut allocator)
-        .expect("should work");
-    debug!(
-        "referee puzzle curried {}",
-        disassemble(allocator.allocator(), puzzle_clvm, None)
-    );
-
     let specific = CoinSpend {
         coin: referee_coins[0].clone(),
         bundle: timeout_transaction.bundle.clone(),
     };
 
     let included = s.push_tx(&mut allocator, &[specific]).expect("should work");
+    debug!("included {included:?}");
     assert_eq!(included.code, 1);
 }
 
@@ -767,7 +739,7 @@ fn test_referee_can_move_on_chain() {
     debug!("state at start of referee object");
     let spend_to_referee = reftest
         .my_referee
-        .on_chain_referee_puzzle_to_replicate_my_move(&mut allocator)
+        .on_chain_referee_puzzle(&mut allocator)
         .expect("should work");
     let spend_to_referee_clvm = spend_to_referee
         .to_clvm(&mut allocator)

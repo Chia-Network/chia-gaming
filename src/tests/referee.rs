@@ -108,6 +108,7 @@ pub struct RefereeTest {
     pub referee_coin_puzzle: Puzzle,
     #[allow(dead_code)]
     pub referee_coin_puzzle_hash: PuzzleHash,
+    pub first_puzzle_hash: PuzzleHash,
 }
 
 impl RefereeTest {
@@ -125,7 +126,7 @@ impl RefereeTest {
         let referee_coin_puzzle =
             read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable");
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
-        let (my_referee, _) = RefereeMaker::new(
+        let (my_referee, first_puzzle_hash) = RefereeMaker::new(
             allocator,
             referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash.clone(),
@@ -135,6 +136,7 @@ impl RefereeTest {
             1,
         )
         .expect("should construct");
+        assert_eq!(first_puzzle_hash, my_referee.on_chain_referee_puzzle_hash(allocator).expect("should work"));
 
         let their_game_start_info = GameStartInfo {
             initial_mover_share: game_start.amount.clone() - game_start.initial_mover_share.clone(),
@@ -162,6 +164,7 @@ impl RefereeTest {
 
             referee_coin_puzzle,
             referee_coin_puzzle_hash,
+            first_puzzle_hash,
         }
     }
 }
