@@ -1056,10 +1056,11 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         game_coin: &CoinString,
         agg_sig_me: &Hash,
+        on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
         assert!(self.referee_maker.processing_my_turn());
         self.referee_maker
-            .get_transaction_for_move(allocator, game_coin, agg_sig_me)
+            .get_transaction_for_move(allocator, game_coin, agg_sig_me, on_chain)
     }
 
     pub fn receive_readable(
@@ -1091,7 +1092,7 @@ impl LiveGame {
         want_ph: &PuzzleHash,
         initiated: bool,
         current_state: usize,
-    ) -> Result<Option<usize>, Error> {
+    ) -> Result<Option<(bool, usize)>, Error> {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
@@ -1100,13 +1101,13 @@ impl LiveGame {
             debug!("{initiated} has compatible game for rewind at {current_state}");
             assert!(self.is_my_turn());
             self.rewind_outcome = Some(*current_state);
-            return Ok(result);
+            return Ok(Some((self.is_my_turn(), *current_state)));
         }
 
         if referee_puzzle_hash == *want_ph {
             debug!("{initiated} has current game for rewind");
             self.rewind_outcome = Some(current_state);
-            return Ok(Some(current_state));
+            return Ok(Some((self.is_my_turn(), current_state)));
         }
 
         debug!("{initiated} has no game for rewind");

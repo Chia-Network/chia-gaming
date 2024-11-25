@@ -767,6 +767,7 @@ fn test_referee_can_move_on_chain() {
             &mut allocator,
             &referee_coins[0],
             &agg_sig_me_additional_data,
+            true,
         )
         .expect("should work");
 

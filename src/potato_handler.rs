@@ -27,6 +27,7 @@ use crate::common::types::{
     Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
     SpendBundle, Timeout,
 };
+use crate::referee::RefereeOnChainTransaction;
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -421,6 +422,7 @@ enum PotatoState {
 #[derive(Debug)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
+    RedoMove(GameID, CoinString, RefereeOnChainTransaction),
     Accept(GameID),
     Shutdown(NodePtr),
 }
@@ -960,6 +962,9 @@ impl PotatoHandler {
                 self.have_potato = PotatoState::Absent;
 
                 Ok(true)
+            }
+            Some(GameAction::RedoMove(game_id, coin, transaction)) => {
+                todo!();
             }
             Some(GameAction::Accept(game_id)) => {
                 let (sigs, amount) = {
@@ -1802,6 +1807,16 @@ impl PotatoHandler {
                         return Err(Error::StrErr("no matching game".to_string()));
                     }
                 }
+                GameAction::RedoMove(game_id, coin, tx) => {
+                    let (env, system_interface) = penv.env();
+                    system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                        spends: vec![CoinSpend {
+                            coin: coin.clone(),
+                            bundle: tx.bundle.clone()
+                        }]
+                    })?;
+                    return Ok(());
+                }
                 _ => todo!(),
             }
         } else {
@@ -2002,14 +2017,25 @@ impl PotatoHandler {
             player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?
         };
 
+        let mut actions = Vec::new();
+        for coin in game_map.keys() {
+            let player_ch = self.channel_handler_mut()?;
+            let (env, _) = penv.env();
+            if let Some(redo_move) = player_ch.get_redo_action(
+                env,
+                coin,
+            )? {
+                debug!("redo move: {redo_move:?}");
+                actions.push(redo_move);
+            }
+        }
+
+        debug!("we can proceed with game");
         self.handshake_state = HandshakeState::OnChain(game_map);
         debug!("Game map {:?}", self.handshake_state);
 
-        let player_ch = self.channel_handler_mut()?;
-        if let Some(redo_move) = player_ch.get_redo_action()? {
-            debug!("redo move: {redo_move:?}");
-            self.do_game_action(penv, redo_move)?;
-            debug!("we can proceed with game");
+        for action in actions.into_iter() {
+            self.do_game_action(penv, action)?;
         }
 
         Ok(())

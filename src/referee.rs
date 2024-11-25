@@ -234,20 +234,20 @@ fn curry_referee_puzzle_hash(
 ) -> Result<PuzzleHash, Error> {
     let args_to_curry: Vec<Node> = args.to_node_list(allocator, referee_coin_puzzle_hash)?;
     let combined_args = args_to_curry.to_clvm(allocator).into_gen()?;
-    debug!(
-        "combined_args {}",
-        disassemble(allocator.allocator(), combined_args, None)
-    );
+    // debug!(
+    //     "combined_args {}",
+    //     disassemble(allocator.allocator(), combined_args, None)
+    // );
     let arg_hash = Node(combined_args).sha256tree(allocator);
     let arg_hash_clvm = arg_hash.to_clvm(allocator).into_gen()?;
-    debug!(
-        "curried in puzzle arg_hash {}",
-        disassemble(allocator.allocator(), arg_hash_clvm, None)
-    );
-    debug!(
-        "curry_referee_puzzle_hash {}",
-        disassemble(allocator.allocator(), combined_args, None)
-    );
+    // debug!(
+    //     "curried in puzzle arg_hash {}",
+    //     disassemble(allocator.allocator(), arg_hash_clvm, None)
+    // );
+    // debug!(
+    //     "curry_referee_puzzle_hash {}",
+    //     disassemble(allocator.allocator(), combined_args, None)
+    // );
     Ok(curry_and_treehash(
         &PuzzleHash::from_hash(calculate_hash_of_quoted_mod_hash(referee_coin_puzzle_hash)),
         &[arg_hash],
@@ -685,10 +685,25 @@ impl RefereeMaker {
         puzzle_hash: &PuzzleHash,
         initiated: bool,
     ) -> Result<Option<usize>, Error> {
+        debug!("REWIND: find a way to proceed from {puzzle_hash:?}");
         for (i, old_state) in self.old_states.iter().enumerate().skip(1).rev() {
+            let start_args = old_state.state.args_for_this_coin();
+            let end_args = old_state.state.spend_this_coin();
+            debug!("end   puzzle hash {:?}", curry_referee_puzzle_hash(
+                allocator,
+                &self.fixed.referee_coin_puzzle_hash,
+                &end_args
+            ));
             if let RefereeMakerGameState::AfterOurTurn { entropy, .. } = old_state.state.borrow() {
-                debug!("state {} has entropy {:?}", old_state.state_number, entropy);
+                debug!("state {} is_my_turn {} and has entropy {:?}", old_state.state_number, old_state.state.is_my_turn(), entropy);
+            } else {
+                debug!("state {} is_my_turn {}", old_state.state_number, old_state.state.is_my_turn());
             }
+            debug!("start puzzle hash {:?}", curry_referee_puzzle_hash(
+                allocator,
+                &self.fixed.referee_coin_puzzle_hash,
+                &start_args
+            ));
         }
 
         for (i, old_state) in self.old_states.iter().enumerate().skip(1).rev() {
@@ -698,17 +713,12 @@ impl RefereeMaker {
                 &old_state.state.args_for_this_coin(),
             )?;
             debug!(
-                "referee rewind: {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
+                "referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
+                old_state.state.is_my_turn(),
                 old_state.state_number
             );
-            if *puzzle_hash == have_puzzle_hash {
-                if !old_state.state.is_my_turn() {
-                    debug!("referee rewind: rewound to their turn {}", old_state.state_number);
-                    self.state = self.old_states[i + 1].state.clone();
-                } else {
-                    debug!("referee rewind: rewound to our turn");
-                    self.state = old_state.state.clone();
-                }
+            if *puzzle_hash == have_puzzle_hash && old_state.state.is_my_turn() {
+                self.state = old_state.state.clone();
                 debug!("referee rewind: reassume state {:?}", self.state);
                 return Ok(Some(old_state.state_number));
             }
@@ -1161,6 +1171,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
         agg_sig_me_additional_data: &Hash,
+        on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
         // We can only do a move to replicate our turn.
         assert!(self.processing_my_turn());
@@ -1199,6 +1210,25 @@ impl RefereeMaker {
         assert_eq!(args.mover_puzzle_hash, target_args.waiter_puzzle_hash);
         assert!(matches!(self.state.borrow(), RefereeMakerGameState::AfterOurTurn { .. }));
         assert!(matches!(self.get_game_handler(), GameHandler::TheirTurnHandler(_)));
+
+        if let Some((_, ph, _)) = coin_string.to_parts() {
+            if on_chain {
+                let start_ph = curry_referee_puzzle_hash(
+                    allocator,
+                    &self.fixed.referee_coin_puzzle_hash,
+                    &args
+                )?;
+                let end_ph = curry_referee_puzzle_hash(
+                    allocator,
+                    &self.fixed.referee_coin_puzzle_hash,
+                    &target_args
+                )?;
+                debug!("spend puzzle hash {ph:?}");
+                debug!("this coin start {start_ph:?}");
+                debug!("this coin end   {end_ph:?}");
+                assert_eq!(ph, start_ph);
+            }
+        }
 
         assert_eq!(Some(&args.game_move.validation_info_hash), target_args.previous_validation_info_hash.as_ref());
         debug!(

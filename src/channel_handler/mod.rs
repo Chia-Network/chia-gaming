@@ -1287,6 +1287,7 @@ impl ChannelHandler {
                     env.allocator,
                     &game_coin,
                     &env.agg_sig_me_additional_data,
+                    false,
                 )?;
 
                 Ok(Some(DispositionResult {
@@ -1316,6 +1317,7 @@ impl ChannelHandler {
                     env.allocator,
                     &game_coin,
                     &env.agg_sig_me_additional_data,
+                    false,
                 )?;
 
                 // Existing game coin is in the before state.
@@ -1409,7 +1411,7 @@ impl ChannelHandler {
                     self.initiated_on_chain,
                     self.current_state_number,
                 )?;
-                if let Some(rewind_state) = rewind_target {
+                if let Some((my_turn, rewind_state)) = rewind_target {
                     debug!("{} rewind target state was {rewind_state}", initial_potato);
                     debug!("mover puzzle hash is {:?}", mover_puzzle_hash);
                     let coin_id = CoinString::from_parts(
@@ -1477,6 +1479,7 @@ impl ChannelHandler {
             env.allocator,
             existing_coin,
             &env.agg_sig_me_additional_data,
+            true,
         )?;
 
         Ok((
@@ -1504,7 +1507,11 @@ impl ChannelHandler {
         )
     }
 
-    pub fn get_redo_action(&mut self) -> Result<Option<GameAction>, Error> {
+    pub fn get_redo_action<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        coin: &CoinString
+    ) -> Result<Option<GameAction>, Error> {
         debug!(
             "{} GET REDO ACTION {} vs {}",
             self.is_initial_potato(),
@@ -1537,15 +1544,22 @@ impl ChannelHandler {
                 if let Some(rewind_state) = self.live_games[game_idx].get_rewind_outcome() {
                     // We should have odd parity between the rewind and the current state.
                     debug!("{} getting redo move: move_data.state_number {} rewind_state {rewind_state}", self.is_initial_potato(), move_data.state_number);
-                    if (move_data.state_number & 1) == (finished_unroll_state & 1) {
+                    if !self.live_games[game_idx].processing_my_turn() {
                         return Ok(None);
                     }
 
+                    let transaction = self.live_games[game_idx].get_transaction_for_move(
+                        env.allocator,
+                        coin,
+                        &env.agg_sig_me_additional_data,
+                        true
+                    )?;
+
                     debug!("{} redo move data {move_data:?}", self.is_initial_potato());
-                    return Ok(Some(GameAction::Move(
+                    return Ok(Some(GameAction::RedoMove(
                         move_data.game_id.clone(),
-                        move_data.move_data.clone(),
-                        move_data.move_entropy.clone(),
+                        coin.clone(),
+                        transaction,
                     )));
                 }
 
