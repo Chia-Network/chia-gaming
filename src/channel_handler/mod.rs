@@ -1423,7 +1423,7 @@ impl ChannelHandler {
             }
         }
 
-        assert_eq!(!res.is_empty(), !self.live_games.is_empty());
+        assert_eq!(res.is_empty(), self.live_games.is_empty());
 
         Ok(res)
     }
@@ -1511,8 +1511,13 @@ impl ChannelHandler {
             }
             Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) => {
                 let game_idx = self.get_game_by_id(&move_data.game_id)?;
+                debug!(
+                    "{} have cached move {move_data:?}",
+                    self.is_initial_potato()
+                );
                 if let Some(rewind_state) = self.live_games[game_idx].get_rewind_outcome() {
                     // We should have odd parity between the rewind and the current state.
+                    debug!("{} getting redo move: move_data.state_number {} rewind_state {rewind_state}", self.is_initial_potato(), move_data.state_number);
                     if (move_data.state_number & 1) == (rewind_state & 1) {
                         return Ok(None);
                     }

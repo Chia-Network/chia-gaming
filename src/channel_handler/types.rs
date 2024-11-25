@@ -1010,7 +1010,7 @@ impl LiveGame {
         new_entropy: Hash,
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
-        assert!(self.referee_maker.is_my_turn());
+        // assert!(self.referee_maker.is_my_turn());
         let referee_result = self.referee_maker.my_turn_make_move(
             allocator,
             readable_move,
@@ -1088,21 +1088,24 @@ impl LiveGame {
         initiated: bool,
         current_state: usize,
     ) -> Result<Option<usize>, Error> {
-        let referee_puzzle_hash = self
-            .referee_maker
-            .on_chain_referee_puzzle_hash(allocator)?;
+        let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
+        let result = self.referee_maker.rewind(allocator, want_ph, initiated)?;
+        if let Some(current_state) = &result {
+            debug!("{initiated} has compatible game for rewind at {current_state}");
+            assert!(self.is_my_turn());
+            self.rewind_outcome = Some(*current_state);
+            return Ok(result);
+        }
+
         if referee_puzzle_hash == *want_ph {
+            debug!("{initiated} has current game for rewind");
             self.rewind_outcome = Some(current_state);
             return Ok(Some(current_state));
         }
 
-        let result = self.referee_maker.rewind(allocator, want_ph, initiated)?;
-        if let Some(current_state) = &result {
-            self.rewind_outcome = Some(*current_state);
-        }
-
-        Ok(result)
+        debug!("{initiated} has no game for rewind");
+        Ok(None)
     }
 }

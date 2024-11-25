@@ -8,6 +8,7 @@
 (import std.condition_codes)
 (import std.match)
 (import std.li)
+(import std.print)
 (import onchain.game_codes)
 
 ; Adjudicates a two player turn based game
@@ -57,19 +58,19 @@
                     VALIDATION_INFO_HASH)))
             conditions (a mover_puzzle solution)
             (assert
-                VALIDATION_INFO_HASH
-                (<= (strlen MOVE) MAX_MOVE_SIZE)
-                (<= new_mover_share AMOUNT)
-                (>= new_mover_share 0)
-                (logior (not new_validation_info_hash) (= 32 (strlen new_validation_info_hash)))
-                (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
+                (print "assert1" VALIDATION_INFO_HASH)
+                (print (list "assert2" MOVE MAX_MOVE_SIZE) (<= (strlen MOVE) MAX_MOVE_SIZE))
+                (print "assert3" (<= new_mover_share AMOUNT))
+                (print "assert4" (>= new_mover_share 0))
+                (print "assert5" (logior (not new_validation_info_hash) (= 32 (strlen new_validation_info_hash))))
+                (print "assert6" (= MOVER_PUZZLE_HASH (shatree mover_puzzle)))
                 ; Check that the child output is made
-                (match
+                (print "assert7" (match
                     (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))
                         (logand (= condname CREATE_COIN) (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
                     )
                     conditions
-                )
+                ))
                 (li (list REMARK new_move new_validation_info_hash new_mover_share new_max_move_size) 
                         (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT) &rest conditions)
             )

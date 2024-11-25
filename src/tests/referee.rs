@@ -136,7 +136,12 @@ impl RefereeTest {
             1,
         )
         .expect("should construct");
-        assert_eq!(first_puzzle_hash, my_referee.on_chain_referee_puzzle_hash(allocator).expect("should work"));
+        assert_eq!(
+            first_puzzle_hash,
+            my_referee
+                .on_chain_referee_puzzle_hash(allocator)
+                .expect("should work")
+        );
 
         let their_game_start_info = GameStartInfo {
             initial_mover_share: game_start.amount.clone() - game_start.initial_mover_share.clone(),
