@@ -23,7 +23,7 @@ use crate::potato_handler::{
 
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
-use crate::common::types::{CoinSpend, Program};
+use crate::common::types::CoinSpend;
 
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::game::GameAction;
@@ -165,7 +165,7 @@ impl ToLocalUI for Pipe {
     fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
         todo!();
     }
-    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
+    fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
         todo!();
     }
 }
@@ -532,7 +532,7 @@ fn test_peer_smoke() {
             let entropy = rng.gen();
             let mut env = channel_handler_env(&mut allocator, &mut rng);
             let move_readable =
-                ReadableMove::from_nodeptr(&mut env.allocator, *what).expect("should work");
+                ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
             let mut penv = TestPeerEnv {
                 env: &mut env,
                 system_interface: &mut pipe_sender[who ^ 1],

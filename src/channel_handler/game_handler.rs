@@ -204,7 +204,6 @@ impl GameHandler {
         if let GameHandler::MyTurnHandler(res) = self {
             Ok(*res)
         } else {
-            todo!();
             Err(Error::StrErr(
                 "my turn called on a their turn driver".to_string(),
             ))
@@ -459,6 +458,6 @@ impl MessageHandler {
         );
         let run_result = run_code(allocator, self.0, args, false)?;
 
-        Ok(ReadableMove::from_nodeptr(allocator, run_result)?)
+        ReadableMove::from_nodeptr(allocator, run_result)
     }
 }

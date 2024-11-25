@@ -163,7 +163,7 @@ impl RefereePuzzleArgs {
         );
         debug!(
             "VALIDATION_INFO_HASH {my_turn} {}",
-            hex::encode(&validation_info_hash.bytes())
+            hex::encode(validation_info_hash.bytes())
         );
         RefereePuzzleArgs {
             mover_puzzle_hash: if my_turn {
@@ -240,20 +240,7 @@ fn curry_referee_puzzle_hash(
 ) -> Result<PuzzleHash, Error> {
     let args_to_curry: Vec<Node> = args.to_node_list(allocator, referee_coin_puzzle_hash)?;
     let combined_args = args_to_curry.to_clvm(allocator).into_gen()?;
-    // debug!(
-    //     "combined_args {}",
-    //     disassemble(allocator.allocator(), combined_args, None)
-    // );
     let arg_hash = Node(combined_args).sha256tree(allocator);
-    let arg_hash_clvm = arg_hash.to_clvm(allocator).into_gen()?;
-    // debug!(
-    //     "curried in puzzle arg_hash {}",
-    //     disassemble(allocator.allocator(), arg_hash_clvm, None)
-    // );
-    // debug!(
-    //     "curry_referee_puzzle_hash {}",
-    //     disassemble(allocator.allocator(), combined_args, None)
-    // );
     Ok(curry_and_treehash(
         &PuzzleHash::from_hash(calculate_hash_of_quoted_mod_hash(referee_coin_puzzle_hash)),
         &[arg_hash],
@@ -361,7 +348,6 @@ enum RefereeMakerGameState {
     AfterOurTurn {
         game_handler: GameHandler,
         my_turn_result: Rc<MyTurnResult>,
-        entropy: Hash,
         create_this_coin: Rc<RefereePuzzleArgs>,
         spend_this_coin: Rc<RefereePuzzleArgs>,
     },
@@ -695,10 +681,9 @@ impl RefereeMaker {
         &mut self,
         allocator: &mut AllocEncoder,
         puzzle_hash: &PuzzleHash,
-        initiated: bool,
     ) -> Result<Option<usize>, Error> {
         debug!("REWIND: find a way to proceed from {puzzle_hash:?}");
-        for (i, old_state) in self.old_states.iter().enumerate().skip(1).rev() {
+        for old_state in self.old_states.iter().skip(1).rev() {
             let start_args = old_state.state.args_for_this_coin();
             let end_args = old_state.state.spend_this_coin();
             debug!(
@@ -709,20 +694,11 @@ impl RefereeMaker {
                     &end_args
                 )
             );
-            if let RefereeMakerGameState::AfterOurTurn { entropy, .. } = old_state.state.borrow() {
-                debug!(
-                    "state {} is_my_turn {} and has entropy {:?}",
-                    old_state.state_number,
-                    old_state.state.is_my_turn(),
-                    entropy
-                );
-            } else {
-                debug!(
-                    "state {} is_my_turn {}",
-                    old_state.state_number,
-                    old_state.state.is_my_turn()
-                );
-            }
+            debug!(
+                "state {} is_my_turn {}",
+                old_state.state_number,
+                old_state.state.is_my_turn()
+            );
             debug!(
                 "start puzzle hash {:?}",
                 curry_referee_puzzle_hash(
@@ -733,7 +709,7 @@ impl RefereeMaker {
             );
         }
 
-        for (i, old_state) in self.old_states.iter().enumerate().skip(1).rev() {
+        for old_state in self.old_states.iter().skip(1).rev() {
             let have_puzzle_hash = curry_referee_puzzle_hash(
                 allocator,
                 &self.fixed.referee_coin_puzzle_hash,
@@ -773,12 +749,12 @@ impl RefereeMaker {
 
     pub fn get_game_state(&self) -> &Program {
         match self.state.borrow() {
-            RefereeMakerGameState::Initial { initial_state, .. } => &initial_state,
+            RefereeMakerGameState::Initial { initial_state, .. } => initial_state,
             RefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => &my_turn_result.state,
             RefereeMakerGameState::AfterTheirTurn {
                 most_recent_our_state_result,
                 ..
-            } => &most_recent_our_state_result,
+            } => most_recent_our_state_result,
         }
     }
 
@@ -797,7 +773,7 @@ impl RefereeMaker {
                 most_recent_our_state_result,
                 ..
             } => Ok((
-                &most_recent_our_state_result,
+                most_recent_our_state_result,
                 most_recent_our_validation_program.clone(),
             )),
         }
@@ -846,7 +822,6 @@ impl RefereeMaker {
         current_puzzle_args: Rc<RefereePuzzleArgs>,
         new_puzzle_args: Rc<RefereePuzzleArgs>,
         my_turn_result: Rc<MyTurnResult>,
-        entropy: Hash,
         details: &GameMoveDetails,
         state_number: usize,
     ) -> Result<(), Error> {
@@ -865,7 +840,6 @@ impl RefereeMaker {
         );
         let new_state = RefereeMakerGameState::AfterOurTurn {
             game_handler: game_handler.clone(),
-            entropy,
             my_turn_result,
             create_this_coin: current_puzzle_args,
             spend_this_coin: new_puzzle_args,
@@ -997,7 +971,6 @@ impl RefereeMaker {
             args.clone(),
             ref_puzzle_args.clone(),
             result.clone(),
-            new_entropy,
             &result.game_move,
             state_number,
         )?;
@@ -1098,21 +1071,12 @@ impl RefereeMaker {
         )
     }
 
-    pub fn on_chain_referee_puzzle_hash_state(
-        &self,
-        allocator: &mut AllocEncoder,
-        state: &RefereeMakerGameState,
-    ) -> Result<PuzzleHash, Error> {
-        let args = self.args_for_this_coin();
-        debug!("on_chain_referee_puzzle_args: {args:?}");
-        curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
-    }
-
     pub fn on_chain_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
     ) -> Result<PuzzleHash, Error> {
-        self.on_chain_referee_puzzle_hash_state(allocator, &self.state)
+        let args = self.args_for_this_coin();
+        curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
     }
 
     // Ensure this returns

@@ -1,6 +1,5 @@
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use clvmr::{run_program, NodePtr};
@@ -21,7 +20,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
+    PrivateKey, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::simulator::Simulator;
 use crate::tests::game::{new_channel_handler_game, GameAction, GameActionResult};

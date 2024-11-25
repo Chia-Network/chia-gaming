@@ -28,7 +28,7 @@ use crate::common::types::{
     Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
 use crate::referee::{
-    GameMoveDetails, GameMoveWireData, LiveGameReplay, RefereeMaker, RefereeOnChainTransaction,
+    GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
     TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 
@@ -304,7 +304,7 @@ impl ToClvm<NodePtr> for ReadableMove {
         &self,
         encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
-        Ok(self.0.to_clvm(encoder)?)
+        self.0.to_clvm(encoder)
     }
 }
 
@@ -1040,7 +1040,7 @@ impl LiveGame {
     }
 
     pub fn get_rewind_outcome(&self) -> Option<usize> {
-        self.rewind_outcome.clone()
+        self.rewind_outcome
     }
 
     pub fn get_amount(&self) -> Amount {
@@ -1090,27 +1090,23 @@ impl LiveGame {
         &mut self,
         allocator: &mut AllocEncoder,
         want_ph: &PuzzleHash,
-        initiated: bool,
         current_state: usize,
     ) -> Result<Option<(bool, usize)>, Error> {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
-        let result = self.referee_maker.rewind(allocator, want_ph, initiated)?;
+        let result = self.referee_maker.rewind(allocator, want_ph)?;
         if let Some(current_state) = &result {
-            debug!("{initiated} has compatible game for rewind at {current_state}");
             assert!(self.is_my_turn());
             self.rewind_outcome = Some(*current_state);
             return Ok(Some((self.is_my_turn(), *current_state)));
         }
 
         if referee_puzzle_hash == *want_ph {
-            debug!("{initiated} has current game for rewind");
             self.rewind_outcome = Some(current_state);
             return Ok(Some((self.is_my_turn(), current_state)));
         }
 
-        debug!("{initiated} has no game for rewind");
         Ok(None)
     }
 }

@@ -422,7 +422,7 @@ enum PotatoState {
 #[derive(Debug)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
-    RedoMove(GameID, CoinString, RefereeOnChainTransaction),
+    RedoMove(GameID, CoinString, Box<RefereeOnChainTransaction>),
     Accept(GameID),
     Shutdown(NodePtr),
 }
@@ -963,7 +963,7 @@ impl PotatoHandler {
 
                 Ok(true)
             }
-            Some(GameAction::RedoMove(game_id, coin, transaction)) => {
+            Some(GameAction::RedoMove(_game_id, _coin, _transaction)) => {
                 todo!();
             }
             Some(GameAction::Accept(game_id)) => {
@@ -1768,7 +1768,7 @@ impl PotatoHandler {
         swap(&mut hs_state, &mut self.handshake_state);
         match hs_state {
             HandshakeState::Finished(t) => {
-                let mut player_ch = self.channel_handler_mut()?;
+                let player_ch = self.channel_handler_mut()?;
                 player_ch.set_on_chain_for_error();
                 self.do_channel_spend_to_unroll(penv, t)?;
                 Ok(())
@@ -1795,7 +1795,7 @@ impl PotatoHandler {
         {
             match action {
                 GameAction::Move(game_id, readable_move, hash) => {
-                    if let Some((current, game)) = game_map.iter().find(|g| g.1.game_id == game_id)
+                    if let Some((current, _game)) = game_map.iter().find(|g| g.1.game_id == game_id)
                     {
                         (
                             game_id.clone(),
@@ -1807,8 +1807,8 @@ impl PotatoHandler {
                         return Err(Error::StrErr("no matching game".to_string()));
                     }
                 }
-                GameAction::RedoMove(game_id, coin, tx) => {
-                    let (env, system_interface) = penv.env();
+                GameAction::RedoMove(_game_id, coin, tx) => {
+                    let (_env, system_interface) = penv.env();
                     system_interface.spend_transaction_and_add_fee(&SpendBundle {
                         spends: vec![CoinSpend {
                             coin: coin.clone(),
@@ -1824,9 +1824,9 @@ impl PotatoHandler {
         };
 
         let (old_ph, move_result, transaction) = {
-            let (env, system_interface) = penv.env();
-            let mut player_ch = self.channel_handler_mut()?;
-            let (old_ph, new_ph, move_result, transaction) =
+            let (env, _system_interface) = penv.env();
+            let player_ch = self.channel_handler_mut()?;
+            let (old_ph, _new_ph, move_result, transaction) =
                 player_ch.on_chain_our_move(env, &game_id, &readable_move, hash, &current)?;
             (old_ph, move_result, transaction)
         };
@@ -1883,7 +1883,7 @@ impl PotatoHandler {
             }
 
             self.have_potato_move(penv)?;
-        } else if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+        } else if let HandshakeState::OnChain(_game_map) = &mut self.handshake_state {
             return self.do_on_chain_action(penv, action);
         } else {
             return Err(Error::StrErr(
@@ -1987,7 +1987,7 @@ impl PotatoHandler {
                 player_ch.is_initial_potato()
             );
 
-            let (env, system_interface) = penv.env();
+            let (env, _system_interface) = penv.env();
             let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
             let run_args = solution.to_nodeptr(env.allocator)?;
             let conditions = run_program(

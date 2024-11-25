@@ -3,7 +3,6 @@ pub mod game_handler;
 pub mod runner;
 pub mod types;
 
-use std::borrow::BorrowMut;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::mem::swap;
@@ -13,12 +12,9 @@ use log::debug;
 
 use rand::prelude::*;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
-use clvmr::run_program;
 
-use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
@@ -29,11 +25,9 @@ use crate::channel_handler::types::{
     UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
 use crate::common::constants::CREATE_COIN;
-use crate::common::constants::DEFAULT_HIDDEN_PUZZLE_HASH;
 use crate::common::standard_coin::{
-    calculate_synthetic_public_key, private_to_public_key, puzzle_for_pk,
-    puzzle_for_synthetic_public_key, puzzle_hash_for_pk, puzzle_hash_for_synthetic_public_key,
-    sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
+    private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
+    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
@@ -42,8 +36,7 @@ use crate::common::types::{
 };
 use crate::potato_handler::GameAction;
 use crate::referee::{
-    GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
-    TheirTurnCoinSpentResult,
+    GameMoveDetails, RefereeMaker, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
 };
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -1408,10 +1401,9 @@ impl ChannelHandler {
                 let rewind_target = live_game.set_state_for_coin(
                     env.allocator,
                     game_coin,
-                    self.initiated_on_chain,
                     self.current_state_number,
                 )?;
-                if let Some((my_turn, rewind_state)) = rewind_target {
+                if let Some((_my_turn, rewind_state)) = rewind_target {
                     debug!("{} rewind target state was {rewind_state}", initial_potato);
                     debug!("mover puzzle hash is {:?}", mover_puzzle_hash);
                     let coin_id = CoinString::from_parts(
@@ -1527,11 +1519,6 @@ impl ChannelHandler {
             self.unroll.coin.state_number
         );
 
-        let finished_unroll_state = {
-            let finished_unroll = self.get_finished_unroll_coin();
-            finished_unroll.coin.state_number
-        };
-
         // We're on chain due to error.
         let mut cla = None;
         swap(&mut cla, &mut self.cached_last_action);
@@ -1566,7 +1553,7 @@ impl ChannelHandler {
                     return Ok(Some(GameAction::RedoMove(
                         move_data.game_id.clone(),
                         coin.clone(),
-                        transaction,
+                        Box::new(transaction),
                     )));
                 }
 

@@ -424,7 +424,7 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.shutdown = Some(reward_coin_string.clone());
         Ok(())
     }
-    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
+    fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
         todo!();
     }
 }

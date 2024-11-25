@@ -108,7 +108,6 @@ pub struct RefereeTest {
     pub referee_coin_puzzle: Puzzle,
     #[allow(dead_code)]
     pub referee_coin_puzzle_hash: PuzzleHash,
-    pub first_puzzle_hash: PuzzleHash,
 }
 
 impl RefereeTest {
@@ -169,7 +168,6 @@ impl RefereeTest {
 
             referee_coin_puzzle,
             referee_coin_puzzle_hash,
-            first_puzzle_hash,
         }
     }
 }
