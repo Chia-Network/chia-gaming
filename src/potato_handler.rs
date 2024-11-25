@@ -1758,6 +1758,7 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        debug!("going on chain due to error {got_error}");
         let mut hs_state = HandshakeState::StepA;
         swap(&mut hs_state, &mut self.handshake_state);
         match hs_state {
@@ -1807,11 +1808,30 @@ impl PotatoHandler {
             return Err(Error::StrErr("not on chain".to_string()));
         };
 
-        let mut player_ch = self.channel_handler_mut()?;
-        let (env, system_interface) = penv.env();
-        let (new_ph, move_result, transaction) =
-            player_ch.on_chain_our_move(env, &game_id, &readable_move, hash, &current)?;
+        let (old_ph, move_result, transaction) =
+        {
+            let (env, system_interface) = penv.env();
+            let mut player_ch = self.channel_handler_mut()?;
+            let (old_ph, new_ph, move_result, transaction) =
+                player_ch.on_chain_our_move(env, &game_id, &readable_move, hash, &current)?;
+            (old_ph, move_result, transaction)
+        };
 
+        // Assert that our idea of what's being spent matches the coin.
+        if let HandshakeState::OnChain(game_map) = &self.handshake_state {
+            let matching_keys = game_map.keys().filter(|k| {
+                if let Some((_, ph, _)) = k.to_parts() {
+                    if ph == old_ph {
+                        return true;
+                    }
+                }
+
+                false
+            }).count();
+            assert_eq!(matching_keys, 1);
+        }
+
+        let (env, system_interface) = penv.env();
         let solution_nodeptr = transaction.bundle.solution.to_nodeptr(env.allocator)?;
         debug!(
             "referee solution {}",

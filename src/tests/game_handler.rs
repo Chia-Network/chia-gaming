@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 use clvm_traits::ToClvm;
 
@@ -131,5 +132,5 @@ fn test_game_handler_my_turn() {
         "(1337 () () () 100 0x0000000000000000000000000000000000000000000000000000000000000000)"
     );
     assert_eq!(result.game_move.basic.move_made, &[1]);
-    assert_eq!(disassemble(allocator.allocator(), result.state, None), "4");
+    assert_eq!(result.state, Rc::new(Program::from_bytes(&[4])));
 }

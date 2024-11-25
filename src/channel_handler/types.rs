@@ -1003,6 +1003,10 @@ impl LiveGame {
         self.referee_maker.processing_my_turn()
     }
 
+    pub fn current_puzzle_hash(&self, allocator: &mut AllocEncoder) -> Result<PuzzleHash, Error> {
+        self.referee_maker.on_chain_referee_puzzle_hash(allocator)
+    }
+
     pub fn internal_make_move(
         &mut self,
         allocator: &mut AllocEncoder,

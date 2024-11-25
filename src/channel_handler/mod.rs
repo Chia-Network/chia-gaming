@@ -16,7 +16,9 @@ use rand::prelude::*;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
+use clvmr::run_program;
 
+use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
@@ -1435,7 +1437,7 @@ impl ChannelHandler {
         readable_move: &ReadableMove,
         entropy: Hash,
         existing_coin: &CoinString,
-    ) -> Result<(PuzzleHash, GameMoveDetails, RefereeOnChainTransaction), Error> {
+    ) -> Result<(PuzzleHash, PuzzleHash, GameMoveDetails, RefereeOnChainTransaction), Error> {
         debug!(
             "{} ON CHAIN OUR MOVE {:?} {:?} {:?}",
             self.is_initial_potato(),
@@ -1444,8 +1446,13 @@ impl ChannelHandler {
             existing_coin
         );
         let game_idx = self.get_game_by_id(game_id)?;
+        let start_puzzle_hash = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
+        if let Some((_, existing_ph, _)) = existing_coin.to_parts() {
+            assert_eq!(start_puzzle_hash, existing_ph);
+        }
+
         debug!(
-            "our turn {} processing our turn {}",
+            "on chain our turn {} processing our turn {}",
             self.live_games[game_idx].is_my_turn(),
             self.live_games[game_idx].processing_my_turn()
         );
@@ -1468,6 +1475,7 @@ impl ChannelHandler {
         )?;
 
         Ok((
+            start_puzzle_hash,
             self.live_games[game_idx].last_referee_puzzle_hash.clone(),
             move_result.details.clone(),
             tx,

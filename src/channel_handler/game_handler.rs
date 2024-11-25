@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 #[cfg(test)]
 use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
-#[cfg(test)]
 use std::rc::Rc;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -97,7 +96,7 @@ pub struct MyTurnResult {
     pub waiting_driver: GameHandler,
     pub validation_program: ValidationProgram,
     pub validation_program_hash: Hash,
-    pub state: NodePtr,
+    pub state: Rc<Program>,
     pub game_move: GameMoveDetails,
     pub message_parser: Option<MessageHandler>,
 }
@@ -304,11 +303,12 @@ impl GameHandler {
         };
 
         let validation_program = ValidationProgram::new(allocator, pl[1]);
+        let state = Rc::new(Program::from_nodeptr(allocator, pl[3])?);
         Ok(MyTurnResult {
             waiting_driver: GameHandler::their_driver_from_nodeptr(pl[6]),
             validation_program,
             validation_program_hash: validation_program_hash.clone(),
-            state: pl[3],
+            state,
             game_move: GameMoveDetails {
                 basic: GameMoveStateInfo {
                     move_made: move_data,

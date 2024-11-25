@@ -848,6 +848,7 @@ impl GameCradle for SynchronousGameCradle {
                     return Ok(result);
                 }
                 Err(e) => {
+                    debug!("going on chain for error {e:?}");
                     result.receive_error = Some(e);
                     // Go on chain.
                     local_ui.going_on_chain(true)?;

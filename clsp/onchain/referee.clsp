@@ -53,23 +53,23 @@
         ; move
         (assign 
             (new_move new_validation_info_hash new_mover_share new_max_move_size mover_puzzle solution) args
-            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT 
+            new_puzzle_hash (curry_hashes MOD_HASH (shatree (print "curried args" (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT 
                     AMOUNT MOD_HASH NONCE new_move new_max_move_size new_validation_info_hash new_mover_share
-                    VALIDATION_INFO_HASH)))
+                    VALIDATION_INFO_HASH))))
             conditions (a mover_puzzle solution)
             (assert
                 (print "assert1" VALIDATION_INFO_HASH)
-                (print (list "assert2" MOVE MAX_MOVE_SIZE) (<= (strlen MOVE) MAX_MOVE_SIZE))
+                (print (list "assert2" new_move MAX_MOVE_SIZE) (<= (strlen new_move) MAX_MOVE_SIZE))
                 (print "assert3" (<= new_mover_share AMOUNT))
                 (print "assert4" (>= new_mover_share 0))
                 (print "assert5" (logior (not new_validation_info_hash) (= 32 (strlen new_validation_info_hash))))
-                (print "assert6" (= MOVER_PUZZLE_HASH (shatree mover_puzzle)))
+                (print (list "assert6" MOVER_PUZZLE_HASH mover_puzzle) (= MOVER_PUZZLE_HASH (shatree mover_puzzle)))
                 ; Check that the child output is made
                 (print "assert7" (match
                     (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))
                         (logand (= condname CREATE_COIN) (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
                     )
-                    conditions
+                    (print (list "the conditions" new_puzzle_hash) conditions)
                 ))
                 (li (list REMARK new_move new_validation_info_hash new_mover_share new_max_move_size) 
                         (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT) &rest conditions)
