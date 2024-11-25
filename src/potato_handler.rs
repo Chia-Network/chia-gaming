@@ -1812,8 +1812,8 @@ impl PotatoHandler {
                     system_interface.spend_transaction_and_add_fee(&SpendBundle {
                         spends: vec![CoinSpend {
                             coin: coin.clone(),
-                            bundle: tx.bundle.clone()
-                        }]
+                            bundle: tx.bundle.clone(),
+                        }],
                     })?;
                     return Ok(());
                 }
@@ -1823,8 +1823,7 @@ impl PotatoHandler {
             return Err(Error::StrErr("not on chain".to_string()));
         };
 
-        let (old_ph, move_result, transaction) =
-        {
+        let (old_ph, move_result, transaction) = {
             let (env, system_interface) = penv.env();
             let mut player_ch = self.channel_handler_mut()?;
             let (old_ph, new_ph, move_result, transaction) =
@@ -1834,15 +1833,18 @@ impl PotatoHandler {
 
         // Assert that our idea of what's being spent matches the coin.
         if let HandshakeState::OnChain(game_map) = &self.handshake_state {
-            let matching_keys = game_map.keys().filter(|k| {
-                if let Some((_, ph, _)) = k.to_parts() {
-                    if ph == old_ph {
-                        return true;
+            let matching_keys = game_map
+                .keys()
+                .filter(|k| {
+                    if let Some((_, ph, _)) = k.to_parts() {
+                        if ph == old_ph {
+                            return true;
+                        }
                     }
-                }
 
-                false
-            }).count();
+                    false
+                })
+                .count();
             assert_eq!(matching_keys, 1);
         }
 
@@ -2021,10 +2023,7 @@ impl PotatoHandler {
         for coin in game_map.keys() {
             let player_ch = self.channel_handler_mut()?;
             let (env, _) = penv.env();
-            if let Some(redo_move) = player_ch.get_redo_action(
-                env,
-                coin,
-            )? {
+            if let Some(redo_move) = player_ch.get_redo_action(env, coin)? {
                 debug!("redo move: {redo_move:?}");
                 actions.push(redo_move);
             }

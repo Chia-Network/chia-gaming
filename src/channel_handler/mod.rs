@@ -29,10 +29,11 @@ use crate::channel_handler::types::{
     UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
 use crate::common::constants::CREATE_COIN;
+use crate::common::constants::DEFAULT_HIDDEN_PUZZLE_HASH;
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
-    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
-    calculate_synthetic_public_key
+    calculate_synthetic_public_key, private_to_public_key, puzzle_for_pk,
+    puzzle_for_synthetic_public_key, puzzle_hash_for_pk, puzzle_hash_for_synthetic_public_key,
+    sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
@@ -44,7 +45,6 @@ use crate::referee::{
     GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
     TheirTurnCoinSpentResult,
 };
-use crate::common::constants::DEFAULT_HIDDEN_PUZZLE_HASH;
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -1444,7 +1444,15 @@ impl ChannelHandler {
         readable_move: &ReadableMove,
         entropy: Hash,
         existing_coin: &CoinString,
-    ) -> Result<(PuzzleHash, PuzzleHash, GameMoveDetails, RefereeOnChainTransaction), Error> {
+    ) -> Result<
+        (
+            PuzzleHash,
+            PuzzleHash,
+            GameMoveDetails,
+            RefereeOnChainTransaction,
+        ),
+        Error,
+    > {
         debug!(
             "{} ON CHAIN OUR MOVE {:?} {:?} {:?}",
             self.is_initial_potato(),
@@ -1510,7 +1518,7 @@ impl ChannelHandler {
     pub fn get_redo_action<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        coin: &CoinString
+        coin: &CoinString,
     ) -> Result<Option<GameAction>, Error> {
         debug!(
             "{} GET REDO ACTION {} vs {}",
@@ -1519,8 +1527,7 @@ impl ChannelHandler {
             self.unroll.coin.state_number
         );
 
-        let finished_unroll_state =
-        {
+        let finished_unroll_state = {
             let finished_unroll = self.get_finished_unroll_coin();
             finished_unroll.coin.state_number
         };
@@ -1552,7 +1559,7 @@ impl ChannelHandler {
                         env.allocator,
                         coin,
                         &env.agg_sig_me_additional_data,
-                        true
+                        true,
                     )?;
 
                     debug!("{} redo move data {move_data:?}", self.is_initial_potato());

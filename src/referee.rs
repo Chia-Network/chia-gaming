@@ -13,8 +13,8 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::{
-    chia_dialect, GameHandler, MessageHandler, MessageInputs, MyTurnInputs, TheirTurnInputs,
-    MyTurnResult, TheirTurnResult,
+    chia_dialect, GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult,
+    TheirTurnInputs, TheirTurnResult,
 };
 use crate::channel_handler::types::{
     Evidence, GameStartInfo, PrintableGameStartInfo, ReadableMove, ValidationInfo,
@@ -157,8 +157,14 @@ impl RefereePuzzleArgs {
         mover_share: Option<&Amount>,
         my_turn: bool,
     ) -> Self {
-        debug!("PREVIOUS_VALIDATION_INFO_HASH {my_turn} {:?}", previous_validation_info_hash.map(|h| hex::encode(h.bytes())));
-        debug!("VALIDATION_INFO_HASH {my_turn} {}", hex::encode(&validation_info_hash.bytes()));
+        debug!(
+            "PREVIOUS_VALIDATION_INFO_HASH {my_turn} {:?}",
+            previous_validation_info_hash.map(|h| hex::encode(h.bytes()))
+        );
+        debug!(
+            "VALIDATION_INFO_HASH {my_turn} {}",
+            hex::encode(&validation_info_hash.bytes())
+        );
         RefereePuzzleArgs {
             mover_puzzle_hash: if my_turn {
                 fixed_info.my_identity.puzzle_hash.clone()
@@ -644,9 +650,15 @@ impl RefereeMaker {
         ));
         // If this reflects my turn, then we will spend the next parameter set.
         if my_turn {
-            assert_eq!(fixed_info.my_identity.puzzle_hash, ref_puzzle_args.mover_puzzle_hash);
+            assert_eq!(
+                fixed_info.my_identity.puzzle_hash,
+                ref_puzzle_args.mover_puzzle_hash
+            );
         } else {
-            assert_eq!(fixed_info.their_referee_puzzle_hash, ref_puzzle_args.mover_puzzle_hash);
+            assert_eq!(
+                fixed_info.their_referee_puzzle_hash,
+                ref_puzzle_args.mover_puzzle_hash
+            );
         }
         let state = Rc::new(RefereeMakerGameState::Initial {
             initial_state: Rc::new(initial_state_program),
@@ -689,21 +701,36 @@ impl RefereeMaker {
         for (i, old_state) in self.old_states.iter().enumerate().skip(1).rev() {
             let start_args = old_state.state.args_for_this_coin();
             let end_args = old_state.state.spend_this_coin();
-            debug!("end   puzzle hash {:?}", curry_referee_puzzle_hash(
-                allocator,
-                &self.fixed.referee_coin_puzzle_hash,
-                &end_args
-            ));
+            debug!(
+                "end   puzzle hash {:?}",
+                curry_referee_puzzle_hash(
+                    allocator,
+                    &self.fixed.referee_coin_puzzle_hash,
+                    &end_args
+                )
+            );
             if let RefereeMakerGameState::AfterOurTurn { entropy, .. } = old_state.state.borrow() {
-                debug!("state {} is_my_turn {} and has entropy {:?}", old_state.state_number, old_state.state.is_my_turn(), entropy);
+                debug!(
+                    "state {} is_my_turn {} and has entropy {:?}",
+                    old_state.state_number,
+                    old_state.state.is_my_turn(),
+                    entropy
+                );
             } else {
-                debug!("state {} is_my_turn {}", old_state.state_number, old_state.state.is_my_turn());
+                debug!(
+                    "state {} is_my_turn {}",
+                    old_state.state_number,
+                    old_state.state.is_my_turn()
+                );
             }
-            debug!("start puzzle hash {:?}", curry_referee_puzzle_hash(
-                allocator,
-                &self.fixed.referee_coin_puzzle_hash,
-                &start_args
-            ));
+            debug!(
+                "start puzzle hash {:?}",
+                curry_referee_puzzle_hash(
+                    allocator,
+                    &self.fixed.referee_coin_puzzle_hash,
+                    &start_args
+                )
+            );
         }
 
         for (i, old_state) in self.old_states.iter().enumerate().skip(1).rev() {
@@ -787,9 +814,9 @@ impl RefereeMaker {
                 initial_validation_program,
                 ..
             } => Ok(initial_validation_program.to_nodeptr()),
-            RefereeMakerGameState::AfterOurTurn {
-                my_turn_result, ..
-            } => Ok(my_turn_result.validation_program.to_nodeptr()),
+            RefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
+                Ok(my_turn_result.validation_program.to_nodeptr())
+            }
             RefereeMakerGameState::AfterTheirTurn { .. } => Err(Error::StrErr(
                 "we already accepted their turn so it can't be validated".to_string(),
             )),
@@ -824,9 +851,18 @@ impl RefereeMaker {
         state_number: usize,
     ) -> Result<(), Error> {
         debug!("{state_number} accept move {details:?}");
-        assert_ne!(current_puzzle_args.mover_puzzle_hash, new_puzzle_args.mover_puzzle_hash);
-        assert_eq!(current_puzzle_args.mover_puzzle_hash, new_puzzle_args.waiter_puzzle_hash);
-        assert_eq!(self.fixed.my_identity.puzzle_hash, current_puzzle_args.mover_puzzle_hash);
+        assert_ne!(
+            current_puzzle_args.mover_puzzle_hash,
+            new_puzzle_args.mover_puzzle_hash
+        );
+        assert_eq!(
+            current_puzzle_args.mover_puzzle_hash,
+            new_puzzle_args.waiter_puzzle_hash
+        );
+        assert_eq!(
+            self.fixed.my_identity.puzzle_hash,
+            current_puzzle_args.mover_puzzle_hash
+        );
         let new_state = RefereeMakerGameState::AfterOurTurn {
             game_handler: game_handler.clone(),
             entropy,
@@ -854,7 +890,10 @@ impl RefereeMaker {
     ) -> Result<(), Error> {
         assert_ne!(old_args.mover_puzzle_hash, referee_args.mover_puzzle_hash);
         assert_eq!(old_args.mover_puzzle_hash, referee_args.waiter_puzzle_hash);
-        assert_eq!(self.fixed.my_identity.puzzle_hash, referee_args.mover_puzzle_hash);
+        assert_eq!(
+            self.fixed.my_identity.puzzle_hash,
+            referee_args.mover_puzzle_hash
+        );
         debug!("accept their move {details:?}");
 
         // An empty handler if the game ended.
@@ -878,17 +917,16 @@ impl RefereeMaker {
                 create_this_coin: old_args,
                 spend_this_coin: referee_args,
             },
-            RefereeMakerGameState::AfterOurTurn {
-                my_turn_result,
-                ..
-            } => RefereeMakerGameState::AfterTheirTurn {
-                game_handler: raw_game_handler.clone(),
-                most_recent_our_state_result: my_turn_result.state.clone(),
-                most_recent_our_validation_program: my_turn_result.validation_program.clone(),
-                our_turn_game_handler: raw_game_handler.clone(),
-                create_this_coin: old_args,
-                spend_this_coin: referee_args,
-            },
+            RefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
+                RefereeMakerGameState::AfterTheirTurn {
+                    game_handler: raw_game_handler.clone(),
+                    most_recent_our_state_result: my_turn_result.state.clone(),
+                    most_recent_our_validation_program: my_turn_result.validation_program.clone(),
+                    our_turn_game_handler: raw_game_handler.clone(),
+                    create_this_coin: old_args,
+                    spend_this_coin: referee_args,
+                }
+            }
             RefereeMakerGameState::AfterTheirTurn { .. } => {
                 return Err(Error::StrErr(
                     "accept their move when it's already past their turn".to_string(),
@@ -936,10 +974,7 @@ impl RefereeMaker {
                 run_debug: self.run_debug,
             },
         )?);
-        debug!(
-            "referee my turn referee move details {:?}",
-            result
-        );
+        debug!("referee my turn referee move details {:?}", result);
 
         debug!("my turn result {result:?}");
         debug!("new state {:?}", result.state);
@@ -952,7 +987,10 @@ impl RefereeMaker {
             None,
             false,
         ));
-        assert_eq!(Some(&args.game_move.validation_info_hash), ref_puzzle_args.previous_validation_info_hash.as_ref());
+        assert_eq!(
+            Some(&args.game_move.validation_info_hash),
+            ref_puzzle_args.previous_validation_info_hash.as_ref()
+        );
 
         self.accept_this_move(
             &result.waiting_driver,
@@ -1011,13 +1049,11 @@ impl RefereeMaker {
                 my_turn_result,
                 spend_this_coin,
                 ..
-            } => {
-                (
-                    &my_turn_result.state,
-                    spend_this_coin.game_move.basic.move_made.clone(),
-                    spend_this_coin.game_move.basic.mover_share.clone(),
-                )
-            }
+            } => (
+                &my_turn_result.state,
+                spend_this_coin.game_move.basic.move_made.clone(),
+                spend_this_coin.game_move.basic.mover_share.clone(),
+            ),
             RefereeMakerGameState::AfterTheirTurn {
                 most_recent_our_state_result,
                 create_this_coin,
@@ -1205,23 +1241,32 @@ impl RefereeMaker {
         debug!("transaction for move: state {:?}", self.state);
         debug!("get_transaction_for_move: target curry");
         let target_args = self.spend_this_coin();
-        assert_ne!(target_args.mover_puzzle_hash, self.fixed.my_identity.puzzle_hash);
+        assert_ne!(
+            target_args.mover_puzzle_hash,
+            self.fixed.my_identity.puzzle_hash
+        );
         assert_ne!(args.mover_puzzle_hash, target_args.mover_puzzle_hash);
         assert_eq!(args.mover_puzzle_hash, target_args.waiter_puzzle_hash);
-        assert!(matches!(self.state.borrow(), RefereeMakerGameState::AfterOurTurn { .. }));
-        assert!(matches!(self.get_game_handler(), GameHandler::TheirTurnHandler(_)));
+        assert!(matches!(
+            self.state.borrow(),
+            RefereeMakerGameState::AfterOurTurn { .. }
+        ));
+        assert!(matches!(
+            self.get_game_handler(),
+            GameHandler::TheirTurnHandler(_)
+        ));
 
         if let Some((_, ph, _)) = coin_string.to_parts() {
             if on_chain {
                 let start_ph = curry_referee_puzzle_hash(
                     allocator,
                     &self.fixed.referee_coin_puzzle_hash,
-                    &args
+                    &args,
                 )?;
                 let end_ph = curry_referee_puzzle_hash(
                     allocator,
                     &self.fixed.referee_coin_puzzle_hash,
-                    &target_args
+                    &target_args,
                 )?;
                 debug!("spend puzzle hash {ph:?}");
                 debug!("this coin start {start_ph:?}");
@@ -1230,7 +1275,10 @@ impl RefereeMaker {
             }
         }
 
-        assert_eq!(Some(&args.game_move.validation_info_hash), target_args.previous_validation_info_hash.as_ref());
+        assert_eq!(
+            Some(&args.game_move.validation_info_hash),
+            target_args.previous_validation_info_hash.as_ref()
+        );
         debug!(
             "transaction for move: from {:?} to {target_args:?}",
             self.args_for_this_coin()
@@ -1269,7 +1317,10 @@ impl RefereeMaker {
         // Generalize this once the test is working.  Move out the assumption that
         // referee private key is my_identity.synthetic_private_key.
         debug!("referee spend with parent coin {coin_string:?}");
-        debug!("signing coin with synthetic public key {:?} for public key {:?}", self.fixed.my_identity.synthetic_public_key, self.fixed.my_identity.public_key);
+        debug!(
+            "signing coin with synthetic public key {:?} for public key {:?}",
+            self.fixed.my_identity.synthetic_public_key, self.fixed.my_identity.public_key
+        );
         let referee_spend = standard_solution_partial(
             allocator,
             &self.fixed.my_identity.synthetic_private_key,
