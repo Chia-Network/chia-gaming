@@ -14,15 +14,15 @@ const App: React.FC = () => {
   type GameState = 'idle' | 'searching' | 'playing';
 
   const [gameState, setGameState] = useState<GameState>('idle');
-  const [wagerAmount, setWagerAmount] = useState<string>('');
+  const [wagerAmount, setWagerAmount] = useState<number>(0);
   const [log, setLog] = useState<string[]>([]);
   const [playerHand, setPlayerHand] = useState<string[]>([]);
   const [opponentHand, setOpponentHand] = useState<string[]>([]);
-  const [playerCoins, setPlayerCoins] = useState<number>(100);
-  const [opponentCoins, setOpponentCoins] = useState<number>(100);
+  const [playerCoins, setPlayerCoins] = useState<number>(0);
+  const [opponentCoins, setOpponentCoins] = useState<number>(0);
 
   const handleFindOpponent = () => {
-    if (wagerAmount === '') {
+    if (wagerAmount === 0) {
       alert('Please enter a wager amount.');
       return;
     }
@@ -33,6 +33,8 @@ const App: React.FC = () => {
         ...prevLog,
         `Opponent found! Wager amount: ${wagerAmount} XCH`,
       ]);
+      setPlayerCoins(wagerAmount)
+      setOpponentCoins(wagerAmount)
       dealHands();
     }, 5000);
   };
@@ -121,7 +123,7 @@ const App: React.FC = () => {
           type="number"
           value={wagerAmount}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setWagerAmount(e.target.value)
+            setWagerAmount(parseInt(e.target.value, 10))
           }
           fullWidth
           margin="normal"
@@ -257,7 +259,7 @@ const App: React.FC = () => {
         <Box mt={4}>
           <Typography variant="h5">Game Log:</Typography>
           <br />
-          <Paper elevation={1} style={{ maxHeight: '200px', overflow: 'auto', padding: '8px' }}>
+          <Paper elevation={1} style={{ maxHeight: '1000px', overflow: 'auto', padding: '8px' }}>
             {log.map((entry, index) => (
               <Typography key={index}>{entry}</Typography>
             ))}
