@@ -1,10 +1,11 @@
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 use clvm_traits::ToClvm;
+use std::rc::Rc;
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::game_handler::{MyTurnInputs, TheirTurnInputs, TheirTurnResult};
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::{Aggsig, AllocEncoder, Amount, Hash};
+use crate::common::types::{Aggsig, AllocEncoder, Amount, Hash, Program};
 use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 
 #[test]
@@ -107,12 +108,11 @@ fn test_game_handler_my_turn() {
         ).expect("should assemble");
 
     let my_turn_handler = GameHandler::my_driver_from_nodeptr(program);
-    let nil = allocator.allocator().null();
     let result = my_turn_handler
         .call_my_turn_driver(
             &mut allocator,
             &MyTurnInputs {
-                readable_new_move: ReadableMove::from_nodeptr(nil),
+                readable_new_move: ReadableMove::from_program(Program::from_bytes(&[0x80])),
                 amount: Amount::default(),
                 last_move: &[],
                 last_mover_share: Amount::default(),
@@ -132,5 +132,5 @@ fn test_game_handler_my_turn() {
         "(1337 () () () 100 0x0000000000000000000000000000000000000000000000000000000000000000)"
     );
     assert_eq!(result.game_move.basic.move_made, &[1]);
-    assert_eq!(disassemble(allocator.allocator(), result.state, None), "4");
+    assert_eq!(result.state, Rc::new(Program::from_bytes(&[4])));
 }

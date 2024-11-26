@@ -1,14 +1,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::mem::swap;
+use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, OnChainGameCoin, ReadableMove,
-};
+use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
@@ -233,6 +232,7 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
+        got_error: bool,
     ) -> Result<(), Error>;
 
     /// Report a puzzle and solution for a spent coin.
@@ -264,8 +264,6 @@ struct SynchronousGameCradleState {
     game_finished: VecDeque<(GameID, Amount)>,
     shutdown: Option<CoinString>,
     identity: ChiaIdentity,
-    #[allow(dead_code)]
-    on_chain_game_coins: Vec<OnChainGameCoin>,
 }
 
 impl PacketSender for SynchronousGameCradleState {
@@ -351,7 +349,6 @@ impl SynchronousGameCradle {
                 funding_coin: None,
                 unfunded_offer: None,
                 shutdown: None,
-                on_chain_game_coins: Vec::default(),
             },
             peer: PotatoHandler::new(PotatoHandlerInit {
                 have_potato: config.have_potato,
@@ -427,7 +424,7 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.shutdown = Some(reward_coin_string.clone());
         Ok(())
     }
-    fn going_on_chain(&mut self) -> Result<(), Error> {
+    fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
         todo!();
     }
 }
@@ -531,14 +528,12 @@ impl SynchronousGameCradle {
             false,
         )?;
 
-        let spend_solution_program = Program::from_nodeptr(env.allocator, spend.solution)?;
-
         let bundle = SpendBundle {
             spends: vec![CoinSpend {
                 coin: parent.clone(),
                 bundle: Spend {
                     puzzle: self.state.identity.puzzle.clone(),
-                    solution: spend_solution_program,
+                    solution: spend.solution.clone(),
                     signature: spend.signature.clone(),
                 },
             }],
@@ -588,7 +583,7 @@ impl SynchronousGameCradle {
             coin: parent_coin.clone(),
             bundle: Spend {
                 puzzle: self.state.identity.puzzle.clone(),
-                solution: Program::from_nodeptr(env.allocator, solution)?,
+                solution: Rc::new(Program::from_nodeptr(env.allocator, solution)?),
                 signature,
             },
         });
@@ -731,7 +726,7 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         let mut env = channel_handler_env(allocator, rng);
         let rehydrated_move = Program::from_bytes(&readable);
-        let readable = ReadableMove::from_nodeptr(rehydrated_move.to_nodeptr(env.allocator)?);
+        let readable = ReadableMove::from_program(rehydrated_move);
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
@@ -853,9 +848,10 @@ impl GameCradle for SynchronousGameCradle {
                     return Ok(result);
                 }
                 Err(e) => {
+                    debug!("going on chain for error {e:?}");
                     result.receive_error = Some(e);
                     // Go on chain.
-                    local_ui.going_on_chain()?;
+                    local_ui.going_on_chain(true)?;
                     return Ok(result);
                 }
             }
@@ -880,13 +876,14 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         _local_ui: &mut dyn ToLocalUI,
+        got_error: bool,
     ) -> Result<(), Error> {
         let mut env = channel_handler_env(allocator, rng);
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
         };
-        self.peer.go_on_chain(&mut penv)
+        self.peer.go_on_chain(&mut penv, got_error)
     }
 
     fn report_puzzle_and_solution<R: Rng>(
