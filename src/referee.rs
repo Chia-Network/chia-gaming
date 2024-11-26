@@ -13,7 +13,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::{
-    chia_dialect, GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult,
+    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult,
     TheirTurnInputs, TheirTurnResult,
 };
 use crate::channel_handler::types::{
@@ -28,7 +28,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend,
     CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
-    Timeout,
+    Timeout, chia_dialect,
 };
 
 pub const REM_CONDITION_FIELDS: usize = 4;
@@ -1079,6 +1079,14 @@ impl RefereeMaker {
         curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
     }
 
+    pub fn outcome_referee_puzzle_hash(
+        &self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<PuzzleHash, Error> {
+        let args = self.spend_this_coin();
+        curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
+    }
+
     // Ensure this returns
     fn get_transaction(
         &self,
@@ -1273,10 +1281,10 @@ impl RefereeMaker {
             (
                 target_referee_puzzle_hash.clone(),
                 (self.fixed.amount.clone(), ()),
-            ),
+            )
         )]
-        .to_clvm(allocator)
-        .into_gen()?;
+            .to_clvm(allocator)
+            .into_gen()?;
 
         // Generalize this once the test is working.  Move out the assumption that
         // referee private key is my_identity.synthetic_private_key.
@@ -1530,12 +1538,14 @@ impl RefereeMaker {
         &mut self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        conditions: &NodePtr,
+        conditions: &[CoinCondition],
         state_number: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
+        debug!("rems in spend {conditions:?}");
+
         // Read parameters off conditions
         let rem_condition = if let Some(CoinCondition::Rem(rem_condition)) =
-            CoinCondition::from_nodeptr(allocator, *conditions)
+            conditions
                 .iter()
                 .find(|cond| matches!(cond, CoinCondition::Rem(_)))
         {
@@ -1552,8 +1562,8 @@ impl RefereeMaker {
             // Timeout case
             // Return enum timeout and we give the coin string of our reward
             // coin if any.
-            // Something went wrong if i think it's my turn
-            debug_assert!(!self.is_my_turn());
+            // Something went wrong if i think it was my turn
+            debug_assert!(!self.processing_my_turn());
 
             let my_reward_coin_string = CoinString::from_parts(
                 &coin_string.to_coin_id(),
@@ -1669,7 +1679,12 @@ impl RefereeMaker {
             .into_gen()?;
 
         match full_slash_result {
-            Ok(_) => {
+            Ok(slash) => {
+                debug!(
+                    "slash was allowed: {}",
+                    disassemble(allocator.allocator(), slash.1, None)
+                );
+
                 // Ultimately each of these cases returns some kind of
                 // TheirTurnCoinSpentResult.
                 let nil_evidence = Evidence::nil(allocator);

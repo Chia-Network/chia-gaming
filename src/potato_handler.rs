@@ -12,11 +12,10 @@ use log::debug;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult, OnChainGameState,
-    PotatoSignatures, PrintableGameStartInfo, ReadableMove,
+    PotatoSignatures, PrintableGameStartInfo, ReadableMove, CoinSpentInformation,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
@@ -25,9 +24,9 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID,
     Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
-    SpendBundle, Timeout,
+    SpendBundle, Timeout, chia_dialect,
 };
-use crate::referee::RefereeOnChainTransaction;
+use crate::referee::{RefereeOnChainTransaction, TheirTurnCoinSpentResult};
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,6 +59,7 @@ pub struct MyGameStartQueueEntry {
 enum ConditionWaitKind {
     Channel(CoinString),
     Unroll(CoinString),
+    Game,
 }
 
 /// Async interface for messaging out of the game layer toward the wallet.
@@ -1922,20 +1922,13 @@ impl PotatoHandler {
         };
 
         let (env, system_interface) = penv.env();
-        let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
-        let run_args = solution.to_nodeptr(env.allocator)?;
-        let conditions = run_program(
-            env.allocator.allocator(),
-            &chia_dialect(),
-            run_puzzle,
-            run_args,
-            0,
-        )
-        .into_gen()?;
+        let channel_conditions = CoinCondition::from_puzzle_and_solution(
+            env.allocator, puzzle, solution
+        )?;
 
         // XXX If I wasn't the one who initiated the on chain transition, determine whether
         // to bump the unroll coin.
-        let channel_conditions = CoinCondition::from_nodeptr(env.allocator, conditions.1);
+
         let unroll_coin = if let Some(coin_id) = channel_conditions
             .iter()
             .filter_map(|c| {
@@ -1988,30 +1981,21 @@ impl PotatoHandler {
             );
 
             let (env, _system_interface) = penv.env();
-            let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
-            let run_args = solution.to_nodeptr(env.allocator)?;
-            let conditions = run_program(
-                env.allocator.allocator(),
-                &chia_dialect(),
-                run_puzzle,
-                run_args,
-                0,
-            )
-            .into_gen()?;
-
-            let created_coins: Vec<PuzzleHash> =
-                CoinCondition::from_nodeptr(env.allocator, conditions.1)
-                    .iter()
-                    .filter_map(|c| {
-                        if let CoinCondition::CreateCoin(ph, amt) = c {
-                            if *amt > Amount::default() {
-                                return Some(ph.clone());
-                            }
+            let conditions = CoinCondition::from_puzzle_and_solution(
+                env.allocator, puzzle, solution
+            )?;
+            let created_coins: Vec<PuzzleHash> = conditions
+                .iter()
+                .filter_map(|c| {
+                    if let CoinCondition::CreateCoin(ph, amt) = c {
+                        if *amt > Amount::default() {
+                            return Some(ph.clone());
                         }
+                    }
 
-                        None
-                    })
-                    .collect();
+                    None
+                })
+                .collect();
 
             // We have a collection puzzle hash and amount pairs.  We need to match these to the
             // games in the channel handler.
@@ -2020,9 +2004,20 @@ impl PotatoHandler {
         };
 
         let mut actions = Vec::new();
+
+        // Register each coin that corresponds to a game.
+        for coin in game_map.keys() {
+            let (_env, system_interface) = penv.env();
+            system_interface.register_coin(
+                coin,
+                &self.channel_timeout,
+                Some("game coin")
+            )?;
+        }
+
         for coin in game_map.keys() {
             let player_ch = self.channel_handler_mut()?;
-            let (env, _) = penv.env();
+            let (env, _system_interface) = penv.env();
             if let Some(redo_move) = player_ch.get_redo_action(env, coin)? {
                 debug!("redo move: {redo_move:?}");
                 actions.push(redo_move);
@@ -2030,11 +2025,122 @@ impl PotatoHandler {
         }
 
         debug!("we can proceed with game");
+        self.have_potato = PotatoState::Present;
         self.handshake_state = HandshakeState::OnChain(game_map);
         debug!("Game map {:?}", self.handshake_state);
 
         for action in actions.into_iter() {
+            self.game_action_queue.push_front(action);
+        }
+
+        self.next_action(penv)?;
+
+        Ok(())
+    }
+
+    fn check_game_coin_spent<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString,
+    ) -> Result<bool, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+            if game_map.contains_key(coin_id) {
+                // Check how it got spent.
+                let (env, system_interface) = penv.env();
+                system_interface.request_puzzle_and_solution(coin_id)?;
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn next_action<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        if let Some(action) = self.game_action_queue.pop_front() {
             self.do_game_action(penv, action)?;
+        }
+
+        Ok(())
+    }
+
+    fn handle_game_coin_spent<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString,
+        puzzle: &Program,
+        solution: &Program,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let mut unblock_queue = false;
+
+        let old_definition =
+            if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+                if let Some(old_definition) = game_map.remove(coin_id) {
+                    old_definition
+                } else {
+                    return Ok(());
+                }
+            } else {
+                return Ok(());
+            };
+
+        // A game coin was spent and we have the puzzle and solution.
+        let player_ch = self.channel_handler_mut()?;
+        let (env, system_interface) = penv.env();
+        let conditions = CoinCondition::from_puzzle_and_solution(
+            env.allocator,
+            puzzle,
+            solution
+        )?;
+        let their_turn_result = player_ch.game_coin_spent(
+            env,
+            &old_definition.game_id,
+            coin_id,
+            &conditions,
+        )?;
+        match their_turn_result {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout { my_reward_coin_string }) => {
+                todo!();
+            }
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved { new_coin_string, readable }) => {
+                todo!();
+            }
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(outcome)) => {
+                todo!();
+            }
+            CoinSpentInformation::OurReward(_, _) => {
+                todo!();
+            }
+            CoinSpentInformation::OurSpend(ph, amt) => {
+                if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+                    game_map.insert(CoinString::from_parts(
+                        &coin_id.to_coin_id(),
+                        &ph,
+                        &amt
+                    ), OnChainGameState {
+                        puzzle_hash: ph,
+                        our_turn: false,
+                        .. old_definition
+                    });
+                    // Do some kind of UI indication.
+                    unblock_queue = true;
+                }
+            }
+        }
+
+        if unblock_queue {
+            self.next_action(penv)?;
         }
 
         Ok(())
@@ -2265,6 +2371,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
         self.check_unroll_spent(penv, coin_id)?;
 
+        self.check_game_coin_spent(penv, coin_id)?;
+
         Ok(())
     }
 
@@ -2324,6 +2432,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             HandshakeState::OnChainWaitingForUnrollConditions(unroll_id) => {
                 Some(ConditionWaitKind::Unroll(unroll_id.clone()))
             }
+            HandshakeState::OnChain(game_map) => {
+                Some(ConditionWaitKind::Game)
+            }
             _ => None,
         };
 
@@ -2345,6 +2456,15 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 if *coin_id == unroll_coin_id {
                     return self.finish_on_chain_transition(penv, coin_id, puzzle_and_solution);
                 }
+            }
+            Some(ConditionWaitKind::Game) => {
+                let (puzzle, solution) =
+                    if let Some((puzzle, solution)) = puzzle_and_solution {
+                        (puzzle, solution)
+                    } else {
+                        return Err(Error::StrErr("no puzzle and solution for game coin".to_string()));
+                    };
+                self.handle_game_coin_spent(penv, coin_id, puzzle, solution)?;
             }
             _ => {}
         }

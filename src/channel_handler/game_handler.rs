@@ -16,21 +16,16 @@ use clvm_tools_rs::compiler::comptypes::CompilerOpts;
 use clvm_tools_rs::compiler::srcloc::Srcloc;
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::NodePtr;
-use clvmr::NO_UNKNOWN_OPS;
-use clvmr::{run_program, ChiaDialect};
+use clvmr::run_program;
 
 use log::debug;
 
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, ValidationProgram};
 use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
-    IntoErr, Node, Program,
+    IntoErr, Node, Program, chia_dialect
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo};
-
-pub fn chia_dialect() -> ChiaDialect {
-    ChiaDialect::new(NO_UNKNOWN_OPS)
-}
 
 // How to call the clvm program in this object:
 //

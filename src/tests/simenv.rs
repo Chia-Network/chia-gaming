@@ -9,7 +9,6 @@ use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 use log::debug;
 
 use crate::channel_handler::game::Game;
-use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::runner::{channel_handler_env, ChannelHandlerGame};
 use crate::channel_handler::types::{
     ChannelHandlerEnv, GameStartInfo, ReadableMove, ValidationProgram,
@@ -20,7 +19,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, PuzzleHash, Sha256tree, Spend, Timeout,
+    PrivateKey, PuzzleHash, Sha256tree, Spend, Timeout, chia_dialect,
 };
 use crate::simulator::Simulator;
 use crate::tests::game::{new_channel_handler_game, GameAction, GameActionResult};

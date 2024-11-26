@@ -25,7 +25,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID,
     CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
-    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
+    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout, CoinCondition,
 };
 use crate::referee::{
     GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
@@ -1007,6 +1007,10 @@ impl LiveGame {
         self.referee_maker.on_chain_referee_puzzle_hash(allocator)
     }
 
+    pub fn outcome_puzzle_hash(&self, allocator: &mut AllocEncoder) -> Result<PuzzleHash, Error> {
+        self.referee_maker.outcome_referee_puzzle_hash(allocator)
+    }
+
     pub fn internal_make_move(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -1068,7 +1072,6 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         data: &[u8],
     ) -> Result<ReadableMove, Error> {
-        assert!(!self.referee_maker.is_my_turn());
         self.referee_maker.receive_readable(allocator, data)
     }
 
@@ -1076,10 +1079,10 @@ impl LiveGame {
         &mut self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        conditions: &NodePtr,
+        conditions: &[CoinCondition],
         current_state: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        assert!(!self.referee_maker.is_my_turn());
+        assert!(!self.referee_maker.processing_my_turn());
         self.referee_maker
             .their_turn_coin_spent(allocator, coin_string, conditions, current_state)
     }
@@ -1109,4 +1112,17 @@ impl LiveGame {
 
         Ok(None)
     }
+}
+
+/// Identifies the game phase that an on chain spend represented.
+/// If their turn, gives a referee TheirTurnCoinSpentResult, otherwise gives the new coin.
+pub enum CoinSpentInformation {
+    OurReward(PuzzleHash, Amount),
+    OurSpend(PuzzleHash, Amount),
+    TheirSpend(TheirTurnCoinSpentResult)
+}
+
+pub enum CoinIdentificationByPuzzleHash {
+    Reward(PuzzleHash, Amount),
+    Game(PuzzleHash, Amount),
 }

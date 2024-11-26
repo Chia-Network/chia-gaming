@@ -2,6 +2,8 @@ use std::io;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::rc::Rc;
 
+use log::debug;
+
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -16,10 +18,12 @@ use sha2::{Digest, Sha256};
 use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
+use clvmr::{ChiaDialect, run_program, NO_UNKNOWN_OPS};
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
 use crate::common::constants::{AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, CREATE_COIN_ATOM, REM_ATOM};
 
@@ -29,6 +33,10 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 
 #[cfg(test)]
 use clvm_tools_rs::compiler::runtypes::RunFailure;
+
+pub fn chia_dialect() -> ChiaDialect {
+    ChiaDialect::new(NO_UNKNOWN_OPS)
+}
 
 /// CoinID
 #[derive(Default, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -954,18 +962,10 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
                     Amount::new(amt),
                 ));
             }
-        } else {
-            return None;
         }
-    } else if exploded.len() > 1
-        && matches!(
-            (
-                allocator.allocator().sexp(exploded[0]),
-                allocator.allocator().sexp(exploded[1])
-            ),
-            (SExp::Atom, SExp::Atom)
-        )
-    {
+    }
+
+    if !exploded.is_empty() && exploded.iter().all(|e| matches!(allocator.allocator().sexp(*e), SExp::Atom)) {
         let atoms: Vec<Vec<u8>> = exploded
             .iter()
             .map(|a| allocator.allocator().atom(*a).to_vec())
@@ -991,6 +991,25 @@ impl CoinCondition {
         } else {
             Vec::new()
         }
+    }
+
+    pub fn from_puzzle_and_solution(allocator: &mut AllocEncoder, puzzle: &Program, solution: &Program) -> Result<Vec<CoinCondition>, Error> {
+        let run_puzzle = puzzle.to_nodeptr(allocator)?;
+        let run_args = solution.to_nodeptr(allocator)?;
+        let conditions = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            run_puzzle,
+            run_args,
+            0,
+        )
+            .into_gen()?;
+        debug!(
+            "conditions to parse {}",
+            disassemble(allocator.allocator(), conditions.1, None)
+        );
+
+        Ok(CoinCondition::from_nodeptr(allocator, conditions.1))
     }
 }
 

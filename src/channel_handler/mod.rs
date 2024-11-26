@@ -22,7 +22,8 @@ use crate::channel_handler::types::{
     CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult,
     DispositionResult, GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
     OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
-    UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
+    UnrollCoin, UnrollCoinConditionInputs, UnrollTarget, CoinSpentInformation,
+    CoinIdentificationByPuzzleHash,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -36,7 +37,7 @@ use crate::common::types::{
 };
 use crate::potato_handler::GameAction;
 use crate::referee::{
-    GameMoveDetails, RefereeMaker, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
+    GameMoveDetails, RefereeMaker, RefereeOnChainTransaction,
 };
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -1490,21 +1491,54 @@ impl ChannelHandler {
         ))
     }
 
-    pub fn their_turn_coin_spent<R: Rng>(
+    pub fn game_coin_spent<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         coin_string: &CoinString,
-        conditions: &NodePtr,
-    ) -> Result<TheirTurnCoinSpentResult, Error> {
+        conditions: &[CoinCondition]
+    ) -> Result<CoinSpentInformation, Error> {
         let live_game_idx = self.get_game_by_id(game_id)?;
+        let referee_pk = private_to_public_key(&self.referee_private_key());
+        let reward_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_pk)?;
+        let game_puzzle_hash = self.live_games[live_game_idx].outcome_puzzle_hash(env.allocator)?;
 
-        self.live_games[live_game_idx].their_turn_coin_spent(
+        if self.live_games[live_game_idx].processing_my_turn() {
+            // Try to determine if the spend was us.
+            let expected_creation =
+                conditions.iter().filter_map(|c| {
+                    if let CoinCondition::CreateCoin(ph, amt) = c {
+                        if game_puzzle_hash == *ph {
+
+                            return Some(CoinIdentificationByPuzzleHash::Game(ph.clone(), amt.clone()));
+                        } else if reward_puzzle_hash == *ph {
+                            return Some(CoinIdentificationByPuzzleHash::Reward(ph.clone(), amt.clone()));
+                        }
+                    }
+                    None
+                }).next();
+            {
+                // It was the spend we expected from our own actions to continue the game.
+                match expected_creation {
+                    Some(CoinIdentificationByPuzzleHash::Reward(ph, amt)) => {
+                        return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
+                    }
+                    Some(CoinIdentificationByPuzzleHash::Game(ph, amt)) => {
+                        return Ok(CoinSpentInformation::OurSpend(ph.clone(), amt.clone()));
+                    }
+                    _ => { }
+                }
+            }
+
+            todo!();
+        }
+
+        Ok(CoinSpentInformation::TheirSpend(self.live_games[live_game_idx].their_turn_coin_spent(
             env.allocator,
             coin_string,
             conditions,
             self.current_state_number,
-        )
+        )?))
     }
 
     pub fn get_redo_action<R: Rng>(

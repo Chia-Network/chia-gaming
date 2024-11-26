@@ -3,13 +3,13 @@ use clvmr::{run_program, NodePtr};
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
-use crate::channel_handler::game_handler::{chia_dialect, GameHandler};
+use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::ValidationProgram;
 use crate::channel_handler::GameStartInfo;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
     atom_from_clvm, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error, GameID, Hash,
-    IntoErr, Timeout,
+    IntoErr, Timeout, chia_dialect
 };
 
 pub struct Game {
