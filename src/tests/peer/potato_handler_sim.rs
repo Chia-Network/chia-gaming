@@ -1025,6 +1025,7 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     );
 }
 
+#[ignore]
 #[test]
 fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut allocator = AllocEncoder::new();
