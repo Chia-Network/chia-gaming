@@ -23,3 +23,4 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
 };
 
 export default GameLog;
+

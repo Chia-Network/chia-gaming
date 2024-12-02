@@ -1,4 +1,3 @@
-// components/WaitingScreen.tsx
 import React from 'react';
 import { Box, Typography, CircularProgress } from '@mui/material';
 
@@ -19,3 +18,4 @@ const WaitingScreen: React.FC = () => {
 };
 
 export default WaitingScreen;
+

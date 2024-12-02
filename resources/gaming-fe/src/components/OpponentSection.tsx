@@ -44,3 +44,4 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
 };
 
 export default OpponentSection;
+
