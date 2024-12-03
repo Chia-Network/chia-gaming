@@ -40,11 +40,15 @@
             previous_validation_program_hash (shatree previous_validation_program)
             (assert
                 (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
-                (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree 
+                (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree
                         previous_state)))
-                ; usually returns the conditions verbatim
+
+                ; Intention here:
+                ; An empty remark indicating slash
+                ; The conditions returned by previous_validation_program
+                ; The conditions returned by mover_puzzle
                 (c (list REMARK)
-                    (concat (a previous_validation_program (c previous_validation_program_hash all_args)) 
+                    (concat (a previous_validation_program (c previous_validation_program_hash all_args))
                         (a mover_puzzle solution))
                 )
             )

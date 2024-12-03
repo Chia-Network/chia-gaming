@@ -1030,7 +1030,7 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
 fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator);
+    let mut moves = test_moves_1(&mut allocator).to_vec();
     if let GameAction::Move(_player, readable, _) = moves[2].clone() {
         moves[3] = GameAction::FakeMove(1, readable, vec![0; 500]);
     } else {

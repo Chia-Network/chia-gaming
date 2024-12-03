@@ -224,6 +224,7 @@ fn test_referee_smoke() {
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
+    let state = reftest.my_referee.get_game_state().clone();
 
     assert!(my_move_wire_data.details.basic.move_made.is_empty());
     let mut off_chain_slash_gives_error = reftest.my_referee.clone();
@@ -254,8 +255,11 @@ fn test_referee_smoke() {
 
     debug!("their_move_wire_data {their_move_local_update:?}");
 
+    let state_node = state.to_nodeptr(&mut allocator).expect("should cvt");
+    let nil = allocator.allocator().null();
     let validator_move_args = ValidatorMoveArgs {
-        game_move: my_move_wire_data.details.clone(),
+        state: state_node,
+        evidence: allocator.allocator().null(),
         mover_puzzle: reftest.my_identity.puzzle.to_program(),
         solution: reftest
             .my_identity
@@ -266,10 +270,10 @@ fn test_referee_smoke() {
             .expect("should create"),
     };
 
-    reftest
+    let validator_result = reftest
         .their_referee
-        .run_validator_for_their_move(&mut allocator, &validator_move_args)
-        .expect("should run");
+        .run_validator_for_their_move(&mut allocator, &validator_move_args);
+    assert!(validator_result.is_err());
 
     assert!(reftest.my_referee.processing_my_turn());
     let their_move_result = reftest
