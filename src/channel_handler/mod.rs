@@ -1503,7 +1503,7 @@ impl ChannelHandler {
         let reward_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_pk)?;
         let game_puzzle_hash = self.live_games[live_game_idx].outcome_puzzle_hash(env.allocator)?;
 
-        if self.live_games[live_game_idx].processing_my_turn() {
+        if !self.live_games[live_game_idx].processing_my_turn() {
             // Try to determine if the spend was us.
             let expected_creation =
                 conditions.iter().filter_map(|c| {
@@ -1533,6 +1533,7 @@ impl ChannelHandler {
             todo!();
         }
 
+        // Check whether this is for a spend that already happened.
         Ok(CoinSpentInformation::TheirSpend(self.live_games[live_game_idx].their_turn_coin_spent(
             env.allocator,
             coin_string,

@@ -1082,7 +1082,7 @@ impl LiveGame {
         conditions: &[CoinCondition],
         current_state: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        assert!(!self.referee_maker.processing_my_turn());
+        assert!(self.referee_maker.processing_my_turn());
         self.referee_maker
             .their_turn_coin_spent(allocator, coin_string, conditions, current_state)
     }

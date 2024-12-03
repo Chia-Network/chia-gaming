@@ -1733,6 +1733,7 @@ impl RefereeMaker {
         conditions: &[CoinCondition],
         state_number: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
+        assert!(!self.is_my_turn());
         debug!("rems in spend {conditions:?}");
 
         // Read parameters off conditions
