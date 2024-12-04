@@ -1502,6 +1502,7 @@ impl ChannelHandler {
         let referee_pk = private_to_public_key(&self.referee_private_key());
         let reward_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_pk)?;
         let game_puzzle_hash = self.live_games[live_game_idx].outcome_puzzle_hash(env.allocator)?;
+        let prev_puzzle_hash = self.live_games[live_game_idx].current_puzzle_hash(env.allocator)?;
 
         if !self.live_games[live_game_idx].processing_my_turn() {
             // Try to determine if the spend was us.
@@ -1533,12 +1534,24 @@ impl ChannelHandler {
             todo!();
         }
 
-        // Check whether this is for a spend that already happened.
+        if let Some((_, ph, _)) = coin_string.to_parts() {
+            if prev_puzzle_hash == ph {
+                return Ok(CoinSpentInformation::Expected(game_puzzle_hash.clone(), self.live_games[live_game_idx].get_amount(), self.live_games[live_game_idx].their_turn_coin_spent(
+                    env.allocator,
+                    coin_string,
+                    conditions,
+                    self.current_state_number,
+                    true,
+                )?));
+            }
+        }
+
         Ok(CoinSpentInformation::TheirSpend(self.live_games[live_game_idx].their_turn_coin_spent(
             env.allocator,
             coin_string,
             conditions,
             self.current_state_number,
+            false,
         )?))
     }
 

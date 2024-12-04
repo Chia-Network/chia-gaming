@@ -22,7 +22,7 @@ use crate::channel_handler::types::{
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    calculate_hash_of_quoted_mod_hash, curry_and_treehash, puzzle_for_pk,
+    calculate_hash_of_quoted_mod_hash, curry_and_treehash,
     standard_solution_partial, standard_solution_unsafe, ChiaIdentity,
 };
 use crate::common::types::{
@@ -89,7 +89,7 @@ pub enum TheirTurnCoinSpentResult {
     Moved {
         // New iteration of the game coin.
         new_coin_string: CoinString,
-        readable: NodePtr,
+        readable: ReadableMove,
     },
     Slash(Box<SlashOutcome>),
 }
@@ -552,43 +552,6 @@ pub struct StoredGameState {
     state_number: usize,
 }
 
-// validation programs get passed this:
-// ((last_move next_validation_hash my_share me_hash my_puzzle_hash opponent_puzzle_hash
-//        amount timeout max_move_size referee_hash)
-//        state me mover_puzzle solution evidence)
-//
-// 'args' of referee was
-//   (previous_state previous_validation_program mover_puzzle solution evidence)
-//
-// and
-//
-//   previous_validation_program_hash = (shatree previous_validation_program)
-//
-// we apply
-// (a previous_validation_program (c previous_validation_program_hash all_args))
-//
-// So the arguments to the validation program should match.
-fn curried_args_for_validator(
-    allocator: &mut AllocEncoder,
-    referee_puzzle_hash: &PuzzleHash,
-    referee_args: &RefereePuzzleArgs,
-    validator_args: &ValidatorMoveArgs,
-) -> Result<Vec<NodePtr>, Error> {
-    let referee_args_node = referee_args.to_node_list(
-        allocator,
-        referee_puzzle_hash
-    )?;
-    todo!();
-        // let previous_validation_program_hash = referee_args.game_move.validation_program
-}
-    // clvm_curried_args!(
-    //     state,
-    //     Node(validation_program.to_nodeptr()),
-    //     my_inner_puzzle,
-    //     slash_spend_solution,
-    //     0
-    // )
-
 // XXX break out state so we can have a previous state and easily swap them.
 // Referee coin has two inner puzzles.
 // Throughout channel handler, the one that's ours is the standard format puzzle
@@ -734,11 +697,16 @@ impl RefereeMaker {
             );
         }
 
-        for old_state in self.old_states.iter().skip(1).rev() {
+        for (i, old_state) in self.old_states.iter().enumerate().skip(1).rev() {
             let have_puzzle_hash = curry_referee_puzzle_hash(
                 allocator,
                 &self.fixed.referee_coin_puzzle_hash,
                 &old_state.state.args_for_this_coin(),
+            )?;
+            let after_puzzle_hash = curry_referee_puzzle_hash(
+                allocator,
+                &self.fixed.referee_coin_puzzle_hash,
+                &old_state.state.spend_this_coin(),
             )?;
             debug!(
                 "referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
@@ -1397,6 +1365,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
+        really_update: bool,
     ) -> Result<TheirTurnMoveResult, Error> {
         debug!("do their turn {details:?}");
 
@@ -1433,14 +1402,16 @@ impl RefereeMaker {
 
         let (readable_move, message) = match &result {
             TheirTurnResult::FinalMove(readable_move) => {
-                self.accept_their_move(
-                    allocator,
-                    None,
-                    args.clone(),
-                    puzzle_args.clone(),
-                    details,
-                    state_number,
-                )?;
+                if really_update {
+                    self.accept_their_move(
+                        allocator,
+                        None,
+                        args.clone(),
+                        puzzle_args.clone(),
+                        details,
+                        state_number,
+                    )?;
+                }
 
                 (readable_move.clone(), vec![])
             }
@@ -1457,14 +1428,16 @@ impl RefereeMaker {
                 // In case this succeeds, we'll direct the result to our mover
                 // puzzle, which sets our identity for the game and is a value-
                 // holding coin spendable by us.
-                self.accept_their_move(
-                    allocator,
-                    Some(handler.clone()),
-                    args.clone(),
-                    puzzle_args.clone(),
-                    details,
-                    state_number,
-                )?;
+                if really_update {
+                    self.accept_their_move(
+                        allocator,
+                        Some(handler.clone()),
+                        args.clone(),
+                        puzzle_args.clone(),
+                        details,
+                        state_number,
+                    )?;
+                }
 
                 debug!(
                     "readable_move {}",
@@ -1642,32 +1615,25 @@ impl RefereeMaker {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        details: &GameMoveDetails,
-        state_number: usize,
+        _state_number: usize,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
-        let args = self.spend_this_coin();
-        let puzzle_args = Rc::new(RefereePuzzleArgs::new(
-            &self.fixed,
-            &details.basic,
-            Some(&args.game_move.validation_info_hash),
-            &details.validation_info_hash,
-            None,
-            false,
-        ));
+        let puzzle_args = self.spend_this_coin();
         let new_puzzle = curry_referee_puzzle(
             allocator,
             &self.fixed.referee_coin_puzzle,
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
+        debug!("prior move was {:?}", self.args_for_this_coin().game_move.basic);
+        debug!("move from previous turn is {:?}", puzzle_args.game_move.basic);
+        assert_ne!(self.args_for_this_coin().game_move, puzzle_args.game_move);
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
 
-        let game_handler = self.get_game_handler();
-        let referee_args = self.args_for_this_coin();
+        let _game_handler = self.get_game_handler();
         let nil = allocator.allocator().null();
         let validator_args = ValidatorMoveArgs {
             evidence: nil,
@@ -1684,12 +1650,6 @@ impl RefereeMaker {
 
         // my_inner_solution maker is just in charge of making aggsigs from
         // conditions.
-        let slash_conditions = self.make_slash_conditions(allocator)?;
-        let slash_spend = self.make_slash_spend(allocator)?;
-
-        let slash_spend_solution: &Program = slash_spend.solution.borrow();
-        let referee_args = self.args_for_this_coin();
-
         let full_slash_result = self.run_validator_for_their_move(
             allocator,
             &validator_args,
@@ -1710,6 +1670,7 @@ impl RefereeMaker {
                 // below, having been created for the reward coin by using
                 // the standard solution signer.
                 let full_slash_solution = self.make_full_slash_solution(allocator)?;
+                let slash_spend = self.make_slash_spend(allocator)?;
                 self.make_slash_for_their_turn(
                     allocator,
                     coin_string,
@@ -1732,9 +1693,12 @@ impl RefereeMaker {
         coin_string: &CoinString,
         conditions: &[CoinCondition],
         state_number: usize,
+        expected: bool,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         assert!(!self.is_my_turn());
         debug!("rems in spend {conditions:?}");
+        debug!("current state {:?}", self.state);
+        assert_ne!(self.args_for_this_coin().game_move, self.spend_this_coin().game_move);
 
         // Read parameters off conditions
         let rem_condition = if let Some(CoinCondition::Rem(rem_condition)) =
@@ -1775,8 +1739,6 @@ impl RefereeMaker {
             ));
         }
 
-        let my_inner_puzzle = puzzle_for_pk(allocator, &self.fixed.my_identity.public_key)?;
-
         let new_move = &rem_condition[0];
         let validation_info_hash = Hash::from_slice(&rem_condition[1]);
         let (new_mover_share, new_max_move_size) = if let (Some(share), Some(max_size)) = (
@@ -1799,10 +1761,16 @@ impl RefereeMaker {
             validation_info_hash,
         };
 
+        assert_ne!(details, self.args_for_this_coin().game_move);
+        if !expected {
+            assert_ne!(details, self.spend_this_coin().game_move);
+            assert_ne!(self.args_for_this_coin().game_move, self.spend_this_coin().game_move);
+        }
         let result = self.their_turn_move_off_chain(
             allocator,
             &details,
             state_number,
+            !expected,
         )?;
 
         let args = self.spend_this_coin();
@@ -1819,11 +1787,10 @@ impl RefereeMaker {
             &args
         )?;
 
-        let mut check_and_report_slash = |readable_move: NodePtr| {
+        let mut check_and_report_slash = |allocator: &mut AllocEncoder, readable_move: NodePtr| {
             if let Some(result) = self.check_their_turn_for_slash(
                 allocator,
                 coin_string,
-                &details,
                 state_number)?
             {
                 Ok(result)
@@ -1834,10 +1801,22 @@ impl RefereeMaker {
                         &new_puzzle_hash,
                         &self.fixed.amount,
                     ),
-                    readable: readable_move,
+                    readable: ReadableMove::from_nodeptr(allocator, readable_move)?,
                 })
             }
         };
+
+        let dont_enforce = |allocator: &mut AllocEncoder, readable_move: NodePtr| {
+            Ok(TheirTurnCoinSpentResult::Moved {
+                new_coin_string: CoinString::from_parts(
+                    &coin_string.to_coin_id(),
+                    &new_puzzle_hash,
+                    &self.fixed.amount,
+                ),
+                readable: ReadableMove::from_nodeptr(allocator, readable_move)?,
+            })
+        };
+
         debug!("referee move details {details:?}");
         match result.original {
             TheirTurnResult::Slash(evidence, sig) => {
@@ -1854,12 +1833,19 @@ impl RefereeMaker {
                 );
             }
             TheirTurnResult::FinalMove(readable_move) => {
-                check_and_report_slash(readable_move)
+                if expected {
+                    dont_enforce(allocator, readable_move)
+                } else {
+                    check_and_report_slash(allocator, readable_move)
+                }
             }
             TheirTurnResult::MakeMove(readable_move, _, _) => {
-                check_and_report_slash(readable_move)
+                if expected {
+                    dont_enforce(allocator, readable_move)
+                } else {
+                    check_and_report_slash(allocator, readable_move)
+                }
             }
         }
-
     }
 }

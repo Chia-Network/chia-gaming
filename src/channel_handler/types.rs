@@ -1003,6 +1003,10 @@ impl LiveGame {
         self.referee_maker.processing_my_turn()
     }
 
+    pub fn last_puzzle_hash(&self) -> PuzzleHash {
+        self.last_referee_puzzle_hash.clone()
+    }
+
     pub fn current_puzzle_hash(&self, allocator: &mut AllocEncoder) -> Result<PuzzleHash, Error> {
         self.referee_maker.on_chain_referee_puzzle_hash(allocator)
     }
@@ -1038,7 +1042,7 @@ impl LiveGame {
         assert!(!self.referee_maker.is_my_turn());
         let their_move_result =
             self.referee_maker
-                .their_turn_move_off_chain(allocator, game_move, state_number)?;
+                .their_turn_move_off_chain(allocator, game_move, state_number, true)?;
         self.last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
         Ok(their_move_result)
     }
@@ -1081,10 +1085,13 @@ impl LiveGame {
         coin_string: &CoinString,
         conditions: &[CoinCondition],
         current_state: usize,
+        expected: bool,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         assert!(self.referee_maker.processing_my_turn());
-        self.referee_maker
-            .their_turn_coin_spent(allocator, coin_string, conditions, current_state)
+        let res = self.referee_maker
+            .their_turn_coin_spent(allocator, coin_string, conditions, current_state, expected)?;
+        self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
+        Ok(res)
     }
 
     /// Regress the live game state to the state we know so that we can generate the puzzle
@@ -1100,13 +1107,14 @@ impl LiveGame {
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
         let result = self.referee_maker.rewind(allocator, want_ph)?;
         if let Some(current_state) = &result {
-            assert!(self.is_my_turn());
             self.rewind_outcome = Some(*current_state);
+            self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
             return Ok(Some((self.is_my_turn(), *current_state)));
         }
 
         if referee_puzzle_hash == *want_ph {
             self.rewind_outcome = Some(current_state);
+            self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
             return Ok(Some((self.is_my_turn(), current_state)));
         }
 
@@ -1119,7 +1127,8 @@ impl LiveGame {
 pub enum CoinSpentInformation {
     OurReward(PuzzleHash, Amount),
     OurSpend(PuzzleHash, Amount),
-    TheirSpend(TheirTurnCoinSpentResult)
+    TheirSpend(TheirTurnCoinSpentResult),
+    Expected(PuzzleHash, Amount, TheirTurnCoinSpentResult),
 }
 
 pub enum CoinIdentificationByPuzzleHash {

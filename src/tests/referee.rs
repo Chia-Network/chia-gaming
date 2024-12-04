@@ -239,6 +239,7 @@ fn test_referee_smoke() {
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
         },
         0,
+        true,
     );
     debug!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
@@ -250,13 +251,12 @@ fn test_referee_smoke() {
 
     let their_move_local_update = reftest
         .their_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, true)
         .expect("should move");
 
     debug!("their_move_wire_data {their_move_local_update:?}");
 
     let state_node = state.to_nodeptr(&mut allocator).expect("should cvt");
-    let nil = allocator.allocator().null();
     let validator_move_args = ValidatorMoveArgs {
         state: state_node,
         evidence: allocator.allocator().null(),
@@ -278,7 +278,7 @@ fn test_referee_smoke() {
     assert!(reftest.my_referee.processing_my_turn());
     let their_move_result = reftest
         .my_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, true)
         .expect("should run");
     assert_eq!(their_move_result.message, b"message data");
     assert_eq!(

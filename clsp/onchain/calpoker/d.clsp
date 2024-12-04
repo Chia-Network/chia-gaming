@@ -16,7 +16,7 @@
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     (cards alice_commit) me mover_puzzle solution evidence)
     (if_any_fail
-        (print "poker d" (= (strlen bob_picks) 1))
+        (print (list "poker d" bob_picks) (= (strlen bob_picks) 1))
         (= (popcount bob_picks) 4)
         (= new_validation_hash (sha256 ehash (shatree (list bob_picks cards alice_commit))))
         (= max_move_size 18)
