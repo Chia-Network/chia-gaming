@@ -41,8 +41,8 @@ use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GameHandler {
-    MyTurnHandler(Program),
-    TheirTurnHandler(Program),
+    MyTurnHandler(Rc<Program>),
+    TheirTurnHandler(Rc<Program>),
 }
 
 impl ToClvm<NodePtr> for GameHandler {
@@ -172,10 +172,10 @@ pub enum TheirTurnResult {
 
 impl GameHandler {
     pub fn their_driver_from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<GameHandler, Error> {
-        Ok(GameHandler::TheirTurnHandler(Program::from_nodeptr(allocator, n)?))
+        Ok(GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(allocator, n)?)))
     }
     pub fn my_driver_from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<GameHandler, Error> {
-        Ok(GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, n)?))
+        Ok(GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, n)?)))
     }
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         match self {

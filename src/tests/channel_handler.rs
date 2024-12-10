@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
@@ -134,7 +136,7 @@ fn test_smoke_can_start_game() {
         ValidationProgram::new(env.allocator, initial_validation_puzzle);
 
     let timeout = Timeout::new(1337);
-    let game_handler = GameHandler::TheirTurnHandler(Program::from_nodeptr(env.allocator, game_handler).expect("should cvt"));
+    let game_handler = GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(env.allocator, game_handler).expect("should cvt")));
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
         &mut env,
         &[GameStartInfo {

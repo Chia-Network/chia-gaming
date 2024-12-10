@@ -232,9 +232,9 @@ impl GenericGameStartInfo<ValidationProgram, NodePtr> {
         let returned_game_id = GameID::from_clvm(allocator, lst[0])?;
         let returned_amount = Amount::from_clvm(allocator, lst[1])?;
         let returned_handler = if my_turn {
-            GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, lst[2])?)
+            GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
         } else {
-            GameHandler::TheirTurnHandler(Program::from_nodeptr(allocator, lst[2])?)
+            GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
         };
         let returned_timeout = Timeout::from_clvm(allocator, lst[3])?;
         let returned_my_contribution = Amount::from_clvm(allocator, lst[4])?;

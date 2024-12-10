@@ -867,7 +867,7 @@ impl RefereeMaker {
             g.clone()
         } else {
             let nil = allocator.encode_atom(&[]).into_gen()?;
-            GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, nil)?)
+            GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, nil)?))
         };
 
         let new_state = match self.state.borrow() {
