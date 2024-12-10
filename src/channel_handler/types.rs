@@ -16,7 +16,7 @@ use rand::prelude::*;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::{FlatGameHandler, GameHandler};
+use crate::channel_handler::game_handler::GameHandler;
 use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle, standard_solution_partial,
@@ -76,13 +76,12 @@ pub struct PotatoSignatures {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GenericGameStartInfo<
-    H: std::fmt::Debug + Clone,
     VP: std::fmt::Debug + Clone,
     S: std::fmt::Debug + Clone,
 > {
     pub game_id: GameID,
     pub amount: Amount,
-    pub game_handler: H,
+    pub game_handler: GameHandler,
     pub timeout: Timeout,
 
     pub my_contribution_this_game: Amount,
@@ -95,8 +94,8 @@ pub struct GenericGameStartInfo<
     pub initial_mover_share: Amount,
 }
 
-pub type GameStartInfo = GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr>;
-pub type FlatGameStartInfo = GenericGameStartInfo<FlatGameHandler, Program, Program>;
+pub type GameStartInfo = GenericGameStartInfo<ValidationProgram, NodePtr>;
+pub type FlatGameStartInfo = GenericGameStartInfo<Program, Program>;
 
 pub struct PrintableGameStartInfo<'a> {
     pub allocator: &'a mut Allocator,
@@ -109,9 +108,9 @@ impl<'a> std::fmt::Debug for PrintableGameStartInfo<'a> {
         writeln!(formatter, "- amount: {:?}", self.info.amount)?;
         writeln!(
             formatter,
-            "- game_handler: {} {}",
+            "- game_handler: {} {:?}",
             self.info.game_handler.is_my_turn(),
-            disassemble(self.allocator, self.info.game_handler.to_nodeptr(), None)
+            self.info.game_handler,
         )?;
         writeln!(formatter, "- timeout: {:?}", self.info.timeout)?;
         writeln!(
@@ -154,7 +153,7 @@ impl<'a> std::fmt::Debug for PrintableGameStartInfo<'a> {
     }
 }
 
-impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
+impl GenericGameStartInfo<ValidationProgram, NodePtr> {
     pub fn is_my_turn(&self) -> bool {
         matches!(self.game_handler, GameHandler::MyTurnHandler(_))
     }
@@ -163,16 +162,7 @@ impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
         allocator: &mut AllocEncoder,
         serializable: &FlatGameStartInfo,
     ) -> Result<GameStartInfo, Error> {
-        let game_handler_nodeptr = node_from_bytes(
-            allocator.allocator(),
-            &serializable.game_handler.serialized.0,
-        )
-        .into_gen()?;
-        let game_handler = if serializable.game_handler.my_turn {
-            GameHandler::MyTurnHandler(game_handler_nodeptr)
-        } else {
-            GameHandler::TheirTurnHandler(game_handler_nodeptr)
-        };
+        let game_handler = serializable.game_handler.clone();
         let initial_validation_program_nodeptr = node_from_bytes(
             allocator.allocator(),
             &serializable.initial_validation_program.0,
@@ -201,7 +191,6 @@ impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
         &self,
         allocator: &mut AllocEncoder,
     ) -> Result<FlatGameStartInfo, Error> {
-        let flat_game_handler = self.game_handler.to_serializable(allocator)?;
         let flat_validation_program =
             Program::from_nodeptr(allocator, self.initial_validation_program.to_nodeptr())?;
         let flat_state = Program::from_nodeptr(allocator, self.initial_state)?;
@@ -209,7 +198,7 @@ impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
         Ok(GenericGameStartInfo {
             game_id: self.game_id.clone(),
             amount: self.amount.clone(),
-            game_handler: flat_game_handler,
+            game_handler: self.game_handler.clone(),
             timeout: self.timeout.clone(),
             my_contribution_this_game: self.my_contribution_this_game.clone(),
             their_contribution_this_game: self.their_contribution_this_game.clone(),
@@ -243,9 +232,9 @@ impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
         let returned_game_id = GameID::from_clvm(allocator, lst[0])?;
         let returned_amount = Amount::from_clvm(allocator, lst[1])?;
         let returned_handler = if my_turn {
-            GameHandler::MyTurnHandler(lst[2])
+            GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, lst[2])?)
         } else {
-            GameHandler::TheirTurnHandler(lst[2])
+            GameHandler::TheirTurnHandler(Program::from_nodeptr(allocator, lst[2])?)
         };
         let returned_timeout = Timeout::from_clvm(allocator, lst[3])?;
         let returned_my_contribution = Amount::from_clvm(allocator, lst[4])?;
@@ -428,6 +417,7 @@ pub struct PotatoMoveCachedData {
     pub state_number: usize,
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
+    pub match_puzzle_hash: PuzzleHash,
     pub move_data: ReadableMove,
     pub move_entropy: Hash,
     pub amount: Amount,
@@ -1066,7 +1056,7 @@ impl LiveGame {
         agg_sig_me: &Hash,
         on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
-        assert!(self.referee_maker.processing_my_turn());
+        // assert!(self.referee_maker.processing_my_turn());
         self.referee_maker
             .get_transaction_for_move(allocator, game_coin, agg_sig_me, on_chain)
     }
@@ -1087,7 +1077,7 @@ impl LiveGame {
         current_state: usize,
         expected: bool,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        assert!(self.referee_maker.processing_my_turn());
+        // assert!(self.referee_maker.processing_my_turn());
         let res = self.referee_maker
             .their_turn_coin_spent(allocator, coin_string, conditions, current_state, expected)?;
         self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
@@ -1105,7 +1095,7 @@ impl LiveGame {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
-        let result = self.referee_maker.rewind(allocator, want_ph)?;
+        let result = self.referee_maker.rewind(allocator, want_ph, current_state)?;
         if let Some(current_state) = &result {
             self.rewind_outcome = Some(*current_state);
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
@@ -1124,13 +1114,15 @@ impl LiveGame {
 
 /// Identifies the game phase that an on chain spend represented.
 /// If their turn, gives a referee TheirTurnCoinSpentResult, otherwise gives the new coin.
+#[derive(Debug)]
 pub enum CoinSpentInformation {
     OurReward(PuzzleHash, Amount),
     OurSpend(PuzzleHash, Amount),
     TheirSpend(TheirTurnCoinSpentResult),
-    Expected(PuzzleHash, Amount, TheirTurnCoinSpentResult),
+    Expected(PuzzleHash, Amount),
 }
 
+#[derive(Debug)]
 pub enum CoinIdentificationByPuzzleHash {
     Reward(PuzzleHash, Amount),
     Game(PuzzleHash, Amount),

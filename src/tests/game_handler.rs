@@ -24,7 +24,7 @@ fn test_game_handler_their_move_slash() {
     )
     .expect("should assemble");
 
-    let their_turn_handler = GameHandler::their_driver_from_nodeptr(program);
+    let their_turn_handler = GameHandler::their_driver_from_nodeptr(&mut allocator, program).expect("should cvt");
     assert!(!their_turn_handler.is_my_turn());
     let nil = allocator.allocator().null();
     let result = their_turn_handler
@@ -66,7 +66,7 @@ fn test_game_handler_their_make_move() {
     )
     .expect("should assemble");
 
-    let their_turn_handler = GameHandler::their_driver_from_nodeptr(program);
+    let their_turn_handler = GameHandler::their_driver_from_nodeptr(&mut allocator, program).expect("should cvt");
     let nil = allocator.allocator().null();
     let result = their_turn_handler
         .call_their_turn_driver(
@@ -90,9 +90,10 @@ fn test_game_handler_their_make_move() {
         )
         .expect("should run");
     if let TheirTurnResult::MakeMove(state, game_handler, msg) = result {
+        let game_handler_node = game_handler.to_nodeptr(&mut allocator).expect("should cvt");
         assert_eq!(msg, b"test");
         assert_eq!(disassemble(allocator.allocator(), state, None), "999");
-        assert_eq!(disassemble(allocator.allocator(), game_handler.to_nodeptr(), None), "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000 () ())");
+        assert_eq!(disassemble(allocator.allocator(), game_handler_node, None), "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000 () ())");
     } else {
         unreachable!();
     }
@@ -107,7 +108,7 @@ fn test_game_handler_my_turn() {
             "(c (1 . 1) (c (1 . 2) (c (1 . 3) (c (1 . 4) (c (1 . 5) (c (1 . 6) (c (c (1 . 1337) 1) (c (1 . 8) ()))))))))"
         ).expect("should assemble");
 
-    let my_turn_handler = GameHandler::my_driver_from_nodeptr(program);
+    let my_turn_handler = GameHandler::my_driver_from_nodeptr(&mut allocator, program).expect("should cvt");
     let result = my_turn_handler
         .call_my_turn_driver(
             &mut allocator,
@@ -123,10 +124,11 @@ fn test_game_handler_my_turn() {
             },
         )
         .expect("should run");
+    let waiting_driver_node = result.waiting_driver.to_nodeptr(&mut allocator).expect("should cvt");
     assert_eq!(
         disassemble(
             allocator.allocator(),
-            result.waiting_driver.to_nodeptr(),
+            waiting_driver_node,
             None
         ),
         "(1337 () () () 100 0x0000000000000000000000000000000000000000000000000000000000000000)"

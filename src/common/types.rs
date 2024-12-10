@@ -541,7 +541,7 @@ impl<'a> Sha256Input<'a> {
 }
 
 /// Puzzle hash
-#[derive(Default, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Eq, PartialEq, Debug, Serialize, Deserialize, Hash)]
 pub struct PuzzleHash(Hash);
 
 impl PuzzleHash {

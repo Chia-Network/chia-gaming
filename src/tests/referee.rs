@@ -61,25 +61,23 @@ pub fn make_debug_game_handler(
         }
     };
 
-    let my_turn_handler = GameHandler::my_driver_from_nodeptr(
-        make_curried_game_handler(true)
-            .to_clvm(allocator)
-            .expect("should curry"),
-    );
+    let my_driver_node = make_curried_game_handler(true)
+        .to_clvm(allocator)
+        .expect("should curry");
+    let my_turn_handler = GameHandler::my_driver_from_nodeptr(allocator, my_driver_node).expect("should cvt");
     let my_validation_program = CurriedProgram {
-        program: Node(my_turn_handler.to_nodeptr()),
+        program: my_turn_handler.clone(),
         args: clvm_curried_args!(1337),
     }
     .to_clvm(allocator)
     .expect("should curry");
 
-    let their_turn_handler = GameHandler::their_driver_from_nodeptr(
-        make_curried_game_handler(false)
-            .to_clvm(allocator)
-            .expect("should curry"),
-    );
+    let their_turn_node = make_curried_game_handler(false)
+        .to_clvm(allocator)
+        .expect("should curry");
+    let their_turn_handler = GameHandler::their_driver_from_nodeptr(allocator, their_turn_node).expect("should cvt");
     let their_validation_program = CurriedProgram {
-        program: Node(their_turn_handler.to_nodeptr()),
+        program: their_turn_handler.clone(),
         args: clvm_curried_args!(1337),
     }
     .to_clvm(allocator)

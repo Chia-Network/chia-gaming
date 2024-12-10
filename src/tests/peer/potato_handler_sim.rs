@@ -979,7 +979,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                                     };
 
                                 let mut fake_move = m.clone();
-                                fake_move.game_move.basic.move_made = move_data.clone();
+                                fake_move.game_move.basic.move_made.append(&mut move_data.clone());
                                 Ok(PeerMessage::Move(game_id.clone(), fake_move))
                             })
                             .expect("should be able to sabotage");
@@ -1012,9 +1012,9 @@ fn sim_test_with_peer_container() {
 fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator);
-    if let GameAction::Move(_player, readable, _) = moves[2].clone() {
-        moves[3] = GameAction::FakeMove(1, readable, vec![0; 500]);
+    let mut moves = test_moves_1(&mut allocator).to_vec();
+    if let GameAction::Move(player, readable, _) = moves[3].clone() {
+        moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
     } else {
         panic!("no move 1 to replace");
     }
@@ -1031,8 +1031,8 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut allocator = AllocEncoder::new();
 
     let mut moves = test_moves_1(&mut allocator).to_vec();
-    if let GameAction::Move(_player, readable, _) = moves[2].clone() {
-        moves[3] = GameAction::FakeMove(1, readable, vec![0; 500]);
+    if let GameAction::Move(player, readable, _) = moves[3].clone() {
+        moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
     } else {
         panic!("no move 1 to replace");
     }

@@ -14,7 +14,7 @@ use crate::common::standard_coin::{
     get_standard_coin_puzzle, private_to_public_key, puzzle_hash_for_pk,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    AllocEncoder, Amount, CoinID, GameID, Hash, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::tests::game::DEFAULT_UNROLL_TIME_LOCK;
 
@@ -134,11 +134,12 @@ fn test_smoke_can_start_game() {
         ValidationProgram::new(env.allocator, initial_validation_puzzle);
 
     let timeout = Timeout::new(1337);
+    let game_handler = GameHandler::TheirTurnHandler(Program::from_nodeptr(env.allocator, game_handler).expect("should cvt"));
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
         &mut env,
         &[GameStartInfo {
             game_id: GameID::new(vec![0]),
-            game_handler: GameHandler::TheirTurnHandler(game_handler),
+            game_handler: game_handler,
             timeout: timeout.clone(),
             my_contribution_this_game: our_share.clone(),
             their_contribution_this_game: their_share.clone(),

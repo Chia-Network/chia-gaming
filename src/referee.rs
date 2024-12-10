@@ -62,6 +62,7 @@ pub struct TheirTurnMoveResult {
     pub original: TheirTurnResult,
 }
 
+#[derive(Debug)]
 pub enum SlashOutcome {
     NoReward,
     Reward {
@@ -82,6 +83,7 @@ pub struct LiveGameReplay {
     game_id: GameID,
 }
 
+#[derive(Debug)]
 pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,
@@ -669,6 +671,7 @@ impl RefereeMaker {
         &mut self,
         allocator: &mut AllocEncoder,
         puzzle_hash: &PuzzleHash,
+        state_number: usize,
     ) -> Result<Option<usize>, Error> {
         debug!("REWIND: find a way to proceed from {puzzle_hash:?}");
         for old_state in self.old_states.iter().skip(1).rev() {
@@ -703,24 +706,20 @@ impl RefereeMaker {
                 &self.fixed.referee_coin_puzzle_hash,
                 &old_state.state.args_for_this_coin(),
             )?;
-            let after_puzzle_hash = curry_referee_puzzle_hash(
-                allocator,
-                &self.fixed.referee_coin_puzzle_hash,
-                &old_state.state.spend_this_coin(),
-            )?;
             debug!(
                 "referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
                 old_state.state.is_my_turn(),
                 old_state.state_number
             );
             if *puzzle_hash == have_puzzle_hash && old_state.state.is_my_turn() {
-                self.state = old_state.state.clone();
-                debug!("referee rewind: reassume state {:?}", self.state);
+                self.state = self.old_states[self.old_states.len() - 1].state.clone();
+                debug!("referee rewind my turn: reassume state {:?}", self.state);
                 return Ok(Some(old_state.state_number));
             }
         }
 
         debug!("referee rewind: no matching state");
+        debug!("still in state {:?}", self.state);
         Ok(None)
     }
 
@@ -868,7 +867,7 @@ impl RefereeMaker {
             g.clone()
         } else {
             let nil = allocator.encode_atom(&[]).into_gen()?;
-            GameHandler::MyTurnHandler(nil)
+            GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, nil)?)
         };
 
         let new_state = match self.state.borrow() {
@@ -1087,9 +1086,10 @@ impl RefereeMaker {
         coin_string: &CoinString,
         puzzle: &Puzzle,
         always_produce_transaction: bool,
+        targs: &RefereePuzzleArgs,
         args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let my_mover_share = self.get_our_current_share();
+        let my_mover_share = targs.game_move.basic.mover_share.clone();
 
         if always_produce_transaction || my_mover_share != Amount::default() {
             let signature = args.get_signature().unwrap_or_default();
@@ -1099,6 +1099,7 @@ impl RefereeMaker {
             //
             // OnChainRefereeSolution encodes this properly.
             let transaction_solution = args.to_clvm(allocator).into_gen()?;
+            debug!("transaction solution inputs {args:?}");
             debug!(
                 "transaction_solution {}",
                 disassemble(allocator.allocator(), transaction_solution, None)
@@ -1137,6 +1138,7 @@ impl RefereeMaker {
             coin_string,
             &spend_puzzle,
             false,
+            &self.spend_this_coin(),
             &OnChainRefereeSolution::Timeout,
         )
     }
@@ -1176,6 +1178,30 @@ impl RefereeMaker {
     ) -> Result<RefereeOnChainTransaction, Error> {
         // We can only do a move to replicate our turn.
         assert!(self.processing_my_turn());
+        let args = self.spend_this_coin();
+
+        let state_node = self.get_game_state().to_nodeptr(allocator)?;
+        let nil = allocator.allocator().null();
+        let prog = ValidationProgram::new(allocator, nil);
+        debug!(
+            "referee maker: get transaction for move {:?}",
+            PrintableGameStartInfo {
+                allocator: allocator.allocator(),
+                info: &GameStartInfo {
+                    game_handler: self.get_game_handler(),
+                    game_id: GameID::default(),
+                    amount: self.get_amount(),
+                    initial_state: state_node,
+                    initial_max_move_size: args.game_move.basic.max_move_size,
+                    initial_move: args.game_move.basic.move_made.clone(),
+                    initial_mover_share: args.game_move.basic.mover_share.clone(),
+                    my_contribution_this_game: Amount::default(),
+                    their_contribution_this_game: Amount::default(),
+                    initial_validation_program: prog,
+                    timeout: self.fixed.timeout.clone(),
+                }
+            }
+        );
 
         // Get the puzzle hash for the next referee state.
         // This reflects a "their turn" state with the updated state from the
@@ -1204,8 +1230,9 @@ impl RefereeMaker {
         );
 
         debug!("transaction for move: state {:?}", self.state);
-        debug!("get_transaction_for_move: target curry");
+        debug!("get_transaction_for_move: source curry {args:?}");
         let target_args = self.spend_this_coin();
+        debug!("get_transaction_for_move: target curry {target_args:?}");
         assert_ne!(
             target_args.mover_puzzle_hash,
             self.fixed.my_identity.puzzle_hash
@@ -1306,7 +1333,7 @@ impl RefereeMaker {
         });
 
         if let Some(transaction) =
-            self.get_transaction(allocator, coin_string, &spend_puzzle, true, &args_list)?
+            self.get_transaction(allocator, coin_string, &spend_puzzle, true, &target_args, &args_list)?
         {
             Ok(transaction)
         } else {
@@ -1375,6 +1402,7 @@ impl RefereeMaker {
 
         // Retrieve evidence from their turn handler.
         let state_nodeptr = last_state.to_nodeptr(allocator)?;
+        assert!(args.game_move.basic.move_made.len() <= self.args_for_this_coin().game_move.basic.max_move_size);
         let result = handler.call_their_turn_driver(
             allocator,
             &TheirTurnInputs {
@@ -1402,16 +1430,14 @@ impl RefereeMaker {
 
         let (readable_move, message) = match &result {
             TheirTurnResult::FinalMove(readable_move) => {
-                if really_update {
-                    self.accept_their_move(
-                        allocator,
-                        None,
-                        args.clone(),
-                        puzzle_args.clone(),
-                        details,
-                        state_number,
-                    )?;
-                }
+                self.accept_their_move(
+                    allocator,
+                    None,
+                    args.clone(),
+                    puzzle_args.clone(),
+                    details,
+                    state_number,
+                )?;
 
                 (readable_move.clone(), vec![])
             }
@@ -1428,16 +1454,14 @@ impl RefereeMaker {
                 // In case this succeeds, we'll direct the result to our mover
                 // puzzle, which sets our identity for the game and is a value-
                 // holding coin spendable by us.
-                if really_update {
-                    self.accept_their_move(
-                        allocator,
-                        Some(handler.clone()),
-                        args.clone(),
-                        puzzle_args.clone(),
-                        details,
-                        state_number,
-                    )?;
-                }
+                self.accept_their_move(
+                    allocator,
+                    Some(handler.clone()),
+                    args.clone(),
+                    puzzle_args.clone(),
+                    details,
+                    state_number,
+                )?;
 
                 debug!(
                     "readable_move {}",
@@ -1624,16 +1648,14 @@ impl RefereeMaker {
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
-        debug!("prior move was {:?}", self.args_for_this_coin().game_move.basic);
-        debug!("move from previous turn is {:?}", puzzle_args.game_move.basic);
-        assert_ne!(self.args_for_this_coin().game_move, puzzle_args.game_move);
+        // assert_ne!(self.args_for_this_coin().game_move, puzzle_args.game_move);
+
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
 
-        let _game_handler = self.get_game_handler();
         let nil = allocator.allocator().null();
         let validator_args = ValidatorMoveArgs {
             evidence: nil,
@@ -1695,10 +1717,29 @@ impl RefereeMaker {
         state_number: usize,
         expected: bool,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        assert!(!self.is_my_turn());
-        debug!("rems in spend {conditions:?}");
-        debug!("current state {:?}", self.state);
-        assert_ne!(self.args_for_this_coin().game_move, self.spend_this_coin().game_move);
+        let after_puzzle_hash = curry_referee_puzzle_hash(
+            allocator,
+            &self.fixed.referee_coin_puzzle_hash,
+            &self.spend_this_coin()
+        )?;
+
+        // XXX Revisit this in conjuction with rewind.  There is a better way to do this.
+        let repeat =
+            if let Some(CoinCondition::CreateCoin(ph, amt)) =
+            conditions
+            .iter()
+            .find(|cond| matches!(cond, CoinCondition::CreateCoin(_, _)))
+        {
+            after_puzzle_hash == *ph
+        } else {
+            false
+        };
+
+        if repeat {
+            debug!("rems in spend {conditions:?}");
+            debug!("current state {:?}", self.state);
+            debug!("stored state number {}", self.old_states[self.old_states.len()-1].state_number);
+        }
 
         // Read parameters off conditions
         let rem_condition = if let Some(CoinCondition::Rem(rem_condition)) =
@@ -1761,10 +1802,10 @@ impl RefereeMaker {
             validation_info_hash,
         };
 
-        assert_ne!(details, self.args_for_this_coin().game_move);
-        if !expected {
-            assert_ne!(details, self.spend_this_coin().game_move);
-            assert_ne!(self.args_for_this_coin().game_move, self.spend_this_coin().game_move);
+        let state = self.state.clone();
+        if repeat {
+            self.state = self.old_states[self.old_states.len() - 2].state.clone();
+            debug!("repeat {repeat} new state {:?}", self.state);
         }
         let result = self.their_turn_move_off_chain(
             allocator,
@@ -1786,6 +1827,7 @@ impl RefereeMaker {
             &self.fixed.referee_coin_puzzle_hash,
             &args
         )?;
+        debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}\n");
 
         let mut check_and_report_slash = |allocator: &mut AllocEncoder, readable_move: NodePtr| {
             if let Some(result) = self.check_their_turn_for_slash(
@@ -1818,7 +1860,7 @@ impl RefereeMaker {
         };
 
         debug!("referee move details {details:?}");
-        match result.original {
+        let final_result = match result.original {
             TheirTurnResult::Slash(evidence, sig) => {
                 let slash_spend = self.make_slash_spend(allocator)?;
                 let full_slash_solution = self.make_full_slash_solution(allocator)?;
@@ -1833,19 +1875,21 @@ impl RefereeMaker {
                 );
             }
             TheirTurnResult::FinalMove(readable_move) => {
-                if expected {
+                if repeat {
                     dont_enforce(allocator, readable_move)
                 } else {
                     check_and_report_slash(allocator, readable_move)
                 }
             }
             TheirTurnResult::MakeMove(readable_move, _, _) => {
-                if expected {
+                if repeat {
                     dont_enforce(allocator, readable_move)
                 } else {
                     check_and_report_slash(allocator, readable_move)
                 }
             }
-        }
+        };
+        self.state = state;
+        final_result
     }
 }

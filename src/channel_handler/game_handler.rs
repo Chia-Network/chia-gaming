@@ -14,7 +14,7 @@ use clvm_tools_rs::compiler::clvm::{convert_from_clvm_rs, convert_to_clvm_rs, ru
 use clvm_tools_rs::compiler::comptypes::CompilerOpts;
 #[cfg(test)]
 use clvm_tools_rs::compiler::srcloc::Srcloc;
-use clvm_traits::{ClvmEncoder, ToClvm};
+use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::allocator::NodePtr;
 use clvmr::run_program;
 
@@ -39,29 +39,21 @@ use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 //       (MAKE_MOVE moving_driver readable_info message) or
 //       (SLASH evidence aggsig)
 
-#[derive(Clone, Debug)]
-pub enum GameHandler {
-    MyTurnHandler(NodePtr),
-    TheirTurnHandler(NodePtr),
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FlatGameHandler {
-    pub my_turn: bool,
-    pub serialized: Program,
+pub enum GameHandler {
+    MyTurnHandler(Program),
+    TheirTurnHandler(Program),
 }
 
-impl GameHandler {
-    pub fn to_serializable(&self, allocator: &mut AllocEncoder) -> Result<FlatGameHandler, Error> {
-        let (my_turn, nodeptr) = match self {
-            GameHandler::MyTurnHandler(n) => (true, n),
-            GameHandler::TheirTurnHandler(n) => (false, n),
-        };
-
-        Ok(FlatGameHandler {
-            my_turn,
-            serialized: Program::from_nodeptr(allocator, *nodeptr)?,
-        })
+impl ToClvm<NodePtr> for GameHandler {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
+        match self {
+            GameHandler::MyTurnHandler(p) => p.to_clvm(encoder),
+            GameHandler::TheirTurnHandler(p) => p.to_clvm(encoder),
+        }
     }
 }
 
@@ -179,36 +171,38 @@ pub enum TheirTurnResult {
 }
 
 impl GameHandler {
-    pub fn their_driver_from_nodeptr(n: NodePtr) -> GameHandler {
-        GameHandler::TheirTurnHandler(n)
+    pub fn their_driver_from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<GameHandler, Error> {
+        Ok(GameHandler::TheirTurnHandler(Program::from_nodeptr(allocator, n)?))
     }
-    pub fn my_driver_from_nodeptr(n: NodePtr) -> GameHandler {
-        GameHandler::MyTurnHandler(n)
+    pub fn my_driver_from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<GameHandler, Error> {
+        Ok(GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, n)?))
     }
-    pub fn to_nodeptr(&self) -> NodePtr {
+    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         match self {
-            GameHandler::MyTurnHandler(n) => *n,
-            GameHandler::TheirTurnHandler(n) => *n,
+            GameHandler::MyTurnHandler(n) => n.to_nodeptr(allocator),
+            GameHandler::TheirTurnHandler(n) => n.to_nodeptr(allocator),
         }
     }
     pub fn is_my_turn(&self) -> bool {
         matches!(self, GameHandler::MyTurnHandler(_))
     }
 
-    pub fn get_my_turn_driver(&self) -> Result<NodePtr, Error> {
+    pub fn get_my_turn_driver(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         if let GameHandler::MyTurnHandler(res) = self {
-            Ok(*res)
+            res.to_nodeptr(allocator)
         } else {
+            todo!();
             Err(Error::StrErr(
                 "my turn called on a their turn driver".to_string(),
             ))
         }
     }
 
-    pub fn get_their_turn_driver(&self) -> Result<NodePtr, Error> {
+    pub fn get_their_turn_driver(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         if let GameHandler::TheirTurnHandler(res) = self {
-            Ok(*res)
+            res.to_nodeptr(allocator)
         } else {
+            todo!();
             Err(Error::StrErr(
                 "my turn called on a their turn driver".to_string(),
             ))
@@ -238,9 +232,10 @@ impl GameHandler {
             disassemble(allocator.allocator(), driver_args, None)
         );
 
+        let driver_node = self.get_my_turn_driver(allocator)?;
         let run_result = run_code(
             allocator,
-            self.get_my_turn_driver()?,
+            driver_node,
             driver_args,
             get_my_turn_debug_flag(inputs),
         )?;
@@ -283,7 +278,7 @@ impl GameHandler {
         let message_parser = if pl[7] == allocator.allocator().null() {
             None
         } else {
-            Some(MessageHandler::from_nodeptr(pl[7]))
+            Some(MessageHandler::from_nodeptr(allocator, pl[7])?)
         };
         let validation_program_hash =
             if let Some(h) = atom_from_clvm(allocator, pl[2]).map(Hash::from_slice) {
@@ -300,7 +295,7 @@ impl GameHandler {
         let validation_program = ValidationProgram::new(allocator, pl[1]);
         let state = Rc::new(Program::from_nodeptr(allocator, pl[3])?);
         Ok(MyTurnResult {
-            waiting_driver: GameHandler::their_driver_from_nodeptr(pl[6]),
+            waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[6])?,
             validation_program,
             validation_program_hash: validation_program_hash.clone(),
             state,
@@ -350,9 +345,10 @@ impl GameHandler {
             .to_clvm(allocator)
             .into_gen()?;
 
+        let driver_node = self.get_their_turn_driver(allocator)?;
         let run_result = run_code(
             allocator,
-            self.get_their_turn_driver()?,
+            driver_node,
             driver_args,
             get_their_turn_debug_flag(inputs),
         )?;
@@ -398,7 +394,7 @@ impl GameHandler {
                 };
                 Ok(TheirTurnResult::MakeMove(
                     pl[1],
-                    GameHandler::my_driver_from_nodeptr(pl[2]),
+                    GameHandler::my_driver_from_nodeptr(allocator, pl[2])?,
                     message_data,
                 ))
             }
@@ -429,11 +425,11 @@ pub struct MessageInputs {
 }
 
 #[derive(Clone, Debug)]
-pub struct MessageHandler(pub NodePtr);
+pub struct MessageHandler(pub Program);
 
 impl MessageHandler {
-    pub fn from_nodeptr(n: NodePtr) -> Self {
-        MessageHandler(n)
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Self, Error> {
+        Ok(MessageHandler(Program::from_nodeptr(allocator, n)?))
     }
     pub fn run(
         &self,
@@ -451,7 +447,8 @@ impl MessageHandler {
             "running message handler on args {}",
             disassemble(allocator.allocator(), args, None)
         );
-        let run_result = run_code(allocator, self.0, args, false)?;
+        let run_prog = self.0.to_nodeptr(allocator)?;
+        let run_result = run_code(allocator, run_prog, args, false)?;
 
         ReadableMove::from_nodeptr(allocator, run_result)
     }

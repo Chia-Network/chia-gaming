@@ -58,8 +58,8 @@ impl Game {
             ));
         }
 
-        let initial_mover_handler = GameHandler::my_driver_from_nodeptr(template_list[0]);
-        let initial_waiter_handler = GameHandler::their_driver_from_nodeptr(template_list[1]);
+        let initial_mover_handler = GameHandler::my_driver_from_nodeptr(allocator, template_list[0])?;
+        let initial_waiter_handler = GameHandler::their_driver_from_nodeptr(allocator, template_list[1])?;
         let whether_paired = atom_from_clvm(allocator, template_list[2])
             .map(|a| !a.is_empty())
             .expect("should be an atom");
