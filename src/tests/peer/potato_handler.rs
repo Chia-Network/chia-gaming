@@ -230,6 +230,7 @@ where
         peer.channel_offer(
             self,
             SpendBundle {
+                name: None,
                 spends: vec![CoinSpend {
                     coin: parent.clone(),
                     bundle: Spend {

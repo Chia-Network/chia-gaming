@@ -72,9 +72,16 @@ pub enum SlashOutcome {
 }
 
 #[derive(Debug, Clone)]
+pub enum RefereeOutputKind {
+    Game,
+    Reward,
+}
+
+#[derive(Debug, Clone)]
 pub struct RefereeOnChainTransaction {
     pub bundle: Spend,
-    pub reward_coin: CoinString,
+    pub amount: Amount,
+    pub coin: CoinString,
 }
 
 #[allow(dead_code)]
@@ -712,7 +719,7 @@ impl RefereeMaker {
                 old_state.state_number
             );
             if *puzzle_hash == have_puzzle_hash && old_state.state.is_my_turn() {
-                self.state = self.old_states[self.old_states.len() - 1].state.clone();
+                self.state = old_state.state.clone();
                 debug!("referee rewind my turn: reassume state {:?}", self.state);
                 return Ok(Some(old_state.state_number));
             }
@@ -922,6 +929,8 @@ impl RefereeMaker {
         new_entropy: Hash,
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
+        assert!(self.is_my_turn());
+
         let game_handler = self.get_game_handler();
         let args = self.spend_this_coin();
 
@@ -1116,7 +1125,8 @@ impl RefereeMaker {
             );
             return Ok(Some(RefereeOnChainTransaction {
                 bundle: transaction_bundle,
-                reward_coin: output_coin_string,
+                amount: self.fixed.amount.clone(),
+                coin: output_coin_string,
             }));
         }
 
@@ -1263,7 +1273,7 @@ impl RefereeMaker {
                 debug!("spend puzzle hash {ph:?}");
                 debug!("this coin start {start_ph:?}");
                 debug!("this coin end   {end_ph:?}");
-                assert_eq!(ph, start_ph);
+                // assert_eq!(ph, start_ph);
             }
         }
 

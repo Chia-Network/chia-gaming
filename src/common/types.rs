@@ -1043,6 +1043,7 @@ pub struct SpendRewardResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendBundle {
+    pub name: Option<String>,
     pub spends: Vec<CoinSpend>,
 }
 

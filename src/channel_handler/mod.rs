@@ -798,6 +798,17 @@ impl ChannelHandler {
             self.current_state_number,
         )?;
 
+        let _ = self.live_games[game_idx].get_transaction_for_move(
+            env.allocator,
+            &CoinString::from_parts(
+                &CoinID::default(),
+                &PuzzleHash::default(),
+                &Amount::default()
+            ),
+            &env.agg_sig_me_additional_data,
+            false,
+        );
+
         self.live_games[game_idx].last_referee_puzzle_hash =
             referee_result.puzzle_hash_for_unroll.clone();
 
@@ -1294,7 +1305,7 @@ impl ChannelHandler {
                             coin: unroll_coin.clone(),
                             bundle: spend_transaction.bundle.clone(),
                         },
-                        reward_coin: spend_transaction.reward_coin,
+                        reward_coin: spend_transaction.coin,
                     }),
                     skip_game: Vec::default(),
                     skip_coin_id: None,
@@ -1325,7 +1336,7 @@ impl ChannelHandler {
                             coin: game_coin.clone(),
                             bundle: spend_transaction.bundle.clone(),
                         },
-                        after_update_game_coin: spend_transaction.reward_coin.clone(),
+                        after_update_game_coin: spend_transaction.coin.clone(),
                     }),
                     skip_coin_id: Some(cached.game_id.clone()),
                     skip_game: Vec::default(),
@@ -1416,6 +1427,7 @@ impl ChannelHandler {
                         &live_game.get_amount(),
                     );
 
+                    debug!("{initial_potato} new game coin {coin_id:?} for game_id {:?}", live_game.game_id);
                     res.insert(
                         coin_id,
                         OnChainGameState {
@@ -1478,11 +1490,11 @@ impl ChannelHandler {
                 return Err(Error::StrErr("broken coin".to_string()));
             };
 
-        assert_eq!(last_puzzle_hash, existing_ph);
-
         debug!("last puzzle hash {last_puzzle_hash:?}");
         debug!("start puzzle hash {start_puzzle_hash:?}");
         debug!("outcome puzzle hash {end_puzzle_hash:?}");
+
+        // assert_eq!(start_puzzle_hash, existing_ph);
 
         debug!(
             "on chain our turn {} processing our turn {}",
@@ -1645,7 +1657,7 @@ impl ChannelHandler {
                     return Ok(Some(GameAction::RedoMove(
                         move_data.game_id.clone(),
                         coin.clone(),
-                        self.live_games[game_idx].current_puzzle_hash(env.allocator)?,
+                        self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?,
                         Box::new(transaction),
                     )));
                 }

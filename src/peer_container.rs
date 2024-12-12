@@ -529,6 +529,7 @@ impl SynchronousGameCradle {
         )?;
 
         let bundle = SpendBundle {
+            name: Some("create channel".to_string()),
             spends: vec![CoinSpend {
                 coin: parent.clone(),
                 bundle: Spend {
@@ -632,7 +633,6 @@ impl SynchronousGameCradle {
             .cloned()
             .collect();
         for d in deleted_watched.iter() {
-            debug!("filter: spent coin {:?}", self.state.watching_coins.get(d));
             self.state.watching_coins.remove(d);
         }
         let created_watched: HashSet<CoinString> = watch_report
@@ -643,7 +643,6 @@ impl SynchronousGameCradle {
             .collect();
         for c in created_watched.iter() {
             if let Some(w) = self.state.watching_coins.get_mut(c) {
-                debug!("filter: created coin {w:?}");
                 w.timeout_at = Some(w.timeout_blocks.to_u64() + block);
             }
         }
@@ -653,7 +652,6 @@ impl SynchronousGameCradle {
         for (k, w) in self.state.watching_coins.iter_mut() {
             if let Some(t) = w.timeout_at {
                 if t <= block {
-                    debug!("filter: timeout on coin: {w:?}");
                     w.timeout_at = None;
                     timed_out.insert(k.clone());
                 }

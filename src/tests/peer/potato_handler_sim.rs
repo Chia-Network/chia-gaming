@@ -81,10 +81,8 @@ pub fn update_and_report_coins<'a, R: Rng>(
 ) -> Result<WatchReport, Error> {
     let current_height = simulator.get_current_height();
     let current_coins = simulator.get_all_coins().into_gen()?;
-    debug!("current coins {current_height} {current_coins:?}");
     let watch_report =
         coinset_adapter.make_report_from_coin_set_update(current_height as u64, &current_coins)?;
-    debug!("coinset adapter result {watch_report:?}");
 
     // Report timed out coins
     for who in 0..=1 {
@@ -120,7 +118,7 @@ impl SimulatedWalletSpend {
         timeout: &Timeout,
         name: Option<&'static str>,
     ) -> Result<(), Error> {
-        debug!("register coin");
+        debug!("register coin {name:?}");
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
@@ -274,6 +272,7 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
         peer.channel_offer(
             self,
             SpendBundle {
+                name: None,
                 spends: vec![CoinSpend {
                     coin: parent.clone(),
                     bundle: Spend {
@@ -807,7 +806,6 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
         simulator.farm_block(&neutral_identity.puzzle_hash);
         let current_height = simulator.get_current_height();
         let current_coins = simulator.get_all_coins().expect("should work");
-        debug!("current coins {current_height} {current_coins:?}");
         let watch_report = coinset_adapter
             .make_report_from_coin_set_update(current_height as u64, &current_coins)
             .expect("should work");
@@ -838,12 +836,6 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 let result = cradles[i]
                     .idle(allocator, &mut rng, &mut local_uis[i])
                     .expect("should work");
-                debug!(
-                    "cradle {i}: continue_on {} outbound {}",
-                    result.continue_on,
-                    result.outbound_messages.len()
-                );
-
                 for coin in result.coin_solution_requests.iter() {
                     let ps_res = simulator
                         .get_puzzle_and_solution(coin)

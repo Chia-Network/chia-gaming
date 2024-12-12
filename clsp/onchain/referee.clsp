@@ -63,7 +63,7 @@
             conditions (a mover_puzzle solution)
             (assert
                 (print (list "referee data" all_args) VALIDATION_INFO_HASH)
-                (print (list "strlen" MOVE MAX_MOVE_SIZE) (<= (strlen MOVE) MAX_MOVE_SIZE))
+                (print (list "strlen" new_move MAX_MOVE_SIZE) (<= (strlen new_move) MAX_MOVE_SIZE))
                 (<= new_mover_share AMOUNT)
                 (>= new_mover_share 0)
                 (print (list "logior test" (logior (not new_validation_info_hash))) (= 32 (strlen new_validation_info_hash)))
