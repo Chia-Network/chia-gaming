@@ -971,7 +971,11 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                                     };
 
                                 let mut fake_move = m.clone();
-                                fake_move.game_move.basic.move_made.append(&mut move_data.clone());
+                                fake_move
+                                    .game_move
+                                    .basic
+                                    .move_made
+                                    .append(&mut move_data.clone());
                                 Ok(PeerMessage::Move(game_id.clone(), fake_move))
                             })
                             .expect("should be able to sabotage");

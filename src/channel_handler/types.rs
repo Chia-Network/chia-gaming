@@ -23,9 +23,9 @@ use crate::common::standard_coin::{
     unsafe_sign_partial,
 };
 use crate::common::types::{
-    atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID,
-    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
-    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout, CoinCondition,
+    atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo,
+    CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
+    Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
 use crate::referee::{
     GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
@@ -75,10 +75,7 @@ pub struct PotatoSignatures {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GenericGameStartInfo<
-    VP: std::fmt::Debug + Clone,
-    S: std::fmt::Debug + Clone,
-> {
+pub struct GenericGameStartInfo<VP: std::fmt::Debug + Clone, S: std::fmt::Debug + Clone> {
     pub game_id: GameID,
     pub amount: Amount,
     pub game_handler: GameHandler,
@@ -1030,9 +1027,11 @@ impl LiveGame {
         state_number: usize,
     ) -> Result<TheirTurnMoveResult, Error> {
         assert!(!self.referee_maker.is_my_turn());
-        let their_move_result =
-            self.referee_maker
-                .their_turn_move_off_chain(allocator, game_move, state_number, true)?;
+        let their_move_result = self.referee_maker.their_turn_move_off_chain(
+            allocator,
+            game_move,
+            state_number,
+        )?;
         self.last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
         Ok(their_move_result)
     }
@@ -1075,11 +1074,14 @@ impl LiveGame {
         coin_string: &CoinString,
         conditions: &[CoinCondition],
         current_state: usize,
-        expected: bool,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         // assert!(self.referee_maker.processing_my_turn());
-        let res = self.referee_maker
-            .their_turn_coin_spent(allocator, coin_string, conditions, current_state, expected)?;
+        let res = self.referee_maker.their_turn_coin_spent(
+            allocator,
+            coin_string,
+            conditions,
+            current_state,
+        )?;
         self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
         Ok(res)
     }
@@ -1095,7 +1097,9 @@ impl LiveGame {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
-        let result = self.referee_maker.rewind(allocator, want_ph, current_state)?;
+        let result = self
+            .referee_maker
+            .rewind(allocator, want_ph)?;
         if let Some(current_state) = &result {
             self.rewind_outcome = Some(*current_state);
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;

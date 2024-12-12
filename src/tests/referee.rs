@@ -4,7 +4,7 @@ use rand::prelude::*;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
+use clvm_tools_rs::classic::clvm_tools::binutils::assemble;
 use clvmr::NodePtr;
 
 use log::debug;
@@ -13,7 +13,7 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, Puzzle, PuzzleHash, Sha256tree,
+    Aggsig, AllocEncoder, Amount, Error, GameID, PrivateKey, Puzzle, PuzzleHash, Sha256tree,
     Timeout,
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorMoveArgs};
@@ -64,7 +64,8 @@ pub fn make_debug_game_handler(
     let my_driver_node = make_curried_game_handler(true)
         .to_clvm(allocator)
         .expect("should curry");
-    let my_turn_handler = GameHandler::my_driver_from_nodeptr(allocator, my_driver_node).expect("should cvt");
+    let my_turn_handler =
+        GameHandler::my_driver_from_nodeptr(allocator, my_driver_node).expect("should cvt");
     let my_validation_program = CurriedProgram {
         program: my_turn_handler.clone(),
         args: clvm_curried_args!(1337),
@@ -75,7 +76,8 @@ pub fn make_debug_game_handler(
     let their_turn_node = make_curried_game_handler(false)
         .to_clvm(allocator)
         .expect("should curry");
-    let their_turn_handler = GameHandler::their_driver_from_nodeptr(allocator, their_turn_node).expect("should cvt");
+    let their_turn_handler =
+        GameHandler::their_driver_from_nodeptr(allocator, their_turn_node).expect("should cvt");
     let their_validation_program = CurriedProgram {
         program: their_turn_handler.clone(),
         args: clvm_curried_args!(1337),
@@ -237,7 +239,6 @@ fn test_referee_smoke() {
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
         },
         0,
-        true,
     );
     debug!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
@@ -249,7 +250,7 @@ fn test_referee_smoke() {
 
     let their_move_local_update = reftest
         .their_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, true)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
         .expect("should move");
 
     debug!("their_move_wire_data {their_move_local_update:?}");

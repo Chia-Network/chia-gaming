@@ -19,11 +19,11 @@ use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
-    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentMoveUp, CoinSpentResult,
-    DispositionResult, GameStartInfo, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
-    OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
-    UnrollCoin, UnrollCoinConditionInputs, UnrollTarget, CoinSpentInformation,
-    CoinIdentificationByPuzzleHash,
+    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition,
+    CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
+    HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, OnChainGameState,
+    PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
+    UnrollCoinConditionInputs, UnrollTarget,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -36,9 +36,7 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::GameAction;
-use crate::referee::{
-    GameMoveDetails, RefereeMaker, RefereeOnChainTransaction,
-};
+use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -803,7 +801,7 @@ impl ChannelHandler {
             &CoinString::from_parts(
                 &CoinID::default(),
                 &PuzzleHash::default(),
-                &Amount::default()
+                &Amount::default(),
             ),
             &env.agg_sig_me_additional_data,
             false,
@@ -1427,7 +1425,10 @@ impl ChannelHandler {
                         &live_game.get_amount(),
                     );
 
-                    debug!("{initial_potato} new game coin {coin_id:?} for game_id {:?}", live_game.game_id);
+                    debug!(
+                        "{initial_potato} new game coin {coin_id:?} for game_id {:?}",
+                        live_game.game_id
+                    );
                     res.insert(
                         coin_id,
                         OnChainGameState {
@@ -1463,12 +1464,12 @@ impl ChannelHandler {
         entropy: Hash,
         existing_coin: &CoinString,
     ) -> Result<
-            (
-                PuzzleHash,
-                PuzzleHash,
-                GameMoveDetails,
-                RefereeOnChainTransaction,
-            ),
+        (
+            PuzzleHash,
+            PuzzleHash,
+            GameMoveDetails,
+            RefereeOnChainTransaction,
+        ),
         Error,
     > {
         debug!(
@@ -1483,12 +1484,6 @@ impl ChannelHandler {
         let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
         let start_puzzle_hash = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
         let end_puzzle_hash = self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
-        let existing_ph =
-            if let Some((_, existing_ph, _)) = existing_coin.to_parts() {
-                existing_ph
-            } else {
-                return Err(Error::StrErr("broken coin".to_string()));
-            };
 
         debug!("last puzzle hash {last_puzzle_hash:?}");
         debug!("start puzzle hash {start_puzzle_hash:?}");
@@ -1536,9 +1531,7 @@ impl ChannelHandler {
         coin_string: &CoinString,
     ) -> Result<bool, Error> {
         let live_game_idx = self.get_game_by_id(game_id)?;
-        let game_puzzle_hash = self.live_games[live_game_idx].outcome_puzzle_hash(env.allocator)?;
         let prev_puzzle_hash = self.live_games[live_game_idx].current_puzzle_hash(env.allocator)?;
-        let last_puzzle_hash = self.live_games[live_game_idx].last_puzzle_hash();
         if !self.live_games[live_game_idx].processing_my_turn() {
             return Ok(false);
         }
@@ -1555,7 +1548,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         coin_string: &CoinString,
-        conditions: &[CoinCondition]
+        conditions: &[CoinCondition],
     ) -> Result<CoinSpentInformation, Error> {
         debug!(
             "{} GAME COIN SPENT {:?} {:?} {:?}",
@@ -1567,36 +1560,37 @@ impl ChannelHandler {
 
         let live_game_idx = self.get_game_by_id(game_id)?;
         let referee_pk = private_to_public_key(&self.referee_private_key());
-        let game_puzzle_hash = self.live_games[live_game_idx].outcome_puzzle_hash(env.allocator)?;
-        let prev_puzzle_hash = self.live_games[live_game_idx].current_puzzle_hash(env.allocator)?;
-        let last_puzzle_hash = self.live_games[live_game_idx].last_puzzle_hash();
         let reward_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_pk)?;
 
-        let (ph, amt) =
-            if let Some((ph, amt)) = conditions.iter().filter_map(|c| {
+        let (ph, amt) = if let Some((ph, amt)) = conditions
+            .iter()
+            .filter_map(|c| {
                 if let CoinCondition::CreateCoin(ph, amt) = c {
                     return Some((ph.clone(), amt.clone()));
                 }
 
                 None
-            }).next() {
-                (ph, amt)
-            } else {
-                return Err(Error::StrErr("bad coin".to_string()));
-            };
+            })
+            .next()
+        {
+            (ph, amt)
+        } else {
+            return Err(Error::StrErr("bad coin".to_string()));
+        };
 
         if reward_puzzle_hash == ph {
             debug!("was our turn, reward {ph:?} {amt:?}");
             return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
         }
 
-        Ok(CoinSpentInformation::TheirSpend(self.live_games[live_game_idx].their_turn_coin_spent(
-            env.allocator,
-            coin_string,
-            conditions,
-            self.current_state_number,
-            false,
-        )?))
+        Ok(CoinSpentInformation::TheirSpend(
+            self.live_games[live_game_idx].their_turn_coin_spent(
+                env.allocator,
+                coin_string,
+                conditions,
+                self.current_state_number,
+            )?,
+        ))
     }
 
     pub fn get_redo_action<R: Rng>(
@@ -1633,7 +1627,10 @@ impl ChannelHandler {
                     "{} have cached move {move_data:?}",
                     self.is_initial_potato()
                 );
-                debug!("redo if move matches puzzle hash {:?}", move_data.match_puzzle_hash);
+                debug!(
+                    "redo if move matches puzzle hash {:?}",
+                    move_data.match_puzzle_hash
+                );
                 debug!("redo for coin {coin:?}");
 
                 if let Some(rewind_state) = self.live_games[game_idx].get_rewind_outcome() {
@@ -1641,11 +1638,17 @@ impl ChannelHandler {
                     debug!("{} getting redo move: move_data.state_number {} rewind_state {rewind_state}", self.is_initial_potato(), move_data.state_number);
                     let rewind_ph = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
                     if self.live_games[game_idx].is_my_turn() {
-                        debug!("{} not matched rewind state {new_ph:?} vs {rewind_ph:?}", self.is_initial_potato());
+                        debug!(
+                            "{} not matched rewind state {new_ph:?} vs {rewind_ph:?}",
+                            self.is_initial_potato()
+                        );
                         return Ok(None);
                     }
 
-                    debug!("{} matched rewind state {new_ph:?} vs {rewind_ph:?}", self.is_initial_potato());
+                    debug!(
+                        "{} matched rewind state {new_ph:?} vs {rewind_ph:?}",
+                        self.is_initial_potato()
+                    );
                     let transaction = self.live_games[game_idx].get_transaction_for_move(
                         env.allocator,
                         coin,

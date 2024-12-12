@@ -136,12 +136,14 @@ fn test_smoke_can_start_game() {
         ValidationProgram::new(env.allocator, initial_validation_puzzle);
 
     let timeout = Timeout::new(1337);
-    let game_handler = GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(env.allocator, game_handler).expect("should cvt")));
+    let game_handler = GameHandler::TheirTurnHandler(Rc::new(
+        Program::from_nodeptr(env.allocator, game_handler).expect("should cvt"),
+    ));
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
         &mut env,
         &[GameStartInfo {
             game_id: GameID::new(vec![0]),
-            game_handler: game_handler,
+            game_handler,
             timeout: timeout.clone(),
             my_contribution_this_game: our_share.clone(),
             their_contribution_this_game: their_share.clone(),

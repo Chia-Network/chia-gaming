@@ -8,8 +8,8 @@ use crate::channel_handler::types::ValidationProgram;
 use crate::channel_handler::GameStartInfo;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
-    atom_from_clvm, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error, GameID, Hash,
-    IntoErr, Timeout, chia_dialect
+    atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
+    GameID, Hash, IntoErr, Timeout,
 };
 
 pub struct Game {
@@ -58,8 +58,10 @@ impl Game {
             ));
         }
 
-        let initial_mover_handler = GameHandler::my_driver_from_nodeptr(allocator, template_list[0])?;
-        let initial_waiter_handler = GameHandler::their_driver_from_nodeptr(allocator, template_list[1])?;
+        let initial_mover_handler =
+            GameHandler::my_driver_from_nodeptr(allocator, template_list[0])?;
+        let initial_waiter_handler =
+            GameHandler::their_driver_from_nodeptr(allocator, template_list[1])?;
         let whether_paired = atom_from_clvm(allocator, template_list[2])
             .map(|a| !a.is_empty())
             .expect("should be an atom");

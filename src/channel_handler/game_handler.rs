@@ -22,8 +22,8 @@ use log::debug;
 
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, ValidationProgram};
 use crate::common::types::{
-    atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
-    IntoErr, Node, Program, chia_dialect
+    atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
+    Error, Hash, IntoErr, Node, Program,
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 
@@ -171,11 +171,21 @@ pub enum TheirTurnResult {
 }
 
 impl GameHandler {
-    pub fn their_driver_from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<GameHandler, Error> {
-        Ok(GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(allocator, n)?)))
+    pub fn their_driver_from_nodeptr(
+        allocator: &mut AllocEncoder,
+        n: NodePtr,
+    ) -> Result<GameHandler, Error> {
+        Ok(GameHandler::TheirTurnHandler(Rc::new(
+            Program::from_nodeptr(allocator, n)?,
+        )))
     }
-    pub fn my_driver_from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<GameHandler, Error> {
-        Ok(GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, n)?)))
+    pub fn my_driver_from_nodeptr(
+        allocator: &mut AllocEncoder,
+        n: NodePtr,
+    ) -> Result<GameHandler, Error> {
+        Ok(GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(
+            allocator, n,
+        )?)))
     }
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         match self {
@@ -191,7 +201,6 @@ impl GameHandler {
         if let GameHandler::MyTurnHandler(res) = self {
             res.to_nodeptr(allocator)
         } else {
-            todo!();
             Err(Error::StrErr(
                 "my turn called on a their turn driver".to_string(),
             ))
@@ -202,7 +211,6 @@ impl GameHandler {
         if let GameHandler::TheirTurnHandler(res) = self {
             res.to_nodeptr(allocator)
         } else {
-            todo!();
             Err(Error::StrErr(
                 "my turn called on a their turn driver".to_string(),
             ))

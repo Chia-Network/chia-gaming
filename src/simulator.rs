@@ -298,7 +298,6 @@ impl Simulator {
                 } else {
                     i.extract(py)?
                 };
-                let as_list_str: String = coin_of_item.call_method0(py, "__repr__")?.extract(py)?;
                 let as_list: Vec<PyObject> =
                     self.coin_as_list.call1(py, (coin_of_item,))?.extract(py)?;
                 let parent_coin_info: &PyBytes = as_list[0].downcast(py)?;
