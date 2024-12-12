@@ -314,13 +314,75 @@ impl ValidatorMoveArgs {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
         let args: &[NodePtr] = &[
             self.state,
-            me,
             self.mover_puzzle.to_clvm(allocator).into_gen()?,
             self.solution,
             self.evidence
         ];
         let argvec: Vec<Node> = args.iter().map(|v| Node(*v)).collect();
         argvec.to_clvm(allocator).into_gen()
+    }
+}
+
+struct InternalValidatorArgs {
+    move_made: Vec<u8>,
+    new_validation_info_hash: Hash,
+    mover_share: Amount,
+    previous_validation_info_hash: Hash,
+    mover_puzzle_hash: PuzzleHash,
+    waiter_puzzle_hash: PuzzleHash,
+    amount: Amount,
+    timeout: Timeout,
+    max_move_size: usize,
+    referee_hash: PuzzleHash,
+}
+
+impl InternalValidatorArgs {
+    pub fn to_nodeptr(
+        &self,
+        allocator: &mut AllocEncoder,
+        me: NodePtr,
+        validator_mod_hash: PuzzleHash,
+        move_args: &ValidatorMoveArgs
+    ) -> Result<NodePtr, Error> {
+        let converted_vma = move_args.to_nodeptr(allocator, me)?;
+        let move_node = allocator.encode_atom(&self.move_made).into_gen()?;
+        (
+            validator_mod_hash,
+            (
+                (
+                    Node(move_node),
+                    (
+                        self.new_validation_info_hash.clone(),
+                        (
+                            self.mover_share.clone(),
+                            (
+                                self.previous_validation_info_hash.clone(),
+                                (
+                                    self.mover_puzzle_hash.clone(),
+                                    (
+                                        self.waiter_puzzle_hash.clone(),
+                                        (
+                                            self.amount.clone(),
+                                            (
+                                                self.timeout.clone(),
+                                                (
+                                                    self.max_move_size,
+                                                    (
+                                                        self.referee_hash.clone(),
+                                                        ()
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                ),
+                Node(converted_vma)
+            )
+        ).to_clvm(allocator).into_gen()
     }
 }
 
@@ -1357,7 +1419,8 @@ impl RefereeMaker {
     pub fn run_validator_for_their_move(
         &self,
         allocator: &mut AllocEncoder,
-        validator_move_args: &ValidatorMoveArgs,
+        validator_move_args: &InternalValidatorArgs,
+        move_args: &ValidatorMoveArgs,
     ) -> Result<NodePtr, Error> {
         let referee_args = self.spend_this_coin();
         let referee_list = referee_args.to_node_list(
@@ -1367,18 +1430,13 @@ impl RefereeMaker {
         let (_state, validation_program) = self.get_validation_program_for_their_move()?;
         let validation_program_nodeptr = validation_program.to_nodeptr();
         let validation_program_hexer = Program::from_nodeptr(allocator, validation_program_nodeptr)?;
-        let validator_move_converted = validator_move_args.to_nodeptr(
+        let validation_program_mod_hash = validation_program.hash();
+        let validator_full_args_node = validator_move_args.to_nodeptr(
             allocator,
-            validation_program_nodeptr
+            validation_program_nodeptr,
+            PuzzleHash::from_hash(validation_program_mod_hash.clone()),
+            &move_args,
         )?;
-        let mod_hash = validation_program.hash();
-        let validator_full_args_node = (
-            mod_hash,
-            (
-                referee_list,
-                Node(validator_move_converted)
-            )
-        ).to_clvm(allocator).into_gen()?;
         let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
 
         debug!("validator program {:?}", validation_program_hexer);
@@ -1651,6 +1709,7 @@ impl RefereeMaker {
         coin_string: &CoinString,
         _state_number: usize,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
+        let previous_puzzle_args = self.args_for_this_coin();
         let puzzle_args = self.spend_this_coin();
         let new_puzzle = curry_referee_puzzle(
             allocator,
@@ -1658,7 +1717,6 @@ impl RefereeMaker {
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
-        // assert_ne!(self.args_for_this_coin().game_move, puzzle_args.game_move);
 
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
@@ -1679,11 +1737,25 @@ impl RefereeMaker {
                 )
                 .expect("should create"),
         };
+        let internal_validator_args = InternalValidatorArgs {
+            move_made: puzzle_args.game_move.basic.move_made.clone(),
+            new_validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
+            mover_share: puzzle_args.game_move.basic.mover_share.clone(),
+            previous_validation_info_hash: previous_puzzle_args.game_move.validation_info_hash.clone(),
+            mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
+            waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
+            amount: self.fixed.amount.clone(),
+            timeout: self.fixed.timeout.clone(),
+            max_move_size: puzzle_args.game_move.basic.max_move_size,
+            referee_hash: new_puzzle_hash.clone(),
+        };
+        debug!("max_move_size {}", internal_validator_args.max_move_size);
 
         // my_inner_solution maker is just in charge of making aggsigs from
         // conditions.
         let full_slash_result = self.run_validator_for_their_move(
             allocator,
+            &internal_validator_args,
             &validator_args,
         );
         match full_slash_result {

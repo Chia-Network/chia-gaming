@@ -13,7 +13,7 @@
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 ; evidence is empty
-(export (@ all_args (mod_hash (move new_validation_hash max_move_size mover_share previous_validation_hash
+(export (@ all_args (mod_hash (move new_validation_hash mover_share previous_validation_hash
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
     (alice_commit bob_seed) me mover_puzzle solution evidence))
     (if_any_fail

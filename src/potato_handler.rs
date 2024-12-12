@@ -1930,7 +1930,12 @@ impl PotatoHandler {
                     )?;
                     Ok(())
                 }
-                _ => todo!(),
+                GameAction::Accept(game_id) => {
+                    
+                }
+                x => {
+                    todo!("unexpected move type {x:?}");
+                }
             }
         } else {
             Err(Error::StrErr("not on chain".to_string()))

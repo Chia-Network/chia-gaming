@@ -268,20 +268,21 @@ fn test_referee_smoke() {
             .expect("should create"),
     };
 
-    let validator_result = reftest
-        .their_referee
-        .run_validator_for_their_move(&mut allocator, &validator_move_args);
-    assert!(validator_result.is_err());
+    todo!();
+    // let validator_result = reftest
+    //     .their_referee
+    //     .run_validator_for_their_move(&mut allocator, &validator_move_args);
+    // assert!(validator_result.is_err());
 
-    assert!(reftest.my_referee.processing_my_turn());
-    let their_move_result = reftest
-        .my_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, true)
-        .expect("should run");
-    assert_eq!(their_move_result.message, b"message data");
-    assert_eq!(
-        disassemble(allocator.allocator(), their_move_result.readable_move, None),
-        "(())"
-    );
-    assert!(!reftest.my_referee.processing_my_turn());
+    // assert!(reftest.my_referee.processing_my_turn());
+    // let their_move_result = reftest
+    //     .my_referee
+    //     .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, true)
+    //     .expect("should run");
+    // assert_eq!(their_move_result.message, b"message data");
+    // assert_eq!(
+    //     disassemble(allocator.allocator(), their_move_result.readable_move, None),
+    //     "(())"
+    // );
+    // assert!(!reftest.my_referee.processing_my_turn());
 }
