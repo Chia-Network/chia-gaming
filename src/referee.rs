@@ -1746,9 +1746,17 @@ impl RefereeMaker {
         };
 
         if repeat {
+            let nil = allocator.allocator().null();
             debug!("rems in spend {conditions:?}");
             debug!("current state {:?}", self.state);
-            debug!("stored state number {}", self.old_states[self.old_states.len()-1].state_number);
+            return Ok(TheirTurnCoinSpentResult::Moved {
+                new_coin_string: CoinString::from_parts(
+                    &coin_string.to_coin_id(),
+                    &after_puzzle_hash,
+                    &self.fixed.amount,
+                ),
+                readable: ReadableMove::from_nodeptr(allocator, nil)?
+            });
         }
 
         // Read parameters off conditions
@@ -1813,10 +1821,6 @@ impl RefereeMaker {
         };
 
         let state = self.state.clone();
-        if repeat {
-            self.state = self.old_states[self.old_states.len() - 2].state.clone();
-            debug!("repeat {repeat} new state {:?}", self.state);
-        }
         let result = self.their_turn_move_off_chain(
             allocator,
             &details,
@@ -1858,17 +1862,6 @@ impl RefereeMaker {
             }
         };
 
-        let dont_enforce = |allocator: &mut AllocEncoder, readable_move: NodePtr| {
-            Ok(TheirTurnCoinSpentResult::Moved {
-                new_coin_string: CoinString::from_parts(
-                    &coin_string.to_coin_id(),
-                    &new_puzzle_hash,
-                    &self.fixed.amount,
-                ),
-                readable: ReadableMove::from_nodeptr(allocator, readable_move)?,
-            })
-        };
-
         debug!("referee move details {details:?}");
         let final_result = match result.original {
             TheirTurnResult::Slash(evidence, sig) => {
@@ -1885,18 +1878,10 @@ impl RefereeMaker {
                 );
             }
             TheirTurnResult::FinalMove(readable_move) => {
-                if repeat {
-                    dont_enforce(allocator, readable_move)
-                } else {
-                    check_and_report_slash(allocator, readable_move)
-                }
+                check_and_report_slash(allocator, readable_move)
             }
             TheirTurnResult::MakeMove(readable_move, _, _) => {
-                if repeat {
-                    dont_enforce(allocator, readable_move)
-                } else {
-                    check_and_report_slash(allocator, readable_move)
-                }
+                check_and_report_slash(allocator, readable_move)
             }
         };
         self.state = state;

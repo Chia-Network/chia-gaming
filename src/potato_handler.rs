@@ -1903,6 +1903,7 @@ impl PotatoHandler {
                         self.my_game_spends.insert(new_ph.clone());
                     }
                     let (_env, system_interface) = penv.env();
+                    self.have_potato = PotatoState::Absent;
                     system_interface.spend_transaction_and_add_fee(&SpendBundle {
                         name: Some("redo move".to_string()),
                         spends: vec![CoinSpend {
@@ -2172,6 +2173,7 @@ impl PotatoHandler {
         let old_definition =
             if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
                 if let Some(old_definition) = game_map.remove(coin_id) {
+                    self.have_potato = PotatoState::Present;
                     debug!("{initial_potato} we have game coin {old_definition:?}");
                     old_definition
                 } else {
@@ -2582,11 +2584,12 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 Some(ConditionWaitKind::Unroll(unroll_id.clone()))
             }
             HandshakeState::OnChain(_game_map) => {
-                debug!("{coin_id:?} is a game spend");
                 Some(ConditionWaitKind::Game)
             }
             _ => None,
         };
+
+        debug!("{} coin puzzle and solution {coin_id:?} = {state_coin_id:?}", player_ch.is_initial_potato());
 
         match state_coin_id {
             Some(ConditionWaitKind::Channel(state_coin_id)) => {
