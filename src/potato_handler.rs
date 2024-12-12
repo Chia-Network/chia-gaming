@@ -1930,9 +1930,6 @@ impl PotatoHandler {
                     )?;
                     Ok(())
                 }
-                GameAction::Accept(game_id) => {
-                    
-                }
                 x => {
                     todo!("unexpected move type {x:?}");
                 }

@@ -1463,12 +1463,12 @@ impl ChannelHandler {
         entropy: Hash,
         existing_coin: &CoinString,
     ) -> Result<
-        (
-            PuzzleHash,
-            PuzzleHash,
-            GameMoveDetails,
-            RefereeOnChainTransaction,
-        ),
+            (
+                PuzzleHash,
+                PuzzleHash,
+                GameMoveDetails,
+                RefereeOnChainTransaction,
+            ),
         Error,
     > {
         debug!(

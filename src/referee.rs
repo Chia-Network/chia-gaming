@@ -323,7 +323,7 @@ impl ValidatorMoveArgs {
     }
 }
 
-struct InternalValidatorArgs {
+pub struct InternalValidatorArgs {
     move_made: Vec<u8>,
     new_validation_info_hash: Hash,
     mover_share: Amount,
@@ -1749,7 +1749,6 @@ impl RefereeMaker {
             max_move_size: puzzle_args.game_move.basic.max_move_size,
             referee_hash: new_puzzle_hash.clone(),
         };
-        debug!("max_move_size {}", internal_validator_args.max_move_size);
 
         // my_inner_solution maker is just in charge of making aggsigs from
         // conditions.
