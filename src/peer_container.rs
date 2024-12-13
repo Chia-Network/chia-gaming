@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::mem::swap;
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 use log::debug;
 use rand::Rng;
 
@@ -200,7 +200,11 @@ pub trait GameCradle {
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
     /// Perhaps we should consider reporting the reward coins.
-    fn shut_down(&mut self) -> Result<(), Error>;
+    fn shut_down<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<(), Error>;
 
     /// Tell the game cradle that a new block arrived, giving a watch report.
     fn new_block<R: Rng>(
@@ -221,7 +225,7 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
-    ) -> Result<IdleResult, Error>;
+    ) -> Result<Option<IdleResult>, Error>;
 
     /// Check whether we're on chain.
     fn is_on_chain(&self) -> bool;
@@ -420,8 +424,8 @@ impl ToLocalUI for SynchronousGameCradleState {
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
     }
-    fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error> {
-        self.shutdown = Some(reward_coin_string.clone());
+    fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+        self.shutdown = reward_coin_string.cloned();
         Ok(())
     }
     fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
@@ -749,9 +753,20 @@ impl GameCradle for SynchronousGameCradle {
     }
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
-    /// Perhaps we should consider reporting the reward coins.
-    fn shut_down(&mut self) -> Result<(), Error> {
-        todo!();
+    fn shut_down<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<(), Error> {
+        // The conditions relate to spending the remaining money in the channel coin.
+        let nil = allocator.encode_atom(&[]).into_gen()?;
+        let mut env = channel_handler_env(allocator, rng);
+        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
+            env: &mut env,
+            system_interface: &mut self.state,
+        };
+        self.peer.shut_down(&mut penv, nil)?;
+        Ok(())
     }
 
     /// Tell the game cradle that a new block arrived, giving a watch report.
@@ -788,7 +803,11 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
-    ) -> Result<IdleResult, Error> {
+    ) -> Result<Option<IdleResult>, Error> {
+        if self.state.shutdown.is_some() {
+            return Ok(None);
+        }
+
         let mut result = IdleResult::default();
 
         swap(
@@ -811,24 +830,24 @@ impl GameCradle for SynchronousGameCradle {
 
         if let Some((id, msg)) = self.state.our_moves.pop_front() {
             local_ui.self_move(&id, &msg)?;
-            return Ok(result);
+            return Ok(Some(result));
         }
 
         if let Some((id, msg)) = self.state.game_messages.pop_front() {
             local_ui.game_message(allocator, &id, msg)?;
-            return Ok(result);
+            return Ok(Some(result));
         }
 
         if let Some((id, readable)) = self.state.opponent_moves.pop_front() {
             local_ui.opponent_moved(allocator, &id, readable)?;
             result.continue_on = true;
-            return Ok(result);
+            return Ok(Some(result));
         }
 
         if let Some((id, amount)) = self.state.game_finished.pop_front() {
             local_ui.game_finished(&id, amount.clone())?;
             result.continue_on = true;
-            return Ok(result);
+            return Ok(Some(result));
         }
 
         // If there's a message to deliver, deliver it and signal to continue.
@@ -843,29 +862,29 @@ impl GameCradle for SynchronousGameCradle {
             match self.peer.received_message(&mut penv, msg) {
                 Ok(_) => {
                     result.continue_on = true;
-                    return Ok(result);
+                    return Ok(Some(result));
                 }
                 Err(e) => {
                     debug!("going on chain for error {e:?}");
                     result.receive_error = Some(e);
                     // Go on chain.
                     local_ui.going_on_chain(true)?;
-                    return Ok(result);
+                    return Ok(Some(result));
                 }
             }
         }
 
         if let Some(ph) = self.state.channel_puzzle_hash.clone() {
             result.continue_on = self.create_partial_spend_for_channel_coin(allocator, rng, ph)?;
-            return Ok(result);
+            return Ok(Some(result));
         }
 
         if let (false, Some(uo)) = (self.state.is_initiator, self.state.unfunded_offer.clone()) {
             result.continue_on = self.respond_to_unfunded_offer(allocator, rng, uo)?;
-            return Ok(result);
+            return Ok(Some(result));
         }
 
-        Ok(result)
+        Ok(Some(result))
     }
 
     /// Trigger going on chain.

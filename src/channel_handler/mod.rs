@@ -156,6 +156,10 @@ impl ChannelHandler {
         self.current_state_number
     }
 
+    pub fn all_games_finished(&self) -> bool {
+        self.live_games.is_empty()
+    }
+
     pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
         if let Some(t) = self.timeout.as_ref() {
             t
@@ -1749,6 +1753,22 @@ impl ChannelHandler {
             new_game_coins_on_chain,
             disposition: disposition.map(|d| d.disposition),
         })
+    }
+
+    pub fn accept_or_timeout_game_on_chain<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        game_id: &GameID,
+        coin: &CoinString,
+    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
+        let game_idx = self.get_game_by_id(game_id)?;
+        let tx = self.live_games[game_idx].get_transaction_for_timeout(
+            env.allocator,
+            coin
+        )?;
+        // Game is done one way or another.
+        self.live_games.remove(game_idx);
+        Ok(tx)
     }
 
     // the vanilla coin we get and each reward coin are all sent to the referee

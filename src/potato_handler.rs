@@ -269,7 +269,7 @@ pub trait ToLocalUI {
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
-    fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error>;
+    fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
 }
 
@@ -607,7 +607,7 @@ impl PotatoHandler {
     }
 
     pub fn handshake_finished(&self) -> bool {
-        matches!(self.handshake_state, HandshakeState::Finished(_))
+        matches!(self.handshake_state, HandshakeState::Finished(_) | HandshakeState::OnChain(_))
     }
 
     /// Tell whether this peer has the potato.  If it has been sent but not received yet
@@ -973,7 +973,7 @@ impl PotatoHandler {
                 Ok(true)
             }
             Some(GameAction::RedoMove(_game_id, _coin, _new_ph, _transaction)) => {
-                todo!();
+                return Err(Error::StrErr("redo move when not on chain".to_string()));
             }
             Some(GameAction::Accept(game_id)) => {
                 let (sigs, amount) = {
@@ -1885,22 +1885,25 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        if let HandshakeState::OnChain(_game_map) = &mut self.handshake_state {
+        if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+            let get_current_coin = |hs: &HandshakeState, game_id: &GameID| -> Result<CoinString, Error> {
+                if let HandshakeState::OnChain(game_map) = &self.handshake_state {
+                    if let Some((current, _game)) =
+                        game_map.iter().find(|g| g.1.game_id == *game_id)
+                    {
+                        Ok(current.clone())
+                    } else {
+                        Err(Error::StrErr("no matching game".to_string()))
+                    }
+                } else {
+                    Err(Error::StrErr("not on chain".to_string()))
+                }
+            };
+
+            debug!("do_on_chain_action {action:?}");
             match action {
                 GameAction::Move(game_id, readable_move, hash) => {
-                    let current_coin =
-                        if let HandshakeState::OnChain(game_map) = &self.handshake_state {
-                            if let Some((current, _game)) =
-                                game_map.iter().find(|g| g.1.game_id == game_id)
-                            {
-                                current.clone()
-                            } else {
-                                return Err(Error::StrErr("no matching game".to_string()));
-                            }
-                        } else {
-                            return Err(Error::StrErr("not on chain".to_string()));
-                        };
-
+                    let current_coin = get_current_coin(&self.handshake_state, &game_id)?;
                     self.do_on_chain_move(penv, &current_coin, game_id, readable_move, hash)
                 }
                 GameAction::RedoMove(_game_id, coin, new_ph, tx) => {
@@ -1934,6 +1937,20 @@ impl PotatoHandler {
                         &self.channel_timeout,
                         Some("post redo game coin"),
                     )?;
+                    Ok(())
+                }
+                GameAction::Accept(game_id) => {
+                    let current_coin = get_current_coin(&self.handshake_state, &game_id)?;
+                    let player_ch = self.channel_handler_mut()?;
+                    debug!("{} on chain: accept game coin {current_coin:?}", player_ch.is_initial_potato());
+                    let (env, system_interface) = penv.env();
+                    let result_transaction = player_ch.accept_or_timeout_game_on_chain(env, &game_id, &current_coin)?;
+                    self.have_potato = PotatoState::Present;
+                    if let Some(transaction) = result_transaction {
+                        todo!();
+                    } else {
+                        debug!("Accepted game when our share was zero");
+                    }
                     Ok(())
                 }
                 x => {
@@ -2381,6 +2398,22 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
+        if matches!(self.handshake_state, HandshakeState::OnChain(_)) {
+            {
+                let player_ch = self.channel_handler()?;
+                if !player_ch.all_games_finished() {
+                    return Err(Error::StrErr("tried to shut down when there are live games on chain".to_string()));
+                }
+            }
+
+            self.handshake_state = HandshakeState::Completed;
+
+            let (_env, system_interface) = penv.env();
+            system_interface.shutdown_complete(None)?;
+
+            return Ok(());
+        }
+
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
             return Err(Error::StrErr(
                 "shut_down without finishing handshake".to_string(),
@@ -2482,7 +2515,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 // We have the expected reward coin.
                 self.handshake_state = HandshakeState::Completed;
                 let (_, system_interface) = penv.env();
-                system_interface.shutdown_complete(&reward)?;
+                system_interface.shutdown_complete(Some(&reward))?;
             }
         }
 
@@ -2511,7 +2544,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                         // 0 reward so spending the state channel coin means the game is over.
                         self.handshake_state = HandshakeState::Completed;
                         let (_, system_interface) = penv.env();
-                        system_interface.shutdown_complete(&reward)?;
+                        system_interface.shutdown_complete(Some(&reward))?;
                     }
                 }
 

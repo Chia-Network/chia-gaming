@@ -162,7 +162,7 @@ impl ToLocalUI for Pipe {
         todo!();
     }
 
-    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
+    fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         todo!();
     }
     fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {

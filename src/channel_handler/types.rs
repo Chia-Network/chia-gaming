@@ -1114,6 +1114,14 @@ impl LiveGame {
 
         Ok(None)
     }
+
+    pub fn get_transaction_for_timeout(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        coin: &CoinString
+    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
+        self.referee_maker.get_transaction_for_timeout(allocator, coin)
+    }
 }
 
 /// Identifies the game phase that an on chain spend represented.

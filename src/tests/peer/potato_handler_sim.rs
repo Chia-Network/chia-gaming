@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
@@ -209,7 +209,7 @@ impl ToLocalUI for SimulatedPeer {
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
     }
-    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
+    fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         todo!();
     }
     fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
@@ -682,7 +682,7 @@ impl ToLocalUI for LocalTestUIReceiver {
         todo!();
     }
 
-    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
+    fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         self.shutdown_complete = true;
         Ok(())
     }
@@ -784,6 +784,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     let mut game_ids = Vec::default();
     let mut handshake_done = false;
     let mut can_move = false;
+    let mut ending = false;
 
     let mut current_move = moves.iter();
     let mut last_move = 0;
@@ -798,7 +799,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
         .expect("should work");
 
     // XXX Move on to shutdown complete.
-    while !local_uis.iter().all(|l| l.game_finished.is_some()) {
+    while !ending && !local_uis.iter().all(|l| l.game_finished.is_some() || l.shutdown_complete) {
         num_steps += 1;
 
         assert!(num_steps < 100);
@@ -833,9 +834,13 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 .expect("should work");
 
             loop {
-                let result = cradles[i]
-                    .idle(allocator, &mut rng, &mut local_uis[i])
-                    .expect("should work");
+                let result =
+                    if let Some(result) = cradles[i].idle(allocator, &mut rng, &mut local_uis[i]).expect("should work") {
+                        result
+                    } else {
+                        break;
+                    };
+
                 for coin in result.coin_solution_requests.iter() {
                     let ps_res = simulator
                         .get_puzzle_and_solution(coin)
@@ -908,7 +913,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 .expect("should run");
 
             can_move = true;
-        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) {
+        } else if can_move || local_uis.iter().any(|l| l.opponent_moved || l.shutdown_complete) || ending {
             can_move = false;
             assert!(!game_ids.is_empty());
 
@@ -980,12 +985,23 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                             })
                             .expect("should be able to sabotage");
                     }
-                    _ => todo!(),
+                    GameAction::Accept(who) | GameAction::Timeout(who) => {
+                        ending = true;
+                        cradles[*who]
+                            .accept(
+                                allocator,
+                                &mut rng,
+                                &game_ids[0],
+                            )
+                            .expect("should work");
+                    }
+                    GameAction::Shutdown(who,_) => {
+                        ending = true;
+                        cradles[*who]
+                            .shut_down(allocator, &mut rng)
+                            .expect("should work");
+                    }
                 }
-            } else {
-                cradles[last_move ^ 1]
-                    .accept(allocator, &mut rng, &game_ids[0])
-                    .expect("should work");
             }
         }
     }
@@ -1021,12 +1037,16 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     );
 }
 
-#[ignore]
 #[test]
 fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut allocator = AllocEncoder::new();
 
     let mut moves = test_moves_1(&mut allocator).to_vec();
+    let nil = allocator.encode_atom(&[]).into_gen().expect("should work");
+    moves.push(GameAction::Accept(0));
+    moves.push(GameAction::Accept(1));
+    moves.push(GameAction::Shutdown(0, nil));
+    moves.push(GameAction::Shutdown(1, nil));
     if let GameAction::Move(player, readable, _) = moves[3].clone() {
         moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
     } else {
