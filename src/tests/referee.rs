@@ -256,7 +256,7 @@ fn test_referee_smoke() {
     debug!("their_move_wire_data {their_move_local_update:?}");
 
     let state_node = state.to_nodeptr(&mut allocator).expect("should cvt");
-    let validator_move_args = ValidatorMoveArgs {
+    let _validator_move_args = ValidatorMoveArgs {
         state: state_node,
         evidence: allocator.allocator().null(),
         mover_puzzle: reftest.my_identity.puzzle.to_program(),

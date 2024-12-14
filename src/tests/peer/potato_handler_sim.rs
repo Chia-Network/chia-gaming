@@ -209,7 +209,7 @@ impl ToLocalUI for SimulatedPeer {
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
     }
-    fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+    fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         todo!();
     }
     fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
@@ -787,7 +787,6 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     let mut ending = false;
 
     let mut current_move = moves.iter();
-    let mut last_move = 0;
     let mut num_steps = 0;
 
     // Give coins to the cradles.
@@ -936,7 +935,6 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
             if let Some(ga) = current_move.next() {
                 match ga {
                     GameAction::Move(who, readable, _) => {
-                        last_move = *who;
                         debug!("make move");
                         let readable_program =
                             Program::from_nodeptr(allocator, *readable).expect("should convert");
@@ -957,7 +955,6 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                         todo!();
                     }
                     GameAction::FakeMove(who, readable, move_data) => {
-                        last_move = *who;
                         // This is a fake move.  We give that move to the given target channel
                         // handler as a their move.
                         debug!("make move");
