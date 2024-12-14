@@ -6,9 +6,9 @@
   "types": "build/types/index.d.ts",
   "scripts": {
     "start": "webpack serve --config webpack.config.demo.js",
-    "build": "webpack && tsc",
+    "build": "webpack && ./node_modules/typescript/bin/tsc",
     "build:demo": "webpack --config webpack.config.demo.js",
-    "test": "tsc -p tstestconfig.json --noEmit && jest",
+    "test": "./node_modules/typescript/bin/tsc -p tstestconfig.json --noEmit && jest",
     "coverage": "npm run test -- --coverage",
     "prepare": "npm run build",
     "trypublish": "npm publish || true"
@@ -36,7 +36,6 @@
     "@babel/core": "^7.22.10",
     "@babel/plugin-proposal-class-properties": "^7.16.0",
     "@babel/plugin-transform-typescript": "^7.22.10",
-    "core-js": "^3.38.1",
     "@babel/preset-env": "^7.22.10",
     "@types/jest": "^29.5.3",
     "@typescript-eslint/eslint-plugin": "^4.33.0",
@@ -44,6 +43,7 @@
     "babel-eslint": "^10.1.0",
     "babel-loader": "^9.1.3",
     "babel-preset-minify": "^0.5.2",
+    "core-js": "^3.38.1",
     "css-loader": "^6.8.1",
     "css-minimizer-webpack-plugin": "^5.0.1",
     "eslint": "^7.32.0",

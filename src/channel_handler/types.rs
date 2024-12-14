@@ -283,6 +283,10 @@ impl ReadableMove {
     pub fn from_program(p: Program) -> Self {
         ReadableMove(p)
     }
+
+    pub fn to_program(&self) -> &Program {
+        &self.0
+    }
 }
 
 impl ToClvm<NodePtr> for ReadableMove {
