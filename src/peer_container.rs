@@ -486,6 +486,10 @@ impl SynchronousGameCradle {
         self.peer.amount()
     }
 
+    pub fn finished(&self) -> Option<CoinString> {
+        self.state.shutdown.clone()
+    }
+
     fn create_partial_spend_for_channel_coin<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,

@@ -1016,8 +1016,17 @@ fn sim_test_with_peer_container() {
     let mut allocator = AllocEncoder::new();
 
     // Play moves
-    let moves = test_moves_1(&mut allocator);
-    run_calpoker_container_with_action_list(&mut allocator, &moves);
+    let mut moves = test_moves_1(&mut allocator).to_vec();
+    let nil = allocator.encode_atom(&[]).into_gen().expect("should work");
+    moves.push(GameAction::Accept(0));
+    moves.push(GameAction::Accept(1));
+    moves.push(GameAction::Shutdown(0, nil));
+    moves.push(GameAction::Shutdown(1, nil));
+    run_calpoker_container_with_action_list_with_success_predicate(
+        &mut allocator,
+        &moves,
+        Some(&|cradles| cradles[0].finished().is_some() && cradles[1].finished().is_some()),
+    );
 }
 
 #[test]
