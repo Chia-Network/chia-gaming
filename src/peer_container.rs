@@ -200,11 +200,8 @@ pub trait GameCradle {
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
     /// Perhaps we should consider reporting the reward coins.
-    fn shut_down<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-    ) -> Result<(), Error>;
+    fn shut_down<R: Rng>(&mut self, allocator: &mut AllocEncoder, rng: &mut R)
+        -> Result<(), Error>;
 
     /// Tell the game cradle that a new block arrived, giving a watch report.
     fn new_block<R: Rng>(

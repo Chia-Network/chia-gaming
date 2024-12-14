@@ -799,7 +799,11 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
         .expect("should work");
 
     // XXX Move on to shutdown complete.
-    while !ending && !local_uis.iter().all(|l| l.game_finished.is_some() || l.shutdown_complete) {
+    while !ending
+        && !local_uis
+            .iter()
+            .all(|l| l.game_finished.is_some() || l.shutdown_complete)
+    {
         num_steps += 1;
 
         assert!(num_steps < 100);
@@ -834,12 +838,14 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 .expect("should work");
 
             loop {
-                let result =
-                    if let Some(result) = cradles[i].idle(allocator, &mut rng, &mut local_uis[i]).expect("should work") {
-                        result
-                    } else {
-                        break;
-                    };
+                let result = if let Some(result) = cradles[i]
+                    .idle(allocator, &mut rng, &mut local_uis[i])
+                    .expect("should work")
+                {
+                    result
+                } else {
+                    break;
+                };
 
                 for coin in result.coin_solution_requests.iter() {
                     let ps_res = simulator
@@ -913,7 +919,12 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 .expect("should run");
 
             can_move = true;
-        } else if can_move || local_uis.iter().any(|l| l.opponent_moved || l.shutdown_complete) || ending {
+        } else if can_move
+            || local_uis
+                .iter()
+                .any(|l| l.opponent_moved || l.shutdown_complete)
+            || ending
+        {
             can_move = false;
             assert!(!game_ids.is_empty());
 
@@ -988,14 +999,10 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                     GameAction::Accept(who) | GameAction::Timeout(who) => {
                         ending = true;
                         cradles[*who]
-                            .accept(
-                                allocator,
-                                &mut rng,
-                                &game_ids[0],
-                            )
+                            .accept(allocator, &mut rng, &game_ids[0])
                             .expect("should work");
                     }
-                    GameAction::Shutdown(who,_) => {
+                    GameAction::Shutdown(who, _) => {
                         ending = true;
                         cradles[*who]
                             .shut_down(allocator, &mut rng)

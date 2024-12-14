@@ -1027,11 +1027,9 @@ impl LiveGame {
         state_number: usize,
     ) -> Result<TheirTurnMoveResult, Error> {
         assert!(!self.referee_maker.is_my_turn());
-        let their_move_result = self.referee_maker.their_turn_move_off_chain(
-            allocator,
-            game_move,
-            state_number,
-        )?;
+        let their_move_result =
+            self.referee_maker
+                .their_turn_move_off_chain(allocator, game_move, state_number)?;
         self.last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
         Ok(their_move_result)
     }
@@ -1097,9 +1095,7 @@ impl LiveGame {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
-        let result = self
-            .referee_maker
-            .rewind(allocator, want_ph)?;
+        let result = self.referee_maker.rewind(allocator, want_ph)?;
         if let Some(current_state) = &result {
             self.rewind_outcome = Some(*current_state);
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
@@ -1118,9 +1114,10 @@ impl LiveGame {
     pub fn get_transaction_for_timeout(
         &mut self,
         allocator: &mut AllocEncoder,
-        coin: &CoinString
+        coin: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        self.referee_maker.get_transaction_for_timeout(allocator, coin)
+        self.referee_maker
+            .get_transaction_for_timeout(allocator, coin)
     }
 }
 

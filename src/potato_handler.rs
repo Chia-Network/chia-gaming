@@ -607,7 +607,10 @@ impl PotatoHandler {
     }
 
     pub fn handshake_finished(&self) -> bool {
-        matches!(self.handshake_state, HandshakeState::Finished(_) | HandshakeState::OnChain(_))
+        matches!(
+            self.handshake_state,
+            HandshakeState::Finished(_) | HandshakeState::OnChain(_)
+        )
     }
 
     /// Tell whether this peer has the potato.  If it has been sent but not received yet
@@ -1886,19 +1889,20 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
-            let get_current_coin = |hs: &HandshakeState, game_id: &GameID| -> Result<CoinString, Error> {
-                if let HandshakeState::OnChain(game_map) = &self.handshake_state {
-                    if let Some((current, _game)) =
-                        game_map.iter().find(|g| g.1.game_id == *game_id)
-                    {
-                        Ok(current.clone())
+            let get_current_coin =
+                |hs: &HandshakeState, game_id: &GameID| -> Result<CoinString, Error> {
+                    if let HandshakeState::OnChain(game_map) = &self.handshake_state {
+                        if let Some((current, _game)) =
+                            game_map.iter().find(|g| g.1.game_id == *game_id)
+                        {
+                            Ok(current.clone())
+                        } else {
+                            Err(Error::StrErr("no matching game".to_string()))
+                        }
                     } else {
-                        Err(Error::StrErr("no matching game".to_string()))
+                        Err(Error::StrErr("not on chain".to_string()))
                     }
-                } else {
-                    Err(Error::StrErr("not on chain".to_string()))
-                }
-            };
+                };
 
             debug!("do_on_chain_action {action:?}");
             match action {
@@ -1942,9 +1946,13 @@ impl PotatoHandler {
                 GameAction::Accept(game_id) => {
                     let current_coin = get_current_coin(&self.handshake_state, &game_id)?;
                     let player_ch = self.channel_handler_mut()?;
-                    debug!("{} on chain: accept game coin {current_coin:?}", player_ch.is_initial_potato());
+                    debug!(
+                        "{} on chain: accept game coin {current_coin:?}",
+                        player_ch.is_initial_potato()
+                    );
                     let (env, system_interface) = penv.env();
-                    let result_transaction = player_ch.accept_or_timeout_game_on_chain(env, &game_id, &current_coin)?;
+                    let result_transaction =
+                        player_ch.accept_or_timeout_game_on_chain(env, &game_id, &current_coin)?;
                     self.have_potato = PotatoState::Present;
                     if let Some(transaction) = result_transaction {
                         todo!();
@@ -2402,7 +2410,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             {
                 let player_ch = self.channel_handler()?;
                 if !player_ch.all_games_finished() {
-                    return Err(Error::StrErr("tried to shut down when there are live games on chain".to_string()));
+                    return Err(Error::StrErr(
+                        "tried to shut down when there are live games on chain".to_string(),
+                    ));
                 }
             }
 

@@ -19,11 +19,10 @@ use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
-    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition,
-    CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
-    HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, OnChainGameState,
-    PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
-    UnrollCoinConditionInputs, UnrollTarget,
+    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation,
+    CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo, HandshakeResult, LiveGame,
+    MoveResult, OnChainGameCoin, OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData,
+    PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -1762,10 +1761,7 @@ impl ChannelHandler {
         coin: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
-        let tx = self.live_games[game_idx].get_transaction_for_timeout(
-            env.allocator,
-            coin
-        )?;
+        let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
         // Game is done one way or another.
         self.live_games.remove(game_idx);
         Ok(tx)

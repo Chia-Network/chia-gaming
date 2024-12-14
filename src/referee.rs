@@ -1878,8 +1878,7 @@ impl RefereeMaker {
         };
 
         let state = self.state.clone();
-        let result =
-            self.their_turn_move_off_chain(allocator, &details, state_number)?;
+        let result = self.their_turn_move_off_chain(allocator, &details, state_number)?;
 
         let args = self.spend_this_coin();
 
