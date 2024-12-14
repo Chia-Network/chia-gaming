@@ -1888,20 +1888,19 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let get_current_coin =
-            |hs: &HandshakeState, game_id: &GameID| -> Result<CoinString, Error> {
-                if let HandshakeState::OnChain(game_map) = hs {
-                    if let Some((current, _game)) =
-                        game_map.iter().find(|g| g.1.game_id == *game_id)
-                    {
-                        Ok(current.clone())
-                    } else {
-                        Err(Error::StrErr("no matching game".to_string()))
-                    }
+        let get_current_coin = |hs: &HandshakeState,
+                                game_id: &GameID|
+         -> Result<CoinString, Error> {
+            if let HandshakeState::OnChain(game_map) = hs {
+                if let Some((current, _game)) = game_map.iter().find(|g| g.1.game_id == *game_id) {
+                    Ok(current.clone())
                 } else {
-                    Err(Error::StrErr("not on chain".to_string()))
+                    Err(Error::StrErr("no matching game".to_string()))
                 }
-            };
+            } else {
+                Err(Error::StrErr("not on chain".to_string()))
+            }
+        };
 
         debug!("do_on_chain_action {action:?}");
         match action {
