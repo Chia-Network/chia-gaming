@@ -675,18 +675,13 @@ impl RefereeMaker {
             nonce,
         });
 
-        let mover_share = if my_turn {
-            fixed_info.amount.clone() - initial_move.mover_share.clone()
-        } else {
-            initial_move.mover_share.clone()
-        };
         // TODO: Revisit how we create initial_move
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &initial_move,
             None,
             &Hash::default(),
-            Some(&mover_share),
+            Some(&initial_move.mover_share.clone()),
             my_turn,
         ));
         // If this reflects my turn, then we will spend the next parameter set.
