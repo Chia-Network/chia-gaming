@@ -91,7 +91,7 @@ fn test_game_handler_their_make_move() {
             },
         )
         .expect("should run");
-    if let TheirTurnResult::MakeMove(state, game_handler, msg) = result {
+    if let TheirTurnResult::MakeMove(state, game_handler, msg, _mover_share) = result {
         let game_handler_node = game_handler.to_nodeptr(&mut allocator).expect("should cvt");
         assert_eq!(msg, b"test");
         assert_eq!(disassemble(allocator.allocator(), state, None), "999");

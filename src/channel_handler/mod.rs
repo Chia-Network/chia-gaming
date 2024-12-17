@@ -847,7 +847,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         move_result: &MoveResult,
-    ) -> Result<(ChannelCoinSpendInfo, NodePtr, Vec<u8>), Error> {
+    ) -> Result<(ChannelCoinSpendInfo, NodePtr, Vec<u8>, Amount), Error> {
         debug!(
             "{} RECEIVED_POTATO_MOVE {}",
             self.is_initial_potato(),
@@ -890,6 +890,7 @@ impl ChannelHandler {
             },
             their_move_result.readable_move,
             their_move_result.message,
+            their_move_result.mover_share,
         ))
     }
 

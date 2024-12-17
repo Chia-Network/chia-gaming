@@ -256,6 +256,7 @@ pub trait ToLocalUI {
         allocator: &mut AllocEncoder,
         id: &GameID,
         readable: ReadableMove,
+        mover_share: Amount,
     ) -> Result<(), Error>;
     fn raw_game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
         Ok(())
@@ -266,7 +267,7 @@ pub trait ToLocalUI {
         id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error>;
-    fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;
+    fn game_finished(&mut self, id: &GameID, mover_share: Amount) -> Result<(), Error>;
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
@@ -725,7 +726,7 @@ impl PotatoHandler {
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             PeerMessage::Move(game_id, m) => {
-                let (spend_info, readable_move, message) = {
+                let (spend_info, readable_move, message, mover_share) = {
                     let (env, _) = penv.env();
                     ch.received_potato_move(env, &game_id, &m)?
                 };
@@ -733,7 +734,7 @@ impl PotatoHandler {
                     let (env, system_interface) = penv.env();
                     let opponent_readable =
                         ReadableMove::from_nodeptr(env.allocator, readable_move)?;
-                    system_interface.opponent_moved(env.allocator, &game_id, opponent_readable)?;
+                    system_interface.opponent_moved(env.allocator, &game_id, opponent_readable, mover_share)?;
                     if !message.is_empty() {
                         system_interface.send_message(&PeerMessage::Message(game_id, message))?;
                     }
@@ -1494,10 +1495,11 @@ impl PotatoHandler {
             }
 
             _ => {
-                return Err(Error::StrErr(format!(
-                    "should not receive message in state {:?}",
-                    self.handshake_state
-                )));
+                return Ok(());
+                // return Err(Error::StrErr(format!(
+                //     "should not receive message in state {:?}",
+                //     self.handshake_state
+                // )));
             }
         }
 
@@ -1951,11 +1953,12 @@ impl PotatoHandler {
                 let (env, _system_interface) = penv.env();
                 let result_transaction =
                     player_ch.accept_or_timeout_game_on_chain(env, &game_id, &current_coin)?;
+                let initial_potato = player_ch.is_initial_potato();
                 self.have_potato = PotatoState::Present;
                 if let Some(_transaction) = result_transaction {
                     todo!();
                 } else {
-                    debug!("Accepted game when our share was zero");
+                    debug!("{initial_potato} Accepted game when our share was zero");
                 }
                 Ok(())
             }
@@ -2244,7 +2247,7 @@ impl PotatoHandler {
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout { /*my_reward_coin_string*/ .. }) => {
                 todo!();
             }
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved { new_coin_string, readable, .. }) => {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved { new_coin_string, readable, mover_share, .. }) => {
                 debug!("{initial_potato} got a their spend {new_coin_string:?} from ph {:?}", old_definition.puzzle_hash);
                 if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
                     let (puzzle_hash, amt) =
@@ -2266,7 +2269,8 @@ impl PotatoHandler {
                     system_interface.opponent_moved(
                         env.allocator,
                         &game_id,
-                        readable
+                        readable,
+                        mover_share,
                     )?;
                     system_interface.register_coin(
                         &new_coin_string,

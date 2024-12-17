@@ -37,7 +37,7 @@ struct Pipe {
     registered_coins: HashMap<CoinString, Timeout>,
 
     // Opponent moves
-    opponent_moves: Vec<(GameID, ReadableMove)>,
+    opponent_moves: Vec<(GameID, ReadableMove, Amount)>,
     opponent_raw_messages: Vec<(GameID, Vec<u8>)>,
     opponent_messages: Vec<(GameID, ReadableMove)>,
     our_moves: Vec<(GameID, Vec<u8>)>,
@@ -137,8 +137,9 @@ impl ToLocalUI for Pipe {
         _allocator: &mut AllocEncoder,
         id: &GameID,
         readable: ReadableMove,
+        mover_share: Amount,
     ) -> Result<(), Error> {
-        self.opponent_moves.push((id.clone(), readable));
+        self.opponent_moves.push((id.clone(), readable, mover_share));
         Ok(())
     }
     fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {

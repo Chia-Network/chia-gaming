@@ -187,6 +187,7 @@ impl ToLocalUI for SimulatedPeer {
         _allocator: &mut AllocEncoder,
         _id: &GameID,
         _readable: ReadableMove,
+        _my_share: Amount,
     ) -> Result<(), Error> {
         // We can record stuff here and check that we got what was expected, but there's
         // no effect on the game mechanics.
@@ -654,7 +655,7 @@ struct LocalTestUIReceiver {
     opponent_moved: bool,
     go_on_chain: bool,
     got_error: bool,
-    opponent_moves: Vec<(GameID, ReadableMove)>,
+    opponent_moves: Vec<(GameID, ReadableMove, Amount)>,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -663,9 +664,10 @@ impl ToLocalUI for LocalTestUIReceiver {
         _allocator: &mut AllocEncoder,
         id: &GameID,
         readable: ReadableMove,
+        my_share: Amount,
     ) -> Result<(), Error> {
         self.opponent_moved = true;
-        self.opponent_moves.push((id.clone(), readable.clone()));
+        self.opponent_moves.push((id.clone(), readable, my_share));
         Ok(())
     }
 
@@ -992,7 +994,8 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                             })?;
                     }
                     GameAction::Accept(who) | GameAction::Timeout(who) => {
-                        ending = true;
+                        debug!("{who} doing ACCEPT");
+                        can_move = true;
                         cradles[*who]
                             .accept(allocator, &mut rng, &game_ids[0])?;
                     }
@@ -1085,7 +1088,7 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     for (pn, lui) in outcome.local_uis.iter().enumerate() {
         for the_move in lui.opponent_moves.iter() {
             let the_move_to_node = the_move.1.to_nodeptr(&mut allocator).expect("should work");
-            debug!("player {pn} opponent move {}", disassemble(allocator.allocator(), the_move_to_node, None));
+            debug!("player {pn} opponent move {the_move:?} {}", disassemble(allocator.allocator(), the_move_to_node, None));
         }
     }
     let outcome_move = &outcome.local_uis[0].opponent_moves[2];

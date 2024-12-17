@@ -259,7 +259,7 @@ struct SynchronousGameCradleState {
     outbound_transactions: VecDeque<SpendBundle>,
     coin_solution_requests: VecDeque<CoinString>,
     our_moves: VecDeque<(GameID, Vec<u8>)>,
-    opponent_moves: VecDeque<(GameID, ReadableMove)>,
+    opponent_moves: VecDeque<(GameID, ReadableMove, Amount)>,
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_messages: VecDeque<(GameID, ReadableMove)>,
     game_finished: VecDeque<(GameID, Amount)>,
@@ -396,8 +396,9 @@ impl ToLocalUI for SynchronousGameCradleState {
         _allocator: &mut AllocEncoder,
         id: &GameID,
         readable: ReadableMove,
+        my_share: Amount,
     ) -> Result<(), Error> {
-        self.opponent_moves.push_back((id.clone(), readable));
+        self.opponent_moves.push_back((id.clone(), readable, my_share));
         Ok(())
     }
     fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
@@ -575,6 +576,7 @@ impl SynchronousGameCradle {
         let quoted_empty_hash = quoted_empty_conditions.sha256tree(env.allocator);
 
         let mut spends = unfunded_offer.clone();
+        assert!(!spends.spends.is_empty());
         // Create no coins.  The target is already created in the partially funded
         // transaction.
         //
@@ -593,6 +595,9 @@ impl SynchronousGameCradle {
                 signature,
             },
         });
+        debug!("s1 {:?}", spends.spends[0]);
+        debug!("s2 {:?}", spends.spends[1]);
+        assert_eq!(spends.spends.len(), 2);
 
         self.state.outbound_transactions.push_back(spends);
 
@@ -839,8 +844,8 @@ impl GameCradle for SynchronousGameCradle {
             return Ok(Some(result));
         }
 
-        if let Some((id, readable)) = self.state.opponent_moves.pop_front() {
-            local_ui.opponent_moved(allocator, &id, readable)?;
+        if let Some((id, readable, my_share)) = self.state.opponent_moves.pop_front() {
+            local_ui.opponent_moved(allocator, &id, readable, my_share)?;
             result.continue_on = true;
             return Ok(Some(result));
         }

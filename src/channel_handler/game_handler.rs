@@ -165,8 +165,8 @@ fn run_code(
 
 #[derive(Debug, Clone)]
 pub enum TheirTurnResult {
-    FinalMove(NodePtr),
-    MakeMove(NodePtr, GameHandler, Vec<u8>),
+    FinalMove(NodePtr, Amount),
+    MakeMove(NodePtr, GameHandler, Vec<u8>, Amount),
     Slash(Evidence, Box<Aggsig>),
 }
 
@@ -283,6 +283,7 @@ impl GameHandler {
                 disassemble(allocator.allocator(), pl[5], None)
             )));
         };
+        debug!("MOVER_SHARE {mover_share:?}");
         let message_parser = if pl[7] == allocator.allocator().null() {
             None
         } else {
@@ -330,6 +331,7 @@ impl GameHandler {
         allocator: &mut AllocEncoder,
         inputs: &TheirTurnInputs,
     ) -> Result<TheirTurnResult, Error> {
+        debug!("THEIR TURN MOVER SHARE {:?}", inputs.new_move.basic.mover_share);
         let driver_args = (
             inputs.amount.clone(),
             (
@@ -393,7 +395,7 @@ impl GameHandler {
                     "final move with data {}",
                     disassemble(allocator.allocator(), pl[1], None)
                 );
-                Ok(TheirTurnResult::FinalMove(pl[1]))
+                Ok(TheirTurnResult::FinalMove(pl[1], inputs.new_move.basic.mover_share.clone()))
             } else {
                 let message_data = if pl.len() == 4 {
                     allocator.allocator().atom(pl[3]).to_vec()
@@ -404,6 +406,7 @@ impl GameHandler {
                     pl[1],
                     GameHandler::my_driver_from_nodeptr(allocator, pl[2])?,
                     message_data,
+                    inputs.new_move.basic.mover_share.clone(),
                 ))
             }
         } else if move_type == 2 {

@@ -59,6 +59,7 @@ pub struct TheirTurnMoveResult {
     pub puzzle_hash_for_unroll: PuzzleHash,
     pub readable_move: NodePtr,
     pub message: Vec<u8>,
+    pub mover_share: Amount,
     pub original: TheirTurnResult,
 }
 
@@ -93,6 +94,7 @@ pub enum TheirTurnCoinSpentResult {
         // New iteration of the game coin.
         new_coin_string: CoinString,
         readable: ReadableMove,
+        mover_share: Amount,
     },
     Slash(Box<SlashOutcome>),
 }
@@ -1529,8 +1531,8 @@ impl RefereeMaker {
             true,
         ));
 
-        let (readable_move, message) = match &result {
-            TheirTurnResult::FinalMove(readable_move) => {
+        let (readable_move, message, mover_share) = match &result {
+            TheirTurnResult::FinalMove(readable_move, mover_share) => {
                 self.accept_their_move(
                     allocator,
                     None,
@@ -1540,9 +1542,9 @@ impl RefereeMaker {
                     state_number,
                 )?;
 
-                (*readable_move, vec![])
+                (*readable_move, vec![], mover_share)
             }
-            TheirTurnResult::MakeMove(readable_move, handler, message) => {
+            TheirTurnResult::MakeMove(readable_move, handler, message, mover_share) => {
                 // Mover puzzle turns the given solution into coin conditions
                 // that pay the game's amount to us.  It checks whether the
                 // originally curried mover puzzle hash is the sha256tree of the
@@ -1570,7 +1572,7 @@ impl RefereeMaker {
                 );
                 debug!("message {message:?}");
 
-                (*readable_move, message.clone())
+                (*readable_move, message.clone(), mover_share)
             }
             // Slash can't be used when we're off chain.
             TheirTurnResult::Slash(_evidence, _signature) => {
@@ -1593,6 +1595,7 @@ impl RefereeMaker {
             puzzle_hash_for_unroll,
             readable_move,
             message: message.clone(),
+            mover_share: mover_share.clone(),
             original: result,
         })
     }
@@ -1815,6 +1818,7 @@ impl RefereeMaker {
                     &self.fixed.amount,
                 ),
                 readable: ReadableMove::from_nodeptr(allocator, nil)?,
+                mover_share: self.spend_this_coin().game_move.basic.mover_share.clone(),
             });
         }
 
@@ -1893,7 +1897,7 @@ impl RefereeMaker {
             curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)?;
         debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}\n");
 
-        let check_and_report_slash = |allocator: &mut AllocEncoder, readable_move: NodePtr| {
+        let check_and_report_slash = |allocator: &mut AllocEncoder, readable_move: NodePtr, mover_share: Amount| {
             if let Some(result) = self.check_their_turn_for_slash(allocator, coin_string)? {
                 Ok(result)
             } else {
@@ -1904,6 +1908,7 @@ impl RefereeMaker {
                         &self.fixed.amount,
                     ),
                     readable: ReadableMove::from_nodeptr(allocator, readable_move)?,
+                    mover_share: args.game_move.basic.mover_share.clone(),
                 })
             }
         };
@@ -1923,11 +1928,11 @@ impl RefereeMaker {
                     &(slash_spend.signature + *sig),
                 );
             }
-            TheirTurnResult::FinalMove(readable_move) => {
-                check_and_report_slash(allocator, readable_move)
+            TheirTurnResult::FinalMove(readable_move, mover_share) => {
+                check_and_report_slash(allocator, readable_move, mover_share)
             }
-            TheirTurnResult::MakeMove(readable_move, _, _) => {
-                check_and_report_slash(allocator, readable_move)
+            TheirTurnResult::MakeMove(readable_move, _, _, _) => {
+                check_and_report_slash(allocator, readable_move, mover_share)
             }
         };
         self.state = state;
