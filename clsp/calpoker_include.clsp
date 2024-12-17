@@ -103,7 +103,7 @@
        (max-move-size-of-template template)
 
        ;; Initial mover share
-       ()
+       amount       
        )
       )
      )
