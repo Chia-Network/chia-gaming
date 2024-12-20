@@ -965,6 +965,7 @@ pub struct UnrollTarget {
 pub struct OnChainGameState {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
+    pub next_puzzle_hash: Option<PuzzleHash>,
     pub our_turn: bool,
 }
 
@@ -1034,7 +1035,9 @@ impl LiveGame {
         let their_move_result =
             self.referee_maker
                 .their_turn_move_off_chain(allocator, game_move, state_number)?;
-        self.last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
+        if let TheirTurnMoveResult::Move { puzzle_hash_for_unroll, .. } = &their_move_result {
+            self.last_referee_puzzle_hash = puzzle_hash_for_unroll.clone();
+        }
         Ok(their_move_result)
     }
 

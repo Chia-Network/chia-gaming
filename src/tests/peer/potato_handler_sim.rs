@@ -1000,7 +1000,6 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                             .accept(allocator, &mut rng, &game_ids[0])?;
                     }
                     GameAction::Shutdown(who, _) => {
-                        ending = true;
                         cradles[*who]
                             .shut_down(allocator, &mut rng)?;
                     }
@@ -1065,10 +1064,10 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
 
     let mut moves = test_moves_1(&mut allocator).to_vec();
     let nil = allocator.encode_atom(&[]).into_gen().expect("should work");
-    moves.push(GameAction::Accept(0));
     moves.push(GameAction::Accept(1));
-    moves.push(GameAction::Shutdown(0, nil));
+    moves.push(GameAction::Accept(0));
     moves.push(GameAction::Shutdown(1, nil));
+    moves.push(GameAction::Shutdown(0, nil));
     if let GameAction::Move(player, readable, _) = moves[3].clone() {
         moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
     } else {

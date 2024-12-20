@@ -35,7 +35,7 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::GameAction;
-use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction};
+use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction, TheirTurnCoinSpentResult, TheirTurnMoveResult};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -882,16 +882,23 @@ impl ChannelHandler {
         // the unroll puzzle hash that was given to us.
         self.cached_last_action = None;
 
-        Ok((
-            ChannelCoinSpendInfo {
-                aggsig: spend.signature,
-                solution: spend.solution,
-                conditions: spend.conditions,
-            },
-            their_move_result.readable_move,
-            their_move_result.message,
-            their_move_result.mover_share,
-        ))
+        match their_move_result {
+            TheirTurnMoveResult::Move { readable_move, message, mover_share, .. } => {
+                Ok((
+                    ChannelCoinSpendInfo {
+                        aggsig: spend.signature,
+                        solution: spend.solution,
+                        conditions: spend.conditions,
+                    },
+                    readable_move,
+                    message,
+                    mover_share,
+                ))
+            }
+            TheirTurnMoveResult::Slash { evidence } => {
+                todo!();
+            }
+        }
     }
 
     pub fn received_message<R: Rng>(
@@ -1438,6 +1445,7 @@ impl ChannelHandler {
                         OnChainGameState {
                             game_id: live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
+                            next_puzzle_hash: None,
                             our_turn: live_game.is_my_turn(),
                         },
                     );
@@ -1587,14 +1595,22 @@ impl ChannelHandler {
             return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
         }
 
-        Ok(CoinSpentInformation::TheirSpend(
-            self.live_games[live_game_idx].their_turn_coin_spent(
-                env.allocator,
-                coin_string,
-                conditions,
-                self.current_state_number,
-            )?,
-        ))
+        debug!("{} asking referee", self.is_initial_potato());
+        let their_spend_result = self.live_games[live_game_idx].their_turn_coin_spent(
+            env.allocator,
+            coin_string,
+            conditions,
+            self.current_state_number,
+        )?;
+        debug!("their_spend_result {their_spend_result:?}");
+        if let TheirTurnCoinSpentResult::Repeat(ph, amt) = &their_spend_result {
+            if !self.live_games[live_game_idx].is_my_turn() {
+                return Ok(CoinSpentInformation::Expected(ph.clone(), amt.clone()));
+            }
+        }
+
+        assert!(self.live_games[live_game_idx].is_my_turn());
+        Ok(CoinSpentInformation::TheirSpend(their_spend_result))
     }
 
     pub fn get_redo_action<R: Rng>(
@@ -1765,6 +1781,7 @@ impl ChannelHandler {
         let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
         // Game is done one way or another.
         self.live_games.remove(game_idx);
+        debug!("{} has {} games left", self.is_initial_potato(), self.live_games.len());
         Ok(tx)
     }
 

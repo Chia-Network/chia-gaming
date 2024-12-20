@@ -57,6 +57,7 @@ impl ToClvm<NodePtr> for GameHandler {
     }
 }
 
+#[derive(Debug)]
 pub struct MyTurnInputs<'a> {
     pub readable_new_move: ReadableMove,
     pub amount: Amount,
@@ -167,7 +168,7 @@ fn run_code(
 pub enum TheirTurnResult {
     FinalMove(NodePtr, Amount),
     MakeMove(NodePtr, GameHandler, Vec<u8>, Amount),
-    Slash(Evidence, Box<Aggsig>),
+    Slash(Evidence),
 }
 
 impl GameHandler {
@@ -222,6 +223,7 @@ impl GameHandler {
         allocator: &mut AllocEncoder,
         inputs: &MyTurnInputs,
     ) -> Result<MyTurnResult, Error> {
+        debug!("CALL MY TURN DRIVER WITH {inputs:?}");
         let driver_args = (
             inputs.readable_new_move.clone(),
             (
@@ -356,6 +358,7 @@ impl GameHandler {
             .into_gen()?;
 
         let driver_node = self.get_their_turn_driver(allocator)?;
+        debug!("call their turn driver {self:?} args {}", disassemble(allocator.allocator(), driver_args, None));
         let run_result = run_code(
             allocator,
             driver_node,
@@ -410,17 +413,13 @@ impl GameHandler {
                 ))
             }
         } else if move_type == 2 {
-            if pl.len() != 3 {
+            if pl.len() != 2 {
                 return Err(Error::StrErr(format!(
                     "bad length for slash {}",
                     disassemble(allocator.allocator(), run_result, None)
                 )));
             }
-            let sig_bytes = allocator.allocator().atom(pl[2]).to_vec();
-            Ok(TheirTurnResult::Slash(
-                Evidence::from_nodeptr(pl[1]),
-                Box::new(Aggsig::from_slice(&sig_bytes)?),
-            ))
+            Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(pl[1])))
         } else {
             Err(Error::StrErr("unknown move result type".to_string()))
         }

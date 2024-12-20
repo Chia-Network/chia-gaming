@@ -66,7 +66,7 @@
        (max-move-size-of-template template)
 
        ;; Initial mover share
-       amount
+       (/ amount 2)
        )
       )
 
@@ -103,7 +103,7 @@
        (max-move-size-of-template template)
 
        ;; Initial mover share
-       amount       
+       (/ amount 2)       
        )
       )
      )

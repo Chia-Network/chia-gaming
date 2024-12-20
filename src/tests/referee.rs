@@ -15,7 +15,7 @@ use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker};
+use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, TheirTurnMoveResult};
 
 pub struct DebugGamePrograms {
     pub my_validation_program: NodePtr,
@@ -264,9 +264,13 @@ fn test_referee_smoke() {
         .my_referee
         .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
         .expect("should run");
-    assert_eq!(their_move_result.message, b"message data");
-    let readable_prog =
-        Program::from_nodeptr(&mut allocator, their_move_result.readable_move).expect("should cvt");
-    assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
+    if let TheirTurnMoveResult::Move { message, readable_move, .. } = &their_move_result {
+        assert_eq!(message, b"message data");
+        let readable_prog =
+            Program::from_nodeptr(&mut allocator, *readable_move).expect("should cvt");
+        assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
+    } else {
+        assert!(false);
+    }
     assert!(!reftest.my_referee.processing_my_turn());
 }
