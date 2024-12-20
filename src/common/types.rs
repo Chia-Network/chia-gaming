@@ -18,12 +18,12 @@ use sha2::{Digest, Sha256};
 use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
-use clvmr::{ChiaDialect, run_program, NO_UNKNOWN_OPS};
+use clvmr::{run_program, ChiaDialect, NO_UNKNOWN_OPS};
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
-use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
 
 use crate::common::constants::{AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, CREATE_COIN_ATOM, REM_ATOM};
 
@@ -175,7 +175,7 @@ impl Distribution<PrivateKey> for Standard {
 
 struct SerdeByteConsumer;
 
-impl<'de> Visitor<'de> for SerdeByteConsumer {
+impl Visitor<'_> for SerdeByteConsumer {
     type Value = Vec<u8>;
     fn expecting(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         fmt.write_str("expected bytes")
@@ -507,7 +507,7 @@ pub enum Sha256Input<'a> {
     Array(Vec<Sha256Input<'a>>),
 }
 
-impl<'a> Sha256Input<'a> {
+impl Sha256Input<'_> {
     fn update(&self, hasher: &mut Sha256) {
         match self {
             Sha256Input::Bytes(b) => {
@@ -541,7 +541,7 @@ impl<'a> Sha256Input<'a> {
 }
 
 /// Puzzle hash
-#[derive(Default, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Eq, PartialEq, Debug, Serialize, Deserialize, Hash)]
 pub struct PuzzleHash(Hash);
 
 impl PuzzleHash {
@@ -965,7 +965,11 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
         }
     }
 
-    if !exploded.is_empty() && exploded.iter().all(|e| matches!(allocator.allocator().sexp(*e), SExp::Atom)) {
+    if !exploded.is_empty()
+        && exploded
+            .iter()
+            .all(|e| matches!(allocator.allocator().sexp(*e), SExp::Atom))
+    {
         let atoms: Vec<Vec<u8>> = exploded
             .iter()
             .map(|a| allocator.allocator().atom(*a).to_vec())
@@ -993,7 +997,11 @@ impl CoinCondition {
         }
     }
 
-    pub fn from_puzzle_and_solution(allocator: &mut AllocEncoder, puzzle: &Program, solution: &Program) -> Result<Vec<CoinCondition>, Error> {
+    pub fn from_puzzle_and_solution(
+        allocator: &mut AllocEncoder,
+        puzzle: &Program,
+        solution: &Program,
+    ) -> Result<Vec<CoinCondition>, Error> {
         let run_puzzle = puzzle.to_nodeptr(allocator)?;
         let run_args = solution.to_nodeptr(allocator)?;
         let conditions = run_program(
@@ -1003,7 +1011,7 @@ impl CoinCondition {
             run_args,
             0,
         )
-            .into_gen()?;
+        .into_gen()?;
         debug!(
             "conditions to parse {}",
             disassemble(allocator.allocator(), conditions.1, None)
@@ -1043,6 +1051,7 @@ pub struct SpendRewardResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendBundle {
+    pub name: Option<String>,
     pub spends: Vec<CoinSpend>,
 }
 

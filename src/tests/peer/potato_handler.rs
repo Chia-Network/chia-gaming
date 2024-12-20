@@ -37,7 +37,7 @@ struct Pipe {
     registered_coins: HashMap<CoinString, Timeout>,
 
     // Opponent moves
-    opponent_moves: Vec<(GameID, ReadableMove)>,
+    opponent_moves: Vec<(GameID, ReadableMove, Amount)>,
     opponent_raw_messages: Vec<(GameID, Vec<u8>)>,
     opponent_messages: Vec<(GameID, ReadableMove)>,
     our_moves: Vec<(GameID, Vec<u8>)>,
@@ -137,8 +137,9 @@ impl ToLocalUI for Pipe {
         _allocator: &mut AllocEncoder,
         id: &GameID,
         readable: ReadableMove,
+        mover_share: Amount,
     ) -> Result<(), Error> {
-        self.opponent_moves.push((id.clone(), readable));
+        self.opponent_moves.push((id.clone(), readable, mover_share));
         Ok(())
     }
     fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
@@ -162,7 +163,7 @@ impl ToLocalUI for Pipe {
         todo!();
     }
 
-    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
+    fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         todo!();
     }
     fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
@@ -230,6 +231,7 @@ where
         peer.channel_offer(
             self,
             SpendBundle {
+                name: None,
                 spends: vec![CoinSpend {
                     coin: parent.clone(),
                     bundle: Spend {

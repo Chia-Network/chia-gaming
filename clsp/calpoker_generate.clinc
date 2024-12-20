@@ -11,6 +11,7 @@
 (import std.assert)
 (import std.append)
 (import std.relops)
+(import std.print)
 (import std.list_compare)
 (import handcalc exposing handcalc)
 (import onchain.calpoker.onehandcalc exposing onehandcalc)
@@ -37,7 +38,7 @@
             pokerb_hash
             image
             16
-            0
+            (/ amount 2)
             (curry calpoker_alice_driver_b preimage image)
             0
         )
@@ -52,10 +53,22 @@
             (curry calpoker_alice_driver_c PREIMAGE move) PREIMAGE)
 )
 
+(defun single-byte (raw-indices)
+    (if raw-indices
+        (assign
+            indices-len (strlen raw-indices)
+            (substr raw-indices (- indices-len 1) indices-len)
+        )
+        0x00
+    )
+)
+
 (defun bitify (mylist)
-    (if (not mylist)
-        0
-        (logior (f mylist) (lsh (bitify (r mylist)) 1))
+    (single-byte 
+        (if (not mylist)
+            0
+            (logior (f mylist) (lsh (bitify (r mylist)) 1))
+        )
     )
 )
 
@@ -73,7 +86,7 @@
             pokerd_hash
             (list cards new_commit)
             1
-            0
+            (/ amount 2)
             (curry calpoker_alice_driver_d salt my_picks)
             0
         )
@@ -84,13 +97,13 @@
     (if (not mylist)
         0
         (= (f mylist) index)
-        (logior 1 (* 2 (indices_to_bitfield_inner (r mylist) (+ index 1))))
-        (* 2 (indices_to_bitfield_inner mylist (+ index 1)))
+        (logior 1 (lsh (indices_to_bitfield_inner (r mylist) (+ index 1)) 1))
+        (lsh (indices_to_bitfield_inner mylist (+ index 1)) 1)
     )
 )
 
 (defun indices_to_bitfield (mylist)
-    (indices_to_bitfield_inner mylist 0)
+    (single-byte (indices_to_bitfield_inner mylist 0))
 )
 
 ; We have composed cards as sublists but need them as pairs.
@@ -113,7 +126,7 @@
         (list MAKE_MOVE
             (list move (indices_to_bitfield my_picks) (indices_to_bitfield bob_picks)
                 my_hand_value bob_hand_value win_result)
-            (lambda ((& MY_SALT MY_PICKS split)) (list (concat MY_SALT MY_PICKS) 0 0 0 0 split 0 0)
+            (lambda ((& MY_SALT MY_PICKS my_picks split)) (list (concat (print "MY_SALT is" MY_SALT) (print "MY_PICKS are" MY_PICKS) (print "my_picks are" (indices_to_bitfield my_picks))) 0 0 0 0 split 0 0)
             0
             )
         )
@@ -137,7 +150,7 @@
             pokerc_hash
             (list ALICE_COMMIT seed)
             48
-            0
+            (/ amount 2)
             (curry calpoker_bob_driver_c seed)
             parse_message
         )
@@ -192,8 +205,8 @@
             pokere
             pokere_hash
             (list my_move (list ALICE_CARDS BOB_CARDS) ALICE_COMMIT_2)
-            17
-            0
+            18
+            (/ amount 2)
             calpoker_bob_driver_e
             0
         )
@@ -214,7 +227,7 @@
         (alice_hand_value alice_picks) (handcalc (map card_list_to_pair alice_all_cards))
         (bob_hand_value bob_picks) (handcalc (map card_list_to_pair bob_all_cards))
         win_result (list_compare alice_hand_value bob_hand_value)
-        correct_split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
+        correct_split (print (list "checking correct split" win_result split amount) (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount))
         (if (!= split correct_split)
             (list SLASH (indices_to_bitfield bob_picks))
             (list MAKE_MOVE
