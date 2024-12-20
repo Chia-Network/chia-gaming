@@ -18,3 +18,16 @@ index 3237e13..37d56e9 100644
          _id: &GameID,
          readable: ReadableMove,
      ) -> Result<(), Error> {
+diff --git a/src/cmd/main.rs b/src/cmd/main.rs
+index 3237e13..72091fb 100644
+--- a/src/cmd/main.rs
++++ b/src/cmd/main.rs
+@@ -1039,7 +1039,7 @@ fn main() {
+             .push(Router::with_path("set_auto").post(set_auto))
+             .push(Router::with_path("allow_message").post(allow_message))
+             .push(Router::with_path("finish").post(finish));
+-        let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
++        let acceptor = TcpListener::new("0.0.0.0:5800").bind().await;
+ 
+         let s = std::thread::spawn(move || {
+             {
