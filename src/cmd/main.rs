@@ -69,7 +69,6 @@ impl ToLocalUI for UIReceiver {
 
     fn opponent_moved(
         &mut self,
-        _allocator: &mut AllocEncoder,
         _id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error> {
@@ -81,7 +80,6 @@ impl ToLocalUI for UIReceiver {
 
     fn game_message(
         &mut self,
-        _allocator: &mut AllocEncoder,
         _id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error> {
@@ -1039,7 +1037,7 @@ fn main() {
             .push(Router::with_path("set_auto").post(set_auto))
             .push(Router::with_path("allow_message").post(allow_message))
             .push(Router::with_path("finish").post(finish));
-        let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
+        let acceptor = TcpListener::new("0.0.0.0:5800").bind().await;
 
         let s = std::thread::spawn(move || {
             {
