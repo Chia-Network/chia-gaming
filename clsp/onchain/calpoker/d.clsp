@@ -19,7 +19,7 @@
         (print (list "poker d" bob_picks) (= (strlen bob_picks) 1))
         (print "check popcount" (= (popcount bob_picks) 4))
         (print (list "check validation hash" new_validation_hash (sha256 ehash (shatree (list bob_picks cards alice_commit)))) (= new_validation_hash (sha256 ehash (shatree (list bob_picks cards alice_commit)))))
-        (print (list "check new max move size" max_move_size) (= max_move_size 17))
+        (print (list "check new max move size" max_move_size) (= max_move_size 18))
         0
         (x)
     )

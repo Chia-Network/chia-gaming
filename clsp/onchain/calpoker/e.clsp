@@ -19,7 +19,7 @@
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     (bob_picks (alice_cards bob_cards) alice_commit) me mover_puzzle solution bob_card_selections)
     (if_any_fail
-        (print "poker e" (= (strlen move) 18))
+        (print (list "poker e" move) (= (strlen move) 18))
         (assign
             alice_salted_picks (substr move 0 17)
             alice_picks (substr move 16 17)
