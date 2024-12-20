@@ -1,0 +1,20 @@
+diff --git a/src/cmd/main.rs b/src/cmd/main.rs
+index 3237e13..37d56e9 100644
+--- a/src/cmd/main.rs
++++ b/src/cmd/main.rs
+@@ -69,7 +69,6 @@ impl ToLocalUI for UIReceiver {
+ 
+     fn opponent_moved(
+         &mut self,
+-        _allocator: &mut AllocEncoder,
+         _id: &GameID,
+         readable: ReadableMove,
+     ) -> Result<(), Error> {
+@@ -81,7 +80,6 @@ impl ToLocalUI for UIReceiver {
+ 
+     fn game_message(
+         &mut self,
+-        _allocator: &mut AllocEncoder,
+         _id: &GameID,
+         readable: ReadableMove,
+     ) -> Result<(), Error> {
