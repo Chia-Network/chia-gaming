@@ -1101,9 +1101,11 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     ).expect("should decode");
     debug!("outcome move {}", disassemble(allocator.allocator(), outcome_node, None));
     debug!("game outcome {decoded_outcome:?}");
-    if decoded_outcome.win_direction != 0 {
+    if decoded_outcome.win_direction == 1 {
+        assert_eq!(p2_balance + 200, p1_balance);
+    } else if decoded_outcome.win_direction == -1 {
         assert_eq!(p2_balance, p1_balance + 200);
     } else {
-        assert_eq!(p2_balance + 200, p1_balance);
+        assert_eq!(p2_balance, p1_balance);
     }
 }

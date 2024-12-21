@@ -1870,7 +1870,6 @@ impl RefereeMaker {
             validation_info_hash,
         };
 
-        let state = self.state.clone();
         let result = self.their_turn_move_off_chain(allocator, &details, state_number)?;
 
         let args = self.spend_this_coin();
@@ -1923,7 +1922,7 @@ impl RefereeMaker {
                 check_and_report_slash(allocator, readable_move, mover_share)
             }
         };
-        self.state = state;
+
         final_result
     }
 }

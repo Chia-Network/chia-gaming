@@ -1890,6 +1890,12 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        let initial_potato =
+        {
+            let player_ch = self.channel_handler()?;
+            player_ch.is_initial_potato()
+        };
+
         let get_current_coin = |hs: &HandshakeState,
                                 game_id: &GameID|
          -> Result<CoinString, Error> {
@@ -1904,7 +1910,7 @@ impl PotatoHandler {
             }
         };
 
-        debug!("do_on_chain_action {action:?}");
+        debug!("{initial_potato} do_on_chain_action {action:?}");
         match action {
             GameAction::Move(game_id, readable_move, hash) => {
                 let current_coin = get_current_coin(&self.handshake_state, &game_id)?;
@@ -1915,8 +1921,7 @@ impl PotatoHandler {
                 {
                     let player_ch = self.channel_handler()?;
                     debug!(
-                        "{} created puzzle hash for redo {new_ph:?}",
-                        player_ch.is_initial_potato()
+                        "{initial_potato} created puzzle hash for redo {new_ph:?}",
                     );
                     self.my_game_spends.insert(new_ph.clone());
                 }
@@ -1947,18 +1952,17 @@ impl PotatoHandler {
                 let current_coin = get_current_coin(&self.handshake_state, &game_id)?;
                 let player_ch = self.channel_handler_mut()?;
                 debug!(
-                    "{} on chain: accept game coin {current_coin:?}",
-                    player_ch.is_initial_potato()
+                    "{initial_potato} on chain: accept game coin {current_coin:?}",
                 );
                 let (env, system_interface) = penv.env();
                 let result_transaction =
                     player_ch.accept_or_timeout_game_on_chain(env, &game_id, &current_coin)?;
-                let initial_potato = player_ch.is_initial_potato();
                 self.have_potato = PotatoState::Present;
                 if let Some(tx) = result_transaction {
+                    debug!("{initial_potato} accept: have transaction {tx:?}");
                     self.have_potato = PotatoState::Absent;
                     system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                        name: Some("accept transaction".to_string()),
+                        name: Some(format!("{initial_potato} accept transaction")),
                         spends: vec![CoinSpend {
                             coin: current_coin.clone(),
                             bundle: tx.bundle.clone(),
