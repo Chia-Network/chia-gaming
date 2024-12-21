@@ -54,12 +54,10 @@ pub struct GameMoveWireData {
     pub puzzle_hash_for_unroll: PuzzleHash,
     pub details: GameMoveDetails,
 }
+
 #[derive(Debug, Clone)]
 pub struct TheirTurnMoveResult {
-    pub puzzle_hash_for_unroll: PuzzleHash,
-    pub readable_move: NodePtr,
-    pub message: Vec<u8>,
-    pub mover_share: Amount,
+    pub puzzle_hash_for_unroll: Option<PuzzleHash>,
     pub original: TheirTurnResult,
 }
 
@@ -1531,7 +1529,7 @@ impl RefereeMaker {
             true,
         ));
 
-        let (readable_move, message, mover_share) = match &result {
+        match &result {
             TheirTurnResult::FinalMove(readable_move, mover_share) => {
                 self.accept_their_move(
                     allocator,
@@ -1541,8 +1539,6 @@ impl RefereeMaker {
                     details,
                     state_number,
                 )?;
-
-                (*readable_move, vec![], mover_share)
             }
             TheirTurnResult::MakeMove(readable_move, handler, message, mover_share) => {
                 // Mover puzzle turns the given solution into coin conditions
@@ -1565,18 +1561,13 @@ impl RefereeMaker {
                     details,
                     state_number,
                 )?;
-
-                debug!(
-                    "readable_move {}",
-                    disassemble(allocator.allocator(), *readable_move, None)
-                );
-                debug!("message {message:?}");
-
-                (*readable_move, message.clone(), mover_share)
             }
             // Slash can't be used when we're off chain.
-            TheirTurnResult::Slash(_evidence, _signature) => {
-                return Err(Error::StrErr("slash when off chain".to_string()));
+            TheirTurnResult::Slash(_evidence) => {
+                return Ok(TheirTurnMoveResult {
+                    puzzle_hash_for_unroll: None,
+                    original: result.clone(),
+                })
             }
         };
 
@@ -1592,10 +1583,7 @@ impl RefereeMaker {
 
         // Coin calculated off the new new state.
         Ok(TheirTurnMoveResult {
-            puzzle_hash_for_unroll,
-            readable_move,
-            message: message.clone(),
-            mover_share: mover_share.clone(),
+            puzzle_hash_for_unroll: Some(puzzle_hash_for_unroll),
             original: result,
         })
     }
@@ -1915,7 +1903,7 @@ impl RefereeMaker {
 
         debug!("referee move details {details:?}");
         let final_result = match result.original {
-            TheirTurnResult::Slash(evidence, sig) => {
+            TheirTurnResult::Slash(evidence) => {
                 let slash_spend = self.make_slash_spend(allocator)?;
                 let full_slash_solution = self.make_full_slash_solution(allocator)?;
                 return self.make_slash_for_their_turn(
@@ -1925,7 +1913,7 @@ impl RefereeMaker {
                     &new_puzzle_hash,
                     full_slash_solution,
                     evidence,
-                    &(slash_spend.signature + *sig),
+                    &slash_spend.signature,
                 );
             }
             TheirTurnResult::FinalMove(readable_move, mover_share) => {

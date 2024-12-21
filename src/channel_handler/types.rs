@@ -1034,7 +1034,9 @@ impl LiveGame {
         let their_move_result =
             self.referee_maker
                 .their_turn_move_off_chain(allocator, game_move, state_number)?;
-        self.last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
+        if let Some(ph) = &their_move_result.puzzle_hash_for_unroll {
+            self.last_referee_puzzle_hash = ph.clone();
+        }
         Ok(their_move_result)
     }
 

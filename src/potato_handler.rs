@@ -1950,13 +1950,20 @@ impl PotatoHandler {
                     "{} on chain: accept game coin {current_coin:?}",
                     player_ch.is_initial_potato()
                 );
-                let (env, _system_interface) = penv.env();
+                let (env, system_interface) = penv.env();
                 let result_transaction =
                     player_ch.accept_or_timeout_game_on_chain(env, &game_id, &current_coin)?;
                 let initial_potato = player_ch.is_initial_potato();
                 self.have_potato = PotatoState::Present;
-                if let Some(_transaction) = result_transaction {
-                    todo!();
+                if let Some(tx) = result_transaction {
+                    self.have_potato = PotatoState::Absent;
+                    system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                        name: Some("accept transaction".to_string()),
+                        spends: vec![CoinSpend {
+                            coin: current_coin.clone(),
+                            bundle: tx.bundle.clone(),
+                        }],
+                    })?;
                 } else {
                     debug!("{initial_potato} Accepted game when our share was zero");
                 }

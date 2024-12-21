@@ -24,6 +24,8 @@ use crate::channel_handler::types::{
     MoveResult, OnChainGameCoin, OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData,
     PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
+use crate::channel_handler::game_handler::TheirTurnResult;
+
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
@@ -866,6 +868,18 @@ impl ChannelHandler {
             self.unroll.coin.started_with_potato
         );
 
+        let (readable_move, message, mover_share) = match their_move_result.original {
+            TheirTurnResult::FinalMove(readable_move, mover_share) => {
+                (readable_move, vec![], mover_share.clone())
+            }
+            TheirTurnResult::MakeMove(readable_move, _, message, mover_share) => {
+                (readable_move, message.clone(), mover_share.clone())
+            }
+            TheirTurnResult::Slash(_) => {
+                return Err(Error::StrErr("slash when off chain: go on chain".to_string()));
+            }
+        };
+
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
         let spend = self.received_potato_verify_signatures(
@@ -888,9 +902,9 @@ impl ChannelHandler {
                 solution: spend.solution,
                 conditions: spend.conditions,
             },
-            their_move_result.readable_move,
-            their_move_result.message,
-            their_move_result.mover_share,
+            readable_move,
+            message,
+            mover_share,
         ))
     }
 
