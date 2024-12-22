@@ -57,7 +57,6 @@ impl ToClvm<NodePtr> for GameHandler {
     }
 }
 
-#[derive(Debug)]
 pub struct MyTurnInputs<'a> {
     pub readable_new_move: ReadableMove,
     pub amount: Amount,
@@ -223,7 +222,6 @@ impl GameHandler {
         allocator: &mut AllocEncoder,
         inputs: &MyTurnInputs,
     ) -> Result<MyTurnResult, Error> {
-        debug!("CALL MY TURN DRIVER WITH {inputs:?}");
         let driver_args = (
             inputs.readable_new_move.clone(),
             (
@@ -333,7 +331,6 @@ impl GameHandler {
         allocator: &mut AllocEncoder,
         inputs: &TheirTurnInputs,
     ) -> Result<TheirTurnResult, Error> {
-        debug!("THEIR TURN MOVER SHARE {:?}", inputs.new_move.basic.mover_share);
         let driver_args = (
             inputs.amount.clone(),
             (
@@ -358,7 +355,9 @@ impl GameHandler {
             .into_gen()?;
 
         let driver_node = self.get_their_turn_driver(allocator)?;
-        debug!("call their turn driver {self:?} args {}", disassemble(allocator.allocator(), driver_args, None));
+        debug!("call their turn driver: {self:?}");
+        debug!("call their turn args {}", disassemble(allocator.allocator(), driver_args, None));
+
         let run_result = run_code(
             allocator,
             driver_node,
@@ -419,7 +418,9 @@ impl GameHandler {
                     disassemble(allocator.allocator(), run_result, None)
                 )));
             }
-            Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(pl[1])))
+            Ok(TheirTurnResult::Slash(
+                Evidence::from_nodeptr(pl[1]),
+            ))
         } else {
             Err(Error::StrErr("unknown move result type".to_string()))
         }

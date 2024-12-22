@@ -94,7 +94,7 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
     let bob_picks = [1, 0, 1, 0, 1, 0, 1, 0]
         .to_clvm(allocator)
         .expect("should work");
-    let win_move = ().to_clvm(allocator).expect("should work");
+    let win_move_200 = 200.to_clvm(allocator).expect("should work");
 
     [
         GameAction::Move(0, alice_word_hash, true),
@@ -104,7 +104,7 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
         GameAction::Move(0, alice_picks, true),
         GameAction::Move(1, bob_picks, true),
         // Move is a declared split.
-        GameAction::Move(0, win_move, true),
+        GameAction::Move(0, win_move_200, true),
     ]
 }
 

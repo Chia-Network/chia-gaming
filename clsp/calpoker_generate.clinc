@@ -126,7 +126,7 @@
         (list MAKE_MOVE
             (list move (indices_to_bitfield my_picks) (indices_to_bitfield bob_picks)
                 my_hand_value bob_hand_value win_result)
-            (lambda ((& MY_SALT MY_PICKS my_picks split)) (list (concat (print "MY_SALT is" MY_SALT) (print "MY_PICKS are" MY_PICKS) (print "my_picks are" (indices_to_bitfield my_picks))) 0 0 0 0 split 0 0)
+            (lambda ((& MY_SALT MY_PICKS my_picks split amount)) (list (concat (print "MY_SALT is" MY_SALT) (print "MY_PICKS are" MY_PICKS) (print "my_selects are" (single-byte (indices_to_bitfield my_picks)))) 0 0 0 0 split 0 0)
             0
             )
         )
@@ -219,19 +219,20 @@
 (defun calpoker_bob_driver_e (amount (@ state (bob_selects (alice_cards bob_cards) alice_commit_2)) move
         validation_program_hash max_move_size split)
     (assign
-        alice_selects (substr move 16 (strlen move))
-        (alice_cards_alice alice_cards_bob) (split_cards alice_selects alice_cards)
+        alice_my_picks (substr move 16 17)
+        alice_selects (substr move 17 (strlen move))
+        (alice_cards_alice alice_cards_bob) (split_cards alice_my_picks alice_cards)
         (bob_cards_bob bob_cards_alice) (split_cards bob_selects bob_cards)
         alice_all_cards (map make_card (append alice_cards_alice bob_cards_alice))
         bob_all_cards (map make_card (append bob_cards_bob alice_cards_bob))
         (alice_hand_value alice_picks) (handcalc (map card_list_to_pair alice_all_cards))
         (bob_hand_value bob_picks) (handcalc (map card_list_to_pair bob_all_cards))
         win_result (list_compare alice_hand_value bob_hand_value)
-        correct_split (print (list "checking correct split" win_result split amount) (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount))
+        correct_split (print (list "bob driver e checking correct split" win_result split amount) (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount))
         (if (!= split correct_split)
             (list SLASH (indices_to_bitfield bob_picks))
             (list MAKE_MOVE
-                (list alice_selects (indices_to_bitfield bob_picks) (indices_to_bitfield alice_picks)
+                (list alice_my_picks (indices_to_bitfield bob_picks) (indices_to_bitfield alice_picks)
                     bob_hand_value alice_hand_value split)
             )
         )

@@ -8,14 +8,14 @@ use clvmr::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::game_handler::GameHandler;
+use crate::channel_handler::game_handler::{GameHandler, TheirTurnResult};
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, TheirTurnMoveResult};
+use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker};
 
 pub struct DebugGamePrograms {
     pub my_validation_program: NodePtr,
@@ -241,7 +241,6 @@ fn test_referee_smoke() {
     debug!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
         assert!(s.contains("slash"));
-        assert!(s.contains("off chain"));
     } else {
         unreachable!();
     }
@@ -264,13 +263,20 @@ fn test_referee_smoke() {
         .my_referee
         .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
         .expect("should run");
-    if let TheirTurnMoveResult::Move { message, readable_move, .. } = &their_move_result {
-        assert_eq!(message, b"message data");
-        let readable_prog =
-            Program::from_nodeptr(&mut allocator, *readable_move).expect("should cvt");
-        assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
-    } else {
-        assert!(false);
-    }
+    let (readable_move, message) = match &their_move_result.original {
+        TheirTurnResult::MakeMove(readable_node, _, message, _) => {
+            (*readable_node, message.clone())
+        }
+        TheirTurnResult::FinalMove(readable_node, _) => {
+            (*readable_node, vec![])
+        }
+        _ => {
+            panic!();
+        }
+    };
+    assert_eq!(message, b"message data");
+    let readable_prog =
+        Program::from_nodeptr(&mut allocator, readable_move).expect("should cvt");
+    assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
     assert!(!reftest.my_referee.processing_my_turn());
 }

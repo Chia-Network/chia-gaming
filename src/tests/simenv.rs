@@ -577,6 +577,7 @@ fn test_referee_can_slash_on_chain() {
     let init_state = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
     let initial_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
+    let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
 
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {
@@ -612,9 +613,21 @@ fn test_referee_can_slash_on_chain() {
         .expect("got coins");
     assert!(!coins.is_empty());
     let (_, _, amt) = coins[0].to_parts().unwrap();
+
+    // Timeout applies after this move.  It will be their move, with their claim being 0.
+    // Therefore, the timeout gives _us_ 100.
+    let readable_move = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let readable_my_move =
+        ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
+    let _my_move_wire_data = reftest
+        .my_referee
+        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
+        .expect("should move");
+
+    // We get the outcome puzzle hash for the most recent move to spend to.
     let spend_to_referee = reftest
         .my_referee
-        .on_chain_referee_puzzle(&mut allocator)
+        .outcome_referee_puzzle(&mut allocator)
         .expect("should work");
     let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
     let referee_coins = s
@@ -627,22 +640,14 @@ fn test_referee_can_slash_on_chain() {
         )
         .expect("should create referee coin");
 
-    let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
-    let readable_my_move =
-        ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
-    let _my_move_wire_data = reftest
-        .my_referee
-        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
-        .expect("should move");
-
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
+    assert_eq!(reftest.my_referee.get_our_current_share(), amount);
 
     // Farm 20 blocks to get past the time limit.
     for _ in 0..20 {
         s.farm_block(&reftest.my_identity.puzzle_hash);
     }
 
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
+    assert_eq!(reftest.my_referee.get_our_current_share(), amount);
     let timeout_transaction = reftest
         .my_referee
         .get_transaction_for_timeout(&mut allocator, &referee_coins[0])

@@ -24,18 +24,20 @@ use crate::channel_handler::types::{
     MoveResult, OnChainGameCoin, OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData,
     PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
-use crate::common::constants::CREATE_COIN;
+use crate::channel_handler::game_handler::TheirTurnResult;
+
+use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
-    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
+    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_partial, standard_solution_unsafe, calculate_synthetic_secret_key, calculate_synthetic_public_key, ChiaIdentity,
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
-    PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
+    PuzzleHash, Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::GameAction;
-use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction, TheirTurnCoinSpentResult, TheirTurnMoveResult};
+use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -157,6 +159,14 @@ impl ChannelHandler {
 
     pub fn all_games_finished(&self) -> bool {
         self.live_games.is_empty()
+    }
+
+    pub fn get_reward_puzzle_hash<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>
+    ) -> Result<PuzzleHash, Error> {
+        let referee_pk = private_to_public_key(&self.referee_private_key());
+        puzzle_hash_for_pk(env.allocator, &referee_pk)
     }
 
     pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
@@ -866,6 +876,18 @@ impl ChannelHandler {
             self.unroll.coin.started_with_potato
         );
 
+        let (readable_move, message, mover_share) = match their_move_result.original {
+            TheirTurnResult::FinalMove(readable_move, mover_share) => {
+                (readable_move, vec![], mover_share.clone())
+            }
+            TheirTurnResult::MakeMove(readable_move, _, message, mover_share) => {
+                (readable_move, message.clone(), mover_share.clone())
+            }
+            TheirTurnResult::Slash(_) => {
+                return Err(Error::StrErr("slash when off chain: go on chain".to_string()));
+            }
+        };
+
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
         let spend = self.received_potato_verify_signatures(
@@ -882,23 +904,16 @@ impl ChannelHandler {
         // the unroll puzzle hash that was given to us.
         self.cached_last_action = None;
 
-        match their_move_result {
-            TheirTurnMoveResult::Move { readable_move, message, mover_share, .. } => {
-                Ok((
-                    ChannelCoinSpendInfo {
-                        aggsig: spend.signature,
-                        solution: spend.solution,
-                        conditions: spend.conditions,
-                    },
-                    readable_move,
-                    message,
-                    mover_share,
-                ))
-            }
-            TheirTurnMoveResult::Slash { evidence } => {
-                todo!();
-            }
-        }
+        Ok((
+            ChannelCoinSpendInfo {
+                aggsig: spend.signature,
+                solution: spend.solution,
+                conditions: spend.conditions,
+            },
+            readable_move,
+            message,
+            mover_share,
+        ))
     }
 
     pub fn received_message<R: Rng>(
@@ -1445,8 +1460,8 @@ impl ChannelHandler {
                         OnChainGameState {
                             game_id: live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
-                            next_puzzle_hash: None,
                             our_turn: live_game.is_my_turn(),
+                            accept: false,
                         },
                     );
                 }
@@ -1572,7 +1587,7 @@ impl ChannelHandler {
 
         let live_game_idx = self.get_game_by_id(game_id)?;
         let referee_pk = private_to_public_key(&self.referee_private_key());
-        let reward_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_pk)?;
+        let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
 
         let (ph, amt) = if let Some((ph, amt)) = conditions
             .iter()
@@ -1595,22 +1610,14 @@ impl ChannelHandler {
             return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
         }
 
-        debug!("{} asking referee", self.is_initial_potato());
-        let their_spend_result = self.live_games[live_game_idx].their_turn_coin_spent(
-            env.allocator,
-            coin_string,
-            conditions,
-            self.current_state_number,
-        )?;
-        debug!("their_spend_result {their_spend_result:?}");
-        if let TheirTurnCoinSpentResult::Repeat(ph, amt) = &their_spend_result {
-            if !self.live_games[live_game_idx].is_my_turn() {
-                return Ok(CoinSpentInformation::Expected(ph.clone(), amt.clone()));
-            }
-        }
-
-        assert!(self.live_games[live_game_idx].is_my_turn());
-        Ok(CoinSpentInformation::TheirSpend(their_spend_result))
+        Ok(CoinSpentInformation::TheirSpend(
+            self.live_games[live_game_idx].their_turn_coin_spent(
+                env.allocator,
+                coin_string,
+                conditions,
+                self.current_state_number,
+            )?,
+        ))
     }
 
     pub fn get_redo_action<R: Rng>(
@@ -1781,7 +1788,6 @@ impl ChannelHandler {
         let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
         // Game is done one way or another.
         self.live_games.remove(game_idx);
-        debug!("{} has {} games left", self.is_initial_potato(), self.live_games.len());
         Ok(tx)
     }
 
@@ -1825,32 +1831,48 @@ impl ChannelHandler {
         }
 
         let mut coins_with_solutions = Vec::default();
+        let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH);
+        let synthetic_referee_private_key = calculate_synthetic_secret_key(&self.private_keys.my_referee_private_key, &default_hidden_puzzle_hash)?;
+        let my_referee_public_key =
+            private_to_public_key(&self.private_keys.my_referee_private_key);
+        let synthetic_referee_public_key = calculate_synthetic_public_key(
+            &my_referee_public_key,
+            &PuzzleHash::from_hash(default_hidden_puzzle_hash.clone()),
+        );
+        let puzzle = puzzle_for_pk(env.allocator, &my_referee_public_key)?;
 
         for (i, coin) in exploded_coins.iter().enumerate() {
             let parent_id = coin.coin_string.to_coin_id();
             let conditions = if i == 0 {
-                (CREATE_COIN, (parent_id.clone(), (total_amount.clone(), ())))
+                (
+                    (CREATE_COIN, (target_puzzle_hash.clone(), (total_amount.clone(), ()))),
+                    ()
+                )
                     .to_clvm(env.allocator)
                     .into_gen()?
             } else {
                 ().to_clvm(env.allocator).into_gen()?
             };
 
-            let quoted_program = conditions.to_quoted_program(env.allocator)?;
-            let quoted_program_hash = quoted_program.sha256tree(env.allocator);
-            let signature = sign_agg_sig_me(
-                &self.referee_private_key(),
-                quoted_program_hash.bytes(),
+            let spend = standard_solution_partial(
+                env.allocator,
+                &synthetic_referee_private_key,
                 &parent_id,
+                conditions,
+                &my_referee_public_key,
                 &env.agg_sig_me_additional_data,
-            );
+                false
+            )?;
 
             let standard_solution =
                 standard_solution_unsafe(env.allocator, &self.referee_private_key(), conditions)?;
-            coins_with_solutions.push(Spend {
-                puzzle: spend_coin_puzzle.clone(),
-                solution: standard_solution.solution.clone(),
-                signature,
+            coins_with_solutions.push(CoinSpend {
+                coin: coin.coin_string.clone(),
+                bundle: Spend {
+                    puzzle: puzzle.clone(),
+                    solution: spend.solution.clone(),
+                    signature: spend.signature.clone(),
+                }
             });
         }
 

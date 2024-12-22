@@ -14,7 +14,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
-    Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
@@ -71,9 +71,6 @@ impl FullCoinSetAdapter {
         current_height: u64,
         current_coins: &[CoinString],
     ) -> Result<WatchReport, Error> {
-        debug!(
-            "update known coins {current_height:?}: current coins from blockchain {current_coins:?}"
-        );
         self.current_height = current_height;
         let mut current_coin_set: HashSet<CoinString> = current_coins.iter().cloned().collect();
         let created_coins: HashSet<CoinString> = current_coin_set
@@ -244,6 +241,22 @@ pub trait GameCradle {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error>;
+
+    /// Get the reward puzzle hash
+    fn get_reward_puzzle_hash<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<PuzzleHash, Error>;
+
+    /// Return a transaction to spend a reward coin to a given target
+    fn spend_reward_coins<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        coin_string: &[CoinString],
+        target: &PuzzleHash,
+    ) -> Result<SpendRewardResult, Error>;
 }
 
 struct SynchronousGameCradleState {
@@ -263,6 +276,7 @@ struct SynchronousGameCradleState {
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_messages: VecDeque<(GameID, ReadableMove)>,
     game_finished: VecDeque<(GameID, Amount)>,
+    finished: bool,
     shutdown: Option<CoinString>,
     identity: ChiaIdentity,
 }
@@ -350,6 +364,7 @@ impl SynchronousGameCradle {
                 funding_coin: None,
                 unfunded_offer: None,
                 shutdown: None,
+                finished: false,
             },
             peer: PotatoHandler::new(PotatoHandlerInit {
                 have_potato: config.have_potato,
@@ -424,6 +439,7 @@ impl ToLocalUI for SynchronousGameCradleState {
     }
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         self.shutdown = reward_coin_string.cloned();
+        self.finished = true;
         Ok(())
     }
     fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
@@ -484,8 +500,8 @@ impl SynchronousGameCradle {
         self.peer.amount()
     }
 
-    pub fn finished(&self) -> Option<CoinString> {
-        self.state.shutdown.clone()
+    pub fn finished(&self) -> bool {
+        self.state.finished
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(
@@ -679,6 +695,34 @@ impl SynchronousGameCradle {
 impl GameCradle for SynchronousGameCradle {
     fn is_on_chain(&self) -> bool {
         self.peer.is_on_chain()
+    }
+
+    fn get_reward_puzzle_hash<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<PuzzleHash, Error> {
+        let mut env = channel_handler_env(allocator, rng);
+        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
+            env: &mut env,
+            system_interface: &mut self.state,
+        };
+        self.peer.get_reward_puzzle_hash(&mut penv)
+    }
+
+    fn spend_reward_coins<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+        coin_string: &[CoinString],
+        target: &PuzzleHash,
+    ) -> Result<SpendRewardResult, Error> {
+        let mut env = channel_handler_env(allocator, rng);
+        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
+            env: &mut env,
+            system_interface: &mut self.state,
+        };
+        self.peer.spend_reward_coins(&mut penv, coin_string, target)
     }
 
     fn opening_coin<R: Rng>(

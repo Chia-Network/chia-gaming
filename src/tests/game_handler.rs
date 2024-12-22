@@ -11,15 +11,11 @@ use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 #[test]
 fn test_game_handler_their_move_slash() {
     let mut allocator = AllocEncoder::new();
-    let default_aggsig = Aggsig::default();
 
-    let aggsig_node = default_aggsig.to_clvm(&mut allocator).expect("should make");
-    let dis_aggsig = disassemble(allocator.allocator(), aggsig_node, None);
     let program = assemble(
         allocator.allocator(),
         &format!(
-            "(c (1 . 2) (c (c (1 . 1337) 1) (c (1 . {}) ())))",
-            dis_aggsig
+            "(c (1 . 2) (c (c (1 . 1337) 1) ()))",
         ),
     )
     .expect("should assemble");

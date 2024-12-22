@@ -24,7 +24,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString,
     Error, GameID, Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, Timeout,
+    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
 use crate::referee::{RefereeOnChainTransaction, TheirTurnCoinSpentResult};
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -433,17 +433,6 @@ pub enum GameAction {
     Shutdown(NodePtr),
 }
 
-impl GameAction {
-    pub fn get_game_id(&self) -> Option<&GameID> {
-        match self {
-            GameAction::Move(id, _, _) => Some(id),
-            GameAction::RedoMove(id, _, _, _) => Some(id),
-            GameAction::Accept(id) => Some(id),
-            GameAction::Shutdown(_) => None,
-        }
-    }
-}
-
 pub struct PotatoHandlerInit {
     pub have_potato: bool,
     pub private_keys: ChannelHandlerPrivateKeys,
@@ -630,6 +619,33 @@ impl PotatoHandler {
     pub fn has_potato(&self) -> bool {
         matches!(self.have_potato, PotatoState::Present)
     }
+
+    pub fn get_reward_puzzle_hash<'a, G, R: Rng + 'a>(
+        &self,
+        penv: &'a mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<PuzzleHash, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+    {
+        let player_ch = self.channel_handler()?;
+        let (env, _) = penv.env();
+        player_ch.get_reward_puzzle_hash(env)
+    }
+
+    pub fn spend_reward_coins<'a, G, R: Rng + 'a>(
+        &self,
+        penv: &'a mut dyn PeerEnv<'a, G, R>,
+        coin_string: &[CoinString],
+        target: &PuzzleHash,
+    ) -> Result<SpendRewardResult, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+    {
+        let player_ch = self.channel_handler()?;
+        let (env, _) = penv.env();
+        player_ch.spend_reward_coins(env, coin_string, target)
+    }
+
 
     pub fn start<'a, G, R: Rng + 'a>(
         &mut self,
@@ -1865,30 +1881,21 @@ impl PotatoHandler {
             CoinString::from_parts(&current_coin.to_coin_id(), &new_ph, &transaction.amount);
 
         self.my_game_spends.insert(new_ph.clone());
-        debug!("{initial_potato} change game map {new_ph:?}");
+        debug!("{initial_potato} changing game map");
         game_map.insert(
-            current_coin.clone(),
+            new_coin.clone(),
             OnChainGameState {
-                puzzle_hash: old_ph,
+                puzzle_hash: new_ph,
                 our_turn: false,
-                next_puzzle_hash: Some(new_ph),
                 ..old_definition
             },
         );
 
         let (_env, system_interface) = penv.env();
-        // The next coin.
         system_interface.register_coin(
             &new_coin,
             &self.channel_timeout,
             Some("game coin for my turn"),
-        )?;
-
-        // The coin we're coming from.
-        system_interface.register_coin(
-            current_coin,
-            &self.channel_timeout,
-            Some("their turn coin spent"),
         )?;
 
         system_interface.spend_transaction_and_add_fee(&SpendBundle {
@@ -1911,6 +1918,12 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        let initial_potato =
+        {
+            let player_ch = self.channel_handler()?;
+            player_ch.is_initial_potato()
+        };
+
         let get_current_coin = |hs: &HandshakeState,
                                 game_id: &GameID|
          -> Result<CoinString, Error> {
@@ -1925,7 +1938,7 @@ impl PotatoHandler {
             }
         };
 
-        debug!("do_on_chain_action {action:?}");
+        debug!("{initial_potato} do_on_chain_action {action:?}");
         match action {
             GameAction::Move(game_id, readable_move, hash) => {
                 let current_coin = get_current_coin(&self.handshake_state, &game_id)?;
@@ -1936,8 +1949,7 @@ impl PotatoHandler {
                 {
                     let player_ch = self.channel_handler()?;
                     debug!(
-                        "{} created puzzle hash for redo {new_ph:?}",
-                        player_ch.is_initial_potato()
+                        "{initial_potato} created puzzle hash for redo {new_ph:?}",
                     );
                     self.my_game_spends.insert(new_ph.clone());
                 }
@@ -1967,35 +1979,32 @@ impl PotatoHandler {
             GameAction::Accept(game_id) => {
                 let current_coin = get_current_coin(&self.handshake_state, &game_id)?;
                 let player_ch = self.channel_handler_mut()?;
+                let my_turn = player_ch.game_is_my_turn(&game_id);
                 debug!(
-                    "{} on chain: accept game coin {current_coin:?}",
-                    player_ch.is_initial_potato()
+                    "{initial_potato} on chain (my turn {my_turn:?}): accept game coin {current_coin:?}",
                 );
 
                 let (env, system_interface) = penv.env();
-                let result_transaction =
-                    player_ch.accept_or_timeout_game_on_chain(env, &game_id, &current_coin)?;
-                let initial_potato = player_ch.is_initial_potato();
-                self.have_potato = PotatoState::Present;
-                if let Some(transaction) = result_transaction {
-                    debug!("accept with transaction {transaction:?}");
-                    if let Some((_, ph, _)) = current_coin.to_parts() {
-                        assert_eq!(ph, transaction.bundle.puzzle.sha256tree(env.allocator));
+                if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+                    if let Some(coin_def) = game_map.get_mut(&current_coin) {
+                        coin_def.accept = true;
                     }
-                    system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                        name: Some("accept".to_string()),
-                        spends: vec![CoinSpend {
-                            coin: current_coin,
-                            bundle: transaction.bundle.clone()
-                        }],
-                    })?;
-                } else {
-                    debug!("{initial_potato} Accepted game when our share was zero");
                 }
                 Ok(())
             }
-            x => {
-                todo!("unexpected move type {x:?}");
+            GameAction::Shutdown(conditions) => {
+                if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+                    if !game_map.is_empty() {
+                        debug!("Can't shut down yet, still have games");
+                        self.game_action_queue.push_front(GameAction::Shutdown(conditions));
+                        return Ok(());
+                    }
+                }
+
+                let (env, system_interface) = penv.env();
+                debug!("notify shutdown complete");
+                system_interface.shutdown_complete(None);
+                Ok(())
             }
         }
     }
@@ -2018,15 +2027,6 @@ impl PotatoHandler {
 
             self.have_potato_move(penv)?;
         } else if let HandshakeState::OnChain(_game_map) = &mut self.handshake_state {
-            let player_ch = self.channel_handler()?;
-            if let Some(game_id) = action.get_game_id() {
-                if !matches!(action, GameAction::RedoMove(_, _, _, _)) && !matches!(player_ch.game_is_my_turn(&game_id), Some(true)) {
-                    debug!("{} holding action {action:?} due to not our turn", player_ch.is_initial_potato());
-                    self.game_action_queue.push_back(action);
-                    return Ok(());
-                }
-            }
-
             return self.do_on_chain_action(penv, action);
         } else {
             return Err(Error::StrErr(
@@ -2214,9 +2214,6 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if let Some(action) = self.game_action_queue.pop_front() {
-            let player_ch = self.channel_handler()?;
-            let initial_potato = player_ch.is_initial_potato();
-            debug!("{initial_potato} try to do next action {action:?}");
             self.do_game_action(penv, action)?;
         }
 
@@ -2259,19 +2256,14 @@ impl PotatoHandler {
         let player_ch = self.channel_handler_mut()?;
         let (env, system_interface) = penv.env();
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
-        let preceding_turn_polarity = player_ch.game_is_my_turn(&old_definition.game_id);
         let their_turn_result =
             player_ch.game_coin_spent(env, &old_definition.game_id, coin_id, &conditions)?;
         debug!(
             "{initial_potato} game coin spent result from channel handler {their_turn_result:?}"
         );
-        let turn_polarity_for_game = player_ch.game_is_my_turn(&old_definition.game_id);
-        // We did a their turn, so it should be our turn.
-
         match their_turn_result {
             CoinSpentInformation::Expected(ph, amt) => {
-                let my_turn = matches!(turn_polarity_for_game, Some(true));
-                debug!("{initial_potato} my turn {my_turn} got an expected spend {ph:?} {amt:?}");
+                debug!("{initial_potato} got an expected spend {ph:?} {amt:?}");
                 let new_coin_id = CoinString::from_parts(
                     &coin_id.to_coin_id(),
                     &ph,
@@ -2279,60 +2271,26 @@ impl PotatoHandler {
                 );
                 if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
                     // An expected their spend arrived.  We can do our next action.
-                    debug!("{initial_potato} change game map {ph:?}");
+                    debug!("{initial_potato} changing game map");
                     game_map.insert(new_coin_id.clone(), OnChainGameState {
                         puzzle_hash: ph,
-                        our_turn: my_turn,
+                        our_turn: false,
                         .. old_definition
                     });
-                    if my_turn {
-                        unblock_queue = true;
-                    }
                 }
 
                 let (_, system_interface) = penv.env();
                 system_interface.register_coin(
                     &new_coin_id,
                     &self.channel_timeout,
-                    Some("coin gives their turn (e)")
+                    Some("coin gives their turn")
                 )?;
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout { /*my_reward_coin_string*/ .. }) => {
                 todo!();
             }
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Repeat(ph, amt)) => {
-                if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
-                    let new_coin_id = CoinString::from_parts(
-                        &coin_id.to_coin_id(),
-                        &ph,
-                        &amt
-                    );
-
-                    // An expected their spend arrived.  We can do our next action.
-                    debug!("{initial_potato} change game map {ph:?}");
-                    let nil = env.allocator.encode_atom(&[]).into_gen()?;
-                    let rm = ReadableMove::from_nodeptr(env.allocator, nil)?;
-                    system_interface.opponent_moved(
-                        env.allocator,
-                        &old_definition.game_id,
-                        rm,
-                        Amount::default(),
-                    )?;
-                    game_map.insert(new_coin_id.clone(), OnChainGameState {
-                        puzzle_hash: ph,
-                        .. old_definition
-                    });
-                    system_interface.register_coin(
-                        &new_coin_id,
-                        &self.channel_timeout,
-                        Some("coin gives their turn (2)")
-                    )?;
-                }
-            }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved { new_coin_string, readable, mover_share, .. }) => {
-                debug!("{initial_potato} got a their spend creating {new_coin_string:?} from ph {:?}", old_definition.puzzle_hash);
-                // assert_ne!(preceding_turn_polarity, turn_polarity_for_game);
-                assert_eq!(Some(true), turn_polarity_for_game);
+                debug!("{initial_potato} got a their spend {new_coin_string:?} from ph {:?}", old_definition.puzzle_hash);
                 if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
                     let (puzzle_hash, amt) =
                         if let Some((orig_coin_id, ph, amt)) = new_coin_string.to_parts() {
@@ -2344,7 +2302,7 @@ impl PotatoHandler {
 
                     let game_id = old_definition.game_id.clone();
                     debug!("{initial_potato} got their coin spend with new puzzle hash {puzzle_hash:?} {amt:?}");
-                    debug!("{initial_potato} change game map {puzzle_hash:?}");
+                    debug!("{initial_potato} changing game map");
                     game_map.insert(new_coin_string.clone(), OnChainGameState {
                         puzzle_hash,
                         our_turn: true,
@@ -2382,7 +2340,7 @@ impl PotatoHandler {
                         &ph,
                         &amt
                     );
-                    debug!("{initial_potato} change game map {ph:?}");
+                    debug!("{initial_potato} changing game map");
                     game_map.insert(new_coin_id.clone(), OnChainGameState {
                         puzzle_hash: ph,
                         our_turn: false,
@@ -2491,13 +2449,12 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
-        if matches!(self.handshake_state, HandshakeState::OnChain(_)) {
-            {
-                let player_ch = self.channel_handler()?;
-                if !player_ch.all_games_finished() {
-                    self.game_action_queue.push_back(GameAction::Shutdown(conditions));
-                    return Ok(());
-                }
+        if let HandshakeState::OnChain(game_map) = &self.handshake_state {
+            let player_ch = self.channel_handler()?;
+            if !game_map.is_empty() {
+                debug!("{} waiting for all games to be done", player_ch.is_initial_potato());
+                self.game_action_queue.push_back(GameAction::Shutdown(conditions));
+                return Ok(());
             }
 
             self.handshake_state = HandshakeState::Completed;
@@ -2681,6 +2638,49 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         // out from under the immutable borrow.
         if unroll_timed_out {
             return self.do_unroll_spend_to_games(penv, coin_id);
+        }
+
+        if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+            if let Some(game_def) = game_map.remove(coin_id) {
+                let player_ch = self.channel_handler_mut()?;
+                let initial_potato = player_ch.is_initial_potato();
+                let (env, system_interface) = penv.env();
+                debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
+
+                let result_transaction =
+                    player_ch.accept_or_timeout_game_on_chain(env, &game_def.game_id, &coin_id)?;
+
+                self.have_potato = PotatoState::Present;
+                if let Some(tx) = result_transaction {
+                    debug!("{initial_potato} accept: have transaction {tx:?}");
+                    self.have_potato = PotatoState::Absent;
+                    system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                        name: Some(format!("{initial_potato} accept transaction")),
+                        spends: vec![CoinSpend {
+                            coin: coin_id.clone(),
+                            bundle: tx.bundle.clone(),
+                        }],
+                    })?;
+                } else {
+                    debug!("{initial_potato} Accepted game when our share was zero");
+                    debug!("when action queue is {:?}", self.game_action_queue);
+                }
+
+                // XXX Have a notification for this.
+                let nil = env.allocator.encode_atom(&[]).into_gen()?;
+                let readable = ReadableMove::from_nodeptr(env.allocator, nil)?;
+                let mover_share = Amount::default();
+
+                system_interface.opponent_moved(
+                    env.allocator,
+                    &game_def.game_id,
+                    readable,
+                    mover_share,
+                )?;
+                if let Some(action) = self.game_action_queue.pop_front() {
+                    self.do_on_chain_action(penv, action)?;
+                }
+            }
         }
 
         Ok(())
