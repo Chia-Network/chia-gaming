@@ -1148,12 +1148,19 @@ impl RefereeMaker {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        puzzle: &Puzzle,
         always_produce_transaction: bool,
+        puzzle: &Puzzle,
         targs: &RefereePuzzleArgs,
         args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let my_mover_share = targs.game_move.basic.mover_share.clone();
+        let our_move = self.is_my_turn();
+
+        let my_mover_share =
+            if our_move {
+                targs.game_move.basic.mover_share.clone()
+            } else {
+                self.fixed.amount.clone() - targs.game_move.basic.mover_share.clone()
+            };
 
         if always_produce_transaction || my_mover_share != Amount::default() {
             let signature = args.get_signature().unwrap_or_default();
@@ -1192,18 +1199,37 @@ impl RefereeMaker {
     /// Output coin_string:
     /// Parent is hash of current_coin
     /// Puzzle hash is my_referee_puzzle_hash.
+    ///
+    /// Timeout unlike other actions applies to the current ph, not the one at the
+    /// start of a turn proper.
     pub fn get_transaction_for_timeout(
         &mut self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
+        debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
+        debug!("mover share at start of action   {:?}", self.args_for_this_coin().game_move.basic.mover_share);
+        debug!("mover share at end   of action   {:?}", self.spend_this_coin().game_move.basic.mover_share);
+
+        let targs = self.spend_this_coin();
+        let puzzle = curry_referee_puzzle(
+            allocator,
+            &self.fixed.referee_coin_puzzle,
+            &self.fixed.referee_coin_puzzle_hash,
+            &targs
+        )?;
+
+        let current_referee_puzzle_hash = self.outcome_referee_puzzle_hash(allocator)?;
+        if let Some((_, ph, _)) = coin_string.to_parts() {
+            assert_eq!(ph, current_referee_puzzle_hash);
+        }
+
         self.get_transaction(
             allocator,
             coin_string,
-            &spend_puzzle,
             false,
-            &self.spend_this_coin(),
+            &puzzle,
+            &targs,
             &OnChainRefereeSolution::Timeout,
         )
     }
@@ -1244,6 +1270,7 @@ impl RefereeMaker {
         // We can only do a move to replicate our turn.
         assert!(self.processing_my_turn());
         let args = self.spend_this_coin();
+        let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
 
         let state_node = self.get_game_state().to_nodeptr(allocator)?;
         let nil = allocator.allocator().null();
@@ -1280,19 +1307,6 @@ impl RefereeMaker {
         //
         debug!("get_transaction_for_move: previous curry");
         let args = self.args_for_this_coin();
-        let current_referee_puzzle_hash = self.on_chain_referee_puzzle_hash(allocator)?;
-        debug!("spend from puzzle hash {current_referee_puzzle_hash:?}");
-        let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
-
-        let spend_puzzle_nodeptr = spend_puzzle.to_clvm(allocator).into_gen()?;
-        debug!(
-            "spend puzzle {}",
-            disassemble(allocator.allocator(), spend_puzzle_nodeptr, None)
-        );
-        assert_eq!(
-            spend_puzzle.sha256tree(allocator),
-            current_referee_puzzle_hash
-        );
 
         debug!("transaction for move: state {:?}", self.state);
         debug!("get_transaction_for_move: source curry {args:?}");
@@ -1400,8 +1414,8 @@ impl RefereeMaker {
         if let Some(transaction) = self.get_transaction(
             allocator,
             coin_string,
-            &spend_puzzle,
             true,
+            &spend_puzzle,
             &target_args,
             &args_list,
         )? {

@@ -39,7 +39,7 @@
 ;
 (export (@ all_args ((MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH) . args))
-    (if (not args)
+    (if (not (print "check args" args))
         ; timeout
         (list
             (list ASSERT_HEIGHT_RELATIVE TIMEOUT)

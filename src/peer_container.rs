@@ -71,9 +71,6 @@ impl FullCoinSetAdapter {
         current_height: u64,
         current_coins: &[CoinString],
     ) -> Result<WatchReport, Error> {
-        debug!(
-            "update known coins {current_height:?}: current coins from blockchain {current_coins:?}"
-        );
         self.current_height = current_height;
         let mut current_coin_set: HashSet<CoinString> = current_coins.iter().cloned().collect();
         let created_coins: HashSet<CoinString> = current_coin_set

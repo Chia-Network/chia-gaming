@@ -1066,7 +1066,6 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut moves = test_moves_1(&mut allocator).to_vec();
     let nil = allocator.encode_atom(&[]).into_gen().expect("should work");
     moves.push(GameAction::Accept(0));
-    moves.push(GameAction::Accept(1));
     moves.push(GameAction::Shutdown(0, nil));
     moves.push(GameAction::Shutdown(1, nil));
     if let GameAction::Move(player, readable, _) = moves[3].clone() {
@@ -1101,10 +1100,11 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     ).expect("should decode");
     debug!("outcome move {}", disassemble(allocator.allocator(), outcome_node, None));
     debug!("game outcome {decoded_outcome:?}");
+    debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
     if decoded_outcome.win_direction == 1 {
-        assert_eq!(p2_balance + 200, p1_balance);
-    } else if decoded_outcome.win_direction == -1 {
         assert_eq!(p2_balance, p1_balance + 200);
+    } else if decoded_outcome.win_direction == -1 {
+        assert_eq!(p2_balance + 200, p1_balance);
     } else {
         assert_eq!(p2_balance, p1_balance);
     }

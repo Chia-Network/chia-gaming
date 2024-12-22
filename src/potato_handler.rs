@@ -1854,6 +1854,7 @@ impl PotatoHandler {
             CoinString::from_parts(&current_coin.to_coin_id(), &new_ph, &transaction.amount);
 
         self.my_game_spends.insert(new_ph.clone());
+        debug!("{initial_potato} changing game map");
         game_map.insert(
             new_coin.clone(),
             OnChainGameState {
@@ -1951,9 +1952,11 @@ impl PotatoHandler {
             GameAction::Accept(game_id) => {
                 let current_coin = get_current_coin(&self.handshake_state, &game_id)?;
                 let player_ch = self.channel_handler_mut()?;
+                let my_turn = player_ch.game_is_my_turn(&game_id);
                 debug!(
-                    "{initial_potato} on chain: accept game coin {current_coin:?}",
+                    "{initial_potato} on chain (my turn {my_turn:?}): accept game coin {current_coin:?}",
                 );
+
                 let (env, system_interface) = penv.env();
                 let result_transaction =
                     player_ch.accept_or_timeout_game_on_chain(env, &game_id, &current_coin)?;
@@ -2241,6 +2244,7 @@ impl PotatoHandler {
                 );
                 if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
                     // An expected their spend arrived.  We can do our next action.
+                    debug!("{initial_potato} changing game map");
                     game_map.insert(new_coin_id.clone(), OnChainGameState {
                         puzzle_hash: ph,
                         our_turn: false,
@@ -2271,6 +2275,7 @@ impl PotatoHandler {
 
                     let game_id = old_definition.game_id.clone();
                     debug!("{initial_potato} got their coin spend with new puzzle hash {puzzle_hash:?} {amt:?}");
+                    debug!("{initial_potato} changing game map");
                     game_map.insert(new_coin_string.clone(), OnChainGameState {
                         puzzle_hash,
                         our_turn: true,
@@ -2308,6 +2313,7 @@ impl PotatoHandler {
                         &ph,
                         &amt
                     );
+                    debug!("{initial_potato} changing game map");
                     game_map.insert(new_coin_id.clone(), OnChainGameState {
                         puzzle_hash: ph,
                         our_turn: false,
@@ -2420,9 +2426,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             {
                 let player_ch = self.channel_handler()?;
                 if !player_ch.all_games_finished() {
-                    return Err(Error::StrErr(
-                        "tried to shut down when there are live games on chain".to_string(),
-                    ));
+                    debug!("{} waiting for all games to be done", player_ch.is_initial_potato());
+                    self.game_action_queue.push_back(GameAction::Shutdown(conditions));
+                    return Ok(());
                 }
             }
 
