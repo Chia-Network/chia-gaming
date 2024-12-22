@@ -1926,7 +1926,7 @@ impl RefereeMaker {
             };
 
         debug!("referee move details {details:?}");
-        let final_result = match result.original {
+        match result.original {
             TheirTurnResult::Slash(evidence) => {
                 let slash_spend = self.make_slash_spend(allocator)?;
                 let full_slash_solution = self.make_full_slash_solution(allocator)?;
@@ -1946,8 +1946,6 @@ impl RefereeMaker {
             TheirTurnResult::MakeMove(readable_move, _, _, _) => {
                 check_and_report_slash(allocator, readable_move, mover_share)
             }
-        };
-
-        final_result
+        }
     }
 }

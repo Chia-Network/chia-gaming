@@ -2652,7 +2652,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
 
                 let result_transaction =
-                    player_ch.accept_or_timeout_game_on_chain(env, &game_def.game_id, &coin_id)?;
+                    player_ch.accept_or_timeout_game_on_chain(env, &game_def.game_id, coin_id)?;
 
                 self.have_potato = PotatoState::Present;
                 if let Some(tx) = result_transaction {
