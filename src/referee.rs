@@ -1930,7 +1930,7 @@ impl RefereeMaker {
             TheirTurnResult::Slash(evidence) => {
                 let slash_spend = self.make_slash_spend(allocator)?;
                 let full_slash_solution = self.make_full_slash_solution(allocator)?;
-                return self.make_slash_for_their_turn(
+                self.make_slash_for_their_turn(
                     allocator,
                     coin_string,
                     &new_puzzle,
@@ -1938,7 +1938,7 @@ impl RefereeMaker {
                     full_slash_solution,
                     evidence,
                     &slash_spend.signature,
-                );
+                )
             }
             TheirTurnResult::FinalMove(readable_move, mover_share) => {
                 check_and_report_slash(allocator, readable_move, mover_share)
