@@ -260,6 +260,7 @@ struct SynchronousGameCradleState {
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_messages: VecDeque<(GameID, ReadableMove)>,
     game_finished: VecDeque<(GameID, Amount)>,
+    finished: bool,
     shutdown: Option<CoinString>,
     identity: ChiaIdentity,
 }
@@ -347,6 +348,7 @@ impl SynchronousGameCradle {
                 funding_coin: None,
                 unfunded_offer: None,
                 shutdown: None,
+                finished: false,
             },
             peer: PotatoHandler::new(PotatoHandlerInit {
                 have_potato: config.have_potato,
@@ -421,6 +423,7 @@ impl ToLocalUI for SynchronousGameCradleState {
     }
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         self.shutdown = reward_coin_string.cloned();
+        self.finished = true;
         Ok(())
     }
     fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
@@ -481,8 +484,8 @@ impl SynchronousGameCradle {
         self.peer.amount()
     }
 
-    pub fn finished(&self) -> Option<CoinString> {
-        self.state.shutdown.clone()
+    pub fn finished(&self) -> bool {
+        self.state.finished
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(

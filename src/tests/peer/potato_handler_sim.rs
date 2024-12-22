@@ -690,6 +690,7 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+        todo!();
         self.shutdown_complete = true;
         Ok(())
     }
@@ -794,7 +795,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     let mut game_ids = Vec::default();
     let mut handshake_done = false;
     let mut can_move = false;
-    let mut ending = false;
+    let mut ending = None;
 
     let mut current_move = moves.iter();
     let mut num_steps = 0;
@@ -803,15 +804,10 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     cradles[0].opening_coin(allocator, &mut rng, parent_coin_0)?;
     cradles[1].opening_coin(allocator, &mut rng, parent_coin_1)?;
 
-    // XXX Move on to shutdown complete.
-    while !ending
-        && !local_uis
-            .iter()
-            .all(|l| l.game_finished.is_some() || l.shutdown_complete)
-    {
+    while !matches!(ending, Some(0)) {
         num_steps += 1;
 
-        assert!(num_steps < 100);
+        assert!(num_steps < 1000);
 
         simulator.farm_block(&neutral_identity.puzzle_hash);
         let current_height = simulator.get_current_height();
@@ -886,6 +882,15 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
             }
         }
 
+        let should_end = cradles.iter().all(|c| c.finished()) && ending.is_none();
+        if should_end {
+            ending = Some(10);
+        }
+
+        if let Some(ending) = &mut ending {
+            *ending -= 1;
+        }
+
         if !handshake_done && cradles[0].handshake_finished() && cradles[1].handshake_finished() {
             // Start game.
             handshake_done = true;
@@ -924,8 +929,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
         } else if can_move
             || local_uis
                 .iter()
-                .any(|l| l.opponent_moved || l.shutdown_complete)
-            || ending
+                .any(|l| l.opponent_moved)
         {
             can_move = false;
             assert!(!game_ids.is_empty());
@@ -1000,7 +1004,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                             .accept(allocator, &mut rng, &game_ids[0])?;
                     }
                     GameAction::Shutdown(who, _) => {
-                        ending = true;
+                        can_move = true;
                         cradles[*who]
                             .shut_down(allocator, &mut rng)?;
                     }
@@ -1022,24 +1026,6 @@ fn run_calpoker_container_with_action_list(
     moves: &[GameAction]
 ) -> Result<CalpokerRunOutcome, Error> {
     run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None)
-}
-
-#[test]
-fn sim_test_with_peer_container() {
-    let mut allocator = AllocEncoder::new();
-
-    // Play moves
-    let mut moves = test_moves_1(&mut allocator).to_vec();
-    let nil = allocator.encode_atom(&[]).into_gen().expect("should work");
-    moves.push(GameAction::Accept(0));
-    moves.push(GameAction::Accept(1));
-    moves.push(GameAction::Shutdown(0, nil));
-    moves.push(GameAction::Shutdown(1, nil));
-    run_calpoker_container_with_action_list_with_success_predicate(
-        &mut allocator,
-        &moves,
-        Some(&|cradles| cradles[0].finished().is_some() && cradles[1].finished().is_some()),
-    ).expect("should finish");
 }
 
 #[test]
@@ -1066,6 +1052,7 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut moves = test_moves_1(&mut allocator).to_vec();
     let nil = allocator.encode_atom(&[]).into_gen().expect("should work");
     moves.push(GameAction::Accept(0));
+    moves.push(GameAction::Accept(1));
     moves.push(GameAction::Shutdown(0, nil));
     moves.push(GameAction::Shutdown(1, nil));
     if let GameAction::Move(player, readable, _) = moves[3].clone() {

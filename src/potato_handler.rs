@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::mem::swap;
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
+use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::serde::node_from_bytes;
 use clvmr::{run_program, Allocator, NodePtr};
 
@@ -1965,8 +1965,19 @@ impl PotatoHandler {
                 }
                 Ok(())
             }
-            x => {
-                todo!("unexpected move type {x:?}");
+            GameAction::Shutdown(conditions) => {
+                if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+                    if !game_map.is_empty() {
+                        debug!("Can't shut down yet, still have games");
+                        self.game_action_queue.push_front(GameAction::Shutdown(conditions));
+                        return Ok(());
+                    }
+                }
+
+                let (env, system_interface) = penv.env();
+                debug!("notify shutdown complete");
+                system_interface.shutdown_complete(None);
+                Ok(())
             }
         }
     }
@@ -2411,14 +2422,12 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
-        if matches!(self.handshake_state, HandshakeState::OnChain(_)) {
-            {
-                let player_ch = self.channel_handler()?;
-                if !player_ch.all_games_finished() {
-                    debug!("{} waiting for all games to be done", player_ch.is_initial_potato());
-                    self.game_action_queue.push_back(GameAction::Shutdown(conditions));
-                    return Ok(());
-                }
+        if let HandshakeState::OnChain(game_map) = &self.handshake_state {
+            let player_ch = self.channel_handler()?;
+            if !game_map.is_empty() {
+                debug!("{} waiting for all games to be done", player_ch.is_initial_potato());
+                self.game_action_queue.push_back(GameAction::Shutdown(conditions));
+                return Ok(());
             }
 
             self.handshake_state = HandshakeState::Completed;
@@ -2627,6 +2636,22 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                     })?;
                 } else {
                     debug!("{initial_potato} Accepted game when our share was zero");
+                    debug!("when action queue is {:?}", self.game_action_queue);
+                }
+
+                // XXX Have a notification for this.
+                let nil = env.allocator.encode_atom(&[]).into_gen()?;
+                let readable = ReadableMove::from_nodeptr(env.allocator, nil)?;
+                let mover_share = Amount::default();
+
+                system_interface.opponent_moved(
+                    env.allocator,
+                    &game_def.game_id,
+                    readable,
+                    mover_share,
+                )?;
+                if let Some(action) = self.game_action_queue.pop_front() {
+                    self.do_on_chain_action(penv, action)?;
                 }
             }
         }
