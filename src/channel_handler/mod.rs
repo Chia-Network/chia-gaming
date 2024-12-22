@@ -26,15 +26,15 @@ use crate::channel_handler::types::{
 };
 use crate::channel_handler::game_handler::TheirTurnResult;
 
-use crate::common::constants::CREATE_COIN;
+use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
-    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_unsafe, ChiaIdentity,
+    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_partial, standard_solution_unsafe, calculate_synthetic_secret_key, calculate_synthetic_public_key, ChiaIdentity,
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
-    PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
+    PuzzleHash, Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::GameAction;
 use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction};
@@ -159,6 +159,14 @@ impl ChannelHandler {
 
     pub fn all_games_finished(&self) -> bool {
         self.live_games.is_empty()
+    }
+
+    pub fn get_reward_puzzle_hash<R: Rng>(
+        &self,
+        env: &mut ChannelHandlerEnv<R>
+    ) -> Result<PuzzleHash, Error> {
+        let referee_pk = private_to_public_key(&self.referee_private_key());
+        puzzle_hash_for_pk(env.allocator, &referee_pk)
     }
 
     pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
@@ -1579,7 +1587,7 @@ impl ChannelHandler {
 
         let live_game_idx = self.get_game_by_id(game_id)?;
         let referee_pk = private_to_public_key(&self.referee_private_key());
-        let reward_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_pk)?;
+        let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
 
         let (ph, amt) = if let Some((ph, amt)) = conditions
             .iter()
@@ -1823,32 +1831,48 @@ impl ChannelHandler {
         }
 
         let mut coins_with_solutions = Vec::default();
+        let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH);
+        let synthetic_referee_private_key = calculate_synthetic_secret_key(&self.private_keys.my_referee_private_key, &default_hidden_puzzle_hash)?;
+        let my_referee_public_key =
+            private_to_public_key(&self.private_keys.my_referee_private_key);
+        let synthetic_referee_public_key = calculate_synthetic_public_key(
+            &my_referee_public_key,
+            &PuzzleHash::from_hash(default_hidden_puzzle_hash.clone()),
+        );
+        let puzzle = puzzle_for_pk(env.allocator, &my_referee_public_key)?;
 
         for (i, coin) in exploded_coins.iter().enumerate() {
             let parent_id = coin.coin_string.to_coin_id();
             let conditions = if i == 0 {
-                (CREATE_COIN, (parent_id.clone(), (total_amount.clone(), ())))
+                (
+                    (CREATE_COIN, (target_puzzle_hash.clone(), (total_amount.clone(), ()))),
+                    ()
+                )
                     .to_clvm(env.allocator)
                     .into_gen()?
             } else {
                 ().to_clvm(env.allocator).into_gen()?
             };
 
-            let quoted_program = conditions.to_quoted_program(env.allocator)?;
-            let quoted_program_hash = quoted_program.sha256tree(env.allocator);
-            let signature = sign_agg_sig_me(
-                &self.referee_private_key(),
-                quoted_program_hash.bytes(),
+            let spend = standard_solution_partial(
+                env.allocator,
+                &synthetic_referee_private_key,
                 &parent_id,
+                conditions,
+                &my_referee_public_key,
                 &env.agg_sig_me_additional_data,
-            );
+                false
+            )?;
 
             let standard_solution =
                 standard_solution_unsafe(env.allocator, &self.referee_private_key(), conditions)?;
-            coins_with_solutions.push(Spend {
-                puzzle: spend_coin_puzzle.clone(),
-                solution: standard_solution.solution.clone(),
-                signature,
+            coins_with_solutions.push(CoinSpend {
+                coin: coin.coin_string.clone(),
+                bundle: Spend {
+                    puzzle: puzzle.clone(),
+                    solution: spend.solution.clone(),
+                    signature: spend.signature.clone(),
+                }
             });
         }
 

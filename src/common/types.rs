@@ -1045,7 +1045,7 @@ impl Default for Spend {
 }
 
 pub struct SpendRewardResult {
-    pub coins_with_solutions: Vec<Spend>,
+    pub coins_with_solutions: Vec<CoinSpend>,
     pub result_coin_string_up: CoinString,
 }
 

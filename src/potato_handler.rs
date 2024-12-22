@@ -24,7 +24,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString,
     Error, GameID, Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, Timeout,
+    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
 use crate::referee::{RefereeOnChainTransaction, TheirTurnCoinSpentResult};
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -619,6 +619,33 @@ impl PotatoHandler {
     pub fn has_potato(&self) -> bool {
         matches!(self.have_potato, PotatoState::Present)
     }
+
+    pub fn get_reward_puzzle_hash<'a, G, R: Rng + 'a>(
+        &self,
+        penv: &'a mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<PuzzleHash, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+    {
+        let player_ch = self.channel_handler()?;
+        let (env, _) = penv.env();
+        player_ch.get_reward_puzzle_hash(env)
+    }
+
+    pub fn spend_reward_coins<'a, G, R: Rng + 'a>(
+        &self,
+        penv: &'a mut dyn PeerEnv<'a, G, R>,
+        coin_string: &[CoinString],
+        target: &PuzzleHash,
+    ) -> Result<SpendRewardResult, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
+    {
+        let player_ch = self.channel_handler()?;
+        let (env, _) = penv.env();
+        player_ch.spend_reward_coins(env, coin_string, target)
+    }
+
 
     pub fn start<'a, G, R: Rng + 'a>(
         &mut self,
