@@ -1950,7 +1950,6 @@ impl PotatoHandler {
             GameAction::RedoMove(_game_id, coin, new_ph, tx) => {
                 // Remember that we spent this one.
                 {
-                    let player_ch = self.channel_handler()?;
                     debug!("{initial_potato} created puzzle hash for redo {new_ph:?}",);
                     self.my_game_spends.insert(new_ph.clone());
                 }
@@ -1985,7 +1984,6 @@ impl PotatoHandler {
                     "{initial_potato} on chain (my turn {my_turn:?}): accept game coin {current_coin:?}",
                 );
 
-                let (env, system_interface) = penv.env();
                 if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
                     if let Some(coin_def) = game_map.get_mut(&current_coin) {
                         coin_def.accept = true;
@@ -2003,9 +2001,9 @@ impl PotatoHandler {
                     }
                 }
 
-                let (env, system_interface) = penv.env();
+                let (_env, system_interface) = penv.env();
                 debug!("notify shutdown complete");
-                system_interface.shutdown_complete(None);
+                system_interface.shutdown_complete(None)?;
                 Ok(())
             }
         }

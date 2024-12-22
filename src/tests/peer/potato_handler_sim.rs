@@ -690,7 +690,6 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
-        todo!();
         self.shutdown_complete = true;
         Ok(())
     }
@@ -706,6 +705,7 @@ type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(&[SynchronousGameCradl
 
 struct CalpokerRunOutcome {
     identities: [ChiaIdentity; 2],
+    #[allow(dead_code)]
     cradles: [SynchronousGameCradle; 2],
     local_uis: [LocalTestUIReceiver; 2],
     simulator: Simulator,

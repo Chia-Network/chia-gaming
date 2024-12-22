@@ -28,15 +28,14 @@ use crate::channel_handler::types::{
 
 use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
 use crate::common::standard_coin::{
-    calculate_synthetic_public_key, calculate_synthetic_secret_key, private_to_public_key,
-    puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
-    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_partial,
-    standard_solution_unsafe, ChiaIdentity,
+    calculate_synthetic_secret_key, private_to_public_key, puzzle_for_pk,
+    puzzle_for_synthetic_public_key, puzzle_hash_for_pk, puzzle_hash_for_synthetic_public_key,
+    standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
-    PuzzleHash, Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
+    PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
 };
 use crate::potato_handler::GameAction;
 use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction};
@@ -1590,7 +1589,6 @@ impl ChannelHandler {
         );
 
         let live_game_idx = self.get_game_by_id(game_id)?;
-        let referee_pk = private_to_public_key(&self.referee_private_key());
         let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
 
         let (ph, amt) = if let Some((ph, amt)) = conditions
@@ -1815,7 +1813,6 @@ impl ChannelHandler {
         let mut exploded_coins = Vec::new();
         let referee_pk = private_to_public_key(&self.referee_private_key());
         let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_pk)?;
-        let spend_coin_puzzle = puzzle_for_pk(env.allocator, &referee_pk)?;
 
         for c in coins.iter() {
             if let Some((_parent, ph, amount)) = c.to_parts() {
@@ -1842,10 +1839,6 @@ impl ChannelHandler {
         )?;
         let my_referee_public_key =
             private_to_public_key(&self.private_keys.my_referee_private_key);
-        let synthetic_referee_public_key = calculate_synthetic_public_key(
-            &my_referee_public_key,
-            &PuzzleHash::from_hash(default_hidden_puzzle_hash.clone()),
-        );
         let puzzle = puzzle_for_pk(env.allocator, &my_referee_public_key)?;
 
         for (i, coin) in exploded_coins.iter().enumerate() {
@@ -1874,8 +1867,6 @@ impl ChannelHandler {
                 false,
             )?;
 
-            let standard_solution =
-                standard_solution_unsafe(env.allocator, &self.referee_private_key(), conditions)?;
             coins_with_solutions.push(CoinSpend {
                 coin: coin.coin_string.clone(),
                 bundle: Spend {

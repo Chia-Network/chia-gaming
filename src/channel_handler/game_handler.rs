@@ -22,8 +22,8 @@ use log::debug;
 
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, ValidationProgram};
 use crate::common::types::{
-    atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    Error, Hash, IntoErr, Node, Program,
+    atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
+    Hash, IntoErr, Node, Program,
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 

@@ -1,11 +1,10 @@
 use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
-use clvm_traits::ToClvm;
 use std::rc::Rc;
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::game_handler::{MyTurnInputs, TheirTurnInputs, TheirTurnResult};
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::{Aggsig, AllocEncoder, Amount, Hash, Program};
+use crate::common::types::{AllocEncoder, Amount, Hash, Program};
 use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 
 #[test]

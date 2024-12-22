@@ -577,7 +577,6 @@ fn test_referee_can_slash_on_chain() {
     let init_state = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
     let initial_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
-    let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
 
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {

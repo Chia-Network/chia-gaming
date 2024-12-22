@@ -1554,7 +1554,7 @@ impl RefereeMaker {
         ));
 
         match &result {
-            TheirTurnResult::FinalMove(readable_move, mover_share) => {
+            TheirTurnResult::FinalMove(_readable_move, _mover_share) => {
                 self.accept_their_move(
                     allocator,
                     None,
@@ -1564,7 +1564,7 @@ impl RefereeMaker {
                     state_number,
                 )?;
             }
-            TheirTurnResult::MakeMove(readable_move, handler, message, mover_share) => {
+            TheirTurnResult::MakeMove(_readable_move, handler, _message, _mover_share) => {
                 // Mover puzzle turns the given solution into coin conditions
                 // that pay the game's amount to us.  It checks whether the
                 // originally curried mover puzzle hash is the sha256tree of the
@@ -1909,7 +1909,7 @@ impl RefereeMaker {
         debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}\n");
 
         let check_and_report_slash =
-            |allocator: &mut AllocEncoder, readable_move: NodePtr, mover_share: Amount| {
+            |allocator: &mut AllocEncoder, readable_move: NodePtr, _mover_share: Amount| {
                 if let Some(result) = self.check_their_turn_for_slash(allocator, coin_string)? {
                     Ok(result)
                 } else {
