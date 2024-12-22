@@ -1127,6 +1127,16 @@ impl RefereeMaker {
         )
     }
 
+    pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
+        let args = self.spend_this_coin();
+        curry_referee_puzzle(
+            allocator,
+            &self.fixed.referee_coin_puzzle,
+            &self.fixed.referee_coin_puzzle_hash,
+            &args,
+        )
+    }
+
     pub fn on_chain_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
@@ -1218,11 +1228,6 @@ impl RefereeMaker {
             &self.fixed.referee_coin_puzzle_hash,
             &targs
         )?;
-
-        let current_referee_puzzle_hash = self.outcome_referee_puzzle_hash(allocator)?;
-        if let Some((_, ph, _)) = coin_string.to_parts() {
-            assert_eq!(ph, current_referee_puzzle_hash);
-        }
 
         self.get_transaction(
             allocator,

@@ -1453,6 +1453,7 @@ impl ChannelHandler {
                             game_id: live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
                             our_turn: live_game.is_my_turn(),
+                            accept: false,
                         },
                     );
                 }

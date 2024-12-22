@@ -1958,21 +1958,10 @@ impl PotatoHandler {
                 );
 
                 let (env, system_interface) = penv.env();
-                let result_transaction =
-                    player_ch.accept_or_timeout_game_on_chain(env, &game_id, &current_coin)?;
-                self.have_potato = PotatoState::Present;
-                if let Some(tx) = result_transaction {
-                    debug!("{initial_potato} accept: have transaction {tx:?}");
-                    self.have_potato = PotatoState::Absent;
-                    system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                        name: Some(format!("{initial_potato} accept transaction")),
-                        spends: vec![CoinSpend {
-                            coin: current_coin.clone(),
-                            bundle: tx.bundle.clone(),
-                        }],
-                    })?;
-                } else {
-                    debug!("{initial_potato} Accepted game when our share was zero");
+                if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+                    if let Some(coin_def) = game_map.get_mut(&current_coin) {
+                        coin_def.accept = true;
+                    }
                 }
                 Ok(())
             }
@@ -2613,6 +2602,33 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         // out from under the immutable borrow.
         if unroll_timed_out {
             return self.do_unroll_spend_to_games(penv, coin_id);
+        }
+
+        if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
+            if let Some(game_def) = game_map.remove(coin_id) {
+                let player_ch = self.channel_handler_mut()?;
+                let initial_potato = player_ch.is_initial_potato();
+                let (env, system_interface) = penv.env();
+                debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
+
+                let result_transaction =
+                    player_ch.accept_or_timeout_game_on_chain(env, &game_def.game_id, &coin_id)?;
+
+                self.have_potato = PotatoState::Present;
+                if let Some(tx) = result_transaction {
+                    debug!("{initial_potato} accept: have transaction {tx:?}");
+                    self.have_potato = PotatoState::Absent;
+                    system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                        name: Some(format!("{initial_potato} accept transaction")),
+                        spends: vec![CoinSpend {
+                            coin: coin_id.clone(),
+                            bundle: tx.bundle.clone(),
+                        }],
+                    })?;
+                } else {
+                    debug!("{initial_potato} Accepted game when our share was zero");
+                }
+            }
         }
 
         Ok(())
