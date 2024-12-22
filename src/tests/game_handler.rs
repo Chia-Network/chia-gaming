@@ -14,9 +14,7 @@ fn test_game_handler_their_move_slash() {
 
     let program = assemble(
         allocator.allocator(),
-        &format!(
-            "(c (1 . 2) (c (c (1 . 1337) 1) ()))",
-        ),
+        &format!("(c (1 . 2) (c (c (1 . 1337) 1) ()))",),
     )
     .expect("should assemble");
 

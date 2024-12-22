@@ -19,8 +19,8 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, PrivateKey, Program,
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::games::poker_collection;
 use crate::games::calpoker::decode_calpoker_readable;
+use crate::games::poker_collection;
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
@@ -741,27 +741,27 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     simulator.farm_block(&identities[1].puzzle_hash);
 
     let coins0 = simulator
-        .get_my_coins(&identities[0].puzzle_hash).into_gen()?;
+        .get_my_coins(&identities[0].puzzle_hash)
+        .into_gen()?;
     let coins1 = simulator
-        .get_my_coins(&identities[1].puzzle_hash).into_gen()?;
+        .get_my_coins(&identities[1].puzzle_hash)
+        .into_gen()?;
 
     // Make a 100 coin for each player (and test the deleted and created events).
-    let (parent_coin_0, _rest_0) = simulator
-        .transfer_coin_amount(
-            allocator,
-            &identities[0],
-            &identities[0],
-            &coins0[0],
-            Amount::new(100),
-        )?;
-    let (parent_coin_1, _rest_1) = simulator
-        .transfer_coin_amount(
-            allocator,
-            &identities[1],
-            &identities[1],
-            &coins1[0],
-            Amount::new(100),
-        )?;
+    let (parent_coin_0, _rest_0) = simulator.transfer_coin_amount(
+        allocator,
+        &identities[0],
+        &identities[0],
+        &coins0[0],
+        Amount::new(100),
+    )?;
+    let (parent_coin_1, _rest_1) = simulator.transfer_coin_amount(
+        allocator,
+        &identities[1],
+        &identities[1],
+        &coins1[0],
+        Amount::new(100),
+    )?;
 
     simulator.farm_block(&neutral_identity.puzzle_hash);
 
@@ -838,12 +838,11 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                         allocator,
                         &mut rng,
                         &reward_coins,
-                        &identities[i].puzzle_hash
+                        &identities[i].puzzle_hash,
                     )?;
-                    let included = simulator.push_tx(
-                        allocator,
-                        &spends.coins_with_solutions
-                    ).into_gen()?;
+                    let included = simulator
+                        .push_tx(allocator, &spends.coins_with_solutions)
+                        .into_gen()?;
                     debug!("reward spends: {included:?}");
                     assert_eq!(included.code, 1);
                 }
@@ -854,16 +853,14 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 // Turn off the flag to go on chain.
                 local_uis[i].go_on_chain = false;
                 let got_error = local_uis[i].got_error;
-                cradles[i]
-                    .go_on_chain(allocator, &mut rng, &mut local_uis[i], got_error)?;
+                cradles[i].go_on_chain(allocator, &mut rng, &mut local_uis[i], got_error)?;
             }
 
-            cradles[i]
-                .new_block(allocator, &mut rng, current_height, &watch_report)?;
+            cradles[i].new_block(allocator, &mut rng, current_height, &watch_report)?;
 
             loop {
-                let result = if let Some(result) = cradles[i]
-                    .idle(allocator, &mut rng, &mut local_uis[i])?
+                let result = if let Some(result) =
+                    cradles[i].idle(allocator, &mut rng, &mut local_uis[i])?
                 {
                     result
                 } else {
@@ -875,20 +872,18 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                         .get_puzzle_and_solution(coin)
                         .expect("should work");
                     for cradle in cradles.iter_mut() {
-                        cradle
-                            .report_puzzle_and_solution(
-                                allocator,
-                                &mut rng,
-                                coin,
-                                ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
-                            )?;
+                        cradle.report_puzzle_and_solution(
+                            allocator,
+                            &mut rng,
+                            coin,
+                            ps_res.as_ref().map(|ps| (&ps.0, &ps.1)),
+                        )?;
                     }
                 }
 
                 for tx in result.outbound_transactions.iter() {
                     debug!("PROCESS TX {tx:?}");
-                    let included_result = simulator
-                        .push_tx(allocator, &tx.spends).into_gen()?;
+                    let included_result = simulator.push_tx(allocator, &tx.spends).into_gen()?;
                     debug!("included_result {included_result:?}");
                     assert_eq!(included_result.code, 1);
                 }
@@ -916,42 +911,36 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
             // Start game.
             handshake_done = true;
 
-            game_ids = cradles[0]
-                .start_games(
-                    allocator,
-                    &mut rng,
-                    true,
-                    &GameStart {
-                        amount: Amount::new(200),
-                        my_contribution: Amount::new(100),
-                        game_type: GameType(b"calpoker".to_vec()),
-                        timeout: Timeout::new(10),
-                        my_turn: true,
-                        parameters: vec![0x80],
-                    },
-                )?;
+            game_ids = cradles[0].start_games(
+                allocator,
+                &mut rng,
+                true,
+                &GameStart {
+                    amount: Amount::new(200),
+                    my_contribution: Amount::new(100),
+                    game_type: GameType(b"calpoker".to_vec()),
+                    timeout: Timeout::new(10),
+                    my_turn: true,
+                    parameters: vec![0x80],
+                },
+            )?;
 
-            cradles[1]
-                .start_games(
-                    allocator,
-                    &mut rng,
-                    false,
-                    &GameStart {
-                        amount: Amount::new(200),
-                        my_contribution: Amount::new(100),
-                        game_type: GameType(b"calpoker".to_vec()),
-                        timeout: Timeout::new(10),
-                        my_turn: false,
-                        parameters: vec![0x80],
-                    },
-                )?;
+            cradles[1].start_games(
+                allocator,
+                &mut rng,
+                false,
+                &GameStart {
+                    amount: Amount::new(200),
+                    my_contribution: Amount::new(100),
+                    game_type: GameType(b"calpoker".to_vec()),
+                    timeout: Timeout::new(10),
+                    my_turn: false,
+                    parameters: vec![0x80],
+                },
+            )?;
 
             can_move = true;
-        } else if can_move
-            || local_uis
-                .iter()
-                .any(|l| l.opponent_moved)
-        {
+        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) {
             can_move = false;
             assert!(!game_ids.is_empty());
 
@@ -964,18 +953,16 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 match ga {
                     GameAction::Move(who, readable, _) => {
                         debug!("make move");
-                        let readable_program =
-                            Program::from_nodeptr(allocator, *readable)?;
+                        let readable_program = Program::from_nodeptr(allocator, *readable)?;
                         let encoded_readable_move = readable_program.bytes();
                         let entropy = rng.gen();
-                        cradles[*who]
-                            .make_move(
-                                allocator,
-                                &mut rng,
-                                &game_ids[0],
-                                encoded_readable_move.to_vec(),
-                                entropy,
-                            )?;
+                        cradles[*who].make_move(
+                            allocator,
+                            &mut rng,
+                            &game_ids[0],
+                            encoded_readable_move.to_vec(),
+                            entropy,
+                        )?;
                     }
                     GameAction::GoOnChain(_who) => {
                         debug!("go on chain");
@@ -985,49 +972,43 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                         // This is a fake move.  We give that move to the given target channel
                         // handler as a their move.
                         debug!("make move");
-                        let readable_program =
-                            Program::from_nodeptr(allocator, *readable)?;
+                        let readable_program = Program::from_nodeptr(allocator, *readable)?;
                         let encoded_readable_move = readable_program.bytes();
                         let entropy = rng.gen();
                         // Do like we're sending a real message.
-                        cradles[*who]
-                            .make_move(
-                                allocator,
-                                &mut rng,
-                                &game_ids[0],
-                                encoded_readable_move.to_vec(),
-                                entropy,
-                            )?;
+                        cradles[*who].make_move(
+                            allocator,
+                            &mut rng,
+                            &game_ids[0],
+                            encoded_readable_move.to_vec(),
+                            entropy,
+                        )?;
 
-                        cradles[*who]
-                            .replace_last_message(|msg_envelope| {
-                                debug!("sabotage envelope = {msg_envelope:?}");
-                                let (game_id, m) =
-                                    if let PeerMessage::Move(game_id, m) = msg_envelope {
-                                        (game_id, m)
-                                    } else {
-                                        todo!();
-                                    };
+                        cradles[*who].replace_last_message(|msg_envelope| {
+                            debug!("sabotage envelope = {msg_envelope:?}");
+                            let (game_id, m) = if let PeerMessage::Move(game_id, m) = msg_envelope {
+                                (game_id, m)
+                            } else {
+                                todo!();
+                            };
 
-                                let mut fake_move = m.clone();
-                                fake_move
-                                    .game_move
-                                    .basic
-                                    .move_made
-                                    .append(&mut move_data.clone());
-                                Ok(PeerMessage::Move(game_id.clone(), fake_move))
-                            })?;
+                            let mut fake_move = m.clone();
+                            fake_move
+                                .game_move
+                                .basic
+                                .move_made
+                                .append(&mut move_data.clone());
+                            Ok(PeerMessage::Move(game_id.clone(), fake_move))
+                        })?;
                     }
                     GameAction::Accept(who) | GameAction::Timeout(who) => {
                         debug!("{who} doing ACCEPT");
                         can_move = true;
-                        cradles[*who]
-                            .accept(allocator, &mut rng, &game_ids[0])?;
+                        cradles[*who].accept(allocator, &mut rng, &game_ids[0])?;
                     }
                     GameAction::Shutdown(who, _) => {
                         can_move = true;
-                        cradles[*who]
-                            .shut_down(allocator, &mut rng)?;
+                        cradles[*who].shut_down(allocator, &mut rng)?;
                     }
                 }
             }
@@ -1044,7 +1025,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
 
 fn run_calpoker_container_with_action_list(
     allocator: &mut AllocEncoder,
-    moves: &[GameAction]
+    moves: &[GameAction],
 ) -> Result<CalpokerRunOutcome, Error> {
     run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None)
 }
@@ -1063,7 +1044,8 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
         &mut allocator,
         &moves,
         Some(&|cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
-    ).expect("should finish");
+    )
+    .expect("should finish");
 }
 
 #[test]
@@ -1081,32 +1063,41 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     } else {
         panic!("no move 1 to replace");
     }
-    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+    let outcome =
+        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
     let p1_ph = outcome.identities[0].puzzle_hash.clone();
     let p2_ph = outcome.identities[1].puzzle_hash.clone();
     let p1_coins = outcome.simulator.get_my_coins(&p1_ph).expect("should work");
     let p2_coins = outcome.simulator.get_my_coins(&p2_ph).expect("should work");
-    let p1_balance: u64 = p1_coins.iter().map(|c| {
-        c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0)
-    }).sum();
-    let p2_balance: u64 = p2_coins.iter().map(|c| {
-        c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0)
-    }).sum();
+    let p1_balance: u64 = p1_coins
+        .iter()
+        .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
+        .sum();
+    let p2_balance: u64 = p2_coins
+        .iter()
+        .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
+        .sum();
     for (pn, lui) in outcome.local_uis.iter().enumerate() {
         for the_move in lui.opponent_moves.iter() {
             let the_move_to_node = the_move.1.to_nodeptr(&mut allocator).expect("should work");
-            debug!("player {pn} opponent move {the_move:?} {}", disassemble(allocator.allocator(), the_move_to_node, None));
+            debug!(
+                "player {pn} opponent move {the_move:?} {}",
+                disassemble(allocator.allocator(), the_move_to_node, None)
+            );
         }
     }
     let outcome_move = &outcome.local_uis[0].opponent_moves[2];
-    let outcome_node = outcome_move.1.to_nodeptr(&mut allocator).expect("should work");
-    let decoded_outcome = decode_calpoker_readable(
-        &mut allocator,
-        outcome_node,
-        Amount::new(200),
-        false
-    ).expect("should decode");
-    debug!("outcome move {}", disassemble(allocator.allocator(), outcome_node, None));
+    let outcome_node = outcome_move
+        .1
+        .to_nodeptr(&mut allocator)
+        .expect("should work");
+    let decoded_outcome =
+        decode_calpoker_readable(&mut allocator, outcome_node, Amount::new(200), false)
+            .expect("should decode");
+    debug!(
+        "outcome move {}",
+        disassemble(allocator.allocator(), outcome_node, None)
+    );
     debug!("game outcome {decoded_outcome:?}");
     debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
     if decoded_outcome.win_direction == 1 {

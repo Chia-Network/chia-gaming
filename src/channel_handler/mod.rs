@@ -15,6 +15,7 @@ use rand::prelude::*;
 use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
 
+use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
@@ -24,12 +25,13 @@ use crate::channel_handler::types::{
     MoveResult, OnChainGameCoin, OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData,
     PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
-use crate::channel_handler::game_handler::TheirTurnResult;
 
 use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
-    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_partial, standard_solution_unsafe, calculate_synthetic_secret_key, calculate_synthetic_public_key, ChiaIdentity,
+    calculate_synthetic_public_key, calculate_synthetic_secret_key, private_to_public_key,
+    puzzle_for_pk, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
+    puzzle_hash_for_synthetic_public_key, sign_agg_sig_me, standard_solution_partial,
+    standard_solution_unsafe, ChiaIdentity,
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
@@ -163,7 +165,7 @@ impl ChannelHandler {
 
     pub fn get_reward_puzzle_hash<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv<R>
+        env: &mut ChannelHandlerEnv<R>,
     ) -> Result<PuzzleHash, Error> {
         let referee_pk = private_to_public_key(&self.referee_private_key());
         puzzle_hash_for_pk(env.allocator, &referee_pk)
@@ -884,7 +886,9 @@ impl ChannelHandler {
                 (readable_move, message.clone(), mover_share.clone())
             }
             TheirTurnResult::Slash(_) => {
-                return Err(Error::StrErr("slash when off chain: go on chain".to_string()));
+                return Err(Error::StrErr(
+                    "slash when off chain: go on chain".to_string(),
+                ));
             }
         };
 
@@ -1832,7 +1836,10 @@ impl ChannelHandler {
 
         let mut coins_with_solutions = Vec::default();
         let default_hidden_puzzle_hash = Hash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH);
-        let synthetic_referee_private_key = calculate_synthetic_secret_key(&self.private_keys.my_referee_private_key, &default_hidden_puzzle_hash)?;
+        let synthetic_referee_private_key = calculate_synthetic_secret_key(
+            &self.private_keys.my_referee_private_key,
+            &default_hidden_puzzle_hash,
+        )?;
         let my_referee_public_key =
             private_to_public_key(&self.private_keys.my_referee_private_key);
         let synthetic_referee_public_key = calculate_synthetic_public_key(
@@ -1845,8 +1852,11 @@ impl ChannelHandler {
             let parent_id = coin.coin_string.to_coin_id();
             let conditions = if i == 0 {
                 (
-                    (CREATE_COIN, (target_puzzle_hash.clone(), (total_amount.clone(), ()))),
-                    ()
+                    (
+                        CREATE_COIN,
+                        (target_puzzle_hash.clone(), (total_amount.clone(), ())),
+                    ),
+                    (),
                 )
                     .to_clvm(env.allocator)
                     .into_gen()?
@@ -1861,7 +1871,7 @@ impl ChannelHandler {
                 conditions,
                 &my_referee_public_key,
                 &env.agg_sig_me_additional_data,
-                false
+                false,
             )?;
 
             let standard_solution =
@@ -1872,7 +1882,7 @@ impl ChannelHandler {
                     puzzle: puzzle.clone(),
                     solution: spend.solution.clone(),
                     signature: spend.signature.clone(),
-                }
+                },
             });
         }
 

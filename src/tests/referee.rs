@@ -267,16 +267,13 @@ fn test_referee_smoke() {
         TheirTurnResult::MakeMove(readable_node, _, message, _) => {
             (*readable_node, message.clone())
         }
-        TheirTurnResult::FinalMove(readable_node, _) => {
-            (*readable_node, vec![])
-        }
+        TheirTurnResult::FinalMove(readable_node, _) => (*readable_node, vec![]),
         _ => {
             panic!();
         }
     };
     assert_eq!(message, b"message data");
-    let readable_prog =
-        Program::from_nodeptr(&mut allocator, readable_move).expect("should cvt");
+    let readable_prog = Program::from_nodeptr(&mut allocator, readable_move).expect("should cvt");
     assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
     assert!(!reftest.my_referee.processing_my_turn());
 }

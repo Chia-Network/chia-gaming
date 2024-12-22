@@ -139,7 +139,8 @@ impl ToLocalUI for Pipe {
         readable: ReadableMove,
         mover_share: Amount,
     ) -> Result<(), Error> {
-        self.opponent_moves.push((id.clone(), readable, mover_share));
+        self.opponent_moves
+            .push((id.clone(), readable, mover_share));
         Ok(())
     }
     fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {

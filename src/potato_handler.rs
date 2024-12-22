@@ -646,7 +646,6 @@ impl PotatoHandler {
         player_ch.spend_reward_coins(env, coin_string, target)
     }
 
-
     pub fn start<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &'a mut dyn PeerEnv<'a, G, R>,
@@ -761,7 +760,12 @@ impl PotatoHandler {
                     let (env, system_interface) = penv.env();
                     let opponent_readable =
                         ReadableMove::from_nodeptr(env.allocator, readable_move)?;
-                    system_interface.opponent_moved(env.allocator, &game_id, opponent_readable, mover_share)?;
+                    system_interface.opponent_moved(
+                        env.allocator,
+                        &game_id,
+                        opponent_readable,
+                        mover_share,
+                    )?;
                     if !message.is_empty() {
                         system_interface.send_message(&PeerMessage::Message(game_id, message))?;
                     }
@@ -1918,8 +1922,7 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let initial_potato =
-        {
+        let initial_potato = {
             let player_ch = self.channel_handler()?;
             player_ch.is_initial_potato()
         };
@@ -1948,9 +1951,7 @@ impl PotatoHandler {
                 // Remember that we spent this one.
                 {
                     let player_ch = self.channel_handler()?;
-                    debug!(
-                        "{initial_potato} created puzzle hash for redo {new_ph:?}",
-                    );
+                    debug!("{initial_potato} created puzzle hash for redo {new_ph:?}",);
                     self.my_game_spends.insert(new_ph.clone());
                 }
                 let (_env, system_interface) = penv.env();
@@ -1996,7 +1997,8 @@ impl PotatoHandler {
                 if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
                     if !game_map.is_empty() {
                         debug!("Can't shut down yet, still have games");
-                        self.game_action_queue.push_front(GameAction::Shutdown(conditions));
+                        self.game_action_queue
+                            .push_front(GameAction::Shutdown(conditions));
                         return Ok(());
                     }
                 }
@@ -2452,8 +2454,12 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         if let HandshakeState::OnChain(game_map) = &self.handshake_state {
             let player_ch = self.channel_handler()?;
             if !game_map.is_empty() {
-                debug!("{} waiting for all games to be done", player_ch.is_initial_potato());
-                self.game_action_queue.push_back(GameAction::Shutdown(conditions));
+                debug!(
+                    "{} waiting for all games to be done",
+                    player_ch.is_initial_potato()
+                );
+                self.game_action_queue
+                    .push_back(GameAction::Shutdown(conditions));
                 return Ok(());
             }
 

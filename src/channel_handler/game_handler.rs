@@ -356,7 +356,10 @@ impl GameHandler {
 
         let driver_node = self.get_their_turn_driver(allocator)?;
         debug!("call their turn driver: {self:?}");
-        debug!("call their turn args {}", disassemble(allocator.allocator(), driver_args, None));
+        debug!(
+            "call their turn args {}",
+            disassemble(allocator.allocator(), driver_args, None)
+        );
 
         let run_result = run_code(
             allocator,
@@ -397,7 +400,10 @@ impl GameHandler {
                     "final move with data {}",
                     disassemble(allocator.allocator(), pl[1], None)
                 );
-                Ok(TheirTurnResult::FinalMove(pl[1], inputs.new_move.basic.mover_share.clone()))
+                Ok(TheirTurnResult::FinalMove(
+                    pl[1],
+                    inputs.new_move.basic.mover_share.clone(),
+                ))
             } else {
                 let message_data = if pl.len() == 4 {
                     allocator.allocator().atom(pl[3]).to_vec()
@@ -418,9 +424,7 @@ impl GameHandler {
                     disassemble(allocator.allocator(), run_result, None)
                 )));
             }
-            Ok(TheirTurnResult::Slash(
-                Evidence::from_nodeptr(pl[1]),
-            ))
+            Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(pl[1])))
         } else {
             Err(Error::StrErr("unknown move result type".to_string()))
         }

@@ -1165,12 +1165,11 @@ impl RefereeMaker {
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         let our_move = self.is_my_turn();
 
-        let my_mover_share =
-            if our_move {
-                targs.game_move.basic.mover_share.clone()
-            } else {
-                self.fixed.amount.clone() - targs.game_move.basic.mover_share.clone()
-            };
+        let my_mover_share = if our_move {
+            targs.game_move.basic.mover_share.clone()
+        } else {
+            self.fixed.amount.clone() - targs.game_move.basic.mover_share.clone()
+        };
 
         if always_produce_transaction || my_mover_share != Amount::default() {
             let signature = args.get_signature().unwrap_or_default();
@@ -1218,15 +1217,21 @@ impl RefereeMaker {
         coin_string: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
-        debug!("mover share at start of action   {:?}", self.args_for_this_coin().game_move.basic.mover_share);
-        debug!("mover share at end   of action   {:?}", self.spend_this_coin().game_move.basic.mover_share);
+        debug!(
+            "mover share at start of action   {:?}",
+            self.args_for_this_coin().game_move.basic.mover_share
+        );
+        debug!(
+            "mover share at end   of action   {:?}",
+            self.spend_this_coin().game_move.basic.mover_share
+        );
 
         let targs = self.spend_this_coin();
         let puzzle = curry_referee_puzzle(
             allocator,
             &self.fixed.referee_coin_puzzle,
             &self.fixed.referee_coin_puzzle_hash,
-            &targs
+            &targs,
         )?;
 
         self.get_transaction(
@@ -1903,21 +1908,22 @@ impl RefereeMaker {
             curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)?;
         debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}\n");
 
-        let check_and_report_slash = |allocator: &mut AllocEncoder, readable_move: NodePtr, mover_share: Amount| {
-            if let Some(result) = self.check_their_turn_for_slash(allocator, coin_string)? {
-                Ok(result)
-            } else {
-                Ok(TheirTurnCoinSpentResult::Moved {
-                    new_coin_string: CoinString::from_parts(
-                        &coin_string.to_coin_id(),
-                        &new_puzzle_hash,
-                        &self.fixed.amount,
-                    ),
-                    readable: ReadableMove::from_nodeptr(allocator, readable_move)?,
-                    mover_share: args.game_move.basic.mover_share.clone(),
-                })
-            }
-        };
+        let check_and_report_slash =
+            |allocator: &mut AllocEncoder, readable_move: NodePtr, mover_share: Amount| {
+                if let Some(result) = self.check_their_turn_for_slash(allocator, coin_string)? {
+                    Ok(result)
+                } else {
+                    Ok(TheirTurnCoinSpentResult::Moved {
+                        new_coin_string: CoinString::from_parts(
+                            &coin_string.to_coin_id(),
+                            &new_puzzle_hash,
+                            &self.fixed.amount,
+                        ),
+                        readable: ReadableMove::from_nodeptr(allocator, readable_move)?,
+                        mover_share: args.game_move.basic.mover_share.clone(),
+                    })
+                }
+            };
 
         debug!("referee move details {details:?}");
         let final_result = match result.original {
