@@ -393,7 +393,7 @@ enum HandshakeState {
     Finished(Box<HandshakeStepWithSpend>),
     // Going on chain ourselves route.
     OnChainTransition(CoinString, Box<HandshakeStepWithSpend>),
-    OnChainWaitingForUnrollTimeoutOrSpend(CoinString, Box<HandshakeStepWithSpend>),
+    OnChainWaitingForUnrollTimeoutOrSpend(CoinString),
     // Other party went on chain, we're catching up route.
     OnChainWaitForConditions(CoinString, Box<HandshakeStepWithSpend>),
     // Converge here to on chain state.
@@ -1583,7 +1583,6 @@ impl PotatoHandler {
                         self.handshake_state =
                             HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(
                                 unroll_coin.clone(),
-                                t,
                             );
                         let (_, system_interface) = penv.env();
                         system_interface.register_coin(
@@ -1651,7 +1650,7 @@ impl PotatoHandler {
         assert!(!matches!(self.handshake_state, HandshakeState::StepA));
         let is_unroll_coin = match &self.handshake_state {
             HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin) => coin_id == unroll_coin,
-            HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll_coin, _) => {
+            HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll_coin) => {
                 coin_id == unroll_coin
             }
             _ => false,
@@ -2657,7 +2656,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         // reveal and go to OnChainWaitingForUnrollSpend, transitioning to OnChain when
         // we receive the unroll coin spend.
         let unroll_timed_out =
-            if let HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll, _hs) =
+            if let HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll) =
                 &self.handshake_state
             {
                 coin_id == unroll
