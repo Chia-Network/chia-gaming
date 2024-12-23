@@ -4,6 +4,7 @@ use js_sys::{Array, Function, JsString, Object};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use hex::FromHexError;
@@ -21,6 +22,7 @@ use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
 use chia_gaming::peer_container::{GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport};
 use chia_gaming::common::standard_coin::{ChiaIdentity, wasm_deposit_file};
+use chia_gaming::shutdown::BasicShutdownConditions;
 
 use crate::map_m::map_m;
 
@@ -398,7 +400,7 @@ pub fn accept(cid: i32, id: &str) -> Result<(), JsValue> {
 #[wasm_bindgen]
 pub fn shut_down(cid: i32) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
-        cradle.cradle.shut_down(&mut cradle.allocator, &mut cradle.rng)
+        cradle.cradle.shut_down(&mut cradle.allocator, &mut cradle.rng, Rc::new(BasicShutdownConditions))
     })
 }
 
