@@ -1,11 +1,11 @@
 #[cfg(feature = "sim-tests")]
-use std::rc::Rc;
-#[cfg(feature = "sim-tests")]
 use log::debug;
 #[cfg(feature = "sim-tests")]
 use rand::prelude::*;
 #[cfg(feature = "sim-tests")]
 use rand_chacha::ChaCha8Rng;
+#[cfg(feature = "sim-tests")]
+use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
@@ -13,9 +13,9 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Amount;
+use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]

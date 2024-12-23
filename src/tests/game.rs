@@ -1,12 +1,12 @@
 #[cfg(feature = "sim-tests")]
-use std::rc::Rc;
-#[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
 use crate::common::types::Timeout;
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::ShutdownConditions;
+#[cfg(feature = "sim-tests")]
+use std::rc::Rc;
 
 #[cfg(test)]
 use clvmr::NodePtr;
@@ -65,15 +65,14 @@ impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
-            GameAction::Move(p,n,r) => write!(formatter, "Move({p},{n:?},{r})"),
-            GameAction::FakeMove(p,n,v) => write!(formatter, "FakeMove({p},{n:?},{v:?})"),
+            GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
+            GameAction::FakeMove(p, n, v) => write!(formatter, "FakeMove({p},{n:?},{v:?})"),
             GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
             GameAction::Accept(p) => write!(formatter, "Accept({p})"),
-            GameAction::Shutdown(p,_) => write!(formatter, "Shutdown({p},..)"),
+            GameAction::Shutdown(p, _) => write!(formatter, "Shutdown({p},..)"),
         }
     }
 }
-
 
 impl GameAction {
     #[cfg(feature = "sim-tests")]

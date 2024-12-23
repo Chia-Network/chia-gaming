@@ -1544,18 +1544,19 @@ impl RefereeMaker {
             },
         )?;
 
-        let (handler, mover_share) =
-            match &result {
-                TheirTurnResult::FinalMove(_readable_move, mover_share) => (None, mover_share.clone()),
-                TheirTurnResult::MakeMove(_, handler, _, mover_share) => (Some(handler.clone()), mover_share.clone()),
-                // Slash can't be used when we're off chain.
-                TheirTurnResult::Slash(_evidence) => {
-                    return Ok(TheirTurnMoveResult {
-                        puzzle_hash_for_unroll: None,
-                        original: result.clone(),
-                    })
-                }
-            };
+        let (handler, mover_share) = match &result {
+            TheirTurnResult::FinalMove(_readable_move, mover_share) => (None, mover_share.clone()),
+            TheirTurnResult::MakeMove(_, handler, _, mover_share) => {
+                (Some(handler.clone()), mover_share.clone())
+            }
+            // Slash can't be used when we're off chain.
+            TheirTurnResult::Slash(_evidence) => {
+                return Ok(TheirTurnMoveResult {
+                    puzzle_hash_for_unroll: None,
+                    original: result.clone(),
+                })
+            }
+        };
 
         let puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &self.fixed,

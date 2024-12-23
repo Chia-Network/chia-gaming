@@ -482,7 +482,11 @@ pub fn standard_solution_partial(
                     add_signature(
                         &mut aggregated_signature,
                         if partial {
-                            partial_signer(private_key, aggregate_public_key, &coin_agg_sig_me_message)
+                            partial_signer(
+                                private_key,
+                                aggregate_public_key,
+                                &coin_agg_sig_me_message,
+                            )
                         } else {
                             private_key.sign(&coin_agg_sig_me_message)
                         },

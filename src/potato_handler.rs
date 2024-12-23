@@ -436,8 +436,10 @@ pub enum GameAction {
 impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            GameAction::Move(gi,rm,h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
-            GameAction::RedoMove(gi,cs,ph,rt) => write!(formatter, "RedoMove({gi:?},{cs:?},{ph:?},{rt:?})"),
+            GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
+            GameAction::RedoMove(gi, cs, ph, rt) => {
+                write!(formatter, "RedoMove({gi:?},{cs:?},{ph:?},{rt:?})")
+            }
             GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
             GameAction::Shutdown(_) => write!(formatter, "Shutdown(..)"),
         }
@@ -813,7 +815,8 @@ impl PotatoHandler {
                 let want_puzzle_hash = puzzle_hash_for_pk(env.allocator, &want_public_key)?;
                 let want_amount = ch.clean_shutdown_amount();
                 if want_amount != Amount::default() {
-                    let condition_list = CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
+                    let condition_list =
+                        CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
                     let found_conditions = condition_list.iter().any(|cond| {
                         if let CoinCondition::CreateCoin(ph, amt) = cond {
                             *ph == want_puzzle_hash && *amt >= want_amount
@@ -1042,11 +1045,7 @@ impl PotatoHandler {
                 let real_conditions = {
                     let ch = self.channel_handler_mut()?;
                     let (env, _) = penv.env();
-                    get_conditions_with_channel_handler(
-                        env,
-                        ch,
-                        conditions.borrow(),
-                    )?
+                    get_conditions_with_channel_handler(env, ch, conditions.borrow())?
                 };
                 let (state_channel_coin, spend, want_puzzle_hash, want_amount) = {
                     let ch = self.channel_handler_mut()?;
@@ -1076,13 +1075,15 @@ impl PotatoHandler {
                 system_interface.register_coin(&my_reward, &timeout, Some("reward"))?;
 
                 // If the state channel coin is spent, then we signal full shutdown.
-                let shutdown_condition_program = Program::from_nodeptr(env.allocator, real_conditions)?;
+                let shutdown_condition_program =
+                    Program::from_nodeptr(env.allocator, real_conditions)?;
                 system_interface.send_message(&PeerMessage::Shutdown(
                     spend.signature.clone(),
                     shutdown_condition_program,
                 ))?;
 
-                self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(state_channel_coin.clone());
+                self.handshake_state =
+                    HandshakeState::OnChainWaitingForUnrollSpend(state_channel_coin.clone());
 
                 Ok(true)
             }

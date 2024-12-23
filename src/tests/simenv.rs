@@ -1,6 +1,6 @@
-use std::borrow::Borrow;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use std::borrow::Borrow;
 
 use clvm_traits::ToClvm;
 use clvmr::{run_program, NodePtr};
@@ -400,7 +400,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 let real_target_conditions = get_conditions_with_channel_handler(
                     &mut self.env,
                     &self.parties.player(*player).ch,
-                    target_conditions.borrow()
+                    target_conditions.borrow(),
                 )?;
                 let spend = self
                     .parties
@@ -646,14 +646,20 @@ fn test_referee_can_slash_on_chain() {
         )
         .expect("should create referee coin");
 
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::default());
+    assert_eq!(
+        reftest.my_referee.get_our_current_share(),
+        Amount::default()
+    );
 
     // Farm 20 blocks to get past the time limit.
     for _ in 0..20 {
         s.farm_block(&reftest.my_identity.puzzle_hash);
     }
 
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::default());
+    assert_eq!(
+        reftest.my_referee.get_our_current_share(),
+        Amount::default()
+    );
     let timeout_transaction = reftest
         .my_referee
         .get_transaction_for_timeout(&mut allocator, &referee_coins[0])
