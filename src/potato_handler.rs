@@ -813,20 +813,22 @@ impl PotatoHandler {
                 let want_public_key = private_to_public_key(&ch.referee_private_key());
                 let want_puzzle_hash = puzzle_hash_for_pk(env.allocator, &want_public_key)?;
                 let want_amount = ch.clean_shutdown_amount();
-                let condition_list = CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
-                let found_conditions = condition_list.iter().any(|cond| {
-                    if let CoinCondition::CreateCoin(ph, amt) = cond {
-                        *ph == want_puzzle_hash && *amt >= want_amount
-                    } else {
-                        false
-                    }
-                });
+                if want_amount != Amount::default() {
+                    let condition_list = CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
+                    let found_conditions = condition_list.iter().any(|cond| {
+                        if let CoinCondition::CreateCoin(ph, amt) = cond {
+                            *ph == want_puzzle_hash && *amt >= want_amount
+                        } else {
+                            false
+                        }
+                    });
 
-                if !found_conditions {
-                    return Err(Error::StrErr(
-                        "given conditions don't pay our referee puzzle hash what's expected"
-                            .to_string(),
-                    ));
+                    if !found_conditions {
+                        return Err(Error::StrErr(
+                            "given conditions don't pay our referee puzzle hash what's expected"
+                                .to_string(),
+                        ));
+                    }
                 }
 
                 let my_reward =
@@ -842,24 +844,20 @@ impl PotatoHandler {
                     &env.standard_puzzle,
                     &channel_puzzle_public_key,
                 )?;
+                let spend = Spend {
+                    solution: full_spend.solution.clone(),
+                    puzzle,
+                    signature: full_spend.signature.clone(),
+                };
                 system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                    name: Some("Create channel 2".to_string()),
+                    name: Some("Create unroll".to_string()),
                     spends: vec![CoinSpend {
                         coin: coin.clone(),
-                        bundle: Spend {
-                            solution: full_spend.solution.clone(),
-                            puzzle,
-                            signature: full_spend.signature.clone(),
-                        },
+                        bundle: spend,
                     }],
                 })?;
 
-                // Expected reward coin is shutdown amount + puzzle hash of referee
-                // coin and parent is the reported reward coin.
-                return Ok(Some(HandshakeState::WaitingForShutdown(
-                    my_reward,
-                    coin.clone(),
-                )));
+                self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone());
             }
             _ => {
                 todo!("unhandled passthrough message {msg_envelope:?}");
@@ -1077,8 +1075,6 @@ impl PotatoHandler {
 
                 let (env, system_interface) = penv.env();
                 system_interface.register_coin(&my_reward, &timeout, Some("reward"))?;
-                self.handshake_state =
-                    HandshakeState::WaitingForShutdown(my_reward, state_channel_coin.clone());
 
                 // If the state channel coin is spent, then we signal full shutdown.
                 let shutdown_condition_program = Program::from_nodeptr(env.allocator, real_conditions)?;
@@ -1086,6 +1082,8 @@ impl PotatoHandler {
                     spend.signature.clone(),
                     shutdown_condition_program,
                 ))?;
+
+                self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(state_channel_coin.clone());
 
                 Ok(true)
             }
@@ -1607,6 +1605,16 @@ impl PotatoHandler {
                         assert!(!matches!(self.handshake_state, HandshakeState::StepA));
                         return Ok(true);
                     }
+                    HandshakeState::OnChainWaitingForUnrollSpend(_) => {
+                        debug!(
+                            "{} notified of channel coin spend in waiting for unroll state.  this is used to collect rewards in a clean shutdown.",
+                            ch.is_initial_potato()
+                        );
+                        self.handshake_state = HandshakeState::Completed;
+                        let (_, system_interface) = penv.env();
+                        system_interface.shutdown_complete(None)?;
+                        return Ok(false);
+                    }
                     x => {
                         self.handshake_state = x;
                         assert!(!matches!(self.handshake_state, HandshakeState::StepA));
@@ -1647,7 +1655,6 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         // Channel coin was spent so we're going on chain.
-        assert!(!matches!(self.handshake_state, HandshakeState::StepA));
         let is_unroll_coin = match &self.handshake_state {
             HandshakeState::OnChainWaitingForUnrollSpend(unroll_coin) => coin_id == unroll_coin,
             HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll_coin) => {

@@ -829,7 +829,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
         }
 
         for i in 0..=1 {
-            if cradles[i].handshake_finished() {
+            if cradles[i].handshake_finished() || cradles[i].finished() {
                 let reward_ph = cradles[i].get_reward_puzzle_hash(allocator, &mut rng)?;
                 let reward_coins = simulator.get_my_coins(&reward_ph).into_gen()?;
                 debug!("{i} reward coins {reward_coins:?}");
@@ -1096,9 +1096,9 @@ fn sim_test_with_peer_container_off_chain_complete() {
     debug!("game outcome {decoded_outcome:?}");
     debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
     if decoded_outcome.win_direction == 1 {
-        assert_eq!(p2_balance + 200, p1_balance);
-    } else if decoded_outcome.win_direction == -1 {
         assert_eq!(p2_balance, p1_balance + 200);
+    } else if decoded_outcome.win_direction == -1 {
+        assert_eq!(p2_balance + 200, p1_balance);
     } else {
         assert_eq!(p2_balance, p1_balance);
     }
