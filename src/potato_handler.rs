@@ -1664,7 +1664,9 @@ impl PotatoHandler {
         Ok(false)
     }
 
-    pub fn do_channel_spend_to_unroll<'a, G, R: Rng + 'a>(
+    // Do work needed to set us up in on chain state waiting for the spend of the channel
+    // coin as specified.
+    fn setup_for_on_chain_waiting_for_unroll<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         spend: Box<HandshakeStepWithSpend>,
@@ -1672,31 +1674,8 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let (env, system_interface) = penv.env();
-
-        {
-            let player_ch = self.channel_handler_mut()?;
-            player_ch.set_initiated_on_chain();
-        }
-
+        let (env, _) = penv.env();
         let player_ch = self.channel_handler()?;
-        debug!("GO ON CHAIN: initiated {}", player_ch.is_initial_potato());
-        // Channel coin
-        let finished_unroll_coin = player_ch.get_finished_unroll_coin();
-
-        // For debugging: get internal idea of what's signed.
-        let unroll_puzzle_solution = finished_unroll_coin
-            .coin
-            .get_internal_conditions_for_unroll_coin_spend()?;
-        let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
-        let aggregate_unroll_signature = finished_unroll_coin.coin.get_unroll_coin_signature()?
-            + finished_unroll_coin
-                .signatures
-                .my_unroll_half_signature_peer
-                .clone();
-
-        debug!("{} CHANNEL: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", player_ch.is_initial_potato());
-
         let run_puzzle = spend.spend.spends[0]
             .bundle
             .puzzle
@@ -1739,10 +1718,46 @@ impl PotatoHandler {
             return Err(Error::StrErr("no unroll coin created".to_string()));
         };
 
-        system_interface.spend_transaction_and_add_fee(&spend.spend)?;
         self.handshake_state = HandshakeState::OnChainTransition(unroll_result.clone(), spend);
 
         Ok(())
+    }
+
+    pub fn do_channel_spend_to_unroll<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        spend: Box<HandshakeStepWithSpend>,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let (env, system_interface) = penv.env();
+
+        {
+            let player_ch = self.channel_handler_mut()?;
+            player_ch.set_initiated_on_chain();
+        }
+
+        let player_ch = self.channel_handler()?;
+        debug!("GO ON CHAIN: initiated {}", player_ch.is_initial_potato());
+        // Channel coin
+        let finished_unroll_coin = player_ch.get_finished_unroll_coin();
+
+        // For debugging: get internal idea of what's signed.
+        let unroll_puzzle_solution = finished_unroll_coin
+            .coin
+            .get_internal_conditions_for_unroll_coin_spend()?;
+        let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
+        let aggregate_unroll_signature = finished_unroll_coin.coin.get_unroll_coin_signature()?
+            + finished_unroll_coin
+                .signatures
+                .my_unroll_half_signature_peer
+                .clone();
+
+        debug!("{} CHANNEL: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", player_ch.is_initial_potato());
+
+        system_interface.spend_transaction_and_add_fee(&spend.spend)?;
+        self.setup_for_on_chain_waiting_for_unroll(penv, spend)
     }
 
     pub fn do_unroll_spend_to_games<'a, G, R: Rng + 'a>(
