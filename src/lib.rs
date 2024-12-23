@@ -7,6 +7,7 @@ pub mod log;
 pub mod peer_container;
 pub mod potato_handler;
 mod referee;
+pub mod shutdown;
 #[cfg(any(feature = "sim-tests", feature = "simulator"))]
 pub mod simulator;
 

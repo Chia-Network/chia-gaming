@@ -1,9 +1,14 @@
 #[cfg(feature = "sim-tests")]
+use std::rc::Rc;
+#[cfg(feature = "sim-tests")]
 use log::debug;
 #[cfg(feature = "sim-tests")]
 use rand::prelude::*;
 #[cfg(feature = "sim-tests")]
 use rand_chacha::ChaCha8Rng;
+
+#[cfg(feature = "sim-tests")]
+use clvmr::allocator::NodePtr;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
@@ -17,7 +22,7 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Amount, PrivateKey};
+use crate::common::types::{Amount, PrivateKey, PuzzleHash};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
@@ -30,6 +35,8 @@ use crate::games::calpoker::make_cards;
 use crate::games::calpoker::CalpokerResult;
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
+#[cfg(feature = "sim-tests")]
+use crate::shutdown::BasicShutdownConditions;
 use crate::tests::game::GameAction;
 #[cfg(feature = "sim-tests")]
 use crate::tests::game::GameActionResult;
@@ -269,13 +276,7 @@ fn test_play_calpoker_end_game_reward() {
 
     let mut moves = test_moves_1(&mut allocator).to_vec();
     moves.push(GameAction::Accept(1));
-    let win_conditions = [(
-        CREATE_COIN,
-        (output_identity.puzzle_hash.clone(), (Amount::new(200), ())),
-    )]
-    .to_clvm(&mut allocator)
-    .unwrap();
-    moves.push(GameAction::Shutdown(0, win_conditions));
+    moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
 
     debug!("running moves {moves:?}");
     let _game_action_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");

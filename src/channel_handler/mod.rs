@@ -162,12 +162,24 @@ impl ChannelHandler {
         self.live_games.is_empty()
     }
 
+    pub fn get_our_current_share(&self) -> Amount {
+        self.my_out_of_game_balance.clone()
+    }
+
+    pub fn get_their_current_share(&self) -> Amount {
+        self.their_out_of_game_balance.clone()
+    }
+
     pub fn get_reward_puzzle_hash<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<PuzzleHash, Error> {
         let referee_pk = private_to_public_key(&self.referee_private_key());
         puzzle_hash_for_pk(env.allocator, &referee_pk)
+    }
+
+    pub fn get_opponent_reward_puzzle_hash(&self) -> PuzzleHash {
+        self.their_referee_puzzle_hash.clone()
     }
 
     pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
@@ -193,8 +205,8 @@ impl ChannelHandler {
 
     fn unroll_coin_condition_inputs(
         &self,
-        my_ending_game_value: Amount,
-        their_ending_game_value: Amount,
+        my_balance: Amount,
+        their_balance: Amount,
         puzzle_hashes_and_amounts: &[(PuzzleHash, Amount)],
     ) -> UnrollCoinConditionInputs {
         let my_referee_public_key =
@@ -202,11 +214,8 @@ impl ChannelHandler {
         UnrollCoinConditionInputs {
             ref_pubkey: my_referee_public_key,
             their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-            my_balance: self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone()
-                + my_ending_game_value,
-            their_balance: self.their_out_of_game_balance.clone()
-                - self.their_allocated_balance.clone()
-                + their_ending_game_value,
+            my_balance,
+            their_balance,
             puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
         }
     }
@@ -360,7 +369,11 @@ impl ChannelHandler {
         // We need a spend of the channel coin to sign.
         // The seq number is zero.
         // There are no game coins and a balance for both sides.
-        let inputs = myself.unroll_coin_condition_inputs(Amount::default(), Amount::default(), &[]);
+        let inputs = myself.unroll_coin_condition_inputs(
+            myself.my_out_of_game_balance.clone() - myself.my_allocated_balance.clone(),
+            myself.their_out_of_game_balance.clone() - myself.their_allocated_balance.clone(),
+            &[]
+        );
         myself.unroll.coin.update(
             env,
             &myself.private_keys.my_unroll_coin_private_key,
@@ -488,8 +501,8 @@ impl ChannelHandler {
             self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
         let unroll_inputs = self.unroll_coin_condition_inputs(
-            Amount::default(),
-            Amount::default(),
+            self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
+            self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
             &new_game_coins_on_chain,
         );
 
@@ -620,7 +633,11 @@ impl ChannelHandler {
         let spend = self.received_potato_verify_signatures(
             env,
             signatures,
-            &self.unroll_coin_condition_inputs(Amount::default(), Amount::default(), &unroll_data),
+            &self.unroll_coin_condition_inputs(
+                self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
+                self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
+                &unroll_data
+            ),
         )?;
 
         Ok(ChannelCoinSpendInfo {
@@ -762,8 +779,8 @@ impl ChannelHandler {
             env,
             signatures,
             &self.unroll_coin_condition_inputs(
-                Amount::default(),
-                Amount::default(),
+                self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
+                self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
                 &unroll_data_for_all_games,
             ),
         )?;
@@ -876,6 +893,11 @@ impl ChannelHandler {
             "{} their_move_result {their_move_result:?}",
             self.unroll.coin.started_with_potato
         );
+        debug!(
+            "{} my share after their move {:?}",
+            self.unroll.coin.started_with_potato,
+            self.live_games[game_idx].get_our_current_share()
+        );
 
         let (readable_move, message, mover_share) = match their_move_result.original {
             TheirTurnResult::FinalMove(readable_move, mover_share) => {
@@ -896,7 +918,11 @@ impl ChannelHandler {
         let spend = self.received_potato_verify_signatures(
             env,
             &move_result.signatures,
-            &self.unroll_coin_condition_inputs(Amount::default(), Amount::default(), &unroll_data),
+            &self.unroll_coin_condition_inputs(
+                self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
+                self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
+                &unroll_data
+            ),
         )?;
 
         // Needs to know their puzzle_hash_for_unroll so we can keep it to do
@@ -936,7 +962,7 @@ impl ChannelHandler {
         game_id: &GameID,
     ) -> Result<(PotatoSignatures, Amount), Error> {
         assert!(self.have_potato);
-        debug!("SEND_POTATO_ACCEPT");
+        debug!("{} SEND_POTATO_ACCEPT", self.is_initial_potato());
         let game_idx = self.get_game_by_id(game_id)?;
 
         // referee maker is removed and will be destroyed when we leave this
@@ -947,6 +973,13 @@ impl ChannelHandler {
 
         let amount = live_game.get_our_current_share();
         let at_stake = live_game.get_amount();
+
+        self.my_out_of_game_balance -= live_game.my_contribution.clone();
+        self.my_out_of_game_balance += amount.clone();
+        self.their_out_of_game_balance -= live_game.their_contribution.clone();
+        self.their_out_of_game_balance += at_stake.clone() - amount.clone();
+
+        debug!("accept: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}", self.my_allocated_balance, self.their_allocated_balance, self.my_out_of_game_balance, self.their_out_of_game_balance);
 
         self.update_cache_for_potato_send(if amount == Amount::default() {
             None
@@ -974,7 +1007,7 @@ impl ChannelHandler {
         game_id: &GameID,
     ) -> Result<ChannelCoinSpendInfo, Error> {
         assert!(!self.have_potato);
-        debug!("RECEIVED_POTATO_ACCEPT");
+        debug!("{} RECEIVED_POTATO_ACCEPT", self.is_initial_potato());
         let game_idx = self.get_game_by_id(game_id)?;
         let unroll_data = self.compute_unroll_data_for_games(
             // Skip the removed game.
@@ -983,30 +1016,31 @@ impl ChannelHandler {
             &self.live_games,
         )?;
 
-        let game_amount_for_me = self
-            .live_games
-            .iter()
-            .find(|l| &l.game_id == game_id)
-            .map(|l| l.my_contribution.clone())
-            .unwrap_or_default();
-        let game_amount_for_them = self
-            .live_games
-            .iter()
-            .find(|l| &l.game_id == game_id)
-            .map(|l| l.their_contribution.clone())
-            .unwrap_or_default();
+        let game_amount_for_me = self.live_games[game_idx].get_our_current_share();
+        let game_amount_for_them = self.live_games[game_idx].get_amount() - self.live_games[game_idx].get_our_current_share();
+
+        debug!("received potato accept, my share {game_amount_for_me:?}");
+        let new_my_allocated = self.my_allocated_balance.clone() - self.live_games[game_idx].my_contribution.clone();
+        let new_their_allocated = self.their_allocated_balance.clone() - self.live_games[game_idx].their_contribution.clone();
+        let my_balance = self.my_out_of_game_balance.clone() - self.live_games[game_idx].my_contribution.clone() + game_amount_for_me;
+        let their_balance = self.their_out_of_game_balance.clone() - self.live_games[game_idx].their_contribution.clone() + game_amount_for_them;
+
+        debug!("accept: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}", new_my_allocated, new_their_allocated, my_balance, their_balance);
 
         let unroll_condition_inputs = self.unroll_coin_condition_inputs(
-            game_amount_for_me,
-            game_amount_for_them,
+            my_balance.clone(),
+            their_balance.clone(),
             &unroll_data,
         );
         let spend =
             self.received_potato_verify_signatures(env, signatures, &unroll_condition_inputs)?;
 
         let live_game = self.live_games.remove(game_idx);
-        self.my_allocated_balance -= live_game.my_contribution.clone();
-        self.their_allocated_balance -= live_game.their_contribution.clone();
+        self.my_allocated_balance = new_my_allocated;
+        self.their_allocated_balance = new_their_allocated;
+
+        self.my_out_of_game_balance = my_balance;
+        self.their_out_of_game_balance = their_balance;
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
@@ -1039,12 +1073,13 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
-        debug!("SEND_POTATO_CLEAN_SHUTDOWN");
+        debug!("{} SEND_POTATO_CLEAN_SHUTDOWN", self.is_initial_potato());
         assert!(self.have_potato);
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         let spend = self.state_channel_coin();
 
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
+        debug!("conditions {conditions_program:?}");
         let channel_coin_spend = spend.get_solution_and_signature_from_conditions(
             env,
             &self.private_keys.my_channel_coin_private_key,
@@ -1070,9 +1105,10 @@ impl ChannelHandler {
         their_channel_half_signature: &Aggsig,
         conditions: NodePtr,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        debug!("RECEIVED_POTATO_CLEAN_SHUTDOWN");
+        debug!("{} RECEIVED_POTATO_CLEAN_SHUTDOWN", self.is_initial_potato());
         assert!(!self.have_potato);
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
+        debug!("conditions {conditions_program:?}");
         let channel_spend = self.verify_channel_coin_from_peer_signatures(
             env,
             their_channel_half_signature,

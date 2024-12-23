@@ -30,6 +30,7 @@ use crate::potato_handler::{
     PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, ToLocalUI, WalletSpendInterface,
 };
 
+use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::game::GameAction;
@@ -807,7 +808,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     while !matches!(ending, Some(0)) {
         num_steps += 1;
 
-        assert!(num_steps < 1000);
+        assert!(num_steps < 200);
 
         simulator.farm_block(&neutral_identity.puzzle_hash);
         let current_height = simulator.get_current_height();
@@ -1006,9 +1007,9 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                         can_move = true;
                         cradles[*who].accept(allocator, &mut rng, &game_ids[0])?;
                     }
-                    GameAction::Shutdown(who, _) => {
+                    GameAction::Shutdown(who, conditions) => {
                         can_move = true;
-                        cradles[*who].shut_down(allocator, &mut rng)?;
+                        cradles[*who].shut_down(allocator, &mut rng, conditions.clone())?;
                     }
                 }
             }
@@ -1049,15 +1050,69 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
 }
 
 #[test]
+fn sim_test_with_peer_container_off_chain_complete() {
+    let mut allocator = AllocEncoder::new();
+
+    let mut moves = test_moves_1(&mut allocator).to_vec();
+    moves.push(GameAction::Accept(0));
+    moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+    let outcome =
+        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+    let p1_ph = outcome.identities[0].puzzle_hash.clone();
+    let p2_ph = outcome.identities[1].puzzle_hash.clone();
+    let p1_coins = outcome.simulator.get_my_coins(&p1_ph).expect("should work");
+    let p2_coins = outcome.simulator.get_my_coins(&p2_ph).expect("should work");
+    let p1_balance: u64 = p1_coins
+        .iter()
+        .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
+        .sum();
+    let p2_balance: u64 = p2_coins
+        .iter()
+        .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
+        .sum();
+    for (pn, lui) in outcome.local_uis.iter().enumerate() {
+        for the_move in lui.opponent_moves.iter() {
+            let the_move_to_node = the_move.1.to_nodeptr(&mut allocator).expect("should work");
+            debug!(
+                "player {pn} opponent move {the_move:?} {}",
+                disassemble(allocator.allocator(), the_move_to_node, None)
+            );
+        }
+    }
+    let opponent_moves = &outcome.local_uis[0].opponent_moves;
+    let olen = opponent_moves.len();
+    let outcome_move = &opponent_moves[olen - 1];
+    let outcome_node = outcome_move
+        .1
+        .to_nodeptr(&mut allocator)
+        .expect("should work");
+    let decoded_outcome =
+        decode_calpoker_readable(&mut allocator, outcome_node, Amount::new(200), false)
+            .expect("should decode");
+    debug!(
+        "outcome move {}",
+        disassemble(allocator.allocator(), outcome_node, None)
+    );
+    debug!("game outcome {decoded_outcome:?}");
+    debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
+    if decoded_outcome.win_direction == 1 {
+        assert_eq!(p2_balance + 200, p1_balance);
+    } else if decoded_outcome.win_direction == -1 {
+        assert_eq!(p2_balance, p1_balance + 200);
+    } else {
+        assert_eq!(p2_balance, p1_balance);
+    }
+}
+
+#[test]
 fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut allocator = AllocEncoder::new();
 
     let mut moves = test_moves_1(&mut allocator).to_vec();
-    let nil = allocator.encode_atom(&[]).into_gen().expect("should work");
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::Accept(1));
-    moves.push(GameAction::Shutdown(0, nil));
-    moves.push(GameAction::Shutdown(1, nil));
+    moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+    moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
     if let GameAction::Move(player, readable, _) = moves[3].clone() {
         moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
     } else {

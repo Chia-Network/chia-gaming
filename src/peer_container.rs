@@ -21,6 +21,7 @@ use crate::potato_handler::{
     PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
     WalletSpendInterface,
 };
+use crate::shutdown::ShutdownConditions;
 
 #[derive(Default)]
 pub struct MessagePipe {
@@ -197,7 +198,7 @@ pub trait GameCradle {
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
     /// Perhaps we should consider reporting the reward coins.
-    fn shut_down<R: Rng>(&mut self, allocator: &mut AllocEncoder, rng: &mut R)
+    fn shut_down<R: Rng>(&mut self, allocator: &mut AllocEncoder, rng: &mut R, conditions: Rc<dyn ShutdownConditions>)
         -> Result<(), Error>;
 
     /// Tell the game cradle that a new block arrived, giving a watch report.
@@ -808,15 +809,15 @@ impl GameCradle for SynchronousGameCradle {
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
+        conditions: Rc<dyn ShutdownConditions>,
     ) -> Result<(), Error> {
         // The conditions relate to spending the remaining money in the channel coin.
-        let nil = allocator.encode_atom(&[]).into_gen()?;
         let mut env = channel_handler_env(allocator, rng);
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
         };
-        self.peer.shut_down(&mut penv, nil)?;
+        self.peer.shut_down(&mut penv, conditions)?;
         Ok(())
     }
 

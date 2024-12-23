@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -21,6 +22,7 @@ use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
     IntoErr, Node, PrivateKey, PuzzleHash, Sha256tree, Spend, Timeout,
 };
+use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
 use crate::tests::game::{new_channel_handler_game, GameAction, GameActionResult};
 use crate::tests::referee::{make_debug_game_handler, RefereeTest};
@@ -395,11 +397,16 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 Ok(GameActionResult::Accepted)
             }
             GameAction::Shutdown(player, target_conditions) => {
+                let real_target_conditions = get_conditions_with_channel_handler(
+                    &mut self.env,
+                    &self.parties.player(*player).ch,
+                    target_conditions.borrow()
+                )?;
                 let spend = self
                     .parties
                     .player(*player)
                     .ch
-                    .send_potato_clean_shutdown(&mut self.env, *target_conditions)?;
+                    .send_potato_clean_shutdown(&mut self.env, real_target_conditions)?;
 
                 let full_spend = self
                     .parties
@@ -408,7 +415,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .received_potato_clean_shutdown(
                         &mut self.env,
                         &spend.signature,
-                        *target_conditions,
+                        real_target_conditions,
                     )?;
 
                 // The shutdown gives a spend, which we need to do here.
@@ -639,14 +646,14 @@ fn test_referee_can_slash_on_chain() {
         )
         .expect("should create referee coin");
 
-    assert_eq!(reftest.my_referee.get_our_current_share(), amount);
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::default());
 
     // Farm 20 blocks to get past the time limit.
     for _ in 0..20 {
         s.farm_block(&reftest.my_identity.puzzle_hash);
     }
 
-    assert_eq!(reftest.my_referee.get_our_current_share(), amount);
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::default());
     let timeout_transaction = reftest
         .my_referee
         .get_transaction_for_timeout(&mut allocator, &referee_coins[0])

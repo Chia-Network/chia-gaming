@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::mem::swap;
 use std::rc::Rc;
@@ -27,6 +28,7 @@ use crate::common::types::{
     Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
 use crate::referee::{RefereeOnChainTransaction, TheirTurnCoinSpentResult};
+use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -318,7 +320,7 @@ pub trait FromLocalUI<
     fn shut_down<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        condition: NodePtr,
+        condition: Rc<dyn ShutdownConditions>,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -420,7 +422,6 @@ enum PotatoState {
     Present,
 }
 
-#[derive(Debug)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
     RedoMove(
@@ -430,7 +431,18 @@ pub enum GameAction {
         Box<RefereeOnChainTransaction>,
     ),
     Accept(GameID),
-    Shutdown(NodePtr),
+    Shutdown(Rc<dyn ShutdownConditions>),
+}
+
+impl std::fmt::Debug for GameAction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            GameAction::Move(gi,rm,h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
+            GameAction::RedoMove(gi,cs,ph,rt) => write!(formatter, "RedoMove({gi:?},{cs:?},{ph:?},{rt:?})"),
+            GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
+            GameAction::Shutdown(_) => write!(formatter, "Shutdown(..)"),
+        }
+    }
 }
 
 pub struct PotatoHandlerInit {
@@ -1030,10 +1042,19 @@ impl PotatoHandler {
             }
             Some(GameAction::Shutdown(conditions)) => {
                 let timeout = self.channel_timeout.clone();
+                let real_conditions = {
+                    let ch = self.channel_handler_mut()?;
+                    let (env, _) = penv.env();
+                    get_conditions_with_channel_handler(
+                        env,
+                        ch,
+                        conditions.borrow(),
+                    )?
+                };
                 let (state_channel_coin, spend, want_puzzle_hash, want_amount) = {
                     let ch = self.channel_handler_mut()?;
                     let (env, _) = penv.env();
-                    let spend = ch.send_potato_clean_shutdown(env, conditions)?;
+                    let spend = ch.send_potato_clean_shutdown(env, real_conditions)?;
 
                     // conditions must have a reward coin targeted at our referee_public_key.
                     // this is how we'll know we're being paid.
@@ -1060,7 +1081,7 @@ impl PotatoHandler {
                     HandshakeState::WaitingForShutdown(my_reward, state_channel_coin.clone());
 
                 // If the state channel coin is spent, then we signal full shutdown.
-                let shutdown_condition_program = Program::from_nodeptr(env.allocator, conditions)?;
+                let shutdown_condition_program = Program::from_nodeptr(env.allocator, real_conditions)?;
                 system_interface.send_message(&PeerMessage::Shutdown(
                     spend.signature.clone(),
                     shutdown_condition_program,
@@ -2443,7 +2464,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     fn shut_down<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        conditions: NodePtr,
+        conditions: Rc<dyn ShutdownConditions>,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -2451,6 +2472,12 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     {
         if let HandshakeState::OnChain(game_map) = &self.handshake_state {
             let player_ch = self.channel_handler()?;
+            let (env, system_interface) = penv.env();
+            let real_conditions = get_conditions_with_channel_handler(
+                env,
+                player_ch,
+                conditions.borrow(),
+            )?;
             if !game_map.is_empty() {
                 debug!(
                     "{} waiting for all games to be done",
@@ -2463,7 +2490,6 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
             self.handshake_state = HandshakeState::Completed;
 
-            let (_env, system_interface) = penv.env();
             system_interface.shutdown_complete(None)?;
 
             return Ok(());
