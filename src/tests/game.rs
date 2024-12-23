@@ -66,9 +66,13 @@ impl std::fmt::Debug for GameAction {
         match self {
             GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
             GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
+            #[cfg(feature = "sim-tests")]
             GameAction::FakeMove(p, n, v) => write!(formatter, "FakeMove({p},{n:?},{v:?})"),
+            #[cfg(feature = "sim-tests")]
             GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
+            #[cfg(feature = "sim-tests")]
             GameAction::Accept(p) => write!(formatter, "Accept({p})"),
+            #[cfg(feature = "sim-tests")]
             GameAction::Shutdown(p, _) => write!(formatter, "Shutdown({p},..)"),
         }
     }
