@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
-use clvm_traits::{ClvmEncoder, ToClvm};
+use clvm_traits::ToClvm;
 use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;

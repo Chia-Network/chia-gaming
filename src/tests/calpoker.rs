@@ -7,22 +7,15 @@ use rand::prelude::*;
 #[cfg(feature = "sim-tests")]
 use rand_chacha::ChaCha8Rng;
 
-#[cfg(feature = "sim-tests")]
-use clvmr::allocator::NodePtr;
-
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
-#[cfg(feature = "sim-tests")]
-use crate::common::constants::CREATE_COIN;
-#[cfg(feature = "sim-tests")]
-use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Amount, PrivateKey, PuzzleHash};
+use crate::common::types::Amount;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
@@ -268,11 +261,6 @@ fn test_play_calpoker_on_chain_after_2_moves_p1() {
 #[test]
 fn test_play_calpoker_end_game_reward() {
     let mut allocator = AllocEncoder::new();
-
-    let seed: [u8; 32] = [0; 32];
-    let mut rng = ChaCha8Rng::from_seed(seed);
-    let output_private_key: PrivateKey = rng.gen();
-    let output_identity = ChiaIdentity::new(&mut allocator, output_private_key).unwrap();
 
     let mut moves = test_moves_1(&mut allocator).to_vec();
     moves.push(GameAction::Accept(1));

@@ -400,7 +400,6 @@ enum HandshakeState {
     OnChainWaitingForUnrollSpend(CoinString),
     OnChainWaitingForUnrollConditions(CoinString),
     OnChain(HashMap<CoinString, OnChainGameState>),
-    WaitingForShutdown(CoinString, CoinString),
     Completed,
 }
 
@@ -1573,7 +1572,7 @@ impl PotatoHandler {
                 let mut hs = HandshakeState::StepA;
                 swap(&mut hs, &mut self.handshake_state);
                 match hs {
-                    HandshakeState::OnChainTransition(unroll_coin, t) => {
+                    HandshakeState::OnChainTransition(unroll_coin, _t) => {
                         debug!(
                             "{} notified of channel coin spend in on chain transition state",
                             ch.is_initial_potato()
@@ -2493,12 +2492,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
     {
         if let HandshakeState::OnChain(game_map) = &self.handshake_state {
             let player_ch = self.channel_handler()?;
-            let (env, system_interface) = penv.env();
-            let real_conditions = get_conditions_with_channel_handler(
-                env,
-                player_ch,
-                conditions.borrow(),
-            )?;
+            let (_env, system_interface) = penv.env();
             if !game_map.is_empty() {
                 debug!(
                     "{} waiting for all games to be done",
@@ -2606,21 +2600,6 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             }
         }
 
-        if let Some(reward) =
-            if let HandshakeState::WaitingForShutdown(reward, _state) = &self.handshake_state {
-                Some(reward.clone())
-            } else {
-                None
-            }
-        {
-            if reward == *coin {
-                // We have the expected reward coin.
-                self.handshake_state = HandshakeState::Completed;
-                let (_, system_interface) = penv.env();
-                system_interface.shutdown_complete(Some(&reward))?;
-            }
-        }
-
         Ok(())
     }
 
@@ -2633,28 +2612,6 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
-        if let Some((reward, state_coin)) =
-            if let HandshakeState::WaitingForShutdown(reward, coin) = &self.handshake_state {
-                Some((reward.clone(), coin.clone()))
-            } else {
-                None
-            }
-        {
-            if *coin_id == state_coin {
-                if let Some((_parent, _ph, amount)) = reward.to_parts() {
-                    if amount == Amount::default() {
-                        // 0 reward so spending the state channel coin means the game is over.
-                        self.handshake_state = HandshakeState::Completed;
-                        let (_, system_interface) = penv.env();
-                        system_interface.shutdown_complete(Some(&reward))?;
-                    }
-                }
-
-                // We're in shutdown state so we're waiting for our reward coin to appear.
-                return Ok(());
-            }
-        }
-
         self.check_channel_spent(penv, coin_id)?;
 
         self.check_unroll_spent(penv, coin_id)?;

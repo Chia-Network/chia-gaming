@@ -1035,7 +1035,6 @@ impl ChannelHandler {
         let spend =
             self.received_potato_verify_signatures(env, signatures, &unroll_condition_inputs)?;
 
-        let live_game = self.live_games.remove(game_idx);
         self.my_allocated_balance = new_my_allocated;
         self.their_allocated_balance = new_their_allocated;
 

@@ -33,7 +33,7 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
 };
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Amount, AllocEncoder, CoinString, Error, IntoErr, PuzzleHash};
+use crate::common::types::{Amount, CoinString, Error, IntoErr};
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::Simulator;
