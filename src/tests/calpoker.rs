@@ -19,13 +19,12 @@ use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
-use crate::games::calpoker::decode_calpoker_readable;
-#[cfg(feature = "sim-tests")]
-use crate::games::calpoker::decode_readable_card_choices;
-#[cfg(feature = "sim-tests")]
 use crate::games::calpoker::make_cards;
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::CalpokerResult;
+use crate::games::calpoker::WinDirectionUser;
+#[cfg(feature = "sim-tests")]
+use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choices};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 #[cfg(feature = "sim-tests")]
@@ -150,7 +149,8 @@ fn test_verify_endgame_data() {
                 bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 1, 1, 1, 3, 14, 13, 11]),
                 your_share: 200,
                 game_amount: 200,
-                win_direction: 1
+                raw_win_direction: 1,
+                win_direction: Some(WinDirectionUser::Alice),
             }
         );
     } else {

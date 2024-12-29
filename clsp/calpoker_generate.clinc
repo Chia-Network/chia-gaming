@@ -121,7 +121,10 @@
         bob_all_cards (map make_card (append bob_cards_bob my_cards_bob))
         (my_hand_value my_picks) (handcalc (map card_list_to_pair my_all_cards))
         (bob_hand_value bob_picks) (handcalc (map card_list_to_pair bob_all_cards))
+        ;; win_result is 1 if my_hand_value is greater than bob_hand_value
         win_result (list_compare my_hand_value bob_hand_value)
+        ;; split is captured in a their turn handler below so it's the opposite of what
+        ;; this turn would specify.
         split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
         (list MAKE_MOVE
             (list move (indices_to_bitfield my_picks) (indices_to_bitfield bob_picks)
@@ -228,6 +231,7 @@
         (alice_hand_value alice_picks) (handcalc (map card_list_to_pair alice_all_cards))
         (bob_hand_value bob_picks) (handcalc (map card_list_to_pair bob_all_cards))
         win_result (list_compare alice_hand_value bob_hand_value)
+        ;; win_result 1 means alice wins.
         correct_split (print (list "bob driver e checking correct split" win_result split amount) (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount))
         (if (!= split correct_split)
             (list SLASH (indices_to_bitfield bob_picks))

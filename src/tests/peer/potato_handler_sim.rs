@@ -19,7 +19,9 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, PrivateKey, Program,
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::games::calpoker::decode_calpoker_readable;
+use crate::games::calpoker::{
+    decode_calpoker_readable, decode_readable_card_choices, get_final_used_cards,
+};
 use crate::games::poker_collection;
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
@@ -1070,15 +1072,46 @@ fn sim_test_with_peer_container_off_chain_complete() {
         .iter()
         .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
         .sum();
+
     for (pn, lui) in outcome.local_uis.iter().enumerate() {
-        for the_move in lui.opponent_moves.iter() {
+        for (mn, the_move) in lui.opponent_moves.iter().enumerate() {
             let the_move_to_node = the_move.1.to_nodeptr(&mut allocator).expect("should work");
             debug!(
-                "player {pn} opponent move {the_move:?} {}",
+                "player {pn} opponent move {mn} {the_move:?} {}",
                 disassemble(allocator.allocator(), the_move_to_node, None)
             );
         }
     }
+
+    let p0_view_of_cards = outcome.local_uis[0].opponent_moves[0].1.clone();
+    let alice_cards =
+        decode_readable_card_choices(&mut allocator, p0_view_of_cards).expect("should get cards");
+    let alice_outcome_node = outcome.local_uis[0].opponent_moves[1]
+        .1
+        .to_nodeptr(&mut allocator)
+        .expect("should work");
+    let alice_outcome =
+        decode_calpoker_readable(&mut allocator, alice_outcome_node, Amount::new(200), false)
+            .expect("should work");
+    let p1_view_of_cards = outcome.local_uis[1].opponent_moves[1].1.clone();
+    let bob_cards =
+        decode_readable_card_choices(&mut allocator, p1_view_of_cards).expect("should work");
+    let bob_outcome_node = outcome.local_uis[1].opponent_moves[2]
+        .1
+        .to_nodeptr(&mut allocator)
+        .expect("should work");
+    let bob_outcome =
+        decode_calpoker_readable(&mut allocator, bob_outcome_node, Amount::new(200), true)
+            .expect("should work");
+
+    assert_eq!(alice_cards, bob_cards);
+
+    let (alice_used_cards, bob_used_cards) =
+        get_final_used_cards(&alice_cards, &alice_outcome, &bob_outcome);
+
+    debug!("alice_used_cards {alice_used_cards:?}");
+    debug!("bob_used_cards   {bob_used_cards:?}");
+
     let opponent_moves = &outcome.local_uis[0].opponent_moves;
     let olen = opponent_moves.len();
     let outcome_move = &opponent_moves[olen - 1];
@@ -1095,10 +1128,10 @@ fn sim_test_with_peer_container_off_chain_complete() {
     );
     debug!("game outcome {decoded_outcome:?}");
     debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
-    if decoded_outcome.win_direction == 1 {
-        assert_eq!(p2_balance, p1_balance + 200);
-    } else if decoded_outcome.win_direction == -1 {
+    if decoded_outcome.raw_win_direction == 1 {
         assert_eq!(p2_balance + 200, p1_balance);
+    } else if decoded_outcome.raw_win_direction == -1 {
+        assert_eq!(p2_balance, p1_balance + 200);
     } else {
         assert_eq!(p2_balance, p1_balance);
     }
@@ -1155,9 +1188,9 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     );
     debug!("game outcome {decoded_outcome:?}");
     debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
-    if decoded_outcome.win_direction == 1 {
+    if decoded_outcome.raw_win_direction == 1 {
         assert_eq!(p2_balance + 200, p1_balance);
-    } else if decoded_outcome.win_direction == -1 {
+    } else if decoded_outcome.raw_win_direction == -1 {
         assert_eq!(p2_balance, p1_balance + 200);
     } else {
         assert_eq!(p2_balance, p1_balance);

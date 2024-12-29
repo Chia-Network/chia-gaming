@@ -700,7 +700,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         start_info_list: &[GameStartInfo],
     ) -> Result<PotatoSignatures, Error> {
-        debug!("SEND POTATO START GAME");
+        debug!("{} SEND POTATO START GAME", self.is_initial_potato());
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
 
@@ -738,8 +738,10 @@ impl ChannelHandler {
         start_info_list: &[GameStartInfo],
     ) -> Result<ChannelCoinSpendInfo, Error> {
         debug!(
-            "RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",
-            self.current_state_number, self.unroll.coin.state_number
+            "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",
+            self.is_initial_potato(),
+            self.current_state_number,
+            self.unroll.coin.state_number
         );
         let mut new_games = self.add_games(env, start_info_list)?;
 

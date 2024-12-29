@@ -608,7 +608,7 @@ fn test_referee_can_slash_on_chain() {
         &game_start_info,
     );
 
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
 
     // Make simulator and create referee coin.
     let s = Simulator::default();
@@ -646,20 +646,14 @@ fn test_referee_can_slash_on_chain() {
         )
         .expect("should create referee coin");
 
-    assert_eq!(
-        reftest.my_referee.get_our_current_share(),
-        Amount::default()
-    );
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
 
     // Farm 20 blocks to get past the time limit.
     for _ in 0..20 {
         s.farm_block(&reftest.my_identity.puzzle_hash);
     }
 
-    assert_eq!(
-        reftest.my_referee.get_our_current_share(),
-        Amount::default()
-    );
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
     let timeout_transaction = reftest
         .my_referee
         .get_transaction_for_timeout(&mut allocator, &referee_coins[0])
@@ -727,7 +721,7 @@ fn test_referee_can_move_on_chain() {
     );
 
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
 
     // Make our first move.
     let readable_my_move =
@@ -738,7 +732,7 @@ fn test_referee_can_move_on_chain() {
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
 
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
     // Make simulator and create referee coin.
     let s = Simulator::default();
