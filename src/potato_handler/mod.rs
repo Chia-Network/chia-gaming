@@ -1638,7 +1638,7 @@ impl PotatoHandler {
                 game_map,
             );
             on_chain.next_action(penv)?;
-            self.handshake_state = HandshakeState::OnChain(on_chain);
+            self.handshake_state = HandshakeState::OnChain(Box::new(on_chain));
         } else {
             return Err(Error::StrErr("no channel handler yet".to_string()));
         }
