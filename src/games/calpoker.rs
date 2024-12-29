@@ -338,8 +338,10 @@ pub fn decode_hand_result(
     Ok(RawCalpokerHandValue::SimpleList(result_list))
 }
 
+type IndexAndCard = (usize, (usize, usize));
+
 fn select_cards_using_bits(cardlist: &CardList, selections: usize) -> (CardList, CardList) {
-    let (p1, p2): (Vec<(usize, (usize, usize))>, Vec<(usize, (usize, usize))>) = cardlist
+    let (p1, p2): (Vec<IndexAndCard>, Vec<IndexAndCard>) = cardlist
         .iter()
         .cloned()
         .enumerate()
