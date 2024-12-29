@@ -1,17 +1,19 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult,
-    OnChainGameState, PotatoSignatures, ReadableMove,
+    PotatoSignatures, ReadableMove,
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, PublicKey, PuzzleHash,
     SpendBundle, Timeout,
 };
+use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::referee::RefereeOnChainTransaction;
 use crate::shutdown::ShutdownConditions;
 
@@ -383,7 +385,7 @@ pub enum HandshakeState {
     // Converge here to on chain state.
     OnChainWaitingForUnrollSpend(CoinString),
     OnChainWaitingForUnrollConditions(CoinString),
-    OnChain(HashMap<CoinString, OnChainGameState>),
+    OnChain(OnChainPotatoHandler),
     Completed,
 }
 
@@ -399,6 +401,7 @@ where
     fn env(&mut self) -> (&mut ChannelHandlerEnv<'inputs, R>, &mut G);
 }
 
+#[derive(Debug)]
 pub enum PotatoState {
     Absent,
     Requested,
@@ -439,4 +442,65 @@ pub struct PotatoHandlerInit {
     pub channel_timeout: Timeout,
     pub unroll_timeout: Timeout,
     pub reward_puzzle_hash: PuzzleHash,
+}
+
+pub trait PotatoHandlerImpl {
+    fn channel_handler(&self) -> &ChannelHandler;
+
+    fn channel_handler_mut(&mut self) -> &mut ChannelHandler;
+
+    fn check_game_coin_spent<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString,
+    ) -> Result<bool, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+
+    fn handle_game_coin_spent<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString,
+        puzzle: &Program,
+        solution: &Program,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+
+    fn coin_timeout_reached<'a, G, R>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        coin_id: &CoinString,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+        R: Rng + 'a;
+
+    fn do_on_chain_move<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        current_coin: &CoinString,
+        game_id: GameID,
+        readable_move: ReadableMove,
+        entropy: Hash,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+
+    fn do_on_chain_action<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        action: GameAction,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+
+    fn shut_down<'a, G, R>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        conditions: Rc<dyn ShutdownConditions>,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+        R: Rng + 'a;
 }
