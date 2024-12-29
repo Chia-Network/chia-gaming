@@ -11,7 +11,6 @@
 (import std.assert)
 (import std.append)
 (import std.relops)
-(import std.print)
 (import std.list_compare)
 (import handcalc exposing handcalc)
 (import onchain.calpoker.onehandcalc exposing onehandcalc)
@@ -129,9 +128,8 @@
         (list MAKE_MOVE
             (list move (indices_to_bitfield my_picks) (indices_to_bitfield bob_picks)
                 my_hand_value bob_hand_value win_result)
-            (lambda ((& MY_SALT MY_PICKS my_picks split amount)) (list (concat (print "MY_SALT is" MY_SALT) (print "MY_PICKS are" MY_PICKS) (print "my_selects are" (single-byte (indices_to_bitfield my_picks)))) 0 0 0 0 split 0 0)
+            (lambda ((& MY_SALT MY_PICKS my_picks split amount)) (list (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_picks))) 0 0 0 0 split 0 0))
             0
-            )
         )
     )
 )
@@ -232,7 +230,7 @@
         (bob_hand_value bob_picks) (handcalc (map card_list_to_pair bob_all_cards))
         win_result (list_compare alice_hand_value bob_hand_value)
         ;; win_result 1 means alice wins.
-        correct_split (print (list "bob driver e checking correct split" win_result split amount) (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount))
+        correct_split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
         (if (!= split correct_split)
             (list SLASH (indices_to_bitfield bob_picks))
             (list MAKE_MOVE
