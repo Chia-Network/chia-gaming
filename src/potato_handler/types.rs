@@ -476,6 +476,14 @@ pub trait PotatoHandlerImpl {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
         R: Rng + 'a;
 
+    fn next_action<'a, G, R>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+        R: Rng + 'a;
+
     fn do_on_chain_move<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
@@ -499,7 +507,7 @@ pub trait PotatoHandlerImpl {
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         conditions: Rc<dyn ShutdownConditions>,
-    ) -> Result<(), Error>
+    ) -> Result<bool, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
         R: Rng + 'a;

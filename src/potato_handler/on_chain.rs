@@ -195,9 +195,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         }
 
         if unblock_queue {
-            if let Some(action) = self.game_action_queue.pop_front() {
-                self.do_on_chain_action(penv, action)?;
-            }
+            self.next_action(penv)?;
         }
 
         Ok(())
@@ -247,9 +245,21 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 readable,
                 mover_share,
             )?;
-            if let Some(action) = self.game_action_queue.pop_front() {
-                self.do_on_chain_action(penv, action)?;
-            }
+            self.next_action(penv)?;
+        }
+
+        Ok(())
+    }
+
+    fn next_action<'a, G, R>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+        R: Rng + 'a {
+        if let Some(action) = self.game_action_queue.pop_front() {
+            self.do_on_chain_action(penv, action)?;
         }
 
         Ok(())
@@ -418,7 +428,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         conditions: Rc<dyn ShutdownConditions>,
-    ) -> Result<(), Error>
+    ) -> Result<bool, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
         R: Rng + 'a
@@ -431,11 +441,11 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             );
             self.game_action_queue
                 .push_back(GameAction::Shutdown(conditions));
-            return Ok(());
+            return Ok(false);
         }
 
         system_interface.shutdown_complete(None)?;
 
-        return Ok(());
+        Ok(true)
     }
 }

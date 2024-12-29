@@ -1597,8 +1597,6 @@ impl PotatoHandler {
             player_ch.set_state_for_coins(env, unroll_coin, &created_coins)?
         };
 
-        let mut actions = Vec::new();
-
         for (_coin, def) in game_map.iter() {
             let player_ch = self.channel_handler()?;
             debug!(
@@ -1621,28 +1619,26 @@ impl PotatoHandler {
             let (env, _system_interface) = penv.env();
             if let Some(redo_move) = player_ch.get_redo_action(env, coin)? {
                 debug!("redo move: {redo_move:?}");
-                actions.push(redo_move);
+                self.game_action_queue.push_front(redo_move);
             }
         }
 
         debug!("we can proceed with game");
-
-        for action in actions.into_iter() {
-            self.game_action_queue.push_front(action);
-        }
 
         let mut on_chain_queue = VecDeque::new();
         let mut swap_player_ch: Option<ChannelHandler> = None;
         swap(&mut self.game_action_queue, &mut on_chain_queue);
         swap(&mut self.channel_handler, &mut swap_player_ch);
         if let Some(channel_handler) = swap_player_ch {
-            self.handshake_state = HandshakeState::OnChain(OnChainPotatoHandler::new(
+            let mut on_chain = OnChainPotatoHandler::new(
                 PotatoState::Present,
                 self.channel_timeout.clone(),
                 channel_handler,
                 on_chain_queue,
                 game_map
-            ));
+            );
+            on_chain.next_action(penv)?;
+            self.handshake_state = HandshakeState::OnChain(on_chain);
         } else {
             return Err(Error::StrErr("no channel handler yet".to_string()));
         }
@@ -1769,16 +1765,10 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
-        let shutdown_complete =
-            if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
-                on_chain.shut_down(penv, conditions.clone())?;
-                true
-            } else {
-                false
-            };
-
-        if shutdown_complete {
-            self.handshake_state = HandshakeState::Completed;
+        if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
+            if on_chain.shut_down(penv, conditions.clone())? {
+                self.handshake_state = HandshakeState::Completed;
+            }
             return Ok(());
         }
 
