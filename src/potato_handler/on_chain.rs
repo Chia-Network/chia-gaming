@@ -6,10 +6,16 @@ use rand::Rng;
 
 use log::debug;
 
-use crate::potato_handler::types::{BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState, ToLocalUI, WalletSpendInterface};
-use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::types::{CoinSpentInformation, OnChainGameState, ReadableMove};
-use crate::common::types::{Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, SpendBundle, Timeout};
+use crate::channel_handler::ChannelHandler;
+use crate::common::types::{
+    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
+    SpendBundle, Timeout,
+};
+use crate::potato_handler::types::{
+    BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
+    ToLocalUI, WalletSpendInterface,
+};
 use crate::referee::TheirTurnCoinSpentResult;
 use crate::shutdown::ShutdownConditions;
 
@@ -18,7 +24,7 @@ pub struct OnChainPotatoHandler {
     channel_timeout: Timeout,
     player_ch: ChannelHandler,
     game_action_queue: VecDeque<GameAction>,
-    game_map: HashMap<CoinString, OnChainGameState>
+    game_map: HashMap<CoinString, OnChainGameState>,
 }
 
 impl std::fmt::Debug for OnChainPotatoHandler {
@@ -60,7 +66,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         coin_id: &CoinString,
     ) -> Result<bool, Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a {
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
         if self.game_map.contains_key(coin_id) {
             // Check how it got spent.
             let (_env, system_interface) = penv.env();
@@ -79,7 +86,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         solution: &Program,
     ) -> Result<(), Error>
     where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a {
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
         let mut unblock_queue = false;
         let initial_potato = self.player_ch.is_initial_potato();
 
@@ -98,7 +106,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         let (env, system_interface) = penv.env();
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
         let their_turn_result =
-            self.player_ch.game_coin_spent(env, &old_definition.game_id, coin_id, &conditions)?;
+            self.player_ch
+                .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions)?;
         debug!(
             "{initial_potato} game coin spent result from channel handler {their_turn_result:?}"
         );
@@ -208,7 +217,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: Rng + 'a
+        R: Rng + 'a,
     {
         if let Some(game_def) = self.game_map.remove(coin_id) {
             let initial_potato = self.player_ch.is_initial_potato();
@@ -216,7 +225,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
 
             let result_transaction =
-                self.player_ch.accept_or_timeout_game_on_chain(env, &game_def.game_id, coin_id)?;
+                self.player_ch
+                    .accept_or_timeout_game_on_chain(env, &game_def.game_id, coin_id)?;
 
             self.have_potato = PotatoState::Present;
             if let Some(tx) = result_transaction {
@@ -251,13 +261,11 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         Ok(())
     }
 
-    fn next_action<'a, G, R>(
-        &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-    ) -> Result<(), Error>
+    fn next_action<'a, G, R>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: Rng + 'a {
+        R: Rng + 'a,
+    {
         if let Some(action) = self.game_action_queue.pop_front() {
             self.do_on_chain_action(penv, action)?;
         }
@@ -431,7 +439,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
     ) -> Result<bool, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-        R: Rng + 'a
+        R: Rng + 'a,
     {
         let (_env, system_interface) = penv.env();
         if !self.game_map.is_empty() {

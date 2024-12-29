@@ -4,11 +4,11 @@ use std::rc::Rc;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::ChannelHandler;
 use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult,
     PotatoSignatures, ReadableMove,
 };
+use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, PublicKey, PuzzleHash,
     SpendBundle, Timeout,
@@ -476,10 +476,7 @@ pub trait PotatoHandlerImpl {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
         R: Rng + 'a;
 
-    fn next_action<'a, G, R>(
-        &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-    ) -> Result<(), Error>
+    fn next_action<'a, G, R>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
         R: Rng + 'a;

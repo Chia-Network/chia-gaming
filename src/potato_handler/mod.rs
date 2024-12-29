@@ -14,8 +14,7 @@ use rand::Rng;
 
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys,
-    FlatGameStartInfo, GameStartInfo, PotatoSignatures,
-    PrintableGameStartInfo, ReadableMove,
+    FlatGameStartInfo, GameStartInfo, PotatoSignatures, PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
@@ -37,8 +36,8 @@ use crate::potato_handler::types::{
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
-pub mod types;
 pub mod on_chain;
+pub mod types;
 
 /// Handle potato in flight when I request potato:
 ///
@@ -1485,9 +1484,10 @@ impl PotatoHandler {
             return Ok(());
         }
 
-        Err(Error::StrErr(
-            format!("move without finishing handshake (state {:?})", self.handshake_state),
-        ))
+        Err(Error::StrErr(format!(
+            "move without finishing handshake (state {:?})",
+            self.handshake_state
+        )))
     }
 
     fn handle_channel_coin_spent<'a, G, R: Rng + 'a>(
@@ -1635,7 +1635,7 @@ impl PotatoHandler {
                 self.channel_timeout.clone(),
                 channel_handler,
                 on_chain_queue,
-                game_map
+                game_map,
             );
             on_chain.next_action(penv)?;
             self.handshake_state = HandshakeState::OnChain(on_chain);
@@ -1672,12 +1672,7 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
-            return on_chain.handle_game_coin_spent(
-                penv,
-                coin_id,
-                puzzle,
-                solution
-            );
+            return on_chain.handle_game_coin_spent(penv, coin_id, puzzle, solution);
         }
 
         Ok(())
@@ -1898,12 +1893,12 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         // we receive the unroll coin spend.
         let unroll_timed_out =
             if let HandshakeState::OnChainWaitingForUnrollTimeoutOrSpend(unroll) =
-            &self.handshake_state
-        {
-            coin_id == unroll
-        } else {
-            false
-        };
+                &self.handshake_state
+            {
+                coin_id == unroll
+            } else {
+                false
+            };
 
         // out from under the immutable borrow.
         if unroll_timed_out {
@@ -1911,10 +1906,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         }
 
         if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
-            return on_chain.coin_timeout_reached(
-                penv,
-                coin_id
-            );
+            return on_chain.coin_timeout_reached(penv, coin_id);
         }
 
         Ok(())
