@@ -16,11 +16,11 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
     Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
 };
-use crate::potato_handler::{
+use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
-    WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
+use crate::potato_handler::PotatoHandler;
 use crate::shutdown::ShutdownConditions;
 
 #[derive(Default)]

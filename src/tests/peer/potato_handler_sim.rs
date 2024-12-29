@@ -27,10 +27,11 @@ use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
-use crate::potato_handler::{
+use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandlerInit, ToLocalUI, WalletSpendInterface,
 };
+use crate::potato_handler::PotatoHandler;
 
 use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
