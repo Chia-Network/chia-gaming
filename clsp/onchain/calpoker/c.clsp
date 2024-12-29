@@ -5,7 +5,6 @@
 (import std.relops)
 (import std.and)
 (import std.if_any_fail)
-(import std.print)
 (import onchain.calpoker.d exposing (program_hash as dhash))
 (import onchain.calpoker.make_cards)
 
@@ -17,11 +16,11 @@
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
     (alice_commit bob_seed) me mover_puzzle solution evidence))
     (if_any_fail
-        (print (list "poker c" move "all args" move (strlen move)) (= (strlen move) 48))
-        (print (list "check hash of move 0..16" (substr move 0 16) alice_commit) (= (sha256 (substr move 0 16)) alice_commit))
-        (print (list "check new validation hash" new_validation_hash) (= new_validation_hash (sha256 dhash (shatree (list (make_cards 
-            (sha256 (substr move 0 16) bob_seed amount)) (substr move 16 48))))))
-        (print (list "check max move size" max_move_size) (= max_move_size 1))
+        (= (strlen move) 48)
+        (= (sha256 (substr move 0 16)) alice_commit)
+        (= new_validation_hash (sha256 dhash (shatree (list (make_cards
+            (sha256 (substr move 0 16) bob_seed amount)) (substr move 16 48)))))
+        (= max_move_size 1)
         0
         (x)
     )

@@ -3,7 +3,6 @@
 (import onchain.calpoker.b exposing (program_hash as bhash))
 (import std.assert)
 (import std.and)
-(import std.print)
 (import std.if_any_fail)
 
 ; Bob challenging
@@ -16,7 +15,7 @@
     state me mover_puzzle solution evidence)
 
     (if_any_fail
-        (print "poker a" (= new_validation_hash (sha256 bhash (sha256 1 move))))
+        (= new_validation_hash (sha256 bhash (sha256 1 move)))
         (= (strlen move) 32)
         (= max_move_size 16)
         0
