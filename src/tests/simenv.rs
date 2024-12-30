@@ -1,6 +1,8 @@
+use std::borrow::Borrow;
+use std::rc::Rc;
+
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use std::borrow::Borrow;
 
 use clvm_traits::ToClvm;
 use clvmr::{run_program, NodePtr};
@@ -20,7 +22,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, Node, PrivateKey, PuzzleHash, Sha256tree, Spend, Timeout,
+    IntoErr, PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
@@ -57,7 +59,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             ChiaIdentity::new(allocator, their_private_key).expect("should generate"),
         ];
 
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let simulator = Simulator::default();
         let (parties, coin) = new_channel_handler_game(
             &simulator,
@@ -434,11 +436,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .player(*player)
                     .ch
                     .get_aggregate_channel_public_key();
-                let puzzle = puzzle_for_synthetic_public_key(
+                let puzzle = Rc::new(puzzle_for_synthetic_public_key(
                     self.env.allocator,
                     &self.env.standard_puzzle,
                     &channel_puzzle_public_key,
-                )?;
+                )?);
                 let included = self
                     .simulator
                     .push_tx(
@@ -581,7 +583,9 @@ fn test_referee_can_slash_on_chain() {
     let timeout = Timeout::new(10);
 
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
-    let init_state = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let init_state_node = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let init_state =
+        Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
     let initial_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
 
@@ -690,8 +694,9 @@ fn test_referee_can_move_on_chain() {
     let max_move_size = 100;
 
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
-    let init_state = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
-
+    let init_state_node = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let init_state =
+        Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
     let my_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
 
@@ -709,8 +714,9 @@ fn test_referee_can_move_on_chain() {
         initial_mover_share: Amount::default(),
     };
 
-    let _their_validation_program_hash =
-        Node(debug_game.their_validation_program).sha256tree(&mut allocator);
+    let _their_validation_program_hash = debug_game
+        .their_validation_program
+        .sha256tree(&mut allocator);
 
     let mut reftest = RefereeTest::new(
         &mut allocator,

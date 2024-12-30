@@ -6,8 +6,6 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
-use clvmr::serde::node_from_bytes;
-use clvmr::Allocator;
 
 use log::debug;
 
@@ -25,7 +23,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo,
     CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
-    Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
+    Program, PublicKey, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
 };
 use crate::referee::{
     GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
@@ -75,7 +73,7 @@ pub struct PotatoSignatures {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GenericGameStartInfo<VP: std::fmt::Debug + Clone, S: std::fmt::Debug + Clone> {
+pub struct GameStartInfo {
     pub game_id: GameID,
     pub amount: Amount,
     pub game_handler: GameHandler,
@@ -84,127 +82,16 @@ pub struct GenericGameStartInfo<VP: std::fmt::Debug + Clone, S: std::fmt::Debug 
     pub my_contribution_this_game: Amount,
     pub their_contribution_this_game: Amount,
 
-    pub initial_validation_program: VP,
-    pub initial_state: S,
+    pub initial_validation_program: ValidationProgram,
+    pub initial_state: Rc<Program>,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
 }
 
-pub type GameStartInfo = GenericGameStartInfo<ValidationProgram, NodePtr>;
-pub type FlatGameStartInfo = GenericGameStartInfo<Program, Program>;
-
-pub struct PrintableGameStartInfo<'a> {
-    pub allocator: &'a mut Allocator,
-    pub info: &'a GameStartInfo,
-}
-
-impl std::fmt::Debug for PrintableGameStartInfo<'_> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        writeln!(formatter, "- game_id: {:?}", self.info.game_id)?;
-        writeln!(formatter, "- amount: {:?}", self.info.amount)?;
-        writeln!(
-            formatter,
-            "- game_handler: {} {:?}",
-            self.info.game_handler.is_my_turn(),
-            self.info.game_handler,
-        )?;
-        writeln!(formatter, "- timeout: {:?}", self.info.timeout)?;
-        writeln!(
-            formatter,
-            "- my_contribution_this_game: {:?}",
-            self.info.my_contribution_this_game
-        )?;
-        writeln!(
-            formatter,
-            "- their_contribution_this_game: {:?}",
-            self.info.their_contribution_this_game
-        )?;
-        writeln!(
-            formatter,
-            "- initial_validation_program: {}",
-            disassemble(
-                self.allocator,
-                self.info.initial_validation_program.to_nodeptr(),
-                None
-            )
-        )?;
-        writeln!(
-            formatter,
-            "- initial_state: {}",
-            disassemble(self.allocator, self.info.initial_state, None)
-        )?;
-        writeln!(formatter, "- initial_move: {:?}", self.info.initial_move)?;
-        writeln!(
-            formatter,
-            "- initial_max_move_size: {:?}",
-            self.info.initial_max_move_size
-        )?;
-        writeln!(
-            formatter,
-            "- initial_mover_share: {:?}",
-            self.info.initial_mover_share
-        )?;
-
-        Ok(())
-    }
-}
-
-impl GenericGameStartInfo<ValidationProgram, NodePtr> {
+impl GameStartInfo {
     pub fn is_my_turn(&self) -> bool {
         matches!(self.game_handler, GameHandler::MyTurnHandler(_))
-    }
-
-    pub fn from_serializable(
-        allocator: &mut AllocEncoder,
-        serializable: &FlatGameStartInfo,
-    ) -> Result<GameStartInfo, Error> {
-        let game_handler = serializable.game_handler.clone();
-        let initial_validation_program_nodeptr = node_from_bytes(
-            allocator.allocator(),
-            &serializable.initial_validation_program.0,
-        )
-        .into_gen()?;
-        let initial_validation_program =
-            ValidationProgram::new(allocator, initial_validation_program_nodeptr);
-        let initial_state_nodeptr =
-            node_from_bytes(allocator.allocator(), &serializable.initial_state.0).into_gen()?;
-        Ok(GenericGameStartInfo {
-            game_id: serializable.game_id.clone(),
-            amount: serializable.amount.clone(),
-            game_handler,
-            timeout: serializable.timeout.clone(),
-            my_contribution_this_game: serializable.my_contribution_this_game.clone(),
-            their_contribution_this_game: serializable.their_contribution_this_game.clone(),
-            initial_validation_program,
-            initial_state: initial_state_nodeptr,
-            initial_move: serializable.initial_move.clone(),
-            initial_max_move_size: serializable.initial_max_move_size,
-            initial_mover_share: serializable.initial_mover_share.clone(),
-        })
-    }
-
-    pub fn to_serializable(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<FlatGameStartInfo, Error> {
-        let flat_validation_program =
-            Program::from_nodeptr(allocator, self.initial_validation_program.to_nodeptr())?;
-        let flat_state = Program::from_nodeptr(allocator, self.initial_state)?;
-
-        Ok(GenericGameStartInfo {
-            game_id: self.game_id.clone(),
-            amount: self.amount.clone(),
-            game_handler: self.game_handler.clone(),
-            timeout: self.timeout.clone(),
-            my_contribution_this_game: self.my_contribution_this_game.clone(),
-            their_contribution_this_game: self.their_contribution_this_game.clone(),
-            initial_validation_program: flat_validation_program,
-            initial_state: flat_state,
-            initial_move: self.initial_move.clone(),
-            initial_max_move_size: self.initial_max_move_size,
-            initial_mover_share: self.initial_mover_share.clone(),
-        })
     }
 
     pub fn from_clvm(
@@ -237,8 +124,9 @@ impl GenericGameStartInfo<ValidationProgram, NodePtr> {
         let returned_my_contribution = Amount::from_clvm(allocator, lst[4])?;
         let returned_their_contribution = Amount::from_clvm(allocator, lst[5])?;
 
-        let validation_program = ValidationProgram::new(allocator, lst[6]);
-        let initial_state = lst[7];
+        let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[6])?);
+        let validation_program = ValidationProgram::new(allocator, validation_prog);
+        let initial_state = Rc::new(Program::from_nodeptr(allocator, lst[7])?);
         let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
             a.to_vec()
         } else {
@@ -269,18 +157,18 @@ impl GenericGameStartInfo<ValidationProgram, NodePtr> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ReadableMove(Program);
+pub struct ReadableMove(Rc<Program>);
 
 impl ReadableMove {
     pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Self, Error> {
-        Ok(ReadableMove(Program::from_nodeptr(allocator, n)?))
+        Ok(ReadableMove(Rc::new(Program::from_nodeptr(allocator, n)?)))
     }
 
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         self.0.to_nodeptr(allocator)
     }
 
-    pub fn from_program(p: Program) -> Self {
+    pub fn from_program(p: Rc<Program>) -> Self {
         ReadableMove(p)
     }
 
@@ -361,13 +249,13 @@ pub fn read_unroll_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, Error>
 pub struct ChannelHandlerEnv<'a, R: Rng> {
     pub allocator: &'a mut AllocEncoder,
     pub rng: &'a mut R,
-    pub unroll_metapuzzle: Puzzle,
-    pub unroll_puzzle: Puzzle,
+    pub unroll_metapuzzle: Rc<Puzzle>,
+    pub unroll_puzzle: Rc<Puzzle>,
 
-    pub referee_coin_puzzle: Puzzle,
+    pub referee_coin_puzzle: Rc<Puzzle>,
     pub referee_coin_puzzle_hash: PuzzleHash,
 
-    pub standard_puzzle: Puzzle,
+    pub standard_puzzle: Rc<Puzzle>,
 
     pub agg_sig_me_additional_data: Hash,
 }
@@ -376,10 +264,10 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
     pub fn new(
         allocator: &'a mut AllocEncoder,
         rng: &'a mut R,
-        unroll_metapuzzle: Puzzle,
-        unroll_puzzle: Puzzle,
-        referee_coin_puzzle: Puzzle,
-        standard_puzzle: Puzzle,
+        unroll_metapuzzle: Rc<Puzzle>,
+        unroll_puzzle: Rc<Puzzle>,
+        referee_coin_puzzle: Rc<Puzzle>,
+        standard_puzzle: Rc<Puzzle>,
         agg_sig_me_additional_data: Hash,
     ) -> ChannelHandlerEnv<'a, R> {
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
@@ -446,7 +334,7 @@ pub struct ChannelCoinSpendInfo {
 
 #[derive(Clone)]
 pub struct HandshakeResult {
-    pub channel_puzzle_reveal: Puzzle,
+    pub channel_puzzle_reveal: Rc<Puzzle>,
     pub amount: Amount,
     pub spend: ChannelCoinSpendInfo,
 }
@@ -490,29 +378,40 @@ impl ToClvm<NodePtr> for Evidence {
 /// other kinds of things that are related.
 ///
 /// This can give a validation program hash or a validation info hash, given state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ValidationProgram {
-    validation_program: NodePtr,
+    validation_program: Rc<Program>,
     validation_program_hash: Hash,
 }
 
 impl ValidationProgram {
-    pub fn new(allocator: &mut AllocEncoder, validation_program: NodePtr) -> Self {
+    pub fn new(allocator: &mut AllocEncoder, validation_program: Rc<Program>) -> Self {
+        let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
         ValidationProgram {
             validation_program,
-            validation_program_hash: Node(validation_program)
-                .sha256tree(allocator)
-                .hash()
-                .clone(),
+            validation_program_hash,
         }
     }
 
-    pub fn to_nodeptr(&self) -> NodePtr {
-        self.validation_program
+    pub fn to_program(&self) -> Rc<Program> {
+        self.validation_program.clone()
+    }
+
+    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
+        self.validation_program.to_nodeptr(allocator)
     }
 
     pub fn hash(&self) -> &Hash {
         &self.validation_program_hash
+    }
+}
+
+impl ToClvm<NodePtr> for ValidationProgram {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
+        self.validation_program.to_clvm(encoder)
     }
 }
 
@@ -791,7 +690,7 @@ impl UnrollCoin {
     ) -> Result<NodePtr, Error> {
         let conditions_hash = self.get_conditions_hash_for_unroll_puzzle()?;
         let shared_puzzle = CurriedProgram {
-            program: env.unroll_metapuzzle.clone(),
+            program: RcNode::new(env.unroll_metapuzzle.clone()),
             args: clvm_curried_args!(aggregate_public_key.clone()),
         }
         .to_clvm(env.allocator)
@@ -799,7 +698,7 @@ impl UnrollCoin {
         let shared_puzzle_hash = Node(shared_puzzle).sha256tree(env.allocator);
 
         CurriedProgram {
-            program: env.unroll_puzzle.clone(),
+            program: RcNode::new(env.unroll_puzzle.clone()),
             args: clvm_curried_args!(
                 shared_puzzle_hash,
                 self.get_old_state_number()? - 1,
@@ -816,7 +715,7 @@ impl UnrollCoin {
         aggregate_public_key: &PublicKey,
     ) -> Result<NodePtr, Error> {
         let unroll_inner_puzzle = CurriedProgram {
-            program: env.unroll_metapuzzle.clone(),
+            program: RcNode::new(env.unroll_metapuzzle.clone()),
             args: clvm_curried_args!(aggregate_public_key.clone()),
         }
         .to_clvm(env.allocator)

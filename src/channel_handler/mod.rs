@@ -386,11 +386,11 @@ impl ChannelHandler {
             myself.create_conditions_and_signature_of_channel_coin(env, &myself.unroll.coin)?;
 
         myself.state_channel.spend = Spend {
-            puzzle: puzzle_for_synthetic_public_key(
+            puzzle: Rc::new(puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
                 &aggregate_public_key,
-            )?,
+            )?),
             solution: channel_coin_spend.solution.clone(),
             signature: channel_coin_spend.signature.clone(),
         };
@@ -420,11 +420,11 @@ impl ChannelHandler {
             channel_coin_spend.signature.clone() + their_initial_channel_half_signature.clone();
         debug!("combined signature {combined_signature:?}");
 
-        let state_channel_puzzle = puzzle_for_synthetic_public_key(
+        let state_channel_puzzle = Rc::new(puzzle_for_synthetic_public_key(
             env.allocator,
             &env.standard_puzzle,
             &aggregate_public_key,
-        )?;
+        )?);
         debug!(
             "puzzle hash for state channel coin (ch) {:?}",
             state_channel_puzzle.sha256tree(env.allocator)
@@ -1112,7 +1112,7 @@ impl ChannelHandler {
         Ok(Spend {
             solution: channel_coin_spend.solution.clone(),
             signature: channel_coin_spend.signature,
-            puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
+            puzzle: Rc::new(puzzle_for_pk(env.allocator, &aggregate_public_key)?),
         })
     }
 
@@ -1205,7 +1205,7 @@ impl ChannelHandler {
         }
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
-                puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
+                puzzle: Rc::new(Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?),
                 solution: Rc::new(solution_program),
                 signature,
             },
@@ -1294,7 +1294,10 @@ impl ChannelHandler {
 
                 Ok(ChannelCoinSpentResult {
                     transaction: Spend {
-                        puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
+                        puzzle: Rc::new(Puzzle::from_nodeptr(
+                            env.allocator,
+                            curried_unroll_puzzle,
+                        )?),
                         solution: Rc::new(Program::from_nodeptr(
                             env.allocator,
                             unroll_puzzle_solution,
@@ -1895,7 +1898,7 @@ impl ChannelHandler {
         )?;
         let my_referee_public_key =
             private_to_public_key(&self.private_keys.my_referee_private_key);
-        let puzzle = puzzle_for_pk(env.allocator, &my_referee_public_key)?;
+        let puzzle = Rc::new(puzzle_for_pk(env.allocator, &my_referee_public_key)?);
 
         for (i, coin) in exploded_coins.iter().enumerate() {
             let parent_id = coin.coin_string.to_coin_id();

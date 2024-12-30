@@ -5,7 +5,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, MoveResult,
     PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
@@ -345,9 +345,9 @@ pub enum PeerMessage {
     Move(GameID, MoveResult),
     Message(GameID, Vec<u8>),
     Accept(GameID, Amount, PotatoSignatures),
-    Shutdown(Aggsig, Program),
+    Shutdown(Aggsig, Rc<Program>),
     RequestPotato(()),
-    StartGames(PotatoSignatures, Vec<FlatGameStartInfo>),
+    StartGames(PotatoSignatures, Vec<GameStartInfo>),
 }
 
 #[derive(Debug, Clone)]
@@ -436,7 +436,7 @@ impl std::fmt::Debug for GameAction {
 pub struct PotatoHandlerInit {
     pub have_potato: bool,
     pub private_keys: ChannelHandlerPrivateKeys,
-    pub game_types: BTreeMap<GameType, Program>,
+    pub game_types: BTreeMap<GameType, Rc<Program>>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
     pub channel_timeout: Timeout,

@@ -394,7 +394,7 @@ impl Simulator {
         py: Python<'_>,
         allocator: &mut AllocEncoder,
         parent_coin: &CoinString,
-        puzzle_reveal: Puzzle,
+        puzzle_reveal: Rc<Puzzle>,
         solution: NodePtr,
     ) -> PyResult<PyObject> {
         let coin = self.make_coin(parent_coin)?;

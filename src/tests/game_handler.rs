@@ -108,7 +108,9 @@ fn test_game_handler_my_turn() {
         .call_my_turn_driver(
             &mut allocator,
             &MyTurnInputs {
-                readable_new_move: ReadableMove::from_program(Program::from_bytes(&[0x80])),
+                readable_new_move: ReadableMove::from_program(Rc::new(Program::from_bytes(&[
+                    0x80,
+                ]))),
                 amount: Amount::default(),
                 last_move: &[],
                 last_mover_share: Amount::default(),

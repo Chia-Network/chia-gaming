@@ -549,7 +549,7 @@ pub struct ChiaIdentity {
     pub synthetic_public_key: PublicKey,
     pub public_key: PublicKey,
     pub synthetic_private_key: PrivateKey,
-    pub puzzle: Puzzle,
+    pub puzzle: Rc<Puzzle>,
     pub puzzle_hash: PuzzleHash,
 }
 
@@ -563,7 +563,7 @@ impl ChiaIdentity {
             calculate_synthetic_secret_key(&private_key, &default_hidden_puzzle_hash)?;
         let public_key = private_to_public_key(&private_key);
         let synthetic_public_key = private_to_public_key(&synthetic_private_key);
-        let puzzle = puzzle_for_pk(allocator, &public_key)?;
+        let puzzle = Rc::new(puzzle_for_pk(allocator, &public_key)?);
         let puzzle_hash = puzzle_hash_for_pk(allocator, &public_key)?;
         assert_eq!(puzzle.sha256tree(allocator), puzzle_hash);
         Ok(ChiaIdentity {

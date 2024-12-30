@@ -1,10 +1,10 @@
+use std::rc::Rc;
+
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm};
 use clvm_utils::CurriedProgram;
 use rand::prelude::*;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-
-use clvmr::NodePtr;
 
 use log::debug;
 
@@ -18,9 +18,9 @@ use crate::common::types::{
 use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker};
 
 pub struct DebugGamePrograms {
-    pub my_validation_program: NodePtr,
+    pub my_validation_program: Rc<Program>,
     #[allow(dead_code)]
-    pub their_validation_program: NodePtr,
+    pub their_validation_program: Rc<Program>,
     pub my_turn_handler: GameHandler,
     pub their_turn_handler: GameHandler,
 }
@@ -65,24 +65,30 @@ pub fn make_debug_game_handler(
         .expect("should curry");
     let my_turn_handler =
         GameHandler::my_driver_from_nodeptr(allocator, my_driver_node).expect("should cvt");
-    let my_validation_program = CurriedProgram {
+    let my_validation_program_node = CurriedProgram {
         program: my_turn_handler.clone(),
         args: clvm_curried_args!(1337),
     }
     .to_clvm(allocator)
     .expect("should curry");
+    let my_validation_program = Rc::new(
+        Program::from_nodeptr(allocator, my_validation_program_node).expect("should convert"),
+    );
 
     let their_turn_node = make_curried_game_handler(false)
         .to_clvm(allocator)
         .expect("should curry");
     let their_turn_handler =
         GameHandler::their_driver_from_nodeptr(allocator, their_turn_node).expect("should cvt");
-    let their_validation_program = CurriedProgram {
+    let their_validation_program_node = CurriedProgram {
         program: their_turn_handler.clone(),
         args: clvm_curried_args!(1337),
     }
     .to_clvm(allocator)
     .expect("should curry");
+    let their_validation_program = Rc::new(
+        Program::from_nodeptr(allocator, their_validation_program_node).expect("should convert"),
+    );
 
     DebugGamePrograms {
         my_validation_program,
@@ -104,7 +110,7 @@ pub struct RefereeTest {
     pub their_referee: RefereeMaker,
 
     #[allow(dead_code)]
-    pub referee_coin_puzzle: Puzzle,
+    pub referee_coin_puzzle: Rc<Puzzle>,
     #[allow(dead_code)]
     pub referee_coin_puzzle_hash: PuzzleHash,
 }
@@ -121,8 +127,9 @@ impl RefereeTest {
         game_start: &GameStartInfo,
     ) -> RefereeTest {
         // Load up the real referee coin.
-        let referee_coin_puzzle =
-            read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable");
+        let referee_coin_puzzle = Rc::new(
+            read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable"),
+        );
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
         let (my_referee, first_puzzle_hash) = RefereeMaker::new(
             allocator,
@@ -189,7 +196,9 @@ fn test_referee_smoke() {
     let timeout = Timeout::new(1000);
 
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
-    let init_state = ((), ()).to_clvm(&mut allocator).expect("should assemble");
+    let init_state_node = ((), ()).to_clvm(&mut allocator).expect("should assemble");
+    let init_state =
+        Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
     let initial_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
 
