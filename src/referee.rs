@@ -313,7 +313,9 @@ impl ValidatorMoveArgs {
             &self.mover_puzzle,
             &self.solution,
             &self.evidence,
-        ].to_clvm(allocator).into_gen()
+        ]
+        .to_clvm(allocator)
+        .into_gen()
     }
 }
 
@@ -1447,16 +1449,13 @@ impl RefereeMaker {
             &puzzle_args,
         )?;
 
-        let solution = self
-            .fixed
-            .my_identity
-            .standard_solution(
-                allocator,
-                &[(
-                    self.fixed.my_identity.puzzle_hash.clone(),
-                    Amount::default(),
-                )],
-            )?;
+        let solution = self.fixed.my_identity.standard_solution(
+            allocator,
+            &[(
+                self.fixed.my_identity.puzzle_hash.clone(),
+                Amount::default(),
+            )],
+        )?;
         let solution_program = Program::from_nodeptr(allocator, solution)?;
         let validator_move_args = InternalValidatorArgs {
             move_made: puzzle_args.game_move.basic.move_made.clone(),
@@ -1477,7 +1476,6 @@ impl RefereeMaker {
                 state: self.get_game_state().clone(),
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
-
             },
         };
         let (_state, validation_program) = self.get_validation_program_for_their_move()?;

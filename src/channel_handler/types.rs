@@ -129,11 +129,7 @@ impl std::fmt::Debug for PrintableGameStartInfo<'_> {
                 None
             )
         )?;
-        writeln!(
-            formatter,
-            "- initial_state: {:?}",
-            self.info.initial_state
-        )?;
+        writeln!(formatter, "- initial_state: {:?}", self.info.initial_state)?;
         writeln!(formatter, "- initial_move: {:?}", self.info.initial_move)?;
         writeln!(
             formatter,
