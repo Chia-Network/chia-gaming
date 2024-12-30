@@ -31,6 +31,7 @@ class ChiaGame {
             my_contribution: {amt: my_contribution},
             their_contribution: {amt: their_contribution},
             channel_timeout: env.timeout,
+            unroll_timeout: env.unroll_timeout,
             reward_puzzle_hash: identity.puzzle_hash,
         });
         console.log(`constructed ${have_potato}`);
@@ -112,7 +113,8 @@ it('loads', async () => {
         game_types: {
             "calpoker": calpoker_hex
         },
-        timeout: 99
+        timeout: 99,
+        unroll_timeout: 5
     };
 
     let fake_coin1 = identity1.puzzle_hash + identity1.puzzle_hash + '64';
