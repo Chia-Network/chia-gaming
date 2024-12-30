@@ -175,7 +175,7 @@ impl Distribution<PrivateKey> for Standard {
 
 struct SerdeByteConsumer;
 
-impl<'de> Visitor<'de> for SerdeByteConsumer {
+impl Visitor<'_> for SerdeByteConsumer {
     type Value = Vec<u8>;
     fn expecting(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         fmt.write_str("expected bytes")
@@ -507,7 +507,7 @@ pub enum Sha256Input<'a> {
     Array(Vec<Sha256Input<'a>>),
 }
 
-impl<'a> Sha256Input<'a> {
+impl Sha256Input<'_> {
     fn update(&self, hasher: &mut Sha256) {
         match self {
             Sha256Input::Bytes(b) => {
