@@ -294,6 +294,8 @@ impl ReadableMove {
         self.0.to_nodeptr(allocator)
     }
 
+    pub fn to_program(&self) -> &Program { &self.0 }
+
     pub fn from_program(p: Program) -> Self {
         ReadableMove(p)
     }

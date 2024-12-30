@@ -444,20 +444,18 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
-    fn opponent_moved(&mut self, allocator: &mut AllocEncoder, game_id: &GameID, readable_move: ReadableMove) -> Result<(), chia_gaming::common::types::Error> {
+    fn opponent_moved(&mut self, _allocator: &mut AllocEncoder, game_id: &GameID, readable_move: ReadableMove) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "opponent_moved", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
-            let program = Program::from_nodeptr(allocator, readable_move.to_nodeptr())?;
-            args_array.set(1, JsValue::from_str(&program.to_hex()));
+            args_array.set(1, JsValue::from_str(&readable_move.to_program().to_hex()));
             Ok(())
         })
     }
 
-    fn game_message(&mut self, allocator: &mut AllocEncoder, game_id: &GameID, readable: ReadableMove) -> Result<(), chia_gaming::common::types::Error> {
+    fn game_message(&mut self, _allocator: &mut AllocEncoder, game_id: &GameID, readable: ReadableMove) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "game_message", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
-            let program = Program::from_nodeptr(allocator, readable.to_nodeptr())?;
-            args_array.set(1, JsValue::from_str(&program.to_hex()));
+            args_array.set(1, JsValue::from_str(&readable.to_program().to_hex()));
             Ok(())
         })
     }
@@ -484,8 +482,9 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
-    fn going_on_chain(&mut self) -> Result<(), chia_gaming::common::types::Error> {
-        call_javascript_from_collection(&self.callbacks, "going_on_chain", |_args_array| {
+    fn going_on_chain(&mut self, got_error: bool) -> Result<(), chia_gaming::common::types::Error> {
+        call_javascript_from_collection(&self.callbacks, "going_on_chain", |args_array| {
+            args_array.set(0, got_error.into());
             Ok(())
         })
     }
@@ -562,9 +561,8 @@ fn spend_bundle_to_js(spend_bundle: &SpendBundle) -> JsSpendBundle {
     }
 }
 
-fn readable_move_to_hex(allocator: &mut AllocEncoder, rm: &ReadableMove) -> Result<String, types::Error> {
-    let program = Program::from_nodeptr(allocator, rm.to_nodeptr())?;
-    Ok(program.to_hex())
+fn readable_move_to_hex(rm: &ReadableMove) -> Result<String, types::Error> {
+    Ok(rm.to_program().to_hex())
 }
 
 trait IntoE {
@@ -594,12 +592,11 @@ impl<T, Err: IntoE<E = types::Error>> IntoE for Result<T, Err> {
 }
 
 fn idle_result_to_js(
-    allocator: &mut AllocEncoder,
     idle_result: &IdleResult
 ) -> Result<JsValue, types::Error> {
     let opponent_move =
         if let Some((gid, vs)) = &idle_result.opponent_move {
-            Some((game_id_to_string(gid), readable_move_to_hex(allocator, vs)?))
+            Some((game_id_to_string(gid), readable_move_to_hex(vs)?))
         } else {
             None
         };
@@ -627,7 +624,7 @@ pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
             &mut cradle.rng,
             &mut local_ui
         )?;
-        idle_result_to_js(&mut cradle.allocator, &idle_result)
+        idle_result_to_js(&idle_result)
     })
 
 }
