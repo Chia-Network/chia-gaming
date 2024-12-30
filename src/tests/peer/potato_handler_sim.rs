@@ -21,10 +21,11 @@ use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
-use crate::potato_handler::{
+use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
+use crate::potato_handler::PotatoHandler;
 
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
