@@ -17,10 +17,16 @@ use wasm_bindgen::prelude::*;
 
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
+use chia_gaming::common::types;
+use chia_gaming::common::types::{
+    AllocEncoder, Amount, CoinSpend, CoinString, GameID, Hash, IntoErr, PrivateKey, Program,
+    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+};
+use chia_gaming::log::wasm_init;
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
-use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
+use chia_gaming::potato_handler::types::{GameStart, GameType, ToLocalUI};
 use chia_gaming::shutdown::BasicShutdownConditions;
 
 use crate::map_m::map_m;
@@ -184,7 +190,6 @@ fn get_game_config<'b>(
         my_contribution: jsconfig.my_contribution.amt.clone(),
         their_contribution: jsconfig.their_contribution.amt.clone(),
         reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)),
-        unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
     })
 }
 
