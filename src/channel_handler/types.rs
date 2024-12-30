@@ -98,7 +98,7 @@ pub struct PrintableGameStartInfo<'a> {
     pub info: &'a GameStartInfo,
 }
 
-impl<'a> std::fmt::Debug for PrintableGameStartInfo<'a> {
+impl std::fmt::Debug for PrintableGameStartInfo<'_> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         writeln!(formatter, "- game_id: {:?}", self.info.game_id)?;
         writeln!(formatter, "- amount: {:?}", self.info.amount)?;
