@@ -657,8 +657,6 @@ impl RefereeMaker {
             move_made: game_start_info.initial_move.clone(),
             max_move_size: game_start_info.initial_max_move_size,
         };
-        let initial_state_program =
-            Program::from_nodeptr(allocator, game_start_info.initial_state)?;
         let my_turn = game_start_info.game_handler.is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
 
@@ -699,7 +697,7 @@ impl RefereeMaker {
             );
         }
         let state = Rc::new(RefereeMakerGameState::Initial {
-            initial_state: Rc::new(initial_state_program),
+            initial_state: Rc::new(game_start_info.initial_state.clone()),
             initial_validation_program: game_start_info.initial_validation_program.clone(),
             initial_puzzle_args: ref_puzzle_args.clone(),
             game_handler: game_start_info.game_handler.clone(),
@@ -1281,7 +1279,6 @@ impl RefereeMaker {
         let args = self.spend_this_coin();
         let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
 
-        let state_node = self.get_game_state().to_nodeptr(allocator)?;
         let nil = allocator.allocator().null();
         let prog = ValidationProgram::new(allocator, nil);
         debug!(
@@ -1292,7 +1289,7 @@ impl RefereeMaker {
                     game_handler: self.get_game_handler(),
                     game_id: GameID::default(),
                     amount: self.get_amount(),
-                    initial_state: state_node,
+                    initial_state: self.get_game_state().clone(),
                     initial_max_move_size: args.game_move.basic.max_move_size,
                     initial_move: args.game_move.basic.move_made.clone(),
                     initial_mover_share: args.game_move.basic.mover_share.clone(),

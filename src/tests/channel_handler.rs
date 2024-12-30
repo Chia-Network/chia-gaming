@@ -131,7 +131,8 @@ fn test_smoke_can_start_game() {
     // Fake
     let game_handler = env.allocator.allocator().null();
     let initial_validation_puzzle = game_handler;
-    let initial_state = env.allocator.allocator().null();
+    let initial_state_node = env.allocator.allocator().null();
+    let initial_state = Program::from_nodeptr(&mut env.allocator, initial_state_node).expect("should convert");
     let initial_validation_program =
         ValidationProgram::new(env.allocator, initial_validation_puzzle);
 

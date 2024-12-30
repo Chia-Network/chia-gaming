@@ -75,7 +75,7 @@ pub struct PotatoSignatures {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GenericGameStartInfo<VP: std::fmt::Debug + Clone, S: std::fmt::Debug + Clone> {
+pub struct GenericGameStartInfo<VP: std::fmt::Debug + Clone> {
     pub game_id: GameID,
     pub amount: Amount,
     pub game_handler: GameHandler,
@@ -85,14 +85,14 @@ pub struct GenericGameStartInfo<VP: std::fmt::Debug + Clone, S: std::fmt::Debug 
     pub their_contribution_this_game: Amount,
 
     pub initial_validation_program: VP,
-    pub initial_state: S,
+    pub initial_state: Program,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
 }
 
-pub type GameStartInfo = GenericGameStartInfo<ValidationProgram, NodePtr>;
-pub type FlatGameStartInfo = GenericGameStartInfo<Program, Program>;
+pub type GameStartInfo = GenericGameStartInfo<ValidationProgram>;
+pub type FlatGameStartInfo = GenericGameStartInfo<Program>;
 
 pub struct PrintableGameStartInfo<'a> {
     pub allocator: &'a mut Allocator,
@@ -131,8 +131,8 @@ impl std::fmt::Debug for PrintableGameStartInfo<'_> {
         )?;
         writeln!(
             formatter,
-            "- initial_state: {}",
-            disassemble(self.allocator, self.info.initial_state, None)
+            "- initial_state: {:?}",
+            self.info.initial_state
         )?;
         writeln!(formatter, "- initial_move: {:?}", self.info.initial_move)?;
         writeln!(
@@ -150,7 +150,7 @@ impl std::fmt::Debug for PrintableGameStartInfo<'_> {
     }
 }
 
-impl GenericGameStartInfo<ValidationProgram, NodePtr> {
+impl GenericGameStartInfo<ValidationProgram> {
     pub fn is_my_turn(&self) -> bool {
         matches!(self.game_handler, GameHandler::MyTurnHandler(_))
     }
@@ -167,8 +167,6 @@ impl GenericGameStartInfo<ValidationProgram, NodePtr> {
         .into_gen()?;
         let initial_validation_program =
             ValidationProgram::new(allocator, initial_validation_program_nodeptr);
-        let initial_state_nodeptr =
-            node_from_bytes(allocator.allocator(), &serializable.initial_state.0).into_gen()?;
         Ok(GenericGameStartInfo {
             game_id: serializable.game_id.clone(),
             amount: serializable.amount.clone(),
@@ -177,7 +175,7 @@ impl GenericGameStartInfo<ValidationProgram, NodePtr> {
             my_contribution_this_game: serializable.my_contribution_this_game.clone(),
             their_contribution_this_game: serializable.their_contribution_this_game.clone(),
             initial_validation_program,
-            initial_state: initial_state_nodeptr,
+            initial_state: serializable.initial_state.clone(),
             initial_move: serializable.initial_move.clone(),
             initial_max_move_size: serializable.initial_max_move_size,
             initial_mover_share: serializable.initial_mover_share.clone(),
@@ -190,7 +188,6 @@ impl GenericGameStartInfo<ValidationProgram, NodePtr> {
     ) -> Result<FlatGameStartInfo, Error> {
         let flat_validation_program =
             Program::from_nodeptr(allocator, self.initial_validation_program.to_nodeptr())?;
-        let flat_state = Program::from_nodeptr(allocator, self.initial_state)?;
 
         Ok(GenericGameStartInfo {
             game_id: self.game_id.clone(),
@@ -200,7 +197,7 @@ impl GenericGameStartInfo<ValidationProgram, NodePtr> {
             my_contribution_this_game: self.my_contribution_this_game.clone(),
             their_contribution_this_game: self.their_contribution_this_game.clone(),
             initial_validation_program: flat_validation_program,
-            initial_state: flat_state,
+            initial_state: self.initial_state.clone(),
             initial_move: self.initial_move.clone(),
             initial_max_move_size: self.initial_max_move_size,
             initial_mover_share: self.initial_mover_share.clone(),
@@ -238,7 +235,7 @@ impl GenericGameStartInfo<ValidationProgram, NodePtr> {
         let returned_their_contribution = Amount::from_clvm(allocator, lst[5])?;
 
         let validation_program = ValidationProgram::new(allocator, lst[6]);
-        let initial_state = lst[7];
+        let initial_state = Program::from_nodeptr(allocator, lst[7])?;
         let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
             a.to_vec()
         } else {

@@ -189,7 +189,8 @@ fn test_referee_smoke() {
     let timeout = Timeout::new(1000);
 
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
-    let init_state = ((), ()).to_clvm(&mut allocator).expect("should assemble");
+    let init_state_node = ((), ()).to_clvm(&mut allocator).expect("should assemble");
+    let init_state = Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert");
     let initial_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
 
