@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, CoinSpentInformation, FlatGameStartInfo, GameStartInfo, MoveResult,
-    OnChainGameState, PotatoSignatures, PrintableGameStartInfo, ReadableMove,
+    ChannelHandlerPrivateKeys, CoinSpentInformation, GameStartInfo, MoveResult, OnChainGameState,
+    PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
@@ -361,7 +361,7 @@ pub enum PeerMessage {
     Accept(GameID, Amount, PotatoSignatures),
     Shutdown(Aggsig, Program),
     RequestPotato(()),
-    StartGames(PotatoSignatures, Vec<FlatGameStartInfo>),
+    StartGames(PotatoSignatures, Vec<GameStartInfo>),
 }
 
 #[derive(Debug, Clone)]
@@ -973,16 +973,10 @@ impl PotatoHandler {
                 let ch = self.channel_handler_mut()?;
                 let (env, _) = penv.env();
                 for game in desc.their_games.iter() {
-                    dehydrated_games.push(game.to_serializable(env.allocator)?);
+                    dehydrated_games.push(game.clone());
                 }
                 for game in desc.my_games.iter() {
-                    debug!(
-                        "using game {:?}",
-                        PrintableGameStartInfo {
-                            allocator: env.allocator.allocator(),
-                            info: game
-                        }
-                    );
+                    debug!("using game {:?}", game);
                 }
                 ch.send_potato_start_game(env, &desc.my_games)?
             };
@@ -1235,7 +1229,7 @@ impl PotatoHandler {
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         sigs: &PotatoSignatures,
-        games: &[FlatGameStartInfo],
+        games: &[GameStartInfo],
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
@@ -1251,17 +1245,8 @@ impl PotatoHandler {
             let (env, _system_interface) = penv.env();
             let mut rehydrated_games = Vec::new();
             for game in games.iter() {
-                let new_rehydrated_game = GameStartInfo::from_serializable(env.allocator, game)?;
-                let re_dehydrated = new_rehydrated_game.to_serializable(env.allocator)?;
-                assert_eq!(&re_dehydrated, game);
-                debug!(
-                    "their game {:?}",
-                    PrintableGameStartInfo {
-                        allocator: env.allocator.allocator(),
-                        info: &new_rehydrated_game
-                    }
-                );
-                rehydrated_games.push(new_rehydrated_game);
+                debug!("their game {:?}", game);
+                rehydrated_games.push(game.clone());
             }
             ch.received_potato_start_game(env, sigs, &rehydrated_games)?
         };

@@ -27,7 +27,7 @@ use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::runner::ChannelHandlerGame;
 #[cfg(feature = "sim-tests")]
-use crate::channel_handler::types::{ChannelHandlerEnv, PrintableGameStartInfo};
+use crate::channel_handler::types::ChannelHandlerEnv;
 #[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
@@ -192,20 +192,8 @@ pub fn new_channel_handler_game<R: Rng>(
         &timeout,
     );
 
-    debug!(
-        "our_game_start {:?}",
-        PrintableGameStartInfo {
-            allocator: env.allocator.allocator(),
-            info: &our_game_start
-        }
-    );
-    debug!(
-        "their_game_start {:?}",
-        PrintableGameStartInfo {
-            allocator: env.allocator.allocator(),
-            info: &their_game_start
-        }
-    );
+    debug!("our_game_start {:?}", our_game_start);
+    debug!("their_game_start {:?}", their_game_start);
 
     let sigs1 = party.player(0).ch.send_empty_potato(env)?;
     let spend1 = party.player(1).ch.received_empty_potato(env, &sigs1)?;

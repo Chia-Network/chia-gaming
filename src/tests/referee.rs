@@ -4,8 +4,6 @@ use rand::prelude::*;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-use clvmr::NodePtr;
-
 use log::debug;
 
 use crate::channel_handler::game_handler::{GameHandler, TheirTurnResult};
@@ -18,9 +16,9 @@ use crate::common::types::{
 use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker};
 
 pub struct DebugGamePrograms {
-    pub my_validation_program: NodePtr,
+    pub my_validation_program: Program,
     #[allow(dead_code)]
-    pub their_validation_program: NodePtr,
+    pub their_validation_program: Program,
     pub my_turn_handler: GameHandler,
     pub their_turn_handler: GameHandler,
 }
@@ -65,24 +63,28 @@ pub fn make_debug_game_handler(
         .expect("should curry");
     let my_turn_handler =
         GameHandler::my_driver_from_nodeptr(allocator, my_driver_node).expect("should cvt");
-    let my_validation_program = CurriedProgram {
+    let my_validation_program_node = CurriedProgram {
         program: my_turn_handler.clone(),
         args: clvm_curried_args!(1337),
     }
     .to_clvm(allocator)
     .expect("should curry");
+    let my_validation_program =
+        Program::from_nodeptr(allocator, my_validation_program_node).expect("should convert");
 
     let their_turn_node = make_curried_game_handler(false)
         .to_clvm(allocator)
         .expect("should curry");
     let their_turn_handler =
         GameHandler::their_driver_from_nodeptr(allocator, their_turn_node).expect("should cvt");
-    let their_validation_program = CurriedProgram {
+    let their_validation_program_node = CurriedProgram {
         program: their_turn_handler.clone(),
         args: clvm_curried_args!(1337),
     }
     .to_clvm(allocator)
     .expect("should curry");
+    let their_validation_program =
+        Program::from_nodeptr(allocator, their_validation_program_node).expect("should convert");
 
     DebugGamePrograms {
         my_validation_program,

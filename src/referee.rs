@@ -17,8 +17,7 @@ use crate::channel_handler::game_handler::{
     TheirTurnResult,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, PrintableGameStartInfo, ReadableMove, ValidationInfo,
-    ValidationProgram,
+    Evidence, GameStartInfo, ReadableMove, ValidationInfo, ValidationProgram,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
@@ -647,13 +646,7 @@ impl RefereeMaker {
         their_puzzle_hash: &PuzzleHash,
         nonce: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
-        debug!(
-            "referee maker: game start {:?}",
-            PrintableGameStartInfo {
-                allocator: allocator.allocator(),
-                info: game_start_info
-            }
-        );
+        debug!("referee maker: game start {:?}", game_start_info);
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share.clone(),
             move_made: game_start_info.initial_move.clone(),
@@ -837,14 +830,14 @@ impl RefereeMaker {
         self.run_debug = ena;
     }
 
-    pub fn get_validation_program_clvm(&self) -> Result<NodePtr, Error> {
+    pub fn get_validation_program(&self) -> Result<&Program, Error> {
         match self.state.borrow() {
             RefereeMakerGameState::Initial {
                 initial_validation_program,
                 ..
-            } => Ok(initial_validation_program.to_nodeptr()),
+            } => Ok(initial_validation_program.to_program()),
             RefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
-                Ok(my_turn_result.validation_program.to_nodeptr())
+                Ok(my_turn_result.validation_program.to_program())
             }
             RefereeMakerGameState::AfterTheirTurn { .. } => Err(Error::StrErr(
                 "we already accepted their turn so it can't be validated".to_string(),
@@ -1281,25 +1274,21 @@ impl RefereeMaker {
         let args = self.spend_this_coin();
         let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
 
-        let nil = allocator.allocator().null();
-        let prog = ValidationProgram::new(allocator, nil);
+        let prog = ValidationProgram::new(allocator, Program::from_bytes(&[0x80]));
         debug!(
             "referee maker: get transaction for move {:?}",
-            PrintableGameStartInfo {
-                allocator: allocator.allocator(),
-                info: &GameStartInfo {
-                    game_handler: self.get_game_handler(),
-                    game_id: GameID::default(),
-                    amount: self.get_amount(),
-                    initial_state: self.get_game_state().clone(),
-                    initial_max_move_size: args.game_move.basic.max_move_size,
-                    initial_move: args.game_move.basic.move_made.clone(),
-                    initial_mover_share: args.game_move.basic.mover_share.clone(),
-                    my_contribution_this_game: Amount::default(),
-                    their_contribution_this_game: Amount::default(),
-                    initial_validation_program: prog,
-                    timeout: self.fixed.timeout.clone(),
-                }
+            GameStartInfo {
+                game_handler: self.get_game_handler(),
+                game_id: GameID::default(),
+                amount: self.get_amount(),
+                initial_state: self.get_game_state().clone(),
+                initial_max_move_size: args.game_move.basic.max_move_size,
+                initial_move: args.game_move.basic.move_made.clone(),
+                initial_mover_share: args.game_move.basic.mover_share.clone(),
+                my_contribution_this_game: Amount::default(),
+                their_contribution_this_game: Amount::default(),
+                initial_validation_program: prog,
+                timeout: self.fixed.timeout.clone(),
             }
         );
 
@@ -1479,10 +1468,8 @@ impl RefereeMaker {
             },
         };
         let (_state, validation_program) = self.get_validation_program_for_their_move()?;
-        let validation_program_nodeptr = validation_program.to_nodeptr();
-        let validation_program_hexer =
-            Program::from_nodeptr(allocator, validation_program_nodeptr)?;
         let validation_program_mod_hash = validation_program.hash();
+        let validation_program_nodeptr = validation_program.to_nodeptr(allocator)?;
         let validator_full_args_node = validator_move_args.to_nodeptr(
             allocator,
             validation_program_nodeptr,
@@ -1490,7 +1477,7 @@ impl RefereeMaker {
         )?;
         let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
 
-        debug!("validator program {:?}", validation_program_hexer);
+        debug!("validator program {:?}", validation_program);
         debug!("validator args {:?}", validator_full_args);
 
         // Error means validation should not work.
@@ -1498,7 +1485,7 @@ impl RefereeMaker {
         let result = run_program(
             allocator.allocator(),
             &chia_dialect(),
-            validation_program.to_nodeptr(),
+            validation_program_nodeptr,
             validator_full_args_node,
             0,
         )
@@ -1643,10 +1630,11 @@ impl RefereeMaker {
         }
 
         let state_nodeptr = state.to_nodeptr(allocator)?;
+        let validation_program_node = validation_program.to_nodeptr(allocator)?;
         let slashing_coin_solution = self.slashing_coin_solution(
             allocator,
             state_nodeptr,
-            validation_program.to_nodeptr(),
+            validation_program_node,
             slash_solution,
             evidence,
         )?;
@@ -1710,7 +1698,7 @@ impl RefereeMaker {
         (
             &state,
             (
-                Node(validation_program.to_nodeptr()),
+                &validation_program,
                 // No evidence here.
                 (new_puzzle_hash.clone(), ((), (0, ()))),
             ),

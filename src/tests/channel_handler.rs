@@ -129,18 +129,14 @@ fn test_smoke_can_start_game() {
     let their_share = Amount::new(100);
 
     // Fake
-    let game_handler = env.allocator.allocator().null();
-    let initial_validation_puzzle = game_handler;
-    let initial_state_node = env.allocator.allocator().null();
-    let initial_state =
-        Program::from_nodeptr(&mut env.allocator, initial_state_node).expect("should convert");
+    let game_handler = Program::from_bytes(&[0x80]);
+    let initial_validation_puzzle = &game_handler;
+    let initial_state = Program::from_bytes(&[0x80]);
     let initial_validation_program =
-        ValidationProgram::new(env.allocator, initial_validation_puzzle);
+        ValidationProgram::new(env.allocator, initial_validation_puzzle.clone());
 
     let timeout = Timeout::new(1337);
-    let game_handler = GameHandler::TheirTurnHandler(Rc::new(
-        Program::from_nodeptr(env.allocator, game_handler).expect("should cvt"),
-    ));
+    let game_handler = GameHandler::TheirTurnHandler(Rc::new(game_handler));
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
         &mut env,
         &[GameStartInfo {

@@ -73,7 +73,8 @@ impl Game {
         let initial_max_move_size = atom_from_clvm(allocator, template_list[4])
             .and_then(usize_from_atom)
             .expect("should be an atom");
-        let initial_validation_program = ValidationProgram::new(allocator, template_list[5]);
+        let validation_prog = Program::from_nodeptr(allocator, template_list[5])?;
+        let initial_validation_program = ValidationProgram::new(allocator, validation_prog);
         let initial_validation_program_hash =
             if let Some(a) = atom_from_clvm(allocator, template_list[6]) {
                 Hash::from_slice(a)

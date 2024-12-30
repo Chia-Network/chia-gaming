@@ -20,7 +20,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, Node, PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
+    IntoErr, PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
@@ -712,8 +712,9 @@ fn test_referee_can_move_on_chain() {
         initial_mover_share: Amount::default(),
     };
 
-    let _their_validation_program_hash =
-        Node(debug_game.their_validation_program).sha256tree(&mut allocator);
+    let _their_validation_program_hash = debug_game
+        .their_validation_program
+        .sha256tree(&mut allocator);
 
     let mut reftest = RefereeTest::new(
         &mut allocator,
