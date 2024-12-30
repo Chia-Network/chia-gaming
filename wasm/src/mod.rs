@@ -154,12 +154,12 @@ struct JsGameCradleConfig {
     reward_puzzle_hash: String,
 }
 
-fn convert_game_types(collection: &BTreeMap<String, String>) -> Result<BTreeMap<GameType, Program>, JsValue> {
+fn convert_game_types(collection: &BTreeMap<String, String>) -> Result<BTreeMap<GameType, Rc<Program>>, JsValue> {
     let mut result = BTreeMap::new();
     for (name, hex) in collection.iter() {
         let name_data = GameType(name.bytes().collect());
         let byte_data = hex::decode(&hex).into_js()?;
-        result.insert(name_data, Program::from_bytes(&byte_data));
+        result.insert(name_data, Rc::new(Program::from_bytes(&byte_data)));
     }
     Ok(result)
 }
