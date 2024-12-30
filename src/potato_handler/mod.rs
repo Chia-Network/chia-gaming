@@ -13,8 +13,7 @@ use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::types::{
-    ChannelCoinSpendInfo, ChannelHandlerInitiationData,
-    ChannelHandlerPrivateKeys, GameStartInfo,
+    ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
     PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;

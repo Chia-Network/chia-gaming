@@ -5,8 +5,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, MoveResult,
-    PotatoSignatures, ReadableMove,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, MoveResult, PotatoSignatures,
+    ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
