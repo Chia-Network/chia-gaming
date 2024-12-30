@@ -1,10 +1,12 @@
+use std::rc::Rc;
 use rand::Rng;
+use clvmr::NodePtr;
 
 use crate::channel_handler::types::{
     ChannelHandlerEnv, FlatGameStartInfo, GameStartInfo, MoveResult, PotatoSignatures, ReadableMove,
 };
 use crate::common::types::{
-    Aggsig, Amount, CoinString, Error, GameID, Hash, PublicKey, PuzzleHash, Spend, SpendBundle,
+    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, PublicKey, PuzzleHash, Spend, SpendBundle,
     Timeout,
 };
 use serde::{Deserialize, Serialize};
@@ -192,7 +194,11 @@ pub trait SpendWalletReceiver<
 /// Unroll time wallet interface.
 pub trait WalletSpendInterface {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error>;
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &Spend,
+        parent: Option<&CoinString>,
+    ) -> Result<(), Error>;
     /// Coin should report its lifecycle until it gets spent, then should be
     /// de-registered.
     fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error>;
@@ -205,11 +211,21 @@ pub trait ToLocalUI {
     fn self_move(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
         Ok(())
     }
-    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
+    fn opponent_moved(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error>;
     fn raw_game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
         Ok(())
     }
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error>;
+    fn game_message(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
@@ -258,7 +274,14 @@ pub trait FromLocalUI<
         G: 'a,
         R: 'a;
 
-    fn shut_down(&mut self) -> Result<(), Error>;
+    fn shut_down<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        condition: NodePtr,
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a;
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -293,7 +316,7 @@ pub enum PeerMessage {
     Move(GameID, MoveResult),
     Message(GameID, Vec<u8>),
     Accept(GameID, Amount, PotatoSignatures),
-    Shutdown(Aggsig),
+    Shutdown(Aggsig, Rc<Program>),
     RequestPotato(()),
     StartGames(PotatoSignatures, Vec<FlatGameStartInfo>),
 }
@@ -325,6 +348,8 @@ pub enum HandshakeState {
     StepF(Box<HandshakeStepInfo>),
     PostStepF(Box<HandshakeStepInfo>),
     Finished(Box<HandshakeStepWithSpend>),
+    WaitingForShutdown(CoinString, CoinString),
+    Completed,
 }
 
 pub trait PacketSender {
@@ -348,4 +373,5 @@ pub enum PotatoState {
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
     Accept(GameID),
+    Shutdown(NodePtr),
 }

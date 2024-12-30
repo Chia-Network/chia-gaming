@@ -28,12 +28,20 @@ use crate::common::types::{CoinSpend, Program};
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::game::GameAction;
 
+#[derive(Debug, Clone)]
+struct SpendSpec {
+    #[allow(dead_code)]
+    spend: Spend,
+    #[allow(dead_code)]
+    parent: Option<CoinString>,
+}
+
 #[derive(Default)]
 struct Pipe {
     message_pipe: MessagePipe,
 
     // WalletSpendInterface
-    outgoing_transactions: VecDeque<Spend>,
+    outgoing_transactions: VecDeque<SpendSpec>,
     registered_coins: HashMap<CoinString, Timeout>,
 
     // Opponent moves
@@ -85,8 +93,15 @@ impl PacketSender for Pipe {
 }
 
 impl WalletSpendInterface for Pipe {
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
-        self.outgoing_transactions.push_back(bundle.clone());
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &Spend,
+        parent: Option<&CoinString>,
+    ) -> Result<(), Error> {
+        self.outgoing_transactions.push_back(SpendSpec {
+            spend: bundle.clone(),
+            parent: parent.cloned(),
+        });
 
         Ok(())
     }
@@ -124,7 +139,12 @@ impl ToLocalUI for Pipe {
         Ok(())
     }
 
-    fn opponent_moved(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error> {
         self.opponent_moves.push((id.clone(), readable));
         Ok(())
     }
@@ -133,7 +153,12 @@ impl ToLocalUI for Pipe {
             .push((id.clone(), readable.to_vec()));
         Ok(())
     }
-    fn game_message(&mut self, id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error> {
         self.opponent_messages.push((id.clone(), readable));
         Ok(())
     }

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use clvmr::serde::node_from_bytes;
@@ -13,10 +14,12 @@ use crate::channel_handler::types::{
     FlatGameStartInfo, GameStartInfo, PotatoSignatures, PrintableGameStartInfo, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
+use crate::common::standard_coin::{
+    private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
+};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node, Program,
-    PuzzleHash, Sha256Input, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GameID, Hash, IntoErr,
+    Node, Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameAction, GameStart,
@@ -257,10 +260,11 @@ impl PotatoHandler {
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         msg: Vec<u8>,
-    ) -> Result<(), Error>
+    ) -> Result<Option<HandshakeState>, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        let timeout = self.channel_timeout.clone();
         let ch = self.channel_handler_mut()?;
 
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
@@ -282,9 +286,12 @@ impl PotatoHandler {
                     ch.received_potato_move(env, &game_id, &m)?
                 };
                 {
-                    let (_, system_interface) = penv.env();
-                    system_interface
-                        .opponent_moved(&game_id, ReadableMove::from_nodeptr(readable_move))?;
+                    let (env, system_interface) = penv.env();
+                    system_interface.opponent_moved(
+                        env.allocator,
+                        &game_id,
+                        ReadableMove::from_nodeptr(readable_move),
+                    )?;
                     if !message.is_empty() {
                         system_interface.send_message(&PeerMessage::Message(game_id, message))?;
                     }
@@ -297,9 +304,9 @@ impl PotatoHandler {
                     ch.received_message(env, &game_id, &message)?
                 };
 
-                let (_, system_interface) = penv.env();
+                let (env, system_interface) = penv.env();
                 system_interface.raw_game_message(&game_id, &message)?;
-                system_interface.game_message(&game_id, decoded_message)?;
+                system_interface.game_message(env.allocator, &game_id, decoded_message)?;
                 // Does not affect potato.
             }
             PeerMessage::Accept(game_id, amount, sigs) => {
@@ -311,12 +318,67 @@ impl PotatoHandler {
                 }?;
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
+            PeerMessage::Shutdown(sig, conditions) => {
+                let coin = ch.state_channel_coin().coin_string();
+                let (env, system_interface) = penv.env();
+                let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
+                // conditions must have a reward coin targeted at our referee_public_key.
+                // this is how we'll know we're being paid.
+                let want_public_key = private_to_public_key(&ch.referee_private_key());
+                let want_puzzle_hash = puzzle_hash_for_pk(env.allocator, &want_public_key)?;
+                let want_amount = ch.clean_shutdown_amount();
+                let condition_list = CoinCondition::from_nodeptr(env.allocator, clvm_conditions);
+                let found_conditions = condition_list.iter().any(|cond| {
+                    if let CoinCondition::CreateCoin(ph, amt) = cond {
+                        *ph == want_puzzle_hash && *amt >= want_amount
+                    } else {
+                        false
+                    }
+                });
+
+                if !found_conditions {
+                    return Err(Error::StrErr(
+                        "given conditions don't pay our referee puzzle hash what's expected"
+                            .to_string(),
+                    ));
+                }
+
+                let my_reward =
+                    CoinString::from_parts(&coin.to_coin_id(), &want_puzzle_hash, &want_amount);
+                system_interface.register_coin(&my_reward, &timeout)?;
+
+                system_interface.register_coin(coin, &timeout)?;
+                let full_spend = ch.received_potato_clean_shutdown(env, &sig, clvm_conditions)?;
+
+                let solution = Program::from_nodeptr(env.allocator, full_spend.solution)?;
+                let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
+                let puzzle = puzzle_for_synthetic_public_key(
+                    env.allocator,
+                    &env.standard_puzzle,
+                    &channel_puzzle_public_key,
+                )?;
+                system_interface.spend_transaction_and_add_fee(
+                    &Spend {
+                        solution,
+                        puzzle,
+                        signature: full_spend.signature.clone(),
+                    },
+                    Some(coin),
+                )?;
+
+                // Expected reward coin is shutdown amount + puzzle hash of referee
+                // coin and parent is the reported reward coin.
+                return Ok(Some(HandshakeState::WaitingForShutdown(
+                    my_reward,
+                    coin.clone(),
+                )));
+            }
             _ => {
                 todo!("unhandled passthrough message {msg_envelope:?}");
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 
     pub fn try_complete_step_e<'a, G, R: Rng + 'a>(
@@ -469,8 +531,48 @@ impl PotatoHandler {
                     amount.clone(),
                     sigs,
                 ))?;
-                system_interface.game_finished(&game_id, amount)?;
                 self.have_potato = PotatoState::Absent;
+                system_interface.game_finished(&game_id, amount)?;
+
+                Ok(true)
+            }
+            Some(GameAction::Shutdown(conditions)) => {
+                let timeout = self.channel_timeout.clone();
+                let (state_channel_coin, spend, want_puzzle_hash, want_amount) = {
+                    let ch = self.channel_handler_mut()?;
+                    let (env, _) = penv.env();
+                    let spend = ch.send_potato_clean_shutdown(env, conditions)?;
+
+                    // conditions must have a reward coin targeted at our referee_public_key.
+                    // this is how we'll know we're being paid.
+                    let want_public_key = private_to_public_key(&ch.referee_private_key());
+                    let want_puzzle_hash = puzzle_hash_for_pk(env.allocator, &want_public_key)?;
+                    let want_amount = ch.clean_shutdown_amount();
+                    (
+                        ch.state_channel_coin().coin_string(),
+                        spend,
+                        want_puzzle_hash,
+                        want_amount,
+                    )
+                };
+
+                let my_reward = CoinString::from_parts(
+                    &state_channel_coin.to_coin_id(),
+                    &want_puzzle_hash,
+                    &want_amount,
+                );
+
+                let (env, system_interface) = penv.env();
+                system_interface.register_coin(&my_reward, &timeout)?;
+                self.handshake_state =
+                    HandshakeState::WaitingForShutdown(my_reward, state_channel_coin.clone());
+
+                // If the state channel coin is spent, then we signal full shutdown.
+                let shutdown_condition_program = Rc::new(Program::from_nodeptr(env.allocator, conditions)?);
+                system_interface.send_message(&PeerMessage::Shutdown(
+                    spend.signature.clone(),
+                    shutdown_condition_program,
+                ))?;
 
                 Ok(true)
             }
@@ -1036,14 +1138,22 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         self.do_game_action(penv, GameAction::Accept(id.clone()))
     }
 
-    fn shut_down(&mut self) -> Result<(), Error> {
+    fn shut_down<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        conditions: NodePtr,
+    ) -> Result<(), Error>
+    where
+        G: 'a,
+        R: 'a,
+    {
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
             return Err(Error::StrErr(
                 "shut_down without finishing handshake".to_string(),
             ));
         }
 
-        todo!();
+        self.do_game_action(penv, GameAction::Shutdown(conditions))
     }
 }
 
@@ -1126,18 +1236,55 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             }
         }
 
+        if let Some(reward) =
+            if let HandshakeState::WaitingForShutdown(reward, _state) = &self.handshake_state {
+                Some(reward.clone())
+            } else {
+                None
+            }
+        {
+            if reward == *coin {
+                // We have the expected reward coin.
+                self.handshake_state = HandshakeState::Completed;
+                let (_, system_interface) = penv.env();
+                system_interface.shutdown_complete(&reward)?;
+            }
+        }
+
         Ok(())
     }
 
     fn coin_spent<'a>(
         &mut self,
-        _penv: &mut dyn PeerEnv<'a, G, R>,
+        penv: &mut dyn PeerEnv<'a, G, R>,
         coin_id: &CoinString,
     ) -> Result<(), Error>
     where
         G: 'a,
         R: 'a,
     {
+        if let Some((reward, state_coin)) =
+            if let HandshakeState::WaitingForShutdown(reward, coin) = &self.handshake_state {
+                Some((reward.clone(), coin.clone()))
+            } else {
+                None
+            }
+        {
+            if *coin_id == state_coin {
+                if let Some((_parent, _ph, amount)) = reward.to_parts() {
+                    if amount == Amount::default() {
+                        // 0 reward so spending the state channel coin means the game is over.
+                        self.handshake_state = HandshakeState::Completed;
+                        let (_, system_interface) = penv.env();
+                        system_interface.shutdown_complete(&reward)?;
+                    }
+                }
+
+                // We're in shutdown state so we're waiting for our reward coin to appear.
+                return Ok(());
+            }
+        }
+
         if let Some(ch) = self.channel_handler.as_ref() {
             let channel_coin = ch.state_channel_coin();
             if coin_id == channel_coin.coin_string() {

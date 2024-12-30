@@ -83,6 +83,14 @@ impl SimulatedWalletSpend {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SpendSpec {
+    #[allow(dead_code)]
+    spend: Spend,
+    #[allow(dead_code)]
+    parent: Option<CoinString>,
+}
+
 #[derive(Default)]
 pub struct SimulatedPeer {
     message_pipe: MessagePipe,
@@ -91,7 +99,7 @@ pub struct SimulatedPeer {
     channel_puzzle_hash: Option<PuzzleHash>,
 
     unfunded_offer: Option<SpendBundle>,
-    outbound_transactions: Vec<Spend>,
+    outbound_transactions: Vec<SpendSpec>,
 
     raw_messages: Vec<Vec<u8>>,
     messages: Vec<ReadableMove>,
@@ -184,9 +192,16 @@ impl SimulatedWalletSpend {
 
 impl WalletSpendInterface for SimulatedPeer {
     /// Enqueue an outbound transaction.
-    fn spend_transaction_and_add_fee(&mut self, bundle: &Spend) -> Result<(), Error> {
+    fn spend_transaction_and_add_fee(
+        &mut self,
+        bundle: &Spend,
+        parent: Option<&CoinString>,
+    ) -> Result<(), Error> {
         debug!("waiting to spend transaction");
-        self.outbound_transactions.push(bundle.clone());
+        self.outbound_transactions.push(SpendSpec {
+            spend: bundle.clone(),
+            parent: parent.cloned(),
+        });
         Ok(())
     }
     /// Coin should report its lifecycle until it gets spent, then should be
@@ -220,7 +235,12 @@ impl BootstrapTowardWallet for SimulatedPeer {
 }
 
 impl ToLocalUI for SimulatedPeer {
-    fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        _readable: ReadableMove,
+    ) -> Result<(), Error> {
         // We can record stuff here and check that we got what was expected, but there's
         // no effect on the game mechanics.
         Ok(())
@@ -229,7 +249,12 @@ impl ToLocalUI for SimulatedPeer {
         self.raw_messages.push(readable.to_vec());
         Ok(())
     }
-    fn game_message(&mut self, _id: &GameID, readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), Error> {
         // Record for testing, but doens't affect the game.
         self.messages.push(readable);
         Ok(())
@@ -684,12 +709,22 @@ struct LocalTestUIReceiver {
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
-    fn opponent_moved(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
+    fn opponent_moved(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        _readable: ReadableMove,
+    ) -> Result<(), Error> {
         self.opponent_moved = true;
         Ok(())
     }
 
-    fn game_message(&mut self, _id: &GameID, _readable: ReadableMove) -> Result<(), Error> {
+    fn game_message(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _id: &GameID,
+        _readable: ReadableMove,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
