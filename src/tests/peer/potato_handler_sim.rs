@@ -92,7 +92,7 @@ pub fn update_and_report_coins<'a, R: Rng>(
 
     // Report timed out coins
     for who in 0..=1 {
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng).expect("should work");
         let mut penv: SimulatedPeerSystem<'_, '_, R> =
             SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
 
@@ -350,7 +350,7 @@ fn check_watch_report<'a, 'b: 'a, R: Rng>(
     pipes: &'b mut [SimulatedPeer; 2],
     simulator: &'b mut Simulator,
 ) {
-    let mut env = channel_handler_env(allocator, rng);
+    let mut env = channel_handler_env(allocator, rng).expect("should work");
     let mut _simenv0 = SimulatedPeerSystem::new(&mut env, &mut pipes[0]);
     simulator.farm_block(&identities[0].puzzle_hash);
 
@@ -390,14 +390,14 @@ pub fn handshake<'a, R: Rng + 'a>(
 
         debug!("handshake iterate {who}");
         {
-            let mut env = channel_handler_env(allocator, rng);
+            let mut env = channel_handler_env(allocator, rng).expect("should work");
             run_move(&mut env, Amount::new(200), pipes, &mut peers[who], who).expect("should send");
         }
 
         if let Some(ph) = pipes[who].channel_puzzle_hash.clone() {
             debug!("puzzle hash");
             pipes[who].channel_puzzle_hash = None;
-            let mut env = channel_handler_env(allocator, rng);
+            let mut env = channel_handler_env(allocator, rng).expect("should work");
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
             penv.test_handle_received_channel_puzzle_hash(
                 &identities[who],
@@ -414,12 +414,12 @@ pub fn handshake<'a, R: Rng + 'a>(
             );
 
             {
-                let mut env = channel_handler_env(allocator, rng);
+                let mut env = channel_handler_env(allocator, rng).expect("should work");
                 let mut penv = SimulatedPeerSystem::new(&mut env, &mut pipes[who]);
                 peers[who].channel_transaction_completion(&mut penv, &u)?;
             }
 
-            let env = channel_handler_env(allocator, rng);
+            let env = channel_handler_env(allocator, rng).expect("should work");
             let mut spends = u.clone();
             // Create no coins.  The target is already created in the partially funded
             // transaction.
@@ -561,7 +561,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
     simulator.farm_block(&identities[0].puzzle_hash);
 
     {
-        let mut env = channel_handler_env(allocator, &mut rng);
+        let mut env = channel_handler_env(allocator, &mut rng).expect("should work");
         let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[1]);
         handlers[1]
             .start(&mut penv, parent_coin_1.clone())
@@ -592,12 +592,12 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
 
     // Start game
     let game_ids = {
-        let mut env = channel_handler_env(allocator, &mut rng);
+        let mut env = channel_handler_env(allocator, &mut rng).expect("should work");
         do_first_game_start(&mut env, &mut peers[1], &mut handlers[1])
     };
 
     {
-        let mut env = channel_handler_env(allocator, &mut rng);
+        let mut env = channel_handler_env(allocator, &mut rng).expect("should work");
         do_second_game_start(&mut env, &mut peers[0], &mut handlers[0]);
     }
 
@@ -622,7 +622,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
 
         {
             let entropy = rng.gen();
-            let mut env = channel_handler_env(allocator, &mut rng);
+            let mut env = channel_handler_env(allocator, &mut rng).expect("should work");
             let move_readable =
                 ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);

@@ -337,7 +337,7 @@ pub struct SynchronousGameCradle {
 }
 
 pub struct SynchronousGameCradleConfig<'a> {
-    pub game_types: BTreeMap<GameType, Program>,
+    pub game_types: BTreeMap<GameType, Rc<Program>>,
     pub have_potato: bool,
     pub identity: &'a ChiaIdentity,
     pub my_contribution: Amount,
@@ -545,7 +545,7 @@ impl SynchronousGameCradle {
         .to_clvm(allocator)
         .into_gen()?;
 
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let spend = standard_solution_partial(
             env.allocator,
             &self.state.identity.synthetic_private_key,
@@ -591,7 +591,7 @@ impl SynchronousGameCradle {
 
         self.state.unfunded_offer = None;
 
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let empty_conditions = ().to_clvm(env.allocator).into_gen()?;
         let quoted_empty_conditions = empty_conditions.to_quoted_program(env.allocator)?;
         let solution = solution_for_conditions(env.allocator, empty_conditions)?;
@@ -708,7 +708,7 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
     ) -> Result<PuzzleHash, Error> {
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
@@ -723,7 +723,7 @@ impl GameCradle for SynchronousGameCradle {
         coin_string: &[CoinString],
         target: &PuzzleHash,
     ) -> Result<SpendRewardResult, Error> {
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
@@ -743,7 +743,7 @@ impl GameCradle for SynchronousGameCradle {
             return Ok(());
         }
 
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
@@ -765,7 +765,7 @@ impl GameCradle for SynchronousGameCradle {
         i_initiated: bool,
         game: &GameStart,
     ) -> Result<Vec<GameID>, Error> {
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
@@ -782,8 +782,8 @@ impl GameCradle for SynchronousGameCradle {
         readable: Vec<u8>,
         new_entropy: Hash,
     ) -> Result<(), Error> {
-        let mut env = channel_handler_env(allocator, rng);
-        let rehydrated_move = Program::from_bytes(&readable);
+        let mut env = channel_handler_env(allocator, rng)?;
+        let rehydrated_move = Rc::new(Program::from_bytes(&readable));
         let readable = ReadableMove::from_program(rehydrated_move);
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
@@ -800,7 +800,7 @@ impl GameCradle for SynchronousGameCradle {
         rng: &mut R,
         id: &GameID,
     ) -> Result<(), Error> {
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
@@ -816,7 +816,7 @@ impl GameCradle for SynchronousGameCradle {
         conditions: Rc<dyn ShutdownConditions>,
     ) -> Result<(), Error> {
         // The conditions relate to spending the remaining money in the channel coin.
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
@@ -835,7 +835,7 @@ impl GameCradle for SynchronousGameCradle {
     ) -> Result<(), Error> {
         self.state.current_height = height as u64;
         let filtered_report = self.filter_coin_report(self.state.current_height, report);
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
@@ -908,7 +908,7 @@ impl GameCradle for SynchronousGameCradle {
 
         // If there's a message to deliver, deliver it and signal to continue.
         if let Some(msg) = self.state.inbound_messages.pop_front() {
-            let mut env = channel_handler_env(allocator, rng);
+            let mut env = channel_handler_env(allocator, rng)?;
             let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
                 env: &mut env,
                 system_interface: &mut self.state,
@@ -951,7 +951,7 @@ impl GameCradle for SynchronousGameCradle {
         _local_ui: &mut dyn ToLocalUI,
         got_error: bool,
     ) -> Result<(), Error> {
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
@@ -966,7 +966,7 @@ impl GameCradle for SynchronousGameCradle {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<(), Error> {
-        let mut env = channel_handler_env(allocator, rng);
+        let mut env = channel_handler_env(allocator, rng)?;
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,

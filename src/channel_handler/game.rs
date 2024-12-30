@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::run_program;
 
@@ -21,7 +23,7 @@ pub struct Game {
     pub initial_max_move_size: usize,
     pub initial_validation_program: ValidationProgram,
     pub initial_validation_program_hash: Hash,
-    pub initial_state: Program,
+    pub initial_state: Rc<Program>,
     pub initial_mover_share_proportion: usize,
 }
 
@@ -73,7 +75,7 @@ impl Game {
         let initial_max_move_size = atom_from_clvm(allocator, template_list[4])
             .and_then(usize_from_atom)
             .expect("should be an atom");
-        let validation_prog = Program::from_nodeptr(allocator, template_list[5])?;
+        let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);
         let initial_validation_program = ValidationProgram::new(allocator, validation_prog);
         let initial_validation_program_hash =
             if let Some(a) = atom_from_clvm(allocator, template_list[6]) {
@@ -84,7 +86,7 @@ impl Game {
                 ));
             };
         let initial_state_node = template_list[7];
-        let initial_state = Program::from_nodeptr(allocator, initial_state_node)?;
+        let initial_state = Rc::new(Program::from_nodeptr(allocator, initial_state_node)?);
         let initial_mover_share_proportion = atom_from_clvm(allocator, template_list[8])
             .and_then(usize_from_atom)
             .expect("should be an atom");

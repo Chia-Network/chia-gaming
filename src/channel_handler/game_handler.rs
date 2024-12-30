@@ -301,7 +301,7 @@ impl GameHandler {
             return Err(Error::StrErr("bad move".to_string()));
         };
 
-        let validation_prog = Program::from_nodeptr(allocator, pl[1])?;
+        let validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[1])?);
         let validation_program = ValidationProgram::new(allocator, validation_prog);
         let state = Rc::new(Program::from_nodeptr(allocator, pl[3])?);
         Ok(MyTurnResult {

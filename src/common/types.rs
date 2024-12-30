@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::io;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::rc::Rc;
@@ -733,7 +734,7 @@ impl ToClvm<NodePtr> for Program {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Puzzle(Program);
+pub struct Puzzle(Rc<Program>);
 
 impl ToClvm<NodePtr> for Puzzle {
     fn to_clvm(
@@ -745,11 +746,11 @@ impl ToClvm<NodePtr> for Puzzle {
 }
 
 impl Puzzle {
-    pub fn to_program(&self) -> Program {
+    pub fn to_program(&self) -> Rc<Program> {
         self.0.clone()
     }
     pub fn from_bytes(by: &[u8]) -> Puzzle {
-        Puzzle(Program::from_bytes(by))
+        Puzzle(Rc::new(Program::from_bytes(by)))
     }
     pub fn from_nodeptr(allocator: &mut AllocEncoder, node: NodePtr) -> Result<Puzzle, Error> {
         let bytes = node_to_bytes(allocator.allocator(), node).into_gen()?;
@@ -1023,7 +1024,7 @@ impl CoinCondition {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Spend {
-    pub puzzle: Puzzle,
+    pub puzzle: Rc<Puzzle>,
     pub solution: Rc<Program>,
     pub signature: Aggsig,
 }
@@ -1037,7 +1038,7 @@ pub struct CoinSpend {
 impl Default for Spend {
     fn default() -> Self {
         Spend {
-            puzzle: Puzzle::from_bytes(&[0x80]),
+            puzzle: Rc::new(Puzzle::from_bytes(&[0x80])),
             solution: Rc::new(Program::from_bytes(&[0x80])),
             signature: Aggsig::default(),
         }
@@ -1120,4 +1121,28 @@ fn test_local_divmod() {
         divmod(7.to_bigint().unwrap(), 2.to_bigint().unwrap()),
         (3.to_bigint().unwrap(), 1.to_bigint().unwrap())
     );
+}
+
+pub struct RcNode<X>(Rc<X>);
+
+impl<X: ToClvm<NodePtr>> ToClvm<NodePtr> for RcNode<X> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
+        let borrowed: &X = self.0.borrow();
+        borrowed.to_clvm(encoder)
+    }
+}
+
+impl<X> RcNode<X> {
+    pub fn new(node: Rc<X>) -> Self {
+        RcNode(node.clone())
+    }
+}
+
+impl<X> From<&Rc<X>> for RcNode<X> {
+    fn from(item: &Rc<X>) -> RcNode<X> {
+        RcNode(item.clone())
+    }
 }
