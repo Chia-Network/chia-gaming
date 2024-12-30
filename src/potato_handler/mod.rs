@@ -2109,15 +2109,14 @@ impl PotatoHandler {
             }
             CoinSpentInformation::OurSpend(ph, amt) => {
                 if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
-                    game_map.insert(CoinString::from_parts(
-                        &coin_id.to_coin_id(),
-                        &ph,
-                        &amt
-                    ), OnChainGameState {
-                        puzzle_hash: ph,
-                        our_turn: false,
-                        .. old_definition
-                    });
+                    game_map.insert(
+                        CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt),
+                        OnChainGameState {
+                            puzzle_hash: ph,
+                            our_turn: false,
+                            ..old_definition
+                        },
+                    );
                     // Do some kind of UI indication.
                     unblock_queue = true;
                 }

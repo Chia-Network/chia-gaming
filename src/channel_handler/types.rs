@@ -103,7 +103,7 @@ pub struct PrintableGameStartInfo<'a> {
     pub info: &'a GameStartInfo,
 }
 
-impl<'a> std::fmt::Debug for PrintableGameStartInfo<'a> {
+impl std::fmt::Debug for PrintableGameStartInfo<'_> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         writeln!(formatter, "- game_id: {:?}", self.info.game_id)?;
         writeln!(formatter, "- amount: {:?}", self.info.amount)?;
@@ -292,6 +292,10 @@ impl ReadableMove {
 
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         self.0.to_nodeptr(allocator)
+    }
+
+    pub fn to_program(&self) -> &Program {
+        &self.0
     }
 
     pub fn from_program(p: Program) -> Self {
