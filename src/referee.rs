@@ -298,7 +298,7 @@ fn curry_referee_puzzle(
 /// is next to it.
 ///
 pub struct ValidatorMoveArgs {
-    pub state: NodePtr,
+    pub state: Program,
     pub mover_puzzle: Program,
     pub solution: NodePtr,
     pub evidence: NodePtr,
@@ -306,8 +306,9 @@ pub struct ValidatorMoveArgs {
 
 impl ValidatorMoveArgs {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
+        let state_node = self.state.to_nodeptr(allocator)?;
         let args: &[NodePtr] = &[
-            self.state,
+            state_node,
             me,
             self.mover_puzzle.to_clvm(allocator).into_gen()?,
             self.solution,
@@ -1467,7 +1468,7 @@ impl RefereeMaker {
             referee_hash: new_puzzle_hash.clone(),
             move_args: ValidatorMoveArgs {
                 evidence,
-                state: self.get_game_state().to_nodeptr(allocator)?,
+                state: self.get_game_state().clone(),
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: self
                     .fixed
