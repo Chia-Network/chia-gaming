@@ -300,22 +300,20 @@ fn curry_referee_puzzle(
 pub struct ValidatorMoveArgs {
     pub state: Program,
     pub mover_puzzle: Program,
-    pub solution: NodePtr,
-    pub evidence: NodePtr,
+    pub solution: Program,
+    pub evidence: Program,
 }
 
 impl ValidatorMoveArgs {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
-        let state_node = self.state.to_nodeptr(allocator)?;
-        let args: &[NodePtr] = &[
-            state_node,
-            me,
-            self.mover_puzzle.to_clvm(allocator).into_gen()?,
-            self.solution,
-            self.evidence,
-        ];
-        let argvec: Vec<Node> = args.iter().map(|v| Node(*v)).collect();
-        argvec.to_clvm(allocator).into_gen()
+        let me_program = Program::from_nodeptr(allocator, me)?;
+        [
+            &self.state,
+            &me_program,
+            &self.mover_puzzle,
+            &self.solution,
+            &self.evidence,
+        ].to_clvm(allocator).into_gen()
     }
 }
 
@@ -1452,6 +1450,17 @@ impl RefereeMaker {
             &puzzle_args,
         )?;
 
+        let solution = self
+            .fixed
+            .my_identity
+            .standard_solution(
+                allocator,
+                &[(
+                    self.fixed.my_identity.puzzle_hash.clone(),
+                    Amount::default(),
+                )],
+            )?;
+        let solution_program = Program::from_nodeptr(allocator, solution)?;
         let validator_move_args = InternalValidatorArgs {
             move_made: puzzle_args.game_move.basic.move_made.clone(),
             new_validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
@@ -1467,20 +1476,11 @@ impl RefereeMaker {
             max_move_size: puzzle_args.game_move.basic.max_move_size,
             referee_hash: new_puzzle_hash.clone(),
             move_args: ValidatorMoveArgs {
-                evidence,
+                evidence: Program::from_nodeptr(allocator, evidence)?,
                 state: self.get_game_state().clone(),
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
-                solution: self
-                    .fixed
-                    .my_identity
-                    .standard_solution(
-                        allocator,
-                        &[(
-                            self.fixed.my_identity.puzzle_hash.clone(),
-                            Amount::default(),
-                        )],
-                    )
-                    .expect("should create"),
+                solution: solution_program,
+
             },
         };
         let (_state, validation_program) = self.get_validation_program_for_their_move()?;
