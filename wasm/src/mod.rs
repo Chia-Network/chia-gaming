@@ -25,7 +25,7 @@ use chia_gaming::log::wasm_init;
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
-use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
+use chia_gaming::potato_handler::types::{GameStart, GameType, ToLocalUI};
 
 use crate::map_m::map_m;
 
