@@ -1,13 +1,13 @@
-use std::rc::Rc;
-use rand::Rng;
 use clvmr::NodePtr;
+use rand::Rng;
+use std::rc::Rc;
 
 use crate::channel_handler::types::{
     ChannelHandlerEnv, FlatGameStartInfo, GameStartInfo, MoveResult, PotatoSignatures, ReadableMove,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, PublicKey, PuzzleHash, Spend, SpendBundle,
-    Timeout,
+    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, PublicKey, PuzzleHash,
+    Spend, SpendBundle, Timeout,
 };
 use serde::{Deserialize, Serialize};
 

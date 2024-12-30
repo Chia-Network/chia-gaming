@@ -18,8 +18,8 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GameID, Hash, IntoErr, Node,
+    Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameAction, GameStart,
@@ -568,7 +568,8 @@ impl PotatoHandler {
                     HandshakeState::WaitingForShutdown(my_reward, state_channel_coin.clone());
 
                 // If the state channel coin is spent, then we signal full shutdown.
-                let shutdown_condition_program = Rc::new(Program::from_nodeptr(env.allocator, conditions)?);
+                let shutdown_condition_program =
+                    Rc::new(Program::from_nodeptr(env.allocator, conditions)?);
                 system_interface.send_message(&PeerMessage::Shutdown(
                     spend.signature.clone(),
                     shutdown_condition_program,
