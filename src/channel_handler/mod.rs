@@ -37,7 +37,7 @@ use crate::common::types::{
     CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
     PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
 };
-use crate::potato_handler::GameAction;
+use crate::potato_handler::types::GameAction;
 use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction};
 
 /// A channel handler runs the game by facilitating the phases of game startup

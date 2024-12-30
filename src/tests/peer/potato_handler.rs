@@ -15,11 +15,11 @@ use crate::common::types::{
     Spend, SpendBundle, Timeout,
 };
 use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
-use crate::potato_handler::{
+use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
-    WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
+use crate::potato_handler::PotatoHandler;
 
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
