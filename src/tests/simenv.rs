@@ -18,8 +18,8 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, PuzzleHash, Sha256tree, Spend, Timeout, chia_dialect,
+    chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
+    IntoErr, Node, PrivateKey, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::simulator::Simulator;
 use crate::tests::game::{new_channel_handler_game, GameAction, GameActionResult};

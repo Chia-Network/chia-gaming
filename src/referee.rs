@@ -13,8 +13,8 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult,
-    TheirTurnInputs, TheirTurnResult,
+    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnInputs,
+    TheirTurnResult,
 };
 use crate::channel_handler::types::{
     Evidence, GameStartInfo, PrintableGameStartInfo, ReadableMove, ValidationInfo,
@@ -26,9 +26,9 @@ use crate::common::standard_coin::{
     standard_solution_partial, standard_solution_unsafe, ChiaIdentity,
 };
 use crate::common::types::{
-    u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
-    Timeout, chia_dialect,
+    chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
+    Sha256tree, Spend, Timeout,
 };
 
 pub const REM_CONDITION_FIELDS: usize = 4;
@@ -1281,10 +1281,10 @@ impl RefereeMaker {
             (
                 target_referee_puzzle_hash.clone(),
                 (self.fixed.amount.clone(), ()),
-            )
+            ),
         )]
-            .to_clvm(allocator)
-            .into_gen()?;
+        .to_clvm(allocator)
+        .into_gen()?;
 
         // Generalize this once the test is working.  Move out the assumption that
         // referee private key is my_identity.synthetic_private_key.
@@ -1544,10 +1544,9 @@ impl RefereeMaker {
         debug!("rems in spend {conditions:?}");
 
         // Read parameters off conditions
-        let rem_condition = if let Some(CoinCondition::Rem(rem_condition)) =
-            conditions
-                .iter()
-                .find(|cond| matches!(cond, CoinCondition::Rem(_)))
+        let rem_condition = if let Some(CoinCondition::Rem(rem_condition)) = conditions
+            .iter()
+            .find(|cond| matches!(cond, CoinCondition::Rem(_)))
         {
             // Got rem condition
             rem_condition.to_vec()
