@@ -2043,7 +2043,7 @@ impl PotatoHandler {
         if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
             if game_map.contains_key(coin_id) {
                 // Check how it got spent.
-                let (env, system_interface) = penv.env();
+                let (_env, system_interface) = penv.env();
                 system_interface.request_puzzle_and_solution(coin_id)?;
                 return Ok(true);
             }
@@ -2090,23 +2090,22 @@ impl PotatoHandler {
 
         // A game coin was spent and we have the puzzle and solution.
         let player_ch = self.channel_handler_mut()?;
-        let (env, system_interface) = penv.env();
+        let (env, _system_interface) = penv.env();
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
         let their_turn_result =
             player_ch.game_coin_spent(env, &old_definition.game_id, coin_id, &conditions)?;
         match their_turn_result {
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout {
-                my_reward_coin_string,
+                /*my_reward_coin_string,*/ ..
             }) => {
                 todo!();
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved {
-                new_coin_string,
-                readable,
+                /* new_coin_string, readable, */ ..
             }) => {
                 todo!();
             }
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(outcome)) => {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(_outcome)) => {
                 todo!();
             }
             CoinSpentInformation::OurReward(_, _) => {
@@ -2421,7 +2420,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             HandshakeState::OnChainWaitingForUnrollConditions(unroll_id) => {
                 Some(ConditionWaitKind::Unroll(unroll_id.clone()))
             }
-            HandshakeState::OnChain(game_map) => Some(ConditionWaitKind::Game),
+            HandshakeState::OnChain(_game_map) => Some(ConditionWaitKind::Game),
             _ => None,
         };
 
