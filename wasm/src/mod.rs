@@ -18,7 +18,7 @@ use chia_gaming::log::wasm_init;
 use chia_gaming::common::types::{AllocEncoder, Amount, CoinSpend, CoinString, GameID, Hash, PrivateKey, Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, IntoErr};
 use chia_gaming::common::types;
 use chia_gaming::channel_handler::types::ReadableMove;
-use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
+use chia_gaming::potato_handler::types::{GameStart, GameType, ToLocalUI};
 use chia_gaming::peer_container::{GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport};
 use chia_gaming::common::standard_coin::{ChiaIdentity, wasm_deposit_file};
 
