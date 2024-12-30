@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::common::standard_coin::read_hex_puzzle;
-use crate::common::types::{AllocEncoder, Node, Sha256Input, chia_dialect};
+use crate::common::types::{chia_dialect, AllocEncoder, Node, Sha256Input};
 
 use clvm_traits::ToClvm;
 use clvmr::run_program;

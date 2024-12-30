@@ -23,9 +23,9 @@ use crate::common::standard_coin::{
     unsafe_sign_partial,
 };
 use crate::common::types::{
-    atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID,
-    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
-    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout, CoinCondition,
+    atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo,
+    CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
+    Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
 use crate::referee::{
     GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
@@ -1119,7 +1119,7 @@ impl LiveGame {
 pub enum CoinSpentInformation {
     OurReward(PuzzleHash, Amount),
     OurSpend(PuzzleHash, Amount),
-    TheirSpend(TheirTurnCoinSpentResult)
+    TheirSpend(TheirTurnCoinSpentResult),
 }
 
 pub enum CoinIdentificationByPuzzleHash {
