@@ -25,6 +25,9 @@ use crate::common::types::{
     GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
     SpendBundle, SpendRewardResult, Timeout,
 };
+use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
+use clvm_tools_rs::classic::clvm::sexp::proper_list;
+
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, ConditionWaitKind, FromLocalUI, GameAction,
@@ -33,8 +36,6 @@ use crate::potato_handler::types::{
     PeerMessage, PotatoHandlerImpl, PotatoHandlerInit, PotatoState, SpendWalletReceiver, ToLocalUI,
     WalletSpendInterface,
 };
-use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
-use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
 pub mod on_chain;
 pub mod types;

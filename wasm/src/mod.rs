@@ -15,13 +15,12 @@ use serde::{Deserialize, Serialize};
 
 use wasm_bindgen::prelude::*;
 
-use chia_gaming::log::wasm_init;
-use chia_gaming::common::types::{AllocEncoder, Amount, CoinSpend, CoinString, GameID, Hash, PrivateKey, Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, IntoErr};
-use chia_gaming::common::types;
 use chia_gaming::channel_handler::types::ReadableMove;
+use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
+use chia_gaming::peer_container::{
+    GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
+};
 use chia_gaming::potato_handler::types::{GameStart, GameType, ToLocalUI};
-use chia_gaming::peer_container::{GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport};
-use chia_gaming::common::standard_coin::{ChiaIdentity, wasm_deposit_file};
 use chia_gaming::shutdown::BasicShutdownConditions;
 
 use crate::map_m::map_m;
@@ -92,13 +91,13 @@ export type IdleCallbacks = {
 
 #[derive(Serialize, Deserialize, Default)]
 struct JsAmount {
-    amt: Amount
+    amt: Amount,
 }
 
 struct JsCradle {
     allocator: AllocEncoder,
     rng: ChaCha8Rng,
-    cradle: SynchronousGameCradle
+    cradle: SynchronousGameCradle,
 }
 
 thread_local! {
@@ -134,7 +133,7 @@ fn insert_cradle(this_id: i32, runner: JsCradle) {
 #[derive(Serialize, Deserialize)]
 struct JsRndConfig {
     // hex string.
-    seed: String
+    seed: String,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -154,7 +153,9 @@ struct JsGameCradleConfig {
     reward_puzzle_hash: String,
 }
 
-fn convert_game_types(collection: &BTreeMap<String, String>) -> Result<BTreeMap<GameType, Rc<Program>>, JsValue> {
+fn convert_game_types(
+    collection: &BTreeMap<String, String>,
+) -> Result<BTreeMap<GameType, Rc<Program>>, JsValue> {
     let mut result = BTreeMap::new();
     for (name, hex) in collection.iter() {
         let name_data = GameType(name.bytes().collect());
@@ -168,7 +169,7 @@ fn convert_game_types(collection: &BTreeMap<String, String>) -> Result<BTreeMap<
 // them.  probably the indexes should be hashes, thinking about it, but can be anything.
 fn get_game_config<'b>(
     identity: &'b mut ChiaIdentity,
-    js_config: JsValue
+    js_config: JsValue,
 ) -> Result<SynchronousGameCradleConfig<'b>, JsValue> {
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
 
@@ -179,10 +180,10 @@ fn get_game_config<'b>(
         have_potato: jsconfig.have_potato,
         identity: identity,
         channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
+        unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
         my_contribution: jsconfig.my_contribution.amt.clone(),
         their_contribution: jsconfig.their_contribution.amt.clone(),
         reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)),
-        unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
     })
 }
 
@@ -194,7 +195,8 @@ trait ErrIntoJs {
 impl ErrIntoJs for types::Error {
     type EResult = JsValue;
     fn into_js(self) -> Self::EResult {
-        serde_wasm_bindgen::to_value(&self).unwrap_or_else(|e| JsValue::from_str(&format!("{:?}", e)))
+        serde_wasm_bindgen::to_value(&self)
+            .unwrap_or_else(|e| JsValue::from_str(&format!("{:?}", e)))
     }
 }
 
@@ -229,9 +231,11 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     let new_id = get_next_id();
 
     let mut use_seed: [u8; 32] = [0; 32];
-    if let Some(js_rnd_config) = serde_wasm_bindgen::from_value::<JsRndConfig>(js_config.clone()).ok() {
+    if let Some(js_rnd_config) =
+        serde_wasm_bindgen::from_value::<JsRndConfig>(js_config.clone()).ok()
+    {
         let seed_bytes = hex::decode(&js_rnd_config.seed).into_js()?;
-        for (i,b) in seed_bytes.iter().enumerate() {
+        for (i, b) in seed_bytes.iter().enumerate() {
             use_seed[i % use_seed.len()] = *b;
         }
     }
@@ -241,14 +245,11 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     let random_private_key: PrivateKey = rng.gen();
     let mut identity = ChiaIdentity::new(&mut allocator, random_private_key).into_js()?;
     let synchronous_game_cradle_config = get_game_config(&mut identity, js_config.clone())?;
-    let game_cradle = SynchronousGameCradle::new(
-        &mut rng,
-        synchronous_game_cradle_config
-    );
+    let game_cradle = SynchronousGameCradle::new(&mut rng, synchronous_game_cradle_config);
     let cradle = JsCradle {
         allocator,
         rng,
-        cradle: game_cradle
+        cradle: game_cradle,
     };
 
     insert_cradle(new_id, cradle);
@@ -258,7 +259,7 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
 
 fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
 where
-    F: FnOnce(&mut JsCradle) -> Result<T, types::Error>
+    F: FnOnce(&mut JsCradle) -> Result<T, types::Error>,
 {
     CRADLES.with(|cell| {
         let mut mut_ref = cell.borrow_mut();
@@ -266,7 +267,9 @@ where
             return f(cradle).into_js();
         }
 
-        Err(JsValue::from_str(&format!("could not find game instance {cid}")))
+        Err(JsValue::from_str(&format!(
+            "could not find game instance {cid}"
+        )))
     })
 }
 
@@ -285,28 +288,47 @@ pub fn opening_coin(cid: i32, hex_coinstring: &str) -> Result<(), JsValue> {
         cradle.cradle.opening_coin(
             &mut cradle.allocator,
             &mut cradle.rng,
-            hex_to_coinstring(hex_coinstring)?
+            hex_to_coinstring(hex_coinstring)?,
         )
     })
 }
 
-fn watch_report_from_params(additions: Vec<String>, removals: Vec<String>, timed_out: Vec<String>) -> Result<WatchReport, types::Error> {
+fn watch_report_from_params(
+    additions: Vec<String>,
+    removals: Vec<String>,
+    timed_out: Vec<String>,
+) -> Result<WatchReport, types::Error> {
     Ok(WatchReport {
-        created_watched: map_m(|s| hex_to_coinstring(&s), &additions)?.iter().cloned().collect(),
-        deleted_watched: map_m(|s| hex_to_coinstring(&s), &removals)?.iter().cloned().collect(),
-        timed_out: map_m(|s| hex_to_coinstring(&s), &timed_out)?.iter().cloned().collect(),
+        created_watched: map_m(|s| hex_to_coinstring(&s), &additions)?
+            .iter()
+            .cloned()
+            .collect(),
+        deleted_watched: map_m(|s| hex_to_coinstring(&s), &removals)?
+            .iter()
+            .cloned()
+            .collect(),
+        timed_out: map_m(|s| hex_to_coinstring(&s), &timed_out)?
+            .iter()
+            .cloned()
+            .collect(),
     })
 }
 
 #[wasm_bindgen]
-pub fn new_block(cid: i32, height: usize, additions: Vec<String>, removals: Vec<String>, timed_out: Vec<String>) -> Result<(), JsValue> {
+pub fn new_block(
+    cid: i32,
+    height: usize,
+    additions: Vec<String>,
+    removals: Vec<String>,
+    timed_out: Vec<String>,
+) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
         let watch_report = watch_report_from_params(additions, removals, timed_out)?;
         cradle.cradle.new_block(
             &mut cradle.allocator,
             &mut cradle.rng,
             height,
-            &watch_report
+            &watch_report,
         )
     })
 }
@@ -320,7 +342,7 @@ struct JsGameStart {
     my_contribution: u64,
     my_turn: bool,
     // Hex
-    parameters: String
+    parameters: String,
 }
 
 fn game_id_to_string(id: &GameID) -> String {
@@ -341,7 +363,7 @@ pub fn start_games(cid: i32, initiator: bool, game: JsValue) -> Result<Vec<Strin
             amount: Amount::new(js_game_start.amount),
             my_contribution: Amount::new(js_game_start.my_contribution),
             my_turn: js_game_start.my_turn,
-            parameters: hex::decode(&js_game_start.parameters).into_gen()?
+            parameters: hex::decode(&js_game_start.parameters).into_gen()?,
         };
         cradle.cradle.start_games(
             &mut cradle.allocator,
@@ -354,15 +376,19 @@ pub fn start_games(cid: i32, initiator: bool, game: JsValue) -> Result<Vec<Strin
     Ok(res.iter().map(game_id_to_string).collect())
 }
 
-pub fn make_move_inner(cid: i32, id: &str, readable: &str, entropy: Option<&str>) -> Result<(), JsValue> {
+pub fn make_move_inner(
+    cid: i32,
+    id: &str,
+    readable: &str,
+    entropy: Option<&str>,
+) -> Result<(), JsValue> {
     let game_id = string_to_game_id(id)?;
     let readable_bytes = hex::decode(readable).into_js()?;
-    let new_entropy =
-        if let Some(e) = entropy {
-            Some(Hash::from_slice(&hex::decode(e).into_js()?))
-        } else {
-            None
-        };
+    let new_entropy = if let Some(e) = entropy {
+        Some(Hash::from_slice(&hex::decode(e).into_js()?))
+    } else {
+        None
+    };
     with_game(cid, move |cradle: &mut JsCradle| {
         let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.gen());
         cradle.cradle.make_move(
@@ -376,7 +402,12 @@ pub fn make_move_inner(cid: i32, id: &str, readable: &str, entropy: Option<&str>
 }
 
 #[wasm_bindgen]
-pub fn make_move_entropy(cid: i32, id: &str, readable: &str, new_entropy: &str) -> Result<(), JsValue> {
+pub fn make_move_entropy(
+    cid: i32,
+    id: &str,
+    readable: &str,
+    new_entropy: &str,
+) -> Result<(), JsValue> {
     make_move_inner(cid, id, readable, Some(new_entropy))
 }
 
@@ -389,18 +420,20 @@ pub fn make_move(cid: i32, id: &str, readable: &str) -> Result<(), JsValue> {
 pub fn accept(cid: i32, id: &str) -> Result<(), JsValue> {
     let game_id = string_to_game_id(id)?;
     with_game(cid, move |cradle: &mut JsCradle| {
-        cradle.cradle.accept(
-            &mut cradle.allocator,
-            &mut cradle.rng,
-            &game_id,
-        )
+        cradle
+            .cradle
+            .accept(&mut cradle.allocator, &mut cradle.rng, &game_id)
     })
 }
 
 #[wasm_bindgen]
 pub fn shut_down(cid: i32) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
-        cradle.cradle.shut_down(&mut cradle.allocator, &mut cradle.rng, Rc::new(BasicShutdownConditions))
+        cradle.cradle.shut_down(
+            &mut cradle.allocator,
+            &mut cradle.rng,
+            Rc::new(BasicShutdownConditions),
+        )
     })
 }
 
@@ -414,20 +447,21 @@ pub fn deliver_message(cid: i32, inbound_message: &str) -> Result<(), JsValue> {
 
 #[derive(Default)]
 struct JsLocalUI {
-    callbacks: BTreeMap<String, JsValue>
+    callbacks: BTreeMap<String, JsValue>,
 }
 
-fn call_javascript_from_collection<F>(callbacks: &BTreeMap<String, JsValue>, name: &str, f: F) -> Result<(), types::Error>
+fn call_javascript_from_collection<F>(
+    callbacks: &BTreeMap<String, JsValue>,
+    name: &str,
+    f: F,
+) -> Result<(), types::Error>
 where
-    F: FnOnce(&mut Array) -> Result<(), types::Error>
+    F: FnOnce(&mut Array) -> Result<(), types::Error>,
 {
     if let Some(function) = callbacks.get(name).and_then(Function::try_from) {
         let mut args_array = Array::new();
         f(&mut args_array)?;
-        function.apply(
-            &JsValue::NULL,
-            &args_array
-        ).into_e()?;
+        function.apply(&JsValue::NULL, &args_array).into_e()?;
     }
 
     Ok(())
@@ -442,7 +476,13 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
-    fn opponent_moved(&mut self, _allocator: &mut AllocEncoder, game_id: &GameID, readable_move: ReadableMove, _amount: Amount) -> Result<(), chia_gaming::common::types::Error> {
+    fn opponent_moved(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        game_id: &GameID,
+        readable_move: ReadableMove,
+        _amount: Amount,
+    ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "opponent_moved", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
             args_array.set(1, JsValue::from_str(&readable_move.to_program().to_hex()));
@@ -450,7 +490,12 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
-    fn game_message(&mut self, _allocator: &mut AllocEncoder, game_id: &GameID, readable: ReadableMove) -> Result<(), chia_gaming::common::types::Error> {
+    fn game_message(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        game_id: &GameID,
+        readable: ReadableMove,
+    ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "game_message", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
             args_array.set(1, JsValue::from_str(&readable.to_program().to_hex()));
@@ -458,7 +503,11 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
-    fn game_finished(&mut self, game_id: &GameID, amount: Amount) -> Result<(), chia_gaming::common::types::Error> {
+    fn game_finished(
+        &mut self,
+        game_id: &GameID,
+        amount: Amount,
+    ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "game_message", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
             args_array.set(1, amount.to_u64().into());
@@ -466,16 +515,26 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
-    fn game_cancelled(&mut self, game_id: &GameID) -> Result<(), chia_gaming::common::types::Error> {
+    fn game_cancelled(
+        &mut self,
+        game_id: &GameID,
+    ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "game_finished", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
             Ok(())
         })
     }
 
-    fn shutdown_complete(&mut self, coin: Option<&CoinString>) -> Result<(), chia_gaming::common::types::Error> {
+    fn shutdown_complete(
+        &mut self,
+        coin: Option<&CoinString>,
+    ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "shutdown_complete", |args_array| {
-            args_array.set(0, coin.map(|c| JsValue::from_str(&hex::encode(&c.to_bytes()))).unwrap_or_else(|| JsValue::NULL.clone()));
+            args_array.set(
+                0,
+                coin.map(|c| JsValue::from_str(&hex::encode(&c.to_bytes())))
+                    .unwrap_or_else(|| JsValue::NULL.clone()),
+            );
             Ok(())
         })
     }
@@ -489,12 +548,11 @@ impl ToLocalUI for JsLocalUI {
 }
 
 fn to_local_ui(callbacks: JsValue) -> Result<JsLocalUI, JsValue> {
-    let object =
-        if let Some(object) = Object::try_from(&callbacks) {
-            object
-        } else {
-            return Err(JsValue::from_str("callbacks wasn't an object"));
-        };
+    let object = if let Some(object) = Object::try_from(&callbacks) {
+        object
+    } else {
+        return Err(JsValue::from_str("callbacks wasn't an object"));
+    };
 
     let mut jslocalui = JsLocalUI::default();
 
@@ -542,20 +600,20 @@ fn spend_to_js(spend: &Spend) -> JsSpend {
     JsSpend {
         puzzle: spend.puzzle.to_hex(),
         solution: spend.solution.to_hex(),
-        signature: hex::encode(&spend.signature.bytes())
+        signature: hex::encode(&spend.signature.bytes()),
     }
 }
 
 fn coin_spend_to_js(spend: &CoinSpend) -> JsCoinSpend {
     JsCoinSpend {
         coin: coinstring_to_hex(&spend.coin),
-        bundle: spend_to_js(&spend.bundle)
+        bundle: spend_to_js(&spend.bundle),
     }
 }
 
 fn spend_bundle_to_js(spend_bundle: &SpendBundle) -> JsSpendBundle {
     JsSpendBundle {
-        spends: spend_bundle.spends.iter().map(coin_spend_to_js).collect()
+        spends: spend_bundle.spends.iter().map(coin_spend_to_js).collect(),
     }
 }
 
@@ -578,7 +636,9 @@ impl IntoE for serde_wasm_bindgen::Error {
 impl IntoE for wasm_bindgen::JsValue {
     type E = types::Error;
     fn into_e(self) -> types::Error {
-        self.as_string().map(types::Error::StrErr).unwrap_or_else(|| types::Error::StrErr("unspecified error".to_string()))
+        self.as_string()
+            .map(types::Error::StrErr)
+            .unwrap_or_else(|| types::Error::StrErr("unspecified error".to_string()))
     }
 }
 
@@ -589,45 +649,49 @@ impl<T, Err: IntoE<E = types::Error>> IntoE for Result<T, Err> {
     }
 }
 
-fn idle_result_to_js(
-    idle_result: &IdleResult
-) -> Result<JsValue, types::Error> {
-    let opponent_move =
-        if let Some((gid, vs)) = &idle_result.opponent_move {
-            Some((game_id_to_string(gid), readable_move_to_hex(vs)?))
-        } else {
-            None
-        };
-    let game_finished =
-        if let Some((gid, amt)) = &idle_result.game_finished {
-            Some((game_id_to_string(gid), amt.to_u64()))
-        } else {
-            None
-        };
+fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> {
+    let opponent_move = if let Some((gid, vs)) = &idle_result.opponent_move {
+        Some((game_id_to_string(gid), readable_move_to_hex(vs)?))
+    } else {
+        None
+    };
+    let game_finished = if let Some((gid, amt)) = &idle_result.game_finished {
+        Some((game_id_to_string(gid), amt.to_u64()))
+    } else {
+        None
+    };
     serde_wasm_bindgen::to_value(&JsIdleResult {
         continue_on: idle_result.continue_on,
-        outbound_transactions: idle_result.outbound_transactions.iter().map(spend_bundle_to_js).collect(),
-        outbound_messages: idle_result.outbound_messages.iter().map(hex::encode).collect(),
+        outbound_transactions: idle_result
+            .outbound_transactions
+            .iter()
+            .map(spend_bundle_to_js)
+            .collect(),
+        outbound_messages: idle_result
+            .outbound_messages
+            .iter()
+            .map(hex::encode)
+            .collect(),
         opponent_move: opponent_move,
         game_finished: game_finished,
-    }).into_e()
+    })
+    .into_e()
 }
 
 #[wasm_bindgen]
 pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
     let mut local_ui = to_local_ui(callbacks)?;
     with_game(cid, move |cradle: &mut JsCradle| {
-        if let Some(idle_result) = cradle.cradle.idle(
-            &mut cradle.allocator,
-            &mut cradle.rng,
-            &mut local_ui
-        )? {
+        if let Some(idle_result) =
+            cradle
+                .cradle
+                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui)?
+        {
             idle_result_to_js(&idle_result)
         } else {
             Ok(JsValue::NULL.clone())
         }
     })
-
 }
 
 #[derive(Serialize, Deserialize)]
