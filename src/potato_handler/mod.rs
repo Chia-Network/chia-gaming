@@ -453,7 +453,9 @@ impl PotatoHandler {
                 self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone());
             }
             _ => {
-                return Err(Error::StrErr(format!("unhandled passthrough message {msg_envelope:?}")));
+                return Err(Error::StrErr(format!(
+                    "unhandled passthrough message {msg_envelope:?}"
+                )));
             }
         }
 

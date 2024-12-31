@@ -1755,9 +1755,7 @@ impl ChannelHandler {
 
                 Ok(None)
             }
-            _ => {
-                todo!();
-            }
+            _ => Ok(None),
         }
     }
 
