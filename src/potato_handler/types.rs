@@ -449,6 +449,8 @@ pub trait PotatoHandlerImpl {
 
     fn channel_handler_mut(&mut self) -> &mut ChannelHandler;
 
+    fn into_channel_handler(self) -> ChannelHandler;
+
     fn check_game_coin_spent<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,

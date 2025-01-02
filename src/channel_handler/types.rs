@@ -894,6 +894,10 @@ impl LiveGame {
         self.referee_maker.processing_my_turn()
     }
 
+    pub fn first_move(&self) -> bool {
+        self.referee_maker.first_move()
+    }
+
     pub fn last_puzzle_hash(&self) -> PuzzleHash {
         self.last_referee_puzzle_hash.clone()
     }

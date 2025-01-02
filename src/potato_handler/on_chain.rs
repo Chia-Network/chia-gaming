@@ -60,6 +60,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         &mut self.player_ch
     }
 
+    fn into_channel_handler(self) -> ChannelHandler {
+        self.player_ch
+    }
+
     fn check_game_coin_spent<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,

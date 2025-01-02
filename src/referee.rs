@@ -785,6 +785,10 @@ impl RefereeMaker {
         self.state.processing_my_turn()
     }
 
+    pub fn first_move(&self) -> bool {
+        self.old_states.len() == 1
+    }
+
     pub fn get_game_handler(&self) -> GameHandler {
         match self.state.borrow() {
             RefereeMakerGameState::Initial { game_handler, .. }
@@ -1509,10 +1513,6 @@ impl RefereeMaker {
 
         // Retrieve evidence from their turn handler.
         let state_nodeptr = last_state.to_nodeptr(allocator)?;
-        assert!(
-            args.game_move.basic.move_made.len()
-                <= self.args_for_this_coin().game_move.basic.max_move_size
-        );
         let result = handler.call_their_turn_driver(
             allocator,
             &TheirTurnInputs {

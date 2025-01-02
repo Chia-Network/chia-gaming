@@ -1704,7 +1704,8 @@ impl ChannelHandler {
         swap(&mut cla, &mut self.cached_last_action);
         match cla {
             Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(_, _, _)) => {
-                todo!();
+                // Can't re-create game.
+                return Ok(None);
             }
             Some(CachedPotatoRegenerateLastHop::PotatoAccept(_)) => {
                 todo!();
@@ -1725,7 +1726,7 @@ impl ChannelHandler {
                     // We should have odd parity between the rewind and the current state.
                     debug!("{} getting redo move: move_data.state_number {} rewind_state {rewind_state}", self.is_initial_potato(), move_data.state_number);
                     let rewind_ph = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
-                    if self.live_games[game_idx].is_my_turn() {
+                    if self.live_games[game_idx].is_my_turn() || self.live_games[game_idx].first_move() {
                         debug!(
                             "{} not matched rewind state {new_ph:?} vs {rewind_ph:?}",
                             self.is_initial_potato()

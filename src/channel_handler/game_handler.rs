@@ -193,6 +193,7 @@ impl GameHandler {
             GameHandler::TheirTurnHandler(n) => n.to_nodeptr(allocator),
         }
     }
+
     pub fn is_my_turn(&self) -> bool {
         matches!(self, GameHandler::MyTurnHandler(_))
     }
