@@ -1181,9 +1181,7 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
 fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = vec![
-        GameAction::GoOnChain(1)
-    ];
+    let mut moves = vec![GameAction::GoOnChain(1)];
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 

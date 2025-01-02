@@ -1726,7 +1726,9 @@ impl ChannelHandler {
                     // We should have odd parity between the rewind and the current state.
                     debug!("{} getting redo move: move_data.state_number {} rewind_state {rewind_state}", self.is_initial_potato(), move_data.state_number);
                     let rewind_ph = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
-                    if self.live_games[game_idx].is_my_turn() || self.live_games[game_idx].first_move() {
+                    if self.live_games[game_idx].is_my_turn()
+                        || self.live_games[game_idx].first_move()
+                    {
                         debug!(
                             "{} not matched rewind state {new_ph:?} vs {rewind_ph:?}",
                             self.is_initial_potato()
