@@ -20,7 +20,7 @@ use crate::common::types::{
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::calpoker::{
-    decode_calpoker_readable, decode_readable_card_choices, get_final_used_cards,
+    decode_calpoker_readable, decode_readable_card_choices, get_final_used_cards, WinDirectionUser,
 };
 use crate::games::poker_collection;
 use crate::peer_container::{
@@ -1052,15 +1052,7 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     .expect("should finish");
 }
 
-#[test]
-fn sim_test_with_peer_container_off_chain_complete() {
-    let mut allocator = AllocEncoder::new();
-
-    let mut moves = test_moves_1(&mut allocator).to_vec();
-    moves.push(GameAction::Accept(0));
-    moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+fn check_calpoker_economic_outcome(allocator: &mut AllocEncoder, outcome: &CalpokerRunOutcome) {
     let p1_ph = outcome.identities[0].puzzle_hash.clone();
     let p2_ph = outcome.identities[1].puzzle_hash.clone();
     let p1_coins = outcome.simulator.get_my_coins(&p1_ph).expect("should work");
@@ -1076,7 +1068,7 @@ fn sim_test_with_peer_container_off_chain_complete() {
 
     for (pn, lui) in outcome.local_uis.iter().enumerate() {
         for (mn, the_move) in lui.opponent_moves.iter().enumerate() {
-            let the_move_to_node = the_move.1.to_nodeptr(&mut allocator).expect("should work");
+            let the_move_to_node = the_move.1.to_nodeptr(allocator).expect("should work");
             debug!(
                 "player {pn} opponent move {mn} {the_move:?} {}",
                 disassemble(allocator.allocator(), the_move_to_node, None)
@@ -1086,24 +1078,22 @@ fn sim_test_with_peer_container_off_chain_complete() {
 
     let p0_view_of_cards = outcome.local_uis[0].opponent_moves[0].1.clone();
     let alice_cards =
-        decode_readable_card_choices(&mut allocator, p0_view_of_cards).expect("should get cards");
+        decode_readable_card_choices(allocator, p0_view_of_cards).expect("should get cards");
     let alice_outcome_node = outcome.local_uis[0].opponent_moves[1]
         .1
-        .to_nodeptr(&mut allocator)
+        .to_nodeptr(allocator)
         .expect("should work");
     let alice_outcome =
-        decode_calpoker_readable(&mut allocator, alice_outcome_node, Amount::new(200), false)
+        decode_calpoker_readable(allocator, alice_outcome_node, Amount::new(200), false)
             .expect("should work");
     let p1_view_of_cards = outcome.local_uis[1].opponent_moves[1].1.clone();
-    let bob_cards =
-        decode_readable_card_choices(&mut allocator, p1_view_of_cards).expect("should work");
+    let bob_cards = decode_readable_card_choices(allocator, p1_view_of_cards).expect("should work");
     let bob_outcome_node = outcome.local_uis[1].opponent_moves[2]
         .1
-        .to_nodeptr(&mut allocator)
+        .to_nodeptr(allocator)
         .expect("should work");
-    let bob_outcome =
-        decode_calpoker_readable(&mut allocator, bob_outcome_node, Amount::new(200), true)
-            .expect("should work");
+    let bob_outcome = decode_calpoker_readable(allocator, bob_outcome_node, Amount::new(200), true)
+        .expect("should work");
 
     assert_eq!(alice_cards, bob_cards);
 
@@ -1116,26 +1106,49 @@ fn sim_test_with_peer_container_off_chain_complete() {
     let opponent_moves = &outcome.local_uis[0].opponent_moves;
     let olen = opponent_moves.len();
     let outcome_move = &opponent_moves[olen - 1];
-    let outcome_node = outcome_move
-        .1
-        .to_nodeptr(&mut allocator)
-        .expect("should work");
+    let outcome_node = outcome_move.1.to_nodeptr(allocator).expect("should work");
     let decoded_outcome =
-        decode_calpoker_readable(&mut allocator, outcome_node, Amount::new(200), false)
+        decode_calpoker_readable(allocator, outcome_node, Amount::new(200), false)
             .expect("should decode");
     debug!(
         "outcome move {}",
         disassemble(allocator.allocator(), outcome_node, None)
     );
+    let expected_p1 =
+        p2_balance + decoded_outcome.game_amount.clone() - decoded_outcome.your_share.clone();
+    let expected_p2 = p1_balance + decoded_outcome.your_share.clone();
+
     debug!("game outcome {decoded_outcome:?}");
     debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
     if decoded_outcome.raw_win_direction == 1 {
-        assert_eq!(p2_balance + 200, p1_balance);
+        assert!(matches!(
+            decoded_outcome.win_direction,
+            Some(WinDirectionUser::Alice)
+        ));
+        assert_eq!(expected_p1, p1_balance);
     } else if decoded_outcome.raw_win_direction == -1 {
-        assert_eq!(p2_balance, p1_balance + 200);
+        assert!(matches!(
+            decoded_outcome.win_direction,
+            Some(WinDirectionUser::Bob)
+        ));
+        assert_eq!(expected_p2, p2_balance);
     } else {
+        assert!(matches!(decoded_outcome.win_direction, None));
         assert_eq!(p2_balance, p1_balance);
     }
+}
+
+#[test]
+fn sim_test_with_peer_container_off_chain_complete() {
+    let mut allocator = AllocEncoder::new();
+
+    let mut moves = test_moves_1(&mut allocator).to_vec();
+    moves.push(GameAction::Accept(0));
+    moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+    let outcome =
+        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+    check_calpoker_economic_outcome(&mut allocator, &outcome);
 }
 
 #[test]
@@ -1154,46 +1167,6 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     }
     let outcome =
         run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
-    let p1_ph = outcome.identities[0].puzzle_hash.clone();
-    let p2_ph = outcome.identities[1].puzzle_hash.clone();
-    let p1_coins = outcome.simulator.get_my_coins(&p1_ph).expect("should work");
-    let p2_coins = outcome.simulator.get_my_coins(&p2_ph).expect("should work");
-    let p1_balance: u64 = p1_coins
-        .iter()
-        .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
-        .sum();
-    let p2_balance: u64 = p2_coins
-        .iter()
-        .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
-        .sum();
-    for (pn, lui) in outcome.local_uis.iter().enumerate() {
-        for the_move in lui.opponent_moves.iter() {
-            let the_move_to_node = the_move.1.to_nodeptr(&mut allocator).expect("should work");
-            debug!(
-                "player {pn} opponent move {the_move:?} {}",
-                disassemble(allocator.allocator(), the_move_to_node, None)
-            );
-        }
-    }
-    let outcome_move = &outcome.local_uis[0].opponent_moves[2];
-    let outcome_node = outcome_move
-        .1
-        .to_nodeptr(&mut allocator)
-        .expect("should work");
-    let decoded_outcome =
-        decode_calpoker_readable(&mut allocator, outcome_node, Amount::new(200), false)
-            .expect("should decode");
-    debug!(
-        "outcome move {}",
-        disassemble(allocator.allocator(), outcome_node, None)
-    );
-    debug!("game outcome {decoded_outcome:?}");
-    debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
-    if decoded_outcome.raw_win_direction == 1 {
-        assert_eq!(p2_balance + 200, p1_balance);
-    } else if decoded_outcome.raw_win_direction == -1 {
-        assert_eq!(p2_balance, p1_balance + 200);
-    } else {
-        assert_eq!(p2_balance, p1_balance);
-    }
+
+    check_calpoker_economic_outcome(&mut allocator, &outcome);
 }
