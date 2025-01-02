@@ -1726,7 +1726,7 @@ impl ChannelHandler {
                 for id in remove_ids.into_iter() {
                     self.live_games.remove(id);
                 }
-                return Ok(None);
+                Ok(None)
             }
             Some(CachedPotatoRegenerateLastHop::PotatoAccept(_)) => {
                 todo!();
