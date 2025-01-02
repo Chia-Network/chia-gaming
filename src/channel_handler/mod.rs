@@ -1703,8 +1703,30 @@ impl ChannelHandler {
         let mut cla = None;
         swap(&mut cla, &mut self.cached_last_action);
         match cla {
-            Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(_, _, _)) => {
-                todo!();
+            Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
+                ids,
+                my_contrib,
+                their_contrib,
+            )) => {
+                // Can't restart games on chain so rewind.
+                self.my_allocated_balance -= my_contrib;
+                self.their_allocated_balance -= their_contrib;
+                let remove_ids: Vec<usize> = self
+                    .live_games
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, g)| {
+                        if ids.iter().any(|i| g.game_id == *i) {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                for id in remove_ids.into_iter() {
+                    self.live_games.remove(id);
+                }
+                return Ok(None);
             }
             Some(CachedPotatoRegenerateLastHop::PotatoAccept(_)) => {
                 todo!();
@@ -1843,11 +1865,14 @@ impl ChannelHandler {
         game_id: &GameID,
         coin: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let game_idx = self.get_game_by_id(game_id)?;
-        let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
-        // Game is done one way or another.
-        self.live_games.remove(game_idx);
-        Ok(tx)
+        if let Ok(game_idx) = self.get_game_by_id(game_id) {
+            let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
+            // Game is done one way or another.
+            self.live_games.remove(game_idx);
+            Ok(tx)
+        } else {
+            Ok(None)
+        }
     }
 
     // the vanilla coin we get and each reward coin are all sent to the referee
