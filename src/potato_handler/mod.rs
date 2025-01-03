@@ -1749,11 +1749,21 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
-        if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
-            if on_chain.shut_down(penv, conditions.clone())? {
-                self.handshake_state = HandshakeState::Completed;
+        let mut hs_state = HandshakeState::Completed;
+        swap(&mut hs_state, &mut self.handshake_state);
+        match hs_state {
+            HandshakeState::OnChain(mut on_chain) => {
+                if on_chain.shut_down(penv, conditions.clone())? {
+                    self.channel_handler = Some(on_chain.into_channel_handler());
+                    self.handshake_state = HandshakeState::Completed;
+                } else {
+                    self.handshake_state = HandshakeState::OnChain(on_chain);
+                }
+                return Ok(());
             }
-            return Ok(());
+            x => {
+                self.handshake_state = x;
+            }
         }
 
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
