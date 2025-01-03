@@ -1464,7 +1464,9 @@ impl PotatoHandler {
             self.game_action_queue.push_back(action);
 
             if !matches!(self.have_potato, PotatoState::Present) {
-                self.request_potato(penv)?;
+                if matches!(self.have_potato, PotatoState::Absent) {
+                    self.request_potato(penv)?;
+                }
                 return Ok(());
             }
 
@@ -1702,7 +1704,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             });
 
             if !matches!(self.have_potato, PotatoState::Present) {
-                self.request_potato(penv)?;
+                if matches!(self.have_potato, PotatoState::Absent) {
+                    self.request_potato(penv)?;
+                }
                 return Ok(game_id_list);
             }
 
