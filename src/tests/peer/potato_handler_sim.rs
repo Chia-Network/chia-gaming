@@ -968,9 +968,9 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                             entropy,
                         )?;
                     }
-                    GameAction::GoOnChain(_who) => {
+                    GameAction::GoOnChain(who) => {
                         debug!("go on chain");
-                        todo!();
+                        local_uis[*who].go_on_chain = true;
                     }
                     GameAction::FakeMove(who, readable, move_data) => {
                         // This is a fake move.  We give that move to the given target channel
@@ -1175,4 +1175,34 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
         bob_outcome_move,
         &outcome,
     );
+}
+
+#[test]
+fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
+    let mut allocator = AllocEncoder::new();
+
+    let moves = vec![
+        GameAction::GoOnChain(1),
+        GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)),
+        GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
+    ];
+
+    let outcome =
+        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+    let p1_ph = outcome.identities[0].puzzle_hash.clone();
+    let p2_ph = outcome.identities[1].puzzle_hash.clone();
+    let p1_coins = outcome.simulator.get_my_coins(&p1_ph).expect("should work");
+    let p2_coins = outcome.simulator.get_my_coins(&p2_ph).expect("should work");
+    let p1_balance: u64 = p1_coins
+        .iter()
+        .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
+        .sum();
+    let p2_balance: u64 = p2_coins
+        .iter()
+        .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
+        .sum();
+
+    assert_eq!(p1_balance, 2000000000000);
+    assert_eq!(p1_balance, p2_balance);
 }
