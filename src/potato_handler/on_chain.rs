@@ -241,9 +241,11 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     }],
                 })?;
             } else {
-                let result_transaction =
-                    self.player_ch
-                    .accept_or_timeout_game_on_chain(env, &game_def.game_id, coin_id)?;
+                let result_transaction = self.player_ch.accept_or_timeout_game_on_chain(
+                    env,
+                    &game_def.game_id,
+                    coin_id,
+                )?;
 
                 self.have_potato = PotatoState::Present;
                 if let Some(tx) = result_transaction {
