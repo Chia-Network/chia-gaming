@@ -1485,15 +1485,41 @@ impl ChannelHandler {
         let initial_potato = self.is_initial_potato();
 
         debug!(
-            "{} ALIGN GAME STATES: initiated {} my state {} coin state {}",
-            initial_potato,
-            self.initiated_on_chain,
-            self.current_state_number,
-            self.unroll.coin.state_number,
+            "{initial_potato} ALIGN GAME STATES: initiated {} my state {} coin state {}",
+            self.initiated_on_chain, self.current_state_number, self.unroll.coin.state_number,
         );
+
+        debug!(
+            "{initial_potato} cached state {:?}",
+            self.cached_last_action
+        );
+        debug!("{initial_potato} #game coins {}", coins.len());
 
         let mover_puzzle_hash = private_to_public_key(&self.referee_private_key());
         for game_coin in coins.iter() {
+            if let Some(CachedPotatoRegenerateLastHop::PotatoAccept(cached)) =
+                &self.cached_last_action
+            {
+                if *game_coin == cached.puzzle_hash {
+                    let coin_id = CoinString::from_parts(
+                        &unroll_coin.to_coin_id(),
+                        &game_coin.clone(),
+                        &cached.live_game.get_amount(),
+                    );
+                    debug!("{initial_potato} set coin for accept");
+                    res.insert(
+                        coin_id,
+                        OnChainGameState {
+                            game_id: cached.live_game.game_id.clone(),
+                            puzzle_hash: game_coin.clone(),
+                            our_turn: cached.live_game.is_my_turn(),
+                            accept: None,
+                        },
+                    );
+                    continue;
+                }
+            }
+
             for live_game in self.live_games.iter_mut() {
                 debug!(
                     "live game id {:?} try to use coin {game_coin:?}",
@@ -1504,6 +1530,7 @@ impl ChannelHandler {
                     game_coin,
                     self.current_state_number,
                 )?;
+
                 if let Some((_my_turn, rewind_state)) = rewind_target {
                     debug!("{} rewind target state was {rewind_state}", initial_potato);
                     debug!("mover puzzle hash is {:?}", mover_puzzle_hash);
@@ -1523,14 +1550,14 @@ impl ChannelHandler {
                             game_id: live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
                             our_turn: live_game.is_my_turn(),
-                            accept: false,
+                            accept: None,
                         },
                     );
                 }
             }
         }
 
-        assert_eq!(res.is_empty(), self.live_games.is_empty());
+        // assert_eq!(res.is_empty(), coins.is_empty());
 
         Ok(res)
     }
@@ -1728,8 +1755,22 @@ impl ChannelHandler {
                 }
                 Ok(None)
             }
-            Some(CachedPotatoRegenerateLastHop::PotatoAccept(_)) => {
-                todo!();
+            Some(CachedPotatoRegenerateLastHop::PotatoAccept(mut accept)) => {
+                debug!("{} redo move is an accept", self.is_initial_potato());
+                let transaction = accept
+                    .live_game
+                    .get_transaction_for_timeout(env.allocator, coin)?;
+
+                debug!("{} redo accept data {accept:?}", self.is_initial_potato());
+                let outcome_puzzle_hash = accept.live_game.outcome_puzzle_hash(env.allocator)?;
+                Ok(transaction.map(|t| {
+                    GameAction::RedoAccept(
+                        accept.live_game.game_id.clone(),
+                        coin.clone(),
+                        outcome_puzzle_hash,
+                        Box::new(t),
+                    )
+                }))
             }
             Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) => {
                 let game_idx = self.get_game_by_id(&move_data.game_id)?;

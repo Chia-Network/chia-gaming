@@ -1206,3 +1206,30 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
     assert_eq!(p1_balance, 2000000000000);
     assert_eq!(p1_balance, p2_balance);
 }
+
+#[test]
+fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
+    let mut allocator = AllocEncoder::new();
+
+    let mut moves = test_moves_1(&mut allocator).to_vec();
+    moves.push(GameAction::Accept(0));
+    moves.push(GameAction::GoOnChain(1));
+    moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+    moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+    let outcome =
+        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+    let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
+    let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
+    let alice_outcome_move = &outcome.local_uis[0].opponent_moves[1];
+    let bob_outcome_move = &outcome.local_uis[1].opponent_moves[2];
+
+    check_calpoker_economic_result(
+        &mut allocator,
+        p0_view_of_cards,
+        p1_view_of_cards,
+        alice_outcome_move,
+        bob_outcome_move,
+        &outcome,
+    );
+}

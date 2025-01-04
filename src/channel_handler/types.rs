@@ -301,6 +301,12 @@ pub struct PotatoAcceptCachedData {
     pub our_share_amount: Amount,
 }
 
+impl std::fmt::Debug for PotatoAcceptCachedData {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(formatter, "PotatoAcceptCachedData {{ game_id: {:?}, puzzle_hash: {:?}, live_game: .., at_stake_amount: {:?}, our_share_amount: {:?} }}", self.game_id, self.puzzle_hash, self.at_stake_amount, self.our_share_amount)
+    }
+}
+
 #[derive(Debug)]
 pub struct PotatoMoveCachedData {
     pub state_number: usize,
@@ -312,6 +318,7 @@ pub struct PotatoMoveCachedData {
     pub amount: Amount,
 }
 
+#[derive(Debug)]
 pub enum CachedPotatoRegenerateLastHop {
     PotatoCreatedGame(Vec<GameID>, Amount, Amount),
     PotatoAccept(PotatoAcceptCachedData),
@@ -865,7 +872,7 @@ pub struct OnChainGameState {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
     pub our_turn: bool,
-    pub accept: bool,
+    pub accept: Option<RefereeOnChainTransaction>,
 }
 
 impl LiveGame {
