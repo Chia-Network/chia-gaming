@@ -207,7 +207,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 todo!();
             }
             CoinSpentInformation::OurReward(_, _) => {
-                todo!();
+                // XXX notify UI if we decide we need it.
+                debug!("{initial_potato} our reward coin was spent");
+                unblock_queue = true;
             }
             CoinSpentInformation::OurSpend(ph, amt) => {
                 debug!("{initial_potato} got an our spend {ph:?} {amt:?}");
