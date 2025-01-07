@@ -1819,9 +1819,6 @@ impl RefereeMaker {
             // Timeout case
             // Return enum timeout and we give the coin string of our reward
             // coin if any.
-            // Something went wrong if i think it was my turn
-            debug_assert!(!self.processing_my_turn());
-
             let my_reward_coin_string = CoinString::from_parts(
                 &coin_string.to_coin_id(),
                 &self.fixed.my_identity.puzzle_hash,

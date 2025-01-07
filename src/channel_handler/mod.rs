@@ -801,6 +801,7 @@ impl ChannelHandler {
             .position(|g| &g.game_id == game_id)
             .map(Ok)
             .unwrap_or_else(|| {
+                debug!("nonexistent game id {game_id:?}");
                 Err(Error::StrErr(
                     "send potato move for nonexistent game id".to_string(),
                 ))
