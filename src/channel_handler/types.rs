@@ -869,7 +869,7 @@ pub struct UnrollTarget {
 
 #[derive(Debug)]
 pub enum AcceptTransactionState {
-    Determined(RefereeOnChainTransaction),
+    Determined(Box<RefereeOnChainTransaction>),
     Waiting,
     Finished,
 }

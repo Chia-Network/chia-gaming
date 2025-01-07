@@ -432,7 +432,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     self.have_potato = PotatoState::Absent;
                     debug!("{initial_potato} redo accept: register for timeout {coin:?}");
                     let tx_borrow: &RefereeOnChainTransaction = tx.borrow();
-                    def.accept = AcceptTransactionState::Determined(tx_borrow.clone());
+                    def.accept = AcceptTransactionState::Determined(Box::new(tx_borrow.clone()));
                     system_interface.register_coin(
                         &coin,
                         &self.channel_timeout,
