@@ -868,11 +868,18 @@ pub struct UnrollTarget {
 }
 
 #[derive(Debug)]
+pub enum AcceptTransactionState {
+    Determined(RefereeOnChainTransaction),
+    Waiting,
+    Finished,
+}
+
+#[derive(Debug)]
 pub struct OnChainGameState {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
     pub our_turn: bool,
-    pub accept: Option<RefereeOnChainTransaction>,
+    pub accept: AcceptTransactionState,
 }
 
 impl LiveGame {

@@ -17,8 +17,8 @@ use clvmr::allocator::NodePtr;
 
 use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
-    CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
-    ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
+    AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo,
+    ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation,
     CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo, HandshakeResult, LiveGame,
@@ -1513,7 +1513,7 @@ impl ChannelHandler {
                             game_id: cached.live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
                             our_turn: cached.live_game.is_my_turn(),
-                            accept: None,
+                            accept: AcceptTransactionState::Waiting,
                         },
                     );
                     continue;
@@ -1550,7 +1550,7 @@ impl ChannelHandler {
                             game_id: live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
                             our_turn: live_game.is_my_turn(),
-                            accept: None,
+                            accept: AcceptTransactionState::Waiting,
                         },
                     );
                 }

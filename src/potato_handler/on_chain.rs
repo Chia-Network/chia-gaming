@@ -7,7 +7,9 @@ use rand::Rng;
 
 use log::debug;
 
-use crate::channel_handler::types::{CoinSpentInformation, OnChainGameState, ReadableMove};
+use crate::channel_handler::types::{
+    AcceptTransactionState, CoinSpentInformation, OnChainGameState, ReadableMove,
+};
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
@@ -229,7 +231,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             let (env, system_interface) = penv.env();
             debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
 
-            if let Some(tx) = &game_def.accept {
+            if let AcceptTransactionState::Determined(tx) = &game_def.accept {
                 debug!("{initial_potato} accept tx {tx:?}");
                 self.have_potato = PotatoState::Present;
 
@@ -430,7 +432,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     self.have_potato = PotatoState::Absent;
                     debug!("{initial_potato} redo accept: register for timeout {coin:?}");
                     let tx_borrow: &RefereeOnChainTransaction = tx.borrow();
-                    def.accept = Some(tx_borrow.clone());
+                    def.accept = AcceptTransactionState::Determined(tx_borrow.clone());
                     system_interface.register_coin(
                         &coin,
                         &self.channel_timeout,
@@ -447,7 +449,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 );
 
                 if let Some(coin_def) = self.game_map.get_mut(&current_coin) {
-                    coin_def.accept = None;
+                    coin_def.accept = AcceptTransactionState::Finished;
                 }
 
                 Ok(())
