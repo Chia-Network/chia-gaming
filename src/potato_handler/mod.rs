@@ -1648,27 +1648,11 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
+            debug!("game coin spent in on chain mode {coin_id:?}");
             return on_chain.check_game_coin_spent(penv, coin_id);
         }
 
         Ok(false)
-    }
-
-    fn handle_game_coin_spent<'a, G, R: Rng + 'a>(
-        &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        coin_id: &CoinString,
-        puzzle: &Program,
-        solution: &Program,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-    {
-        if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
-            return on_chain.handle_game_coin_spent(penv, coin_id, puzzle, solution);
-        }
-
-        Ok(())
     }
 }
 
@@ -1927,6 +1911,13 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
+        if let (HandshakeState::OnChain(on_chain), Some((p, s))) =
+            (&mut self.handshake_state, puzzle_and_solution)
+        {
+            debug!("passing on game coin spend to on chain handler {coin_id:?}");
+            return on_chain.handle_game_coin_spent(penv, coin_id, p, s);
+        }
+
         let player_ch = self.channel_handler()?;
         let state_coin_id = match &self.handshake_state {
             HandshakeState::OnChainWaitForConditions(state_coin_id, _data) => {
@@ -1938,7 +1929,6 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             HandshakeState::OnChainWaitingForUnrollConditions(unroll_id) => {
                 Some(ConditionWaitKind::Unroll(unroll_id.clone()))
             }
-            HandshakeState::OnChain(_game_map) => Some(ConditionWaitKind::Game),
             _ => None,
         };
 
@@ -1957,16 +1947,6 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 if *coin_id == unroll_coin_id {
                     return self.finish_on_chain_transition(penv, coin_id, puzzle_and_solution);
                 }
-            }
-            Some(ConditionWaitKind::Game) => {
-                let (puzzle, solution) = if let Some((puzzle, solution)) = puzzle_and_solution {
-                    (puzzle, solution)
-                } else {
-                    return Err(Error::StrErr(
-                        "no puzzle and solution for game coin".to_string(),
-                    ));
-                };
-                self.handle_game_coin_spent(penv, coin_id, puzzle, solution)?;
             }
             _ => {}
         }
