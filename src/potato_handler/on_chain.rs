@@ -278,7 +278,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 {
                     result_transaction
                 } else {
-                    todo!();
+                    return self.next_action(penv);
                 };
 
                 game_def.accept = AcceptTransactionState::Finished;
