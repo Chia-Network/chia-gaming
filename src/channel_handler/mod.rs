@@ -896,11 +896,10 @@ impl ChannelHandler {
         let coin_string = self.state_channel_coin().coin_string();
         let slash_no_evidence = env.allocator.encode_atom(&[]).into_gen()?;
         debug!("{} calling slash", self.is_initial_potato());
-        if let Some(_) = self.live_games[game_idx].check_their_turn_for_slash(
-            env.allocator,
-            slash_no_evidence,
-            coin_string,
-        )? {
+        if self.live_games[game_idx]
+            .check_their_turn_for_slash(env.allocator, slash_no_evidence, coin_string)?
+            .is_some()
+        {
             // Slash isn't allowed in off chain, we'll go on chain via error.
             return Err(Error::StrErr(
                 "slash when off chain: go on chain".to_string(),

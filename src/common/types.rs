@@ -484,7 +484,7 @@ impl ToClvm<NodePtr> for Hash {
 impl std::fmt::Debug for Hash {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(formatter, "Hash(")?;
-        write!(formatter, "{}", hex::encode(&self.0))?;
+        write!(formatter, "{}", hex::encode(self.0))?;
         write!(formatter, ")")
     }
 }

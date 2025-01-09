@@ -839,7 +839,7 @@ impl RefereeMaker {
                 if game_handler.is_my_turn() {
                     return Err(Error::StrErr("no moves have been made yet".to_string()));
                 }
-                Ok((&initial_state, initial_validation_program.clone()))
+                Ok((initial_state, initial_validation_program.clone()))
             }
             RefereeMakerGameState::AfterOurTurn { .. } => Err(Error::StrErr(
                 "we accepted an our move so their move has sunsetted".to_string(),
