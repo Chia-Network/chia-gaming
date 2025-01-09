@@ -1288,3 +1288,21 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
     assert_eq!(p1_balance, 2000000000000);
     assert_eq!(p1_balance, p2_balance);
 }
+
+#[test]
+fn sim_test_with_peer_container_piss_off_peer_slash() {
+    let mut allocator = AllocEncoder::new();
+
+    let mut moves = test_moves_1(&mut allocator).to_vec();
+    let move_3_node = [1, 0, 1, 0, 1, 0, 1, 1]
+        .to_clvm(&mut allocator)
+        .expect("should work");
+    moves[3] = GameAction::Move(1, move_3_node, true);
+
+    let outcome =
+        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    assert_eq!(p1_balance, 2000000000000);
+    assert_eq!(p1_balance, p2_balance);
+}

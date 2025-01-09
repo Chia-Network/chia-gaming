@@ -10,7 +10,7 @@
 ; state is alice's commit
 ; move is bob's seed
 ; evidence is empty
-(export (mod_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
+(export (mod_hash (move new_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     alice_commit me mover_puzzle solution evidence)
     (if_any_fail
