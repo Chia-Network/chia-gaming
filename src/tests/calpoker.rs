@@ -21,8 +21,7 @@ use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::make_cards;
 #[cfg(feature = "sim-tests")]
-use crate::games::calpoker::CalpokerResult;
-use crate::games::calpoker::WinDirectionUser;
+use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choices};
 #[cfg(feature = "sim-tests")]

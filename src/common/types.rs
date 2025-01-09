@@ -469,7 +469,7 @@ impl From<Amount> for u64 {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize, Hash, Default)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Hash, Default)]
 pub struct Hash([u8; 32]);
 
 impl ToClvm<NodePtr> for Hash {
@@ -478,6 +478,14 @@ impl ToClvm<NodePtr> for Hash {
         encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
         encoder.encode_atom(&self.0)
+    }
+}
+
+impl std::fmt::Debug for Hash {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(formatter, "Hash(")?;
+        write!(formatter, "{}", hex::encode(&self.0))?;
+        write!(formatter, ")")
     }
 }
 
