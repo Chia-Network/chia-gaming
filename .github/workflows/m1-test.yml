@@ -51,7 +51,7 @@ jobs:
       run: |
         python3 -m venv ./test
         source ./test/bin/activate
-        pip install chia-blockchain
+        pip install chia-blockchain==2.3.0
 
     - name: Run tests
       run: |
