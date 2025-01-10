@@ -49,7 +49,7 @@ jobs:
 
     - name: Set up a venv for chia-blockchain
       run: |
-        python3 -m venv python=3.12 ./test
+        python3 -m venv --python=3.12 ./test
         source ./test/bin/activate
         pip install chia-blockchain==2.3.0
 
