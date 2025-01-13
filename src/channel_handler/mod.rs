@@ -12,7 +12,7 @@ use log::debug;
 
 use rand::prelude::*;
 
-use clvm_traits::{ClvmEncoder, ToClvm};
+use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
 
 use crate::channel_handler::game_handler::TheirTurnResult;
@@ -886,25 +886,14 @@ impl ChannelHandler {
         );
         let game_idx = self.get_game_by_id(game_id)?;
 
+        // Not used along this route, but provided.
+        let coin_string = self.state_channel_coin().coin_string().clone();
         let their_move_result = self.live_games[game_idx].internal_their_move(
             env.allocator,
             &move_result.game_move,
             self.current_state_number,
+            Some(&coin_string),
         )?;
-
-        // Not used along this route, but provided.
-        let coin_string = self.state_channel_coin().coin_string();
-        let slash_no_evidence = env.allocator.encode_atom(&[]).into_gen()?;
-        debug!("{} calling slash", self.is_initial_potato());
-        if self.live_games[game_idx]
-            .check_their_turn_for_slash(env.allocator, slash_no_evidence, coin_string)?
-            .is_some()
-        {
-            // Slash isn't allowed in off chain, we'll go on chain via error.
-            return Err(Error::StrErr(
-                "slash when off chain: go on chain".to_string(),
-            ));
-        }
 
         debug!(
             "{} their_move_result {their_move_result:?}",
