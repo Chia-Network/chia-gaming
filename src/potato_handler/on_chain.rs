@@ -274,6 +274,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     }],
                 })?;
             } else {
+                game_def.accept = AcceptTransactionState::Finished;
+                self.game_map.insert(coin_id.clone(), game_def);
+
                 let result_transaction = if let Ok(result_transaction) = self
                     .player_ch
                     .accept_or_timeout_game_on_chain(env, &game_id, coin_id)
@@ -282,9 +285,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 } else {
                     return self.next_action(penv);
                 };
-
-                game_def.accept = AcceptTransactionState::Finished;
-                self.game_map.insert(coin_id.clone(), game_def);
 
                 self.have_potato = PotatoState::Present;
                 if let Some(tx) = result_transaction {
