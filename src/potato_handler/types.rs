@@ -460,6 +460,8 @@ pub trait PotatoHandlerImpl {
 
     fn into_channel_handler(self) -> ChannelHandler;
 
+    fn my_move_in_game(&self, game_id: &GameID) -> Option<bool>;
+
     fn check_game_coin_spent<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,

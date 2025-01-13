@@ -67,6 +67,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         &self.player_ch
     }
 
+    fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
+        self.player_ch.game_is_my_turn(game_id)
+    }
+
     fn channel_handler_mut(&mut self) -> &mut ChannelHandler {
         &mut self.player_ch
     }

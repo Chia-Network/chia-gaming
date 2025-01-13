@@ -168,6 +168,9 @@ pub trait GameCradle {
     /// Tell the user that handshake has finished.
     fn handshake_finished(&self) -> bool;
 
+    /// Ask whether it's my turn in the indicated game.
+    fn my_move_in_game(&self, game_id: &GameID) -> Option<bool>;
+
     /// Signal game start.  Passes through to FromLocalUI::start_games.
     fn start_games<R: Rng>(
         &mut self,
@@ -701,6 +704,10 @@ impl SynchronousGameCradle {
 impl GameCradle for SynchronousGameCradle {
     fn is_on_chain(&self) -> bool {
         self.peer.is_on_chain()
+    }
+
+    fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
+        self.peer.my_move_in_game(game_id)
     }
 
     fn get_reward_puzzle_hash<R: Rng>(
