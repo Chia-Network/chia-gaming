@@ -246,6 +246,7 @@ fn test_referee_smoke() {
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
         },
         0,
+        None,
     );
     debug!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
@@ -256,7 +257,7 @@ fn test_referee_smoke() {
 
     let their_move_local_update = reftest
         .their_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should move");
 
     debug!("their_move_wire_data {their_move_local_update:?}");
@@ -270,7 +271,7 @@ fn test_referee_smoke() {
     assert!(reftest.my_referee.processing_my_turn());
     let their_move_result = reftest
         .my_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should run");
     let (readable_move, message) = match &their_move_result.original {
         TheirTurnResult::MakeMove(readable_node, _, message, _) => {

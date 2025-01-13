@@ -1,4 +1,6 @@
 use std::borrow::Borrow;
+use std::io::Write;
+use std::process::Command;
 use std::rc::Rc;
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
@@ -7,6 +9,7 @@ use clvmr::allocator::NodePtr;
 use clvmr::run_program;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+use clvm_tools_rs::compiler::sexp::decode_string;
 
 use log::debug;
 
@@ -616,7 +619,7 @@ struct RMFixed {
     pub nonce: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StoredGameState {
     state: Rc<RefereeMakerGameState>,
     state_number: usize,
@@ -1528,6 +1531,9 @@ impl RefereeMaker {
         };
 
         debug!("getting validation program");
+        debug!("my turn {}", self.is_my_turn());
+        debug!("state {:?}", self.state);
+        debug!("last stored {:?}", self.old_states[self.old_states.len()-1]);
         let (_state, validation_program) = self.get_validation_program_for_their_move()?;
         debug!("validation_program {validation_program:?}");
         let validation_program_mod_hash = validation_program.hash();
@@ -1543,6 +1549,15 @@ impl RefereeMaker {
 
         debug!("validator program {:?}", validation_program);
         debug!("validator args {:?}", validator_full_args);
+
+        let mut cldb_out = Vec::new();
+        let mut cldb = Command::new("cldb");
+        cldb.arg("-p");
+        cldb.arg("-x");
+        cldb.arg(validation_program.to_program().to_hex());
+        cldb.arg(validator_full_args.to_hex());
+        cldb_out.write_all(&cldb.output().unwrap().stdout).into_gen()?;
+        debug!("cldb {}", decode_string(&cldb_out));
 
         // Error means validation should not work.
         // It should be handled later.
@@ -1565,9 +1580,11 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
+        coin: Option<&CoinString>,
     ) -> Result<TheirTurnMoveResult, Error> {
         debug!("do their turn {details:?}");
 
+        let original_state = self.state.clone();
         let handler = self.get_game_handler();
         let last_state = self.get_game_state();
         let args = self.spend_this_coin();
@@ -1926,7 +1943,7 @@ impl RefereeMaker {
             validation_info_hash,
         };
 
-        let result = self.their_turn_move_off_chain(allocator, &details, state_number)?;
+        let result = self.their_turn_move_off_chain(allocator, &details, state_number, None)?;
 
         let args = self.spend_this_coin();
 
@@ -1938,12 +1955,13 @@ impl RefereeMaker {
         )?);
         let new_puzzle_hash =
             curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)?;
-        debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}\n");
+        debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}");
 
         let check_and_report_slash = |allocator: &mut AllocEncoder,
-                                      readable_move: NodePtr,
-                                      _mover_share: Amount| {
+        readable_move: NodePtr,
+        _mover_share: Amount| {
             let nil = allocator.encode_atom(&[]).into_gen()?;
+            debug!("check their turn for slash");
             if let Some(result) = self.check_their_turn_for_slash(allocator, nil, coin_string)? {
                 Ok(result)
             } else {
