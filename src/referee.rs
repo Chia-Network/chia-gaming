@@ -1643,6 +1643,20 @@ impl RefereeMaker {
             state_number,
         )?;
 
+        // If specified, check for slash.
+        if let Some(coin_string) = coin {
+            let slash_no_evidence = allocator.encode_atom(&[]).into_gen()?;
+            debug!("calling slash");
+            if self.check_their_turn_for_slash(allocator, slash_no_evidence, coin_string)?
+                .is_some()
+            {
+                // Slash isn't allowed in off chain, we'll go on chain via error.
+                debug!("slash was allowed");
+                self.state = original_state;
+                return Err(Error::StrErr("slashable when off chain".to_string()));
+            }
+        }
+
         let puzzle_hash_for_unroll = curry_referee_puzzle_hash(
             allocator,
             &self.fixed.referee_coin_puzzle_hash,
@@ -1871,10 +1885,24 @@ impl RefereeMaker {
             false
         };
 
+        debug!("rems in spend {conditions:?}");
+
         if repeat {
             let nil = allocator.allocator().null();
-            debug!("rems in spend {conditions:?}");
-            debug!("current state {:?}", self.state);
+            debug!("repeat: current state {:?}", self.state);
+
+            if self.is_my_turn() {
+                if let Some(result) = self.check_their_turn_for_slash(
+                    allocator,
+                    nil,
+                    coin_string
+                )? {
+                    // A repeat means that we tried a move but went on chain.
+                    // if the move is slashable, then we should do that here.
+                    todo!();
+                }
+            }
+
             return Ok(TheirTurnCoinSpentResult::Moved {
                 new_coin_string: CoinString::from_parts(
                     &coin_string.to_coin_id(),
@@ -1910,6 +1938,7 @@ impl RefereeMaker {
                 &mover_share,
             );
 
+            debug!("game coin timed out: conditions {conditions:?}");
             return Ok(TheirTurnCoinSpentResult::Timedout {
                 my_reward_coin_string: Some(my_reward_coin_string),
             });

@@ -124,12 +124,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         // A game coin was spent and we have the puzzle and solution.
         let (env, system_interface) = penv.env();
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
-        let their_turn_result = if let Ok(result) =
-            self.player_ch
-                .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions)
-        {
+        let result = self.player_ch
+            .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
+        let their_turn_result = if let Ok(result) = result {
             result
         } else {
+            debug!("failed result {result:?}");
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout {
                 my_reward_coin_string: None,
             })
@@ -346,7 +346,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             let initial_potato = self.player_ch.is_initial_potato();
             let my_turn = self.player_ch.game_is_my_turn(&game_id);
             if my_turn != Some(true) {
-                debug!("{initial_potato} trying to do game action when not my turn");
+                debug!("{initial_potato} trying to do game action when not my turn {readable_move:?}");
+                todo!();
                 self.game_action_queue.push_front(GameAction::Move(
                     game_id,
                     readable_move,
@@ -427,11 +428,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             if let Some((current, _game)) = self.game_map.iter().find(|g| g.1.game_id == *game_id) {
                 Ok(current.clone())
             } else {
-                Err(Error::StrErr("no matching game".to_string()))
+                Err(Error::StrErr(format!("no matching game in {:?}", self.game_map)))
             }
         };
 
         debug!("{initial_potato} do_on_chain_action {action:?}");
+        debug!("{initial_potato} have collection {:?}", self.game_map);
+
         match action {
             GameAction::Move(game_id, readable_move, hash) => {
                 let current_coin = get_current_coin(&game_id)?;
