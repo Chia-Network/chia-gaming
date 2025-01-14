@@ -221,7 +221,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     my_reward_coin_string
                         .to_parts()
                         .map(|(_, _, amt)| amt.clone())
-                        .unwrap_or_else(|| Amount::default())
+                        .unwrap_or(Amount::default())
                 } else {
                     Amount::default()
                 };

@@ -1,6 +1,4 @@
 use std::borrow::Borrow;
-use std::io::Write;
-use std::process::Command;
 use std::rc::Rc;
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
@@ -9,7 +7,6 @@ use clvmr::allocator::NodePtr;
 use clvmr::run_program;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
-use clvm_tools_rs::compiler::sexp::decode_string;
 
 use log::debug;
 
@@ -645,6 +642,7 @@ pub struct RefereeMaker {
 }
 
 impl RefereeMaker {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         allocator: &mut AllocEncoder,
         referee_coin_puzzle: Rc<Puzzle>,
@@ -1554,17 +1552,6 @@ impl RefereeMaker {
         debug!("validator program {:?}", validation_program);
         debug!("validator args {:?}", validator_full_args);
 
-        let mut cldb_out = Vec::new();
-        let mut cldb = Command::new("cldb");
-        cldb.arg("-p");
-        cldb.arg("-x");
-        cldb.arg(validation_program.to_program().to_hex());
-        cldb.arg(validator_full_args.to_hex());
-        cldb_out
-            .write_all(&cldb.output().unwrap().stdout)
-            .into_gen()?;
-        debug!("cldb {}", decode_string(&cldb_out));
-
         // Error means validation should not work.
         // It should be handled later.
         let result = run_program(
@@ -1884,7 +1871,7 @@ impl RefereeMaker {
             })
             .next()
         {
-            CoinString::from_parts(&coin_string.to_coin_id(), &ph, &amt)
+            CoinString::from_parts(&coin_string.to_coin_id(), ph, amt)
         } else {
             return Err(Error::StrErr("no coin created".to_string()));
         };
