@@ -1769,9 +1769,10 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         }
 
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr(
-                format!("shut_down without finishing handshake {:?}", self.handshake_state)
-            ));
+            return Err(Error::StrErr(format!(
+                "shut_down without finishing handshake {:?}",
+                self.handshake_state
+            )));
         }
 
         self.do_game_action(penv, GameAction::Shutdown(conditions))

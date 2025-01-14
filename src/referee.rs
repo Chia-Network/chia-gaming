@@ -24,8 +24,7 @@ use crate::channel_handler::types::{
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial,
-    ChiaIdentity,
+    calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
     chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
@@ -1535,7 +1534,10 @@ impl RefereeMaker {
         debug!("getting validation program");
         debug!("my turn {}", self.is_my_turn());
         debug!("state {:?}", self.state);
-        debug!("last stored {:?}", self.old_states[self.old_states.len()-1]);
+        debug!(
+            "last stored {:?}",
+            self.old_states[self.old_states.len() - 1]
+        );
         let (_state, validation_program) = self.get_validation_program_for_their_move()?;
         debug!("validation_program {validation_program:?}");
         let validation_program_mod_hash = validation_program.hash();
@@ -1558,7 +1560,9 @@ impl RefereeMaker {
         cldb.arg("-x");
         cldb.arg(validation_program.to_program().to_hex());
         cldb.arg(validator_full_args.to_hex());
-        cldb_out.write_all(&cldb.output().unwrap().stdout).into_gen()?;
+        cldb_out
+            .write_all(&cldb.output().unwrap().stdout)
+            .into_gen()?;
         debug!("cldb {}", decode_string(&cldb_out));
 
         // Error means validation should not work.
@@ -1649,7 +1653,8 @@ impl RefereeMaker {
         if let Some(coin_string) = coin {
             let slash_no_evidence = allocator.encode_atom(&[]).into_gen()?;
             debug!("calling slash");
-            if self.check_their_turn_for_slash(allocator, slash_no_evidence, coin_string)?
+            if self
+                .check_their_turn_for_slash(allocator, slash_no_evidence, coin_string)?
                 .is_some()
             {
                 // Slash isn't allowed in off chain, we'll go on chain via error.
@@ -1775,8 +1780,8 @@ impl RefereeMaker {
                 (self.fixed.amount.clone(), ()),
             ),
         )]
-            .to_clvm(allocator)
-            .into_gen()
+        .to_clvm(allocator)
+        .into_gen()
     }
 
     fn make_slash_spend(
@@ -1793,7 +1798,7 @@ impl RefereeMaker {
             slash_conditions,
             &self.fixed.my_identity.synthetic_public_key,
             &self.fixed.agg_sig_me_additional_data,
-            false
+            false,
         )
     }
 
@@ -1868,8 +1873,7 @@ impl RefereeMaker {
         } else {
             false
         };
-        let created_coin =
-            if let Some((ph, amt)) = conditions
+        let created_coin = if let Some((ph, amt)) = conditions
             .iter()
             .filter_map(|cond| {
                 if let CoinCondition::CreateCoin(ph, amt) = cond {
@@ -1877,15 +1881,13 @@ impl RefereeMaker {
                 } else {
                     None
                 }
-            }).next() {
-                CoinString::from_parts(
-                    &coin_string.to_coin_id(),
-                    &ph,
-                    &amt
-                )
-            } else {
-                return Err(Error::StrErr("no coin created".to_string()));
-            };
+            })
+            .next()
+        {
+            CoinString::from_parts(&coin_string.to_coin_id(), &ph, &amt)
+        } else {
+            return Err(Error::StrErr("no coin created".to_string()));
+        };
 
         debug!("rems in spend {conditions:?}");
 
@@ -1894,11 +1896,9 @@ impl RefereeMaker {
             debug!("repeat: current state {:?}", self.state);
 
             if self.is_my_turn() {
-                if let Some(_result) = self.check_their_turn_for_slash(
-                    allocator,
-                    nil,
-                    &created_coin,
-                )? {
+                if let Some(_result) =
+                    self.check_their_turn_for_slash(allocator, nil, &created_coin)?
+                {
                     // A repeat means that we tried a move but went on chain.
                     // if the move is slashable, then we should do that here.
                     todo!();
@@ -1989,8 +1989,8 @@ impl RefereeMaker {
         debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}");
 
         let check_and_report_slash = |allocator: &mut AllocEncoder,
-        readable_move: NodePtr,
-        _mover_share: Amount| {
+                                      readable_move: NodePtr,
+                                      _mover_share: Amount| {
             let nil = allocator.encode_atom(&[]).into_gen()?;
             debug!("check their turn for slash");
             if let Some(result) = self.check_their_turn_for_slash(allocator, nil, &created_coin)? {

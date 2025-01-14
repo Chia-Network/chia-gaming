@@ -824,7 +824,10 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     cradles[1].opening_coin(allocator, &mut rng, parent_coin_1)?;
 
     let global_move = |moves: &VecDeque<&GameAction>| {
-        matches!(moves.front(), Some(GameAction::Shutdown(_, _)) | Some(GameAction::WaitBlocks(_, _)))
+        matches!(
+            moves.front(),
+            Some(GameAction::Shutdown(_, _)) | Some(GameAction::WaitBlocks(_, _))
+        )
     };
 
     while !matches!(ending, Some(0)) {

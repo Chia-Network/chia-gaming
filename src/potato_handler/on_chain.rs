@@ -124,8 +124,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         // A game coin was spent and we have the puzzle and solution.
         let (env, system_interface) = penv.env();
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
-        let result = self.player_ch
-            .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
+        let result =
+            self.player_ch
+                .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
         let their_turn_result = if let Ok(result) = result {
             result
         } else {
@@ -212,12 +213,18 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 debug!("{initial_potato} slash {outcome:?}");
                 self.have_potato = PotatoState::Present;
                 // XXX amount
-                let amount =
-                    if let SlashOutcome::Reward { my_reward_coin_string, .. } = outcome.borrow() {
-                        my_reward_coin_string.to_parts().map(|(_, _, amt)| amt.clone()).unwrap_or_else(|| Amount::default())
-                    } else {
-                        Amount::default()
-                    };
+                let amount = if let SlashOutcome::Reward {
+                    my_reward_coin_string,
+                    ..
+                } = outcome.borrow()
+                {
+                    my_reward_coin_string
+                        .to_parts()
+                        .map(|(_, _, amt)| amt.clone())
+                        .unwrap_or_else(|| Amount::default())
+                } else {
+                    Amount::default()
+                };
                 debug!("{initial_potato} setting game finished");
                 system_interface.game_finished(&old_definition.game_id, amount)?;
 
@@ -364,7 +371,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             let initial_potato = self.player_ch.is_initial_potato();
             let my_turn = self.player_ch.game_is_my_turn(&game_id);
             if my_turn != Some(true) {
-                debug!("{initial_potato} trying to do game action when not my turn {readable_move:?}");
+                debug!(
+                    "{initial_potato} trying to do game action when not my turn {readable_move:?}"
+                );
                 self.game_action_queue.push_front(GameAction::Move(
                     game_id,
                     readable_move,
@@ -445,7 +454,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             if let Some((current, _game)) = self.game_map.iter().find(|g| g.1.game_id == *game_id) {
                 Ok(current.clone())
             } else {
-                Err(Error::StrErr(format!("no matching game in {:?}", self.game_map)))
+                Err(Error::StrErr(format!(
+                    "no matching game in {:?}",
+                    self.game_map
+                )))
             }
         };
 

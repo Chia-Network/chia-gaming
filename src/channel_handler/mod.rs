@@ -1381,11 +1381,10 @@ impl ChannelHandler {
                     &cached.at_stake_amount,
                 );
 
-                let spend_transaction = cached.live_game.get_transaction_for_move(
-                    env.allocator,
-                    &game_coin,
-                    false,
-                )?;
+                let spend_transaction =
+                    cached
+                        .live_game
+                        .get_transaction_for_move(env.allocator, &game_coin, false)?;
 
                 Ok(Some(DispositionResult {
                     disposition: CoinSpentDisposition::Accept(CoinSpentAccept {
