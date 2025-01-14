@@ -1883,12 +1883,12 @@ impl RefereeMaker {
             debug!("repeat: current state {:?}", self.state);
 
             if self.is_my_turn() {
-                if let Some(_result) =
+                if let Some(result) =
                     self.check_their_turn_for_slash(allocator, nil, &created_coin)?
                 {
                     // A repeat means that we tried a move but went on chain.
                     // if the move is slashable, then we should do that here.
-                    todo!();
+                    return Ok(result);
                 }
             }
 
