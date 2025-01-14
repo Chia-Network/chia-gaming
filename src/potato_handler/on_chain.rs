@@ -19,7 +19,7 @@ use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
     ToLocalUI, WalletSpendInterface,
 };
-use crate::referee::{RefereeOnChainTransaction, TheirTurnCoinSpentResult};
+use crate::referee::{RefereeOnChainTransaction, SlashOutcome, TheirTurnCoinSpentResult};
 use crate::shutdown::ShutdownConditions;
 
 pub struct OnChainPotatoHandler {
@@ -166,6 +166,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 ..
             }) => {
                 debug!("{initial_potato} timed out {my_reward_coin_string:?}");
+                system_interface.game_cancelled(&old_definition.game_id)?;
                 unblock_queue = true;
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved {
@@ -207,8 +208,24 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
                 unblock_queue = true;
             }
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(_outcome)) => {
-                todo!();
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(outcome)) => {
+                debug!("{initial_potato} accept tx {outcome:?}");
+                self.have_potato = PotatoState::Present;
+                // XXX amount
+                let amount =
+                    if let SlashOutcome::Reward { my_reward_coin_string, .. } = outcome.borrow() {
+                        my_reward_coin_string.to_parts().map(|(_, _, amt)| amt.clone()).unwrap_or_else(|| Amount::default())
+                    } else {
+                        Amount::default()
+                    };
+                system_interface.game_finished(&old_definition.game_id, amount)?;
+
+                if let SlashOutcome::Reward { transaction, .. } = outcome.borrow() {
+                    system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                        name: Some("slash move".to_string()),
+                        spends: vec![*transaction.clone()],
+                    })?;
+                }
             }
             CoinSpentInformation::OurReward(_, _) => {
                 // XXX notify UI if we decide we need it.
@@ -347,7 +364,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             let my_turn = self.player_ch.game_is_my_turn(&game_id);
             if my_turn != Some(true) {
                 debug!("{initial_potato} trying to do game action when not my turn {readable_move:?}");
-                todo!();
                 self.game_action_queue.push_front(GameAction::Move(
                     game_id,
                     readable_move,

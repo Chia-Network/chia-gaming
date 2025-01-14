@@ -670,6 +670,7 @@ impl ChannelHandler {
                 referee_identity,
                 &self.their_referee_puzzle_hash,
                 new_game_nonce,
+                &env.agg_sig_me_additional_data,
             )?;
             res.push(LiveGame::new(
                 g.game_id.clone(),
@@ -837,7 +838,6 @@ impl ChannelHandler {
                 &PuzzleHash::default(),
                 &Amount::default(),
             ),
-            &env.agg_sig_me_additional_data,
             false,
         );
 
@@ -1384,7 +1384,6 @@ impl ChannelHandler {
                 let spend_transaction = cached.live_game.get_transaction_for_move(
                     env.allocator,
                     &game_coin,
-                    &env.agg_sig_me_additional_data,
                     false,
                 )?;
 
@@ -1414,7 +1413,6 @@ impl ChannelHandler {
                 let spend_transaction = self.live_games[game_idx].get_transaction_for_move(
                     env.allocator,
                     &game_coin,
-                    &env.agg_sig_me_additional_data,
                     false,
                 )?;
 
@@ -1632,7 +1630,6 @@ impl ChannelHandler {
         let tx = self.live_games[game_idx].get_transaction_for_move(
             env.allocator,
             existing_coin,
-            &env.agg_sig_me_additional_data,
             true,
         )?;
 
@@ -1807,7 +1804,6 @@ impl ChannelHandler {
                     let transaction = self.live_games[game_idx].get_transaction_for_move(
                         env.allocator,
                         coin,
-                        &env.agg_sig_me_additional_data,
                         true,
                     )?;
 

@@ -10,9 +10,10 @@ use log::debug;
 
 use crate::channel_handler::game_handler::{GameHandler, TheirTurnResult};
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, Error, GameID, PrivateKey, Program, Puzzle, PuzzleHash,
+    Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorResult};
@@ -139,6 +140,7 @@ impl RefereeTest {
             my_identity.clone(),
             &their_identity.puzzle_hash,
             1,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         )
         .expect("should construct");
         assert_eq!(
@@ -162,6 +164,7 @@ impl RefereeTest {
             their_identity.clone(),
             &my_identity.puzzle_hash,
             1,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         )
         .expect("should construct");
 

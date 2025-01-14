@@ -690,7 +690,8 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
-        todo!();
+        self.game_finished = Some(Amount::default());
+        Ok(())
     }
 
     fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
@@ -824,6 +825,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
+        debug!("{num_steps} can move {can_move} {moves:?}");
 
         assert!(num_steps < 200);
 
@@ -952,7 +954,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
             *ending -= 1;
         }
 
-        if !handshake_done && cradles[0].handshake_finished() && cradles[1].handshake_finished() {
+        if !handshake_done && cradles.iter().all(|c| c.handshake_finished()) {
             // Start game.
             handshake_done = true;
 
@@ -985,7 +987,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
             )?;
 
             can_move = true;
-        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) {
+        } else if can_move || local_uis.iter().any(|l| l.opponent_moved || l.game_finished.is_some()) {
             can_move = false;
             assert!(!game_ids.is_empty());
 
@@ -996,7 +998,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
 
             if let Some(ga) = moves.pop_front() {
                 match ga {
-                    GameAction::Move(who, readable, share) => {
+                    GameAction::Move(who, readable, _share) => {
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
                         debug!("{who} make move: is my move? {is_my_move:?}");
                         if matches!(is_my_move, Some(true)) {
@@ -1309,15 +1311,22 @@ fn sim_test_with_peer_container_piss_off_peer_slash() {
     let mut allocator = AllocEncoder::new();
 
     let mut moves = test_moves_1(&mut allocator).to_vec();
+    // p2 chooses 5 cards.
     let move_3_node = [1, 0, 1, 0, 1, 0, 1, 1]
         .to_clvm(&mut allocator)
         .expect("should work");
-    moves[3] = GameAction::Move(1, move_3_node, true);
+    let changed_move = GameAction::Move(1, move_3_node, true);
+    moves.truncate(3);
+    moves.push(changed_move.clone());
+    moves.push(changed_move);
+    moves.push(GameAction::WaitBlocks(20, 1));
+    moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+    moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
     let outcome =
         run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
-    assert_eq!(p1_balance, 2000000000000);
-    assert_eq!(p1_balance, p2_balance);
+    // p1 (index 0) won the money because p2 (index 1) cheated by choosing 5 cards.
+    assert_eq!(p1_balance, p2_balance + 200);
 }

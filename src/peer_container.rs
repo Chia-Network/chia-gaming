@@ -443,8 +443,10 @@ impl ToLocalUI for SynchronousGameCradleState {
         self.game_finished.push_back((id.clone(), my_share));
         Ok(())
     }
-    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
-        todo!();
+    fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error> {
+        // XXX cancelled list
+        self.game_finished.push_back((id.clone(), Amount::default()));
+        Ok(())
     }
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         self.shutdown = reward_coin_string.cloned();

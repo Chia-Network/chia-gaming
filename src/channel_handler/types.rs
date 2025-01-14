@@ -981,12 +981,11 @@ impl LiveGame {
         &self,
         allocator: &mut AllocEncoder,
         game_coin: &CoinString,
-        agg_sig_me: &Hash,
         on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
         // assert!(self.referee_maker.processing_my_turn());
         self.referee_maker
-            .get_transaction_for_move(allocator, game_coin, agg_sig_me, on_chain)
+            .get_transaction_for_move(allocator, game_coin, on_chain)
     }
 
     pub fn receive_readable(
