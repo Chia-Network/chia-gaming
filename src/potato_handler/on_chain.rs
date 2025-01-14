@@ -209,7 +209,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 unblock_queue = true;
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(outcome)) => {
-                debug!("{initial_potato} accept tx {outcome:?}");
+                debug!("{initial_potato} slash {outcome:?}");
                 self.have_potato = PotatoState::Present;
                 // XXX amount
                 let amount =
@@ -218,6 +218,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     } else {
                         Amount::default()
                     };
+                debug!("{initial_potato} setting game finished");
                 system_interface.game_finished(&old_definition.game_id, amount)?;
 
                 if let SlashOutcome::Reward { transaction, .. } = outcome.borrow() {

@@ -823,24 +823,19 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     cradles[0].opening_coin(allocator, &mut rng, parent_coin_0)?;
     cradles[1].opening_coin(allocator, &mut rng, parent_coin_1)?;
 
+    let global_move = |moves: &VecDeque<&GameAction>| {
+        matches!(moves.front(), Some(GameAction::Shutdown(_, _)) | Some(GameAction::WaitBlocks(_, _)))
+    };
+
     while !matches!(ending, Some(0)) {
         num_steps += 1;
         debug!("{num_steps} can move {can_move} {moves:?}");
+        debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
+        debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
 
         assert!(num_steps < 200);
 
-        if let Some((blocks, players)) = &mut wait_blocks {
-            debug!("test waiting {blocks} {players}");
-            *blocks -= 1;
-        }
         if matches!(wait_blocks, Some((0, _))) {
-            for i in 0..=1 {
-                for (current_height, watch_report) in report_backlogs[i].iter() {
-                    cradles[i].new_block(allocator, &mut rng, *current_height, watch_report)?;
-                }
-                report_backlogs[i].clear();
-            }
-            debug!("test wait done");
             wait_blocks = None;
         }
 
@@ -987,7 +982,17 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
             )?;
 
             can_move = true;
-        } else if can_move || local_uis.iter().any(|l| l.opponent_moved || l.game_finished.is_some()) {
+        } else if let Some((wb, _)) = &mut wait_blocks {
+            for i in 0..=1 {
+                for (current_height, watch_report) in report_backlogs[i].iter() {
+                    cradles[i].new_block(allocator, &mut rng, *current_height, watch_report)?;
+                }
+                report_backlogs[i].clear();
+            }
+            if *wb > 0 {
+                *wb -= 1;
+            };
+        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) || global_move(&moves) {
             can_move = false;
             assert!(!game_ids.is_empty());
 
@@ -1265,6 +1270,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
     let mut moves = test_moves_1(&mut allocator).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::GoOnChain(1));
+    moves.push(GameAction::WaitBlocks(20, 1));
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
     let outcome =

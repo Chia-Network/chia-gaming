@@ -1770,7 +1770,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
             return Err(Error::StrErr(
-                "shut_down without finishing handshake".to_string(),
+                format!("shut_down without finishing handshake {:?}", self.handshake_state)
             ));
         }
 
