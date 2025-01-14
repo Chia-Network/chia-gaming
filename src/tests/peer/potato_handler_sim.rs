@@ -1251,6 +1251,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
 
     let moves = vec![
         GameAction::GoOnChain(1),
+        GameAction::WaitBlocks(20, 1),
         GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)),
         GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
     ];
