@@ -76,7 +76,7 @@ function empty_callbacks(): IdleCallbacks {
 }
 
 function action_with_messages(cradle1: ChiaGame, cradle2: ChiaGame) {
-    let cradles = [cradle1, cradle2];
+    const cradles = [cradle1, cradle2];
 
     for (let c = 0; c < 2; c++) {
         cradles[c].idle(empty_callbacks());
