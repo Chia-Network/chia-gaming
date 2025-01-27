@@ -257,12 +257,12 @@ HavePotatoMove(p) ==
         LET p3 == SendMessage(OkOf(p2), game_action) IN
         Rv(1, NewState(p3, OnChainWaitingForUnrollSpend))
     ELSE IF game_action = UIStartGames THEN
-      Ok(p1)
+      Rv(1, p1)
     ELSE IF game_action = RequestPotato THEN
       IF p1.have_potato = PotatoAbsent THEN
-        Ok(SendMessage(p1, game_action))
+        Rv(1, SendMessage(p1, game_action))
       ELSE
-        Ok(p1)
+        Rv(1, p1)
     ELSE IF game_action = SendPotato THEN
       LET ch == ChannelHandler(p1) IN
       IF IsErr(ch) THEN
@@ -561,7 +561,7 @@ StartGamesA ==
 
 GameMoveA ==
   /\ ui_actions.sent_moves >= 1 
-  /\ ui_actions.sent_moves < 4
+  /\ ui_actions.sent_moves < 7
   /\ a.handshake_state >= Finished
   /\ a.handshake_state < MaxHandshakeState
   /\ a' = FLUI_MakeMove(a, Move)
@@ -570,7 +570,7 @@ GameMoveA ==
 
 GameMoveB ==
   /\ ui_actions.sent_moves >= 1 
-  /\ ui_actions.sent_moves < 4
+  /\ ui_actions.sent_moves < 7
   /\ b.handshake_state >= Finished
   /\ b.handshake_state < MaxHandshakeState
   /\ b' = FLUI_MakeMove(b, Move)
@@ -578,7 +578,7 @@ GameMoveB ==
   /\ UNCHANGED << a >>
 
 GameAcceptA ==
-  /\ ui_actions.sent_moves = 4
+  /\ ui_actions.sent_moves = 7
   /\ a.handshake_state >= Finished
   /\ a.handshake_state < MaxHandshakeState
   /\ a' = FLUI_Accept(a, Accept)
@@ -586,7 +586,7 @@ GameAcceptA ==
   /\ UNCHANGED << b >>
 
 GameAcceptB ==
-  /\ ui_actions.sent_moves = 5
+  /\ ui_actions.sent_moves = 8
   /\ b.handshake_state >= Finished
   /\ b.handshake_state < MaxHandshakeState
   /\ b' = FLUI_Accept(b, Accept)
@@ -594,7 +594,7 @@ GameAcceptB ==
   /\ UNCHANGED << a >>
 
 ShutdownA ==
-  /\ ui_actions.sent_moves = 6
+  /\ ui_actions.sent_moves = 9
   /\ a.handshake_state >= Finished
   /\ a.handshake_state < MaxHandshakeState
   /\ a' = FLUI_Shutdown(a, Shutdown)
@@ -602,7 +602,7 @@ ShutdownA ==
   /\ UNCHANGED << b >>
 
 ShutdownB ==
-  /\ ui_actions.sent_moves = 7
+  /\ ui_actions.sent_moves = 10
   /\ b.handshake_state >= Finished
   /\ b.handshake_state < MaxHandshakeState
   /\ b' = FLUI_Shutdown(b, Shutdown)
@@ -644,9 +644,9 @@ PHInvariant(p) ==
   /\ p.handshake_state < MaxHandshakeState
   /\ p.have_potato >= PotatoAbsent
   /\ p.have_potato <= PotatoPresent
-  /\ Len(p.messages) < 10
-  /\ Len(p.incoming_messages) < 10
-  /\ Len(p.game_action_queue) < 10
+  /\ Len(p.messages) < 20
+  /\ Len(p.incoming_messages) < 20
+  /\ Len(p.game_action_queue) < 20
 
 Inv ==
   /\ PHInvariant(a)
