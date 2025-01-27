@@ -1118,14 +1118,12 @@ impl PotatoHandler {
                         system_interface.received_channel_offer(&bundle)?;
                     }
                     PeerMessage::RequestPotato(_) => {
-                        if self.have_potato != PotatoState::Present {
-                            return Ok(());
+                        {
+                            let (env, system_interface) = penv.env();
+                            let ch = self.channel_handler_mut()?;
+                            let nil_msg = ch.send_empty_potato(env)?;
+                            system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                         }
-
-                        let (env, system_interface) = penv.env();
-                        let ch = self.channel_handler_mut()?;
-                        let nil_msg = ch.send_empty_potato(env)?;
-                        system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                         self.have_potato = PotatoState::Absent;
                     }
                     PeerMessage::StartGames(sigs, g) => {
