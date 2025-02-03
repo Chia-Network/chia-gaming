@@ -372,10 +372,6 @@ SendPotatoRequestIfNeeded(p) ==
   ELSE IF p.have_potato = PotatoAbsent THEN
     LET p1 == EnqueueGameAction(PotatoState(p, PotatoRequested), RequestPotato) IN
     Rv(0, p1)
-  ELSE IF p.have_potato = PotatoRequested /\ Len(p.game_action_queue) > 0 /\ p.game_action_queue[1] = RequestPotato THEN
-    Rv(0, p)
-  ELSE IF p.handshake_state = Finished /\ p.have_potato = PotatoPresent /\ Len(p.game_action_queue) > 0 /\ p.game_action_queue[1] = SendPotato THEN
-    Rv(0, p)
   ELSE
     Rv(0, p)
 
