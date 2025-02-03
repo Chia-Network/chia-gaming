@@ -365,20 +365,21 @@ ChannelHandlerMessage(p,act) ==
     ELSE
       Ok(SendMessage(SetChannelHandler(p, ch1 + 1), act))
 
+\* potato_handler/mod.rs:1481
 SendPotatoRequestIfNeeded(p) ==
   IF p.have_potato = PotatoPresent THEN
     Rv(1, p)
   ELSE IF p.have_potato = PotatoAbsent THEN
     LET p1 == EnqueueGameAction(PotatoState(p, PotatoRequested), RequestPotato) IN
-    Rv(1, p1)
+    Rv(0, p1)
   ELSE IF p.have_potato = PotatoRequested /\ Len(p.game_action_queue) > 0 /\ p.game_action_queue[1] = RequestPotato THEN
-    Rv(1, p)
+    Rv(0, p)
   ELSE IF p.handshake_state = Finished /\ p.have_potato = PotatoPresent /\ Len(p.game_action_queue) > 0 /\ p.game_action_queue[1] = SendPotato THEN
-    Rv(1, p)
+    Rv(0, p)
   ELSE
     Rv(0, p)
 
-\* potato_handler/mod.rs:1461
+\* potato_handler/mod.rs:1481
 DoGameAction(p) ==
   LET p1 == SendPotatoRequestIfNeeded(p) IN
   IF RvOf(p1) > 0 THEN
@@ -386,13 +387,7 @@ DoGameAction(p) ==
     IF IsErr(p2) THEN
       p2
     ELSE IF RvOf(p2) > 0 THEN
-      LET p3 == DoGameAction(OkOf(p2)) IN
-      IF IsErr(p3) THEN
-        p3
-      ELSE IF RvOf(p3) > 0 THEN
-        DoGameAction(OkOf(p3))
-      ELSE
-        p3
+      DoGameAction(OkOf(p2))
     ELSE
       p2
   ELSE
@@ -417,11 +412,8 @@ ReceivedGameStart(p, g) ==
         LET ch3 == OkOf(ch2) IN
         UpdateChannelCoinAfterReceive(SetChannelHandler(p, ch3))
 
-\* potato_handler/mod.rs:867
-ReceivedMessage(p,m) ==
-  DoGameAction(AppendIncoming(p, m))
-
-HandleReceivedMessage1(p,m) ==
+\* potato_handler/mod.rs:874
+ProcessIncomingMessage(p,m) ==
   IF p.handshake_state = StepB /\ m = HandshakeA THEN
     Ok(SendMessage(NewState(NewChannelHandler(p), StepD), HandshakeB))
   ELSE IF p.handshake_state = StepC /\ m = HandshakeB THEN
@@ -448,15 +440,19 @@ HandleReceivedMessage1(p,m) ==
     LET NewQueue == SelectSeq(p.incoming_messages, LAMBDA x: x > HandshakeF) IN
     Ok([p EXCEPT !.incoming_messages = HandshakeActions \o << m >> \o NewQueue])    
 
-HandleReceivedMessage(p) ==
+\* potato_handler/mod.rs:1146
+ReceivedMessage(p, msg) == Ok(AppendIncoming(p, msg))
+
+\* potato_handler/mod.rs:1160
+HandleIncomingMessage(p) ==
   IF Len(p.incoming_messages) > 0 THEN
     LET m == p.incoming_messages[1] IN
-    LET p1 == DropIncomingMessage(p) IN
-    LET p2 == HandleReceivedMessage1(p1, m) IN
-    IF IsErr(p2) THEN
-      p2
+    LET p2 == DropIncomingMessage(p) IN
+    LET p3 == ProcessIncomingMessage(p2, m) IN
+    IF IsErr(p3) THEN
+      p3
     ELSE
-      DoGameAction(OkOf(p2))
+      DoGameAction(OkOf(p3))
   ELSE
     Ok(p)
 
@@ -522,13 +518,13 @@ ReceivedMessageB ==
 HandleInboundQueueA ==
   /\ Active(a)
   /\ Len(a.incoming_messages) > 0
-  /\ a' = OkOf(HandleReceivedMessage(a))
+  /\ a' = OkOf(HandleIncomingMessage(a))
   /\ UNCHANGED << b, ui_actions >>
 
 HandleInboundQueueB ==
   /\ Active(b)
   /\ Len(b.incoming_messages) > 0
-  /\ b' = OkOf(HandleReceivedMessage(b))
+  /\ b' = OkOf(HandleIncomingMessage(b))
   /\ UNCHANGED << a, ui_actions >>
 
 ChannelPuzzleHashA ==
