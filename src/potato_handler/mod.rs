@@ -104,6 +104,7 @@ pub struct PotatoHandler {
     unroll_timeout: Timeout,
 
     my_game_spends: HashSet<PuzzleHash>,
+    incoming_messages: VecDeque<Rc<PeerMessage>>,
 }
 
 fn init_game_id(private_keys: &ChannelHandlerPrivateKeys) -> Vec<u8> {
@@ -172,6 +173,7 @@ impl PotatoHandler {
             unroll_timeout: phi.unroll_timeout,
             reward_puzzle_hash: phi.reward_puzzle_hash,
             my_game_spends: HashSet::default(),
+            incoming_messages: VecDeque::default(),
         }
     }
 
@@ -346,7 +348,7 @@ impl PotatoHandler {
     fn pass_on_channel_handler_message<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        msg: Vec<u8>,
+        msg_envelope: Rc<PeerMessage>,
     ) -> Result<Option<HandshakeState>, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
@@ -354,11 +356,8 @@ impl PotatoHandler {
         let timeout = self.channel_timeout.clone();
         let ch = self.channel_handler_mut()?;
 
-        let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
-        let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-
         debug!("msg {msg_envelope:?}");
-        match msg_envelope {
+        match msg_envelope.borrow() {
             PeerMessage::Nil(n) => {
                 debug!("about to receive empty potato");
                 let spend_info = {
@@ -383,7 +382,7 @@ impl PotatoHandler {
                         mover_share,
                     )?;
                     if !message.is_empty() {
-                        system_interface.send_message(&PeerMessage::Message(game_id, message))?;
+                        system_interface.send_message(&PeerMessage::Message(game_id.clone(), message))?;
                     }
                 }
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
@@ -403,7 +402,7 @@ impl PotatoHandler {
                 let spend_info = {
                     let (env, system_interface) = penv.env();
                     let result = ch.received_potato_accept(env, &sigs, &game_id)?;
-                    system_interface.game_finished(&game_id, amount)?;
+                    system_interface.game_finished(&game_id, amount.clone())?;
                     Ok(result)
                 }?;
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
@@ -873,6 +872,25 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
+        let msg_envelope: PeerMessage =
+            bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+        self.incoming_messages.push_back(Rc::new(msg_envelope));
+        self.process_incoming_message(penv)
+    }
+
+    pub fn process_incoming_message<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<(), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let msg_envelope =
+            if let Some(msg) = self.incoming_messages.pop_front() {
+                msg
+            } else {
+                return Ok(());
+            };
 
         let make_channel_handler_initiation =
             |parent: CoinID, start_potato, msg: &HandshakeB| ChannelHandlerInitiationData {
@@ -889,9 +907,7 @@ impl PotatoHandler {
         match &self.handshake_state {
             // non potato progression
             HandshakeState::StepA => {
-                let msg_envelope: PeerMessage =
-                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let msg = if let PeerMessage::HandshakeA(msg) = msg_envelope {
+                let msg = if let PeerMessage::HandshakeA(msg) = msg_envelope.borrow() {
                     msg
                 } else {
                     return Err(Error::StrErr(format!(
@@ -906,9 +922,7 @@ impl PotatoHandler {
             }
 
             HandshakeState::StepC(parent_coin, handshake_a) => {
-                let msg_envelope: PeerMessage =
-                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let msg = if let PeerMessage::HandshakeB(msg) = msg_envelope {
+                let msg = if let PeerMessage::HandshakeB(msg) = msg_envelope.borrow() {
                     msg
                 } else {
                     return Err(Error::StrErr(format!(
@@ -992,16 +1006,14 @@ impl PotatoHandler {
 
                 self.handshake_state = HandshakeState::PostStepE(info.clone());
 
-                self.pass_on_channel_handler_message(penv, msg)?;
+                self.pass_on_channel_handler_message(penv, msg_envelope)?;
 
                 self.try_complete_step_e(penv, first_player_hs, second_player_hs)?;
             }
 
             // potato progression
             HandshakeState::StepB => {
-                let msg_envelope: PeerMessage =
-                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let msg = if let PeerMessage::HandshakeA(msg) = msg_envelope {
+                let msg = if let PeerMessage::HandshakeA(msg) = msg_envelope.borrow() {
                     msg
                 } else {
                     return Err(Error::StrErr(format!(
@@ -1050,7 +1062,7 @@ impl PotatoHandler {
             HandshakeState::StepD(info) => {
                 self.handshake_state = HandshakeState::StepF(info.clone());
 
-                self.pass_on_channel_handler_message(penv, msg)?;
+                self.pass_on_channel_handler_message(penv, msg_envelope)?;
 
                 let ch = self.channel_handler_mut()?;
                 {
@@ -1061,9 +1073,7 @@ impl PotatoHandler {
             }
 
             HandshakeState::StepF(info) => {
-                let msg_envelope: PeerMessage =
-                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-                let bundle = if let PeerMessage::HandshakeE { bundle } = msg_envelope {
+                let bundle = if let PeerMessage::HandshakeE { bundle } = msg_envelope.borrow() {
                     bundle
                 } else {
                     return Err(Error::StrErr(format!(
@@ -1106,12 +1116,8 @@ impl PotatoHandler {
             }
 
             HandshakeState::Finished(_) => {
-                let msg_envelope: PeerMessage =
-                    bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
-
                 debug!("running: got message {:?}", msg_envelope);
-
-                match msg_envelope {
+                match msg_envelope.borrow() {
                     PeerMessage::HandshakeF { bundle } => {
                         self.channel_finished_transaction = Some(bundle.clone());
                         let (_, system_interface) = penv.env();
@@ -1130,7 +1136,7 @@ impl PotatoHandler {
                         self.received_game_start(penv, &sigs, &g)?;
                     }
                     _ => {
-                        self.pass_on_channel_handler_message(penv, msg)?;
+                        self.pass_on_channel_handler_message(penv, msg_envelope)?;
                     }
                 }
 
