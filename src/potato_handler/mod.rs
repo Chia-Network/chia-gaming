@@ -1523,7 +1523,9 @@ impl PotatoHandler {
         }
 
         if matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            if matches!(action, GameAction::SendPotato) && matches!(self.have_potato, PotatoState::Absent) {
+            if matches!(action, GameAction::SendPotato)
+                && matches!(self.have_potato, PotatoState::Absent)
+            {
                 return Ok(true);
             }
 
