@@ -607,7 +607,9 @@ impl PotatoHandler {
         }
 
         if matches!(self.have_potato, PotatoState::Absent) {
-            self.request_potato(penv)?;
+            let (_, system_interface) = penv.env();
+            system_interface.send_message(&PeerMessage::RequestPotato(()))?;
+            self.have_potato = PotatoState::Requested;
         }
 
         return Ok(false);
@@ -824,25 +826,6 @@ impl PotatoHandler {
         let their_result_start_info = convert_info_list(env.allocator, false, &their_info_list)?;
 
         Ok((my_result_start_info, their_result_start_info))
-    }
-
-    fn request_potato<'a, G, R: Rng + 'a>(
-        &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-    ) -> Result<(), Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
-    {
-        if matches!(self.have_potato, PotatoState::Requested) {
-            return Ok(());
-        }
-
-        debug!("requesting potato");
-
-        let (_, system_interface) = penv.env();
-        system_interface.send_message(&PeerMessage::RequestPotato(()))?;
-        self.have_potato = PotatoState::Requested;
-        Ok(())
     }
 
     fn next_game_id(&mut self) -> Result<GameID, Error> {
