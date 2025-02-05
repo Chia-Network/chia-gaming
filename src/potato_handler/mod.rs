@@ -595,6 +595,24 @@ impl PotatoHandler {
         Ok(false)
     }
 
+    fn send_potato_request_if_needed<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<bool, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        if matches!(self.have_potato, PotatoState::Present) {
+            return Ok(true);
+        }
+
+        if matches!(self.have_potato, PotatoState::Absent) {
+            self.request_potato(penv)?;
+        }
+
+        return Ok(false);
+    }
+
     fn have_potato_move<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
@@ -1496,10 +1514,7 @@ impl PotatoHandler {
         if matches!(self.handshake_state, HandshakeState::Finished(_)) {
             self.game_action_queue.push_back(action);
 
-            if !matches!(self.have_potato, PotatoState::Present) {
-                if matches!(self.have_potato, PotatoState::Absent) {
-                    self.request_potato(penv)?;
-                }
+            if !self.send_potato_request_if_needed(penv)? {
                 return Ok(());
             }
 
@@ -1721,10 +1736,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
             self.game_action_queue.push_back(GameAction::LocalStartGame);
 
-            if !matches!(self.have_potato, PotatoState::Present) {
-                if matches!(self.have_potato, PotatoState::Absent) {
-                    self.request_potato(penv)?;
-                }
+            if !self.send_potato_request_if_needed(penv)? {
                 return Ok(game_id_list);
             }
 
