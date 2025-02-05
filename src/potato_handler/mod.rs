@@ -377,7 +377,7 @@ impl PotatoHandler {
                         ReadableMove::from_nodeptr(env.allocator, readable_move)?;
                     system_interface.opponent_moved(
                         env.allocator,
-                        &game_id,
+                        game_id,
                         opponent_readable,
                         mover_share,
                     )?;
@@ -395,7 +395,7 @@ impl PotatoHandler {
                 };
 
                 let (env, system_interface) = penv.env();
-                system_interface.raw_game_message(&game_id, message)?;
+                system_interface.raw_game_message(game_id, message)?;
                 system_interface.game_message(env.allocator, game_id, decoded_message)?;
                 // Does not affect potato.
             }
@@ -613,7 +613,7 @@ impl PotatoHandler {
             self.have_potato = PotatoState::Requested;
         }
 
-        return Ok(false);
+        Ok(false)
     }
 
     fn have_potato_move<'a, G, R: Rng + 'a>(
@@ -1126,7 +1126,7 @@ impl PotatoHandler {
                         Some("channel"),
                     )?;
 
-                    system_interface.received_channel_offer(&bundle)?;
+                    system_interface.received_channel_offer(bundle)?;
                 }
 
                 let first_player_hs = info.first_player_hs_info.clone();
