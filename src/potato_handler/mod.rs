@@ -362,14 +362,14 @@ impl PotatoHandler {
                 debug!("about to receive empty potato");
                 let spend_info = {
                     let (env, _system_interface) = penv.env();
-                    ch.received_empty_potato(env, &n)?
+                    ch.received_empty_potato(env, n)?
                 };
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             PeerMessage::Move(game_id, m) => {
                 let (spend_info, readable_move, message, mover_share) = {
                     let (env, _) = penv.env();
-                    ch.received_potato_move(env, &game_id, &m)?
+                    ch.received_potato_move(env, game_id, m)?
                 };
                 {
                     let (env, system_interface) = penv.env();
@@ -391,19 +391,19 @@ impl PotatoHandler {
             PeerMessage::Message(game_id, message) => {
                 let decoded_message = {
                     let (env, _) = penv.env();
-                    ch.received_message(env, &game_id, &message)?
+                    ch.received_message(env, game_id, message)?
                 };
 
                 let (env, system_interface) = penv.env();
-                system_interface.raw_game_message(&game_id, &message)?;
-                system_interface.game_message(env.allocator, &game_id, decoded_message)?;
+                system_interface.raw_game_message(&game_id, message)?;
+                system_interface.game_message(env.allocator, game_id, decoded_message)?;
                 // Does not affect potato.
             }
             PeerMessage::Accept(game_id, amount, sigs) => {
                 let spend_info = {
                     let (env, system_interface) = penv.env();
-                    let result = ch.received_potato_accept(env, &sigs, &game_id)?;
-                    system_interface.game_finished(&game_id, amount.clone())?;
+                    let result = ch.received_potato_accept(env, sigs, game_id)?;
+                    system_interface.game_finished(game_id, amount.clone())?;
                     Ok(result)
                 }?;
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
@@ -441,7 +441,7 @@ impl PotatoHandler {
                 system_interface.register_coin(&my_reward, &timeout, Some("reward"))?;
 
                 system_interface.register_coin(coin, &timeout, Some("parent"))?;
-                let full_spend = ch.received_potato_clean_shutdown(env, &sig, clvm_conditions)?;
+                let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
 
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
                 let puzzle = Rc::new(puzzle_for_synthetic_public_key(
@@ -962,7 +962,7 @@ impl PotatoHandler {
                 //
                 // That should halt for the channel coin notifiation.
                 let init_data =
-                    make_channel_handler_initiation(parent_coin.to_coin_id(), false, &msg);
+                    make_channel_handler_initiation(parent_coin.to_coin_id(), false, msg);
                 let (mut channel_handler, _init_result) = {
                     let (env, _system_interface) = penv.env();
                     ChannelHandler::new(env, self.private_keys.clone(), &init_data)?
@@ -1144,7 +1144,7 @@ impl PotatoHandler {
                     PeerMessage::HandshakeF { bundle } => {
                         self.channel_finished_transaction = Some(bundle.clone());
                         let (_, system_interface) = penv.env();
-                        system_interface.received_channel_offer(&bundle)?;
+                        system_interface.received_channel_offer(bundle)?;
                     }
                     PeerMessage::RequestPotato(_) => {
                         if matches!(self.have_potato, PotatoState::Present) {
@@ -1154,7 +1154,7 @@ impl PotatoHandler {
                         }
                     }
                     PeerMessage::StartGames(sigs, g) => {
-                        self.received_game_start(penv, &sigs, &g)?;
+                        self.received_game_start(penv, sigs, g)?;
                     }
                     _ => {
                         self.pass_on_channel_handler_message(penv, msg_envelope)?;
