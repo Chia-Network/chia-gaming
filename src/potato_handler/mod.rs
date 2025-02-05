@@ -382,7 +382,8 @@ impl PotatoHandler {
                         mover_share,
                     )?;
                     if !message.is_empty() {
-                        system_interface.send_message(&PeerMessage::Message(game_id.clone(), message))?;
+                        system_interface
+                            .send_message(&PeerMessage::Message(game_id.clone(), message))?;
                     }
                 }
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
@@ -629,14 +630,17 @@ impl PotatoHandler {
             }
             Some(GameAction::Move(game_id, readable_move, new_entropy)) => {
                 assert!(matches!(self.have_potato, PotatoState::Present));
-                let move_result =
-                {
+                let move_result = {
                     let ch = self.channel_handler_mut()?;
                     let (env, _) = penv.env();
                     if let Some(true) = ch.game_is_my_turn(&game_id) {
                         ch.send_potato_move(env, &game_id, &readable_move, new_entropy)?
                     } else {
-                        self.game_action_queue.push_front(GameAction::Move(game_id, readable_move, new_entropy));
+                        self.game_action_queue.push_front(GameAction::Move(
+                            game_id,
+                            readable_move,
+                            new_entropy,
+                        ));
                         return Ok(false);
                     }
                 };
@@ -893,8 +897,7 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
-        let msg_envelope: PeerMessage =
-            bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
+        let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
         self.incoming_messages.push_back(Rc::new(msg_envelope));
         self.process_incoming_message(penv)
     }
@@ -906,12 +909,11 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let msg_envelope =
-            if let Some(msg) = self.incoming_messages.pop_front() {
-                msg
-            } else {
-                return Ok(());
-            };
+        let msg_envelope = if let Some(msg) = self.incoming_messages.pop_front() {
+            msg
+        } else {
+            return Ok(());
+        };
 
         let make_channel_handler_initiation =
             |parent: CoinID, start_potato, msg: &HandshakeB| ChannelHandlerInitiationData {
@@ -1163,7 +1165,14 @@ impl PotatoHandler {
             }
 
             _ => {
-                let (handshake_actions, game_actions) : (Vec<Rc<PeerMessage>>, Vec<Rc<PeerMessage>>) = self.incoming_messages.iter().cloned().partition(|x| x.is_handshake());
+                let (handshake_actions, game_actions): (
+                    Vec<Rc<PeerMessage>>,
+                    Vec<Rc<PeerMessage>>,
+                ) = self
+                    .incoming_messages
+                    .iter()
+                    .cloned()
+                    .partition(|x| x.is_handshake());
                 self.incoming_messages.clear();
                 for m in handshake_actions {
                     self.incoming_messages.push_back(m);

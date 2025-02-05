@@ -534,9 +534,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 system_interface.shutdown_complete(None)?;
                 Ok(())
             }
-            GameAction::SendPotato => {
-                Ok(())
-            }
+            GameAction::SendPotato => Ok(()),
         }
     }
 

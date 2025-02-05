@@ -352,7 +352,13 @@ pub enum PeerMessage {
 
 impl PeerMessage {
     pub fn is_handshake(&self) -> bool {
-        matches!(self, PeerMessage::HandshakeA(_) | PeerMessage::HandshakeB(_) | PeerMessage::HandshakeE {..} | PeerMessage::HandshakeF {..})
+        matches!(
+            self,
+            PeerMessage::HandshakeA(_)
+                | PeerMessage::HandshakeB(_)
+                | PeerMessage::HandshakeE { .. }
+                | PeerMessage::HandshakeF { .. }
+        )
     }
 }
 
