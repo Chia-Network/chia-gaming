@@ -1515,6 +1515,10 @@ impl PotatoHandler {
         }
 
         if matches!(self.handshake_state, HandshakeState::Finished(_)) {
+            if matches!(action, GameAction::SendPotato) && matches!(self.have_potato, PotatoState::Absent) {
+                return Ok(());
+            }
+
             self.game_action_queue.push_back(action);
 
             if !self.send_potato_request_if_needed(penv)? {
