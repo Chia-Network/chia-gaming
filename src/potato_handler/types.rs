@@ -431,6 +431,7 @@ pub enum GameAction {
     Accept(GameID),
     Shutdown(Rc<dyn ShutdownConditions>),
     LocalStartGame,
+    SendPotato,
 }
 
 impl std::fmt::Debug for GameAction {
@@ -446,6 +447,7 @@ impl std::fmt::Debug for GameAction {
             GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
             GameAction::Shutdown(_) => write!(formatter, "Shutdown(..)"),
             GameAction::LocalStartGame => write!(formatter, "LocalStartGame"),
+            GameAction::SendPotato => write!(formatter, "SendPotato"),
         }
     }
 }
