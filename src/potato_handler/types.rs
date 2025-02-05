@@ -350,6 +350,12 @@ pub enum PeerMessage {
     StartGames(PotatoSignatures, Vec<GameStartInfo>),
 }
 
+impl PeerMessage {
+    pub fn is_handshake(&self) -> bool {
+        matches!(self, PeerMessage::HandshakeA(_) | PeerMessage::HandshakeB(_) | PeerMessage::HandshakeE {..} | PeerMessage::HandshakeF {..})
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HandshakeStepInfo {
     #[allow(dead_code)]

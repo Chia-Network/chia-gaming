@@ -1174,11 +1174,16 @@ impl PotatoHandler {
             }
 
             _ => {
+                let (handshake_actions, game_actions) : (Vec<Rc<PeerMessage>>, Vec<Rc<PeerMessage>>) = self.incoming_messages.iter().cloned().partition(|x| x.is_handshake());
+                self.incoming_messages.clear();
+                for m in handshake_actions {
+                    self.incoming_messages.push_back(m);
+                }
+                self.incoming_messages.push_back(msg_envelope);
+                for m in game_actions {
+                    self.incoming_messages.push_back(m);
+                }
                 return Ok(());
-                // return Err(Error::StrErr(format!(
-                //     "should not receive message in state {:?}",
-                //     self.handshake_state
-                // )));
             }
         }
 
