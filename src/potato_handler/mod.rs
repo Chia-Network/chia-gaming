@@ -586,6 +586,7 @@ impl PotatoHandler {
             };
 
             debug!("dehydrated_games {dehydrated_games:?}");
+            self.have_potato = PotatoState::Absent;
             let (_, system_interface) = penv.env();
             system_interface.send_message(&PeerMessage::StartGames(sigs, dehydrated_games))?;
             return Ok(true);
@@ -602,11 +603,22 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         match self.game_action_queue.pop_front() {
+            Some(GameAction::LocalStartGame) => {
+                self.have_potato_start_game(penv)?;
+                Ok(true)
+            }
             Some(GameAction::Move(game_id, readable_move, new_entropy)) => {
-                let move_result = {
+                assert!(matches!(self.have_potato, PotatoState::Present));
+                let move_result =
+                {
                     let ch = self.channel_handler_mut()?;
                     let (env, _) = penv.env();
-                    ch.send_potato_move(env, &game_id, &readable_move, new_entropy)?
+                    if let Some(true) = ch.game_is_my_turn(&game_id) {
+                        ch.send_potato_move(env, &game_id, &readable_move, new_entropy)?
+                    } else {
+                        self.game_action_queue.push_front(GameAction::Move(game_id, readable_move, new_entropy));
+                        return Ok(false);
+                    }
                 };
 
                 let (_, system_interface) = penv.env();
@@ -1707,6 +1719,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 their_games,
             });
 
+            self.game_action_queue.push_back(GameAction::LocalStartGame);
+
             if !matches!(self.have_potato, PotatoState::Present) {
                 if matches!(self.have_potato, PotatoState::Absent) {
                     self.request_potato(penv)?;
@@ -1714,7 +1728,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 return Ok(game_id_list);
             }
 
-            self.have_potato_start_game(penv)?;
+            self.have_potato_move(penv)?;
         } else {
             // All checking needed is done by channel handler.
             self.their_start_queue.push_back(GameStartQueueEntry);

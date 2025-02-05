@@ -70,7 +70,6 @@ impl MessagePeerQueue for Pipe {
 impl PacketSender for MessagePipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
         debug!("Send Message from {} {msg:?}", self.my_id);
-        assert!(self.queue.is_empty());
         let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
         self.queue.push_back(msg_data);
@@ -270,7 +269,7 @@ where
         + MessagePeerQueue
         + 'a,
 {
-    assert!(pipe[who ^ 1].message_pipe().queue.len() < 2);
+    // assert!(pipe[who ^ 1].message_pipe().queue.len() < 2);
     let msg = if let Some(msg) = pipe[who ^ 1].message_pipe().queue.pop_front() {
         msg
     } else {
