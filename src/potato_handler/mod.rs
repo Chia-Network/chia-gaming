@@ -899,7 +899,14 @@ impl PotatoHandler {
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
         let msg_envelope: PeerMessage = bson::from_bson(bson::Bson::Document(doc)).into_gen()?;
         self.incoming_messages.push_back(Rc::new(msg_envelope));
-        self.process_incoming_message(penv)
+        self.process_incoming_message(penv)?;
+        while let Some(action) = self.game_action_queue.pop_front() {
+            if !self.do_game_action(penv, action)? {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     pub fn process_incoming_message<'a, G, R: Rng + 'a>(
@@ -1501,33 +1508,32 @@ impl PotatoHandler {
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         action: GameAction,
-    ) -> Result<(), Error>
+    ) -> Result<bool, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
-            return on_chain.do_on_chain_action(penv, action);
+            on_chain.do_on_chain_action(penv, action)?;
+            return Ok(true);
         }
 
         if let HandshakeState::OnChainWaitingForUnrollConditions(_) = &self.handshake_state {
             self.game_action_queue.push_back(action);
-            return Ok(());
+            return Ok(false);
         }
 
         if matches!(self.handshake_state, HandshakeState::Finished(_)) {
             if matches!(action, GameAction::SendPotato) && matches!(self.have_potato, PotatoState::Absent) {
-                return Ok(());
+                return Ok(true);
             }
 
             self.game_action_queue.push_back(action);
 
             if !self.send_potato_request_if_needed(penv)? {
-                return Ok(());
+                return Ok(false);
             }
 
-            self.have_potato_move(penv)?;
-
-            return Ok(());
+            return self.have_potato_move(penv);
         }
 
         Err(Error::StrErr(format!(
@@ -1770,7 +1776,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         self.do_game_action(
             penv,
             GameAction::Move(id.clone(), readable.clone(), new_entropy),
-        )
+        )?;
+
+        Ok(())
     }
 
     fn accept<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
@@ -1778,7 +1786,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
-        self.do_game_action(penv, GameAction::Accept(id.clone()))
+        self.do_game_action(penv, GameAction::Accept(id.clone()))?;
+
+        Ok(())
     }
 
     fn shut_down<'a>(
@@ -1814,7 +1824,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        self.do_game_action(penv, GameAction::Shutdown(conditions))
+        self.do_game_action(penv, GameAction::Shutdown(conditions))?;
+
+        Ok(())
     }
 }
 
