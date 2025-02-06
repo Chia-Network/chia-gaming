@@ -7,6 +7,7 @@ edition = "2021"
 sim-tests = ["dep:pyo3"]
 simulator = ["dep:pyo3"]
 server = ["dep:tokio","dep:salvo","dep:exec"]
+used_linker = []
 
 [dependencies]
 clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "ec75759377791c9b785123d2d3e2457d08ac6621" }
