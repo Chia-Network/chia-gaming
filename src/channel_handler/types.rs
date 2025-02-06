@@ -74,10 +74,8 @@ pub struct PotatoSignatures {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStartInfo {
-    pub game_id: GameID,
     pub amount: Amount,
     pub game_handler: GameHandler,
-    pub timeout: Timeout,
 
     pub my_contribution_this_game: Amount,
     pub their_contribution_this_game: Amount,
@@ -87,6 +85,10 @@ pub struct GameStartInfo {
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
+
+    // Can be left out.
+    pub game_id: GameID,
+    pub timeout: Timeout,
 }
 
 impl GameStartInfo {
@@ -107,38 +109,50 @@ impl GameStartInfo {
             ));
         };
 
-        if lst.len() != 11 {
+        if lst.len() < 9 {
             return Err(Error::StrErr(
-                "game start info clvm needs 11 items".to_string(),
+                "game start info clvm needs at least 9 items".to_string(),
             ));
         }
 
-        let returned_game_id = GameID::from_clvm(allocator, lst[0])?;
-        let returned_amount = Amount::from_clvm(allocator, lst[1])?;
+        let returned_amount = Amount::from_clvm(allocator, lst[0])?;
         let returned_handler = if my_turn {
-            GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
+            GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[1])?))
         } else {
-            GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
+            GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[1])?))
         };
-        let returned_timeout = Timeout::from_clvm(allocator, lst[3])?;
-        let returned_my_contribution = Amount::from_clvm(allocator, lst[4])?;
-        let returned_their_contribution = Amount::from_clvm(allocator, lst[5])?;
+        let returned_my_contribution = Amount::from_clvm(allocator, lst[2])?;
+        let returned_their_contribution = Amount::from_clvm(allocator, lst[3])?;
 
-        let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[6])?);
+        let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[4])?);
         let validation_program = ValidationProgram::new(allocator, validation_prog);
-        let initial_state = Rc::new(Program::from_nodeptr(allocator, lst[7])?);
-        let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
+        let initial_state = Rc::new(Program::from_nodeptr(allocator, lst[5])?);
+        let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[6]) {
             a.to_vec()
         } else {
             return Err(Error::StrErr("initial move wasn't an atom".to_string()));
         };
         let initial_max_move_size =
-            if let Some(a) = atom_from_clvm(allocator, lst[9]).and_then(usize_from_atom) {
+            if let Some(a) = atom_from_clvm(allocator, lst[7]).and_then(usize_from_atom) {
                 a
             } else {
                 return Err(Error::StrErr("bad initial max move size".to_string()));
             };
-        let initial_mover_share = Amount::from_clvm(allocator, lst[10])?;
+        let initial_mover_share = Amount::from_clvm(allocator, lst[8])?;
+
+        let returned_game_id =
+            if lst.len() > 9 {
+                GameID::from_clvm(allocator, lst[9])?
+            } else {
+                GameID::default()
+            };
+
+        let returned_timeout =
+            if lst.len() > 10 {
+                Timeout::from_clvm(allocator, lst[10])?
+            } else {
+                Timeout::new(0)
+            };
 
         Ok(GameStartInfo {
             game_id: returned_game_id,

@@ -35,17 +35,11 @@
                 (list
                     ;; One game
                     (list
-                        ;; GameID - will be replaced by caller
-                        ()
-
                         ;; Amount
                         amount
 
                         ;; Handler
                         (f template)
-
-                        ;; Timeout, specified as 0 since we'll populate it above
-                        ()
 
                         ;; My contribution this game
                         my_contribution
@@ -73,16 +67,11 @@
                 (list
                     ;; One game
                     (list
-                        ;; GameID - will be replaced by caller
-                        ()
                         ;; Amount
                         amount
 
                         ;; Handler
                         (f (r template))
-
-                        ;; Timeout - specified as zero here since we'll fix it above.
-                        ()
 
                         ;; My contribution this game
                         their-contribution
