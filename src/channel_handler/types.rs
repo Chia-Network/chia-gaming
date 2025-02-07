@@ -96,10 +96,7 @@ impl GameStartInfo {
         matches!(self.game_handler, GameHandler::MyTurnHandler(_))
     }
 
-    pub fn from_clvm(
-        allocator: &mut AllocEncoder,
-        clvm: NodePtr,
-    ) -> Result<Self, Error> {
+    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
         let lst = if let Some(lst) = proper_list(allocator.allocator(), clvm, true) {
             lst
         } else {
@@ -111,14 +108,16 @@ impl GameStartInfo {
         let required_length = 11;
 
         if lst.len() < required_length {
-            return Err(Error::StrErr(
-                format!("game start info clvm needs at least {required_length} items")
-            ));
+            return Err(Error::StrErr(format!(
+                "game start info clvm needs at least {required_length} items"
+            )));
         }
 
         let returned_amount = Amount::from_clvm(allocator, lst[0])?;
-        let my_turn =
-            atom_from_clvm(allocator, lst[1]).and_then(|a| usize_from_atom(a)).unwrap_or(0) != 0;
+        let my_turn = atom_from_clvm(allocator, lst[1])
+            .and_then(|a| usize_from_atom(a))
+            .unwrap_or(0)
+            != 0;
         let returned_handler = if my_turn {
             GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
         } else {
@@ -129,10 +128,8 @@ impl GameStartInfo {
 
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[5])?);
         let validation_program_hash = Hash::from_nodeptr(allocator, lst[6])?;
-        let validation_program = ValidationProgram::new_hash(
-            validation_prog,
-            validation_program_hash
-        );
+        let validation_program =
+            ValidationProgram::new_hash(validation_prog, validation_program_hash);
         let initial_state = Rc::new(Program::from_nodeptr(allocator, lst[7])?);
         let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
             a.to_vec()
@@ -147,19 +144,17 @@ impl GameStartInfo {
             };
         let initial_mover_share = Amount::from_clvm(allocator, lst[10])?;
 
-        let returned_game_id =
-            if lst.len() > required_length + 1 {
-                GameID::from_clvm(allocator, lst[required_length])?
-            } else {
-                GameID::default()
-            };
+        let returned_game_id = if lst.len() > required_length + 1 {
+            GameID::from_clvm(allocator, lst[required_length])?
+        } else {
+            GameID::default()
+        };
 
-        let returned_timeout =
-            if lst.len() > required_length + 2 {
-                Timeout::from_clvm(allocator, lst[required_length + 1])?
-            } else {
-                Timeout::new(0)
-            };
+        let returned_timeout = if lst.len() > required_length + 2 {
+            Timeout::from_clvm(allocator, lst[required_length + 1])?
+        } else {
+            Timeout::new(0)
+        };
 
         Ok(GameStartInfo {
             game_id: returned_game_id,
@@ -421,10 +416,7 @@ impl ValidationProgram {
         }
     }
 
-    pub fn new_hash(
-        validation_program: Rc<Program>,
-        validation_program_hash: Hash
-    ) -> Self {
+    pub fn new_hash(validation_program: Rc<Program>, validation_program_hash: Hash) -> Self {
         ValidationProgram {
             validation_program,
             validation_program_hash,

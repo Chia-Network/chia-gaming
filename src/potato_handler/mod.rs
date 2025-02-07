@@ -764,9 +764,9 @@ impl PotatoHandler {
                 game_start.my_contribution.clone(),
                 (
                     game_start.amount.clone() - game_start.my_contribution.clone(),
-                    (Node(params_clvm), ())
+                    (Node(params_clvm), ()),
                 ),
-            )
+            ),
         )
             .to_clvm(env.allocator)
             .into_gen()?;
