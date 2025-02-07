@@ -503,6 +503,13 @@ impl Hash {
         }
         Hash::from_bytes(fixed)
     }
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Hash, Error> {
+        if let Some(bytes) = atom_from_clvm(allocator, n) {
+            return Ok(Hash::from_slice(bytes));
+        }
+
+        Err(Error::StrErr("can't convert node to hash".to_string()))
+    }
     pub fn bytes(&self) -> &[u8; 32] {
         &self.0
     }

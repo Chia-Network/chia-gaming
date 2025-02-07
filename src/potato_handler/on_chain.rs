@@ -465,6 +465,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         debug!("{initial_potato} have collection {:?}", self.game_map);
 
         match action {
+            GameAction::LocalStartGame => {
+                Err(Error::StrErr("can't start game on chain".to_string()))
+            }
             GameAction::Move(game_id, readable_move, hash) => {
                 let current_coin = get_current_coin(&game_id)?;
                 self.do_on_chain_move(penv, &current_coin, game_id, readable_move, hash)
@@ -531,6 +534,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 system_interface.shutdown_complete(None)?;
                 Ok(())
             }
+            GameAction::SendPotato => Ok(()),
         }
     }
 
