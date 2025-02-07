@@ -98,7 +98,6 @@ impl GameStartInfo {
 
     pub fn from_clvm(
         allocator: &mut AllocEncoder,
-        my_turn: bool,
         clvm: NodePtr,
     ) -> Result<Self, Error> {
         let lst = if let Some(lst) = proper_list(allocator.allocator(), clvm, true) {
@@ -109,47 +108,55 @@ impl GameStartInfo {
             ));
         };
 
-        if lst.len() < 9 {
+        let required_length = 11;
+
+        if lst.len() < required_length {
             return Err(Error::StrErr(
-                "game start info clvm needs at least 9 items".to_string(),
+                format!("game start info clvm needs at least {required_length} items")
             ));
         }
 
         let returned_amount = Amount::from_clvm(allocator, lst[0])?;
+        let my_turn =
+            atom_from_clvm(allocator, lst[1]).and_then(|a| usize_from_atom(a)).unwrap_or(0) != 0;
         let returned_handler = if my_turn {
-            GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[1])?))
+            GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
         } else {
-            GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[1])?))
+            GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
         };
-        let returned_my_contribution = Amount::from_clvm(allocator, lst[2])?;
-        let returned_their_contribution = Amount::from_clvm(allocator, lst[3])?;
+        let returned_my_contribution = Amount::from_clvm(allocator, lst[3])?;
+        let returned_their_contribution = Amount::from_clvm(allocator, lst[4])?;
 
-        let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[4])?);
-        let validation_program = ValidationProgram::new(allocator, validation_prog);
-        let initial_state = Rc::new(Program::from_nodeptr(allocator, lst[5])?);
-        let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[6]) {
+        let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[5])?);
+        let validation_program_hash = Hash::from_nodeptr(allocator, lst[6])?;
+        let validation_program = ValidationProgram::new_hash(
+            validation_prog,
+            validation_program_hash
+        );
+        let initial_state = Rc::new(Program::from_nodeptr(allocator, lst[7])?);
+        let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
             a.to_vec()
         } else {
             return Err(Error::StrErr("initial move wasn't an atom".to_string()));
         };
         let initial_max_move_size =
-            if let Some(a) = atom_from_clvm(allocator, lst[7]).and_then(usize_from_atom) {
+            if let Some(a) = atom_from_clvm(allocator, lst[9]).and_then(usize_from_atom) {
                 a
             } else {
                 return Err(Error::StrErr("bad initial max move size".to_string()));
             };
-        let initial_mover_share = Amount::from_clvm(allocator, lst[8])?;
+        let initial_mover_share = Amount::from_clvm(allocator, lst[10])?;
 
         let returned_game_id =
-            if lst.len() > 9 {
-                GameID::from_clvm(allocator, lst[9])?
+            if lst.len() > required_length + 1 {
+                GameID::from_clvm(allocator, lst[required_length])?
             } else {
                 GameID::default()
             };
 
         let returned_timeout =
-            if lst.len() > 10 {
-                Timeout::from_clvm(allocator, lst[10])?
+            if lst.len() > required_length + 2 {
+                Timeout::from_clvm(allocator, lst[required_length + 1])?
             } else {
                 Timeout::new(0)
             };
@@ -408,6 +415,16 @@ pub struct ValidationProgram {
 impl ValidationProgram {
     pub fn new(allocator: &mut AllocEncoder, validation_program: Rc<Program>) -> Self {
         let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
+        ValidationProgram {
+            validation_program,
+            validation_program_hash,
+        }
+    }
+
+    pub fn new_hash(
+        validation_program: Rc<Program>,
+        validation_program_hash: Hash
+    ) -> Self {
         ValidationProgram {
             validation_program,
             validation_program_hash,
