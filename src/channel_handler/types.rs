@@ -115,7 +115,7 @@ impl GameStartInfo {
 
         let returned_amount = Amount::from_clvm(allocator, lst[0])?;
         let my_turn = atom_from_clvm(allocator, lst[1])
-            .and_then(|a| usize_from_atom(a))
+            .and_then(usize_from_atom)
             .unwrap_or(0)
             != 0;
         let returned_handler = if my_turn {
