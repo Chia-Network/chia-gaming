@@ -108,6 +108,40 @@ impl CoinString {
     }
 }
 
+pub trait GetCoinStringParts {
+    type Res;
+
+    /// Return an error if the optional coin string is improper.
+    fn get_coin_string_parts(&self) -> Result<Self::Res, Error>;
+}
+
+impl GetCoinStringParts for CoinString {
+    type Res = (CoinID, PuzzleHash, Amount);
+    fn get_coin_string_parts(&self) -> Result<Self::Res, Error> {
+        if let Some((id, ph, amt)) = self.to_parts() {
+            Ok((id, ph, amt))
+        } else {
+            Err(Error::StrErr("improper coin string".to_string()))
+        }
+    }
+}
+impl GetCoinStringParts for &CoinString {
+    type Res = (CoinID, PuzzleHash, Amount);
+    fn get_coin_string_parts(&self) -> Result<Self::Res, Error> {
+        (*self).get_coin_string_parts()
+    }
+}
+impl GetCoinStringParts for Option<CoinString> {
+    type Res = Option<(CoinID, PuzzleHash, Amount)>;
+    fn get_coin_string_parts(&self) -> Result<Self::Res, Error> {
+        if let Some(coin) = self {
+            Ok(Some(coin.get_coin_string_parts()?))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 /// Private Key
 #[derive(Clone, Debug)]
 pub struct PrivateKey(chia_bls::SecretKey);
@@ -502,6 +536,13 @@ impl Hash {
             fixed[i % 32] = *b;
         }
         Hash::from_bytes(fixed)
+    }
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Hash, Error> {
+        if let Some(bytes) = atom_from_clvm(allocator, n) {
+            return Ok(Hash::from_slice(bytes));
+        }
+
+        Err(Error::StrErr("can't convert node to hash".to_string()))
     }
     pub fn bytes(&self) -> &[u8; 32] {
         &self.0

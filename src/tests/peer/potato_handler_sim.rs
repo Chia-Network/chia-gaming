@@ -1263,8 +1263,8 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
         run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
-    assert_eq!(p1_balance, 2000000000000);
-    assert_eq!(p1_balance, p2_balance);
+    assert_eq!(p1_balance, 1999999999900);
+    assert_eq!(p2_balance, 2000000000100);
 }
 
 #[test]
@@ -1312,8 +1312,8 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
         run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
-    assert_eq!(p1_balance, 2000000000000);
-    assert_eq!(p1_balance, p2_balance);
+    assert_eq!(p1_balance, 2000000000100);
+    assert_eq!(p1_balance, p2_balance + 200);
 }
 
 #[test]

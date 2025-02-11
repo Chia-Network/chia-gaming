@@ -673,11 +673,6 @@ impl RefereeMaker {
             agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
         });
 
-        let mover_share = if my_turn {
-            fixed_info.amount.clone() - initial_move.mover_share.clone()
-        } else {
-            initial_move.mover_share.clone()
-        };
         // TODO: Revisit how we create initial_move
         let is_hash = game_start_info
             .initial_state
@@ -699,7 +694,11 @@ impl RefereeMaker {
             &initial_move,
             None,
             &vi_hash,
-            Some(&mover_share),
+            // Special for start: nobody can slash the first turn and both sides need to
+            // compute the same value for amount to sign.  The next move will set mover share
+            // and the polarity of the move will determine whether that applies to us or them
+            // from both frames of reference.
+            Some(&Amount::default()),
             my_turn,
         ));
         // If this reflects my turn, then we will spend the next parameter set.

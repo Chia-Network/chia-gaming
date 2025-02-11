@@ -350,6 +350,18 @@ pub enum PeerMessage {
     StartGames(PotatoSignatures, Vec<GameStartInfo>),
 }
 
+impl PeerMessage {
+    pub fn is_handshake(&self) -> bool {
+        matches!(
+            self,
+            PeerMessage::HandshakeA(_)
+                | PeerMessage::HandshakeB(_)
+                | PeerMessage::HandshakeE { .. }
+                | PeerMessage::HandshakeF { .. }
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HandshakeStepInfo {
     #[allow(dead_code)]
@@ -424,6 +436,8 @@ pub enum GameAction {
     ),
     Accept(GameID),
     Shutdown(Rc<dyn ShutdownConditions>),
+    LocalStartGame,
+    SendPotato,
 }
 
 impl std::fmt::Debug for GameAction {
@@ -438,6 +452,8 @@ impl std::fmt::Debug for GameAction {
             }
             GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
             GameAction::Shutdown(_) => write!(formatter, "Shutdown(..)"),
+            GameAction::LocalStartGame => write!(formatter, "LocalStartGame"),
+            GameAction::SendPotato => write!(formatter, "SendPotato"),
         }
     }
 }

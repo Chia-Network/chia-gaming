@@ -3,7 +3,7 @@
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
 VARIABLES a, b, ui_actions
-RECURSIVE DoGameAction(_)
+RECURSIVE ProcessQueueActions(_)
 
 \* States
 StepA == 0
@@ -365,38 +365,30 @@ ChannelHandlerMessage(p,act) ==
     ELSE
       Ok(SendMessage(SetChannelHandler(p, ch1 + 1), act))
 
+\* potato_handler/mod.rs:1481
 SendPotatoRequestIfNeeded(p) ==
   IF p.have_potato = PotatoPresent THEN
     Rv(1, p)
   ELSE IF p.have_potato = PotatoAbsent THEN
     LET p1 == EnqueueGameAction(PotatoState(p, PotatoRequested), RequestPotato) IN
-    Rv(1, p1)
-  ELSE IF p.have_potato = PotatoRequested /\ Len(p.game_action_queue) > 0 /\ p.game_action_queue[1] = RequestPotato THEN
-    Rv(1, p)
-  ELSE IF p.handshake_state = Finished /\ p.have_potato = PotatoPresent /\ Len(p.game_action_queue) > 0 /\ p.game_action_queue[1] = SendPotato THEN
-    Rv(1, p)
+    Rv(0, p1)
   ELSE
     Rv(0, p)
 
-\* potato_handler/mod.rs:1461
-DoGameAction(p) ==
-  LET p1 == SendPotatoRequestIfNeeded(p) IN
-  IF RvOf(p1) > 0 THEN
-    LET p2 == HavePotatoMove(OkOf(p1)) IN
-    IF IsErr(p2) THEN
-      p2
-    ELSE IF RvOf(p2) > 0 THEN
-      LET p3 == DoGameAction(OkOf(p2)) IN
-      IF IsErr(p3) THEN
-        p3
-      ELSE IF RvOf(p3) > 0 THEN
-        DoGameAction(OkOf(p3))
-      ELSE
-        p3
+\* potato_handler/mod.rs:1481
+DoGameAction(p,act) ==
+  IF p.handshake_state = Finished THEN
+    IF act = SendPotato /\ p.have_potato = PotatoAbsent THEN
+      Ok(p)
     ELSE
-      p2
+      LET p0 == EnqueueGameAction(p,act) IN
+      LET p1 == SendPotatoRequestIfNeeded(p0) IN
+      IF RvOf(p1) > 0 THEN
+        HavePotatoMove(OkOf(p1))
+      ELSE
+        p1
   ELSE
-    p1
+    Err(p)
 
 RehydrateGames(g) == g - UIStartGames + StartGames
 
@@ -417,11 +409,8 @@ ReceivedGameStart(p, g) ==
         LET ch3 == OkOf(ch2) IN
         UpdateChannelCoinAfterReceive(SetChannelHandler(p, ch3))
 
-\* potato_handler/mod.rs:867
-ReceivedMessage(p,m) ==
-  DoGameAction(AppendIncoming(p, m))
-
-HandleReceivedMessage1(p,m) ==
+\* potato_handler/mod.rs:874
+ProcessIncomingMessage(p,m) ==
   IF p.handshake_state = StepB /\ m = HandshakeA THEN
     Ok(SendMessage(NewState(NewChannelHandler(p), StepD), HandshakeB))
   ELSE IF p.handshake_state = StepC /\ m = HandshakeB THEN
@@ -438,7 +427,10 @@ HandleReceivedMessage1(p,m) ==
     IF m = HandshakeF THEN
       Ok(p)
     ELSE IF m = RequestPotato THEN
-      DoGameAction(EnqueueGameAction(p, SendPotato))
+      IF p.have_potato = PotatoPresent THEN
+        DoGameAction(p, SendPotato)
+      ELSE
+        EnqueueGameAction(p, SendPotato)
     ELSE IF m = UIStartGames \/ m = UIStartGamesError THEN
       ReceivedGameStart(p, m)
     ELSE
@@ -448,15 +440,33 @@ HandleReceivedMessage1(p,m) ==
     LET NewQueue == SelectSeq(p.incoming_messages, LAMBDA x: x > HandshakeF) IN
     Ok([p EXCEPT !.incoming_messages = HandshakeActions \o << m >> \o NewQueue])    
 
-HandleReceivedMessage(p) ==
-  IF Len(p.incoming_messages) > 0 THEN
-    LET m == p.incoming_messages[1] IN
-    LET p1 == DropIncomingMessage(p) IN
-    LET p2 == HandleReceivedMessage1(p1, m) IN
+\* potato_handler/mod.rs:1146
+ReceivedMessage(p, msg) == Ok(AppendIncoming(p, msg))
+
+ProcessQueueActions(p) ==
+  IF Len(p.game_action_queue) > 0 THEN
+    LET game_action == FirstGameActionQueue(p) IN
+    LET p1 == DropGameActionQueue(p) IN
+    LET p2 == DoGameAction(p1, game_action) IN
     IF IsErr(p2) THEN
       p2
+    ELSE IF RvOf(p2) > 0 THEN
+      ProcessQueueActions(OkOf(p2))
     ELSE
-      DoGameAction(OkOf(p2))
+      p2
+  ELSE
+    Ok(p)
+
+\* potato_handler/mod.rs:1160
+HandleIncomingMessage(p) ==
+  IF Len(p.incoming_messages) > 0 THEN
+    LET m == p.incoming_messages[1] IN
+    LET p2 == DropIncomingMessage(p) IN
+    LET p3 == ProcessIncomingMessage(p2, m) IN
+    IF IsErr(p3) THEN
+      p3
+    ELSE
+      ProcessQueueActions(OkOf(p3))
   ELSE
     Ok(p)
 
@@ -472,30 +482,28 @@ CoinCreated(p) ==
 
 \* potato_handler/mod.rs:1704
 FLUI_StartGames(p, i_initiated, s) ==
-  IF i_initiated = 0 THEN
-    AppendTheirStartQueue(p, s)
-  ELSE
+  IF i_initiated > 0 THEN
     IF p.handshake_state # Finished THEN
       p \* error
     ELSE
       LET p1 == AppendMyStartQueue(p, s) IN
-      LET p2 == SendPotatoRequestIfNeeded(p1) IN
-      IF RvOf(p2) > 0 THEN
-        OkOf(HavePotatoStartGame(OkOf(p2)))
+      LET p2 == EnqueueGameAction(p, StartGames) IN
+      LET p3 == SendPotatoRequestIfNeeded(p1) IN
+      IF RvOf(p3) = 0 THEN
+        OkOf(p3)
       ELSE
-        OkOf(p2)
+        OkOf(HavePotatoMove(OkOf(p3)))
+  ELSE
+    AppendTheirStartQueue(p, s)
 
 FLUI_MakeMove(p, act) ==
-  LET p1 == EnqueueGameAction(p, act) IN
-  OkOf(DoGameAction(p1))
+  OkOf(DoGameAction(p, act))
 
 FLUI_Accept(p, act) ==
-  LET p1 == EnqueueGameAction(p, act) IN
-  OkOf(DoGameAction(p1))
+  OkOf(DoGameAction(p, act))
 
 FLUI_Shutdown(p, act) ==
-  LET p1 == EnqueueGameAction(p, act) IN
-  OkOf(DoGameAction(p1))
+  OkOf(DoGameAction(p, act))
 
 StartA ==
   /\ a.handshake_state = StepA
@@ -522,13 +530,13 @@ ReceivedMessageB ==
 HandleInboundQueueA ==
   /\ Active(a)
   /\ Len(a.incoming_messages) > 0
-  /\ a' = OkOf(HandleReceivedMessage(a))
+  /\ a' = OkOf(HandleIncomingMessage(a))
   /\ UNCHANGED << b, ui_actions >>
 
 HandleInboundQueueB ==
   /\ Active(b)
   /\ Len(b.incoming_messages) > 0
-  /\ b' = OkOf(HandleReceivedMessage(b))
+  /\ b' = OkOf(HandleIncomingMessage(b))
   /\ UNCHANGED << a, ui_actions >>
 
 ChannelPuzzleHashA ==
