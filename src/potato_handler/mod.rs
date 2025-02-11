@@ -1091,8 +1091,7 @@ impl PotatoHandler {
                     PeerMessage::HandshakeF { bundle } => {
                         self.channel_finished_transaction = Some(bundle.clone());
                         let (_, system_interface) = penv.env();
-                        let rco = system_interface.received_channel_offer(&bundle)?;
-                        debug!("rco {rco:?}");
+                        system_interface.received_channel_offer(&bundle)?;
                     }
                     PeerMessage::RequestPotato(_) => {
                         {
