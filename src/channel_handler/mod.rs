@@ -17,8 +17,8 @@ use clvmr::allocator::NodePtr;
 
 use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
-    AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
-    ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
+    AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo,
+    ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation,
     CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo, HandshakeResult, LiveGame,
@@ -1380,11 +1380,10 @@ impl ChannelHandler {
                     &cached.at_stake_amount,
                 );
 
-                let spend_transaction = cached.live_game.get_transaction_for_move(
-                    env.allocator,
-                    &game_coin,
-                    false,
-                )?;
+                let spend_transaction =
+                    cached
+                        .live_game
+                        .get_transaction_for_move(env.allocator, &game_coin, false)?;
 
                 Ok(Some(DispositionResult {
                     disposition: CoinSpentDisposition::Accept(CoinSpentAccept {

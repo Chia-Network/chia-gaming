@@ -13,8 +13,9 @@ use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::types::{
-    AcceptTransactionState, ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys,
-    CoinSpentInformation, GameStartInfo, OnChainGameState, PotatoSignatures, ReadableMove,
+    AcceptTransactionState, ChannelCoinSpendInfo, ChannelHandlerInitiationData,
+    ChannelHandlerPrivateKeys, CoinSpentInformation, GameStartInfo, OnChainGameState,
+    PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
@@ -690,11 +691,13 @@ impl PotatoHandler {
             node_from_bytes(env.allocator.allocator(), &game_start.parameters).into_gen()?;
         let program_run_args = (
             i_initiated,
-            (game_start.my_contribution.clone(),
-             (game_start.amount.clone() - game_start.my_contribution.clone(),
-              (Node(params_clvm), ())
-             )
-            )
+            (
+                game_start.my_contribution.clone(),
+                (
+                    game_start.amount.clone() - game_start.my_contribution.clone(),
+                    (Node(params_clvm), ()),
+                ),
+            ),
         )
             .to_clvm(env.allocator)
             .into_gen()?;

@@ -781,11 +781,7 @@ fn test_referee_can_move_on_chain() {
     // Make our move on chain.
     let move_transaction = reftest
         .my_referee
-        .get_transaction_for_move(
-            &mut allocator,
-            &referee_coins[0],
-            true,
-        )
+        .get_transaction_for_move(&mut allocator, &referee_coins[0], true)
         .expect("should work");
 
     debug!("move_transaction {move_transaction:?}");
