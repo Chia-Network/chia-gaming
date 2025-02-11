@@ -22,8 +22,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID,
-    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey,
-    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
+    CoinSpend, CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey,
+    Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
 use crate::referee::{GameMoveDetails, LiveGameReplay, RefereeMaker};
 
@@ -965,13 +965,12 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         coin: &OnChainGameCoin,
     ) -> Result<Vec<LiveGameReplay>, Error> {
-        let want_ph =
-            if let Some((_, ph, _)) = coin.coin_string_up.as_ref().and_then(|cs| cs.to_parts()) {
-                ph.clone()
-            } else {
-                // No coin string given so this game was ended.  We need to ressurect it.
-                todo!();
-            };
+        let want_ph = if let Some((_, ph, _)) = coin.coin_string_up.get_coin_string_parts()? {
+            ph.clone()
+        } else {
+            // No coin string given so this game was ended.  We need to ressurect it.
+            todo!();
+        };
 
         let referee_puzzle_hash = self
             .referee_maker

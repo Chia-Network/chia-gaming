@@ -30,8 +30,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
-    PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
+    CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey, Program,
+    PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::referee::RefereeMaker;
 
@@ -1456,20 +1456,15 @@ impl ChannelHandler {
         let spend_coin_puzzle = puzzle_for_pk(env.allocator, &referee_pk)?;
 
         for c in coins.iter() {
-            if let Some((_parent, ph, amount)) = c.to_parts() {
-                assert_eq!(ph, referee_puzzle_hash);
-                total_amount += amount.clone();
-                exploded_coins.push(CoinDataForReward {
-                    coin_string: c.clone(),
-                    // parent,
-                    // puzzle_hash: ph,
-                    // amount,
-                });
-            } else {
-                return Err(Error::StrErr(
-                    "ill formed coin passed to spend coin rewards".to_string(),
-                ));
-            }
+            let (_parent, ph, amount) = c.get_coin_string_parts()?;
+            assert_eq!(ph, referee_puzzle_hash);
+            total_amount += amount.clone();
+            exploded_coins.push(CoinDataForReward {
+                coin_string: c.clone(),
+                // parent,
+                // puzzle_hash: ph,
+                // amount,
+            });
         }
 
         let mut coins_with_solutions = Vec::default();

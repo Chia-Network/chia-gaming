@@ -23,8 +23,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID,
-    Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
-    SpendBundle, Timeout,
+    GetCoinStringParts, Hash, IntoErr, Node, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input,
+    Sha256tree, Spend, SpendBundle, Timeout,
 };
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
@@ -1276,14 +1276,8 @@ impl PotatoHandler {
                 };
 
                 let channel_coin = channel_handler.state_channel_coin();
-                let channel_puzzle_hash =
-                    if let Some((_, puzzle_hash, _)) = channel_coin.coin_string().to_parts() {
-                        puzzle_hash
-                    } else {
-                        return Err(Error::StrErr(
-                            "could not understand channel coin parts".to_string(),
-                        ));
-                    };
+                let (_, channel_puzzle_hash, _) =
+                    channel_coin.coin_string().get_coin_string_parts()?;
 
                 // Send the boostrap wallet interface the channel puzzle hash to use.
                 // it will reply at some point with the channel offer.
@@ -2100,13 +2094,12 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             }
         {
             if *coin_id == state_coin {
-                if let Some((_parent, _ph, amount)) = reward.to_parts() {
-                    if amount == Amount::default() {
-                        // 0 reward so spending the state channel coin means the game is over.
-                        self.handshake_state = HandshakeState::Completed;
-                        let (_, system_interface) = penv.env();
-                        system_interface.shutdown_complete(&reward)?;
-                    }
+                let (_parent, _ph, amount) = reward.get_coin_string_parts()?;
+                if amount == Amount::default() {
+                    // 0 reward so spending the state channel coin means the game is over.
+                    self.handshake_state = HandshakeState::Completed;
+                    let (_, system_interface) = penv.env();
+                    system_interface.shutdown_complete(&reward)?;
                 }
 
                 // We're in shutdown state so we're waiting for our reward coin to appear.

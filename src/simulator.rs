@@ -18,8 +18,9 @@ use crate::common::standard_coin::{
     ChiaIdentity,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, ErrToError, Error, Hash, IntoErr,
-    Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend, ToQuotedProgram,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, ErrToError, Error,
+    GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
+    ToQuotedProgram,
 };
 
 #[derive(Debug, Clone)]
@@ -49,6 +50,14 @@ pub struct Simulator {
 impl ErrToError for PyErr {
     fn into_gen(self) -> Error {
         Error::StrErr(format!("{self:?}"))
+    }
+}
+
+impl From<Error> for pyo3::PyErr {
+    fn from(other: Error) -> Self {
+        Python::with_gil(|py| -> pyo3::PyErr {
+            PyErr::from_value(PyIndexError::new_err(format!("{other:?}")).value(py).into())
+        })
     }
 }
 
@@ -184,7 +193,7 @@ impl Simulator {
         target_coins: &[(PuzzleHash, Amount)],
     ) -> Result<Vec<CoinString>, Error> {
         let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
-        let (_first_coin_parent, first_coin_ph, _first_coin_amt) = coin.to_parts().unwrap();
+        let (_first_coin_parent, first_coin_ph, _first_coin_amt) = coin.get_coin_string_parts()?;
         assert_eq!(puzzle.sha256tree(allocator), first_coin_ph);
 
         let conditions_vec = map_m(
@@ -373,11 +382,7 @@ impl Simulator {
     }
 
     pub fn make_coin(&self, coin_string: &CoinString) -> PyResult<PyObject> {
-        let (parent_id, puzzle_hash, amount) = if let Some(parts) = coin_string.to_parts() {
-            parts
-        } else {
-            panic!("coin string didn't parse");
-        };
+        let (parent_id, puzzle_hash, amount) = coin_string.get_coin_string_parts()?;
 
         Python::with_gil(|py| -> PyResult<_> {
             let parent_parent_coin = PyBytes::new(py, parent_id.bytes());
@@ -484,11 +489,7 @@ impl Simulator {
         source_coin: &CoinString,
         target_amt: Amount,
     ) -> Result<(CoinString, CoinString), Error> {
-        let (_parent, _, amt) = if let Some(p) = source_coin.to_parts() {
-            p
-        } else {
-            return Err(Error::StrErr("failed to parse coin string".to_string()));
-        };
+        let (_parent, _, amt) = source_coin.get_coin_string_parts()?;
 
         let change_amt = amt.clone() - target_amt.clone();
         let first_coin = CoinString::from_parts(
@@ -561,11 +562,7 @@ impl Simulator {
         }
 
         for (i, c) in coins.iter().enumerate() {
-            let (_, _, amt) = if let Some(p) = c.to_parts() {
-                p
-            } else {
-                return Err(Error::StrErr("improper coin string".to_string()));
-            };
+            let (_, _, amt) = c.get_coin_string_parts()?;
             amount += amt.clone();
             let conditions = if i == coins.len() - 1 {
                 ((CREATE_COIN, (target_ph.clone(), (amount.clone(), ()))), ())
