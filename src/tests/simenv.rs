@@ -9,7 +9,6 @@ use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
 use log::debug;
 
 use crate::channel_handler::game::Game;
-use crate::channel_handler::game_handler::chia_dialect;
 use crate::channel_handler::runner::{channel_handler_env, ChannelHandlerGame};
 use crate::channel_handler::types::{
     ChannelHandlerEnv, GameStartInfo, ReadableMove, ValidationProgram,
@@ -19,8 +18,8 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
+    chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
+    IntoErr, Node, PrivateKey, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::simulator::Simulator;
 use crate::tests::game::{new_channel_handler_game, GameAction, GameActionResult};
@@ -89,14 +88,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             .channel_puzzle_reveal
             .sha256tree(self.env.allocator);
         debug!("puzzle hash to spend state channel coin: {cc_ph:?}");
-        debug!(
-            "spend conditions {}",
-            disassemble(
-                self.env.allocator.allocator(),
-                cc_spend.spend.conditions,
-                None
-            )
-        );
+        debug!("spend conditions {:?}", cc_spend.spend.conditions);
 
         let private_key_1 = self.parties.player(0).ch.channel_private_key();
         let private_key_2 = self.parties.player(1).ch.channel_private_key();
@@ -105,11 +97,13 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         assert_eq!(aggregate_public_key1, aggregate_public_key2);
 
         debug!("parent coin {:?}", state_channel.to_parts());
+        let cc_spend_conditions_nodeptr =
+            cc_spend.spend.conditions.to_nodeptr(self.env.allocator)?;
         let spend1 = standard_solution_partial(
             self.env.allocator,
             &private_key_1,
             &state_channel.to_coin_id(),
-            cc_spend.spend.conditions,
+            cc_spend_conditions_nodeptr,
             &aggregate_public_key1,
             &self.env.agg_sig_me_additional_data,
             true,
@@ -119,7 +113,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             self.env.allocator,
             &private_key_2,
             &state_channel.to_coin_id(),
-            cc_spend.spend.conditions,
+            cc_spend_conditions_nodeptr,
             &aggregate_public_key1,
             &self.env.agg_sig_me_additional_data,
             true,
@@ -139,7 +133,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             coin: state_channel.clone(),
             bundle: Spend {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
-                solution: Program::from_nodeptr(self.env.allocator, cc_spend.spend.solution)?,
+                solution: cc_spend.spend.solution.clone(),
                 signature,
             },
         };
@@ -157,7 +151,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         self.simulator.farm_block(&self.identities[0].puzzle_hash);
 
         Ok((
-            cc_spend.spend.conditions,
+            cc_spend.spend.conditions.to_nodeptr(self.env.allocator)?,
             CoinString::from_parts(
                 &state_channel.to_coin_id(),
                 unroll_coin_puzzle_hash,
@@ -174,10 +168,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     ) -> Result<GameActionResult, Error> {
         let game_id = self.parties.game_id.clone();
         let entropy: Hash = self.env.rng.gen();
+        let readable_move = ReadableMove::from_nodeptr(self.env.allocator, readable)?;
         let move_result = self.parties.player(player).ch.send_potato_move(
             &mut self.env,
             &game_id,
-            &ReadableMove::from_nodeptr(readable),
+            &readable_move,
             entropy.clone(),
         )?;
 
@@ -293,12 +288,9 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let game_id = self.parties.game_id.clone();
         let player_ch = &mut self.parties.player(player).ch;
         let entropy = self.env.rng.gen();
-        let _move_result = player_ch.send_potato_move(
-            &mut self.env,
-            &game_id,
-            &ReadableMove::from_nodeptr(readable),
-            entropy,
-        )?;
+        let readable_move = ReadableMove::from_nodeptr(self.env.allocator, readable)?;
+        let _move_result =
+            player_ch.send_potato_move(&mut self.env, &game_id, &readable_move, entropy)?;
         let finished_unroll_coin = player_ch.get_finished_unroll_coin();
         let post_unroll_data = player_ch.get_create_unroll_coin_transaction(
             &mut self.env,
@@ -428,11 +420,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .coin_string()
                     .clone();
 
-                let full_spend_sol = full_spend.solution;
-                debug!(
-                    "solution in full spend: {}",
-                    disassemble(self.env.allocator.allocator(), full_spend_sol, None)
-                );
+                debug!("solution in full spend: {:?}", full_spend.solution);
 
                 let channel_puzzle_public_key = self
                     .parties
@@ -444,7 +432,6 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     &self.env.standard_puzzle,
                     &channel_puzzle_public_key,
                 )?;
-                let solution = Program::from_nodeptr(self.env.allocator, full_spend.solution)?;
                 let included = self
                     .simulator
                     .push_tx(
@@ -452,7 +439,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                         &[CoinSpend {
                             coin: channel_coin,
                             bundle: Spend {
-                                solution,
+                                solution: full_spend.solution.clone(),
                                 puzzle,
                                 signature: full_spend.signature.clone(),
                             },
@@ -624,26 +611,12 @@ fn test_referee_can_slash_on_chain() {
         .get_my_coins(&reftest.my_identity.puzzle_hash)
         .expect("got coins");
     assert!(!coins.is_empty());
-
-    let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
-    let _my_move_wire_data = reftest
-        .my_referee
-        .my_turn_make_move(
-            &mut allocator,
-            &ReadableMove::from_nodeptr(readable_move),
-            rng.gen(),
-        )
-        .expect("should move");
-
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
-
     let (_, _, amt) = coins[0].to_parts().unwrap();
     let spend_to_referee = reftest
         .my_referee
-        .curried_referee_puzzle_for_validator(&mut allocator)
+        .on_chain_referee_puzzle(&mut allocator)
         .expect("should work");
     let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
-
     let referee_coins = s
         .spend_coin_to_puzzle_hash(
             &mut allocator,
@@ -653,6 +626,16 @@ fn test_referee_can_slash_on_chain() {
             &[(referee_puzzle_hash.clone(), amt.clone())],
         )
         .expect("should create referee coin");
+
+    let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
+    let readable_my_move =
+        ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
+    let _my_move_wire_data = reftest
+        .my_referee
+        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
+        .expect("should move");
+
+    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
 
     // Farm 20 blocks to get past the time limit.
     for _ in 0..20 {
@@ -665,39 +648,13 @@ fn test_referee_can_slash_on_chain() {
         .get_transaction_for_timeout(&mut allocator, &referee_coins[0])
         .expect("should work")
         .unwrap();
-
-    let timeout_transaction_puzzle = timeout_transaction
-        .bundle
-        .puzzle
-        .to_clvm(&mut allocator)
-        .expect("should work");
-    let disassembled_puzzle_in_transaction =
-        disassemble(allocator.allocator(), timeout_transaction_puzzle, None);
-    let spend_to_referee_clvm = spend_to_referee
-        .to_clvm(&mut allocator)
-        .expect("should work");
-    assert_eq!(
-        disassemble(allocator.allocator(), spend_to_referee_clvm, None),
-        disassembled_puzzle_in_transaction
-    );
-
-    debug!("timeout_transaction {timeout_transaction:?}");
-    let puzzle_clvm = timeout_transaction
-        .bundle
-        .puzzle
-        .to_clvm(&mut allocator)
-        .expect("should work");
-    debug!(
-        "referee puzzle curried {}",
-        disassemble(allocator.allocator(), puzzle_clvm, None)
-    );
-
     let specific = CoinSpend {
         coin: referee_coins[0].clone(),
         bundle: timeout_transaction.bundle.clone(),
     };
 
     let included = s.push_tx(&mut allocator, &[specific]).expect("should work");
+    debug!("included {included:?}");
     assert_eq!(included.code, 1);
 }
 
@@ -756,13 +713,12 @@ fn test_referee_can_move_on_chain() {
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
     // Make our first move.
+    let readable_my_move =
+        ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
+
     let _my_move_wire_data = reftest
         .my_referee
-        .my_turn_make_move(
-            &mut allocator,
-            &ReadableMove::from_nodeptr(readable_move),
-            rng.gen(),
-        )
+        .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
 
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
@@ -781,7 +737,7 @@ fn test_referee_can_move_on_chain() {
     debug!("state at start of referee object");
     let spend_to_referee = reftest
         .my_referee
-        .curried_referee_puzzle_for_validator(&mut allocator)
+        .on_chain_referee_puzzle(&mut allocator)
         .expect("should work");
     let spend_to_referee_clvm = spend_to_referee
         .to_clvm(&mut allocator)
@@ -809,6 +765,7 @@ fn test_referee_can_move_on_chain() {
             &mut allocator,
             &referee_coins[0],
             &agg_sig_me_additional_data,
+            true,
         )
         .expect("should work");
 

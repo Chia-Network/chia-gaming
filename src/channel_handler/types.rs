@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 
@@ -21,11 +23,14 @@ use crate::common::standard_coin::{
     unsafe_sign_partial,
 };
 use crate::common::types::{
-    atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinID,
-    CoinSpend, CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey,
+    atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo,
+    CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
     Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
-use crate::referee::{GameMoveDetails, LiveGameReplay, RefereeMaker};
+use crate::referee::{
+    GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
+    TheirTurnCoinSpentResult, TheirTurnMoveResult,
+};
 
 #[derive(Clone)]
 pub struct ChannelHandlerPrivateKeys {
@@ -278,24 +283,32 @@ impl GenericGameStartInfo<GameHandler, ValidationProgram, NodePtr> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ReadableMove(NodePtr);
+pub struct ReadableMove(Program);
 
 impl ReadableMove {
-    pub fn from_nodeptr(n: NodePtr) -> Self {
-        ReadableMove(n)
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Self, Error> {
+        Ok(ReadableMove(Program::from_nodeptr(allocator, n)?))
     }
 
-    pub fn to_nodeptr(&self) -> NodePtr {
-        self.0
+    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
+        self.0.to_nodeptr(allocator)
+    }
+
+    pub fn to_program(&self) -> &Program {
+        &self.0
+    }
+
+    pub fn from_program(p: Program) -> Self {
+        ReadableMove(p)
     }
 }
 
 impl ToClvm<NodePtr> for ReadableMove {
     fn to_clvm(
         &self,
-        _encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
-        Ok(self.0)
+        self.0.to_clvm(encoder)
     }
 }
 
@@ -399,8 +412,9 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
 
 pub struct LiveGame {
     pub game_id: GameID,
+    pub rewind_outcome: Option<usize>,
     pub last_referee_puzzle_hash: PuzzleHash,
-    pub referee_maker: Box<RefereeMaker>,
+    referee_maker: Box<RefereeMaker>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
 }
@@ -413,9 +427,13 @@ pub struct PotatoAcceptCachedData {
     pub our_share_amount: Amount,
 }
 
+#[derive(Debug)]
 pub struct PotatoMoveCachedData {
+    pub state_number: usize,
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
+    pub move_data: ReadableMove,
+    pub move_entropy: Hash,
     pub amount: Amount,
 }
 
@@ -434,8 +452,8 @@ pub struct ChannelCoinSpentResult {
 
 #[derive(Clone, Debug)]
 pub struct ChannelCoinSpendInfo {
-    pub solution: NodePtr,
-    pub conditions: NodePtr,
+    pub solution: Rc<Program>,
+    pub conditions: Rc<Program>,
     pub aggsig: Aggsig,
 }
 
@@ -598,17 +616,15 @@ impl ChannelCoin {
         env: &mut ChannelHandlerEnv<R>,
         private_key: &PrivateKey,
         aggregate_public_key: &PublicKey,
-        conditions: NodePtr,
+        conditions: Rc<Program>,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        debug!(
-            "STATE CONDITONS: {}",
-            disassemble(env.allocator.allocator(), conditions, None)
-        );
+        debug!("STATE CONDITONS: {conditions:?}");
+        let conditions_nodeptr = conditions.to_nodeptr(env.allocator)?;
         let spend = standard_solution_partial(
             env.allocator,
             private_key,
             &self.state_channel_coin.to_coin_id(),
-            conditions,
+            conditions_nodeptr,
             aggregate_public_key,
             &env.agg_sig_me_additional_data,
             true,
@@ -643,11 +659,12 @@ impl ChannelCoin {
         let create_conditions_obj = create_conditions.to_clvm(env.allocator).into_gen()?;
         let create_conditions_with_rem =
             prepend_rem_conditions(env, unroll_coin.state_number, create_conditions_obj)?;
+        let ccrem_program = Program::from_nodeptr(env.allocator, create_conditions_with_rem)?;
         self.get_solution_and_signature_from_conditions(
             env,
             private_key,
             aggregate_channel_public_key,
-            create_conditions_with_rem,
+            Rc::new(ccrem_program),
         )
     }
 }
@@ -957,39 +974,159 @@ pub struct UnrollTarget {
     pub their_amount: Amount,
 }
 
+#[derive(Debug)]
+pub struct OnChainGameState {
+    pub game_id: GameID,
+    pub puzzle_hash: PuzzleHash,
+    pub our_turn: bool,
+}
+
 impl LiveGame {
+    pub fn new(
+        game_id: GameID,
+        last_referee_puzzle_hash: PuzzleHash,
+        referee_maker: RefereeMaker,
+        my_contribution: Amount,
+        their_contribution: Amount,
+    ) -> LiveGame {
+        LiveGame {
+            game_id,
+            last_referee_puzzle_hash,
+            referee_maker: Box::new(referee_maker),
+            my_contribution,
+            their_contribution,
+            rewind_outcome: None,
+        }
+    }
+
+    pub fn is_my_turn(&self) -> bool {
+        self.referee_maker.is_my_turn()
+    }
+
+    pub fn processing_my_turn(&self) -> bool {
+        self.referee_maker.processing_my_turn()
+    }
+
+    pub fn current_puzzle_hash(&self, allocator: &mut AllocEncoder) -> Result<PuzzleHash, Error> {
+        self.referee_maker.on_chain_referee_puzzle_hash(allocator)
+    }
+
+    pub fn outcome_puzzle_hash(&self, allocator: &mut AllocEncoder) -> Result<PuzzleHash, Error> {
+        self.referee_maker.outcome_referee_puzzle_hash(allocator)
+    }
+
+    pub fn internal_make_move(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        readable_move: &ReadableMove,
+        new_entropy: Hash,
+        state_number: usize,
+    ) -> Result<GameMoveWireData, Error> {
+        // assert!(self.referee_maker.is_my_turn());
+        let referee_result = self.referee_maker.my_turn_make_move(
+            allocator,
+            readable_move,
+            new_entropy.clone(),
+            state_number,
+        )?;
+        self.last_referee_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
+        Ok(referee_result)
+    }
+
+    pub fn internal_their_move(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        game_move: &GameMoveDetails,
+        state_number: usize,
+    ) -> Result<TheirTurnMoveResult, Error> {
+        assert!(!self.referee_maker.is_my_turn());
+        let their_move_result =
+            self.referee_maker
+                .their_turn_move_off_chain(allocator, game_move, state_number)?;
+        self.last_referee_puzzle_hash = their_move_result.puzzle_hash_for_unroll.clone();
+        Ok(their_move_result)
+    }
+
+    pub fn get_rewind_outcome(&self) -> Option<usize> {
+        self.rewind_outcome
+    }
+
+    pub fn get_amount(&self) -> Amount {
+        self.referee_maker.get_amount()
+    }
+
+    pub fn get_our_current_share(&self) -> Amount {
+        self.referee_maker.get_our_current_share()
+    }
+
+    pub fn get_transaction_for_move(
+        &self,
+        allocator: &mut AllocEncoder,
+        game_coin: &CoinString,
+        agg_sig_me: &Hash,
+        on_chain: bool,
+    ) -> Result<RefereeOnChainTransaction, Error> {
+        assert!(self.referee_maker.processing_my_turn());
+        self.referee_maker
+            .get_transaction_for_move(allocator, game_coin, agg_sig_me, on_chain)
+    }
+
+    pub fn receive_readable(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        data: &[u8],
+    ) -> Result<ReadableMove, Error> {
+        self.referee_maker.receive_readable(allocator, data)
+    }
+
+    pub fn their_turn_coin_spent(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        coin_string: &CoinString,
+        conditions: &[CoinCondition],
+        current_state: usize,
+    ) -> Result<TheirTurnCoinSpentResult, Error> {
+        assert!(!self.referee_maker.processing_my_turn());
+        self.referee_maker
+            .their_turn_coin_spent(allocator, coin_string, conditions, current_state)
+    }
+
     /// Regress the live game state to the state we know so that we can generate the puzzle
     /// for that state.  We'll return the move needed to advance it fully.
     pub fn set_state_for_coin(
         &mut self,
         allocator: &mut AllocEncoder,
-        coin: &OnChainGameCoin,
-    ) -> Result<Vec<LiveGameReplay>, Error> {
-        let want_ph = if let Some((_, ph, _)) = coin.coin_string_up.get_coin_string_parts()? {
-            ph.clone()
-        } else {
-            // No coin string given so this game was ended.  We need to ressurect it.
-            todo!();
-        };
+        want_ph: &PuzzleHash,
+        current_state: usize,
+    ) -> Result<Option<(bool, usize)>, Error> {
+        let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
-        let referee_puzzle_hash = self
-            .referee_maker
-            .curried_referee_puzzle_hash_for_validator(allocator, true)?;
-
-        if referee_puzzle_hash == want_ph {
-            return Ok(vec![]);
+        debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
+        let result = self.referee_maker.rewind(allocator, want_ph)?;
+        if let Some(current_state) = &result {
+            assert!(self.is_my_turn());
+            self.rewind_outcome = Some(*current_state);
+            return Ok(Some((self.is_my_turn(), *current_state)));
         }
 
-        while self.referee_maker.rewind()? {
-            let new_puzzle_hash = self
-                .referee_maker
-                .curried_referee_puzzle_hash_for_validator(allocator, true)?;
-
-            if new_puzzle_hash == want_ph {
-                todo!();
-            }
+        if referee_puzzle_hash == *want_ph {
+            self.rewind_outcome = Some(current_state);
+            return Ok(Some((self.is_my_turn(), current_state)));
         }
 
-        todo!();
+        Ok(None)
     }
+}
+
+/// Identifies the game phase that an on chain spend represented.
+/// If their turn, gives a referee TheirTurnCoinSpentResult, otherwise gives the new coin.
+pub enum CoinSpentInformation {
+    OurReward(PuzzleHash, Amount),
+    OurSpend(PuzzleHash, Amount),
+    TheirSpend(TheirTurnCoinSpentResult),
+}
+
+pub enum CoinIdentificationByPuzzleHash {
+    Reward(PuzzleHash, Amount),
+    Game(PuzzleHash, Amount),
 }

@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::NodePtr;
@@ -236,7 +237,7 @@ impl Simulator {
             coin: coin.clone(),
             bundle: Spend {
                 puzzle: identity.puzzle.clone(),
-                solution: Program::from_nodeptr(allocator, coin_spend_info.solution)?,
+                solution: coin_spend_info.solution.clone(),
                 signature: coin_spend_info.signature,
             },
         };
@@ -533,7 +534,7 @@ impl Simulator {
         let tx = CoinSpend {
             bundle: Spend {
                 puzzle: identity_source.puzzle.clone(),
-                solution: Program::from_nodeptr(allocator, standard_solution)?,
+                solution: Rc::new(Program::from_nodeptr(allocator, standard_solution)?),
                 signature,
             },
             coin: source_coin.clone(),
@@ -583,7 +584,7 @@ impl Simulator {
             spends.push(CoinSpend {
                 bundle: Spend {
                     puzzle: owner.puzzle.clone(),
-                    solution: Program::from_nodeptr(allocator, solution)?,
+                    solution: Rc::new(Program::from_nodeptr(allocator, solution)?),
                     signature,
                 },
                 coin: c.clone(),

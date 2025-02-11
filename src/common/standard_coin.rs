@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::read_to_string;
+use std::rc::Rc;
 
 use log::debug;
 use num_bigint::{BigInt, Sign};
@@ -415,11 +416,13 @@ pub fn standard_solution_unsafe(
     let quoted_conds = conditions.to_quoted_program(allocator)?;
     let quoted_conds_hash = quoted_conds.sha256tree(allocator);
     let solution = solution_for_conditions(allocator, conditions)?;
+    let solution_program = Program::from_nodeptr(allocator, solution)?;
     let message = quoted_conds_hash.bytes().to_vec();
     let (_, sig) = signer(private_key, &message);
+    let conditions_program = Program::from_nodeptr(allocator, conditions)?;
     Ok(BrokenOutCoinSpendInfo {
-        solution,
-        conditions,
+        solution: Rc::new(solution_program),
+        conditions: Rc::new(conditions_program),
         message,
         signature: sig,
     })
@@ -494,6 +497,7 @@ pub fn standard_solution_partial(
             }
             CoinCondition::AggSigUnsafe(pubkey, data) => {
                 // It's "unsafe" because it's just a hash of the data.
+                debug!("adding unsafe sig for {data:?}");
                 add_signature(
                     &mut aggregated_signature,
                     partial_signer(private_key, pubkey, data),
@@ -516,10 +520,12 @@ pub fn standard_solution_partial(
     }
 
     if let Some(signature) = aggregated_signature {
+        let solution_program = Program::from_nodeptr(allocator, solution)?;
+        let conditions_program = Program::from_nodeptr(allocator, conditions)?;
         Ok(BrokenOutCoinSpendInfo {
-            solution,
+            solution: Rc::new(solution_program.clone()),
             signature,
-            conditions,
+            conditions: Rc::new(conditions_program.clone()),
             message: coin_agg_sig_me_message,
         })
     } else {

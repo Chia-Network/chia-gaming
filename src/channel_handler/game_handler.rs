@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 #[cfg(test)]
 use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
-#[cfg(test)]
 use std::rc::Rc;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -17,21 +16,16 @@ use clvm_tools_rs::compiler::comptypes::CompilerOpts;
 use clvm_tools_rs::compiler::srcloc::Srcloc;
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::NodePtr;
-use clvmr::NO_UNKNOWN_OPS;
-use clvmr::{run_program, ChiaDialect};
+use clvmr::run_program;
 
 use log::debug;
 
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, ValidationProgram};
 use crate::common::types::{
-    atom_from_clvm, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, Error, Hash,
-    IntoErr, Node, Program,
+    atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
+    Error, Hash, IntoErr, Node, Program,
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo};
-
-pub fn chia_dialect() -> ChiaDialect {
-    ChiaDialect::new(NO_UNKNOWN_OPS)
-}
 
 // How to call the clvm program in this object:
 //
@@ -97,7 +91,7 @@ pub struct MyTurnResult {
     pub waiting_driver: GameHandler,
     pub validation_program: ValidationProgram,
     pub validation_program_hash: Hash,
-    pub state: NodePtr,
+    pub state: Rc<Program>,
     pub game_move: GameMoveDetails,
     pub message_parser: Option<MessageHandler>,
 }
@@ -304,11 +298,12 @@ impl GameHandler {
         };
 
         let validation_program = ValidationProgram::new(allocator, pl[1]);
+        let state = Rc::new(Program::from_nodeptr(allocator, pl[3])?);
         Ok(MyTurnResult {
             waiting_driver: GameHandler::their_driver_from_nodeptr(pl[6]),
             validation_program,
             validation_program_hash: validation_program_hash.clone(),
-            state: pl[3],
+            state,
             game_move: GameMoveDetails {
                 basic: GameMoveStateInfo {
                     move_made: move_data,
@@ -458,6 +453,6 @@ impl MessageHandler {
         );
         let run_result = run_code(allocator, self.0, args, false)?;
 
-        Ok(ReadableMove::from_nodeptr(run_result))
+        ReadableMove::from_nodeptr(allocator, run_result)
     }
 }

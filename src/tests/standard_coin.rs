@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 
@@ -16,8 +18,8 @@ use crate::common::standard_coin::{
     puzzle_hash_for_pk, standard_solution_unsafe, unsafe_sign_partial,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Node, PrivateKey, PublicKey, PuzzleHash, Sha256Input, Sha256tree,
-    ToQuotedProgram,
+    Aggsig, AllocEncoder, Node, PrivateKey, Program, PublicKey, PuzzleHash, Sha256Input,
+    Sha256tree, ToQuotedProgram,
 };
 use crate::tests::constants::{
     EXPECTED_PUZZLE_HEX, KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT, KEY_PAIR_PRIVATE, KEY_PAIR_PUBLIC,
@@ -184,22 +186,19 @@ fn test_standard_puzzle_solution_maker() {
     );
     let spend_info =
         standard_solution_unsafe(&mut allocator, &private_key, conditions).expect("should work");
-    let expected_full_conditions = (expected_added_condition, Node(spend_info.conditions))
+    let conditions_borrowed: &Program = spend_info.conditions.borrow();
+    let expected_full_conditions = (expected_added_condition, conditions_borrowed)
         .to_clvm(&mut allocator)
         .expect("should work");
-    debug!(
-        "solution {}",
-        disassemble(allocator.allocator(), spend_info.solution, None)
-    );
+    debug!("solution {:?}", spend_info.solution);
     let runner = DefaultProgramRunner::new();
     let puzzle_node = puzzle.to_clvm(&mut allocator).expect("should convert");
+    let solution_node = spend_info
+        .solution
+        .to_clvm(&mut allocator)
+        .expect("should convert");
     let res = runner
-        .run_program(
-            allocator.allocator(),
-            puzzle_node,
-            spend_info.solution,
-            None,
-        )
+        .run_program(allocator.allocator(), puzzle_node, solution_node, None)
         .expect("should run");
     assert_eq!(
         disassemble(allocator.allocator(), res.1, None),

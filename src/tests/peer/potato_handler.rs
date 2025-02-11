@@ -15,15 +15,15 @@ use crate::common::types::{
     Spend, SpendBundle, Timeout,
 };
 use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
-use crate::potato_handler::{
+use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
-    WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
+use crate::potato_handler::PotatoHandler;
 
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
-use crate::common::types::{CoinSpend, Program};
+use crate::common::types::CoinSpend;
 
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::game::GameAction;
@@ -165,7 +165,7 @@ impl ToLocalUI for Pipe {
     fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
         todo!();
     }
-    fn going_on_chain(&mut self) -> Result<(), Error> {
+    fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
         todo!();
     }
 }
@@ -226,7 +226,6 @@ where
             &self.env.agg_sig_me_additional_data,
             false,
         )?;
-        let spend_solution_program = Program::from_nodeptr(self.env.allocator, spend.solution)?;
 
         peer.channel_offer(
             self,
@@ -235,7 +234,7 @@ where
                     coin: parent.clone(),
                     bundle: Spend {
                         puzzle: standard_puzzle,
-                        solution: spend_solution_program,
+                        solution: spend.solution.clone(),
                         signature: spend.signature.clone(),
                     },
                 }],
@@ -532,17 +531,14 @@ fn test_peer_smoke() {
         {
             let entropy = rng.gen();
             let mut env = channel_handler_env(&mut allocator, &mut rng);
+            let move_readable =
+                ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
             let mut penv = TestPeerEnv {
                 env: &mut env,
                 system_interface: &mut pipe_sender[who ^ 1],
             };
             peers[who ^ 1]
-                .make_move(
-                    &mut penv,
-                    &game_ids[0],
-                    &ReadableMove::from_nodeptr(*what),
-                    entropy,
-                )
+                .make_move(&mut penv, &game_ids[0], &move_readable, entropy)
                 .expect("should work");
         }
 

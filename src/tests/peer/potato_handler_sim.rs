@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use log::debug;
@@ -21,10 +22,11 @@ use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
-use crate::potato_handler::{
+use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandlerInit, ToLocalUI, WalletSpendInterface,
 };
+use crate::potato_handler::PotatoHandler;
 
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
@@ -213,7 +215,7 @@ impl ToLocalUI for SimulatedPeer {
     fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
         todo!();
     }
-    fn going_on_chain(&mut self) -> Result<(), Error> {
+    fn going_on_chain(&mut self, _got_error: bool) -> Result<(), Error> {
         todo!();
     }
 }
@@ -269,7 +271,6 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
             false,
         )
         .expect("ssp 1");
-        let spend_solution_program = Program::from_nodeptr(self.env.allocator, spend.solution)?;
 
         peer.channel_offer(
             self,
@@ -278,7 +279,7 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
                     coin: parent.clone(),
                     bundle: Spend {
                         puzzle: identity.puzzle.clone(),
-                        solution: spend_solution_program,
+                        solution: spend.solution.clone(),
                         signature: spend.signature.clone(),
                     },
                 }],
@@ -433,7 +434,7 @@ pub fn handshake<'a, R: Rng + 'a>(
                 coin: parent_coins[who].clone(),
                 bundle: Spend {
                     puzzle: identities[who].puzzle.clone(),
-                    solution: Program::from_nodeptr(env.allocator, solution)?,
+                    solution: Rc::new(Program::from_nodeptr(env.allocator, solution)?),
                     signature,
                 },
             });
@@ -617,14 +618,11 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         {
             let entropy = rng.gen();
             let mut env = channel_handler_env(allocator, &mut rng);
+            let move_readable =
+                ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
             handlers[who ^ 1]
-                .make_move(
-                    &mut penv,
-                    &game_ids[0],
-                    &ReadableMove::from_nodeptr(*what),
-                    entropy,
-                )
+                .make_move(&mut penv, &game_ids[0], &move_readable, entropy)
                 .expect("should work");
         }
 
@@ -654,6 +652,7 @@ struct LocalTestUIReceiver {
     game_finished: Option<Amount>,
     opponent_moved: bool,
     go_on_chain: bool,
+    got_error: bool,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -690,8 +689,9 @@ impl ToLocalUI for LocalTestUIReceiver {
         Ok(())
     }
 
-    fn going_on_chain(&mut self) -> Result<(), Error> {
+    fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error> {
         self.go_on_chain = true;
+        self.got_error = got_error;
         Ok(())
     }
 }
@@ -825,8 +825,9 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 // Perform on chain move.
                 // Turn off the flag to go on chain.
                 local_uis[i].go_on_chain = false;
+                let got_error = local_uis[i].got_error;
                 cradles[i]
-                    .go_on_chain(allocator, &mut rng, &mut local_uis[i])
+                    .go_on_chain(allocator, &mut rng, &mut local_uis[i], got_error)
                     .expect("should work");
             }
 
@@ -1009,7 +1010,7 @@ fn sim_test_with_peer_container() {
 }
 
 #[test]
-fn sim_test_with_peer_container_piss_off_peer() {
+fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     let mut allocator = AllocEncoder::new();
 
     let mut moves = test_moves_1(&mut allocator);
@@ -1023,4 +1024,18 @@ fn sim_test_with_peer_container_piss_off_peer() {
         &moves,
         Some(&|cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
     );
+}
+
+#[ignore]
+#[test]
+fn sim_test_with_peer_container_piss_off_peer_complete() {
+    let mut allocator = AllocEncoder::new();
+
+    let mut moves = test_moves_1(&mut allocator);
+    if let GameAction::Move(_player, readable, _) = moves[2].clone() {
+        moves[3] = GameAction::FakeMove(1, readable, vec![0; 500]);
+    } else {
+        panic!("no move 1 to replace");
+    }
+    run_calpoker_container_with_action_list(&mut allocator, &moves);
 }
