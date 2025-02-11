@@ -24,7 +24,7 @@ fn test_game_handler_their_move_slash() {
     .expect("should assemble");
 
     let their_turn_handler = GameHandler::their_driver_from_nodeptr(program);
-    assert_eq!(their_turn_handler.is_my_turn(), false);
+    assert!(!their_turn_handler.is_my_turn());
     let nil = allocator.allocator().null();
     let result = their_turn_handler
         .call_their_turn_driver(
@@ -52,7 +52,7 @@ fn test_game_handler_their_move_slash() {
         assert_eq!(*aggsig, default_aggsig);
         assert_eq!(disassemble(allocator.allocator(), evidence.to_nodeptr(), None), "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000 () ())");
     } else {
-        assert!(false);
+        unreachable!();
     }
 }
 
@@ -93,7 +93,7 @@ fn test_game_handler_their_make_move() {
         assert_eq!(disassemble(allocator.allocator(), state, None), "999");
         assert_eq!(disassemble(allocator.allocator(), game_handler.to_nodeptr(), None), "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000 () ())");
     } else {
-        assert!(false);
+        unreachable!();
     }
 }
 

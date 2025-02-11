@@ -151,6 +151,7 @@ struct JsGameCradleConfig {
     // float or decimal string
     their_contribution: JsAmount,
     channel_timeout: i32,
+    unroll_timeout: i32,
     // hex string for puzzle hash
     reward_puzzle_hash: String,
 }
@@ -180,6 +181,7 @@ fn get_game_config<'b>(
         have_potato: jsconfig.have_potato,
         identity: identity,
         channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
+        unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
         my_contribution: jsconfig.my_contribution.amt.clone(),
         their_contribution: jsconfig.their_contribution.amt.clone(),
         reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)),

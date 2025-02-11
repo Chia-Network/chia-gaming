@@ -27,8 +27,7 @@ use crate::tests::constants::{
 #[test]
 fn test_standard_puzzle() {
     let mut allocator = AllocEncoder::new();
-    let test_key =
-        PublicKey::from_bytes(TEST_PUBLIC_KEY_BYTES.clone()).expect("should be a public key");
+    let test_key = PublicKey::from_bytes(*TEST_PUBLIC_KEY_BYTES).expect("should be a public key");
     let puzzle = puzzle_for_pk(&mut allocator, &test_key).expect("should work");
     let puzzle_hash = puzzle.sha256tree(&mut allocator);
     let expected_puzzle =
@@ -57,12 +56,12 @@ fn test_bram_2_of_2_signature() {
     let private_key_2: PrivateKey = rng.gen();
     let combined_pk = private_key_1.clone() + private_key_2.clone();
     let message = b"hi there";
-    let signature_combined = combined_pk.sign(&message);
+    let signature_combined = combined_pk.sign(message);
     let pubkey_1 = private_to_public_key(&private_key_1);
     let pubkey_2 = private_to_public_key(&private_key_2);
     let combined_pubkey = pubkey_1.clone() + pubkey_2.clone();
-    let partial_sign_1 = unsafe_sign_partial(&private_key_1, &combined_pubkey, &message);
-    let partial_sign_2 = unsafe_sign_partial(&private_key_2, &combined_pubkey, &message);
+    let partial_sign_1 = unsafe_sign_partial(&private_key_1, &combined_pubkey, message);
+    let partial_sign_2 = unsafe_sign_partial(&private_key_2, &combined_pubkey, message);
     let total_sign_from_parts = partial_sign_1 + partial_sign_2;
     assert_eq!(signature_combined, total_sign_from_parts);
 }
@@ -70,9 +69,9 @@ fn test_bram_2_of_2_signature() {
 #[test]
 fn test_partial_signer() {
     let private_key = PrivateKey::from_bytes(&KEY_PAIR_PRIVATE.clone()).expect("should work");
-    let public_key = PublicKey::from_bytes(KEY_PAIR_PUBLIC.clone()).expect("should work");
+    let public_key = PublicKey::from_bytes(*KEY_PAIR_PUBLIC).expect("should work");
     let want_signature =
-        Aggsig::from_bytes(KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT.clone()).expect("should work");
+        Aggsig::from_bytes(*KEY_PAIR_PARTIAL_SIGNER_TEST_RESULT).expect("should work");
 
     let result_sig = partial_signer(&private_key, &public_key, b"hello test");
 
@@ -85,16 +84,16 @@ fn test_standard_puzzle_form() {
     let std_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should work");
     assert_eq!(
         std_puzzle.sha256tree(&mut allocator),
-        PuzzleHash::from_bytes(STANDARD_PUZZLE_HASH.clone())
+        PuzzleHash::from_bytes(*STANDARD_PUZZLE_HASH)
     );
 }
 
 #[test]
 fn test_calculate_synthetic_public_key() {
-    let public_key = PublicKey::from_bytes(KEY_PAIR_PUBLIC.clone()).expect("should work");
+    let public_key = PublicKey::from_bytes(*KEY_PAIR_PUBLIC).expect("should work");
     let synthetic_public_key =
-        PublicKey::from_bytes(KEY_PAIR_SYNTHETIC_PUBLIC_KEY.clone()).expect("should work");
-    let hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone());
+        PublicKey::from_bytes(*KEY_PAIR_SYNTHETIC_PUBLIC_KEY).expect("should work");
+    let hidden_puzzle_hash = PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH);
     assert_eq!(
         calculate_synthetic_public_key(&public_key, &hidden_puzzle_hash).expect("should work"),
         synthetic_public_key
@@ -164,10 +163,10 @@ fn test_standard_puzzle_solution_maker() {
 
     let mut allocator = AllocEncoder::new();
     let private_key = PrivateKey::from_bytes(&KEY_PAIR_PRIVATE.clone()).expect("should work");
-    let public_key = PublicKey::from_bytes(KEY_PAIR_PUBLIC.clone()).expect("should work");
+    let public_key = PublicKey::from_bytes(*KEY_PAIR_PUBLIC).expect("should work");
     let synthetic_public_key = calculate_synthetic_public_key(
         &public_key,
-        &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH.clone()),
+        &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH),
     )
     .expect("should compute");
     let puzzle = puzzle_for_pk(&mut allocator, &public_key).expect("should work");
@@ -183,8 +182,8 @@ fn test_standard_puzzle_solution_maker() {
         50,
         (synthetic_public_key, (quoted_conditions_hash.clone(), ())),
     );
-    let spend_info = standard_solution_unsafe(&mut allocator, &mut &private_key, conditions)
-        .expect("should work");
+    let spend_info =
+        standard_solution_unsafe(&mut allocator, &private_key, conditions).expect("should work");
     let expected_full_conditions = (expected_added_condition, Node(spend_info.conditions))
         .to_clvm(&mut allocator)
         .expect("should work");
@@ -208,5 +207,5 @@ fn test_standard_puzzle_solution_maker() {
     );
     assert!(spend_info
         .signature
-        .verify(&public_key, &quoted_conditions_hash.bytes()));
+        .verify(&public_key, quoted_conditions_hash.bytes()));
 }

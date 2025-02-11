@@ -16,9 +16,10 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
+use crate::tests::game::DEFAULT_UNROLL_TIME_LOCK;
 
 #[test]
-fn test_smoke_can_initiate_channel_handler<'a>() {
+fn test_smoke_can_initiate_channel_handler() {
     let mut allocator = AllocEncoder::new();
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
@@ -36,7 +37,7 @@ fn test_smoke_can_initiate_channel_handler<'a>() {
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,
-        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
+        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
     };
     let game_id_data: Hash = env.rng.gen();
     let game_id = GameID::new(game_id_data.bytes().to_vec());
@@ -49,14 +50,13 @@ fn test_smoke_can_initiate_channel_handler<'a>() {
         game_id,
         &launcher_coin,
         &[Amount::new(100), Amount::new(100)],
+        (*DEFAULT_UNROLL_TIME_LOCK).clone(),
     )
     .expect("should build");
 
-    let _finish_hs_result1 = game
-        .finish_handshake(&mut env, 1)
+    game.finish_handshake(&mut env, 1)
         .expect("should finish handshake");
-    let _finish_hs_result2 = game
-        .finish_handshake(&mut env, 0)
+    game.finish_handshake(&mut env, 0)
         .expect("should finish handshake");
 
     // Set up for the spend.
@@ -100,7 +100,7 @@ fn test_smoke_can_start_game() {
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,
-        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
+        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
     };
     let game_id_data: Hash = env.rng.gen();
     let game_id = GameID::new(game_id_data.bytes().to_vec());
@@ -112,15 +112,14 @@ fn test_smoke_can_start_game() {
         game_id,
         &launcher_coin,
         &[Amount::new(100), Amount::new(100)],
+        (*DEFAULT_UNROLL_TIME_LOCK).clone(),
     )
     .expect("should work");
 
-    let _finish_hs_result1 = game
-        .finish_handshake(&mut env, 1)
+    game.finish_handshake(&mut env, 1)
         .expect("should finish handshake");
 
-    let _finish_hs_result2 = game
-        .finish_handshake(&mut env, 0)
+    game.finish_handshake(&mut env, 0)
         .expect("should finish handshake");
 
     // Set up for the spend.
@@ -132,7 +131,7 @@ fn test_smoke_can_start_game() {
     let initial_validation_puzzle = game_handler;
     let initial_state = env.allocator.allocator().null();
     let initial_validation_program =
-        ValidationProgram::new(&mut env.allocator, initial_validation_puzzle);
+        ValidationProgram::new(env.allocator, initial_validation_puzzle);
 
     let timeout = Timeout::new(1337);
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
@@ -144,7 +143,7 @@ fn test_smoke_can_start_game() {
             my_contribution_this_game: our_share.clone(),
             their_contribution_this_game: their_share.clone(),
             initial_validation_program,
-            initial_state: initial_state,
+            initial_state,
             initial_move: Vec::new(),
             initial_max_move_size: 1,
             initial_mover_share: our_share.clone(),
@@ -189,7 +188,7 @@ fn test_unroll_can_verify_own_signature() {
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,
-        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA.clone()),
+        agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
     };
 
     let inputs_1 = UnrollCoinConditionInputs {

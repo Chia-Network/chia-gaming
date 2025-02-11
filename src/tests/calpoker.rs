@@ -1,24 +1,43 @@
+#[cfg(feature = "sim-tests")]
 use log::debug;
+#[cfg(feature = "sim-tests")]
 use rand::prelude::*;
+#[cfg(feature = "sim-tests")]
 use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
+#[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
+#[cfg(feature = "sim-tests")]
 use crate::common::constants::CREATE_COIN;
+#[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::ChiaIdentity;
-use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Sha256Input};
+use crate::common::types::{AllocEncoder, Sha256Input};
+#[cfg(feature = "sim-tests")]
+use crate::common::types::{Amount, PrivateKey};
+#[cfg(feature = "sim-tests")]
+use crate::common::types::{Error, GameID, Hash};
+#[cfg(feature = "sim-tests")]
 use crate::games::calpoker::decode_calpoker_readable;
+#[cfg(feature = "sim-tests")]
 use crate::games::calpoker::decode_readable_card_choices;
+#[cfg(feature = "sim-tests")]
 use crate::games::calpoker::make_cards;
+#[cfg(feature = "sim-tests")]
 use crate::games::calpoker::CalpokerResult;
+#[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
-use crate::tests::game::{GameAction, GameActionResult};
+use crate::tests::game::GameAction;
+#[cfg(feature = "sim-tests")]
+use crate::tests::game::GameActionResult;
 
 #[cfg(feature = "sim-tests")]
 use crate::tests::simenv::SimulatorEnvironment;
 
+#[cfg(feature = "sim-tests")]
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
     Game::new(
         allocator,
@@ -139,6 +158,7 @@ fn test_verify_endgame_data() {
     };
 }
 
+#[cfg(feature = "sim-tests")]
 fn extract_info_from_game(game_results: &[GameActionResult]) -> (Hash, ReadableMove, Vec<u8>) {
     if let GameActionResult::MoveResult(_, _, _, entropy) = &game_results[1] {
         game_results.iter().find_map(|x| {

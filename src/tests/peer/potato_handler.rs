@@ -17,7 +17,8 @@ use crate::common::types::{
 use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
 use crate::potato_handler::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandler, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    PeerEnv, PeerMessage, PotatoHandler, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
+    WalletSpendInterface,
 };
 
 use crate::common::constants::CREATE_COIN;
@@ -27,20 +28,12 @@ use crate::common::types::{CoinSpend, Program};
 use crate::tests::calpoker::test_moves_1;
 use crate::tests::game::GameAction;
 
-#[derive(Debug, Clone)]
-struct SpendSpec {
-    #[allow(dead_code)]
-    spend: Spend,
-    #[allow(dead_code)]
-    parent: Option<CoinString>,
-}
-
 #[derive(Default)]
 struct Pipe {
     message_pipe: MessagePipe,
 
     // WalletSpendInterface
-    outgoing_transactions: VecDeque<SpendSpec>,
+    outgoing_transactions: VecDeque<SpendBundle>,
     registered_coins: HashMap<CoinString, Timeout>,
 
     // Opponent moves
@@ -92,24 +85,25 @@ impl PacketSender for Pipe {
 }
 
 impl WalletSpendInterface for Pipe {
-    fn spend_transaction_and_add_fee(
-        &mut self,
-        bundle: &Spend,
-        parent: Option<&CoinString>,
-    ) -> Result<(), Error> {
-        self.outgoing_transactions.push_back(SpendSpec {
-            spend: bundle.clone(),
-            parent: parent.cloned(),
-        });
-
+    fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
+        self.outgoing_transactions.push_back(bundle.clone());
         Ok(())
     }
 
-    fn register_coin(&mut self, coin_id: &CoinString, timeout: &Timeout) -> Result<(), Error> {
+    fn register_coin(
+        &mut self,
+        coin_id: &CoinString,
+        timeout: &Timeout,
+        _name: Option<&'static str>,
+    ) -> Result<(), Error> {
         self.registered_coins
             .insert(coin_id.clone(), timeout.clone());
 
         Ok(())
+    }
+
+    fn request_puzzle_and_solution(&mut self, _coin_id: &CoinString) -> Result<(), Error> {
+        todo!();
     }
 }
 
@@ -232,8 +226,7 @@ where
             &self.env.agg_sig_me_additional_data,
             false,
         )?;
-        let spend_solution_program =
-            Program::from_nodeptr(&mut self.env.allocator, spend.solution.clone())?;
+        let spend_solution_program = Program::from_nodeptr(self.env.allocator, spend.solution)?;
 
         peer.channel_offer(
             self,
@@ -283,7 +276,7 @@ where
     };
 
     let mut penv: TestPeerEnv<P, R> = TestPeerEnv {
-        env: env,
+        env,
         system_interface: &mut pipe[who],
     };
 
@@ -292,7 +285,7 @@ where
     Ok(true)
 }
 
-pub fn quiesce<'a, P: MessagePeerQueue, R: Rng + 'a>(
+pub fn quiesce<'a, P, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
     amount: Amount,
@@ -309,9 +302,9 @@ where
 {
     loop {
         let mut msgs = 0;
-        for who in 0..=1 {
+        for (who, peer) in peers.iter_mut().enumerate() {
             let mut env = channel_handler_env(allocator, rng);
-            msgs += run_move(&mut env, amount.clone(), pipes, &mut peers[who], who)? as usize;
+            msgs += run_move(&mut env, amount.clone(), pipes, peer, who)? as usize;
         }
         if msgs == 0 {
             break;
@@ -326,7 +319,7 @@ fn get_channel_coin_for_peer(p: &PotatoHandler) -> Result<CoinString, Error> {
     Ok(channel_handler.state_channel_coin().coin_string().clone())
 }
 
-pub fn handshake<'a, P: MessagePeerQueue, R: Rng + 'a>(
+pub fn handshake<'a, P, R: Rng + 'a>(
     rng: &'a mut R,
     allocator: &'a mut AllocEncoder,
     amount: Amount,
@@ -376,7 +369,7 @@ where
             }
         }
 
-        if i >= 10 && i < 12 {
+        if (10..12).contains(&i) {
             let mut env = channel_handler_env(allocator, rng);
             // Ensure that we notify about the channel coin (fake here, but the notification
             // is required).
@@ -421,15 +414,16 @@ fn test_peer_smoke() {
         let reward_puzzle_hash1 =
             puzzle_hash_for_pk(allocator, &reward_public_key1).expect("should work");
 
-        PotatoHandler::new(
+        PotatoHandler::new(PotatoHandlerInit {
             have_potato,
-            private_keys1,
-            game_type_map.clone(),
-            Amount::new(100),
-            Amount::new(100),
-            Timeout::new(1000),
-            reward_puzzle_hash1.clone(),
-        )
+            private_keys: private_keys1,
+            game_types: game_type_map.clone(),
+            my_contribution: Amount::new(100),
+            their_contribution: Amount::new(100),
+            channel_timeout: Timeout::new(1000),
+            unroll_timeout: Timeout::new(5),
+            reward_puzzle_hash: reward_puzzle_hash1.clone(),
+        })
     };
 
     let parent_private_key: PrivateKey = rng.gen();

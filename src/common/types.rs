@@ -669,6 +669,11 @@ impl Program {
         Ok(Program(bytes))
     }
 
+    pub fn from_hex(s: &str) -> Result<Program, Error> {
+        let bytes = hex::decode(s).into_gen()?;
+        Ok(Program::from_bytes(&bytes))
+    }
+
     pub fn from_bytes(by: &[u8]) -> Program {
         Program(by.to_vec())
     }
@@ -1065,16 +1070,16 @@ pub fn divmod(a: BigInt, b: BigInt) -> (BigInt, BigInt) {
 #[test]
 fn test_local_divmod() {
     assert_eq!(
-        divmod(-7.to_bigint().unwrap(), 2.to_bigint().unwrap()),
-        (-4.to_bigint().unwrap(), 1.to_bigint().unwrap())
+        divmod((-7).to_bigint().unwrap(), 2.to_bigint().unwrap()),
+        ((-4).to_bigint().unwrap(), 1.to_bigint().unwrap())
     );
     assert_eq!(
-        divmod(7.to_bigint().unwrap(), -2.to_bigint().unwrap()),
-        (-4.to_bigint().unwrap(), -1.to_bigint().unwrap())
+        divmod(7.to_bigint().unwrap(), (-2).to_bigint().unwrap()),
+        ((-4).to_bigint().unwrap(), (-1).to_bigint().unwrap())
     );
     assert_eq!(
-        divmod(-7.to_bigint().unwrap(), -2.to_bigint().unwrap()),
-        (3.to_bigint().unwrap(), -1.to_bigint().unwrap())
+        divmod((-7).to_bigint().unwrap(), (-2).to_bigint().unwrap()),
+        (3.to_bigint().unwrap(), (-1).to_bigint().unwrap())
     );
     assert_eq!(
         divmod(7.to_bigint().unwrap(), 2.to_bigint().unwrap()),

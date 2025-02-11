@@ -61,7 +61,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let (parties, coin) = new_channel_handler_game(
             &simulator,
             &mut env,
-            &game,
+            game,
             &identities,
             contributions.clone(),
         )?;
@@ -139,7 +139,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             coin: state_channel.clone(),
             bundle: Spend {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
-                solution: Program::from_nodeptr(&mut self.env.allocator, cc_spend.spend.solution)?,
+                solution: Program::from_nodeptr(self.env.allocator, cc_spend.spend.solution)?,
                 signature,
             },
         };
@@ -216,7 +216,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         unroll_coin: CoinString,
     ) -> Result<Vec<CoinString>, Error> {
         let player_ch = &mut self.parties.player(player).ch;
-        let pre_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env)?;
+        let finished_unroll_coin = player_ch.get_finished_unroll_coin();
+        let pre_unroll_data = player_ch.get_create_unroll_coin_transaction(
+            &mut self.env,
+            finished_unroll_coin,
+            true,
+        )?;
 
         let run_puzzle = pre_unroll_data
             .transaction
@@ -294,7 +299,12 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             &ReadableMove::from_nodeptr(readable),
             entropy,
         )?;
-        let post_unroll_data = player_ch.get_unroll_coin_transaction(&mut self.env)?;
+        let finished_unroll_coin = player_ch.get_finished_unroll_coin();
+        let post_unroll_data = player_ch.get_create_unroll_coin_transaction(
+            &mut self.env,
+            finished_unroll_coin,
+            true,
+        )?;
         debug!("post_unroll_data {post_unroll_data:?}");
         todo!();
     }
@@ -314,12 +324,21 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                 }
             }
             GameAction::GoOnChain(player) => {
-                let (state_number, unroll_target, my_amount, their_amount) = self
+                let use_unroll = self
                     .parties
                     .player(*player)
                     .ch
-                    .get_unroll_target(&mut self.env)?;
-                debug!("GO ON CHAIN: {state_number} {my_amount:?} {their_amount:?}");
+                    .get_finished_unroll_coin()
+                    .clone();
+                let unroll_target = self
+                    .parties
+                    .player(*player)
+                    .ch
+                    .get_unroll_target(&mut self.env, &use_unroll)?;
+                debug!(
+                    "GO ON CHAIN: {} {:?} {:?}",
+                    unroll_target.state_number, unroll_target.my_amount, unroll_target.their_amount
+                );
                 let state_channel_coin = match self.on_chain.clone() {
                     OnChainState::OffChain(coin) => coin.clone(),
                     _ => {
@@ -332,20 +351,23 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                         + private_to_public_key(&self.parties.player(1).ch.channel_private_key());
                 debug!("going on chain: aggregate public key is: {aggregate_public_key:?}",);
 
-                let (channel_coin_conditions, unroll_coin) =
-                    self.spend_channel_coin(*player, state_channel_coin, &unroll_target)?;
+                let (channel_coin_conditions, unroll_coin) = self.spend_channel_coin(
+                    *player,
+                    state_channel_coin,
+                    &unroll_target.unroll_puzzle_hash,
+                )?;
                 debug!("unroll_coin {unroll_coin:?}");
 
-                let _channel_spent_result_1 = self
-                    .parties
-                    .player(*player)
-                    .ch
-                    .channel_coin_spent(&mut self.env, channel_coin_conditions)?;
+                let _channel_spent_result_1 = self.parties.player(*player).ch.channel_coin_spent(
+                    &mut self.env,
+                    true,
+                    channel_coin_conditions,
+                )?;
                 let _channel_spent_result_2 = self
                     .parties
                     .player(*player ^ 1)
                     .ch
-                    .channel_coin_spent(&mut self.env, channel_coin_conditions)?;
+                    .channel_coin_spent(&mut self.env, false, channel_coin_conditions)?;
 
                 let game_coins = self.do_unroll_spend_to_games(*player, unroll_coin)?;
 
@@ -601,7 +623,7 @@ fn test_referee_can_slash_on_chain() {
     let coins = s
         .get_my_coins(&reftest.my_identity.puzzle_hash)
         .expect("got coins");
-    assert!(coins.len() > 0);
+    assert!(!coins.is_empty());
 
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
     let _my_move_wire_data = reftest
@@ -752,7 +774,7 @@ fn test_referee_can_move_on_chain() {
     let coins = s
         .get_my_coins(&reftest.my_identity.puzzle_hash)
         .expect("got coins");
-    assert!(coins.len() > 0);
+    assert!(!coins.is_empty());
 
     // Create the referee coin.
     let (_, _, amt) = coins[0].to_parts().unwrap();
