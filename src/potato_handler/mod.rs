@@ -22,8 +22,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
-    GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
-    SpendBundle, SpendRewardResult, Timeout,
+    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
+    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
@@ -917,14 +917,8 @@ impl PotatoHandler {
                 };
 
                 let channel_coin = channel_handler.state_channel_coin();
-                let channel_puzzle_hash =
-                    if let Some((_, puzzle_hash, _)) = channel_coin.coin_string().to_parts() {
-                        puzzle_hash
-                    } else {
-                        return Err(Error::StrErr(
-                            "could not understand channel coin parts".to_string(),
-                        ));
-                    };
+                let (_, channel_puzzle_hash, _) =
+                    channel_coin.coin_string().get_coin_string_parts()?;
 
                 // Send the boostrap wallet interface the channel puzzle hash to use.
                 // it will reply at some point with the channel offer.
