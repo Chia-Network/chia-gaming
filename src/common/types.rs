@@ -1,5 +1,8 @@
 use std::io;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::rc::Rc;
+
+use log::debug;
 
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -15,9 +18,11 @@ use sha2::{Digest, Sha256};
 use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::reduction::EvalErr;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
+use clvmr::{run_program, ChiaDialect, NO_UNKNOWN_OPS};
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 use clvm_tools_rs::classic::clvm::syntax_error::SyntaxErr;
+use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_tools_rs::classic::clvm_tools::sha256tree::sha256tree;
 
 use crate::common::constants::{AGG_SIG_ME_ATOM, AGG_SIG_UNSAFE_ATOM, CREATE_COIN_ATOM, REM_ATOM};
@@ -28,6 +33,10 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 
 #[cfg(test)]
 use clvm_tools_rs::compiler::runtypes::RunFailure;
+
+pub fn chia_dialect() -> ChiaDialect {
+    ChiaDialect::new(NO_UNKNOWN_OPS)
+}
 
 /// CoinID
 #[derive(Default, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -352,7 +361,7 @@ impl ToClvm<NodePtr> for Aggsig {
 }
 
 /// Game ID
-#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 pub struct GameID(Vec<u8>);
 
 impl GameID {
@@ -657,8 +666,14 @@ impl<X: ToClvm<NodePtr>> Sha256tree for X {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Program(pub Vec<u8>);
+
+impl std::fmt::Debug for Program {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "Program({})", hex::encode(&self.0))
+    }
+}
 
 impl Program {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
@@ -947,17 +962,13 @@ fn parse_condition(allocator: &mut AllocEncoder, condition: NodePtr) -> Option<C
                     Amount::new(amt),
                 ));
             }
-        } else {
-            return None;
         }
-    } else if exploded.len() > 1
-        && matches!(
-            (
-                allocator.allocator().sexp(exploded[0]),
-                allocator.allocator().sexp(exploded[1])
-            ),
-            (SExp::Atom, SExp::Atom)
-        )
+    }
+
+    if !exploded.is_empty()
+        && exploded
+            .iter()
+            .all(|e| matches!(allocator.allocator().sexp(*e), SExp::Atom))
     {
         let atoms: Vec<Vec<u8>> = exploded
             .iter()
@@ -985,12 +996,35 @@ impl CoinCondition {
             Vec::new()
         }
     }
+
+    pub fn from_puzzle_and_solution(
+        allocator: &mut AllocEncoder,
+        puzzle: &Program,
+        solution: &Program,
+    ) -> Result<Vec<CoinCondition>, Error> {
+        let run_puzzle = puzzle.to_nodeptr(allocator)?;
+        let run_args = solution.to_nodeptr(allocator)?;
+        let conditions = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            run_puzzle,
+            run_args,
+            0,
+        )
+        .into_gen()?;
+        debug!(
+            "conditions to parse {}",
+            disassemble(allocator.allocator(), conditions.1, None)
+        );
+
+        Ok(CoinCondition::from_nodeptr(allocator, conditions.1))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Spend {
     pub puzzle: Puzzle,
-    pub solution: Program,
+    pub solution: Rc<Program>,
     pub signature: Aggsig,
 }
 
@@ -1004,7 +1038,7 @@ impl Default for Spend {
     fn default() -> Self {
         Spend {
             puzzle: Puzzle::from_bytes(&[0x80]),
-            solution: Program::from_bytes(&[0x80]),
+            solution: Rc::new(Program::from_bytes(&[0x80])),
             signature: Aggsig::default(),
         }
     }
@@ -1050,8 +1084,8 @@ pub fn atom_from_clvm(allocator: &mut AllocEncoder, n: NodePtr) -> Option<&[u8]>
 
 /// Maximum information about a coin spend.  Everything one might need downstream.
 pub struct BrokenOutCoinSpendInfo {
-    pub solution: NodePtr,
-    pub conditions: NodePtr,
+    pub solution: Rc<Program>,
+    pub conditions: Rc<Program>,
     pub message: Vec<u8>,
     pub signature: Aggsig,
 }
