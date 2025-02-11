@@ -74,10 +74,8 @@ pub struct PotatoSignatures {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStartInfo {
-    pub game_id: GameID,
     pub amount: Amount,
     pub game_handler: GameHandler,
-    pub timeout: Timeout,
 
     pub my_contribution_this_game: Amount,
     pub their_contribution_this_game: Amount,
@@ -87,6 +85,10 @@ pub struct GameStartInfo {
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
+
+    // Can be left out.
+    pub game_id: GameID,
+    pub timeout: Timeout,
 }
 
 impl GameStartInfo {
@@ -94,11 +96,7 @@ impl GameStartInfo {
         matches!(self.game_handler, GameHandler::MyTurnHandler(_))
     }
 
-    pub fn from_clvm(
-        allocator: &mut AllocEncoder,
-        my_turn: bool,
-        clvm: NodePtr,
-    ) -> Result<Self, Error> {
+    pub fn from_clvm(allocator: &mut AllocEncoder, clvm: NodePtr) -> Result<Self, Error> {
         let lst = if let Some(lst) = proper_list(allocator.allocator(), clvm, true) {
             lst
         } else {
@@ -107,25 +105,31 @@ impl GameStartInfo {
             ));
         };
 
-        if lst.len() != 11 {
-            return Err(Error::StrErr(
-                "game start info clvm needs 11 items".to_string(),
-            ));
+        let required_length = 11;
+
+        if lst.len() < required_length {
+            return Err(Error::StrErr(format!(
+                "game start info clvm needs at least {required_length} items"
+            )));
         }
 
-        let returned_game_id = GameID::from_clvm(allocator, lst[0])?;
-        let returned_amount = Amount::from_clvm(allocator, lst[1])?;
+        let returned_amount = Amount::from_clvm(allocator, lst[0])?;
+        let my_turn = atom_from_clvm(allocator, lst[1])
+            .and_then(usize_from_atom)
+            .unwrap_or(0)
+            != 0;
         let returned_handler = if my_turn {
             GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
         } else {
             GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
         };
-        let returned_timeout = Timeout::from_clvm(allocator, lst[3])?;
-        let returned_my_contribution = Amount::from_clvm(allocator, lst[4])?;
-        let returned_their_contribution = Amount::from_clvm(allocator, lst[5])?;
+        let returned_my_contribution = Amount::from_clvm(allocator, lst[3])?;
+        let returned_their_contribution = Amount::from_clvm(allocator, lst[4])?;
 
-        let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[6])?);
-        let validation_program = ValidationProgram::new(allocator, validation_prog);
+        let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[5])?);
+        let validation_program_hash = Hash::from_nodeptr(allocator, lst[6])?;
+        let validation_program =
+            ValidationProgram::new_hash(validation_prog, validation_program_hash);
         let initial_state = Rc::new(Program::from_nodeptr(allocator, lst[7])?);
         let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
             a.to_vec()
@@ -139,6 +143,18 @@ impl GameStartInfo {
                 return Err(Error::StrErr("bad initial max move size".to_string()));
             };
         let initial_mover_share = Amount::from_clvm(allocator, lst[10])?;
+
+        let returned_game_id = if lst.len() > required_length + 1 {
+            GameID::from_clvm(allocator, lst[required_length])?
+        } else {
+            GameID::default()
+        };
+
+        let returned_timeout = if lst.len() > required_length + 2 {
+            Timeout::from_clvm(allocator, lst[required_length + 1])?
+        } else {
+            Timeout::new(0)
+        };
 
         Ok(GameStartInfo {
             game_id: returned_game_id,
@@ -301,6 +317,12 @@ pub struct PotatoAcceptCachedData {
     pub our_share_amount: Amount,
 }
 
+impl std::fmt::Debug for PotatoAcceptCachedData {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(formatter, "PotatoAcceptCachedData {{ game_id: {:?}, puzzle_hash: {:?}, live_game: .., at_stake_amount: {:?}, our_share_amount: {:?} }}", self.game_id, self.puzzle_hash, self.at_stake_amount, self.our_share_amount)
+    }
+}
+
 #[derive(Debug)]
 pub struct PotatoMoveCachedData {
     pub state_number: usize,
@@ -312,6 +334,7 @@ pub struct PotatoMoveCachedData {
     pub amount: Amount,
 }
 
+#[derive(Debug)]
 pub enum CachedPotatoRegenerateLastHop {
     PotatoCreatedGame(Vec<GameID>, Amount, Amount),
     PotatoAccept(PotatoAcceptCachedData),
@@ -387,6 +410,13 @@ pub struct ValidationProgram {
 impl ValidationProgram {
     pub fn new(allocator: &mut AllocEncoder, validation_program: Rc<Program>) -> Self {
         let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
+        ValidationProgram {
+            validation_program,
+            validation_program_hash,
+        }
+    }
+
+    pub fn new_hash(validation_program: Rc<Program>, validation_program_hash: Hash) -> Self {
         ValidationProgram {
             validation_program,
             validation_program_hash,
@@ -861,11 +891,18 @@ pub struct UnrollTarget {
 }
 
 #[derive(Debug)]
+pub enum AcceptTransactionState {
+    Determined(Box<RefereeOnChainTransaction>),
+    Waiting,
+    Finished,
+}
+
+#[derive(Debug)]
 pub struct OnChainGameState {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
     pub our_turn: bool,
-    pub accept: bool,
+    pub accept: AcceptTransactionState,
 }
 
 impl LiveGame {
@@ -929,15 +966,29 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         game_move: &GameMoveDetails,
         state_number: usize,
+        coin: Option<&CoinString>,
     ) -> Result<TheirTurnMoveResult, Error> {
         assert!(!self.referee_maker.is_my_turn());
-        let their_move_result =
-            self.referee_maker
-                .their_turn_move_off_chain(allocator, game_move, state_number)?;
+        let their_move_result = self.referee_maker.their_turn_move_off_chain(
+            allocator,
+            game_move,
+            state_number,
+            coin,
+        )?;
         if let Some(ph) = &their_move_result.puzzle_hash_for_unroll {
             self.last_referee_puzzle_hash = ph.clone();
         }
         Ok(their_move_result)
+    }
+
+    pub fn check_their_turn_for_slash(
+        &self,
+        allocator: &mut AllocEncoder,
+        evidence: NodePtr,
+        coin_string: &CoinString,
+    ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
+        self.referee_maker
+            .check_their_turn_for_slash(allocator, evidence, coin_string)
     }
 
     pub fn get_rewind_outcome(&self) -> Option<usize> {
@@ -956,12 +1007,11 @@ impl LiveGame {
         &self,
         allocator: &mut AllocEncoder,
         game_coin: &CoinString,
-        agg_sig_me: &Hash,
         on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
         // assert!(self.referee_maker.processing_my_turn());
         self.referee_maker
-            .get_transaction_for_move(allocator, game_coin, agg_sig_me, on_chain)
+            .get_transaction_for_move(allocator, game_coin, on_chain)
     }
 
     pub fn receive_readable(

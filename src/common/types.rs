@@ -503,7 +503,7 @@ impl From<Amount> for u64 {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize, Hash, Default)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Hash, Default)]
 pub struct Hash([u8; 32]);
 
 impl ToClvm<NodePtr> for Hash {
@@ -512,6 +512,14 @@ impl ToClvm<NodePtr> for Hash {
         encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
         encoder.encode_atom(&self.0)
+    }
+}
+
+impl std::fmt::Debug for Hash {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(formatter, "Hash(")?;
+        write!(formatter, "{}", hex::encode(self.0))?;
+        write!(formatter, ")")
     }
 }
 
@@ -528,6 +536,13 @@ impl Hash {
             fixed[i % 32] = *b;
         }
         Hash::from_bytes(fixed)
+    }
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Hash, Error> {
+        if let Some(bytes) = atom_from_clvm(allocator, n) {
+            return Ok(Hash::from_slice(bytes));
+        }
+
+        Err(Error::StrErr("can't convert node to hash".to_string()))
     }
     pub fn bytes(&self) -> &[u8; 32] {
         &self.0

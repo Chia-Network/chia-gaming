@@ -13,7 +13,7 @@ use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::types::{
-    ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys,
+    AcceptTransactionState, ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys,
     CoinSpentInformation, GameStartInfo, OnChainGameState, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
@@ -748,12 +748,12 @@ impl PotatoHandler {
         }
 
         let convert_info_list = |allocator: &mut AllocEncoder,
-                                 my_turn: bool,
+                                 _my_turn: bool,
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<GameStartInfo>, Error> {
             let mut result_start_info = Vec::new();
             for (i, node) in my_info_list.iter().enumerate() {
-                let new_game = GameStartInfo::from_clvm(allocator, my_turn, *node)?;
+                let new_game = GameStartInfo::from_clvm(allocator, *node)?;
                 // Timeout and game_id are supplied here.
                 result_start_info.push(GameStartInfo {
                     game_id: game_ids[i].clone(),
@@ -1589,7 +1589,7 @@ impl PotatoHandler {
 
                 if let HandshakeState::OnChain(game_map) = &mut self.handshake_state {
                     if let Some(coin_def) = game_map.get_mut(&current_coin) {
-                        coin_def.accept = true;
+                        coin_def.accept = AcceptTransactionState::Waiting;
                     }
                 }
                 Ok(())

@@ -17,7 +17,7 @@ use clvmr::allocator::NodePtr;
 
 use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
-    CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
+    AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation,
@@ -670,6 +670,7 @@ impl ChannelHandler {
                 referee_identity,
                 &self.their_referee_puzzle_hash,
                 new_game_nonce,
+                &env.agg_sig_me_additional_data,
             )?;
             res.push(LiveGame::new(
                 g.game_id.clone(),
@@ -836,7 +837,6 @@ impl ChannelHandler {
                 &PuzzleHash::default(),
                 &Amount::default(),
             ),
-            &env.agg_sig_me_additional_data,
             false,
         );
 
@@ -885,10 +885,13 @@ impl ChannelHandler {
         );
         let game_idx = self.get_game_by_id(game_id)?;
 
+        // Not used along this route, but provided.
+        let coin_string = self.state_channel_coin().coin_string().clone();
         let their_move_result = self.live_games[game_idx].internal_their_move(
             env.allocator,
             &move_result.game_move,
             self.current_state_number,
+            Some(&coin_string),
         )?;
 
         debug!(
@@ -1380,7 +1383,6 @@ impl ChannelHandler {
                 let spend_transaction = cached.live_game.get_transaction_for_move(
                     env.allocator,
                     &game_coin,
-                    &env.agg_sig_me_additional_data,
                     false,
                 )?;
 
@@ -1410,7 +1412,6 @@ impl ChannelHandler {
                 let spend_transaction = self.live_games[game_idx].get_transaction_for_move(
                     env.allocator,
                     &game_coin,
-                    &env.agg_sig_me_additional_data,
                     false,
                 )?;
 
@@ -1523,7 +1524,7 @@ impl ChannelHandler {
                             game_id: live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
                             our_turn: live_game.is_my_turn(),
-                            accept: false,
+                            accept: AcceptTransactionState::Waiting,
                         },
                     );
                 }
@@ -1601,7 +1602,6 @@ impl ChannelHandler {
         let tx = self.live_games[game_idx].get_transaction_for_move(
             env.allocator,
             existing_coin,
-            &env.agg_sig_me_additional_data,
             true,
         )?;
 
@@ -1740,7 +1740,6 @@ impl ChannelHandler {
                     let transaction = self.live_games[game_idx].get_transaction_for_move(
                         env.allocator,
                         coin,
-                        &env.agg_sig_me_additional_data,
                         true,
                     )?;
 

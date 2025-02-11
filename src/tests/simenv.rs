@@ -16,7 +16,6 @@ use crate::channel_handler::runner::{channel_handler_env, ChannelHandlerGame};
 use crate::channel_handler::types::{
     ChannelHandlerEnv, GameStartInfo, ReadableMove, ValidationProgram,
 };
-use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
 };
@@ -612,7 +611,10 @@ fn test_referee_can_slash_on_chain() {
         &game_start_info,
     );
 
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
+    assert_eq!(
+        reftest.my_referee.get_our_current_share(),
+        Amount::default()
+    );
 
     // Make simulator and create referee coin.
     let s = Simulator::default();
@@ -679,8 +681,6 @@ fn test_referee_can_move_on_chain() {
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
 
-    let agg_sig_me_additional_data = Hash::from_slice(&AGG_SIG_ME_ADDITIONAL_DATA);
-
     // Generate keys and puzzle hashes.
     let my_private_key: PrivateKey = rng.gen();
     let my_identity = ChiaIdentity::new(&mut allocator, my_private_key).expect("should generate");
@@ -727,7 +727,10 @@ fn test_referee_can_move_on_chain() {
     );
 
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
+    assert_eq!(
+        reftest.my_referee.get_our_current_share(),
+        Amount::default()
+    );
 
     // Make our first move.
     let readable_my_move =
@@ -781,7 +784,6 @@ fn test_referee_can_move_on_chain() {
         .get_transaction_for_move(
             &mut allocator,
             &referee_coins[0],
-            &agg_sig_me_additional_data,
             true,
         )
         .expect("should work");
