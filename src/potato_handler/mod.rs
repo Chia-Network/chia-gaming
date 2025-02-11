@@ -2095,14 +2095,10 @@ impl PotatoHandler {
         let their_turn_result =
             player_ch.game_coin_spent(env, &old_definition.game_id, coin_id, &conditions)?;
         match their_turn_result {
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout {
-                /*my_reward_coin_string,*/ ..
-            }) => {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout { /*my_reward_coin_string*/ .. }) => {
                 todo!();
             }
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved {
-                /* new_coin_string, readable, */ ..
-            }) => {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved { /*new_coin_string, readable, */ .. }) => {
                 todo!();
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Slash(_outcome)) => {
