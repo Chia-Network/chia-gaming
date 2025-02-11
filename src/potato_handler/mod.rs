@@ -669,6 +669,7 @@ impl PotatoHandler {
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
+        i_initiated: bool,
         game_start: &GameStart,
     ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
     where
@@ -688,12 +689,17 @@ impl PotatoHandler {
         let params_clvm =
             node_from_bytes(env.allocator.allocator(), &game_start.parameters).into_gen()?;
         let program_run_args = (
-            game_start.amount.clone(),
-            (game_start.my_contribution.clone(), (Node(params_clvm), ())),
+            i_initiated,
+            (game_start.my_contribution.clone(),
+             (game_start.amount.clone() - game_start.my_contribution.clone(),
+              (Node(params_clvm), ())
+             )
+            )
         )
             .to_clvm(env.allocator)
             .into_gen()?;
 
+        debug!("running program to get game start");
         let program_output = run_program(
             env.allocator.allocator(),
             &chia_dialect(),
@@ -1082,7 +1088,8 @@ impl PotatoHandler {
                     PeerMessage::HandshakeF { bundle } => {
                         self.channel_finished_transaction = Some(bundle.clone());
                         let (_, system_interface) = penv.env();
-                        system_interface.received_channel_offer(&bundle)?;
+                        let rco = system_interface.received_channel_offer(&bundle)?;
+                        debug!("rco {rco:?}");
                     }
                     PeerMessage::RequestPotato(_) => {
                         {
@@ -1991,7 +1998,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        let (my_games, their_games) = self.get_games_by_start_type(penv, game)?;
+        let (my_games, their_games) = self.get_games_by_start_type(penv, i_initiated, game)?;
 
         let game_id_list = my_games.iter().map(|g| g.game_id.clone()).collect();
 
@@ -2009,6 +2016,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 return Ok(game_id_list);
             }
 
+            debug!("doing have potato start game");
             self.have_potato_start_game(penv)?;
         } else {
             // All checking needed is done by channel handler.
