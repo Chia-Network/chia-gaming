@@ -37,7 +37,7 @@
             pokerb_hash
             image
             16
-            (/ amount 2)
+            0
             (curry calpoker_alice_driver_b preimage image)
             0
         )

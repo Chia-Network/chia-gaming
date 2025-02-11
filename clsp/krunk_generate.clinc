@@ -1,4 +1,3 @@
-(
 ; Alternates moving and validating
 ; Moving takes (readable_move amount) and returns (0 readable_state move new_validator new_validation_hash split) 
 ; or (1 error_info)
@@ -11,9 +10,58 @@
 ; Checking takes complete args and either assert fails if there's no sign of cheating or returns
 ; a list of extra conditions, usually empty
 
-(include assert.clinc)
-(include shatree.clinc)
-(include curry.clinc)
+(import std.assert)
+(import std.shatree)
+(import std.curry)
+
+(defun krunk_factory (amount my_contribution _)
+    (assert
+        (= amount (+ my_contribution my_contribution))
+        (assign
+            my_guess (list
+                my_contribution
+                ; initial handler
+                booga handler
+                ; my contribution
+                0
+                ; their contribution
+                my_contribution
+                ; initial validation program
+                booga validation program
+                ; initial state
+                dictionary_hash
+                ; initial move
+                0
+                ; initial max move size
+                booga initial max move size
+                ; initial mover share
+                0
+            )
+            their_guess (li
+                my_contribution
+                ; initial handler
+                booga handler
+                ; my contribution
+                my_contribution
+                ; their contribution
+                0
+                ; initial validation program
+                booga validation program
+                ; initial state
+                dictionary_hash
+                ; initial move
+                0
+                ; initial max move size
+                booga initial max move size
+                ; initial mover share
+                0
+            )
+            (li (li my_guess their_guess) (li their_guess my_guess))
+        )
+    )
+)
+
+
 
 (defun make_mover_a (dictionary dictionary_key)
     (assign (next next_hash) (make_validator_b dictionary dictionary_key amount)
@@ -400,5 +448,4 @@
         )
         (find_exclusion_proof word (if (< word second) first third))
     )
-)
 )
