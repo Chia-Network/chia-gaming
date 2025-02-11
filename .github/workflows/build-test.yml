@@ -46,7 +46,7 @@ jobs:
         toolchain: stable
 
   fmt:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     name: cargo fmt
     steps:
       - uses: actions/checkout@v3
@@ -62,7 +62,7 @@ jobs:
         run: cargo fmt -- --files-with-diff --check
 
   clippy:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
@@ -80,7 +80,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
   unit_tests:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     name: Unit tests
     steps:
       - uses: actions/checkout@v3
