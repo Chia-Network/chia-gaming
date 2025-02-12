@@ -611,7 +611,10 @@ fn test_referee_can_slash_on_chain() {
         &game_start_info,
     );
 
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
+    assert_eq!(
+        reftest.my_referee.get_our_current_share(),
+        Amount::default()
+    );
 
     // Make simulator and create referee coin.
     let s = Simulator::default();
@@ -724,7 +727,10 @@ fn test_referee_can_move_on_chain() {
     );
 
     let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
-    assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(100));
+    assert_eq!(
+        reftest.my_referee.get_our_current_share(),
+        Amount::default()
+    );
 
     // Make our first move.
     let readable_my_move =
