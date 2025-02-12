@@ -416,6 +416,12 @@ pub enum GameAction {
         PuzzleHash,
         Box<RefereeOnChainTransaction>,
     ),
+    RedoAccept(
+        GameID,
+        CoinString,
+        PuzzleHash,
+        Box<RefereeOnChainTransaction>,
+    ),
     Accept(GameID),
     Shutdown(Rc<dyn ShutdownConditions>),
 }
@@ -426,6 +432,9 @@ impl std::fmt::Debug for GameAction {
             GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
             GameAction::RedoMove(gi, cs, ph, rt) => {
                 write!(formatter, "RedoMove({gi:?},{cs:?},{ph:?},{rt:?})")
+            }
+            GameAction::RedoAccept(gi, cs, ph, rt) => {
+                write!(formatter, "RedoAccept({gi:?},{cs:?},{ph:?},{rt:?})")
             }
             GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
             GameAction::Shutdown(_) => write!(formatter, "Shutdown(..)"),
@@ -448,6 +457,8 @@ pub trait PotatoHandlerImpl {
     fn channel_handler(&self) -> &ChannelHandler;
 
     fn channel_handler_mut(&mut self) -> &mut ChannelHandler;
+
+    fn into_channel_handler(self) -> ChannelHandler;
 
     fn check_game_coin_spent<'a, G, R: Rng + 'a>(
         &mut self,

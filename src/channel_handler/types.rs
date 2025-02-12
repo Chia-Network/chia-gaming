@@ -902,7 +902,7 @@ pub struct OnChainGameState {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
     pub our_turn: bool,
-    pub accept: AcceptTransactionState,
+    pub accept: Option<RefereeOnChainTransaction>,
 }
 
 impl LiveGame {

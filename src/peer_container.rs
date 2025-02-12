@@ -646,7 +646,7 @@ impl SynchronousGameCradle {
         let msg = if let Some(msg) = self.state.outbound_messages.pop_back() {
             msg
         } else {
-            todo!();
+            return Err(Error::StrErr("no message to replace".to_string()));
         };
 
         let doc = bson::Document::from_reader(&mut msg.as_slice()).into_gen()?;
