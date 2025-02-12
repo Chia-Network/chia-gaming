@@ -37,7 +37,7 @@
             pokerb_hash
             image
             16
-            (/ amount 2)
+            0
             (curry calpoker_alice_driver_b preimage image)
             0
         )
@@ -85,7 +85,7 @@
             pokerd_hash
             (list cards new_commit)
             1
-            (/ amount 2)
+            0
             (curry calpoker_alice_driver_d salt my_picks)
             0
         )
@@ -151,7 +151,7 @@
             pokerc_hash
             (list ALICE_COMMIT seed)
             48
-            (/ amount 2)
+            0
             (curry calpoker_bob_driver_c seed)
             parse_message
         )
@@ -206,8 +206,8 @@
             pokere
             pokere_hash
             (list my_move (list ALICE_CARDS BOB_CARDS) ALICE_COMMIT_2)
-            18
-            (/ amount 2)
+            17
+            0
             calpoker_bob_driver_e
             0
         )
