@@ -8,6 +8,7 @@
 (import std.condition_codes)
 (import std.match)
 (import std.li)
+(import std.print)
 (import onchain.game_codes)
 
 ;
@@ -45,16 +46,16 @@
             (i MOVER_SHARE (list CREATE_COIN MOVER_PUZZLE_HASH MOVER_SHARE) (list 1))
             (i (- AMOUNT MOVER_SHARE) (list CREATE_COIN WAITER_PUZZLE_HASH (- AMOUNT MOVER_SHARE)) (list 1))
         )
-        (l (f (r args)))
+        (print (list "do slash?" args) (l (f (r (r args)))))
         ; slash
         (assign
             (previous_state me previous_validation_program mover_puzzle solution evidence) args
             previous_validation_program_hash (shatree previous_validation_program)
             
             (assert
-                (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
-                (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree
-                        previous_state)))
+                (print "= mover puzzle" (= MOVER_PUZZLE_HASH (shatree mover_puzzle)))
+                (print "= prev info hash" (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree
+                        previous_state))))
 
                 ; Intention here:
                 ; An empty remark indicating slash
@@ -62,7 +63,7 @@
                 ; The conditions returned by mover_puzzle
                 (c (list REMARK)
                     (concat
-                        (a previous_validation_program
+                        (print "validation outcome" (a (print "prev validation program" previous_validation_program)
                             (c previous_validation_program_hash
                                 (c
                                     (list
@@ -83,8 +84,8 @@
                                     args
                                 )
                             )
-                        )
-                        (a mover_puzzle solution)
+                        ))
+                        (print "a mover" (a (print "mover puzzle" mover_puzzle) (print "mp solution" solution)))
                     )
                 )
             )

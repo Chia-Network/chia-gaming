@@ -11,11 +11,8 @@ use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 fn test_game_handler_their_move_slash() {
     let mut allocator = AllocEncoder::new();
 
-    let program = assemble(
-        allocator.allocator(),
-        &format!("(c (1 . 2) (c (c (1 . 1337) 1) ()))",),
-    )
-    .expect("should assemble");
+    let program = assemble(allocator.allocator(), "(c (1 . 2) (c (c (1 . 1337) 1) ()))")
+        .expect("should assemble");
 
     let their_turn_handler =
         GameHandler::their_driver_from_nodeptr(&mut allocator, program).expect("should cvt");

@@ -684,6 +684,7 @@ impl PotatoHandler {
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
+        i_initiated: bool,
         game_start: &GameStart,
     ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
     where
@@ -703,12 +704,19 @@ impl PotatoHandler {
         let params_clvm =
             node_from_bytes(env.allocator.allocator(), &game_start.parameters).into_gen()?;
         let program_run_args = (
-            game_start.amount.clone(),
-            (game_start.my_contribution.clone(), (Node(params_clvm), ())),
+            i_initiated,
+            (
+                game_start.my_contribution.clone(),
+                (
+                    game_start.amount.clone() - game_start.my_contribution.clone(),
+                    (Node(params_clvm), ()),
+                ),
+            ),
         )
             .to_clvm(env.allocator)
             .into_gen()?;
 
+        debug!("running program to get game start");
         let program_output = run_program(
             env.allocator.allocator(),
             &chia_dialect(),
@@ -763,12 +771,12 @@ impl PotatoHandler {
         }
 
         let convert_info_list = |allocator: &mut AllocEncoder,
-                                 my_turn: bool,
+                                 _my_turn: bool,
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<GameStartInfo>, Error> {
             let mut result_start_info = Vec::new();
             for (i, node) in my_info_list.iter().enumerate() {
-                let new_game = GameStartInfo::from_clvm(allocator, my_turn, *node)?;
+                let new_game = GameStartInfo::from_clvm(allocator, *node)?;
                 // Timeout and game_id are supplied here.
                 result_start_info.push(GameStartInfo {
                     game_id: game_ids[i].clone(),
@@ -1670,7 +1678,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        let (my_games, their_games) = self.get_games_by_start_type(penv, game)?;
+        let (my_games, their_games) = self.get_games_by_start_type(penv, i_initiated, game)?;
 
         let game_id_list = my_games.iter().map(|g| g.game_id.clone()).collect();
 
@@ -1690,6 +1698,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 return Ok(game_id_list);
             }
 
+            debug!("doing have potato start game");
             self.have_potato_start_game(penv)?;
         } else {
             // All checking needed is done by channel handler.
