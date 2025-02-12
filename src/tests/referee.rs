@@ -10,12 +10,13 @@ use log::debug;
 
 use crate::channel_handler::game_handler::{GameHandler, TheirTurnResult};
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, Error, GameID, PrivateKey, Program, Puzzle, PuzzleHash,
+    Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker};
+use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorResult};
 
 pub struct DebugGamePrograms {
     pub my_validation_program: Rc<Program>,
@@ -139,6 +140,7 @@ impl RefereeTest {
             my_identity.clone(),
             &their_identity.puzzle_hash,
             1,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         )
         .expect("should construct");
         assert_eq!(
@@ -162,6 +164,7 @@ impl RefereeTest {
             their_identity.clone(),
             &my_identity.puzzle_hash,
             1,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         )
         .expect("should construct");
 
@@ -246,6 +249,7 @@ fn test_referee_smoke() {
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
         },
         0,
+        None,
     );
     debug!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
@@ -256,7 +260,7 @@ fn test_referee_smoke() {
 
     let their_move_local_update = reftest
         .their_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should move");
 
     debug!("their_move_wire_data {their_move_local_update:?}");
@@ -265,12 +269,12 @@ fn test_referee_smoke() {
     let validator_result = reftest
         .their_referee
         .run_validator_for_their_move(&mut allocator, nil);
-    assert!(validator_result.is_err());
+    assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk)));
 
     assert!(reftest.my_referee.processing_my_turn());
     let their_move_result = reftest
         .my_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should run");
     let (readable_move, message) = match &their_move_result.original {
         TheirTurnResult::MakeMove(readable_node, _, message, _) => {

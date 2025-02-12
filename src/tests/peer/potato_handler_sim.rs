@@ -1203,8 +1203,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
         .map(|c| c.to_parts().map(|(_, _, amt)| amt.to_u64()).unwrap_or(0))
         .sum();
 
-    assert_eq!(p1_balance, 2000000000000);
-    assert_eq!(p1_balance, p2_balance);
+    assert_eq!(p2_balance, p1_balance + 200);
 }
 
 #[test]
