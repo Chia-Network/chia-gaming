@@ -6,7 +6,9 @@ use rand::Rng;
 
 use log::debug;
 
-use crate::channel_handler::types::{AcceptTransactionState, CoinSpentInformation, OnChainGameState, ReadableMove};
+use crate::channel_handler::types::{
+    AcceptTransactionState, CoinSpentInformation, OnChainGameState, ReadableMove,
+};
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
