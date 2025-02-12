@@ -6,7 +6,6 @@
 (import std.popcount)
 (import std.and)
 (import std.if_any_fail)
-(import std.print)
 
 ; Alice challenging
 ; state is the cards for both players and alice's card pick commitment
@@ -16,7 +15,7 @@
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     (cards alice_commit) me previous_validation_program mover_puzzle solution evidence)
     (if_any_fail
-        (print (list "check d" bob_picks) (= (strlen bob_picks) 1))
+        (= (strlen bob_picks) 1)
         (= (popcount bob_picks) 4)
         (= new_validation_hash (sha256 ehash (shatree (list bob_picks cards alice_commit))))
         (= max_move_size 18)
