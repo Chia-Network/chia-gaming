@@ -694,7 +694,11 @@ impl RefereeMaker {
             &initial_move,
             None,
             &vi_hash,
-            None,
+            // Special for start: nobody can slash the first turn and both sides need to
+            // compute the same value for amount to sign.  The next move will set mover share
+            // and the polarity of the move will determine whether that applies to us or them
+            // from both frames of reference.
+            Some(&Amount::default()),
             my_turn,
         ));
         // If this reflects my turn, then we will spend the next parameter set.
