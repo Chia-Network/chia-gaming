@@ -3,8 +3,8 @@
 (import onchain.poker.begin_round exposing (program_hash as beginhash))
 (import std.assert)
 
-; state is (minraise image5)
-; move is image3
+; state is (minraise waiter_image_5)
+; move is mover_image_4
 ; evidence is empty
 (export (mod_hash (mover_image_4 new_validation_hash max_move_size mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 

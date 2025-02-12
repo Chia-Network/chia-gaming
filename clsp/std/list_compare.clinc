@@ -1,3 +1,4 @@
+;; List compare returns 1 if the a list is greater than the b list.
 (defun list_compare (a b)
     (if (= (f a) (f b))
         (if (r a)

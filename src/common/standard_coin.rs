@@ -472,18 +472,26 @@ pub fn standard_solution_partial(
     // so in this case we can front load the conditions without running the puzzle.
     // Ensure we unborrow allocator before the code below.
     let conds = CoinCondition::from_nodeptr(allocator, conditions);
+    let mut one_create = false;
     for cond in conds.iter() {
         match cond {
             CoinCondition::CreateCoin(_, _) => {
                 debug!("adding signature based on create coin: {aggregate_public_key:?} {coin_agg_sig_me_message:?}");
-                add_signature(
-                    &mut aggregated_signature,
-                    if partial {
-                        partial_signer(private_key, aggregate_public_key, &coin_agg_sig_me_message)
-                    } else {
-                        private_key.sign(&coin_agg_sig_me_message)
-                    },
-                );
+                if !one_create {
+                    one_create = true;
+                    add_signature(
+                        &mut aggregated_signature,
+                        if partial {
+                            partial_signer(
+                                private_key,
+                                aggregate_public_key,
+                                &coin_agg_sig_me_message,
+                            )
+                        } else {
+                            private_key.sign(&coin_agg_sig_me_message)
+                        },
+                    );
+                }
             }
             CoinCondition::AggSigMe(pubkey, data) => {
                 let mut message = pubkey.bytes().to_vec();
@@ -541,7 +549,7 @@ pub struct ChiaIdentity {
     pub synthetic_public_key: PublicKey,
     pub public_key: PublicKey,
     pub synthetic_private_key: PrivateKey,
-    pub puzzle: Puzzle,
+    pub puzzle: Rc<Puzzle>,
     pub puzzle_hash: PuzzleHash,
 }
 
@@ -555,7 +563,7 @@ impl ChiaIdentity {
             calculate_synthetic_secret_key(&private_key, &default_hidden_puzzle_hash)?;
         let public_key = private_to_public_key(&private_key);
         let synthetic_public_key = private_to_public_key(&synthetic_private_key);
-        let puzzle = puzzle_for_pk(allocator, &public_key)?;
+        let puzzle = Rc::new(puzzle_for_pk(allocator, &public_key)?);
         let puzzle_hash = puzzle_hash_for_pk(allocator, &public_key)?;
         assert_eq!(puzzle.sha256tree(allocator), puzzle_hash);
         Ok(ChiaIdentity {

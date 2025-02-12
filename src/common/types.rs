@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::io;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::rc::Rc;
@@ -502,7 +503,7 @@ impl From<Amount> for u64 {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize, Hash, Default)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Hash, Default)]
 pub struct Hash([u8; 32]);
 
 impl ToClvm<NodePtr> for Hash {
@@ -511,6 +512,14 @@ impl ToClvm<NodePtr> for Hash {
         encoder: &mut impl ClvmEncoder<Node = NodePtr>,
     ) -> Result<NodePtr, ToClvmError> {
         encoder.encode_atom(&self.0)
+    }
+}
+
+impl std::fmt::Debug for Hash {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(formatter, "Hash(")?;
+        write!(formatter, "{}", hex::encode(self.0))?;
+        write!(formatter, ")")
     }
 }
 
@@ -527,6 +536,13 @@ impl Hash {
             fixed[i % 32] = *b;
         }
         Hash::from_bytes(fixed)
+    }
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Hash, Error> {
+        if let Some(bytes) = atom_from_clvm(allocator, n) {
+            return Ok(Hash::from_slice(bytes));
+        }
+
+        Err(Error::StrErr("can't convert node to hash".to_string()))
     }
     pub fn bytes(&self) -> &[u8; 32] {
         &self.0
@@ -575,7 +591,7 @@ impl Sha256Input<'_> {
 }
 
 /// Puzzle hash
-#[derive(Default, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Eq, PartialEq, Debug, Serialize, Deserialize, Hash)]
 pub struct PuzzleHash(Hash);
 
 impl PuzzleHash {
@@ -767,7 +783,7 @@ impl ToClvm<NodePtr> for Program {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Puzzle(Program);
+pub struct Puzzle(Rc<Program>);
 
 impl ToClvm<NodePtr> for Puzzle {
     fn to_clvm(
@@ -779,11 +795,11 @@ impl ToClvm<NodePtr> for Puzzle {
 }
 
 impl Puzzle {
-    pub fn to_program(&self) -> Program {
+    pub fn to_program(&self) -> Rc<Program> {
         self.0.clone()
     }
     pub fn from_bytes(by: &[u8]) -> Puzzle {
-        Puzzle(Program::from_bytes(by))
+        Puzzle(Rc::new(Program::from_bytes(by)))
     }
     pub fn from_nodeptr(allocator: &mut AllocEncoder, node: NodePtr) -> Result<Puzzle, Error> {
         let bytes = node_to_bytes(allocator.allocator(), node).into_gen()?;
@@ -1057,7 +1073,7 @@ impl CoinCondition {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Spend {
-    pub puzzle: Puzzle,
+    pub puzzle: Rc<Puzzle>,
     pub solution: Rc<Program>,
     pub signature: Aggsig,
 }
@@ -1071,7 +1087,7 @@ pub struct CoinSpend {
 impl Default for Spend {
     fn default() -> Self {
         Spend {
-            puzzle: Puzzle::from_bytes(&[0x80]),
+            puzzle: Rc::new(Puzzle::from_bytes(&[0x80])),
             solution: Rc::new(Program::from_bytes(&[0x80])),
             signature: Aggsig::default(),
         }
@@ -1079,12 +1095,13 @@ impl Default for Spend {
 }
 
 pub struct SpendRewardResult {
-    pub coins_with_solutions: Vec<Spend>,
+    pub coins_with_solutions: Vec<CoinSpend>,
     pub result_coin_string_up: CoinString,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendBundle {
+    pub name: Option<String>,
     pub spends: Vec<CoinSpend>,
 }
 
@@ -1153,4 +1170,28 @@ fn test_local_divmod() {
         divmod(7.to_bigint().unwrap(), 2.to_bigint().unwrap()),
         (3.to_bigint().unwrap(), 1.to_bigint().unwrap())
     );
+}
+
+pub struct RcNode<X>(Rc<X>);
+
+impl<X: ToClvm<NodePtr>> ToClvm<NodePtr> for RcNode<X> {
+    fn to_clvm(
+        &self,
+        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+    ) -> Result<NodePtr, ToClvmError> {
+        let borrowed: &X = self.0.borrow();
+        borrowed.to_clvm(encoder)
+    }
+}
+
+impl<X> RcNode<X> {
+    pub fn new(node: Rc<X>) -> Self {
+        RcNode(node.clone())
+    }
+}
+
+impl<X> From<&Rc<X>> for RcNode<X> {
+    fn from(item: &Rc<X>) -> RcNode<X> {
+        RcNode(item.clone())
+    }
 }

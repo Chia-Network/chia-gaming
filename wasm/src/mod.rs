@@ -4,6 +4,7 @@ use js_sys::{Array, Function, JsString, Object};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use hex::FromHexError;
@@ -26,12 +27,9 @@ use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
 use chia_gaming::potato_handler::types::{GameStart, GameType, ToLocalUI};
+use chia_gaming::shutdown::BasicShutdownConditions;
 
 use crate::map_m::map_m;
-
-#[cfg(feature = "wee_alloc")]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[wasm_bindgen(typescript_custom_section)]
 const TS_APPEND_CONTENT: &'static str = r#"
@@ -163,12 +161,12 @@ struct JsGameCradleConfig {
 
 fn convert_game_types(
     collection: &BTreeMap<String, String>,
-) -> Result<BTreeMap<GameType, Program>, JsValue> {
+) -> Result<BTreeMap<GameType, Rc<Program>>, JsValue> {
     let mut result = BTreeMap::new();
     for (name, hex) in collection.iter() {
         let name_data = GameType(name.bytes().collect());
         let byte_data = hex::decode(&hex).into_js()?;
-        result.insert(name_data, Program::from_bytes(&byte_data));
+        result.insert(name_data, Rc::new(Program::from_bytes(&byte_data)));
     }
     Ok(result)
 }
@@ -436,7 +434,13 @@ pub fn accept(cid: i32, id: &str) -> Result<(), JsValue> {
 
 #[wasm_bindgen]
 pub fn shut_down(cid: i32) -> Result<(), JsValue> {
-    with_game(cid, move |cradle: &mut JsCradle| cradle.cradle.shut_down())
+    with_game(cid, move |cradle: &mut JsCradle| {
+        cradle.cradle.shut_down(
+            &mut cradle.allocator,
+            &mut cradle.rng,
+            Rc::new(BasicShutdownConditions),
+        )
+    })
 }
 
 #[wasm_bindgen]
@@ -483,6 +487,7 @@ impl ToLocalUI for JsLocalUI {
         _allocator: &mut AllocEncoder,
         game_id: &GameID,
         readable_move: ReadableMove,
+        _amount: Amount,
     ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "opponent_moved", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
@@ -528,17 +533,21 @@ impl ToLocalUI for JsLocalUI {
 
     fn shutdown_complete(
         &mut self,
-        coin: &CoinString,
+        coin: Option<&CoinString>,
     ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "shutdown_complete", |args_array| {
-            args_array.set(0, JsValue::from_str(&hex::encode(&coin.to_bytes())));
+            args_array.set(
+                0,
+                coin.map(|c| JsValue::from_str(&hex::encode(&c.to_bytes())))
+                    .unwrap_or_else(|| JsValue::NULL.clone()),
+            );
             Ok(())
         })
     }
 
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "going_on_chain", |args_array| {
-            args_array.set(0, got_error.into());
+            args_array.set(0, JsValue::from_bool(got_error));
             Ok(())
         })
     }
@@ -679,11 +688,15 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
 pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
     let mut local_ui = to_local_ui(callbacks)?;
     with_game(cid, move |cradle: &mut JsCradle| {
-        let idle_result =
+        if let Some(idle_result) =
             cradle
                 .cradle
-                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui)?;
-        idle_result_to_js(&idle_result)
+                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui)?
+        {
+            idle_result_to_js(&idle_result)
+        } else {
+            Ok(JsValue::NULL.clone())
+        }
     })
 }
 

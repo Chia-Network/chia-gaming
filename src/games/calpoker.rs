@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 
+use log::debug;
+
 use crate::channel_handler::types::ReadableMove;
 use clvmr::NodePtr;
 
@@ -16,6 +18,12 @@ use crate::common::types::{
     atom_from_clvm, divmod, i64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Sha256Input,
 };
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub enum WinDirectionUser {
+    Alice,
+    Bob,
+}
 
 pub type Card = (usize, usize);
 
@@ -149,7 +157,8 @@ pub struct CalpokerResult {
     pub bob_hand_result: CalpokerHandValue,
     pub alice_hand_value: RawCalpokerHandValue,
     pub alice_hand_result: CalpokerHandValue,
-    pub win_direction: i64,
+    pub raw_win_direction: i64,
+    pub win_direction: Option<WinDirectionUser>,
     pub game_amount: u64,
     pub your_share: u64,
 }
@@ -329,6 +338,57 @@ pub fn decode_hand_result(
     Ok(RawCalpokerHandValue::SimpleList(result_list))
 }
 
+type IndexAndCard = (usize, (usize, usize));
+
+fn select_cards_using_bits(cardlist: &CardList, selections: usize) -> (CardList, CardList) {
+    let (p1, p2): (Vec<IndexAndCard>, Vec<IndexAndCard>) = cardlist
+        .iter()
+        .cloned()
+        .enumerate()
+        .partition(|(i, _c)| (selections & (1 << i)) != 0);
+    (
+        p1.into_iter().map(|(_i, c)| c).collect(),
+        p2.into_iter().map(|(_i, c)| c).collect(),
+    )
+}
+
+/// Show the cards given a win result.
+pub fn get_final_used_cards(
+    cardlists: &(CardList, CardList),
+    alice_result: &CalpokerResult,
+    bob_result: &CalpokerResult,
+) -> (CardList, CardList) {
+    let (mut alice_giveaway_cards, alice_kept_cards) =
+        select_cards_using_bits(&cardlists.0, bob_result.raw_alice_selects);
+    let (mut bob_giveaway_cards, bob_kept_cards) =
+        select_cards_using_bits(&cardlists.1, alice_result.raw_alice_selects);
+    let mut alice_total_cards = alice_kept_cards;
+    alice_total_cards.append(&mut bob_giveaway_cards);
+    debug!("alice_total_cards {alice_total_cards:?}");
+    let mut bob_total_cards = bob_kept_cards;
+    bob_total_cards.append(&mut alice_giveaway_cards);
+    debug!("bob_total_cards   {bob_total_cards:?}");
+    assert_eq!(alice_total_cards.len(), 8);
+    assert_eq!(bob_total_cards.len(), 8);
+    let alice_used_cards: CardList = alice_total_cards
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter(|(i, _c)| alice_result.raw_alice_picks & (1 << i) != 0)
+        .map(|(_i, c)| c)
+        .collect();
+    let bob_used_cards: CardList = bob_total_cards
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter(|(i, _c)| alice_result.raw_bob_picks & (1 << i) != 0)
+        .map(|(_i, c)| c)
+        .collect();
+    assert_eq!(alice_used_cards.len(), 5);
+    assert_eq!(bob_used_cards.len(), 5);
+    (alice_used_cards, bob_used_cards)
+}
+
 /// Given a readable move, decode it as a calpoker outcome.
 pub fn decode_calpoker_readable(
     allocator: &mut AllocEncoder,
@@ -399,7 +459,12 @@ pub fn decode_calpoker_readable(
         alice_hand_result: hva?,
         bob_hand_value,
         alice_hand_value,
-        win_direction,
+        raw_win_direction: win_direction,
+        win_direction: match win_direction {
+            1 => Some(WinDirectionUser::Alice),
+            -1 => Some(WinDirectionUser::Bob),
+            _ => None,
+        },
     })
 }
 
@@ -429,7 +494,8 @@ fn test_decode_calpoker_readable() {
             bob_hand_value: bobv,
             your_share: 200,
             game_amount: 200,
-            win_direction: -1
+            raw_win_direction: -1,
+            win_direction: Some(WinDirectionUser::Bob),
         }
     );
 }

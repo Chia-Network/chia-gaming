@@ -16,7 +16,7 @@
 ; evidence is Bob's card selections
 (export (mod_hash (move next_validation_hash bob_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (bob_picks (alice_cards bob_cards) alice_commit) me mover_puzzle solution bob_card_selections)
+    (bob_picks (alice_cards bob_cards) alice_commit) me previous_validation_program mover_puzzle solution bob_card_selections)
     (if_any_fail
         (= (strlen move) 18)
         (assign

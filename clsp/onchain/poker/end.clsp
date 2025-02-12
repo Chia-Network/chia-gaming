@@ -1,7 +1,7 @@
 
 (include *standard-cl-23*)
 
-(import onchain.poker.spacehandcalc exposing space_hand_calc)
+(import onchain.poker.space_hand_eval exposing space_hand_eval)
 (import std.assert)
 
 ; state is (minraise half_pot raise_amount mover_image_N waiter_image_N begin_round_hash)
@@ -24,7 +24,7 @@
                 0
                 (assert (= (len waiter_selected_cards) 5)
                     (!= mover_share
-                        (assign result (deep_compare (space_hand_calc mover_selected_cards mover_boost) 
+                        (assign result (deep_compare (space_hand_eval mover_selected_cards mover_boost) 
                                 (space_hand_calc waiter_selected_cards waiter_boost))
                             (if not result
                                 (/ amount 2)
