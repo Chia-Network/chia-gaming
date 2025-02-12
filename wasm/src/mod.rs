@@ -16,12 +16,9 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use chia_gaming::channel_handler::types::ReadableMove;
-use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
 use chia_gaming::common::types;
-use chia_gaming::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, GameID, Hash, IntoErr, PrivateKey, Program,
-    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
-};
+use chia_gaming::common::types::{AllocEncoder, Amount, CoinSpend, CoinString, Hash, IntoErr, GameID, PrivateKey, Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout};
+use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
 use chia_gaming::log::wasm_init;
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
