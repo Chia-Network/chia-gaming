@@ -771,6 +771,7 @@ impl PotatoHandler {
             .to_clvm(env.allocator)
             .into_gen()?;
 
+        debug!("running program to get game start");
         let program_output = run_program(
             env.allocator.allocator(),
             &chia_dialect(),
