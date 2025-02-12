@@ -5,6 +5,8 @@ use clvmr::run_program;
 
 use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
+use log::debug;
+
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::ValidationProgram;
 use crate::channel_handler::GameStartInfo;
@@ -36,6 +38,7 @@ impl Game {
         let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
         let nil = allocator.encode_atom(&[]).into_gen()?;
         let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
+        debug!("running start");
         let template_clvm = run_program(
             allocator.allocator(),
             &chia_dialect(),
