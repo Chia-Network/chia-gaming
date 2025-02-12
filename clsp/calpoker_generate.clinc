@@ -206,7 +206,7 @@
             pokere
             pokere_hash
             (list my_move (list ALICE_CARDS BOB_CARDS) ALICE_COMMIT_2)
-            18
+            17
             0
             calpoker_bob_driver_e
             0
