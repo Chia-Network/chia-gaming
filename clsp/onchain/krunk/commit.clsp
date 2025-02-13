@@ -1,18 +1,23 @@
 (include *standard-cl-23*)
 
-(import onchain.krunk.guess exposing (program_hash as guesshash))
+(export commit)
+(import onchain.krunk.guess exposing guess_validate_hash)
 (import std.assert)
 
+; Bob challenging
+; state is nil
+; move is an Alice commit to a salted word
+; evidence is empty
+(defun commit_validate (mod_hash (move new_validation_hash mover_share previous_validation_hash
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
+    state me previous_calidation_program mover_puzzle solution evidence)
 
-; state is empty
-; move is alice commit to a salted word 
-(export (quine_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    state me mover_puzzle solution evidence)
-
+    ; check move length is 32
+    ; check state is (0 0 dictionary_public_key alice_commit)
+    ; check max_move_size, mover_share
     (if_any_fail
         (= (strlen move) 32)
-        (= new_validation hash (sha256 guesshash (shatree (li image 0 0))))
+        (= next_validation_hash (sha256 guess_validate_hash (shatree (li 0 0 dictionary_key move))))
         (= max_move_size 5)
         0
         (x)
