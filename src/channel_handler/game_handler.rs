@@ -385,7 +385,10 @@ impl GameHandler {
             get_their_turn_debug_flag(inputs),
         )?;
 
-        debug!("run result {}", disassemble(allocator.allocator(), run_result, None));
+        debug!(
+            "run result {}",
+            disassemble(allocator.allocator(), run_result, None)
+        );
 
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
@@ -419,9 +422,9 @@ impl GameHandler {
             }
 
             let mut decode_slash_evidence = |index: Option<usize>| {
-                let mut lst = if let Some(lst) = index.and_then(|i| {
-                    proper_list(allocator.allocator(), pl[i], true)
-                }) {
+                let mut lst = if let Some(lst) =
+                    index.and_then(|i| proper_list(allocator.allocator(), pl[i], true))
+                {
                     lst
                 } else {
                     vec![]
@@ -430,12 +433,11 @@ impl GameHandler {
                 Ok(lst)
             };
 
-            let slash_evidence =
-                if pl.len() >= 3 {
-                    decode_slash_evidence(Some(2))
-                } else {
-                    decode_slash_evidence(None)
-                };
+            let slash_evidence = if pl.len() >= 3 {
+                decode_slash_evidence(Some(2))
+            } else {
+                decode_slash_evidence(None)
+            };
 
             let their_turn_move_data = TheirTurnMoveData {
                 readable_move: pl[1],
@@ -455,7 +457,7 @@ impl GameHandler {
                 Ok(TheirTurnResult::MakeMove(
                     GameHandler::my_driver_from_nodeptr(allocator, pl[3])?,
                     message_data,
-                    their_turn_move_data
+                    their_turn_move_data,
                 ))
             }
         } else if move_type == 2 {

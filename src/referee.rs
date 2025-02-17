@@ -1981,13 +1981,10 @@ impl RefereeMaker {
                 for evidence in move_data.slash_evidence.iter() {
                     debug!("check their turn for slash");
                     if let Some(result) =
-                        self.check_their_turn_for_slash(
-                            allocator,
-                            *evidence,
-                            &created_coin
-                        )? {
-                            return Ok(result);
-                        }
+                        self.check_their_turn_for_slash(allocator, *evidence, &created_coin)?
+                    {
+                        return Ok(result);
+                    }
                 }
 
                 Ok(TheirTurnCoinSpentResult::Moved {
@@ -2014,9 +2011,7 @@ impl RefereeMaker {
                     evidence,
                 )
             }
-            TheirTurnResult::FinalMove(move_data) => {
-                check_and_report_slash(allocator, &move_data)
-            }
+            TheirTurnResult::FinalMove(move_data) => check_and_report_slash(allocator, &move_data),
             TheirTurnResult::MakeMove(_, _, move_data) => {
                 check_and_report_slash(allocator, &move_data)
             }

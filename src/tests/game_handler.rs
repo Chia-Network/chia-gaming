@@ -83,7 +83,10 @@ fn test_game_handler_their_make_move() {
     if let TheirTurnResult::MakeMove(game_handler, msg, move_data) = result {
         let game_handler_node = game_handler.to_nodeptr(&mut allocator).expect("should cvt");
         assert_eq!(msg, b"test");
-        assert_eq!(disassemble(allocator.allocator(), move_data.readable_move, None), "999");
+        assert_eq!(
+            disassemble(allocator.allocator(), move_data.readable_move, None),
+            "999"
+        );
         assert_eq!(disassemble(allocator.allocator(), game_handler_node, None), "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000 () ())");
     } else {
         unreachable!();

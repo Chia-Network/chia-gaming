@@ -906,12 +906,16 @@ impl ChannelHandler {
         );
 
         let (readable_move, message, mover_share) = match their_move_result.original {
-            TheirTurnResult::FinalMove(move_data) => {
-                (move_data.readable_move, vec![], move_data.mover_share.clone())
-            }
-            TheirTurnResult::MakeMove(_, message, move_data) => {
-                (move_data.readable_move, message.clone(), move_data.mover_share.clone())
-            }
+            TheirTurnResult::FinalMove(move_data) => (
+                move_data.readable_move,
+                vec![],
+                move_data.mover_share.clone(),
+            ),
+            TheirTurnResult::MakeMove(_, message, move_data) => (
+                move_data.readable_move,
+                message.clone(),
+                move_data.mover_share.clone(),
+            ),
             TheirTurnResult::Slash(_) => {
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
