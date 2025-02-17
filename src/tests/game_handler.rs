@@ -52,7 +52,7 @@ fn test_game_handler_their_make_move() {
     let mut allocator = AllocEncoder::new();
     let program = assemble(
         allocator.allocator(),
-        "(c () (c (1 . 999) (c (c (1 . 1337) 1) (c (1 . 'test') ()))))",
+        "(c () (c (1 . 999) (c () (c (c (1 . 1337) 1) (c (1 . 'test') ())))))",
     )
     .expect("should assemble");
 
@@ -80,10 +80,10 @@ fn test_game_handler_their_make_move() {
             },
         )
         .expect("should run");
-    if let TheirTurnResult::MakeMove(state, game_handler, msg, _mover_share) = result {
+    if let TheirTurnResult::MakeMove(game_handler, msg, move_data) = result {
         let game_handler_node = game_handler.to_nodeptr(&mut allocator).expect("should cvt");
         assert_eq!(msg, b"test");
-        assert_eq!(disassemble(allocator.allocator(), state, None), "999");
+        assert_eq!(disassemble(allocator.allocator(), move_data.readable_move, None), "999");
         assert_eq!(disassemble(allocator.allocator(), game_handler_node, None), "(1337 () () () 0x0000000000000000000000000000000000000000000000000000000000000000 () ())");
     } else {
         unreachable!();

@@ -638,6 +638,7 @@ pub enum Error {
     JsonErr(serde_json::Error),
     HexErr(hex::FromHexError),
     Channel(String),
+    GameMoveRejected(Vec<u8>),
 }
 
 #[derive(Serialize, Deserialize)]
