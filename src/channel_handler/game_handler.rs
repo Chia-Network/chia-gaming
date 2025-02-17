@@ -422,8 +422,9 @@ impl GameHandler {
             }
 
             let mut decode_slash_evidence = |index: Option<usize>| {
-                let mut lst =
-                    index.and_then(|i| proper_list(allocator.allocator(), pl[i], true)).unwrap_or_default();
+                let mut lst = index
+                    .and_then(|i| proper_list(allocator.allocator(), pl[i], true))
+                    .unwrap_or_default();
                 lst.push(allocator.encode_atom(&[]).into_gen()?);
                 Ok(lst)
             };
