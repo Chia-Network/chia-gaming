@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::rc::Rc;
 
+use hex::FromHex;
 use log::debug;
 use num_bigint::{BigInt, Sign};
 
@@ -13,13 +14,11 @@ use clvm_traits::{clvm_curried_args, ToClvm};
 use clvmr::serde::node_from_bytes;
 use clvmr::NodePtr;
 
-use clvm_tools_rs::util::{number_from_u8, u8_from_number};
+use crate::utils::{number_from_u8, u8_from_number};
 
-use clvm_tools_rs::classic::clvm::__type_compatibility__::{
-    Bytes, Stream, UnvalidatedBytesFromType,
-};
-use clvm_tools_rs::compiler::comptypes::map_m;
+use crate::utils::map_m;
 
+use clvmr::serde::node_to_bytes;
 use clvm_utils::CurriedProgram;
 
 use crate::common::constants::{
@@ -47,10 +46,8 @@ pub fn hex_to_sexp(
     allocator: &mut AllocEncoder,
     hex_data: String,
 ) -> Result<NodePtr, types::Error> {
-    let hex_stream = Stream::new(Some(
-        Bytes::new_validated(Some(UnvalidatedBytesFromType::Hex(hex_data))).into_gen()?,
-    ));
-    node_from_bytes(allocator.allocator(), hex_stream.get_value().data()).into_gen()
+    let hex_stream = Vec::<u8>::from_hex(&hex_data).into_gen()?;
+    node_from_bytes(allocator.allocator(), &hex_stream).into_gen()
 }
 
 pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, types::Error> {
@@ -342,7 +339,7 @@ pub fn solution_for_conditions(
     conditions: NodePtr,
 ) -> Result<NodePtr, types::Error> {
     let delegated_puzzle = conditions.to_quoted_program(allocator)?;
-    let nil = allocator.allocator().null();
+    let nil = allocator.allocator().nil();
     solution_for_delegated_puzzle(allocator, delegated_puzzle, nil)
 }
 

@@ -6,8 +6,6 @@ use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
 use clvmr::run_program;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
-
 use log::debug;
 
 use serde::{Deserialize, Serialize};
@@ -266,8 +264,7 @@ fn curry_referee_puzzle(
     let args_to_curry: Vec<Node> = args.to_node_list(allocator, referee_coin_puzzle_hash)?;
     let combined_args = args_to_curry.to_clvm(allocator).into_gen()?;
     debug!(
-        "curry_referee_puzzle {}",
-        disassemble(allocator.allocator(), combined_args, None)
+        "curry_referee_puzzle {}", combined_args.to_hex(allocator)
     );
     let curried_program_nodeptr = CurriedProgram {
         program: referee_coin_puzzle,
@@ -553,11 +550,11 @@ impl OnChainRefereeSolution {
     }
 }
 
-impl ToClvm<NodePtr> for OnChainRefereeSolution {
+impl<E: ClvmEncoder> ToClvm<E> for OnChainRefereeSolution {
     fn to_clvm(
         &self,
-        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
-    ) -> Result<NodePtr, ToClvmError> {
+        encoder: &mut E,
+    ) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         match self {
             OnChainRefereeSolution::Timeout => encoder.encode_atom(&[]),
             OnChainRefereeSolution::Move(refmove) => {
@@ -1233,10 +1230,6 @@ impl RefereeMaker {
             // OnChainRefereeSolution encodes this properly.
             let transaction_solution = args.to_clvm(allocator).into_gen()?;
             debug!("transaction solution inputs {args:?}");
-            debug!(
-                "transaction_solution {}",
-                disassemble(allocator.allocator(), transaction_solution, None)
-            );
             let transaction_bundle = Spend {
                 puzzle: puzzle.clone(),
                 solution: Rc::new(Program::from_nodeptr(allocator, transaction_solution)?),
@@ -1423,10 +1416,6 @@ impl RefereeMaker {
             &target_args,
         )?;
         let target_referee_puzzle_nodeptr = target_referee_puzzle.to_clvm(allocator).into_gen()?;
-        debug!(
-            "target_referee_puzzle {}",
-            disassemble(allocator.allocator(), target_referee_puzzle_nodeptr, None)
-        );
         assert_eq!(
             target_referee_puzzle.sha256tree(allocator),
             target_referee_puzzle_hash
@@ -1815,11 +1804,6 @@ impl RefereeMaker {
         let full_slash_result = self.run_validator_for_their_move(allocator, evidence)?;
         match full_slash_result {
             ValidatorResult::Slash(slash) => {
-                debug!(
-                    "slash was allowed: {}",
-                    disassemble(allocator.allocator(), slash, None)
-                );
-
                 // result is NodePtr containing solution and aggsig.
                 // The aggsig for the nil slash is the same as the slash
                 // below, having been created for the reward coin by using

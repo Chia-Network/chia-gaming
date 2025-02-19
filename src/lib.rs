@@ -10,6 +10,7 @@ mod referee;
 pub mod shutdown;
 #[cfg(any(feature = "sim-tests", feature = "simulator"))]
 pub mod simulator;
+pub mod utils;
 
 #[cfg(test)]
 mod tests;

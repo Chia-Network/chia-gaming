@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
-use clvm_tools_rs::classic::clvm::sexp::proper_list;
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
+use crate::utils::proper_list;
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
@@ -193,10 +192,10 @@ impl ReadableMove {
     }
 }
 
-impl ToClvm<NodePtr> for ReadableMove {
+impl ToClvm<AllocEncoder> for ReadableMove {
     fn to_clvm(
         &self,
-        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+        encoder: &mut AllocEncoder,
     ) -> Result<NodePtr, ToClvmError> {
         self.0.to_clvm(encoder)
     }
@@ -380,7 +379,7 @@ impl Evidence {
     }
 
     pub fn nil(allocator: &mut AllocEncoder) -> Evidence {
-        Evidence(allocator.allocator().null())
+        Evidence(allocator.allocator().nil())
     }
 
     pub fn to_nodeptr(&self) -> NodePtr {
@@ -388,10 +387,10 @@ impl Evidence {
     }
 }
 
-impl ToClvm<NodePtr> for Evidence {
+impl ToClvm<AllocEncoder> for Evidence {
     fn to_clvm(
         &self,
-        _encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+        encoder: &mut AllocEncoder,
     ) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
     }
@@ -436,10 +435,10 @@ impl ValidationProgram {
     }
 }
 
-impl ToClvm<NodePtr> for ValidationProgram {
+impl ToClvm<AllocEncoder> for ValidationProgram {
     fn to_clvm(
         &self,
-        encoder: &mut impl ClvmEncoder<Node = NodePtr>,
+        encoder: &mut AllocEncoder,
     ) -> Result<NodePtr, ToClvmError> {
         self.validation_program.to_clvm(encoder)
     }
@@ -824,10 +823,6 @@ impl UnrollCoin {
         let conditions_hash = Node(unroll_conditions).sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(unroll_private_key);
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
-        debug!(
-            "conditions {}",
-            disassemble(env.allocator.allocator(), unroll_conditions, None)
-        );
         debug!("conditions_hash {conditions_hash:?}");
         let unroll_signature = unsafe_sign_partial(
             unroll_private_key,
@@ -846,11 +841,6 @@ impl UnrollCoin {
         debug!(
             "SIGNATURE {} {:?}",
             self.started_with_potato, unroll_signature
-        );
-        debug!(
-            "UNROLL UPDATE {} {}",
-            self.started_with_potato,
-            disassemble(env.allocator.allocator(), unroll_conditions, None)
         );
 
         Ok(unroll_signature)

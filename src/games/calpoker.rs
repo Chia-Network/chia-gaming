@@ -5,7 +5,7 @@ use log::debug;
 use crate::channel_handler::types::ReadableMove;
 use clvmr::NodePtr;
 
-use clvm_tools_rs::classic::clvm::sexp::proper_list;
+use crate::utils::proper_list;
 #[cfg(test)]
 use clvm_tools_rs::classic::clvm_tools::binutils::assemble;
 

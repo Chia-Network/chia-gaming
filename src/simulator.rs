@@ -4,7 +4,7 @@ use std::rc::Rc;
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::NodePtr;
 
-use clvm_tools_rs::compiler::comptypes::map_m;
+use crate::utils::map_m;
 
 use indoc::indoc;
 use log::debug;

@@ -7,8 +7,6 @@ use clvm_traits::ToClvm;
 use clvmr::serde::node_from_bytes;
 use clvmr::{run_program, Allocator, NodePtr};
 
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
-
 use log::debug;
 use rand::Rng;
 
@@ -26,7 +24,7 @@ use crate::common::types::{
     Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
-use clvm_tools_rs::classic::clvm::sexp::proper_list;
+use crate::utils::proper_list;
 
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::potato_handler::types::{
@@ -1446,15 +1444,6 @@ impl PotatoHandler {
         ));
 
         debug!("{} SPEND: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", player_ch.is_initial_potato());
-        debug!(
-            "Internal solution {}",
-            disassemble(env.allocator.allocator(), unroll_puzzle_solution, None)
-        );
-        debug!(
-            "Given solution {}",
-            disassemble(env.allocator.allocator(), unroll_solution, None)
-        );
-
         system_interface.spend_transaction_and_add_fee(&SpendBundle {
             name: Some("create unroll".to_string()),
             spends: vec![CoinSpend {
