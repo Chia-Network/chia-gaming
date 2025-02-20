@@ -785,7 +785,7 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Program {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Puzzle(Rc<Program>);
+pub struct Puzzle(ProgramRef);
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Puzzle {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
@@ -795,17 +795,17 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Puzzle {
 
 impl Puzzle {
     pub fn to_program(&self) -> Rc<Program> {
-        self.0.clone()
+        self.0.p()
     }
     pub fn from_bytes(by: &[u8]) -> Puzzle {
-        Puzzle(Rc::new(Program::from_bytes(by)))
+        Puzzle(ProgramRef::new(Rc::new(Program::from_bytes(by))))
     }
     pub fn from_nodeptr(allocator: &mut AllocEncoder, node: NodePtr) -> Result<Puzzle, Error> {
         let bytes = node_to_bytes(allocator.allocator(), node).into_gen()?;
         Ok(Puzzle::from_bytes(&bytes))
     }
     pub fn to_hex(&self) -> String {
-        self.0.to_hex()
+        self.0 .0.to_hex()
     }
 }
 
