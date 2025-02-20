@@ -1,10 +1,13 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.c exposing (program_hash as chash))
+(import onchain.game_codes)
 (import std.and)
 (import std.assert)
 (import std.if_any_fail)
 (import std.shatree)
+(import std.li)
+(import std.relops)
 
 ; Alice challenging
 ; state is alice's commit
@@ -15,6 +18,6 @@
     alice_commit me previous_validation_program mover_puzzle solution evidence)
     (if (!= (strlen move) 16)
         (li SLASH 0)
-        (li MOVE chash (li alice_commit move) 48 0)
+        (li MAKE_MOVE chash (li alice_commit move) 48 0)
     )
 )

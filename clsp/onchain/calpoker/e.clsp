@@ -3,11 +3,13 @@
 (import onchain.calpoker.onehandcalc)
 (import onchain.calpoker.make_card)
 (import onchain.calpoker.arrange_cards)
+(import onchain.game_codes)
 (import std.list_compare)
 (import std.assert)
 (import std.relops)
 (import std.popcount)
 (import std.if_any_fail)
+(import std.li)
 (import std.and)
 
 ; Bob challenging
@@ -38,7 +40,7 @@
                     )
                 )
                 (li SLASH 0)
-                (li MOVE 0 0 0 bob_share)
+                (li MAKE_MOVE 0 0 0 bob_share)
             )
         )
         (li SLASH 0)

@@ -1,9 +1,12 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.b exposing (program_hash as bhash))
+(import onchain.game_codes)
 (import std.assert)
 (import std.and)
+(import std.li)
 (import std.if_any_fail)
+(import std.relops)
 
 ; Bob challenging
 ; state is empty
@@ -17,7 +20,7 @@
     (if (!= (strlen move) 32)
         (li SLASH 0)
         ; next validation hash, next validation state, max move size, mover share
-        (li MOVE bhash move 16 0)
+        (li MAKE_MOVE bhash move 16 0)
     )
 )
 
