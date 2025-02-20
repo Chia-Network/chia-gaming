@@ -714,7 +714,7 @@ impl PotatoHandler {
                     Rc::new(Program::from_nodeptr(env.allocator, real_conditions)?);
                 system_interface.send_message(&PeerMessage::Shutdown(
                     spend.signature.clone(),
-                    shutdown_condition_program,
+                    ProgramRef::new(shutdown_condition_program),
                 ))?;
 
                 self.handshake_state =
