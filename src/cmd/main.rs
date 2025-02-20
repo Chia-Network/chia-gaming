@@ -8,7 +8,6 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::SExp;
 use clvmr::serde::node_to_bytes;
@@ -330,11 +329,7 @@ impl PerPlayerInfo {
             PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::AliceEnd => serde_json::to_value(&self.game_outcome).into_gen(),
             PlayState::BobEnd => serde_json::to_value(&self.game_outcome).into_gen(),
-            _ => Ok(Value::String(disassemble(
-                allocator.allocator(),
-                self.local_ui.opponent_readable_move.to_nodeptr(),
-                None,
-            ))),
+            _ => Ok(Value::String("".to_string())),
         }
     }
 
