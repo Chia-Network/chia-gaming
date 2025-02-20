@@ -22,6 +22,6 @@
         (= (sha256 (substr move 0 16)) alice_commit)
         (li SLASH 0)
         (li MAKE_MOVE dhash (list (make_cards
-            (sha256 (substr move 0 16) bob_seed amount)) (substr move 16 48)) 1 0)
+            (sha256 (substr move 0 16) bob_seed amount)) (substr move 16 48)) 1)
     )
 )

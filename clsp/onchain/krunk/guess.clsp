@@ -21,7 +21,7 @@
         )
         (if (!= (strlen move) 5)
             (li SLASH 0)
-            (li MOVE clue_validate_hash (li (c move bob_guesses) alice_clues mod_hash &rest tail) 21 0)
+            (li MOVE clue_validate_hash (li (c move bob_guesses) alice_clues mod_hash &rest tail) 21)
         )
     )
 )

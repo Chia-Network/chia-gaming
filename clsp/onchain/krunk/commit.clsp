@@ -14,7 +14,7 @@
 
     (if (!= (strlen move) 32)
         (li SLASH 0)
-        (li MOVE guess_validation_hash (li 0 0 dictionary_key move) 5 0)
+        (li MOVE guess_validation_hash (li 0 0 dictionary_key move) 5)
     )
 )
 

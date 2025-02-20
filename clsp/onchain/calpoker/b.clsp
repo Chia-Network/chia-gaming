@@ -18,6 +18,6 @@
     alice_commit me previous_validation_program mover_puzzle solution evidence)
     (if (!= (strlen move) 16)
         (li SLASH 0)
-        (li MAKE_MOVE chash (li alice_commit move) 48 0)
+        (li MAKE_MOVE chash (li alice_commit move) 48)
     )
 )

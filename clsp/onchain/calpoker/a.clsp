@@ -20,7 +20,7 @@
     (if (!= (strlen move) 32)
         (li SLASH 0)
         ; next validation hash, next validation state, max move size, mover share
-        (li MAKE_MOVE bhash move 16 0)
+        (li MAKE_MOVE bhash move 16)
     )
 )
 

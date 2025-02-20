@@ -30,7 +30,7 @@
             (if_any_fail
                 (= (sha256 alice_salted_picks alice_commit))
                 (= (popcount alice_picks) 4)
-                (<= bob_share
+                (= bob_share
                     (if (not result)
                         (/ amount 2)
                         (if (= result 1)
@@ -40,7 +40,7 @@
                     )
                 )
                 (li SLASH 0)
-                (li MAKE_MOVE 0 0 0 bob_share)
+                (li MAKE_MOVE 0 0 0)
             )
         )
         (li SLASH 0)

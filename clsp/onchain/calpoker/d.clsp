@@ -20,6 +20,6 @@
         (= (strlen bob_picks) 1)
         (= (popcount bob_picks) 4)
         (li SLASH 0)
-        (li MAKE_MOVE ehash (list bob_picks cards alice_commit) 18 0)
+        (li MAKE_MOVE ehash (list bob_picks cards alice_commit) 18)
     )
 )

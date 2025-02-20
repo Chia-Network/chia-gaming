@@ -90,10 +90,9 @@
                             (if (= slash_type SLASH)
                                 (f leftovers)
                                 (assign
-                                    (new_validation_program_hash new_state new_max_move_size new_mover_share) leftovers
+                                    (new_validation_program_hash new_state new_max_move_size) leftovers
                                     (if_any_fail
                                         (= max_move_size MAX_MOVE_SIZE)
-                                        (= new_mover_share MOVER_SHARE)
                                         (= VALIDATION_INFO_HASH (sha256 new_validation_program_hash (shatree new_state)))
                                         0
                                         (x)

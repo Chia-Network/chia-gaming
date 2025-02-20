@@ -77,7 +77,7 @@
 ; return validation program hash is krunk guess hash
 ; return game handler is alice_driver_guess with preimage curried in
 ; return message parser is skipped
-(defun alice_driver_commit (local_move amount state mover_share max_move_size entropy)
+(defun alice_driver_commit (local_move amount state mover_share entropy)
 )
 
 ; their turn driver
@@ -88,7 +88,7 @@
 ; return slash evidence is nil
 ; return game handler is alice_driver_clue with preimage curried
 ; return message parser is skipped
-(defun alice_driver_guess (PREIMAGE amount before_state before_mover_share before_max_move_size move)
+(defun alice_driver_guess (PREIMAGE amount before_state before_mover_share move after_mover_share)
 )
 
 ; my turn driver
@@ -103,20 +103,20 @@
 ; return validation program is krunk guess unless bob guessed right or ran out of guesses in which case it's nil
 ; return split is 0 unless bob guessed right or ran out of guesses
 ; return max move size is
-(defun alice_driver_clue (PREIMAGE local_move amount state mover_share max_move_size entropy)
+(defun alice_driver_clue (PREIMAGE local_move amount state mover_share entropy)
 )
 
 ; their turn driver
 ; no special checks
 ; readable_move is nil
 ; next turn handler is bob_driver_guess
-(defun bob_driver_commit (amount before_state before_mover_share before_max_move_size move)
+(defun bob_driver_commit (amount before_state before_mover_share move after_mover_share)
 )
 
 ; my turn driver
 ; local_move is a guess word. Needs to be in the dictionary
 ; next turn handler is bob_driver_clue
-(defun bob_driver_guess (local_move amount state mover_share max_move_size entropy)
+(defun bob_driver_guess (local_move amount state mover_share entropy)
 )
 
 ; their turn driver
@@ -124,5 +124,5 @@
 ; when there's a reveal possible evidence is indices of alice clues
 ; readable_move is a clue and optionally a reveal of Alice's word if done
 ; next turn handler is bob_driver_guess or nil if done
-(defun bob_driver_clue (amount before_state before_mover_share before_max_move_size move)
+(defun bob_driver_clue (amount before_state before_mover_share move after_mover_share)
 )
