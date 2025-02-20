@@ -61,37 +61,62 @@
     )
 )
 
+
+; their turn driver return value
+; move type move, readable move, slash evidence to try, game handler, message
+; move type slash, evidence
+
+; my turn driver return value
+; move, validation program, validation program hash, game handler, message parser
+
 ; my turn driver
 ; local_move is the picked word. Needs to be in the dictionary
 ; checks that word is in dictionary
-; next turn handler is a curried alice_driver_guess
-(defun alice_driver_commit (local_move amount split max_move_size entropy)
+; return move is a word commitment
+; return validation program is krunk guess
+; return validation program hash is krunk guess hash
+; return game handler is alice_driver_guess with preimage curried in
+; return message parser is skipped
+(defun alice_driver_commit (local_move amount state mover_share max_move_size entropy)
 )
 
 ; their turn driver
 ; checks for Bob's guess being in dictionary
 ; readable_move is Bob's guess
-; next turn handler is alice_driver_clue or nil if Bob guessed right or ran out of guesses
-(defun alice_driver_guess (PREIMAGE amount state_unused move validation_info_hash max_move_size split)
+; return move type is MOVE unless Bob guesses a word not in the dictionary in which case it's SLASH
+; return readable move is opponent's move deconstructed to a clue
+; return slash evidence is nil
+; return game handler is alice_driver_clue with preimage curried
+; return message parser is skipped
+(defun alice_driver_guess (PREIMAGE amount before_state before_mover_share before_max_move_size move)
 )
 
 ; my turn driver
 ; local_move is nil (should be called immediately)
-; next turn handler is alice_driver_guess
-(defun alice_driver_clue (PREIMAGE local_move amount split max_move_size entropy)
+; if bob guessed right or ran out of guesses
+;   return move is preimage
+;   return validation program is nil
+;   return validation program hash is nil
+;   return game handler is skipped
+;   return message parser is skipped
+; return move is a clue
+; return validation program is krunk guess unless bob guessed right or ran out of guesses in which case it's nil
+; return split is 0 unless bob guessed right or ran out of guesses
+; return max move size is
+(defun alice_driver_clue (PREIMAGE local_move amount state mover_share max_move_size entropy)
 )
 
 ; their turn driver
 ; no special checks
 ; readable_move is nil
 ; next turn handler is bob_driver_guess
-(defun bob_driver_commit (amount state_unused move validation_info_hash max_move_size split)
+(defun bob_driver_commit (amount before_state before_mover_share before_max_move_size move)
 )
 
 ; my turn driver
 ; local_move is a guess word. Needs to be in the dictionary
 ; next turn handler is bob_driver_clue
-(defun bob_driver_guess (local_move amount split max_move_size entropy)
+(defun bob_driver_guess (local_move amount state mover_share max_move_size entropy)
 )
 
 ; their turn driver
@@ -99,5 +124,5 @@
 ; when there's a reveal possible evidence is indices of alice clues
 ; readable_move is a clue and optionally a reveal of Alice's word if done
 ; next turn handler is bob_driver_guess or nil if done
-(defun bob_driver_clue (amount state_unused move validation_info_hash max_move_size split)
+(defun bob_driver_clue (amount before_state before_mover_share before_max_move_size move)
 )

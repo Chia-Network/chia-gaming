@@ -50,7 +50,7 @@
         (assign
             (previous_state me previous_validation_program mover_puzzle solution evidence) args
             previous_validation_program_hash (shatree previous_validation_program)
-            
+
             (assert
                 (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
                 (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree
@@ -62,25 +62,42 @@
                 ; The conditions returned by mover_puzzle
                 (c (list REMARK)
                     (concat
-                        (a previous_validation_program
-                            (c previous_validation_program_hash
-                                (c
-                                    (list
-                                        ;; The items from the onchain validators in
-                                        ;; clsp/onchain/calpoker/a-e.clsp
-                                        ;; (and above at line 33)
-                                        MOVE
-                                        VALIDATION_INFO_HASH
-                                        MOVER_SHARE
-                                        PREVIOUS_VALIDATION_INFO_HASH
-                                        MOVER_PUZZLE_HASH
-                                        WAITER_PUZZLE_HASH
-                                        AMOUNT
-                                        TIMEOUT
-                                        MAX_MOVE_SIZE
-                                        MOD_HASH ; referee_hash
+                        ; Should change to look like this:
+                        ; (a previous_validation_program (li previous_validan_program_hash &rest all_args))
+                        (assign
+                            (slash_type . leftovers) (a previous_validation_program
+                                (c previous_validation_program_hash
+                                    (c
+                                        (list
+                                            ;; The items from the onchain validators in
+                                            ;; clsp/onchain/calpoker/a-e.clsp
+                                            ;; (and above at line 33)
+                                            MOVE
+                                            VALIDATION_INFO_HASH
+                                            MOVER_SHARE
+                                            PREVIOUS_VALIDATION_INFO_HASH
+                                            MOVER_PUZZLE_HASH
+                                            WAITER_PUZZLE_HASH
+                                            AMOUNT
+                                            TIMEOUT
+                                            MAX_MOVE_SIZE
+                                            MOD_HASH ; referee_hash
+                                        )
+                                        args
                                     )
-                                    args
+                                )
+                            )
+                            (if (= slash_type SLASH)
+                                (f leftovers)
+                                (assign
+                                    (new_validation_program_hash new_state new_max_move_size new_mover_share) leftovers
+                                    (if_any_fail
+                                        (= max_move_size MAX_MOVE_SIZE)
+                                        (= new_mover_share MOVER_SHARE)
+                                        (= VALIDATION_INFO_HASH (sha256 new_validation_program_hash (shatree new_state)))
+                                        0
+                                        (x)
+                                    )
                                 )
                             )
                         )
@@ -90,9 +107,9 @@
             )
         )
         ; move
-        (assign 
+        (assign
             (new_move new_validation_info_hash new_mover_share new_max_move_size mover_puzzle solution) args
-            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT 
+            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT
                     AMOUNT MOD_HASH NONCE new_move new_max_move_size new_validation_info_hash new_mover_share
                     VALIDATION_INFO_HASH)))
             conditions (a mover_puzzle solution)
@@ -110,7 +127,7 @@
                     )
                     conditions
                 )
-                (li (list REMARK new_move new_validation_info_hash new_mover_share new_max_move_size) 
+                (li (list REMARK new_move new_validation_info_hash new_mover_share new_max_move_size)
                         (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT) &rest conditions)
             )
         )

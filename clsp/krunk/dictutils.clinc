@@ -1,7 +1,8 @@
 
 ; Words is a list of 5 letter words in sorted order all low caps
 ; creates a BLS private key which it then destroys
-; returns a balanced tree of nodes which are either (leftnode word rightnode) or (minboundary maxboundary signature)
+; returns (dictionary pubkey)
+; dictionary is a balanced tree of nodes which are either (leftnode word rightnode) or (minboundary maxboundary signature)
 (defun create_dictionary (words entropy)
     booga booga
 )
@@ -9,7 +10,7 @@
 ; returns nil if word is in dictionary otherwise (mindboundary maxboundary signature)
 (defun find_exclusion_proof (word (@ node (thing1 thing2 thing3)))
     (if (l thing1)
-        (assign 
+        (assign
             leftnode thing1
             oldword thing2
             rightnode thing3
