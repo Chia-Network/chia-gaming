@@ -19,7 +19,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, PrivateKey, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, Timeout,
+    IntoErr, PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
@@ -134,7 +134,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             coin: state_channel.clone(),
             bundle: Spend {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
-                solution: ProgramRef::new(cc_spend.spend.solution.clone()),
+                solution: cc_spend.spend.solution.into(),
                 signature,
             },
         };
@@ -586,7 +586,7 @@ fn test_referee_can_slash_on_chain() {
         my_contribution_this_game: Amount::new(50),
         their_contribution_this_game: Amount::new(50),
         initial_validation_program,
-        initial_state: ProgramRef::new(init_state),
+        initial_state: init_state.into(),
         initial_move: vec![],
         initial_max_move_size: 100,
         initial_mover_share: Amount::default(),
@@ -699,7 +699,7 @@ fn test_referee_can_move_on_chain() {
         my_contribution_this_game: Amount::new(50),
         their_contribution_this_game: Amount::new(50),
         initial_validation_program: my_validation_program,
-        initial_state: ProgramRef::new(init_state),
+        initial_state: init_state.into(),
         initial_move: vec![],
         initial_max_move_size: max_move_size,
         initial_mover_share: Amount::default(),

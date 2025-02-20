@@ -723,6 +723,14 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for ProgramRef {
     }
 }
 
+impl From<Rc<Program>> for ProgramRef {
+    fn from(other: Rc<Program>) -> Self { ProgramRef::new(other) }
+}
+
+impl From<Program> for ProgramRef {
+    fn from(other: Program) -> Self { ProgramRef::new(Rc::new(other)) }
+}
+
 impl ProgramRef {
     pub fn new(p: Rc<Program>) -> Self {
         ProgramRef(p)
@@ -793,12 +801,24 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Puzzle {
     }
 }
 
+impl From<Program> for Puzzle {
+    fn from(other: Program) -> Self { Puzzle(other.into()) }
+}
+
+impl From<Rc<Program>> for Puzzle {
+    fn from(other: Rc<Program>) -> Self { Puzzle(other.into()) }
+}
+
+impl From<ProgramRef> for Puzzle {
+    fn from(other: ProgramRef) -> Self { Puzzle(other) }
+}
+
 impl Puzzle {
     pub fn to_program(&self) -> Rc<Program> {
         self.0.p()
     }
     pub fn from_bytes(by: &[u8]) -> Puzzle {
-        Puzzle(ProgramRef::new(Rc::new(Program::from_bytes(by))))
+        Puzzle(Program::from_bytes(by).into())
     }
     pub fn from_nodeptr(allocator: &mut AllocEncoder, node: NodePtr) -> Result<Puzzle, Error> {
         let bytes = node_to_bytes(allocator.allocator(), node).into_gen()?;
@@ -1077,7 +1097,7 @@ impl Default for Spend {
     fn default() -> Self {
         Spend {
             puzzle: Puzzle::from_bytes(&[0x80]),
-            solution: ProgramRef::new(Rc::new(Program::from_bytes(&[0x80]))),
+            solution: Program::from_bytes(&[0x80]).into(),
             signature: Aggsig::default(),
         }
     }

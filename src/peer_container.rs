@@ -13,7 +13,7 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, ProgramRef,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
     PuzzleHash, Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::types::{
@@ -619,7 +619,7 @@ impl SynchronousGameCradle {
             coin: parent_coin.clone(),
             bundle: Spend {
                 puzzle: self.state.identity.puzzle.clone(),
-                solution: ProgramRef::new(Rc::new(Program::from_nodeptr(env.allocator, solution)?)),
+                solution: Program::from_nodeptr(env.allocator, solution)?.into(),
                 signature,
             },
         });

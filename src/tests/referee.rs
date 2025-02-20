@@ -13,7 +13,7 @@ use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgr
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, ProgramRef, Puzzle,
+    Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle,
     PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorResult};
@@ -199,9 +199,8 @@ fn test_referee_smoke() {
 
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
     let init_state_node = ((), ()).to_clvm(&mut allocator).expect("should assemble");
-    let init_state = ProgramRef::new(Rc::new(
-        Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"),
-    ));
+    let init_state =
+        Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert");
     let initial_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
 
@@ -214,7 +213,7 @@ fn test_referee_smoke() {
         my_contribution_this_game: Amount::new(50),
         their_contribution_this_game: Amount::new(50),
         initial_validation_program,
-        initial_state: init_state,
+        initial_state: init_state.into(),
         initial_move: vec![],
         initial_max_move_size: 0,
         initial_mover_share: Amount::default(),

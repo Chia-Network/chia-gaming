@@ -24,7 +24,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
     BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, ProgramRef, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
+    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
 };
 
 pub const REM_CONDITION_FIELDS: usize = 4;
@@ -959,9 +959,9 @@ impl RefereeMaker {
             let nil = allocator
                 .encode_atom(clvm_traits::Atom::Borrowed(&[]))
                 .into_gen()?;
-            GameHandler::MyTurnHandler(ProgramRef::new(Rc::new(Program::from_nodeptr(
+            GameHandler::MyTurnHandler(Program::from_nodeptr(
                 allocator, nil,
-            )?)))
+            )?.into())
         };
 
         let new_state = match self.state.borrow() {
@@ -1243,10 +1243,10 @@ impl RefereeMaker {
             debug!("transaction solution inputs {args:?}");
             let transaction_bundle = Spend {
                 puzzle: puzzle.clone(),
-                solution: ProgramRef::new(Rc::new(Program::from_nodeptr(
+                solution: Program::from_nodeptr(
                     allocator,
                     transaction_solution,
-                )?)),
+                )?.into(),
                 signature,
             };
             let output_coin_string = CoinString::from_parts(
@@ -1348,7 +1348,7 @@ impl RefereeMaker {
                 game_handler: self.get_game_handler(),
                 game_id: GameID::default(),
                 amount: self.get_amount(),
-                initial_state: ProgramRef::new(self.get_game_state().clone()),
+                initial_state: self.get_game_state().clone().into(),
                 initial_max_move_size: args.game_move.basic.max_move_size,
                 initial_move: args.game_move.basic.move_made.clone(),
                 initial_mover_share: args.game_move.basic.mover_share.clone(),
@@ -1750,10 +1750,10 @@ impl RefereeMaker {
                     coin: coin_string.clone(),
                     bundle: Spend {
                         puzzle: new_puzzle.clone(),
-                        solution: ProgramRef::new(Rc::new(Program::from_nodeptr(
+                        solution: Program::from_nodeptr(
                             allocator,
                             slashing_coin_solution,
-                        )?)),
+                        )?.into(),
                         signature: slash_spend.signature.clone(),
                     },
                 }),

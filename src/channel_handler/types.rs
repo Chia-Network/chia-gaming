@@ -118,13 +118,13 @@ impl GameStartInfo {
             .unwrap_or(0)
             != 0;
         let returned_handler = if my_turn {
-            GameHandler::MyTurnHandler(ProgramRef::new(Rc::new(Program::from_nodeptr(
+            GameHandler::MyTurnHandler(Program::from_nodeptr(
                 allocator, lst[2],
-            )?)))
+            )?.into())
         } else {
-            GameHandler::TheirTurnHandler(ProgramRef::new(Rc::new(Program::from_nodeptr(
+            GameHandler::TheirTurnHandler(Program::from_nodeptr(
                 allocator, lst[2],
-            )?)))
+            )?.into())
         };
         let returned_my_contribution = Amount::from_clvm(allocator, lst[3])?;
         let returned_their_contribution = Amount::from_clvm(allocator, lst[4])?;
@@ -133,7 +133,7 @@ impl GameStartInfo {
         let validation_program_hash = Hash::from_nodeptr(allocator, lst[6])?;
         let validation_program =
             ValidationProgram::new_hash(validation_prog, validation_program_hash);
-        let initial_state = ProgramRef::new(Rc::new(Program::from_nodeptr(allocator, lst[7])?));
+        let initial_state = Program::from_nodeptr(allocator, lst[7])?.into();
         let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
             a.to_vec()
         } else {
@@ -408,14 +408,14 @@ impl ValidationProgram {
     pub fn new(allocator: &mut AllocEncoder, validation_program: Rc<Program>) -> Self {
         let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
         ValidationProgram {
-            validation_program: ProgramRef::new(validation_program),
+            validation_program: validation_program.into(),
             validation_program_hash,
         }
     }
 
     pub fn new_hash(validation_program: Rc<Program>, validation_program_hash: Hash) -> Self {
         ValidationProgram {
-            validation_program: ProgramRef::new(validation_program),
+            validation_program: validation_program.into(),
             validation_program_hash,
         }
     }

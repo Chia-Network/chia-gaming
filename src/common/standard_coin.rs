@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::read_to_string;
-use std::rc::Rc;
 
 use hex::FromHex;
 use log::debug;
@@ -26,7 +25,7 @@ use crate::common::constants::{
 use crate::common::types;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr,
-    Node, PrivateKey, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
+    Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
     ToQuotedProgram,
 };
 
@@ -411,8 +410,8 @@ pub fn standard_solution_unsafe(
     let (_, sig) = signer(private_key, &message);
     let conditions_program = Program::from_nodeptr(allocator, conditions)?;
     Ok(BrokenOutCoinSpendInfo {
-        solution: ProgramRef::new(Rc::new(solution_program)),
-        conditions: ProgramRef::new(Rc::new(conditions_program)),
+        solution: solution_program.into(),
+        conditions: conditions_program.into(),
         message,
         signature: sig,
     })
@@ -521,9 +520,9 @@ pub fn standard_solution_partial(
         let solution_program = Program::from_nodeptr(allocator, solution)?;
         let conditions_program = Program::from_nodeptr(allocator, conditions)?;
         Ok(BrokenOutCoinSpendInfo {
-            solution: ProgramRef::new(Rc::new(solution_program.clone())),
+            solution: solution_program.into(),
             signature,
-            conditions: ProgramRef::new(Rc::new(conditions_program.clone())),
+            conditions: conditions_program.into(),
             message: coin_agg_sig_me_message,
         })
     } else {

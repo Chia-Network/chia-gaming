@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::NodePtr;
@@ -20,7 +19,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, ErrToError, Error,
-    GetCoinStringParts, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree,
+    GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree,
     Spend, ToQuotedProgram,
 };
 
@@ -526,10 +525,10 @@ impl Simulator {
         let tx = CoinSpend {
             bundle: Spend {
                 puzzle: identity_source.puzzle.clone(),
-                solution: ProgramRef::new(Rc::new(Program::from_nodeptr(
+                solution: Program::from_nodeptr(
                     allocator,
                     standard_solution,
-                )?)),
+                )?.into(),
                 signature,
             },
             coin: source_coin.clone(),
@@ -581,7 +580,7 @@ impl Simulator {
             spends.push(CoinSpend {
                 bundle: Spend {
                     puzzle: owner.puzzle.clone(),
-                    solution: ProgramRef::new(Rc::new(Program::from_nodeptr(allocator, solution)?)),
+                    solution: Program::from_nodeptr(allocator, solution)?.into(),
                     signature,
                 },
                 coin: c.clone(),

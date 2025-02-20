@@ -20,7 +20,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
-    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash,
+    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
     Sha256Input, Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
@@ -332,7 +332,7 @@ impl PotatoHandler {
             hs.spend.spends = vec![CoinSpend {
                 coin: channel_coin,
                 bundle: Spend {
-                    solution: ProgramRef::new(spend.solution.clone()),
+                    solution: spend.solution.clone().into(),
                     signature: spend.aggsig.clone(),
                     puzzle: channel_coin_puzzle,
                 },
@@ -714,7 +714,7 @@ impl PotatoHandler {
                     Rc::new(Program::from_nodeptr(env.allocator, real_conditions)?);
                 system_interface.send_message(&PeerMessage::Shutdown(
                     spend.signature.clone(),
-                    ProgramRef::new(shutdown_condition_program),
+                    shutdown_condition_program.into(),
                 ))?;
 
                 self.handshake_state =
@@ -1448,7 +1448,7 @@ impl PotatoHandler {
             spends: vec![CoinSpend {
                 bundle: Spend {
                     puzzle: curried_unroll_program,
-                    solution: ProgramRef::new(Rc::new(unroll_solution_program)),
+                    solution: unroll_solution_program.into(),
                     signature: aggregate_unroll_signature,
                 },
                 coin: unroll_coin.clone(),

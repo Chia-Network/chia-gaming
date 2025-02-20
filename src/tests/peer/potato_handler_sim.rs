@@ -15,7 +15,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, Node, PrivateKey, Program,
-    ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::calpoker::{
     decode_calpoker_readable, decode_readable_card_choices, get_final_used_cards,
@@ -438,10 +438,10 @@ pub fn handshake<'a, R: Rng + 'a>(
                 coin: parent_coins[who].clone(),
                 bundle: Spend {
                     puzzle: identities[who].puzzle.clone(),
-                    solution: ProgramRef::new(Rc::new(Program::from_nodeptr(
+                    solution: Program::from_nodeptr(
                         env.allocator,
                         solution,
-                    )?)),
+                    )?.into(),
                     signature,
                 },
             });

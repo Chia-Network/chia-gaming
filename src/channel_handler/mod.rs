@@ -35,7 +35,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
     CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey, Program,
-    ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
+    PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
 };
 use crate::potato_handler::types::GameAction;
 use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction};
@@ -1217,7 +1217,7 @@ impl ChannelHandler {
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
                 puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
-                solution: ProgramRef::new(Rc::new(solution_program)),
+                solution: solution_program.into(),
                 signature,
             },
             timeout: false,
@@ -1306,10 +1306,10 @@ impl ChannelHandler {
                 Ok(ChannelCoinSpentResult {
                     transaction: Spend {
                         puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
-                        solution: ProgramRef::new(Rc::new(Program::from_nodeptr(
+                        solution: Program::from_nodeptr(
                             env.allocator,
                             unroll_puzzle_solution,
-                        )?)),
+                        )?.into(),
                         signature: self.unroll.coin.get_unroll_coin_signature()?,
                     },
                     timeout: true,
