@@ -17,15 +17,11 @@
         (assert
             (>=s move (substr evidence 0 5))
             (<=s move (substr evidence 5 10))
-            (list (list AGG_SIG_UNSAFE evidence dictionary_key))
+            (li SLASH (list (list AGG_SIG_UNSAFE evidence dictionary_key)))
         )
-        (if_any_fail
-            (= (strlen move) 5)
-            (= next_validation_hash (sha256 clue_validation_hash (shatree
-                (li (c move bob_guesses) alice_clues mod_hash &rest tail))))
-            (= max_move_size 21)
-            0
-            (x)
+        (if (!= (strlen move) 5)
+            (li SLASH 0)
+            (li MOVE clue_validate_hash (li (c move bob_guesses) alice_clues mod_hash &rest tail) 21 0)
         )
     )
 )

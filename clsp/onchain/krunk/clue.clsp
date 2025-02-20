@@ -16,38 +16,44 @@
 
     (if (= (strlen move)) 1
         ; alice gave a clue
-        (if_any_fail
-            (= new_validation hash (sha256 guess_validation_hash (shatree
-                (li bob_guesses (c move alice_clues) &rest tail))))
-            (!= (len clues) 4)
-            (= max_move_size 5)
-            0
-            (x)
+        (if (= (len alice_clues) 4)
+            (li SLASH 0)
+            (li MOVE (li bob_guesses (c move alice_clues) &rest tail) 5 0)
         )
         ; alice did a reveal
         (if (= (strlen evidence) 1)
-            ; index of wrong clue
-            (assert (!= (make_clue (index bob_guesses evidence)) (index alice_clues evidence)) 0)
+            ; Evidence is index of wrong clue
+            (if (+ evidence 0)
+                ; Guess has to have been correct or given a wrong clue
+                (assign
+                    old_bob_guess (index bob_guesses evidence)
+                    (assert (or
+                            ; old guess was correct
+                            (= old_bob_guess (substr alice_commit 16 21))
+                            ; old clue was wrong
+                            (!= (make_clue old_bob_guess) (index alice_clues (- evidence 1))))
+                        (li SLASH 0)
+                    )
+                )
+                ; Last guess has to be wrong if it's the fifth guess otherwise it has to be right
+                (assert (= (!= (len bob_guesses) 5) (= (f bob_guesses) (substr alice_commit 16 21))) (li SLASH 0))
+            )
             evidence
             ; proof
             (assert
                 (>= (substr move 0 5) (substr evidence 0 5))
                 (<= (substr move 0 5) (substr evidence 5 10))
-                (li (li AGGSIG_UNSAFE dictionary_key evidence))
+                (li SLASH (li (li AGGSIG_UNSAFE dictionary_key evidence)))
             )
             (if_any_fail
                 (= (strlen move) 21)
-                (! new_validation_hash)
-                (! max_move_size)
                 (= alice_commit (sha256 move))
-                (= mover_share
-                    (if (= (f bob_guesses) (substr move 0 5))
+                (li SLASH 0)
+                (li MOVE 0 0 0 (if (= (f bob_guesses) (substr move 0 5))
                         (index (len bob_guesses) (li 100 100 20 5 1))
                         (assert (= (len bob_guesses 5)) 0)
                     )
                 )
-                0
-                (x)
             )
         )
     )

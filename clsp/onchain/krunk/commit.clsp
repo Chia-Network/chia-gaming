@@ -12,15 +12,9 @@
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
     state me previous_calidation_program mover_puzzle solution evidence)
 
-    ; check move length is 32
-    ; check state is (0 0 dictionary_public_key alice_commit)
-    ; check max_move_size, mover_share
-    (if_any_fail
-        (= (strlen move) 32)
-        (= next_validation_hash (sha256 guess_validate_hash (shatree (li 0 0 dictionary_key move))))
-        (= max_move_size 5)
-        0
-        (x)
+    (if (!= (strlen move) 32)
+        (li SLASH 0)
+        (li MOVE guess_validation_hash (li 0 0 dictionary_key move) 5 0)
     )
 )
 
