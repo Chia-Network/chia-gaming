@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use std::borrow::Borrow;
 use std::rc::Rc;
 
 use crate::utils::proper_list;
@@ -28,10 +29,61 @@ use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 //       (MAKE_MOVE moving_driver readable_info message) or
 //       (SLASH evidence aggsig)
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GameHandler {
     MyTurnHandler(Rc<Program>),
     TheirTurnHandler(Rc<Program>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SerialGameHandler {
+    MyTurnHandler(Program),
+    TheirTurnHandler(Program),
+}
+
+impl From<&GameHandler> for SerialGameHandler {
+    fn from(other: &GameHandler) -> Self {
+        let p_rc: Rc<Program> =
+            match &other {
+                GameHandler::MyTurnHandler(p) => p.clone(),
+                GameHandler::TheirTurnHandler(p) => p.clone(),
+            };
+        let p_ref: &Program = p_rc.borrow();
+
+        match other {
+            GameHandler::MyTurnHandler(_) => SerialGameHandler::MyTurnHandler(p_ref.clone()),
+            GameHandler::TheirTurnHandler(_) => SerialGameHandler::TheirTurnHandler(p_ref.clone()),
+        }
+    }
+}
+
+impl From<&SerialGameHandler> for GameHandler {
+    fn from(other: &SerialGameHandler) -> Self {
+        match other {
+            SerialGameHandler::MyTurnHandler(p) => GameHandler::MyTurnHandler(Rc::new(p.clone())),
+            SerialGameHandler::TheirTurnHandler(p) => GameHandler::TheirTurnHandler(Rc::new(p.clone()))
+        }
+    }
+}
+
+impl Serialize for GameHandler {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let ser: SerialGameHandler = self.into();
+        ser.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GameHandler {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let ser: SerialGameHandler = SerialGameHandler::deserialize(deserializer)?;
+        Ok((&ser).into())
+    }
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameHandler {

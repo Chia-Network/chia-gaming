@@ -714,7 +714,7 @@ impl Program {
     }
 }
 
-fn clone_to_encoder<E: ClvmEncoder>(
+fn clone_to_encoder<E: ClvmEncoder<Node = NodePtr>>(
     encoder: &mut E,
     source_allocator: &Allocator,
     node: <E as ClvmEncoder>::Node,
