@@ -3,9 +3,9 @@ use std::cmp::Ordering;
 use log::debug;
 
 use crate::channel_handler::types::ReadableMove;
-use clvmr::NodePtr;
 #[cfg(test)]
 use clvm_traits::ToClvm;
+use clvmr::NodePtr;
 
 use crate::utils::proper_list;
 
