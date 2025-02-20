@@ -36,7 +36,9 @@ impl Game {
         game_hex_file: &str,
     ) -> Result<Game, Error> {
         let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
-        let nil = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()?;
+        let nil = allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+            .into_gen()?;
         let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
         debug!("running start");
         let template_clvm = run_program(
@@ -72,17 +74,17 @@ impl Game {
             .expect("should be an atom");
         let required_size_factor = Amount::new(
             atom_from_clvm(allocator, template_list[3])
-                .and_then(u64_from_atom)
+                .and_then(|a| u64_from_atom(&a))
                 .expect("should be an atom"),
         );
         let initial_max_move_size = atom_from_clvm(allocator, template_list[4])
-            .and_then(usize_from_atom)
+            .and_then(|a| usize_from_atom(&a))
             .expect("should be an atom");
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);
         let initial_validation_program = ValidationProgram::new(allocator, validation_prog);
         let initial_validation_program_hash =
             if let Some(a) = atom_from_clvm(allocator, template_list[6]) {
-                Hash::from_slice(a)
+                Hash::from_slice(&a)
             } else {
                 return Err(Error::StrErr(
                     "not an atom for initial_validation_hash".to_string(),
@@ -91,7 +93,7 @@ impl Game {
         let initial_state_node = template_list[7];
         let initial_state = Rc::new(Program::from_nodeptr(allocator, initial_state_node)?);
         let initial_mover_share_proportion = atom_from_clvm(allocator, template_list[8])
-            .and_then(usize_from_atom)
+            .and_then(|a| usize_from_atom(&a))
             .expect("should be an atom");
         Ok(Game {
             id: game_id,

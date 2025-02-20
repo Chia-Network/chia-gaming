@@ -114,7 +114,7 @@ impl GameStartInfo {
 
         let returned_amount = Amount::from_clvm(allocator, lst[0])?;
         let my_turn = atom_from_clvm(allocator, lst[1])
-            .and_then(usize_from_atom)
+            .and_then(|a| usize_from_atom(&a))
             .unwrap_or(0)
             != 0;
         let returned_handler = if my_turn {
@@ -136,7 +136,7 @@ impl GameStartInfo {
             return Err(Error::StrErr("initial move wasn't an atom".to_string()));
         };
         let initial_max_move_size =
-            if let Some(a) = atom_from_clvm(allocator, lst[9]).and_then(usize_from_atom) {
+            if let Some(a) = atom_from_clvm(allocator, lst[9]).and_then(|a| usize_from_atom(&a)) {
                 a
             } else {
                 return Err(Error::StrErr("bad initial max move size".to_string()));
@@ -193,10 +193,7 @@ impl ReadableMove {
 }
 
 impl ToClvm<AllocEncoder> for ReadableMove {
-    fn to_clvm(
-        &self,
-        encoder: &mut AllocEncoder,
-    ) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(&self, encoder: &mut AllocEncoder) -> Result<NodePtr, ToClvmError> {
         self.0.to_clvm(encoder)
     }
 }
@@ -388,10 +385,7 @@ impl Evidence {
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Evidence {
-    fn to_clvm(
-        &self,
-        encoder: &mut E,
-    ) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(&self, _encoder: &mut E) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
     }
 }
@@ -436,10 +430,7 @@ impl ValidationProgram {
 }
 
 impl ToClvm<AllocEncoder> for ValidationProgram {
-    fn to_clvm(
-        &self,
-        encoder: &mut AllocEncoder,
-    ) -> Result<NodePtr, ToClvmError> {
+    fn to_clvm(&self, encoder: &mut AllocEncoder) -> Result<NodePtr, ToClvmError> {
         self.validation_program.to_clvm(encoder)
     }
 }

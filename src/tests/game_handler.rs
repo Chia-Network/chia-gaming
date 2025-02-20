@@ -17,7 +17,7 @@ fn test_game_handler_their_move_slash() {
     let their_turn_handler =
         GameHandler::their_driver_from_nodeptr(&mut allocator, program).expect("should cvt");
     assert!(!their_turn_handler.is_my_turn());
-    let nil = allocator.allocator().null();
+    let nil = allocator.allocator().nil();
     let result = their_turn_handler
         .call_their_turn_driver(
             &mut allocator,
@@ -58,7 +58,7 @@ fn test_game_handler_their_make_move() {
 
     let their_turn_handler =
         GameHandler::their_driver_from_nodeptr(&mut allocator, program).expect("should cvt");
-    let nil = allocator.allocator().null();
+    let nil = allocator.allocator().nil();
     let result = their_turn_handler
         .call_their_turn_driver(
             &mut allocator,

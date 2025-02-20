@@ -548,7 +548,9 @@ impl Simulator {
     ) -> Result<CoinString, Error> {
         let mut amount = Amount::default();
         let mut spends = Vec::new();
-        let nil = allocator.encode_atom(&[]).into_gen()?;
+        let nil = allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+            .into_gen()?;
 
         if coins.is_empty() {
             return Err(Error::StrErr("no coins".to_string()));

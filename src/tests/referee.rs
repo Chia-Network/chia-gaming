@@ -265,7 +265,9 @@ fn test_referee_smoke() {
 
     debug!("their_move_wire_data {their_move_local_update:?}");
 
-    let nil = allocator.encode_atom(&[]).expect("should encode");
+    let nil = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+        .expect("should encode");
     let validator_result = reftest
         .their_referee
         .run_validator_for_their_move(&mut allocator, nil);

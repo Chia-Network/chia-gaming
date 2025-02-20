@@ -1,21 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-#[cfg(test)]
-use clvm_tools_rs::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
-#[cfg(test)]
-use clvm_tools_rs::compiler::compiler::DefaultCompilerOpts;
 use std::rc::Rc;
 
 use crate::utils::proper_list;
-#[cfg(test)]
-use clvm_tools_rs::compiler::clvm::{convert_from_clvm_rs, convert_to_clvm_rs, run};
-#[cfg(test)]
-use clvm_tools_rs::compiler::comptypes::CompilerOpts;
-#[cfg(test)]
-use clvm_tools_rs::compiler::srcloc::Srcloc;
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
-use clvmr::NodePtr;
 use clvmr::run_program;
+use clvmr::NodePtr;
 
 use log::debug;
 
@@ -45,10 +35,7 @@ pub enum GameHandler {
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameHandler {
-    fn to_clvm(
-        &self,
-        encoder: &mut E,
-    ) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
+    fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         match self {
             GameHandler::MyTurnHandler(p) => p.to_clvm(encoder),
             GameHandler::TheirTurnHandler(p) => p.to_clvm(encoder),
@@ -223,22 +210,26 @@ impl GameHandler {
 
         if pl.len() < 7 {
             return Err(Error::StrErr(format!(
-                "bad result from game driver: {}", Node(run_result).to_hex(allocator)?
+                "bad result from game driver: {}",
+                Node(run_result).to_hex(allocator)?
             )));
         }
 
         let max_move_size =
-            if let Some(mm) = atom_from_clvm(allocator, pl[4]).and_then(usize_from_atom) {
+            if let Some(mm) = atom_from_clvm(allocator, pl[4]).and_then(|a| usize_from_atom(&a)) {
                 mm
             } else {
                 return Err(Error::StrErr("bad max move size".to_string()));
             };
-        let mover_share = if let Some(ms) = atom_from_clvm(allocator, pl[5]).and_then(u64_from_atom)
-        {
-            Amount::new(ms)
-        } else {
-            return Err(Error::StrErr(format!("bad share {}", Node(pl[5]).to_hex(allocator)?)));
-        };
+        let mover_share =
+            if let Some(ms) = atom_from_clvm(allocator, pl[5]).and_then(|a| u64_from_atom(&a)) {
+                Amount::new(ms)
+            } else {
+                return Err(Error::StrErr(format!(
+                    "bad share {}",
+                    Node(pl[5]).to_hex(allocator)?
+                )));
+            };
         debug!("MOVER_SHARE {mover_share:?}");
         let message_parser = if pl.len() <= 7 || pl[7] == allocator.allocator().nil() {
             None
@@ -246,7 +237,7 @@ impl GameHandler {
             Some(MessageHandler::from_nodeptr(allocator, pl[7])?)
         };
         let validation_program_hash =
-            if let Some(h) = atom_from_clvm(allocator, pl[2]).map(Hash::from_slice) {
+            if let Some(h) = atom_from_clvm(allocator, pl[2]).map(|a| Hash::from_slice(&a)) {
                 h
             } else {
                 return Err(Error::StrErr("bad hash".to_string()));
@@ -295,7 +286,9 @@ impl GameHandler {
                 (
                     Node(
                         allocator
-                            .encode_atom(clvm_traits::Atom::Borrowed(&inputs.new_move.basic.move_made))
+                            .encode_atom(clvm_traits::Atom::Borrowed(
+                                &inputs.new_move.basic.move_made,
+                            ))
                             .into_gen()?,
                     ),
                     (
@@ -313,7 +306,10 @@ impl GameHandler {
 
         let driver_node = self.get_their_turn_driver(allocator)?;
         debug!("call their turn driver: {self:?}");
-        debug!("call their turn args {}", Node(driver_args).to_hex(allocator)?);
+        debug!(
+            "call their turn args {}",
+            Node(driver_args).to_hex(allocator)?
+        );
 
         let run_result = run_code(
             allocator,
@@ -348,7 +344,8 @@ impl GameHandler {
         if move_type == 0 {
             if pl.len() < 2 {
                 return Err(Error::StrErr(format!(
-                    "bad length for move result {}", Node(run_result).to_hex(allocator)?
+                    "bad length for move result {}",
+                    Node(run_result).to_hex(allocator)?
                 )));
             }
 
@@ -356,7 +353,11 @@ impl GameHandler {
                 let mut lst = index
                     .and_then(|i| proper_list(allocator.allocator(), pl[i], true))
                     .unwrap_or_default();
-                lst.push(allocator.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()?);
+                lst.push(
+                    allocator
+                        .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+                        .into_gen()?,
+                );
                 Ok(lst)
             };
 
@@ -390,7 +391,8 @@ impl GameHandler {
         } else if move_type == 2 {
             if pl.len() != 2 {
                 return Err(Error::StrErr(format!(
-                    "bad length for slash {}", Node(run_result).to_hex(allocator)?
+                    "bad length for slash {}",
+                    Node(run_result).to_hex(allocator)?
                 )));
             }
             Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(pl[1])))
@@ -420,7 +422,9 @@ impl MessageHandler {
         allocator: &mut AllocEncoder,
         inputs: &MessageInputs,
     ) -> Result<ReadableMove, Error> {
-        let input_msg_atom = allocator.encode_atom(clvm_traits::Atom::Borrowed(&inputs.message)).into_gen()?;
+        let input_msg_atom = allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&inputs.message))
+            .into_gen()?;
         let args = (
             Node(input_msg_atom),
             (Node(inputs.state), (inputs.amount.clone(), ())),
@@ -428,7 +432,8 @@ impl MessageHandler {
             .to_clvm(allocator)
             .into_gen()?;
         eprintln!(
-            "running message handler on args {}", Node(args).to_hex(allocator)?
+            "running message handler on args {}",
+            Node(args).to_hex(allocator)?
         );
         let run_prog = self.0.to_nodeptr(allocator)?;
         let run_result = run_code(allocator, run_prog, args, false)?;

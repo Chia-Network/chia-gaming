@@ -6,7 +6,6 @@ use clvm_utils::CurriedProgram;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use clvm_tools_rs::classic::clvm_tools::stages::stage_0::{DefaultProgramRunner, TRunProgram};
 
 use log::debug;
@@ -33,7 +32,7 @@ fn test_standard_puzzle() {
     let puzzle = puzzle_for_pk(&mut allocator, &test_key).expect("should work");
     let puzzle_hash = puzzle.sha256tree(&mut allocator);
     let expected_puzzle =
-        hex_to_sexp(&mut allocator, EXPECTED_PUZZLE_HEX.clone()).expect("should convert");
+        hex_to_sexp(&mut allocator, &EXPECTED_PUZZLE_HEX).expect("should convert");
     let expected_hash = Node(expected_puzzle).sha256tree(&mut allocator);
     assert_eq!(expected_hash, puzzle_hash);
 }
@@ -201,7 +200,9 @@ fn test_standard_puzzle_solution_maker() {
         .run_program(allocator.allocator(), puzzle_node, solution_node, None)
         .expect("should run");
     let res_1_hex = Node(res.1).to_hex(&mut allocator).unwrap();
-    let expected_full_hex = Node(expected_full_conditions).to_hex(&mut allocator).unwrap();
+    let expected_full_hex = Node(expected_full_conditions)
+        .to_hex(&mut allocator)
+        .unwrap();
     assert_eq!(res_1_hex, expected_full_hex);
     assert!(spend_info
         .signature
