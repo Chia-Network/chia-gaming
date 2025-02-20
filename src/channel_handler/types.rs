@@ -401,7 +401,7 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Evidence {
 /// This can give a validation program hash or a validation info hash, given state.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ValidationProgram {
-    validation_program: Rc<Program>,
+    validation_program: ProgramRef,
     validation_program_hash: Hash,
 }
 
@@ -409,20 +409,20 @@ impl ValidationProgram {
     pub fn new(allocator: &mut AllocEncoder, validation_program: Rc<Program>) -> Self {
         let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
         ValidationProgram {
-            validation_program,
+            validation_program: ProgramRef::new(validation_program),
             validation_program_hash,
         }
     }
 
     pub fn new_hash(validation_program: Rc<Program>, validation_program_hash: Hash) -> Self {
         ValidationProgram {
-            validation_program,
+            validation_program: ProgramRef::new(validation_program),
             validation_program_hash,
         }
     }
 
     pub fn to_program(&self) -> Rc<Program> {
-        self.validation_program.clone()
+        self.validation_program.p()
     }
 
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
