@@ -23,7 +23,7 @@ chia-bls = "=0.9.0"
 clvm-utils = "0.20.0"
 lazy_static = "1.4.0"
 ff = { version = "0.13.0", features = ["derive"] }
-bson = "2.11.0"
+bson = "2.13.0"
 sha2 = "0.10.8"
 indoc = "2.0.5"
 serde = "1.0.203"
@@ -41,13 +41,13 @@ pyo3 = { version = "0.20.0", features = ["auto-initialize"], optional = true }
 [dev-dependencies]
 bls12_381 = { version = "=0.8.0", features = ["experimental"] }
 exec = "0.3.1"
-clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "ec75759377791c9b785123d2d3e2457d08ac6621" }
+clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "49240f92f8de0b90702dad4be5993f334e7c31b6" }
 
 [build-dependencies]
 serde = "1.0.203"
 toml = "0.8.14"
-clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "ec75759377791c9b785123d2d3e2457d08ac6621" }
-clvmr = { version = "=0.3.2", features = ["pre-eval"] }
+clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "49240f92f8de0b90702dad4be5993f334e7c31b6" }
+clvmr = { version = "=0.12.0", features = ["pre-eval"] }
 
 [lib]
 name = "chia_gaming"

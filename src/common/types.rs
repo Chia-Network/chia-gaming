@@ -48,7 +48,7 @@ impl CoinID {
     }
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for CoinID {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for CoinID {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -283,7 +283,7 @@ impl Add for PublicKey {
     }
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for PublicKey {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for PublicKey {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -382,7 +382,7 @@ impl Add for Aggsig {
     }
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for Aggsig {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Aggsig {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -419,7 +419,7 @@ impl GameID {
     }
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for GameID {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameID {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -484,7 +484,7 @@ impl Sub for Amount {
     }
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for Amount {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Amount {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -502,7 +502,7 @@ impl From<Amount> for u64 {
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Hash, Default)]
 pub struct Hash([u8; 32]);
 
-impl<E: ClvmEncoder> ToClvm<E> for Hash {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Hash {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -611,7 +611,7 @@ impl Distribution<PuzzleHash> for Standard {
     }
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for PuzzleHash {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for PuzzleHash {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -670,7 +670,8 @@ impl Node {
     }
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for Node {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Node
+{
     fn to_clvm(
         &self,
         _encoder: &mut E,
@@ -697,7 +698,7 @@ pub trait Sha256tree {
 impl<X: ToClvm<AllocEncoder>> Sha256tree for X {
     fn sha256tree(&self, allocator: &mut AllocEncoder) -> PuzzleHash {
         self.to_clvm(allocator).map(|node| {
-            PuzzleHash::from_bytes(tree_hash(allocator.allocator(), node))
+            PuzzleHash::from_bytes(tree_hash(allocator.allocator(), node).into())
         }).unwrap_or_default()
     }
 }
@@ -738,11 +739,14 @@ impl Program {
     }
 }
 
-fn clone_to_encoder(
-    encoder: &mut AllocEncoder,
+fn clone_to_encoder<E: ClvmEncoder>(
+    encoder: &mut E,
     source_allocator: &Allocator,
-    node: NodePtr,
-) -> Result<NodePtr, ToClvmError> {
+    node: <E as ClvmEncoder>::Node,
+) -> Result<<E as ClvmEncoder>::Node, ToClvmError>
+where
+    E: ClvmEncoder<Node = NodePtr>
+{
     match source_allocator.sexp(node) {
         SExp::Atom => {
             let buf = source_allocator.atom(node);
@@ -756,7 +760,7 @@ fn clone_to_encoder(
     }
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for Program {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Program {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -771,7 +775,7 @@ impl<E: ClvmEncoder> ToClvm<E> for Program {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Puzzle(Rc<Program>);
 
-impl<E: ClvmEncoder> ToClvm<E> for Puzzle {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Puzzle {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -825,7 +829,7 @@ impl Add for Timeout {
     }
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for Timeout {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Timeout {
     fn to_clvm(
         &self,
         encoder: &mut E,
@@ -834,7 +838,7 @@ impl<E: ClvmEncoder> ToClvm<E> for Timeout {
     }
 }
 
-pub struct AllocEncoder(Allocator);
+pub struct AllocEncoder(pub Allocator);
 
 impl Default for AllocEncoder {
     fn default() -> Self {
@@ -854,7 +858,7 @@ impl AllocEncoder {
 
 impl ToClvm<AllocEncoder> for NodePtr {
     fn to_clvm(&self, encoder: &mut AllocEncoder) -> Result<NodePtr, ToClvmError> {
-        Ok(self.0)
+        Ok(*self)
     }
 }
 
@@ -863,7 +867,7 @@ impl ClvmEncoder for AllocEncoder {
 
     fn encode_atom(&mut self, bytes: clvm_traits::Atom<'_>) -> Result<Self::Node, ToClvmError> {
         self.0
-            .new_atom(bytes)
+            .new_atom(&bytes)
             .map_err(|e| ToClvmError::Custom(format!("{e:?}")))
     }
 
@@ -1042,7 +1046,7 @@ impl CoinCondition {
         )
         .into_gen()?;
         debug!(
-            "conditions to parse {}", conditions.1.to_hex(allocator)
+            "conditions to parse {}", Node(conditions.1).to_hex(allocator)?
         );
 
         Ok(CoinCondition::from_nodeptr(allocator, conditions.1))
@@ -1105,7 +1109,7 @@ pub fn u64_from_atom(a: &[u8]) -> Option<u64> {
 
 pub fn atom_from_clvm(allocator: &mut AllocEncoder, n: NodePtr) -> Option<&[u8]> {
     if matches!(allocator.allocator().sexp(n), SExp::Atom) {
-        Some(allocator.allocator().atom(n))
+        Some(&allocator.allocator().atom(n))
     } else {
         None
     }
@@ -1152,7 +1156,7 @@ fn test_local_divmod() {
 
 pub struct RcNode<X>(Rc<X>);
 
-impl<E: ClvmEncoder, X: ToClvm<E>> ToClvm<E> for RcNode<X> {
+impl<E: ClvmEncoder<Node = NodePtr>, X: ToClvm<E>> ToClvm<E> for RcNode<X> {
     fn to_clvm(
         &self,
         encoder: &mut E,

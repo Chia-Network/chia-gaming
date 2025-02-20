@@ -3,7 +3,8 @@ use std::cmp::Ordering;
 use log::debug;
 
 use crate::channel_handler::types::ReadableMove;
-use clvmr::NodePtr;
+use clvmr::{Allocator, NodePtr};
+use clvm_traits::ToClvm;
 
 use crate::utils::proper_list;
 #[cfg(test)]
@@ -471,11 +472,22 @@ pub fn decode_calpoker_readable(
 #[test]
 fn test_decode_calpoker_readable() {
     let mut allocator = AllocEncoder::new();
-    let assembled = assemble(
-        allocator.allocator(),
-        "(60 59 91 (2 2 1 12 11 8) (2 2 1 14 5 2) -1)",
-    )
-    .expect("should work");
+    let assembled = (
+        60,
+        (
+            59,
+            (
+                91,
+                (
+                    [2,2,1,12,11,8],
+                    (
+                        [2,2,1,14,5,2],
+                        (-1, ())
+                    )
+                )
+            )
+        )
+    ).to_clvm(&mut allocator).expect("should work");
     let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), false)
         .expect("should work");
     let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 12, 11, 8]);

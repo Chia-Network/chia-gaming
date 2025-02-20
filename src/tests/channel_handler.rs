@@ -27,7 +27,7 @@ fn test_smoke_can_initiate_channel_handler() {
     let unroll_metapuzzle = Rc::new(read_unroll_metapuzzle(&mut allocator).unwrap());
     let unroll_puzzle = Rc::new(read_unroll_puzzle(&mut allocator).unwrap());
     // XXX
-    let nil = allocator.allocator().null();
+    let nil = allocator.allocator().nil();
     let ref_puz = Rc::new(Puzzle::from_nodeptr(&mut allocator, nil).expect("should work"));
     let standard_puzzle = Rc::new(get_standard_coin_puzzle(&mut allocator).expect("should load"));
     let mut env = ChannelHandlerEnv {
@@ -90,7 +90,7 @@ fn test_smoke_can_start_game() {
     let unroll_metapuzzle = Rc::new(read_unroll_metapuzzle(&mut allocator).unwrap());
     let unroll_puzzle = Rc::new(read_unroll_puzzle(&mut allocator).unwrap());
     // XXX
-    let nil = allocator.allocator().null();
+    let nil = allocator.allocator().nil();
     let ref_coin_puz = Rc::new(Puzzle::from_nodeptr(&mut allocator, nil).expect("should work"));
     let standard_puzzle = Rc::new(get_standard_coin_puzzle(&mut allocator).expect("should load"));
     let mut env = ChannelHandlerEnv {
@@ -179,7 +179,7 @@ fn test_unroll_can_verify_own_signature() {
 
     let unroll_metapuzzle = Rc::new(read_unroll_metapuzzle(&mut allocator).unwrap());
     let unroll_puzzle = Rc::new(read_unroll_puzzle(&mut allocator).unwrap());
-    let nil = allocator.allocator().null();
+    let nil = allocator.allocator().nil();
     let ref_coin_puz = Rc::new(Puzzle::from_nodeptr(&mut allocator, nil).expect("should work"));
     let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
     let standard_puzzle = Rc::new(get_standard_coin_puzzle(&mut allocator).expect("should load"));

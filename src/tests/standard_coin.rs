@@ -200,10 +200,9 @@ fn test_standard_puzzle_solution_maker() {
     let res = runner
         .run_program(allocator.allocator(), puzzle_node, solution_node, None)
         .expect("should run");
-    assert_eq!(
-        disassemble(allocator.allocator(), res.1, None),
-        disassemble(allocator.allocator(), expected_full_conditions, None)
-    );
+    let res_1_hex = Node(res.1).to_hex(&mut allocator).unwrap();
+    let expected_full_hex = Node(expected_full_conditions).to_hex(&mut allocator).unwrap();
+    assert_eq!(res_1_hex, expected_full_hex);
     assert!(spend_info
         .signature
         .verify(&public_key, quoted_conditions_hash.bytes()));

@@ -44,7 +44,7 @@ pub enum GameHandler {
     TheirTurnHandler(Rc<Program>),
 }
 
-impl<E: ClvmEncoder> ToClvm<E> for GameHandler {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameHandler {
     fn to_clvm(
         &self,
         encoder: &mut E,

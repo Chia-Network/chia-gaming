@@ -387,10 +387,10 @@ impl Evidence {
     }
 }
 
-impl ToClvm<AllocEncoder> for Evidence {
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Evidence {
     fn to_clvm(
         &self,
-        encoder: &mut AllocEncoder,
+        encoder: &mut E,
     ) -> Result<NodePtr, ToClvmError> {
         Ok(self.0)
     }

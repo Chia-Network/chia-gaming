@@ -210,7 +210,7 @@ impl RefereePuzzleArgs {
             referee_coin_puzzle_hash.to_clvm(allocator).into_gen()?,
             self.nonce.to_clvm(allocator).into_gen()?,
             allocator
-                .encode_atom(&self.game_move.basic.move_made)
+                .encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))
                 .into_gen()?,
             self.game_move
                 .basic
@@ -264,7 +264,7 @@ fn curry_referee_puzzle(
     let args_to_curry: Vec<Node> = args.to_node_list(allocator, referee_coin_puzzle_hash)?;
     let combined_args = args_to_curry.to_clvm(allocator).into_gen()?;
     debug!(
-        "curry_referee_puzzle {}", combined_args.to_hex(allocator)
+        "curry_referee_puzzle {}", Node(combined_args).to_hex(allocator)?
     );
     let curried_program_nodeptr = CurriedProgram {
         program: referee_coin_puzzle,
@@ -341,7 +341,7 @@ impl InternalValidatorArgs {
         validator_mod_hash: PuzzleHash,
     ) -> Result<NodePtr, Error> {
         let converted_vma = self.move_args.to_nodeptr(allocator, me)?;
-        let move_node = allocator.encode_atom(&self.move_made).into_gen()?;
+        let move_node = allocator.encode_atom(clvm_traits::Atom::Borrowed(&self.move_made)).into_gen()?;
         (
             validator_mod_hash,
             (
@@ -556,14 +556,14 @@ impl<E: ClvmEncoder> ToClvm<E> for OnChainRefereeSolution {
         encoder: &mut E,
     ) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         match self {
-            OnChainRefereeSolution::Timeout => encoder.encode_atom(&[]),
+            OnChainRefereeSolution::Timeout => encoder.encode_atom(clvm_traits::Atom::Borrowed(&[])),
             OnChainRefereeSolution::Move(refmove) => {
                 let refmove_coin_solution_ref: &Program =
                     refmove.mover_coin.mover_coin_spend_solution.borrow();
 
                 // Max move size is left off
                 (
-                    Node(encoder.encode_atom(&refmove.details.basic.move_made)?),
+                    encoder.encode_atom(clvm_traits::Atom::Borrowed(&refmove.details.basic.move_made))?,
                     (
                         refmove.details.validation_info_hash.clone(),
                         (
@@ -949,7 +949,7 @@ impl RefereeMaker {
         let raw_game_handler = if let Some(g) = game_handler.as_ref() {
             g.clone()
         } else {
-            let nil = allocator.encode_atom(&[]).into_gen()?;
+            let nil = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()?;
             GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, nil)?))
         };
 
@@ -1415,7 +1415,6 @@ impl RefereeMaker {
             &self.fixed.referee_coin_puzzle_hash,
             &target_args,
         )?;
-        let target_referee_puzzle_nodeptr = target_referee_puzzle.to_clvm(allocator).into_gen()?;
         assert_eq!(
             target_referee_puzzle.sha256tree(allocator),
             target_referee_puzzle_hash
@@ -1864,7 +1863,7 @@ impl RefereeMaker {
         debug!("rems in spend {conditions:?}");
 
         if repeat {
-            let nil = allocator.allocator().null();
+            let nil = allocator.allocator().nil();
             debug!("repeat: current state {:?}", self.state);
 
             if self.is_my_turn() {
