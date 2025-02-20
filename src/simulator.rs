@@ -19,8 +19,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, ErrToError, Error,
-    GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree,
-    Spend, ToQuotedProgram,
+    GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
+    ToQuotedProgram,
 };
 
 #[derive(Debug, Clone)]
@@ -525,10 +525,7 @@ impl Simulator {
         let tx = CoinSpend {
             bundle: Spend {
                 puzzle: identity_source.puzzle.clone(),
-                solution: Program::from_nodeptr(
-                    allocator,
-                    standard_solution,
-                )?.into(),
+                solution: Program::from_nodeptr(allocator, standard_solution)?.into(),
                 signature,
             },
             coin: source_coin.clone(),

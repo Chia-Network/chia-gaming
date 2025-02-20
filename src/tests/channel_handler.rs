@@ -16,8 +16,7 @@ use crate::common::standard_coin::{
     get_standard_coin_puzzle, private_to_public_key, puzzle_hash_for_pk,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, GameID, Hash, Program, Puzzle, PuzzleHash,
-    Sha256tree, Timeout,
+    AllocEncoder, Amount, CoinID, GameID, Hash, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::tests::game::DEFAULT_UNROLL_TIME_LOCK;
 

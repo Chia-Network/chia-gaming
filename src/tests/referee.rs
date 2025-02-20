@@ -13,8 +13,8 @@ use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgr
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle,
-    PuzzleHash, Sha256tree, Timeout,
+    Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
+    Sha256tree, Timeout,
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorResult};
 

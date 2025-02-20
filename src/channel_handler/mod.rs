@@ -1306,10 +1306,8 @@ impl ChannelHandler {
                 Ok(ChannelCoinSpentResult {
                     transaction: Spend {
                         puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
-                        solution: Program::from_nodeptr(
-                            env.allocator,
-                            unroll_puzzle_solution,
-                        )?.into(),
+                        solution: Program::from_nodeptr(env.allocator, unroll_puzzle_solution)?
+                            .into(),
                         signature: self.unroll.coin.get_unroll_coin_signature()?,
                     },
                     timeout: true,

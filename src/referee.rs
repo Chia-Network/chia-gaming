@@ -959,9 +959,7 @@ impl RefereeMaker {
             let nil = allocator
                 .encode_atom(clvm_traits::Atom::Borrowed(&[]))
                 .into_gen()?;
-            GameHandler::MyTurnHandler(Program::from_nodeptr(
-                allocator, nil,
-            )?.into())
+            GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, nil)?.into())
         };
 
         let new_state = match self.state.borrow() {
@@ -1243,10 +1241,7 @@ impl RefereeMaker {
             debug!("transaction solution inputs {args:?}");
             let transaction_bundle = Spend {
                 puzzle: puzzle.clone(),
-                solution: Program::from_nodeptr(
-                    allocator,
-                    transaction_solution,
-                )?.into(),
+                solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
                 signature,
             };
             let output_coin_string = CoinString::from_parts(
@@ -1750,10 +1745,7 @@ impl RefereeMaker {
                     coin: coin_string.clone(),
                     bundle: Spend {
                         puzzle: new_puzzle.clone(),
-                        solution: Program::from_nodeptr(
-                            allocator,
-                            slashing_coin_solution,
-                        )?.into(),
+                        solution: Program::from_nodeptr(allocator, slashing_coin_solution)?.into(),
                         signature: slash_spend.signature.clone(),
                     },
                 }),

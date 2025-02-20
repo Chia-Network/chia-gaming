@@ -724,11 +724,15 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for ProgramRef {
 }
 
 impl From<Rc<Program>> for ProgramRef {
-    fn from(other: Rc<Program>) -> Self { ProgramRef::new(other) }
+    fn from(other: Rc<Program>) -> Self {
+        ProgramRef::new(other)
+    }
 }
 
 impl From<Program> for ProgramRef {
-    fn from(other: Program) -> Self { ProgramRef::new(Rc::new(other)) }
+    fn from(other: Program) -> Self {
+        ProgramRef::new(Rc::new(other))
+    }
 }
 
 impl ProgramRef {
@@ -802,15 +806,21 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Puzzle {
 }
 
 impl From<Program> for Puzzle {
-    fn from(other: Program) -> Self { Puzzle(other.into()) }
+    fn from(other: Program) -> Self {
+        Puzzle(other.into())
+    }
 }
 
 impl From<Rc<Program>> for Puzzle {
-    fn from(other: Rc<Program>) -> Self { Puzzle(other.into()) }
+    fn from(other: Rc<Program>) -> Self {
+        Puzzle(other.into())
+    }
 }
 
 impl From<ProgramRef> for Puzzle {
-    fn from(other: ProgramRef) -> Self { Puzzle(other) }
+    fn from(other: ProgramRef) -> Self {
+        Puzzle(other)
+    }
 }
 
 impl Puzzle {

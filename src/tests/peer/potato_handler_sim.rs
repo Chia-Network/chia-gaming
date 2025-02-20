@@ -438,10 +438,7 @@ pub fn handshake<'a, R: Rng + 'a>(
                 coin: parent_coins[who].clone(),
                 bundle: Spend {
                     puzzle: identities[who].puzzle.clone(),
-                    solution: Program::from_nodeptr(
-                        env.allocator,
-                        solution,
-                    )?.into(),
+                    solution: Program::from_nodeptr(env.allocator, solution)?.into(),
                     signature,
                 },
             });

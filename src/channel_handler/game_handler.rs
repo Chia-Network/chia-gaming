@@ -123,13 +123,17 @@ impl GameHandler {
         allocator: &mut AllocEncoder,
         n: NodePtr,
     ) -> Result<GameHandler, Error> {
-        Ok(GameHandler::TheirTurnHandler(Program::from_nodeptr(allocator, n)?.into()))
+        Ok(GameHandler::TheirTurnHandler(
+            Program::from_nodeptr(allocator, n)?.into(),
+        ))
     }
     pub fn my_driver_from_nodeptr(
         allocator: &mut AllocEncoder,
         n: NodePtr,
     ) -> Result<GameHandler, Error> {
-        Ok(GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, n)?.into()))
+        Ok(GameHandler::MyTurnHandler(
+            Program::from_nodeptr(allocator, n)?.into(),
+        ))
     }
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         match self {

@@ -20,8 +20,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
-    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
-    Sha256Input, Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
+    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
+    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 use crate::utils::proper_list;

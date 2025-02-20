@@ -118,13 +118,9 @@ impl GameStartInfo {
             .unwrap_or(0)
             != 0;
         let returned_handler = if my_turn {
-            GameHandler::MyTurnHandler(Program::from_nodeptr(
-                allocator, lst[2],
-            )?.into())
+            GameHandler::MyTurnHandler(Program::from_nodeptr(allocator, lst[2])?.into())
         } else {
-            GameHandler::TheirTurnHandler(Program::from_nodeptr(
-                allocator, lst[2],
-            )?.into())
+            GameHandler::TheirTurnHandler(Program::from_nodeptr(allocator, lst[2])?.into())
         };
         let returned_my_contribution = Amount::from_clvm(allocator, lst[3])?;
         let returned_their_contribution = Amount::from_clvm(allocator, lst[4])?;
