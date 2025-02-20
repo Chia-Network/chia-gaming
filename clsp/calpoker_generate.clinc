@@ -218,9 +218,12 @@
         win_result (list_compare alice_hand_value bob_hand_value)
         ;; win_result 1 means alice wins.
         correct_split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
-        (list MAKE_MOVE
-              (list alice_my_picks (indices_to_bitfield bob_picks) (indices_to_bitfield alice_picks)
-                    bob_hand_value alice_hand_value correct_split)
+        (if (!= split correct_split)
+            (list SLASH (indices_to_bitfield bob_picks))
+            (list MAKE_MOVE
+                (list alice_my_picks (indices_to_bitfield bob_picks) (indices_to_bitfield alice_picks)
+                    bob_hand_value alice_hand_value split)
+            )
         )
     )
 )
