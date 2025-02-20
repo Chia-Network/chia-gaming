@@ -1,10 +1,9 @@
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
+use clvmr::{run_program, ChiaDialect};
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-
-use clvm_tools_rs::classic::clvm_tools::stages::stage_0::{DefaultProgramRunner, TRunProgram};
 
 use log::debug;
 
@@ -188,15 +187,19 @@ fn test_standard_puzzle_solution_maker() {
         .to_clvm(&mut allocator)
         .expect("should work");
     debug!("solution {:?}", spend_info.solution);
-    let runner = DefaultProgramRunner::new();
     let puzzle_node = puzzle.to_clvm(&mut allocator).expect("should convert");
     let solution_node = spend_info
         .solution
         .to_clvm(&mut allocator)
         .expect("should convert");
-    let res = runner
-        .run_program(allocator.allocator(), puzzle_node, solution_node, None)
-        .expect("should run");
+    let res = run_program(
+        allocator.allocator(),
+        &ChiaDialect::new(0),
+        puzzle_node,
+        solution_node,
+        0,
+    )
+    .expect("should run");
     let res_1_hex = Node(res.1).to_hex(&mut allocator).unwrap();
     let expected_full_hex = Node(expected_full_conditions)
         .to_hex(&mut allocator)
