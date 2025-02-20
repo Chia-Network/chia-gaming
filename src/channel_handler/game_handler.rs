@@ -1,7 +1,6 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-use std::borrow::Borrow;
 use std::rc::Rc;
+
+use serde::{Deserialize, Serialize};
 
 use crate::utils::proper_list;
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
@@ -13,7 +12,7 @@ use log::debug;
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, ValidationProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    Hash, IntoErr, Node, Program,
+    Hash, IntoErr, Node, Program, ProgramRef,
 };
 use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 
@@ -29,62 +28,10 @@ use crate::referee::{GameMoveDetails, GameMoveStateInfo};
 //       (MAKE_MOVE moving_driver readable_info message) or
 //       (SLASH evidence aggsig)
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum GameHandler {
-    MyTurnHandler(Rc<Program>),
-    TheirTurnHandler(Rc<Program>),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SerialGameHandler {
-    MyTurnHandler(Program),
-    TheirTurnHandler(Program),
-}
-
-impl From<&GameHandler> for SerialGameHandler {
-    fn from(other: &GameHandler) -> Self {
-        let p_rc: Rc<Program> = match &other {
-            GameHandler::MyTurnHandler(p) => p.clone(),
-            GameHandler::TheirTurnHandler(p) => p.clone(),
-        };
-        let p_ref: &Program = p_rc.borrow();
-
-        match other {
-            GameHandler::MyTurnHandler(_) => SerialGameHandler::MyTurnHandler(p_ref.clone()),
-            GameHandler::TheirTurnHandler(_) => SerialGameHandler::TheirTurnHandler(p_ref.clone()),
-        }
-    }
-}
-
-impl From<&SerialGameHandler> for GameHandler {
-    fn from(other: &SerialGameHandler) -> Self {
-        match other {
-            SerialGameHandler::MyTurnHandler(p) => GameHandler::MyTurnHandler(Rc::new(p.clone())),
-            SerialGameHandler::TheirTurnHandler(p) => {
-                GameHandler::TheirTurnHandler(Rc::new(p.clone()))
-            }
-        }
-    }
-}
-
-impl Serialize for GameHandler {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let ser: SerialGameHandler = self.into();
-        ser.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for GameHandler {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let ser: SerialGameHandler = SerialGameHandler::deserialize(deserializer)?;
-        Ok((&ser).into())
-    }
+pub enum GameHandler {
+    MyTurnHandler(ProgramRef),
+    TheirTurnHandler(ProgramRef),
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameHandler {
@@ -176,17 +123,17 @@ impl GameHandler {
         allocator: &mut AllocEncoder,
         n: NodePtr,
     ) -> Result<GameHandler, Error> {
-        Ok(GameHandler::TheirTurnHandler(Rc::new(
+        Ok(GameHandler::TheirTurnHandler(ProgramRef::new(Rc::new(
             Program::from_nodeptr(allocator, n)?,
-        )))
+        ))))
     }
     pub fn my_driver_from_nodeptr(
         allocator: &mut AllocEncoder,
         n: NodePtr,
     ) -> Result<GameHandler, Error> {
-        Ok(GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(
-            allocator, n,
-        )?)))
+        Ok(GameHandler::MyTurnHandler(ProgramRef::new(Rc::new(
+            Program::from_nodeptr(allocator, n)?,
+        ))))
     }
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         match self {

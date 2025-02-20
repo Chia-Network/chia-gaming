@@ -21,7 +21,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
+    IntoErr, PrivateKey, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
@@ -597,7 +597,7 @@ fn test_referee_can_slash_on_chain() {
         my_contribution_this_game: Amount::new(50),
         their_contribution_this_game: Amount::new(50),
         initial_validation_program,
-        initial_state: init_state,
+        initial_state: ProgramRef::new(init_state),
         initial_move: vec![],
         initial_max_move_size: 100,
         initial_mover_share: Amount::default(),
@@ -708,7 +708,7 @@ fn test_referee_can_move_on_chain() {
         my_contribution_this_game: Amount::new(50),
         their_contribution_this_game: Amount::new(50),
         initial_validation_program: my_validation_program,
-        initial_state: init_state,
+        initial_state: ProgramRef::new(init_state),
         initial_move: vec![],
         initial_max_move_size: max_move_size,
         initial_mover_share: Amount::default(),

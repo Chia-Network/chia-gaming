@@ -714,14 +714,54 @@ impl Program {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ProgramRef(Rc<Program>);
+
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for ProgramRef {
+    fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
+        self.0.to_clvm(encoder)
+    }
+}
+
+impl ProgramRef {
+    pub fn new(p: Rc<Program>) -> Self {
+        ProgramRef(p)
+    }
+    pub fn p(&self) -> Rc<Program> {
+        self.0.clone()
+    }
+    pub fn pref(&self) -> &Program {
+        self.0.borrow()
+    }
+    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
+        self.0.to_nodeptr(allocator)
+    }
+}
+
+impl Serialize for ProgramRef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.pref().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProgramRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let ser: Program = Program::deserialize(deserializer)?;
+        Ok(ProgramRef(Rc::new(ser)))
+    }
+}
+
 fn clone_to_encoder<E: ClvmEncoder<Node = NodePtr>>(
     encoder: &mut E,
     source_allocator: &Allocator,
     node: <E as ClvmEncoder>::Node,
-) -> Result<<E as ClvmEncoder>::Node, ToClvmError>
-where
-    E: ClvmEncoder<Node = NodePtr>,
-{
+) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
     match source_allocator.sexp(node) {
         SExp::Atom => {
             let buf = source_allocator.atom(node);

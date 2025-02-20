@@ -24,7 +24,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
     BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
+    Node, Program, ProgramRef, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
 };
 
 pub const REM_CONDITION_FIELDS: usize = 4;
@@ -718,7 +718,7 @@ impl RefereeMaker {
             );
         }
         let state = Rc::new(RefereeMakerGameState::Initial {
-            initial_state: game_start_info.initial_state.clone(),
+            initial_state: game_start_info.initial_state.p(),
             initial_validation_program: game_start_info.initial_validation_program.clone(),
             initial_puzzle_args: ref_puzzle_args.clone(),
             game_handler: game_start_info.game_handler.clone(),
@@ -959,7 +959,9 @@ impl RefereeMaker {
             let nil = allocator
                 .encode_atom(clvm_traits::Atom::Borrowed(&[]))
                 .into_gen()?;
-            GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, nil)?))
+            GameHandler::MyTurnHandler(ProgramRef::new(Rc::new(Program::from_nodeptr(
+                allocator, nil,
+            )?)))
         };
 
         let new_state = match self.state.borrow() {
@@ -1343,7 +1345,7 @@ impl RefereeMaker {
                 game_handler: self.get_game_handler(),
                 game_id: GameID::default(),
                 amount: self.get_amount(),
-                initial_state: self.get_game_state().clone(),
+                initial_state: ProgramRef::new(self.get_game_state().clone()),
                 initial_max_move_size: args.game_move.basic.max_move_size,
                 initial_move: args.game_move.basic.move_made.clone(),
                 initial_mover_share: args.game_move.basic.mover_share.clone(),

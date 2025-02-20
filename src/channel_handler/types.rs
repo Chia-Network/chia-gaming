@@ -22,7 +22,8 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo,
     CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
-    Program, PublicKey, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
+    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend,
+    Timeout,
 };
 use crate::referee::{
     GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
@@ -80,7 +81,7 @@ pub struct GameStartInfo {
     pub their_contribution_this_game: Amount,
 
     pub initial_validation_program: ValidationProgram,
-    pub initial_state: Rc<Program>,
+    pub initial_state: ProgramRef,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_mover_share: Amount,
@@ -118,9 +119,13 @@ impl GameStartInfo {
             .unwrap_or(0)
             != 0;
         let returned_handler = if my_turn {
-            GameHandler::MyTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
+            GameHandler::MyTurnHandler(ProgramRef::new(Rc::new(Program::from_nodeptr(
+                allocator, lst[2],
+            )?)))
         } else {
-            GameHandler::TheirTurnHandler(Rc::new(Program::from_nodeptr(allocator, lst[2])?))
+            GameHandler::TheirTurnHandler(ProgramRef::new(Rc::new(Program::from_nodeptr(
+                allocator, lst[2],
+            )?)))
         };
         let returned_my_contribution = Amount::from_clvm(allocator, lst[3])?;
         let returned_their_contribution = Amount::from_clvm(allocator, lst[4])?;
@@ -129,7 +134,7 @@ impl GameStartInfo {
         let validation_program_hash = Hash::from_nodeptr(allocator, lst[6])?;
         let validation_program =
             ValidationProgram::new_hash(validation_prog, validation_program_hash);
-        let initial_state = Rc::new(Program::from_nodeptr(allocator, lst[7])?);
+        let initial_state = ProgramRef::new(Rc::new(Program::from_nodeptr(allocator, lst[7])?));
         let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
             a.to_vec()
         } else {
