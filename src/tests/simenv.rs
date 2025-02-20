@@ -136,7 +136,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             coin: state_channel.clone(),
             bundle: Spend {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
-                solution: cc_spend.spend.solution.clone(),
+                solution: ProgramRef::new(cc_spend.spend.solution.clone()),
                 signature,
             },
         };
@@ -435,11 +435,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .player(*player)
                     .ch
                     .get_aggregate_channel_public_key();
-                let puzzle = Rc::new(puzzle_for_synthetic_public_key(
+                let puzzle = puzzle_for_synthetic_public_key(
                     self.env.allocator,
                     &self.env.standard_puzzle,
                     &channel_puzzle_public_key,
-                )?);
+                )?;
                 let included = self
                     .simulator
                     .push_tx(

@@ -26,7 +26,7 @@ use crate::common::constants::{
 use crate::common::types;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, Hash, IntoErr,
-    Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
+    Node, PrivateKey, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
     ToQuotedProgram,
 };
 
@@ -411,8 +411,8 @@ pub fn standard_solution_unsafe(
     let (_, sig) = signer(private_key, &message);
     let conditions_program = Program::from_nodeptr(allocator, conditions)?;
     Ok(BrokenOutCoinSpendInfo {
-        solution: Rc::new(solution_program),
-        conditions: Rc::new(conditions_program),
+        solution: ProgramRef::new(Rc::new(solution_program)),
+        conditions: ProgramRef::new(Rc::new(conditions_program)),
         message,
         signature: sig,
     })
@@ -521,9 +521,9 @@ pub fn standard_solution_partial(
         let solution_program = Program::from_nodeptr(allocator, solution)?;
         let conditions_program = Program::from_nodeptr(allocator, conditions)?;
         Ok(BrokenOutCoinSpendInfo {
-            solution: Rc::new(solution_program.clone()),
+            solution: ProgramRef::new(Rc::new(solution_program.clone())),
             signature,
-            conditions: Rc::new(conditions_program.clone()),
+            conditions: ProgramRef::new(Rc::new(conditions_program.clone())),
             message: coin_agg_sig_me_message,
         })
     } else {
@@ -539,7 +539,7 @@ pub struct ChiaIdentity {
     pub synthetic_public_key: PublicKey,
     pub public_key: PublicKey,
     pub synthetic_private_key: PrivateKey,
-    pub puzzle: Rc<Puzzle>,
+    pub puzzle: Puzzle,
     pub puzzle_hash: PuzzleHash,
 }
 
@@ -553,7 +553,7 @@ impl ChiaIdentity {
             calculate_synthetic_secret_key(&private_key, &default_hidden_puzzle_hash)?;
         let public_key = private_to_public_key(&private_key);
         let synthetic_public_key = private_to_public_key(&synthetic_private_key);
-        let puzzle = Rc::new(puzzle_for_pk(allocator, &public_key)?);
+        let puzzle = puzzle_for_pk(allocator, &public_key)?;
         let puzzle_hash = puzzle_hash_for_pk(allocator, &public_key)?;
         assert_eq!(puzzle.sha256tree(allocator), puzzle_hash);
         Ok(ChiaIdentity {

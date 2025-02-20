@@ -20,8 +20,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, ErrToError, Error,
-    GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
-    ToQuotedProgram,
+    GetCoinStringParts, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree,
+    Spend, ToQuotedProgram,
 };
 
 #[derive(Debug, Clone)]
@@ -399,7 +399,7 @@ impl Simulator {
         py: Python<'_>,
         allocator: &mut AllocEncoder,
         parent_coin: &CoinString,
-        puzzle_reveal: Rc<Puzzle>,
+        puzzle_reveal: Puzzle,
         solution: NodePtr,
     ) -> PyResult<PyObject> {
         let coin = self.make_coin(parent_coin)?;
@@ -526,7 +526,10 @@ impl Simulator {
         let tx = CoinSpend {
             bundle: Spend {
                 puzzle: identity_source.puzzle.clone(),
-                solution: Rc::new(Program::from_nodeptr(allocator, standard_solution)?),
+                solution: ProgramRef::new(Rc::new(Program::from_nodeptr(
+                    allocator,
+                    standard_solution,
+                )?)),
                 signature,
             },
             coin: source_coin.clone(),
@@ -578,7 +581,7 @@ impl Simulator {
             spends.push(CoinSpend {
                 bundle: Spend {
                     puzzle: owner.puzzle.clone(),
-                    solution: Rc::new(Program::from_nodeptr(allocator, solution)?),
+                    solution: ProgramRef::new(Rc::new(Program::from_nodeptr(allocator, solution)?)),
                     signature,
                 },
                 coin: c.clone(),

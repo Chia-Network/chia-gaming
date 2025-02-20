@@ -20,8 +20,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
-    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
+    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash,
+    Sha256Input, Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 use crate::utils::proper_list;
@@ -324,15 +324,15 @@ impl PotatoHandler {
         if let HandshakeState::Finished(hs) = &mut self.handshake_state {
             let (env, _) = penv.env();
             debug!("hs spend is {:?}", hs.spend);
-            let channel_coin_puzzle = Rc::new(puzzle_for_synthetic_public_key(
+            let channel_coin_puzzle = puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
                 &channel_public_key,
-            )?);
+            )?;
             hs.spend.spends = vec![CoinSpend {
                 coin: channel_coin,
                 bundle: Spend {
-                    solution: spend.solution.clone(),
+                    solution: ProgramRef::new(spend.solution.clone()),
                     signature: spend.aggsig.clone(),
                     puzzle: channel_coin_puzzle,
                 },
@@ -442,11 +442,11 @@ impl PotatoHandler {
                 let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
 
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
-                let puzzle = Rc::new(puzzle_for_synthetic_public_key(
+                let puzzle = puzzle_for_synthetic_public_key(
                     env.allocator,
                     &env.standard_puzzle,
                     &channel_puzzle_public_key,
-                )?);
+                )?;
                 let spend = Spend {
                     solution: full_spend.solution.clone(),
                     puzzle,
@@ -1421,8 +1421,7 @@ impl PotatoHandler {
         let curried_unroll_puzzle = finished_unroll_coin
             .coin
             .make_curried_unroll_puzzle(env, &player_ch.get_aggregate_unroll_public_key())?;
-        let curried_unroll_program =
-            Rc::new(Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?);
+        let curried_unroll_program = Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?;
         let unroll_solution = finished_unroll_coin
             .coin
             .make_unroll_puzzle_solution(env, &player_ch.get_aggregate_unroll_public_key())?;
@@ -1449,7 +1448,7 @@ impl PotatoHandler {
             spends: vec![CoinSpend {
                 bundle: Spend {
                     puzzle: curried_unroll_program,
-                    solution: Rc::new(unroll_solution_program),
+                    solution: ProgramRef::new(Rc::new(unroll_solution_program)),
                     signature: aggregate_unroll_signature,
                 },
                 coin: unroll_coin.clone(),

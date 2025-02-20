@@ -483,7 +483,7 @@ pub struct IdentityCoinAndSolution {
     /// The referee knows the mover puzzle hash, so we've already decided what
     /// puzzle this is.  It is usually the standard coin puzzle from the user's
     /// ChiaIdentity.
-    mover_coin_puzzle: Rc<Puzzle>,
+    mover_coin_puzzle: Puzzle,
     /// A solution for the above puzzle that the onchain referee applies to
     /// extract the puzzle output conditions.  The spend results in a re-formed
     /// referee on chain.
@@ -578,7 +578,7 @@ where
                             (
                                 refmove.details.basic.max_move_size,
                                 (
-                                    RcNode::new(refmove.mover_coin.mover_coin_puzzle.clone()),
+                                    refmove.mover_coin.mover_coin_puzzle.clone(),
                                     (refmove_coin_solution_ref, ()),
                                 ),
                             ),
@@ -595,7 +595,7 @@ where
                     (
                         refslash.previous_validation_info.hash(),
                         (
-                            RcNode::new(refslash.mover_coin.mover_coin_puzzle.clone()),
+                            refslash.mover_coin.mover_coin_puzzle.clone(),
                             (refslash_solution_ref, (refslash.slash_evidence.clone(), ())),
                         ),
                     ),
@@ -607,7 +607,7 @@ where
 }
 
 struct RMFixed {
-    pub referee_coin_puzzle: Rc<Puzzle>,
+    pub referee_coin_puzzle: Puzzle,
     pub referee_coin_puzzle_hash: PuzzleHash,
 
     pub my_identity: ChiaIdentity,
@@ -649,7 +649,7 @@ impl RefereeMaker {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         allocator: &mut AllocEncoder,
-        referee_coin_puzzle: Rc<Puzzle>,
+        referee_coin_puzzle: Puzzle,
         referee_coin_puzzle_hash: PuzzleHash,
         game_start_info: &GameStartInfo,
         my_identity: ChiaIdentity,
@@ -1220,7 +1220,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
         always_produce_transaction: bool,
-        puzzle: Rc<Puzzle>,
+        puzzle: Puzzle,
         targs: &RefereePuzzleArgs,
         args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
@@ -1243,7 +1243,10 @@ impl RefereeMaker {
             debug!("transaction solution inputs {args:?}");
             let transaction_bundle = Spend {
                 puzzle: puzzle.clone(),
-                solution: Rc::new(Program::from_nodeptr(allocator, transaction_solution)?),
+                solution: ProgramRef::new(Rc::new(Program::from_nodeptr(
+                    allocator,
+                    transaction_solution,
+                )?)),
                 signature,
             };
             let output_coin_string = CoinString::from_parts(
@@ -1284,12 +1287,12 @@ impl RefereeMaker {
         );
 
         let targs = self.spend_this_coin();
-        let puzzle = Rc::new(curry_referee_puzzle(
+        let puzzle = curry_referee_puzzle(
             allocator,
             &self.fixed.referee_coin_puzzle,
             &self.fixed.referee_coin_puzzle_hash,
             &targs,
-        )?);
+        )?;
 
         self.get_transaction(
             allocator,
@@ -1336,7 +1339,7 @@ impl RefereeMaker {
         // We can only do a move to replicate our turn.
         assert!(self.processing_my_turn());
         let args = self.spend_this_coin();
-        let spend_puzzle = Rc::new(self.on_chain_referee_puzzle(allocator)?);
+        let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
 
         let prog = ValidationProgram::new(allocator, Rc::new(Program::from_bytes(&[0x80])));
         debug!(
@@ -1462,7 +1465,7 @@ impl RefereeMaker {
             details: target_args.game_move.clone(),
             mover_coin: IdentityCoinAndSolution {
                 mover_coin_puzzle: self.fixed.my_identity.puzzle.clone(),
-                mover_coin_spend_solution: referee_spend.solution.clone(),
+                mover_coin_spend_solution: referee_spend.solution.p(),
                 mover_coin_spend_signature: referee_spend.signature.clone(),
             },
         });
@@ -1704,7 +1707,7 @@ impl RefereeMaker {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        new_puzzle: Rc<Puzzle>,
+        new_puzzle: Puzzle,
         new_puzzle_hash: &PuzzleHash,
         slash_spend: &BrokenOutCoinSpendInfo,
         evidence: Evidence,
@@ -1747,10 +1750,10 @@ impl RefereeMaker {
                     coin: coin_string.clone(),
                     bundle: Spend {
                         puzzle: new_puzzle.clone(),
-                        solution: Rc::new(Program::from_nodeptr(
+                        solution: ProgramRef::new(Rc::new(Program::from_nodeptr(
                             allocator,
                             slashing_coin_solution,
-                        )?),
+                        )?)),
                         signature: slash_spend.signature.clone(),
                     },
                 }),
@@ -1796,12 +1799,12 @@ impl RefereeMaker {
         coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
         let puzzle_args = self.spend_this_coin();
-        let new_puzzle = Rc::new(curry_referee_puzzle(
+        let new_puzzle = curry_referee_puzzle(
             allocator,
             &self.fixed.referee_coin_puzzle,
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args,
-        )?);
+        )?;
 
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
@@ -1960,12 +1963,12 @@ impl RefereeMaker {
 
         let args = self.spend_this_coin();
 
-        let new_puzzle = Rc::new(curry_referee_puzzle(
+        let new_puzzle = curry_referee_puzzle(
             allocator,
             &self.fixed.referee_coin_puzzle,
             &self.fixed.referee_coin_puzzle_hash,
             &args,
-        )?);
+        )?;
         let new_puzzle_hash =
             curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)?;
         debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}");

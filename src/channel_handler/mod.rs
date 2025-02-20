@@ -35,7 +35,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
     CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey, Program,
-    PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
+    ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
 };
 use crate::potato_handler::types::GameAction;
 use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction};
@@ -386,11 +386,11 @@ impl ChannelHandler {
             myself.create_conditions_and_signature_of_channel_coin(env, &myself.unroll.coin)?;
 
         myself.state_channel.spend = Spend {
-            puzzle: Rc::new(puzzle_for_synthetic_public_key(
+            puzzle: puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
                 &aggregate_public_key,
-            )?),
+            )?,
             solution: channel_coin_spend.solution.clone(),
             signature: channel_coin_spend.signature.clone(),
         };
@@ -420,11 +420,11 @@ impl ChannelHandler {
             channel_coin_spend.signature.clone() + their_initial_channel_half_signature.clone();
         debug!("combined signature {combined_signature:?}");
 
-        let state_channel_puzzle = Rc::new(puzzle_for_synthetic_public_key(
+        let state_channel_puzzle = puzzle_for_synthetic_public_key(
             env.allocator,
             &env.standard_puzzle,
             &aggregate_public_key,
-        )?);
+        )?;
         debug!(
             "puzzle hash for state channel coin (ch) {:?}",
             state_channel_puzzle.sha256tree(env.allocator)
@@ -435,8 +435,8 @@ impl ChannelHandler {
             amount: self.state_channel.amount.clone(),
             spend: ChannelCoinSpendInfo {
                 aggsig: combined_signature,
-                solution: channel_coin_spend.solution.clone(),
-                conditions: channel_coin_spend.conditions.clone(),
+                solution: channel_coin_spend.solution.p(),
+                conditions: channel_coin_spend.conditions.p(),
             },
         })
     }
@@ -597,7 +597,7 @@ impl ChannelHandler {
         self.verify_channel_coin_from_peer_signatures(
             env,
             &signatures.my_channel_half_signature_peer,
-            channel_coin_spend.conditions.clone(),
+            channel_coin_spend.conditions.p(),
         )?;
 
         // If state number is 0 and we're receiving the potato, then we don't
@@ -642,8 +642,8 @@ impl ChannelHandler {
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
-            solution: spend.solution,
-            conditions: spend.conditions,
+            solution: spend.solution.p(),
+            conditions: spend.conditions.p(),
         })
     }
 
@@ -791,8 +791,8 @@ impl ChannelHandler {
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
-            solution: spend.solution,
-            conditions: spend.conditions,
+            solution: spend.solution.p(),
+            conditions: spend.conditions.p(),
         })
     }
 
@@ -946,8 +946,8 @@ impl ChannelHandler {
         Ok((
             ChannelCoinSpendInfo {
                 aggsig: spend.signature,
-                solution: spend.solution,
-                conditions: spend.conditions,
+                solution: spend.solution.p(),
+                conditions: spend.conditions.p(),
             },
             readable_move,
             message,
@@ -1069,8 +1069,8 @@ impl ChannelHandler {
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
-            solution: spend.solution,
-            conditions: spend.conditions,
+            solution: spend.solution.p(),
+            conditions: spend.conditions.p(),
         })
     }
 
@@ -1088,7 +1088,10 @@ impl ChannelHandler {
             conditions,
         )?;
 
-        Ok((channel_coin_spend.solution, channel_coin_spend.signature))
+        Ok((
+            channel_coin_spend.solution.p(),
+            channel_coin_spend.signature,
+        ))
     }
 
     /// Uses the channel coin key to post standard format coin generation to the
@@ -1120,7 +1123,7 @@ impl ChannelHandler {
         Ok(Spend {
             solution: channel_coin_spend.solution.clone(),
             signature: channel_coin_spend.signature,
-            puzzle: Rc::new(puzzle_for_pk(env.allocator, &aggregate_public_key)?),
+            puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
         })
     }
 
@@ -1213,8 +1216,8 @@ impl ChannelHandler {
         }
         Ok(ChannelCoinSpentResult {
             transaction: Spend {
-                puzzle: Rc::new(Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?),
-                solution: Rc::new(solution_program),
+                puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
+                solution: ProgramRef::new(Rc::new(solution_program)),
                 signature,
             },
             timeout: false,
@@ -1302,14 +1305,11 @@ impl ChannelHandler {
 
                 Ok(ChannelCoinSpentResult {
                     transaction: Spend {
-                        puzzle: Rc::new(Puzzle::from_nodeptr(
-                            env.allocator,
-                            curried_unroll_puzzle,
-                        )?),
-                        solution: Rc::new(Program::from_nodeptr(
+                        puzzle: Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?,
+                        solution: ProgramRef::new(Rc::new(Program::from_nodeptr(
                             env.allocator,
                             unroll_puzzle_solution,
-                        )?),
+                        )?)),
                         signature: self.unroll.coin.get_unroll_coin_signature()?,
                     },
                     timeout: true,
@@ -1960,7 +1960,7 @@ impl ChannelHandler {
         )?;
         let my_referee_public_key =
             private_to_public_key(&self.private_keys.my_referee_private_key);
-        let puzzle = Rc::new(puzzle_for_pk(env.allocator, &my_referee_public_key)?);
+        let puzzle = puzzle_for_pk(env.allocator, &my_referee_public_key)?;
 
         for (i, coin) in exploded_coins.iter().enumerate() {
             let parent_id = coin.coin_string.to_coin_id();

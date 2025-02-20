@@ -1062,8 +1062,8 @@ impl CoinCondition {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Spend {
-    pub puzzle: Rc<Puzzle>,
-    pub solution: Rc<Program>,
+    pub puzzle: Puzzle,
+    pub solution: ProgramRef,
     pub signature: Aggsig,
 }
 
@@ -1076,8 +1076,8 @@ pub struct CoinSpend {
 impl Default for Spend {
     fn default() -> Self {
         Spend {
-            puzzle: Rc::new(Puzzle::from_bytes(&[0x80])),
-            solution: Rc::new(Program::from_bytes(&[0x80])),
+            puzzle: Puzzle::from_bytes(&[0x80]),
+            solution: ProgramRef::new(Rc::new(Program::from_bytes(&[0x80]))),
             signature: Aggsig::default(),
         }
     }
@@ -1124,8 +1124,8 @@ pub fn atom_from_clvm(allocator: &mut AllocEncoder, n: NodePtr) -> Option<Vec<u8
 
 /// Maximum information about a coin spend.  Everything one might need downstream.
 pub struct BrokenOutCoinSpendInfo {
-    pub solution: Rc<Program>,
-    pub conditions: Rc<Program>,
+    pub solution: ProgramRef,
+    pub conditions: ProgramRef,
     pub message: Vec<u8>,
     pub signature: Aggsig,
 }

@@ -1,5 +1,3 @@
-use std::borrow::Borrow;
-
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 
@@ -185,7 +183,7 @@ fn test_standard_puzzle_solution_maker() {
     );
     let spend_info =
         standard_solution_unsafe(&mut allocator, &private_key, conditions).expect("should work");
-    let conditions_borrowed: &Program = spend_info.conditions.borrow();
+    let conditions_borrowed: &Program = spend_info.conditions.pref();
     let expected_full_conditions = (expected_added_condition, conditions_borrowed)
         .to_clvm(&mut allocator)
         .expect("should work");
