@@ -43,11 +43,10 @@ pub enum SerialGameHandler {
 
 impl From<&GameHandler> for SerialGameHandler {
     fn from(other: &GameHandler) -> Self {
-        let p_rc: Rc<Program> =
-            match &other {
-                GameHandler::MyTurnHandler(p) => p.clone(),
-                GameHandler::TheirTurnHandler(p) => p.clone(),
-            };
+        let p_rc: Rc<Program> = match &other {
+            GameHandler::MyTurnHandler(p) => p.clone(),
+            GameHandler::TheirTurnHandler(p) => p.clone(),
+        };
         let p_ref: &Program = p_rc.borrow();
 
         match other {
@@ -61,7 +60,9 @@ impl From<&SerialGameHandler> for GameHandler {
     fn from(other: &SerialGameHandler) -> Self {
         match other {
             SerialGameHandler::MyTurnHandler(p) => GameHandler::MyTurnHandler(Rc::new(p.clone())),
-            SerialGameHandler::TheirTurnHandler(p) => GameHandler::TheirTurnHandler(Rc::new(p.clone()))
+            SerialGameHandler::TheirTurnHandler(p) => {
+                GameHandler::TheirTurnHandler(Rc::new(p.clone()))
+            }
         }
     }
 }
