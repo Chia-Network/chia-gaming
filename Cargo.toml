@@ -45,7 +45,7 @@ exec = "0.3.1"
 [build-dependencies]
 serde = "1.0.203"
 toml = "0.8.14"
-clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "983ad02179928f22822387a49309be50c3a13add" }
+clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "db06011325f6f15cb1b2796da584a16262bb168a" }
 clvmr = { version = "=0.12.0", features = ["pre-eval"] }
 
 [lib]
