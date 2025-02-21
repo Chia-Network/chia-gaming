@@ -335,7 +335,9 @@ impl InternalValidatorArgs {
     ) -> Result<NodePtr, Error> {
         let converted_vma = self.move_args.to_nodeptr(allocator, me)?;
         let move_node = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&self.referee_args.game_move.basic.move_made))
+            .encode_atom(clvm_traits::Atom::Borrowed(
+                &self.referee_args.game_move.basic.move_made,
+            ))
             .into_gen()?;
         (
             validator_mod_hash,
@@ -357,9 +359,16 @@ impl InternalValidatorArgs {
                                             (
                                                 self.referee_args.game_move.basic.max_move_size,
                                                 (
-                                                    self.referee_args.game_move.validation_info_hash.clone(),
+                                                    self.referee_args
+                                                        .game_move
+                                                        .validation_info_hash
+                                                        .clone(),
                                                     (
-                                                        self.referee_args.game_move.basic.mover_share.clone(),
+                                                        self.referee_args
+                                                            .game_move
+                                                            .basic
+                                                            .mover_share
+                                                            .clone(),
                                                         (self.referee_hash.clone(), ()),
                                                     ),
                                                 ),
@@ -1509,10 +1518,8 @@ impl RefereeMaker {
                     },
                     validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
                 },
-                previous_validation_info_hash: Some(previous_puzzle_args
-                    .game_move
-                    .validation_info_hash
-                    .clone()
+                previous_validation_info_hash: Some(
+                    previous_puzzle_args.game_move.validation_info_hash.clone(),
                 ),
                 mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
                 waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
