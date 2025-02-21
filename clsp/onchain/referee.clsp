@@ -63,27 +63,7 @@
                 (c (list REMARK)
                     (concat
                         (a previous_validation_program
-                            (c previous_validation_program_hash
-                                (c
-                                    (list
-                                        ;; The items from the onchain validators in
-                                        ;; clsp/onchain/calpoker/a-e.clsp
-                                        ;; (and above at line 33)
-                                        MOVER_PUZZLE_HASH
-                                        WAITER_PUZZLE_HASH
-                                        TIMEOUT
-                                        AMOUNT
-                                        MOD_HASH ; referee_hash
-                                        NONCE
-                                        MOVE
-                                        MAX_MOVE_SIZE
-                                        VALIDATION_INFO_HASH
-                                        MOVER_SHARE
-                                        PREVIOUS_VALIDATION_INFO_HASH
-                                    )
-                                    args
-                                )
-                            )
+                            (c previous_validation_program_hash all_args)
                         )
                         (a mover_puzzle solution)
                     )
