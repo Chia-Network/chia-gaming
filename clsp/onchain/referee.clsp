@@ -50,7 +50,7 @@
         (assign
             (previous_state me previous_validation_program mover_puzzle solution evidence) args
             previous_validation_program_hash (shatree previous_validation_program)
-            
+
             (assert
                 (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
                 (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree
@@ -69,12 +69,12 @@
                                         ;; The items from the onchain validators in
                                         ;; clsp/onchain/calpoker/a-e.clsp
                                         ;; (and above at line 33)
+                                        MOVER_PUZZLE_HASH
+                                        WAITER_PUZZLE_HASH
                                         MOVE
                                         VALIDATION_INFO_HASH
                                         MOVER_SHARE
                                         PREVIOUS_VALIDATION_INFO_HASH
-                                        MOVER_PUZZLE_HASH
-                                        WAITER_PUZZLE_HASH
                                         AMOUNT
                                         TIMEOUT
                                         MAX_MOVE_SIZE
