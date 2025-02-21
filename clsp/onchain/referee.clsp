@@ -76,10 +76,10 @@
                                         MOD_HASH ; referee_hash
                                         NONCE
                                         MOVE
+                                        MAX_MOVE_SIZE
                                         VALIDATION_INFO_HASH
                                         MOVER_SHARE
                                         PREVIOUS_VALIDATION_INFO_HASH
-                                        MAX_MOVE_SIZE
                                     )
                                     args
                                 )

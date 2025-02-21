@@ -10,8 +10,8 @@
 ; state is alice's commit
 ; move is bob's seed
 ; evidence is empty
-(export (mod_hash (mover_puzzle_hash waiter_puzzle_hash timeout amount previous_validation_hash nonce_unused move new_validation_hash mover_share
-    max_move_size referee_hash) 
+(export (mod_hash (mover_puzzle_hash waiter_puzzle_hash timeout amount previous_validation_hash nonce_unused move max_move_size new_validation_hash mover_share
+    referee_hash) 
     alice_commit me previous_validation_program mover_puzzle solution evidence)
     (if_any_fail
         (= new_validation_hash (sha256 chash (shatree (list alice_commit move))))

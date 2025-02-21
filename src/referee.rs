@@ -363,11 +363,11 @@ impl InternalValidatorArgs {
                                         (
                                             Node(move_node),
                                             (
-                                                self.new_validation_info_hash.clone(),
+                                                self.max_move_size,
                                                 (
-                                                    self.mover_share.clone(),
+                                                    self.new_validation_info_hash.clone(),
                                                     (
-                                                        self.max_move_size,
+                                                        self.mover_share.clone(),
                                                         (self.referee_hash.clone(), ()),
                                                     ),
                                                 ),
