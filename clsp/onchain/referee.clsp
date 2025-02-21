@@ -73,12 +73,13 @@
                                         WAITER_PUZZLE_HASH
                                         TIMEOUT
                                         AMOUNT
+                                        MOD_HASH ; referee_hash
+                                        NONCE
                                         MOVE
                                         VALIDATION_INFO_HASH
                                         MOVER_SHARE
                                         PREVIOUS_VALIDATION_INFO_HASH
                                         MAX_MOVE_SIZE
-                                        MOD_HASH ; referee_hash
                                     )
                                     args
                                 )
