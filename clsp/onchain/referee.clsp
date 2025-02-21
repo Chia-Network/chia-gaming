@@ -71,9 +71,9 @@
             )
         )
         ; move
-        (assign 
+        (assign
             (new_move new_validation_info_hash new_mover_share new_max_move_size mover_puzzle solution) args
-            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT 
+            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT
                     AMOUNT MOD_HASH NONCE new_move new_max_move_size new_validation_info_hash new_mover_share
                     VALIDATION_INFO_HASH)))
             conditions (a mover_puzzle solution)

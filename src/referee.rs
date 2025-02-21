@@ -321,12 +321,7 @@ impl ValidatorMoveArgs {
 }
 
 pub struct InternalValidatorArgs {
-    mover_puzzle_hash: PuzzleHash,
-    waiter_puzzle_hash: PuzzleHash,
-    timeout: Timeout,
-    amount: Amount,
-    previous_validation_info_hash: Hash,
-    game_move: GameMoveDetails,
+    referee_args: RefereePuzzleArgs,
     referee_hash: PuzzleHash,
     move_args: ValidatorMoveArgs,
 }
@@ -340,31 +335,31 @@ impl InternalValidatorArgs {
     ) -> Result<NodePtr, Error> {
         let converted_vma = self.move_args.to_nodeptr(allocator, me)?;
         let move_node = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))
+            .encode_atom(clvm_traits::Atom::Borrowed(&self.referee_args.game_move.basic.move_made))
             .into_gen()?;
         (
             validator_mod_hash,
             (
                 (
-                    self.mover_puzzle_hash.clone(),
+                    self.referee_args.mover_puzzle_hash.clone(),
                     (
-                        self.waiter_puzzle_hash.clone(),
+                        self.referee_args.waiter_puzzle_hash.clone(),
                         (
-                            self.timeout.clone(),
+                            self.referee_args.timeout.clone(),
                             (
-                                self.amount.clone(),
+                                self.referee_args.amount.clone(),
                                 (
-                                    self.previous_validation_info_hash.clone(),
+                                    self.referee_args.previous_validation_info_hash.clone(),
                                     (
                                         (), // Unused nonce.
                                         (
                                             Node(move_node),
                                             (
-                                                self.game_move.basic.max_move_size,
+                                                self.referee_args.game_move.basic.max_move_size,
                                                 (
-                                                    self.game_move.validation_info_hash.clone(),
+                                                    self.referee_args.game_move.validation_info_hash.clone(),
                                                     (
-                                                        self.game_move.basic.mover_share.clone(),
+                                                        self.referee_args.game_move.basic.mover_share.clone(),
                                                         (self.referee_hash.clone(), ()),
                                                     ),
                                                 ),
@@ -1504,22 +1499,26 @@ impl RefereeMaker {
         )?;
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let validator_move_args = InternalValidatorArgs {
-            game_move: GameMoveDetails {
-                basic: GameMoveStateInfo {
-                    move_made: puzzle_args.game_move.basic.move_made.clone(),
-                    mover_share: puzzle_args.game_move.basic.mover_share.clone(),
-                    max_move_size: puzzle_args.game_move.basic.max_move_size,
+            referee_args: RefereePuzzleArgs {
+                nonce: self.fixed.nonce,
+                game_move: GameMoveDetails {
+                    basic: GameMoveStateInfo {
+                        move_made: puzzle_args.game_move.basic.move_made.clone(),
+                        mover_share: puzzle_args.game_move.basic.mover_share.clone(),
+                        max_move_size: puzzle_args.game_move.basic.max_move_size,
+                    },
+                    validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
                 },
-                validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
+                previous_validation_info_hash: Some(previous_puzzle_args
+                    .game_move
+                    .validation_info_hash
+                    .clone()
+                ),
+                mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
+                waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
+                amount: self.fixed.amount.clone(),
+                timeout: self.fixed.timeout.clone(),
             },
-            previous_validation_info_hash: previous_puzzle_args
-                .game_move
-                .validation_info_hash
-                .clone(),
-            mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
-            waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
-            amount: self.fixed.amount.clone(),
-            timeout: self.fixed.timeout.clone(),
             referee_hash: new_puzzle_hash.clone(),
             move_args: ValidatorMoveArgs {
                 evidence: Rc::new(Program::from_nodeptr(allocator, evidence)?),
