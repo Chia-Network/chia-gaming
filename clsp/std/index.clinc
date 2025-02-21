@@ -1,0 +1,6 @@
+(defun index (lst idx)
+    (if idx
+        (index (r lst) (- idx 1))
+        (f lst)
+    )
+)

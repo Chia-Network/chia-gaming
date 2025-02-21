@@ -1,8 +1,12 @@
 (include *standard-cl-23*)
 
-(export guess)
+(export guess_validate)
 (import onchain.krunk.clue exposing clue_validate_hash)
+(import onchain.game_codes)
 (import std.assert)
+(import std.li)
+(import std.relops)
+(import std.condition_codes)
 
 ; Alice challenging
 ; state is a (bob_guesses alice_clues dictionary_public_key alice_commit)
@@ -17,11 +21,11 @@
         (assert
             (>=s move (substr evidence 0 5))
             (<=s move (substr evidence 5 10))
-            (li SLASH (list (list AGG_SIG_UNSAFE evidence dictionary_key)))
+            (li SLASH (list (list AGG_SIG_UNSAFE evidence dictionary_public_key)))
         )
         (if (!= (strlen move) 5)
             (li SLASH 0)
-            (li MOVE clue_validate_hash (li (c move bob_guesses) alice_clues mod_hash &rest tail) 21)
+            (li MAKE_MOVE clue_validate_hash (li (c move bob_guesses) alice_clues mod_hash &rest tail) 21)
         )
     )
 )

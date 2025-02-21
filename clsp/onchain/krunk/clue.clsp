@@ -1,8 +1,17 @@
 (include *standard-cl-23*)
 
 (export clue_validate)
-(import std.assert_fail)
 (import onchain.krunk.krunk_make_clue exposing make_clue)
+(import onchain.game_codes)
+(import std.len exposing len)
+(import std.li)
+(import std.index)
+(import std.assert)
+(import std.or)
+(import std.and)
+(import std.relops)
+(import std.if_any_fail)
+(import std.condition_codes)
 
 ; Bob challenging
 ; state is (bob_guesses alice_clues guess_validate_hash dictionary_key alice_commit)
@@ -14,11 +23,11 @@
     (bob_guesses alice_clues guess_validation_hash @ tail (dictionary_key alice_commit))
     me previous_calidation_program mover_puzzle solution evidence)
 
-    (if (= (strlen move)) 1
+    (if (= (strlen move) 1)
         ; alice gave a clue
         (if (= (len alice_clues) 4)
             (li SLASH 0)
-            (li MOVE (li bob_guesses (c move alice_clues) &rest tail) 5)
+            (li MAKE_MOVE (li bob_guesses (c move alice_clues) &rest tail) 5)
         )
         ; alice did a reveal
         (if (= (strlen evidence) 1)
@@ -43,14 +52,14 @@
             (assert
                 (>= (substr move 0 5) (substr evidence 0 5))
                 (<= (substr move 0 5) (substr evidence 5 10))
-                (li SLASH (li (li AGGSIG_UNSAFE dictionary_key evidence)))
+                (li SLASH (li (li AGG_SIG_UNSAFE dictionary_key evidence)))
             )
             (if_any_fail
                 (= (strlen move) 21)
                 (= alice_commit (sha256 move))
                 (= mover_share (* (/ amount 100) (index (len bob_guesses) (li 100 100 20 5 1 0))))
                 (li SLASH 0)
-                (li MOVE 0 0 0)
+                (li MAKE_MOVE 0 0 0)
             )
         )
     )

@@ -1,0 +1,8 @@
+(defun or_ (CLAUSES)
+    (if (r CLAUSES)
+        (qq (if (unquote (f CLAUSES)) (unquote (f CLAUSES)) (unquote (or_ (r CLAUSES)))))
+        (f CLAUSES)
+    )
+)
+
+(defmac or CLAUSES (if CLAUSES (or_ CLAUSES) ()))

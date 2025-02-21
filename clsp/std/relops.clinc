@@ -2,3 +2,8 @@
 (defun-inline <= (A B) (not (> A B)))
 (defun-inline <  (A B) (> B A))
 (defun-inline != (A B) (not (= A B)))
+
+; Strings
+(defun-inline >=s (A B) (not (>s B A)))
+(defun-inline <=s (A B) (not (>s A B)))
+(defun-inline <s  (A B) (>s B A))
