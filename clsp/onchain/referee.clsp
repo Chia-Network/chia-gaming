@@ -71,12 +71,12 @@
                                         ;; (and above at line 33)
                                         MOVER_PUZZLE_HASH
                                         WAITER_PUZZLE_HASH
+                                        TIMEOUT
+                                        AMOUNT
                                         MOVE
                                         VALIDATION_INFO_HASH
                                         MOVER_SHARE
                                         PREVIOUS_VALIDATION_INFO_HASH
-                                        AMOUNT
-                                        TIMEOUT
                                         MAX_MOVE_SIZE
                                         MOD_HASH ; referee_hash
                                     )

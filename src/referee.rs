@@ -323,12 +323,12 @@ impl ValidatorMoveArgs {
 pub struct InternalValidatorArgs {
     mover_puzzle_hash: PuzzleHash,
     waiter_puzzle_hash: PuzzleHash,
+    timeout: Timeout,
+    amount: Amount,
     move_made: Vec<u8>,
     new_validation_info_hash: Hash,
     mover_share: Amount,
     previous_validation_info_hash: Hash,
-    amount: Amount,
-    timeout: Timeout,
     max_move_size: usize,
     referee_hash: PuzzleHash,
     move_args: ValidatorMoveArgs,
@@ -353,17 +353,17 @@ impl InternalValidatorArgs {
                     (
                         self.waiter_puzzle_hash.clone(),
                         (
-                            Node(move_node),
+                            self.timeout.clone(),
                             (
-                                self.new_validation_info_hash.clone(),
+                                self.amount.clone(),
                                 (
-                                    self.mover_share.clone(),
+                                    Node(move_node),
                                     (
-                                        self.previous_validation_info_hash.clone(),
+                                        self.new_validation_info_hash.clone(),
                                         (
-                                            self.amount.clone(),
+                                            self.mover_share.clone(),
                                             (
-                                                self.timeout.clone(),
+                                                self.previous_validation_info_hash.clone(),
                                                 (
                                                     self.max_move_size,
                                                     (self.referee_hash.clone(), ()),
