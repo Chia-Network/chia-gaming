@@ -334,55 +334,10 @@ impl InternalValidatorArgs {
         validator_mod_hash: PuzzleHash,
     ) -> Result<NodePtr, Error> {
         let converted_vma = self.move_args.to_nodeptr(allocator, me)?;
-        let move_node = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(
-                &self.referee_args.game_move.basic.move_made,
-            ))
-            .into_gen()?;
-        (
-            validator_mod_hash,
-            (
-                (
-                    self.referee_args.mover_puzzle_hash.clone(),
-                    (
-                        self.referee_args.waiter_puzzle_hash.clone(),
-                        (
-                            self.referee_args.timeout.clone(),
-                            (
-                                self.referee_args.amount.clone(),
-                                (
-                                    self.referee_args.previous_validation_info_hash.clone(),
-                                    (
-                                        (), // Unused nonce.
-                                        (
-                                            Node(move_node),
-                                            (
-                                                self.referee_args.game_move.basic.max_move_size,
-                                                (
-                                                    self.referee_args
-                                                        .game_move
-                                                        .validation_info_hash
-                                                        .clone(),
-                                                    (
-                                                        self.referee_args
-                                                            .game_move
-                                                            .basic
-                                                            .mover_share
-                                                            .clone(),
-                                                        (self.referee_hash.clone(), ()),
-                                                    ),
-                                                ),
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-                Node(converted_vma),
-            ),
-        )
+        let ref_args_list = self
+            .referee_args
+            .to_node_list(allocator, &self.referee_hash)?;
+        (validator_mod_hash, (ref_args_list, Node(converted_vma)))
             .to_clvm(allocator)
             .into_gen()
     }
