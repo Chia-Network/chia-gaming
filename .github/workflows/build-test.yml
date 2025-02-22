@@ -93,7 +93,7 @@ jobs:
             components: rustfmt, clippy
       - name: cargo test
         run: |
-          python -m pip install setuptools==59.6.0
+          python -m pip install setuptools==75.0.0
           python -m pip install chia-blockchain==2.3.0
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
