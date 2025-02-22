@@ -1671,6 +1671,7 @@ impl RefereeMaker {
         new_puzzle_hash: &PuzzleHash,
         slash_spend: &BrokenOutCoinSpendInfo,
         evidence: Evidence,
+        ignore_zero_value: bool,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         // Probably readable_info overlaps solution.
         // Moving driver in that context is the signature.
@@ -1681,7 +1682,7 @@ impl RefereeMaker {
 
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let reward_amount = self.fixed.amount.clone() - current_mover_share;
-        if reward_amount == Amount::default() {
+        if reward_amount == Amount::default() && !ignore_zero_value {
             return Ok(TheirTurnCoinSpentResult::Slash(Box::new(
                 SlashOutcome::NoReward,
             )));
@@ -1768,9 +1769,56 @@ impl RefereeMaker {
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
+
+        // First step of checking for slash:
+        // run the referee coin with the nil slash and see if it succeeds.  If so,
+        // leave via Some(TheirTurnCoinSpentResult), otherwise run the validator separately
+        // here and leave via the same route if slash is indicated.  Later we'll have a state
+        // result that we feed into the game handler.
+        let slash_spend = self.make_slash_spend(allocator, coin_string)?;
+        let nil = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()?;
+        let potential_slash_for_their_turn = self.make_slash_for_their_turn(
+            allocator,
+            coin_string,
+            new_puzzle,
+            &new_puzzle_hash,
+            &slash_spend,
+            Evidence::from_nodeptr(nil),
+            true,
+        )?;
+
+        let mut check_allowed_slash = || {
+            if let TheirTurnCoinSpentResult::Slash(slash_for_their_turn) = &potential_slash_for_their_turn {
+                let slash_ref: &SlashOutcome = slash_for_their_turn.borrow();
+                if let SlashOutcome::Reward { transaction, .. } = &slash_ref {
+                    // Run the program and solution.
+                    let program_node = transaction.bundle.puzzle.to_clvm(allocator).into_gen()?;
+                    let solution_node = transaction.bundle.solution.to_clvm(allocator).into_gen()?;
+                    let result = run_program(
+                        allocator.allocator(),
+                        &chia_dialect(),
+                        program_node,
+                        solution_node,
+                        0,
+                    );
+
+                    return Ok(result.is_ok());
+                }
+            }
+
+            Ok(false)
+        };
+
+        let allowed_slash = check_allowed_slash()?;
+
+        if !allowed_slash {
+            return Ok(None);
+        }
+
         // my_inner_solution maker is just in charge of making aggsigs from
         // conditions.
         debug!("run validator for their move");
+
         let full_slash_result = self.run_validator_for_their_move(allocator, evidence)?;
         match full_slash_result {
             ValidatorResult::Slash(_slash) => {
@@ -1778,16 +1826,7 @@ impl RefereeMaker {
                 // The aggsig for the nil slash is the same as the slash
                 // below, having been created for the reward coin by using
                 // the standard solution signer.
-                let slash_spend = self.make_slash_spend(allocator, coin_string)?;
-                self.make_slash_for_their_turn(
-                    allocator,
-                    coin_string,
-                    new_puzzle,
-                    &new_puzzle_hash,
-                    &slash_spend,
-                    Evidence::from_nodeptr(evidence),
-                )
-                .map(Some)
+                Ok(Some(potential_slash_for_their_turn))
             }
             ValidatorResult::MoveOk => Ok(None),
         }
@@ -1963,6 +2002,7 @@ impl RefereeMaker {
                     &new_puzzle_hash,
                     &slash_spend,
                     evidence,
+                    false,
                 )
             }
             TheirTurnResult::FinalMove(move_data) => check_and_report_slash(allocator, &move_data),
