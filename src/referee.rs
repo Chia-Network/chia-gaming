@@ -1776,7 +1776,9 @@ impl RefereeMaker {
         // here and leave via the same route if slash is indicated.  Later we'll have a state
         // result that we feed into the game handler.
         let slash_spend = self.make_slash_spend(allocator, coin_string)?;
-        let nil = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()?;
+        let nil = allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+            .into_gen()?;
         let potential_slash_for_their_turn = self.make_slash_for_their_turn(
             allocator,
             coin_string,
@@ -1788,12 +1790,15 @@ impl RefereeMaker {
         )?;
 
         let mut check_allowed_slash = || {
-            if let TheirTurnCoinSpentResult::Slash(slash_for_their_turn) = &potential_slash_for_their_turn {
+            if let TheirTurnCoinSpentResult::Slash(slash_for_their_turn) =
+                &potential_slash_for_their_turn
+            {
                 let slash_ref: &SlashOutcome = slash_for_their_turn.borrow();
                 if let SlashOutcome::Reward { transaction, .. } = &slash_ref {
                     // Run the program and solution.
                     let program_node = transaction.bundle.puzzle.to_clvm(allocator).into_gen()?;
-                    let solution_node = transaction.bundle.solution.to_clvm(allocator).into_gen()?;
+                    let solution_node =
+                        transaction.bundle.solution.to_clvm(allocator).into_gen()?;
                     let result = run_program(
                         allocator.allocator(),
                         &chia_dialect(),
