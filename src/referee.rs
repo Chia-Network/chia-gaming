@@ -321,15 +321,7 @@ impl ValidatorMoveArgs {
 }
 
 pub struct InternalValidatorArgs {
-    move_made: Vec<u8>,
-    new_validation_info_hash: Hash,
-    mover_share: Amount,
-    previous_validation_info_hash: Hash,
-    mover_puzzle_hash: PuzzleHash,
-    waiter_puzzle_hash: PuzzleHash,
-    amount: Amount,
-    timeout: Timeout,
-    max_move_size: usize,
+    referee_args: RefereePuzzleArgs,
     referee_hash: PuzzleHash,
     move_args: ValidatorMoveArgs,
 }
@@ -342,43 +334,10 @@ impl InternalValidatorArgs {
         validator_mod_hash: PuzzleHash,
     ) -> Result<NodePtr, Error> {
         let converted_vma = self.move_args.to_nodeptr(allocator, me)?;
-        let move_node = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&self.move_made))
-            .into_gen()?;
-        (
-            validator_mod_hash,
-            (
-                (
-                    Node(move_node),
-                    (
-                        self.new_validation_info_hash.clone(),
-                        (
-                            self.mover_share.clone(),
-                            (
-                                self.previous_validation_info_hash.clone(),
-                                (
-                                    self.mover_puzzle_hash.clone(),
-                                    (
-                                        self.waiter_puzzle_hash.clone(),
-                                        (
-                                            self.amount.clone(),
-                                            (
-                                                self.timeout.clone(),
-                                                (
-                                                    self.max_move_size,
-                                                    (self.referee_hash.clone(), ()),
-                                                ),
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-                Node(converted_vma),
-            ),
-        )
+        let ref_args_list = self
+            .referee_args
+            .to_node_list(allocator, &self.referee_hash)?;
+        (validator_mod_hash, (ref_args_list, Node(converted_vma)))
             .to_clvm(allocator)
             .into_gen()
     }
@@ -1504,18 +1463,24 @@ impl RefereeMaker {
         )?;
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let validator_move_args = InternalValidatorArgs {
-            move_made: puzzle_args.game_move.basic.move_made.clone(),
-            new_validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
-            mover_share: puzzle_args.game_move.basic.mover_share.clone(),
-            previous_validation_info_hash: previous_puzzle_args
-                .game_move
-                .validation_info_hash
-                .clone(),
-            mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
-            waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
-            amount: self.fixed.amount.clone(),
-            timeout: self.fixed.timeout.clone(),
-            max_move_size: puzzle_args.game_move.basic.max_move_size,
+            referee_args: RefereePuzzleArgs {
+                nonce: self.fixed.nonce,
+                game_move: GameMoveDetails {
+                    basic: GameMoveStateInfo {
+                        move_made: puzzle_args.game_move.basic.move_made.clone(),
+                        mover_share: puzzle_args.game_move.basic.mover_share.clone(),
+                        max_move_size: puzzle_args.game_move.basic.max_move_size,
+                    },
+                    validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
+                },
+                previous_validation_info_hash: Some(
+                    previous_puzzle_args.game_move.validation_info_hash.clone(),
+                ),
+                mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
+                waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
+                amount: self.fixed.amount.clone(),
+                timeout: self.fixed.timeout.clone(),
+            },
             referee_hash: new_puzzle_hash.clone(),
             move_args: ValidatorMoveArgs {
                 evidence: Rc::new(Program::from_nodeptr(allocator, evidence)?),
@@ -1706,6 +1671,7 @@ impl RefereeMaker {
         new_puzzle_hash: &PuzzleHash,
         slash_spend: &BrokenOutCoinSpendInfo,
         evidence: Evidence,
+        ignore_zero_value: bool,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         // Probably readable_info overlaps solution.
         // Moving driver in that context is the signature.
@@ -1716,7 +1682,7 @@ impl RefereeMaker {
 
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let reward_amount = self.fixed.amount.clone() - current_mover_share;
-        if reward_amount == Amount::default() {
+        if reward_amount == Amount::default() && !ignore_zero_value {
             return Ok(TheirTurnCoinSpentResult::Slash(Box::new(
                 SlashOutcome::NoReward,
             )));
@@ -1803,9 +1769,61 @@ impl RefereeMaker {
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args,
         )?;
+
+        // First step of checking for slash:
+        // run the referee coin with the nil slash and see if it succeeds.  If so,
+        // leave via Some(TheirTurnCoinSpentResult), otherwise run the validator separately
+        // here and leave via the same route if slash is indicated.  Later we'll have a state
+        // result that we feed into the game handler.
+        let slash_spend = self.make_slash_spend(allocator, coin_string)?;
+        let nil = allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+            .into_gen()?;
+        let potential_slash_for_their_turn = self.make_slash_for_their_turn(
+            allocator,
+            coin_string,
+            new_puzzle,
+            &new_puzzle_hash,
+            &slash_spend,
+            Evidence::from_nodeptr(nil),
+            true,
+        )?;
+
+        let mut check_allowed_slash = || {
+            if let TheirTurnCoinSpentResult::Slash(slash_for_their_turn) =
+                &potential_slash_for_their_turn
+            {
+                let slash_ref: &SlashOutcome = slash_for_their_turn.borrow();
+                if let SlashOutcome::Reward { transaction, .. } = &slash_ref {
+                    // Run the program and solution.
+                    let program_node = transaction.bundle.puzzle.to_clvm(allocator).into_gen()?;
+                    let solution_node =
+                        transaction.bundle.solution.to_clvm(allocator).into_gen()?;
+                    let result = run_program(
+                        allocator.allocator(),
+                        &chia_dialect(),
+                        program_node,
+                        solution_node,
+                        0,
+                    );
+
+                    return Ok(result.is_ok());
+                }
+            }
+
+            Ok(false)
+        };
+
+        let allowed_slash = check_allowed_slash()?;
+
+        if !allowed_slash {
+            return Ok(None);
+        }
+
         // my_inner_solution maker is just in charge of making aggsigs from
         // conditions.
         debug!("run validator for their move");
+
         let full_slash_result = self.run_validator_for_their_move(allocator, evidence)?;
         match full_slash_result {
             ValidatorResult::Slash(_slash) => {
@@ -1813,16 +1831,7 @@ impl RefereeMaker {
                 // The aggsig for the nil slash is the same as the slash
                 // below, having been created for the reward coin by using
                 // the standard solution signer.
-                let slash_spend = self.make_slash_spend(allocator, coin_string)?;
-                self.make_slash_for_their_turn(
-                    allocator,
-                    coin_string,
-                    new_puzzle,
-                    &new_puzzle_hash,
-                    &slash_spend,
-                    Evidence::from_nodeptr(evidence),
-                )
-                .map(Some)
+                Ok(Some(potential_slash_for_their_turn))
             }
             ValidatorResult::MoveOk => Ok(None),
         }
@@ -1998,6 +2007,7 @@ impl RefereeMaker {
                     &new_puzzle_hash,
                     &slash_spend,
                     evidence,
+                    false,
                 )
             }
             TheirTurnResult::FinalMove(move_data) => check_and_report_slash(allocator, &move_data),
