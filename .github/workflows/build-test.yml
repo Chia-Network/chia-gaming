@@ -31,14 +31,13 @@ jobs:
       with:
         fetch-depth: 0
 
-    - uses: actions/setup-python@v4
-      name: Install Python ${{ matrix.python }}
+    - uses: actions/setup-python@v5
+      name: Install Python 3.9
       with:
-        python-version: ${{ matrix.python }}
+        python-version: 3.9
 
-    - name: Update pip
-      run: |
-          python -m pip install --upgrade pip
+    - uses: chia-network/actions/create-venv@main
+      id: create-venv
 
     - name: Set up rust
       uses: actions-rs/toolchain@v1
@@ -86,11 +85,21 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 1
+
       - name: Install rust
         uses: actions-rs/toolchain@v1
         with:
             toolchain: stable
             components: rustfmt, clippy
+
+      - uses: actions/setup-python@v5
+        name: Install Python 3.9
+        with:
+          python-version: 3.9
+
+      - uses: chia-network/actions/create-venv@main
+        id: create-venv
+
       - name: cargo test
         run: |
           python -m pip install setuptools==75.0.0
