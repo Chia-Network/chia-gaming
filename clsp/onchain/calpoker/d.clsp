@@ -13,8 +13,8 @@
 ; state is the cards for both players and alice's card pick commitment
 ; move is Bob's picks
 ; evidence is empty
-(export (mod_hash (bob_picks new_validation_hash mover_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
+(export (mod_hash (mover_puzzle_hash waiter_puzzle_hash timeout amount previous_validation_hash nonce_unused bob_picks max_move_size new_validation_hash mover_share 
+    referee_hash)
     (cards alice_commit) me previous_validation_program mover_puzzle solution evidence)
     (if_any_fail
         (= (strlen bob_picks) 1)

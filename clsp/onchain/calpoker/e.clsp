@@ -16,8 +16,8 @@
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_picks and alice's selections
 ; evidence is Bob's card selections
-(export (mod_hash (move next_validation_hash bob_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
+(export (mod_hash (mover_puzzle_hash waiter_puzzle_hash timeout amount previous_validation_hash nonce_unused move max_move_size next_validation_hash bob_share
+    referee_hash)
     (bob_picks (alice_cards bob_cards) alice_commit) me previous_validation_program mover_puzzle solution bob_card_selections)
     (if (= (strlen move) 18)
         (assign

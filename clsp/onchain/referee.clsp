@@ -68,26 +68,7 @@
                         ; (a previous_validation_program (li previous_validan_program_hash &rest all_args))
                         (assign
                             (slash_type . leftovers) (a previous_validation_program
-                                (c previous_validation_program_hash
-                                    (c
-                                        (list
-                                            ;; The items from the onchain validators in
-                                            ;; clsp/onchain/calpoker/a-e.clsp
-                                            ;; (and above at line 33)
-                                            MOVE
-                                            VALIDATION_INFO_HASH
-                                            MOVER_SHARE
-                                            PREVIOUS_VALIDATION_INFO_HASH
-                                            MOVER_PUZZLE_HASH
-                                            WAITER_PUZZLE_HASH
-                                            AMOUNT
-                                            TIMEOUT
-                                            MAX_MOVE_SIZE
-                                            MOD_HASH ; referee_hash
-                                        )
-                                        args
-                                    )
-                                )
+                                (c previous_validation_program_hash all_args)
                             )
                             (if (= slash_type SLASH)
                                 (f leftovers)

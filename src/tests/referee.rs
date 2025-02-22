@@ -111,7 +111,7 @@ pub struct RefereeTest {
     pub their_referee: RefereeMaker,
 
     #[allow(dead_code)]
-    pub referee_coin_puzzle: Rc<Puzzle>,
+    pub referee_coin_puzzle: Puzzle,
     #[allow(dead_code)]
     pub referee_coin_puzzle_hash: PuzzleHash,
 }
@@ -128,9 +128,8 @@ impl RefereeTest {
         game_start: &GameStartInfo,
     ) -> RefereeTest {
         // Load up the real referee coin.
-        let referee_coin_puzzle = Rc::new(
-            read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable"),
-        );
+        let referee_coin_puzzle =
+            read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable");
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
         let (my_referee, first_puzzle_hash) = RefereeMaker::new(
             allocator,
@@ -201,7 +200,7 @@ fn test_referee_smoke() {
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
     let init_state_node = ((), ()).to_clvm(&mut allocator).expect("should assemble");
     let init_state =
-        Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
+        Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert");
     let initial_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
 
@@ -214,7 +213,7 @@ fn test_referee_smoke() {
         my_contribution_this_game: Amount::new(50),
         their_contribution_this_game: Amount::new(50),
         initial_validation_program,
-        initial_state: init_state,
+        initial_state: init_state.into(),
         initial_move: vec![],
         initial_max_move_size: 0,
         initial_mover_share: Amount::default(),
@@ -265,11 +264,13 @@ fn test_referee_smoke() {
 
     debug!("their_move_wire_data {their_move_local_update:?}");
 
-    let nil = allocator.encode_atom(&[]).expect("should encode");
+    let nil = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+        .expect("should encode");
     let validator_result = reftest
         .their_referee
         .run_validator_for_their_move(&mut allocator, nil);
-    assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk)));
+    assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk(_,_,_))));
 
     assert!(reftest.my_referee.processing_my_turn());
     let their_move_result = reftest

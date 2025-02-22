@@ -333,7 +333,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             }
 
             // XXX Have a notification for this.
-            let nil = env.allocator.encode_atom(&[]).into_gen()?;
+            let nil = env
+                .allocator
+                .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+                .into_gen()?;
             let readable = ReadableMove::from_nodeptr(env.allocator, nil)?;
             let mover_share = Amount::default();
 
