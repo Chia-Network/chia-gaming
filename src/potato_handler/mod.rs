@@ -827,7 +827,6 @@ impl PotatoHandler {
         }
 
         let convert_info_list = |allocator: &mut AllocEncoder,
-                                 _my_turn: bool,
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<GameStartInfo>, Error> {
             let mut result_start_info = Vec::new();
@@ -843,8 +842,8 @@ impl PotatoHandler {
             Ok(result_start_info)
         };
 
-        let my_result_start_info = convert_info_list(env.allocator, true, &my_info_list)?;
-        let their_result_start_info = convert_info_list(env.allocator, false, &their_info_list)?;
+        let my_result_start_info = convert_info_list(env.allocator, &my_info_list)?;
+        let their_result_start_info = convert_info_list(env.allocator, &their_info_list)?;
 
         Ok((my_result_start_info, their_result_start_info))
     }
