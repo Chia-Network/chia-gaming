@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
@@ -309,7 +309,7 @@ fn do_first_game_start<'a, 'b: 'a>(
                 amount: Amount::new(200),
                 my_contribution: Amount::new(100),
                 game_type: GameType(b"calpoker".to_vec()),
-                timeout: Timeout::new(10),
+                timeout: Timeout::new(25),
                 my_turn: true,
                 parameters: vec![0x80],
             },
@@ -334,7 +334,7 @@ fn do_second_game_start<'a, 'b: 'a>(
                 amount: Amount::new(200),
                 my_contribution: Amount::new(100),
                 game_type: GameType(b"calpoker".to_vec()),
-                timeout: Timeout::new(10),
+                timeout: Timeout::new(25),
                 my_turn: false,
                 parameters: vec![0x80],
             },
@@ -690,7 +690,8 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
-        todo!();
+        self.game_finished = Some(Amount::default());
+        Ok(())
     }
 
     fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
@@ -725,9 +726,14 @@ fn reports_blocked(i: usize, blocked: &Option<(usize, usize)>) -> bool {
 
 fn run_calpoker_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
-    moves: &[GameAction],
+    moves_input: &[GameAction],
     pred: GameRunEarlySuccessPredicate,
 ) -> Result<CalpokerRunOutcome, Error> {
+    let mut moves = VecDeque::new();
+    for m in moves_input.iter() {
+        moves.push_back(m);
+    }
+
     // Coinset adapter for each side.
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let game_type_map = poker_collection(allocator);
@@ -809,7 +815,6 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     let mut can_move = false;
     let mut ending = None;
 
-    let mut current_move = moves.iter();
     let mut wait_blocks = None;
     let mut report_backlogs = [Vec::default(), Vec::default()];
     let mut num_steps = 0;
@@ -818,23 +823,22 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     cradles[0].opening_coin(allocator, &mut rng, parent_coin_0)?;
     cradles[1].opening_coin(allocator, &mut rng, parent_coin_1)?;
 
+    let global_move = |moves: &VecDeque<&GameAction>| {
+        matches!(
+            moves.front(),
+            Some(GameAction::Shutdown(_, _)) | Some(GameAction::WaitBlocks(_, _))
+        )
+    };
+
     while !matches!(ending, Some(0)) {
         num_steps += 1;
+        debug!("{num_steps} can move {can_move} {moves:?}");
+        debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
+        debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
 
         assert!(num_steps < 200);
 
-        if let Some((blocks, players)) = &mut wait_blocks {
-            debug!("test waiting {blocks} {players}");
-            *blocks -= 1;
-        }
         if matches!(wait_blocks, Some((0, _))) {
-            for i in 0..=1 {
-                for (current_height, watch_report) in report_backlogs[i].iter() {
-                    cradles[i].new_block(allocator, &mut rng, *current_height, watch_report)?;
-                }
-                report_backlogs[i].clear();
-            }
-            debug!("test wait done");
             wait_blocks = None;
         }
 
@@ -948,7 +952,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
             *ending -= 1;
         }
 
-        if !handshake_done && cradles[0].handshake_finished() && cradles[1].handshake_finished() {
+        if !handshake_done && cradles.iter().all(|c| c.handshake_finished()) {
             // Start game.
             handshake_done = true;
 
@@ -981,7 +985,17 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
             )?;
 
             can_move = true;
-        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) {
+        } else if let Some((wb, _)) = &mut wait_blocks {
+            for i in 0..=1 {
+                for (current_height, watch_report) in report_backlogs[i].iter() {
+                    cradles[i].new_block(allocator, &mut rng, *current_height, watch_report)?;
+                }
+                report_backlogs[i].clear();
+            }
+            if *wb > 0 {
+                *wb -= 1;
+            };
+        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) || global_move(&moves) {
             can_move = false;
             assert!(!game_ids.is_empty());
 
@@ -990,20 +1004,28 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                 l.opponent_moved = false;
             }
 
-            if let Some(ga) = current_move.next() {
+            if let Some(ga) = moves.pop_front() {
                 match ga {
-                    GameAction::Move(who, readable, _) => {
-                        debug!("make move");
-                        let readable_program = Program::from_nodeptr(allocator, *readable)?;
-                        let encoded_readable_move = readable_program.bytes();
-                        let entropy = rng.gen();
-                        cradles[*who].make_move(
-                            allocator,
-                            &mut rng,
-                            &game_ids[0],
-                            encoded_readable_move.to_vec(),
-                            entropy,
-                        )?;
+                    GameAction::Move(who, readable, _share) => {
+                        let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
+                        debug!("{who} make move: is my move? {is_my_move:?}");
+                        if matches!(is_my_move, Some(true)) {
+                            debug!("make move");
+                            let readable_program = Program::from_nodeptr(allocator, *readable)?;
+                            let encoded_readable_move = readable_program.bytes();
+                            let entropy = rng.gen();
+                            cradles[*who].make_move(
+                                allocator,
+                                &mut rng,
+                                &game_ids[0],
+                                encoded_readable_move.to_vec(),
+                                entropy,
+                            )?;
+                        } else {
+                            debug!("put move back: not my turn");
+                            moves.push_front(ga);
+                            continue;
+                        }
                     }
                     GameAction::GoOnChain(who) => {
                         debug!("go on chain");
@@ -1208,6 +1230,9 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     let outcome =
         run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
+    debug!("outcome 0 {:?}", outcome.local_uis[0].opponent_moves);
+    debug!("outcome 1 {:?}", outcome.local_uis[1].opponent_moves);
+
     let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
     let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
     let alice_outcome_move = &outcome.local_uis[0].opponent_moves[2];
@@ -1229,6 +1254,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
 
     let moves = vec![
         GameAction::GoOnChain(1),
+        GameAction::WaitBlocks(20, 1),
         GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)),
         GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
     ];
@@ -1247,6 +1273,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
     let mut moves = test_moves_1(&mut allocator).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::GoOnChain(1));
+    moves.push(GameAction::WaitBlocks(20, 1));
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
     let outcome =
@@ -1284,5 +1311,30 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
         run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    assert_eq!(p1_balance, p2_balance + 200);
+}
+
+#[test]
+fn sim_test_with_peer_container_piss_off_peer_slash() {
+    let mut allocator = AllocEncoder::new();
+
+    let mut moves = test_moves_1(&mut allocator).to_vec();
+    // p2 chooses 5 cards.
+    let move_3_node = [1, 0, 1, 0, 1, 0, 1, 1]
+        .to_clvm(&mut allocator)
+        .expect("should work");
+    let changed_move = GameAction::Move(1, move_3_node, true);
+    moves.truncate(3);
+    moves.push(changed_move.clone());
+    moves.push(changed_move);
+    moves.push(GameAction::WaitBlocks(20, 1));
+    moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+    moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+    let outcome =
+        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+
+    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    // p1 (index 0) won the money because p2 (index 1) cheated by choosing 5 cards.
     assert_eq!(p1_balance, p2_balance + 200);
 }

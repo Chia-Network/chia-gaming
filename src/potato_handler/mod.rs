@@ -184,6 +184,18 @@ impl PotatoHandler {
         matches!(self.handshake_state, HandshakeState::OnChain(_))
     }
 
+    pub fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
+        if let HandshakeState::OnChain(ocs) = &self.handshake_state {
+            return ocs.my_move_in_game(game_id);
+        }
+
+        if let Ok(ch) = self.channel_handler() {
+            return ch.game_is_my_turn(game_id);
+        }
+
+        None
+    }
+
     pub fn is_initiator(&self) -> bool {
         self.initiator
     }
@@ -1761,9 +1773,10 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         }
 
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            return Err(Error::StrErr(
-                "shut_down without finishing handshake".to_string(),
-            ));
+            return Err(Error::StrErr(format!(
+                "shut_down without finishing handshake {:?}",
+                self.handshake_state
+            )));
         }
 
         self.do_game_action(penv, GameAction::Shutdown(conditions))
