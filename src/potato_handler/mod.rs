@@ -12,6 +12,8 @@ use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
 use log::debug;
 use rand::Rng;
 
+use clvm_tools_rs::classic::clvm::sexp::proper_list;
+
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
     PotatoSignatures, ReadableMove,
@@ -25,10 +27,9 @@ use crate::common::types::{
     GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
     Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
-use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
-use clvm_tools_rs::classic::clvm::sexp::proper_list;
-
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
+use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
+
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, ConditionWaitKind, FromLocalUI, GameAction,
     GameStart, GameStartQueueEntry, GameType, HandshakeA, HandshakeB, HandshakeState,

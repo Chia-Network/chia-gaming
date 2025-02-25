@@ -36,10 +36,10 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
-      - name: Setup Node 16.x
+      - name: Setup Node 18.x
         uses: actions/setup-node@v3
         with:
-          node-version: '16.x'
+          node-version: '18.x'
 
       - name: install wasm-pack
         run: cargo install --version 0.11.1 wasm-pack
