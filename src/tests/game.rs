@@ -53,6 +53,9 @@ pub enum GameAction {
     /// Go on chain
     #[cfg(feature = "sim-tests")]
     GoOnChain(usize),
+    /// Wait a number of blocks
+    #[cfg(feature = "sim-tests")]
+    WaitBlocks(usize, usize),
     /// Accept
     #[cfg(feature = "sim-tests")]
     Accept(usize),
@@ -72,6 +75,8 @@ impl std::fmt::Debug for GameAction {
             GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
             #[cfg(feature = "sim-tests")]
             GameAction::Accept(p) => write!(formatter, "Accept({p})"),
+            #[cfg(feature = "sim-tests")]
+            GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
             #[cfg(feature = "sim-tests")]
             GameAction::Shutdown(p, _) => write!(formatter, "Shutdown({p},..)"),
         }
