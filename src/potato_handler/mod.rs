@@ -610,6 +610,9 @@ impl PotatoHandler {
             Some(GameAction::RedoMove(_game_id, _coin, _new_ph, _transaction)) => {
                 Err(Error::StrErr("redo move when not on chain".to_string()))
             }
+            Some(GameAction::RedoAccept(_, _, _, _)) => {
+                Err(Error::StrErr("redo accept when not on chain".to_string()))
+            }
             Some(GameAction::Accept(game_id)) => {
                 let (sigs, amount) = {
                     let ch = self.channel_handler_mut()?;
@@ -1467,7 +1470,9 @@ impl PotatoHandler {
             self.game_action_queue.push_back(action);
 
             if !matches!(self.have_potato, PotatoState::Present) {
-                self.request_potato(penv)?;
+                if matches!(self.have_potato, PotatoState::Absent) {
+                    self.request_potato(penv)?;
+                }
                 return Ok(());
             }
 
@@ -1597,7 +1602,6 @@ impl PotatoHandler {
                 def.game_id,
                 player_ch.game_is_my_turn(&def.game_id)
             );
-            assert_eq!(player_ch.game_is_my_turn(&def.game_id), Some(def.our_turn));
         }
 
         // Register each coin that corresponds to a game.
@@ -1705,7 +1709,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             });
 
             if !matches!(self.have_potato, PotatoState::Present) {
-                self.request_potato(penv)?;
+                if matches!(self.have_potato, PotatoState::Absent) {
+                    self.request_potato(penv)?;
+                }
                 return Ok(game_id_list);
             }
 
@@ -1753,11 +1759,21 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
-        if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
-            if on_chain.shut_down(penv, conditions.clone())? {
-                self.handshake_state = HandshakeState::Completed;
+        let mut hs_state = HandshakeState::Completed;
+        swap(&mut hs_state, &mut self.handshake_state);
+        match hs_state {
+            HandshakeState::OnChain(mut on_chain) => {
+                if on_chain.shut_down(penv, conditions.clone())? {
+                    self.channel_handler = Some(on_chain.into_channel_handler());
+                    self.handshake_state = HandshakeState::Completed;
+                } else {
+                    self.handshake_state = HandshakeState::OnChain(on_chain);
+                }
+                return Ok(());
             }
-            return Ok(());
+            x => {
+                self.handshake_state = x;
+            }
         }
 
         if !matches!(self.handshake_state, HandshakeState::Finished(_)) {

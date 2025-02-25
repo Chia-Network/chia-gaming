@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
@@ -6,9 +7,7 @@ use rand::Rng;
 
 use log::debug;
 
-use crate::channel_handler::types::{
-    AcceptTransactionState, CoinSpentInformation, OnChainGameState, ReadableMove,
-};
+use crate::channel_handler::types::{CoinSpentInformation, OnChainGameState, ReadableMove};
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
@@ -18,7 +17,7 @@ use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
     ToLocalUI, WalletSpendInterface,
 };
-use crate::referee::TheirTurnCoinSpentResult;
+use crate::referee::{RefereeOnChainTransaction, TheirTurnCoinSpentResult};
 use crate::shutdown::ShutdownConditions;
 
 pub struct OnChainPotatoHandler {
@@ -60,6 +59,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
     fn channel_handler_mut(&mut self) -> &mut ChannelHandler {
         &mut self.player_ch
+    }
+
+    fn into_channel_handler(self) -> ChannelHandler {
+        self.player_ch
     }
 
     fn check_game_coin_spent<'a, G, R: Rng + 'a>(
@@ -226,24 +229,39 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             let (env, system_interface) = penv.env();
             debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
 
-            let result_transaction =
-                self.player_ch
-                    .accept_or_timeout_game_on_chain(env, &game_def.game_id, coin_id)?;
+            if let Some(tx) = &game_def.accept {
+                debug!("{initial_potato} accept tx {tx:?}");
+                self.have_potato = PotatoState::Present;
 
-            self.have_potato = PotatoState::Present;
-            if let Some(tx) = result_transaction {
-                debug!("{initial_potato} accept: have transaction {tx:?}");
-                self.have_potato = PotatoState::Absent;
                 system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                    name: Some(format!("{initial_potato} accept transaction")),
+                    name: Some("redo move".to_string()),
                     spends: vec![CoinSpend {
                         coin: coin_id.clone(),
                         bundle: tx.bundle.clone(),
                     }],
                 })?;
             } else {
-                debug!("{initial_potato} Accepted game when our share was zero");
-                debug!("when action queue is {:?}", self.game_action_queue);
+                let result_transaction = self.player_ch.accept_or_timeout_game_on_chain(
+                    env,
+                    &game_def.game_id,
+                    coin_id,
+                )?;
+
+                self.have_potato = PotatoState::Present;
+                if let Some(tx) = result_transaction {
+                    debug!("{initial_potato} accept: have transaction {tx:?}");
+                    self.have_potato = PotatoState::Absent;
+                    system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                        name: Some(format!("{initial_potato} accept transaction")),
+                        spends: vec![CoinSpend {
+                            coin: coin_id.clone(),
+                            bundle: tx.bundle.clone(),
+                        }],
+                    })?;
+                } else {
+                    debug!("{initial_potato} Accepted game when our share was zero");
+                    debug!("when action queue is {:?}", self.game_action_queue);
+                }
             }
 
             // XXX Have a notification for this.
@@ -405,6 +423,22 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 )?;
                 Ok(())
             }
+            GameAction::RedoAccept(_game_id, coin, _new_ph, tx) => {
+                let (_env, system_interface) = penv.env();
+                // Wait for timeout.
+                if let Some(def) = self.game_map.get_mut(&coin) {
+                    self.have_potato = PotatoState::Absent;
+                    debug!("{initial_potato} redo accept: register for timeout {coin:?}");
+                    let tx_borrow: &RefereeOnChainTransaction = tx.borrow();
+                    def.accept = Some(tx_borrow.clone());
+                    system_interface.register_coin(
+                        &coin,
+                        &self.channel_timeout,
+                        Some("redo accept wait"),
+                    )?;
+                }
+                Ok(())
+            }
             GameAction::Accept(game_id) => {
                 let current_coin = get_current_coin(&game_id)?;
                 let my_turn = self.player_ch.game_is_my_turn(&game_id);
@@ -413,7 +447,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 );
 
                 if let Some(coin_def) = self.game_map.get_mut(&current_coin) {
-                    coin_def.accept = AcceptTransactionState::Waiting;
+                    coin_def.accept = None;
                 }
 
                 Ok(())
