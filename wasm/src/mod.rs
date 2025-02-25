@@ -194,7 +194,6 @@ trait ErrIntoJs {
 impl ErrIntoJs for types::Error {
     type EResult = JsValue;
     fn into_js(self) -> Self::EResult {
-        panic!();
         serde_wasm_bindgen::to_value(&self).unwrap_or_else(|e| JsValue::from_str(&format!("{:?}", e)))
     }
 }
