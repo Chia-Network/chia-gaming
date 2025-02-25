@@ -9,9 +9,10 @@
 ; state is empty
 ; move is alice commit to a salted word
 ; evidence is empty
-(export (mod_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
+; ME below is the object whose hash is mod_hash
+(export (mod_hash (move new_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    state me mover_puzzle solution evidence)
+    state me previous_validation_program mover_puzzle solution evidence)
 
     (if_any_fail
         (= new_validation_hash (sha256 bhash (sha256 1 move)))

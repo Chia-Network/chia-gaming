@@ -1,27 +1,27 @@
-use clvm_traits::{clvm_curried_args, ToClvm};
+use std::rc::Rc;
+
+use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm};
 use clvm_utils::CurriedProgram;
 use rand::prelude::*;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
-use clvmr::NodePtr;
-
 use log::debug;
 
-use crate::channel_handler::game_handler::GameHandler;
+use crate::channel_handler::game_handler::{GameHandler, TheirTurnResult};
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
+use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, Error, GameID, Node, PrivateKey, Puzzle, PuzzleHash, Sha256tree,
-    Timeout,
+    Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
+    Sha256tree, Timeout,
 };
-use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorMoveArgs};
+use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorResult};
 
 pub struct DebugGamePrograms {
-    pub my_validation_program: NodePtr,
+    pub my_validation_program: Rc<Program>,
     #[allow(dead_code)]
-    pub their_validation_program: NodePtr,
+    pub their_validation_program: Rc<Program>,
     pub my_turn_handler: GameHandler,
     pub their_turn_handler: GameHandler,
 }
@@ -61,29 +61,35 @@ pub fn make_debug_game_handler(
         }
     };
 
-    let my_turn_handler = GameHandler::my_driver_from_nodeptr(
-        make_curried_game_handler(true)
-            .to_clvm(allocator)
-            .expect("should curry"),
-    );
-    let my_validation_program = CurriedProgram {
-        program: Node(my_turn_handler.to_nodeptr()),
+    let my_driver_node = make_curried_game_handler(true)
+        .to_clvm(allocator)
+        .expect("should curry");
+    let my_turn_handler =
+        GameHandler::my_driver_from_nodeptr(allocator, my_driver_node).expect("should cvt");
+    let my_validation_program_node = CurriedProgram {
+        program: my_turn_handler.clone(),
         args: clvm_curried_args!(1337),
     }
     .to_clvm(allocator)
     .expect("should curry");
+    let my_validation_program = Rc::new(
+        Program::from_nodeptr(allocator, my_validation_program_node).expect("should convert"),
+    );
 
-    let their_turn_handler = GameHandler::their_driver_from_nodeptr(
-        make_curried_game_handler(false)
-            .to_clvm(allocator)
-            .expect("should curry"),
-    );
-    let their_validation_program = CurriedProgram {
-        program: Node(their_turn_handler.to_nodeptr()),
+    let their_turn_node = make_curried_game_handler(false)
+        .to_clvm(allocator)
+        .expect("should curry");
+    let their_turn_handler =
+        GameHandler::their_driver_from_nodeptr(allocator, their_turn_node).expect("should cvt");
+    let their_validation_program_node = CurriedProgram {
+        program: their_turn_handler.clone(),
         args: clvm_curried_args!(1337),
     }
     .to_clvm(allocator)
     .expect("should curry");
+    let their_validation_program = Rc::new(
+        Program::from_nodeptr(allocator, their_validation_program_node).expect("should convert"),
+    );
 
     DebugGamePrograms {
         my_validation_program,
@@ -105,7 +111,7 @@ pub struct RefereeTest {
     pub their_referee: RefereeMaker,
 
     #[allow(dead_code)]
-    pub referee_coin_puzzle: Puzzle,
+    pub referee_coin_puzzle: Rc<Puzzle>,
     #[allow(dead_code)]
     pub referee_coin_puzzle_hash: PuzzleHash,
 }
@@ -122,8 +128,9 @@ impl RefereeTest {
         game_start: &GameStartInfo,
     ) -> RefereeTest {
         // Load up the real referee coin.
-        let referee_coin_puzzle =
-            read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable");
+        let referee_coin_puzzle = Rc::new(
+            read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable"),
+        );
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
         let (my_referee, first_puzzle_hash) = RefereeMaker::new(
             allocator,
@@ -133,6 +140,7 @@ impl RefereeTest {
             my_identity.clone(),
             &their_identity.puzzle_hash,
             1,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         )
         .expect("should construct");
         assert_eq!(
@@ -156,6 +164,7 @@ impl RefereeTest {
             their_identity.clone(),
             &my_identity.puzzle_hash,
             1,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
         )
         .expect("should construct");
 
@@ -190,7 +199,9 @@ fn test_referee_smoke() {
     let timeout = Timeout::new(1000);
 
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
-    let init_state = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let init_state_node = ((), ()).to_clvm(&mut allocator).expect("should assemble");
+    let init_state =
+        Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
     let initial_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
 
@@ -217,7 +228,7 @@ fn test_referee_smoke() {
         &game_start_info,
     );
 
-    let readable_move = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let readable_move = ((), ()).to_clvm(&mut allocator).expect("should cvt");
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
     let my_move_wire_data = reftest
@@ -238,48 +249,44 @@ fn test_referee_smoke() {
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),
         },
         0,
+        None,
     );
     debug!("their move result {their_move_result:?}");
     if let Err(Error::StrErr(s)) = their_move_result {
         assert!(s.contains("slash"));
-        assert!(s.contains("off chain"));
     } else {
         unreachable!();
     }
 
     let their_move_local_update = reftest
         .their_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should move");
 
     debug!("their_move_wire_data {their_move_local_update:?}");
 
-    let validator_move_args = ValidatorMoveArgs {
-        game_move: my_move_wire_data.details.clone(),
-        mover_puzzle: reftest.my_identity.puzzle.to_program(),
-        solution: reftest
-            .my_identity
-            .standard_solution(
-                &mut allocator,
-                &[(reftest.my_identity.puzzle_hash.clone(), Amount::default())],
-            )
-            .expect("should create"),
-    };
-
-    reftest
+    let nil = allocator.encode_atom(&[]).expect("should encode");
+    let validator_result = reftest
         .their_referee
-        .run_validator_for_their_move(&mut allocator, &validator_move_args)
-        .expect("should run");
+        .run_validator_for_their_move(&mut allocator, nil);
+    assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk)));
 
     assert!(reftest.my_referee.processing_my_turn());
     let their_move_result = reftest
         .my_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0)
+        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should run");
-    assert_eq!(their_move_result.message, b"message data");
-    assert_eq!(
-        disassemble(allocator.allocator(), their_move_result.readable_move, None),
-        "(())"
-    );
+    let (readable_move, message) = match &their_move_result.original {
+        TheirTurnResult::MakeMove(readable_node, _, message, _) => {
+            (*readable_node, message.clone())
+        }
+        TheirTurnResult::FinalMove(readable_node, _) => (*readable_node, vec![]),
+        _ => {
+            panic!();
+        }
+    };
+    assert_eq!(message, b"message data");
+    let readable_prog = Program::from_nodeptr(&mut allocator, readable_move).expect("should cvt");
+    assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
     assert!(!reftest.my_referee.processing_my_turn());
 }

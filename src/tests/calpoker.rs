@@ -4,6 +4,8 @@ use log::debug;
 use rand::prelude::*;
 #[cfg(feature = "sim-tests")]
 use rand_chacha::ChaCha8Rng;
+#[cfg(feature = "sim-tests")]
+use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
@@ -12,24 +14,21 @@ use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
-use crate::common::constants::CREATE_COIN;
-#[cfg(feature = "sim-tests")]
-use crate::common::standard_coin::ChiaIdentity;
+use crate::common::types::Amount;
 use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Amount, PrivateKey};
-#[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
-#[cfg(feature = "sim-tests")]
-use crate::games::calpoker::decode_calpoker_readable;
-#[cfg(feature = "sim-tests")]
-use crate::games::calpoker::decode_readable_card_choices;
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::make_cards;
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::CalpokerResult;
+use crate::games::calpoker::WinDirectionUser;
+#[cfg(feature = "sim-tests")]
+use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choices};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
+#[cfg(feature = "sim-tests")]
+use crate::shutdown::BasicShutdownConditions;
 use crate::tests::game::GameAction;
 #[cfg(feature = "sim-tests")]
 use crate::tests::game::GameActionResult;
@@ -94,7 +93,7 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
     let bob_picks = [1, 0, 1, 0, 1, 0, 1, 0]
         .to_clvm(allocator)
         .expect("should work");
-    let win_move = ().to_clvm(allocator).expect("should work");
+    let win_move_200 = 200.to_clvm(allocator).expect("should work");
 
     [
         GameAction::Move(0, alice_word_hash, true),
@@ -104,7 +103,7 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
         GameAction::Move(0, alice_picks, true),
         GameAction::Move(1, bob_picks, true),
         // Move is a declared split.
-        GameAction::Move(0, win_move, true),
+        GameAction::Move(0, win_move_200, true),
     ]
 }
 
@@ -150,7 +149,8 @@ fn test_verify_endgame_data() {
                 bob_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 1, 1, 1, 3, 14, 13, 11]),
                 your_share: 200,
                 game_amount: 200,
-                win_direction: 1
+                raw_win_direction: 1,
+                win_direction: Some(WinDirectionUser::Alice),
             }
         );
     } else {
@@ -262,20 +262,9 @@ fn test_play_calpoker_on_chain_after_2_moves_p1() {
 fn test_play_calpoker_end_game_reward() {
     let mut allocator = AllocEncoder::new();
 
-    let seed: [u8; 32] = [0; 32];
-    let mut rng = ChaCha8Rng::from_seed(seed);
-    let output_private_key: PrivateKey = rng.gen();
-    let output_identity = ChiaIdentity::new(&mut allocator, output_private_key).unwrap();
-
     let mut moves = test_moves_1(&mut allocator).to_vec();
     moves.push(GameAction::Accept(1));
-    let win_conditions = [(
-        CREATE_COIN,
-        (output_identity.puzzle_hash.clone(), (Amount::new(200), ())),
-    )]
-    .to_clvm(&mut allocator)
-    .unwrap();
-    moves.push(GameAction::Shutdown(0, win_conditions));
+    moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
 
     debug!("running moves {moves:?}");
     let _game_action_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");

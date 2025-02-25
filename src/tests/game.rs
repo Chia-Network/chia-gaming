@@ -3,6 +3,10 @@ use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
 use crate::common::types::Timeout;
+#[cfg(feature = "sim-tests")]
+use crate::shutdown::ShutdownConditions;
+#[cfg(feature = "sim-tests")]
+use std::rc::Rc;
 
 #[cfg(test)]
 use clvmr::NodePtr;
@@ -23,20 +27,18 @@ use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::runner::ChannelHandlerGame;
 #[cfg(feature = "sim-tests")]
-use crate::channel_handler::types::{ChannelHandlerEnv, PrintableGameStartInfo};
+use crate::channel_handler::types::ChannelHandlerEnv;
 #[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
 };
 #[cfg(feature = "sim-tests")]
-use crate::common::types::Amount;
-#[cfg(feature = "sim-tests")]
-use crate::common::types::{CoinString, Error, IntoErr};
+use crate::common::types::{Amount, CoinString, Error, IntoErr};
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::Simulator;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[cfg(test)]
 pub enum GameAction {
     /// Do a timeout
@@ -56,7 +58,24 @@ pub enum GameAction {
     Accept(usize),
     /// Shut down
     #[cfg(feature = "sim-tests")]
-    Shutdown(usize, NodePtr),
+    Shutdown(usize, Rc<dyn ShutdownConditions>),
+}
+
+impl std::fmt::Debug for GameAction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
+            GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
+            #[cfg(feature = "sim-tests")]
+            GameAction::FakeMove(p, n, v) => write!(formatter, "FakeMove({p},{n:?},{v:?})"),
+            #[cfg(feature = "sim-tests")]
+            GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
+            #[cfg(feature = "sim-tests")]
+            GameAction::Accept(p) => write!(formatter, "Accept({p})"),
+            #[cfg(feature = "sim-tests")]
+            GameAction::Shutdown(p, _) => write!(formatter, "Shutdown({p},..)"),
+        }
+    }
 }
 
 impl GameAction {
@@ -173,20 +192,8 @@ pub fn new_channel_handler_game<R: Rng>(
         &timeout,
     );
 
-    debug!(
-        "our_game_start {:?}",
-        PrintableGameStartInfo {
-            allocator: env.allocator.allocator(),
-            info: &our_game_start
-        }
-    );
-    debug!(
-        "their_game_start {:?}",
-        PrintableGameStartInfo {
-            allocator: env.allocator.allocator(),
-            info: &their_game_start
-        }
-    );
+    debug!("our_game_start {:?}", our_game_start);
+    debug!("their_game_start {:?}", their_game_start);
 
     let sigs1 = party.player(0).ch.send_empty_potato(env)?;
     let spend1 = party.player(1).ch.received_empty_potato(env, &sigs1)?;

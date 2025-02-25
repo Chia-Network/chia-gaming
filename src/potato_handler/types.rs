@@ -1,17 +1,19 @@
-use clvmr::NodePtr;
+use std::rc::Rc;
+
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, FlatGameStartInfo, GameStartInfo, MoveResult,
-    OnChainGameState, PotatoSignatures, ReadableMove,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, MoveResult, OnChainGameState,
+    PotatoSignatures, ReadableMove,
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, PublicKey, PuzzleHash,
     SpendBundle, Timeout,
 };
 use crate::referee::RefereeOnChainTransaction;
+use crate::shutdown::ShutdownConditions;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStart {
@@ -240,6 +242,7 @@ pub trait ToLocalUI {
         allocator: &mut AllocEncoder,
         id: &GameID,
         readable: ReadableMove,
+        mover_share: Amount,
     ) -> Result<(), Error>;
     fn raw_game_message(&mut self, _id: &GameID, _readable: &[u8]) -> Result<(), Error> {
         Ok(())
@@ -250,10 +253,10 @@ pub trait ToLocalUI {
         id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error>;
-    fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error>;
+    fn game_finished(&mut self, id: &GameID, mover_share: Amount) -> Result<(), Error>;
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
-    fn shutdown_complete(&mut self, reward_coin_string: &CoinString) -> Result<(), Error>;
+    fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
 }
 
@@ -301,7 +304,7 @@ pub trait FromLocalUI<
     fn shut_down<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
-        condition: NodePtr,
+        condition: Rc<dyn ShutdownConditions>,
     ) -> Result<(), Error>
     where
         G: 'a,
@@ -342,7 +345,7 @@ pub enum PeerMessage {
     Accept(GameID, Amount, PotatoSignatures),
     Shutdown(Aggsig, Program),
     RequestPotato(()),
-    StartGames(PotatoSignatures, Vec<FlatGameStartInfo>),
+    StartGames(PotatoSignatures, Vec<GameStartInfo>),
 }
 
 #[derive(Debug, Clone)]
@@ -374,14 +377,13 @@ pub enum HandshakeState {
     Finished(Box<HandshakeStepWithSpend>),
     // Going on chain ourselves route.
     OnChainTransition(CoinString, Box<HandshakeStepWithSpend>),
-    OnChainWaitingForUnrollTimeoutOrSpend(CoinString, Box<HandshakeStepWithSpend>),
+    OnChainWaitingForUnrollTimeoutOrSpend(CoinString),
     // Other party went on chain, we're catching up route.
     OnChainWaitForConditions(CoinString, Box<HandshakeStepWithSpend>),
     // Converge here to on chain state.
     OnChainWaitingForUnrollSpend(CoinString),
     OnChainWaitingForUnrollConditions(CoinString),
     OnChain(HashMap<CoinString, OnChainGameState>),
-    WaitingForShutdown(CoinString, CoinString),
     Completed,
 }
 
@@ -403,18 +405,35 @@ pub enum PotatoState {
     Present,
 }
 
-#[derive(Debug)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
-    RedoMove(GameID, CoinString, Box<RefereeOnChainTransaction>),
+    RedoMove(
+        GameID,
+        CoinString,
+        PuzzleHash,
+        Box<RefereeOnChainTransaction>,
+    ),
     Accept(GameID),
-    Shutdown(NodePtr),
+    Shutdown(Rc<dyn ShutdownConditions>),
+}
+
+impl std::fmt::Debug for GameAction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
+            GameAction::RedoMove(gi, cs, ph, rt) => {
+                write!(formatter, "RedoMove({gi:?},{cs:?},{ph:?},{rt:?})")
+            }
+            GameAction::Accept(gi) => write!(formatter, "Accept({gi:?})"),
+            GameAction::Shutdown(_) => write!(formatter, "Shutdown(..)"),
+        }
+    }
 }
 
 pub struct PotatoHandlerInit {
     pub have_potato: bool,
     pub private_keys: ChannelHandlerPrivateKeys,
-    pub game_types: BTreeMap<GameType, Program>,
+    pub game_types: BTreeMap<GameType, Rc<Program>>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
     pub channel_timeout: Timeout,
