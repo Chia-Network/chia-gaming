@@ -3,11 +3,11 @@ use std::cmp::Ordering;
 use log::debug;
 
 use crate::channel_handler::types::ReadableMove;
+#[cfg(test)]
+use clvm_traits::ToClvm;
 use clvmr::NodePtr;
 
-use clvm_tools_rs::classic::clvm::sexp::proper_list;
-#[cfg(test)]
-use clvm_tools_rs::classic::clvm_tools::binutils::assemble;
+use crate::utils::proper_list;
 
 use num_bigint::{BigInt, ToBigInt};
 use num_traits::ToPrimitive;
@@ -266,10 +266,10 @@ pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> Vec<(u
             .filter_map(|elt| {
                 proper_list(allocator.allocator(), *elt, true).map(|card| {
                     let rank: usize = atom_from_clvm(allocator, card[0])
-                        .and_then(usize_from_atom)
+                        .and_then(|a| usize_from_atom(&a))
                         .unwrap_or_default();
                     let suit: usize = atom_from_clvm(allocator, card[1])
-                        .and_then(usize_from_atom)
+                        .and_then(|a| usize_from_atom(&a))
                         .unwrap_or_default();
                     (rank, suit)
                 })
@@ -322,13 +322,13 @@ pub fn decode_hand_result(
         if let Some(sublist) = proper_list(allocator.allocator(), *item, true) {
             let result_sublist = sublist
                 .iter()
-                .filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom))
+                .filter_map(|i| atom_from_clvm(allocator, *i).and_then(|a| usize_from_atom(&a)))
                 .collect();
             return Ok(RawCalpokerHandValue::PrefixList(
                 result_list,
                 result_sublist,
             ));
-        } else if let Some(i) = atom_from_clvm(allocator, *item).and_then(usize_from_atom) {
+        } else if let Some(i) = atom_from_clvm(allocator, *item).and_then(|a| usize_from_atom(&a)) {
             result_list.push(i);
         } else {
             return Err(Error::StrErr("decode error, can't make usize".to_string()));
@@ -413,7 +413,7 @@ pub fn decode_calpoker_readable(
     let bitmasks: Vec<usize> = as_list
         .iter()
         .take(3)
-        .filter_map(|i| atom_from_clvm(allocator, *i).and_then(usize_from_atom))
+        .filter_map(|i| atom_from_clvm(allocator, *i).and_then(|a| usize_from_atom(&a)))
         .collect();
     if bitmasks.len() != 3 {
         return Err(Error::StrErr("not all bitmasks converted".to_string()));
@@ -428,7 +428,7 @@ pub fn decode_calpoker_readable(
         decode_hand_result(allocator, as_list[start_index + (3 ^ offset_for_player)])?;
 
     let (your_share, win_direction) =
-        if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(i64_from_atom) {
+        if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(|a| i64_from_atom(&a)) {
             if !am_bob {
                 match o.cmp(&0) {
                     Ordering::Less => (amount.clone(), o),
@@ -471,11 +471,15 @@ pub fn decode_calpoker_readable(
 #[test]
 fn test_decode_calpoker_readable() {
     let mut allocator = AllocEncoder::new();
-    let assembled = assemble(
-        allocator.allocator(),
-        "(60 59 91 (2 2 1 12 11 8) (2 2 1 14 5 2) -1)",
+    let assembled = (
+        60,
+        (
+            59,
+            (91, ([2, 2, 1, 12, 11, 8], ([2, 2, 1, 14, 5, 2], (-1, ())))),
+        ),
     )
-    .expect("should work");
+        .to_clvm(&mut allocator)
+        .expect("should work");
     let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), false)
         .expect("should work");
     let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 12, 11, 8]);

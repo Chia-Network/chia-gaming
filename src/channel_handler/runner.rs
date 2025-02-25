@@ -156,17 +156,14 @@ pub fn channel_handler_env<'a, R: Rng>(
     allocator: &'a mut AllocEncoder,
     rng: &'a mut R,
 ) -> Result<ChannelHandlerEnv<'a, R>, Error> {
-    let referee_coin_puzzle = Rc::new(read_hex_puzzle(allocator, "clsp/onchain/referee.hex")?);
+    let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/onchain/referee.hex")?;
     let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
-    let unroll_puzzle = Rc::new(read_hex_puzzle(
+    let unroll_puzzle = read_hex_puzzle(
         allocator,
         "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
-    )?);
-    let unroll_metapuzzle = Rc::new(read_hex_puzzle(
-        allocator,
-        "clsp/unroll/unroll_meta_puzzle.hex",
-    )?);
-    let standard_puzzle = Rc::new(get_standard_coin_puzzle(allocator)?);
+    )?;
+    let unroll_metapuzzle = read_hex_puzzle(allocator, "clsp/unroll/unroll_meta_puzzle.hex")?;
+    let standard_puzzle = get_standard_coin_puzzle(allocator)?;
     Ok(ChannelHandlerEnv {
         allocator,
         rng,
