@@ -1,6 +1,33 @@
+
+```
+This is a good doc, but it's not a `README`. The `README.md` is displayed
+as the intro page to the repo on GitHub, and it should be a high-level
+overview of the project. This doc is more of an overview of the types and
+traits used in the project, which is great, but it should be moved to
+say, "OVERVIEW.md" or something like that.
+
+ChatGPT can write a `README` for you. I glued in soem stuff github
+copilot wrote for me:
+
+```
+# Chia Gaming
+
+## Introduction
+
+Chia Gaming is a Rust-based project focused on implementing gaming mechanics and state channels on the Chia blockchain. This repository hosts the traits, structs, and modules necessary for creating and managing games on the Chia network.
+
+## Features
+
+- Rust-based implementation
+- Comprehensive set of traits and structs for gaming mechanics
+- Support for state channels on the Chia blockchain
+- Example games and modules
+
+## Key Components
+
 ##  chia-gaming Traits and Structs
 
-Here's a breakdown of the key traits and structs used in the `chia-gaming` project, along with their purposes.
+Here's a breakdown of the key traits and structs used in the `chia-gaming` project.
 
 **Common Types:**
 
