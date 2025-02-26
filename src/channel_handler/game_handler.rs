@@ -12,9 +12,9 @@ use log::debug;
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, ValidationProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    Hash, IntoErr, Node, Program, ProgramRef,
+    Hash, IntoErr, Node, Program, ProgramRef, Sha256tree,
 };
-use crate::referee::{GameMoveDetails, GameMoveStateInfo};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 
 // How to call the clvm program in this object:
 //
@@ -49,23 +49,13 @@ pub struct MyTurnInputs {
     pub state: ProgramRef,
     pub last_mover_share: Amount,
     pub entropy: Hash,
-    #[cfg(test)]
-    pub run_debug: bool,
-}
-
-#[cfg(test)]
-fn get_my_turn_debug_flag(my_turn: &MyTurnInputs) -> bool {
-    my_turn.run_debug
-}
-#[cfg(not(test))]
-fn get_my_turn_debug_flag(_: &MyTurnInputs) -> bool {
-    false
 }
 
 #[derive(Debug)]
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub waiting_driver: GameHandler,
+    pub our_side_validation_program: ValidationProgram,
     pub validation_program: ValidationProgram,
     pub validation_program_hash: Hash,
     pub move_data: Vec<u8>,
@@ -96,7 +86,6 @@ fn run_code(
     allocator: &mut AllocEncoder,
     code: NodePtr,
     env: NodePtr,
-    _debug: bool,
 ) -> Result<NodePtr, Error> {
     run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
         .into_gen()
@@ -186,12 +175,17 @@ impl GameHandler {
             .into_gen()?;
 
         let driver_node = self.get_my_turn_driver(allocator)?;
-        let run_result = run_code(
+        let run_result_ = run_code(
             allocator,
             driver_node,
             driver_args,
-            get_my_turn_debug_flag(inputs),
-        )?;
+        );
+
+	      if run_result_.is_err() {
+	          debug!("run_result {run_result_:?}");
+	          todo!();
+	      }
+	      let run_result = run_result_?;
 
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
@@ -210,12 +204,18 @@ impl GameHandler {
             return Err(Error::GameMoveRejected(message_data));
         }
 
-        if pl.len() < 4 {
+        if pl.len() < 5 {
             return Err(Error::StrErr(format!(
                 "bad result from game driver: {}",
                 Node(run_result).to_hex(allocator)?
             )));
         }
+
+        let move_data = if let Some(m) = atom_from_clvm(allocator, pl[0]).map(|a| a.to_vec()) {
+            m
+        } else {
+            return Err(Error::StrErr("bad move".to_string()));
+        };
 
         let mover_share =
             if let Some(ms) = atom_from_clvm(allocator, pl[1]).and_then(|a| u64_from_atom(&a)) {
@@ -226,30 +226,25 @@ impl GameHandler {
                     Node(pl[5]).to_hex(allocator)?
                 )));
             };
+
+	      let our_side_validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[2])?);
+	      let our_side_validation_program = ValidationProgram::new(allocator, our_side_validation_prog);
+        let validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[3])?);
+        let validation_program = ValidationProgram::new(allocator, validation_prog);
         debug!("MOVER_SHARE {mover_share:?}");
-        let message_parser = if pl.len() <= 5 || pl[5] == allocator.allocator().nil() {
+
+	      let waiting_driver = GameHandler::their_driver_from_nodeptr(allocator, pl[4])?;
+        let message_parser = if pl.len() < 6 || pl[5] == allocator.allocator().nil() {
             None
         } else {
             Some(MessageHandler::from_nodeptr(allocator, pl[5])?)
         };
-        let validation_program_hash =
-            if let Some(h) = atom_from_clvm(allocator, pl[3]).map(|a| Hash::from_slice(&a)) {
-                h
-            } else {
-                return Err(Error::StrErr("bad hash".to_string()));
-            };
-        let move_data = if let Some(m) = atom_from_clvm(allocator, pl[0]).map(|a| a.to_vec()) {
-            m
-        } else {
-            return Err(Error::StrErr("bad move".to_string()));
-        };
 
-        let validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[2])?);
-        let validation_program = ValidationProgram::new(allocator, validation_prog);
         Ok(MyTurnResult {
-            waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[4])?,
-            validation_program,
-            validation_program_hash: validation_program_hash.clone(),
+            waiting_driver,
+	          our_side_validation_program,
+            validation_program: validation_program.clone(),
+	          validation_program_hash: validation_program.sha256tree(allocator).hash().clone(),
             move_data,
             mover_share,
             message_parser,
@@ -266,23 +261,23 @@ impl GameHandler {
             (
                 Node(inputs.last_state),
                 (
-                    Node(
-                        allocator
-                            .encode_atom(clvm_traits::Atom::Borrowed(
-                                &inputs.new_move.basic.move_made,
-                            ))
-                            .into_gen()?,
-                    ),
+                    inputs.new_move.basic.mover_share.clone(),
                     (
-                        inputs.new_move.validation_info_hash.clone(),
-                        (
-                            inputs.new_move.basic.max_move_size,
-                            (inputs.new_move.basic.mover_share.clone(), ()),
-                        ),
-                    ),
-                ),
-            ),
-        )
+			                  Node(
+                            allocator
+				                        .encode_atom(clvm_traits::Atom::Borrowed(
+                                    &inputs.new_move.basic.move_made,
+				                        ))
+				                        .into_gen()?,
+			                  ),
+			                  (
+			                      inputs.new_move.basic.mover_share.clone(),
+			                      ()
+			                  )
+		                )
+		            )
+	          )
+	      )
             .to_clvm(allocator)
             .into_gen()?;
 
@@ -293,12 +288,16 @@ impl GameHandler {
             Node(driver_args).to_hex(allocator)?
         );
 
-        let run_result = run_code(
+        let run_result_ = run_code(
             allocator,
             driver_node,
             driver_args,
-            get_their_turn_debug_flag(inputs),
-        )?;
+        );
+
+	if run_result_.is_err() {
+	    todo!();
+	}
+	let run_result = run_result_?;
 
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
@@ -323,36 +322,32 @@ impl GameHandler {
             return Err(Error::StrErr("bad move type".to_string()));
         };
 
+	// readable-move evidence-list new-handler message
         if move_type == 0 {
-            if pl.len() < 2 {
+            if pl.len() < 3 {
                 return Err(Error::StrErr(format!(
                     "bad length for move result {}",
                     Node(run_result).to_hex(allocator)?
                 )));
             }
 
-            let mut decode_slash_evidence = |index: Option<usize>| {
-                let mut lst = index
-                    .and_then(|i| proper_list(allocator.allocator(), pl[i], true))
-                    .unwrap_or_default();
-                lst.push(
-                    allocator
-                        .encode_atom(clvm_traits::Atom::Borrowed(&[]))
-                        .into_gen()?,
-                );
-                Ok(lst)
+            let mut decode_slash_evidence = |index: usize| {
+		let mut result = Vec::new();
+                if let Some(mut lst) = proper_list(
+		    allocator.allocator(),
+		    pl[index],
+		    true
+		) {
+		    result.append(&mut lst);
+		}
+                Ok(result)
             };
 
-            let slash_evidence = if pl.len() >= 3 {
-                decode_slash_evidence(Some(2))
-            } else {
-                decode_slash_evidence(None)
-            };
-
+            let slash_evidence = decode_slash_evidence(2)?;
             let their_turn_move_data = TheirTurnMoveData {
                 readable_move: pl[1],
                 mover_share: inputs.new_move.basic.mover_share.clone(),
-                slash_evidence: slash_evidence?,
+                slash_evidence: slash_evidence,
             };
 
             let message_data = if pl.len() >= 5 {
@@ -361,7 +356,7 @@ impl GameHandler {
                 vec![]
             };
 
-            if pl.len() < 5 {
+            if pl.len() < 4 {
                 Ok(TheirTurnResult::FinalMove(their_turn_move_data))
             } else {
                 Ok(TheirTurnResult::MakeMove(
@@ -418,7 +413,11 @@ impl MessageHandler {
             Node(args).to_hex(allocator)?
         );
         let run_prog = self.0.to_nodeptr(allocator)?;
-        let run_result = run_code(allocator, run_prog, args, false)?;
+        let run_result_ = run_code(allocator, run_prog, args);
+	if run_result_.is_err() {
+	    todo!();
+	}
+	let run_result = run_result_?;
 
         ReadableMove::from_nodeptr(allocator, run_result)
     }

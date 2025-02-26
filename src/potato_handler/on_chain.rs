@@ -19,7 +19,7 @@ use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
     ToLocalUI, WalletSpendInterface,
 };
-use crate::referee::{RefereeOnChainTransaction, SlashOutcome, TheirTurnCoinSpentResult};
+use crate::referee::types::{SlashOutcome, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
 use crate::shutdown::ShutdownConditions;
 
 pub struct OnChainPotatoHandler {

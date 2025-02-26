@@ -6,7 +6,7 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::game_handler::{MyTurnInputs, TheirTurnInputs, TheirTurnResult};
 use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{AllocEncoder, Amount, Hash, Node, Program};
-use crate::referee::{GameMoveDetails, GameMoveStateInfo};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 
 #[test]
 fn test_game_handler_their_move_slash() {
@@ -137,8 +137,6 @@ fn test_game_handler_my_turn() {
                 state: unit_prog.into(),
                 last_mover_share: Amount::default(),
                 entropy: Hash::default(),
-                #[cfg(test)]
-                run_debug: true,
             },
         )
         .expect("should run");

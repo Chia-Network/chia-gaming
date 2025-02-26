@@ -34,8 +34,8 @@
         (list
             image
             0
+	    pokera
             pokerb
-            pokerb_hash
             (curry calpoker_alice_driver_b preimage)
             0
         )
@@ -81,8 +81,8 @@
         (list
             (concat PREIMAGE new_commit)
             0
+	    pokerc
             pokerd
-            pokerd_hash
             (curry calpoker_alice_driver_d salt my_picks)
             0
         )
@@ -137,7 +137,7 @@
 ; state is empty
 ; move is alice commit to a salted word
 (defun calpoker_bob_driver_a (amount before_state before_mover_share move after_mover_share)
-    (list MAKE_MOVE 0 () (curry calpoker_bob_driver_b move) 0)
+    (list MAKE_MOVE 0 () calpoker_bob_driver_b 0)
 )
 
 ; state is alice_commit
@@ -147,8 +147,9 @@
         seed (substr entropy 0 16)
         (list
             seed
+	    0
             pokerc
-            pokerc_hash
+            pokerd
             calpoker_bob_driver_c
             parse_message
         )
@@ -201,7 +202,7 @@
         (list
             my_move
             pokere
-            pokere_hash
+            pokere
             calpoker_bob_driver_e
             0
         )

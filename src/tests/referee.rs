@@ -16,7 +16,9 @@ use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorResult};
+use crate::referee::RefereeMaker;
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
+use crate::referee::types::ValidatorResult;
 
 pub struct DebugGamePrograms {
     pub my_validation_program: Rc<Program>,
@@ -267,27 +269,28 @@ fn test_referee_smoke() {
     let nil = allocator
         .encode_atom(clvm_traits::Atom::Borrowed(&[]))
         .expect("should encode");
-    let validator_result = reftest
-        .their_referee
-        .run_validator_for_their_move(&mut allocator, nil);
-    assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk(_,_,_))));
+    todo!();
+    // let validator_result = reftest
+    //     .their_referee
+    //     .run_validator_for_move(&mut allocator, nil, true);
+    // assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk(_,_,_))));
 
-    assert!(reftest.my_referee.processing_my_turn());
-    let their_move_result = reftest
-        .my_referee
-        .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
-        .expect("should run");
-    let (readable_move, message) = match &their_move_result.original {
-        TheirTurnResult::MakeMove(_, message, move_data) => {
-            (move_data.readable_move, message.clone())
-        }
-        TheirTurnResult::FinalMove(move_data) => (move_data.readable_move, vec![]),
-        _ => {
-            panic!();
-        }
-    };
-    assert_eq!(message, b"message data");
-    let readable_prog = Program::from_nodeptr(&mut allocator, readable_move).expect("should cvt");
-    assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
-    assert!(!reftest.my_referee.processing_my_turn());
+    // assert!(reftest.my_referee.processing_my_turn());
+    // let their_move_result = reftest
+    //     .my_referee
+    //     .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
+    //     .expect("should run");
+    // let (readable_move, message) = match &their_move_result.original {
+    //     TheirTurnResult::MakeMove(_, message, move_data) => {
+    //         (move_data.readable_move, message.clone())
+    //     }
+    //     TheirTurnResult::FinalMove(move_data) => (move_data.readable_move, vec![]),
+    //     _ => {
+    //         panic!();
+    //     }
+    // };
+    // assert_eq!(message, b"message data");
+    // let readable_prog = Program::from_nodeptr(&mut allocator, readable_move).expect("should cvt");
+    // assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
+    // assert!(!reftest.my_referee.processing_my_turn());
 }

@@ -1330,14 +1330,19 @@ impl PotatoHandler {
             .bundle
             .solution
             .to_nodeptr(env.allocator)?;
-        let puzzle_result = run_program(
+        let puzzle_result_ = run_program(
             env.allocator.allocator(),
             &chia_dialect(),
             run_puzzle,
             run_args,
             0,
         )
-        .into_gen()?;
+            .into_gen();
+	if puzzle_result_.is_err() {
+	    todo!();
+	}
+	let puzzle_result = puzzle_result_?;
+
         let condition_list = CoinCondition::from_nodeptr(env.allocator, puzzle_result.1);
         let unroll_result = if let Some(unroll_coin) = condition_list
             .iter()
