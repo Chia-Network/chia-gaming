@@ -6,7 +6,7 @@ use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::game_handler::{MyTurnInputs, TheirTurnInputs, TheirTurnResult};
 use crate::channel_handler::types::ReadableMove;
 use crate::common::types::{AllocEncoder, Amount, Hash, Node, Program};
-use crate::referee::{GameMoveDetails, GameMoveStateInfo};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 
 #[test]
 fn test_game_handler_their_move_slash() {

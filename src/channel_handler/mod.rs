@@ -38,7 +38,8 @@ use crate::common::types::{
     PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
 };
 use crate::potato_handler::types::GameAction;
-use crate::referee::{GameMoveDetails, RefereeMaker, RefereeOnChainTransaction};
+use crate::referee::RefereeMaker;
+use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.

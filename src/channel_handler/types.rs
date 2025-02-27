@@ -24,10 +24,8 @@ use crate::common::types::{
     CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey,
     Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, Timeout,
 };
-use crate::referee::{
-    GameMoveDetails, GameMoveWireData, RefereeMaker, RefereeOnChainTransaction,
-    TheirTurnCoinSpentResult, TheirTurnMoveResult,
-};
+use crate::referee::RefereeMaker;
+use crate::referee::types::{GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult, TheirTurnMoveResult};
 
 #[derive(Clone)]
 pub struct ChannelHandlerPrivateKeys {

@@ -16,7 +16,8 @@ use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorResult};
+use crate::referee::RefereeMaker;
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidatorResult};
 
 pub struct DebugGamePrograms {
     pub my_validation_program: Rc<Program>,
@@ -269,7 +270,7 @@ fn test_referee_smoke() {
         .expect("should encode");
     let validator_result = reftest
         .their_referee
-        .run_validator_for_their_move(&mut allocator, nil);
+        .run_validator_for_move(&mut allocator, nil, true);
     assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk)));
 
     assert!(reftest.my_referee.processing_my_turn());
