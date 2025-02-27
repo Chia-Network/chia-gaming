@@ -387,7 +387,7 @@ impl OldRefereeMaker {
             Sha256Input::Hash(&is_hash),
             Sha256Input::Hash(&ip_hash),
         ])
-        .hash();
+            .hash();
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &initial_move,

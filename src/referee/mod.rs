@@ -47,8 +47,8 @@ pub struct LiveGameReplay {
 
 #[derive(Clone)]
 enum RefereeMachine {
-    MyTurn(Rc<MyTurnReferee>),
-    TheirTurn(Rc<TheirTurnReferee>),
+    MyTurn(MyTurnReferee),
+    TheirTurn(TheirTurnReferee),
 }
 
 // XXX break out state so we can have a previous state and easily swap them.
@@ -91,7 +91,7 @@ impl RefereeMaker {
             agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
         });
         let referee = if my_turn {
-            RefereeMachine::MyTurn(Rc::new(MyTurnReferee::new(
+            RefereeMachine::MyTurn(MyTurnReferee::new(
                 allocator,
                 fixed_info.clone(),
                 referee_coin_puzzle.clone(),
@@ -101,9 +101,9 @@ impl RefereeMaker {
                 their_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data
-            )?))
+            )?)
         } else {
-            RefereeMachine::TheirTurn(Rc::new(TheirTurnReferee::new(
+            RefereeMachine::TheirTurn(TheirTurnReferee::new(
                 allocator,
                 fixed_info.clone(),
                 referee_coin_puzzle.clone(),
@@ -113,7 +113,7 @@ impl RefereeMaker {
                 their_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data
-            )?))
+            )?)
         };
 
         let initial_move = GameMoveStateInfo {
@@ -365,7 +365,17 @@ impl RefereeMaker {
         new_entropy: Hash,
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
-        todo!();
+        match &mut self.referee {
+            RefereeMachine::MyTurn(t) => t.my_turn_make_move(
+                allocator,
+                readable_move,
+                new_entropy,
+                state_number
+            ),
+            RefereeMachine::TheirTurn(t) => {
+                Err(Error::StrErr("my turn make move but not our turn".to_string()))
+            }
+        }
     }
 
     pub fn their_turn_move_off_chain(

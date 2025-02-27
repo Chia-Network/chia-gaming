@@ -12,8 +12,12 @@ use crate::channel_handler::game_handler::{GameHandler, MessageInputs, MyTurnInp
 use crate::referee::types::{RefereeMakerGameState, RMFixed, RefereeOnChainTransaction, OnChainRefereeSolution, OnChainRefereeMove, IdentityCoinAndSolution, StoredGameState, GameMoveWireData, GameMoveStateInfo, GameMoveDetails};
 use crate::referee::puzzle_args::{RefereePuzzleArgs, curry_referee_puzzle_hash, curry_referee_puzzle};
 
+#[derive(Clone)]
 pub struct MyTurnReferee {
     fixed: Rc<RMFixed>,
+    first_move: bool,
+    game_handler: GameHandler,
+    initial_puzzle_args: Rc<RefereePuzzleArgs>,
     validation_program_before_our_turn: ValidationProgram,
     state_from_our_last_turn_handler: ProgramRef,
     mover_share_from_their_move_handler: Amount,
@@ -90,8 +94,24 @@ impl MyTurnReferee {
             game_handler: game_start_info.game_handler.clone(),
         });
 
+        let initial_puzzle_args = Rc::new(RefereePuzzleArgs::new(
+            &fixed_info,
+            &initial_move,
+            None,
+            &vi_hash,
+            // Special for start: nobody can slash the first turn and both sides need to
+            // compute the same value for amount to sign.  The next move will set mover share
+            // and the polarity of the move will determine whether that applies to us or them
+            // from both frames of reference.
+            Some(&Amount::default()),
+            true,
+        ));
+
         Ok(MyTurnReferee {
             fixed: fixed_info,
+            first_move: true,
+            game_handler: game_start_info.game_handler.clone(),
+            initial_puzzle_args,
             max_move_size_from_their_validation: game_start_info.initial_max_move_size,
             message_handler: None,
             mover_share_from_their_move_handler: game_start_info.initial_mover_share.clone(),
@@ -109,15 +129,27 @@ impl MyTurnReferee {
     }
 
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
-        todo!();
+        if self.first_move {
+            self.initial_puzzle_args.clone()
+        } else {
+            todo!();
+        }
     }
 
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
-        todo!();
+        if self.first_move {
+            self.initial_puzzle_args.clone()
+        } else {
+            todo!();
+        }
     }
 
     pub fn get_game_handler(&self) -> GameHandler {
-        todo!();
+        if self.first_move {
+            self.game_handler.clone()
+        } else {
+            todo!();
+        }
     }
 
     fn get_our_state_for_handler(

@@ -13,6 +13,7 @@ use crate::channel_handler::game_handler::{TheirTurnInputs, TheirTurnResult, The
 use crate::referee::types::{RMFixed, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome, REM_CONDITION_FIELDS, RefereeOnChainTransaction, OnChainRefereeSolution, RefereeMakerGameState, StoredGameState, GameMoveDetails, GameMoveStateInfo};
 use crate::referee::puzzle_args::{RefereePuzzleArgs, curry_referee_puzzle_hash, curry_referee_puzzle};
 
+#[derive(Clone)]
 pub struct TheirTurnReferee {
     fixed: Rc<RMFixed>,
     first_move: bool,
