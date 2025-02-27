@@ -7,14 +7,16 @@ use log::debug;
 
 use crate::common::constants::CREATE_COIN;
 use crate::common::types::{AllocEncoder, Amount, CoinCondition, CoinString, CoinSpend, Error, Hash, IntoErr, Node, RcNode, Program, ProgramRef, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, chia_dialect, u64_from_atom, usize_from_atom, BrokenOutCoinSpendInfo};
-use crate::common::standard_coin::{standard_solution_partial};
-use crate::channel_handler::types::{ValidationProgram, Evidence, ReadableMove};
+use crate::common::standard_coin::{ChiaIdentity, standard_solution_partial};
+use crate::channel_handler::types::{ValidationProgram, Evidence, ReadableMove, GameStartInfo};
 use crate::channel_handler::game_handler::{TheirTurnInputs, TheirTurnResult, TheirTurnMoveData, GameHandler};
 use crate::referee::types::{RMFixed, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome, REM_CONDITION_FIELDS, RefereeOnChainTransaction, OnChainRefereeSolution, RefereeMakerGameState, StoredGameState, GameMoveDetails, GameMoveStateInfo};
 use crate::referee::puzzle_args::{RefereePuzzleArgs, curry_referee_puzzle_hash, curry_referee_puzzle};
 
 pub struct TheirTurnReferee {
     fixed: Rc<RMFixed>,
+    first_move: bool,
+    game_start_info: GameStartInfo,
     validation_program_to_judge_their_move: ValidationProgram,
     validation_program_stored_to_generate_our_state_for_our_move: ValidationProgram,
     state_from_our_move: ProgramRef,
@@ -28,15 +30,79 @@ pub struct TheirTurnCarryData {
 }
 
 impl TheirTurnReferee {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        fixed_info: Rc<RMFixed>,
+        referee_coin_puzzle: Puzzle,
+        referee_coin_puzzle_hash: PuzzleHash,
+        game_start_info: &GameStartInfo,
+        my_identity: ChiaIdentity,
+        their_puzzle_hash: &PuzzleHash,
+        nonce: usize,
+        agg_sig_me_additional_data: &Hash,
+    ) -> Result<Self, Error> {
+        debug!("referee maker: game start {:?}", game_start_info);
+        let initial_move = GameMoveStateInfo {
+            mover_share: game_start_info.initial_mover_share.clone(),
+            move_made: game_start_info.initial_move.clone(),
+            max_move_size: game_start_info.initial_max_move_size,
+        };
+
+        // TODO: Revisit how we create initial_move
+        let is_hash = game_start_info
+            .initial_state
+            .sha256tree(allocator)
+            .hash()
+            .clone();
+        let ip_hash = game_start_info
+            .initial_validation_program
+            .sha256tree(allocator)
+            .hash()
+            .clone();
+        let vi_hash = Sha256Input::Array(vec![
+            Sha256Input::Hash(&is_hash),
+            Sha256Input::Hash(&ip_hash),
+        ])
+        .hash();
+        let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
+            &fixed_info,
+            &initial_move,
+            None,
+            &vi_hash,
+            // Special for start: nobody can slash the first turn and both sides need to
+            // compute the same value for amount to sign.  The next move will set mover share
+            // and the polarity of the move will determine whether that applies to us or them
+            // from both frames of reference.
+            Some(&Amount::default()),
+            false,
+        ));
+        // If this reflects my turn, then we will spend the next parameter set.
+        assert_eq!(
+            fixed_info.their_referee_puzzle_hash,
+            ref_puzzle_args.mover_puzzle_hash
+        );
+        let puzzle_hash =
+            curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
+
+        Ok(TheirTurnReferee {
+            fixed: fixed_info,
+            first_move: true,
+            game_start_info: game_start_info.clone(),
+            state_from_our_move: game_start_info.initial_state.clone(),
+            validation_program_to_judge_their_move: game_start_info.initial_validation_program.clone(),
+            validation_program_stored_to_generate_our_state_for_our_move: game_start_info.initial_validation_program.clone(),
+        })
+    }
+
     fn get_our_current_share(&self) -> Amount {
         todo!();
     }
 
-    fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         todo!();
     }
 
-    fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         todo!();
     }
 

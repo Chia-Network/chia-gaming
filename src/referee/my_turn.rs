@@ -5,10 +5,10 @@ use log::debug;
 use clvm_traits::ToClvm;
 
 use crate::common::constants::CREATE_COIN;
-use crate::common::types::{AllocEncoder, Amount, CoinString, Error, GameID, Hash, IntoErr, Program, ProgramRef, Puzzle, Sha256tree};
-use crate::common::standard_coin::standard_solution_partial;
+use crate::common::types::{AllocEncoder, Amount, CoinString, Error, GameID, Hash, IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256Input, Sha256tree};
+use crate::common::standard_coin::{ChiaIdentity, standard_solution_partial};
 use crate::channel_handler::types::{GameStartInfo, ValidationProgram, ReadableMove, ValidationInfo};
-use crate::channel_handler::game_handler::{GameHandler, MessageInputs, MyTurnInputs, MyTurnResult};
+use crate::channel_handler::game_handler::{GameHandler, MessageInputs, MyTurnInputs, MyTurnResult, MessageHandler};
 use crate::referee::types::{RefereeMakerGameState, RMFixed, RefereeOnChainTransaction, OnChainRefereeSolution, OnChainRefereeMove, IdentityCoinAndSolution, StoredGameState, GameMoveWireData, GameMoveStateInfo, GameMoveDetails};
 use crate::referee::puzzle_args::{RefereePuzzleArgs, curry_referee_puzzle_hash, curry_referee_puzzle};
 
@@ -18,6 +18,8 @@ pub struct MyTurnReferee {
     state_from_our_last_turn_handler: ProgramRef,
     mover_share_from_their_move_handler: Amount,
     max_move_size_from_their_validation: usize,
+
+    message_handler: Option<MessageHandler>,
 }
 
 pub struct MyTurnCarryData {
@@ -29,6 +31,75 @@ pub struct MyTurnCarryData {
 }
 
 impl MyTurnReferee {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        fixed_info: Rc<RMFixed>,
+        referee_coin_puzzle: Puzzle,
+        referee_coin_puzzle_hash: PuzzleHash,
+        game_start_info: &GameStartInfo,
+        my_identity: ChiaIdentity,
+        their_puzzle_hash: &PuzzleHash,
+        nonce: usize,
+        agg_sig_me_additional_data: &Hash,
+    ) -> Result<Self, Error> {
+        debug!("referee maker: game start {:?}", game_start_info);
+        let initial_move = GameMoveStateInfo {
+            mover_share: game_start_info.initial_mover_share.clone(),
+            move_made: game_start_info.initial_move.clone(),
+            max_move_size: game_start_info.initial_max_move_size,
+        };
+
+        // TODO: Revisit how we create initial_move
+        let is_hash = game_start_info
+            .initial_state
+            .sha256tree(allocator)
+            .hash()
+            .clone();
+        let ip_hash = game_start_info
+            .initial_validation_program
+            .sha256tree(allocator)
+            .hash()
+            .clone();
+        let vi_hash = Sha256Input::Array(vec![
+            Sha256Input::Hash(&is_hash),
+            Sha256Input::Hash(&ip_hash),
+        ])
+        .hash();
+        let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
+            &fixed_info,
+            &initial_move,
+            None,
+            &vi_hash,
+            // Special for start: nobody can slash the first turn and both sides need to
+            // compute the same value for amount to sign.  The next move will set mover share
+            // and the polarity of the move will determine whether that applies to us or them
+            // from both frames of reference.
+            Some(&Amount::default()),
+            true,
+        ));
+        // If this reflects my turn, then we will spend the next parameter set.
+        assert_eq!(
+            fixed_info.my_identity.puzzle_hash,
+            ref_puzzle_args.mover_puzzle_hash
+        );
+        let state = Rc::new(RefereeMakerGameState::Initial {
+            initial_state: game_start_info.initial_state.p(),
+            initial_validation_program: game_start_info.initial_validation_program.clone(),
+            initial_max_move_size: game_start_info.initial_max_move_size,
+            initial_puzzle_args: ref_puzzle_args.clone(),
+            game_handler: game_start_info.game_handler.clone(),
+        });
+
+        Ok(MyTurnReferee {
+            fixed: fixed_info,
+            max_move_size_from_their_validation: game_start_info.initial_max_move_size,
+            message_handler: None,
+            mover_share_from_their_move_handler: game_start_info.initial_mover_share.clone(),
+            state_from_our_last_turn_handler: game_start_info.initial_state.clone(),
+            validation_program_before_our_turn: game_start_info.initial_validation_program.clone(),
+        })
+    }
+
     fn get_amount(&self) -> Amount {
         todo!();
     }
@@ -37,11 +108,12 @@ impl MyTurnReferee {
         todo!();
     }
 
-    fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+        Rc::new(RefereeArgs
         todo!();
     }
 
-    fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         todo!();
     }
 

@@ -31,6 +31,8 @@ use crate::common::types::{
     BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
     Node, Program, ProgramRef, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout, atom_from_clvm,
 };
+use crate::referee::my_turn::MyTurnReferee;
+use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{RMFixed, RefereeMakerGameState, StoredGameState, ValidatorResult, OnChainRefereeSolution, RefereeOnChainTransaction, GameMoveStateInfo, GameMoveWireData, GameMoveDetails, TheirTurnMoveResult, TheirTurnCoinSpentResult};
 use crate::referee::puzzle_args::{RefereePuzzleArgs, curry_referee_puzzle_hash, curry_referee_puzzle};
 use crate::utils::proper_list;
@@ -39,6 +41,12 @@ use crate::utils::proper_list;
 pub struct LiveGameReplay {
     #[allow(dead_code)]
     game_id: GameID,
+}
+
+#[derive(Clone)]
+enum RefereeMachine {
+    MyTurn(Rc<MyTurnReferee>),
+    TheirTurn(Rc<TheirTurnReferee>),
 }
 
 // XXX break out state so we can have a previous state and easily swap them.
@@ -51,13 +59,8 @@ pub struct RefereeMaker {
 
     pub finished: bool,
 
-    #[cfg(test)]
-    pub run_debug: bool,
-
-    pub message_handler: Option<MessageHandler>,
-
-    state: Rc<RefereeMakerGameState>,
-    old_states: Vec<StoredGameState>,
+    pub referee: RefereeMachine,
+    old_states: Vec<RefereeMachine>,
 }
 
 impl RefereeMaker {
@@ -72,17 +75,9 @@ impl RefereeMaker {
         nonce: usize,
         agg_sig_me_additional_data: &Hash,
     ) -> Result<(Self, PuzzleHash), Error> {
-        debug!("referee maker: game start {:?}", game_start_info);
-        let initial_move = GameMoveStateInfo {
-            mover_share: game_start_info.initial_mover_share.clone(),
-            move_made: game_start_info.initial_move.clone(),
-            max_move_size: game_start_info.initial_max_move_size,
-        };
         let my_turn = game_start_info.game_handler.is_my_turn();
-        debug!("referee maker: my_turn {my_turn}");
-
         let fixed_info = Rc::new(RMFixed {
-            referee_coin_puzzle,
+            referee_coin_puzzle: referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
@@ -91,6 +86,37 @@ impl RefereeMaker {
             nonce,
             agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
         });
+        let referee = if my_turn {
+            RefereeMachine::MyTurn(Rc::new(MyTurnReferee::new(
+                allocator,
+                fixed_info.clone(),
+                referee_coin_puzzle.clone(),
+                referee_coin_puzzle_hash.clone(),
+                game_start_info,
+                my_identity,
+                their_puzzle_hash,
+                nonce,
+                agg_sig_me_additional_data
+            )?))
+        } else {
+            RefereeMachine::TheirTurn(Rc::new(TheirTurnReferee::new(
+                allocator,
+                fixed_info.clone(),
+                referee_coin_puzzle.clone(),
+                referee_coin_puzzle_hash.clone(),
+                game_start_info,
+                my_identity,
+                their_puzzle_hash,
+                nonce,
+                agg_sig_me_additional_data
+            )?))
+        };
+
+        let initial_move = GameMoveStateInfo {
+            mover_share: game_start_info.initial_mover_share.clone(),
+            move_made: game_start_info.initial_move.clone(),
+            max_move_size: game_start_info.initial_max_move_size,
+        };
 
         // TODO: Revisit how we create initial_move
         let is_hash = game_start_info
@@ -107,7 +133,8 @@ impl RefereeMaker {
             Sha256Input::Hash(&is_hash),
             Sha256Input::Hash(&ip_hash),
         ])
-        .hash();
+            .hash();
+
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &initial_move,
@@ -120,48 +147,15 @@ impl RefereeMaker {
             Some(&Amount::default()),
             my_turn,
         ));
-        // If this reflects my turn, then we will spend the next parameter set.
-        if my_turn {
-            assert_eq!(
-                fixed_info.my_identity.puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
-            );
-        } else {
-            assert_eq!(
-                fixed_info.their_referee_puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
-            );
-        }
-        let state = Rc::new(RefereeMakerGameState::Initial {
-            initial_state: game_start_info.initial_state.p(),
-            initial_validation_program: game_start_info.initial_validation_program.clone(),
-            initial_max_move_size: game_start_info.initial_max_move_size,
-            initial_puzzle_args: ref_puzzle_args.clone(),
-            game_handler: game_start_info.game_handler.clone(),
-        });
+
         let puzzle_hash =
             curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
-
-        Ok((
-            RefereeMaker {
-                fixed: fixed_info,
-                finished: false,
-                state,
-                old_states: Vec::new(),
-                message_handler: None,
-                #[cfg(test)]
-                run_debug: false,
-            },
-            puzzle_hash,
-        ))
-    }
-
-    fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
-        self.state.args_for_this_coin()
-    }
-
-    fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
-        self.state.spend_this_coin()
+        Ok((RefereeMaker {
+            fixed: fixed_info,
+            finished: false,
+            referee,
+            old_states: Vec::new(),
+        }, puzzle_hash))
     }
 
     pub fn rewind(
@@ -221,83 +215,29 @@ impl RefereeMaker {
     }
 
     pub fn is_my_turn(&self) -> bool {
-        self.state.is_my_turn()
+        matches!(self.referee, RefereeMachine::MyTurn(_))
     }
 
     pub fn processing_my_turn(&self) -> bool {
-        self.state.processing_my_turn()
-    }
-
-    pub fn get_game_handler(&self) -> GameHandler {
-        match self.state.borrow() {
-            RefereeMakerGameState::Initial { game_handler, .. }
-            | RefereeMakerGameState::AfterOurTurn { game_handler, .. }
-            | RefereeMakerGameState::AfterTheirTurn { game_handler, .. } => game_handler.clone(),
-        }
-    }
-
-    pub fn get_game_state(&self) -> Rc<Program> {
-        match self.state.borrow() {
-            RefereeMakerGameState::Initial { initial_state, .. } => initial_state.clone(),
-            RefereeMakerGameState::AfterOurTurn { state, .. } => {
-                state.p()
-            }
-            RefereeMakerGameState::AfterTheirTurn {
-                most_recent_our_state_result,
-                ..
-            } => most_recent_our_state_result.clone(),
-        }
-    }
-
-    pub fn get_validation_program_for_move(
-        &self,
-        their_move: bool,
-    ) -> Result<(&Program, ValidationProgram), Error> {
-        todo!();
-        match self.state.borrow() {
-            RefereeMakerGameState::Initial {
-                initial_state,
-                initial_validation_program,
-                ..
-            } => {
-                Ok((initial_state, initial_validation_program.clone()))
-            }
-            RefereeMakerGameState::AfterOurTurn { .. } => {
-                todo!();
-            }
-            RefereeMakerGameState::AfterTheirTurn {
-                most_recent_our_validation_program,
-                most_recent_our_state_result,
-                ..
-            } => Ok((
-                most_recent_our_state_result,
-                most_recent_our_validation_program.clone(),
-            )),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn enable_debug_run(&mut self, ena: bool) {
-        self.run_debug = ena;
-    }
-
-    pub fn get_validation_program(&self) -> Result<Rc<Program>, Error> {
-        match self.state.borrow() {
-            RefereeMakerGameState::Initial {
-                initial_validation_program,
-                ..
-            } => Ok(initial_validation_program.to_program().clone()),
-            RefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
-                Ok(my_turn_result.validation_program.to_program())
-            }
-            RefereeMakerGameState::AfterTheirTurn { .. } => Err(Error::StrErr(
-                "we already accepted their turn so it can't be validated".to_string(),
-            )),
-        }
+        matches!(self.referee, RefereeMachine::TheirTurn(_))
     }
 
     pub fn get_amount(&self) -> Amount {
         self.fixed.amount.clone()
+    }
+
+    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+        match &self.referee {
+            RefereeMachine::MyTurn(r) => r.args_for_this_coin(),
+            RefereeMachine::TheirTurn(r) => r.spend_this_coin(),
+        }
+    }
+
+    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+        match &self.referee {
+            RefereeMachine::MyTurn(r) => r.spend_this_coin(),
+            RefereeMachine::TheirTurn(r) => r.spend_this_coin(),
+        }
     }
 
     pub fn get_our_current_share(&self) -> Amount {
@@ -311,27 +251,6 @@ impl RefereeMaker {
 
     pub fn get_their_current_share(&self) -> Amount {
         self.fixed.amount.clone() - self.get_our_current_share()
-    }
-
-    fn get_our_state_for_handler(
-        &mut self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<(Hash, ProgramRef, usize), Error> {
-        let nil = allocator.allocator().nil();
-        if let RefereeMakerGameState::Initial { initial_state, initial_validation_program, initial_max_move_size, .. } = self.state.borrow() {
-            return Ok((initial_validation_program.hash().clone(), initial_state.clone().into(), *initial_max_move_size));
-        }
-
-        todo!();
-        // if let ValidatorResult::MoveOk(hash, state, max_move_size) = self.run_validator_for_move(
-        //     allocator,
-        //     nil,
-        //     false
-        // )? {
-        //     Ok((hash, state, max_move_size))
-        // } else {
-        //     Err(Error::StrErr("slash indicated on our turn".to_string()))
-        // }
     }
 
     pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
