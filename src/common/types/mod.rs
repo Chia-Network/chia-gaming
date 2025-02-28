@@ -1,3 +1,5 @@
 pub mod all;
+pub mod coin_id;
 
 pub use self::all::*;
+pub use self::coin_id::*;
