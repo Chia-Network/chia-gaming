@@ -1,4 +1,7 @@
 
+--> This is a lot of space about setting up commit signing, which isn't
+strictly necessary. I'd recommend moving this info elsewhere.
+
 # Setting up git
 
 First, you'll need to set up commit signing.
@@ -12,6 +15,11 @@ brew install gpg
 # Set git to sign all commits by default
 git config --global commit.gpgsign true
 ```
+
+--> gpg probably isn't considered best practices anymore. GPG had its day, and
+those days are mostly over. Github supports ssh signing, and I think that's
+probably a better thing since everyone needs ssh anyway and not everyone needs
+gpg. Use `age` instead of gpg for encryption.
 
 ## Find the verified email address for your GitHub account here:
 https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/verifying-your-email-address
@@ -60,7 +68,16 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Set the rust compiler to the bleeding edge, so we can use certain libraries
 rustup toolchain install nightly
-rustup default nightly
+# rustup default nightly
+^^^^^^^^^^^^^^^^^^^^^^^^ <-- don't do this. It's global and affects everything,
+and could very much confuse the user. If you need nightly, say so in your
+`rust-toolchain.toml` file in the root of your directory. See
+https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file
+
+Also, state explicitly what features of nightly you need, probably as comments
+in the .toml file. The goal is to eventually move to stable once all the
+features from nightly you need have migrated to stable. Using nightly makes it
+much harder to build reproducible builds
 ```
 
 ## Check the build

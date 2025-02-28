@@ -1,0 +1,9 @@
+One very likely user of this code will be third parties who want to implement games. To make this code as reusable as possible for these users, separate game-specific code from generic refereee etc. code. Maybe something like:
+
+
+clsp
+├── examples
+│   ├── calpoker
+│   ├── krunk
+│   └── space_poker
+└── gaming
