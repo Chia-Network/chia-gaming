@@ -4,25 +4,7 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::allocator::{NodePtr, SExp};
 use clvmr::Allocator;
 
-use clvmr::reduction::EvalErr;
-use std::io;
-
-/// Error type
-#[derive(Debug)]
-pub enum Error {
-    ClvmErr(EvalErr),
-    IoErr(io::Error),
-    BasicErr,
-    EncodeErr(ToClvmError),
-    StrErr(String),
-    BlsErr(chia_bls::Error),
-    BsonErr(bson::de::Error),
-    JsonErr(serde_json::Error),
-    HexErr(hex::FromHexError),
-    Channel(String),
-    GameMoveRejected(Vec<u8>),
-}
-
+use crate::common::types::error::Error;
 pub struct AllocEncoder(pub Allocator);
 impl Default for AllocEncoder {
     fn default() -> Self {

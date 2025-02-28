@@ -33,7 +33,8 @@ pub fn chia_dialect() -> ChiaDialect {
     ChiaDialect::new(NO_UNKNOWN_OPS)
 }
 
-use crate::common::types::coin_id::{atom_from_clvm, AllocEncoder, CoinID, Error, Hash};
+use crate::common::types::coin_id::{atom_from_clvm, AllocEncoder, CoinID, Hash};
+use crate::common::types::error::Error;
 
 /// Coin String
 #[derive(Default, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
