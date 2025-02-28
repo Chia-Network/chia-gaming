@@ -5,6 +5,7 @@ use clvmr::allocator::{NodePtr, SExp};
 use clvmr::Allocator;
 
 use crate::common::types::error::Error;
+
 pub struct AllocEncoder(pub Allocator);
 impl Default for AllocEncoder {
     fn default() -> Self {
