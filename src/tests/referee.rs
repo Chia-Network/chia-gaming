@@ -16,7 +16,8 @@ use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorResult};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidatorResult};
+use crate::referee::RefereeMaker;
 
 pub struct DebugGamePrograms {
     pub my_validation_program: Rc<Program>,

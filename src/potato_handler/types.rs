@@ -14,7 +14,7 @@ use crate::common::types::{
     PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
-use crate::referee::RefereeOnChainTransaction;
+use crate::referee::types::RefereeOnChainTransaction;
 use crate::shutdown::ShutdownConditions;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
