@@ -172,7 +172,7 @@ impl GameStartInfo {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadableMove(Rc<Program>);
 
 impl ReadableMove {

@@ -796,7 +796,7 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Program {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Puzzle(ProgramRef);
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Puzzle {
@@ -1090,7 +1090,7 @@ impl CoinCondition {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Spend {
     pub puzzle: Puzzle,
     pub solution: ProgramRef,

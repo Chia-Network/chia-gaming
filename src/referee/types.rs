@@ -45,7 +45,7 @@ pub struct GameMoveDetails {
     pub validation_info_hash: Hash,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameMoveWireData {
     pub puzzle_hash_for_unroll: PuzzleHash,
     pub details: GameMoveDetails,
@@ -66,7 +66,7 @@ pub enum SlashOutcome {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefereeOnChainTransaction {
     pub bundle: Spend,
     pub amount: Amount,
