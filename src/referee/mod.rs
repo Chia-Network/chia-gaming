@@ -33,11 +33,11 @@ use crate::common::types::{
 };
 use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, GameMoveWireData, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, OnChainRefereeMove, IdentityCoinAndSolution, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome, REM_CONDITION_FIELDS};
 use crate::referee::old::{OldRefereeMaker, RefereeMakerGameState, StoredGameState};
-use crate::referee::my_turn::MyTurnReferee;
-use crate::referee::their_turn::TheirTurnReferee;
+use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
+use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 
 #[derive(Clone)]
-enum RefereeByTurn {
+pub enum RefereeByTurn {
     MyTurn(MyTurnReferee),
     TheirTurn(TheirTurnReferee),
 }
@@ -76,7 +76,9 @@ impl RefereeByTurn {
     ) -> Result<(&Program, ValidationProgram), Error> {
         match self {
             RefereeByTurn::MyTurn(t) => t.get_validation_program_for_their_move(),
-            RefereeByTurn::TheirTurn(t) => t.get_validation_program_for_their_move()
+            RefereeByTurn::TheirTurn(t) => {
+                todo!();
+            }
         }
     }
 
@@ -94,20 +96,20 @@ impl RefereeByTurn {
         new_entropy: Hash,
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
-        match self {
-            RefereeByTurn::MyTurn(t) => t.my_turn_make_move(
-                allocator,
-                readable_move,
-                new_entropy,
-                state_number
-            ),
-            RefereeByTurn::TheirTurn(t) => t.my_turn_make_move(
-                allocator,
-                readable_move,
-                new_entropy,
-                state_number
-            )
-        }
+        let (replacement, result) =
+            match self {
+                RefereeByTurn::MyTurn(t) => t.my_turn_make_move(
+                    allocator,
+                    readable_move,
+                    new_entropy,
+                    state_number
+                )?,
+                RefereeByTurn::TheirTurn(t) => {
+                    todo!();
+                }
+            };
+        *self = replacement;
+        Ok(result)
     }
 
     pub fn receive_readable(
@@ -117,7 +119,9 @@ impl RefereeByTurn {
     ) -> Result<ReadableMove, Error> {
         match self {
             RefereeByTurn::MyTurn(t) => t.receive_readable(allocator, message),
-            RefereeByTurn::TheirTurn(t) => t.receive_readable(allocator, message)
+            RefereeByTurn::TheirTurn(t) => {
+                todo!();
+            }
         }
     }
 
@@ -128,11 +132,9 @@ impl RefereeByTurn {
         on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.get_transaction_for_move(
-                allocator,
-                coin_string,
-                on_chain
-            ),
+            RefereeByTurn::MyTurn(t) => {
+                todo!();
+            }
             RefereeByTurn::TheirTurn(t) => t.get_transaction_for_move(
                 allocator,
                 coin_string,
@@ -147,14 +149,15 @@ impl RefereeByTurn {
         evidence: NodePtr,
     ) -> Result<ValidatorResult, Error> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.run_validator_for_their_move(
-                allocator,
-                evidence
-            ),
-            RefereeByTurn::TheirTurn(t) => t.run_validator_for_their_move(
-                allocator,
-                evidence
-            )
+            RefereeByTurn::MyTurn(t) => {
+                todo!();
+            },
+            RefereeByTurn::TheirTurn(t) => {
+                t.run_validator_for_their_move(
+                    allocator,
+                    evidence
+                )
+            }
         }
     }
 
@@ -165,20 +168,25 @@ impl RefereeByTurn {
         state_number: usize,
         coin: Option<&CoinString>,
     ) -> Result<TheirTurnMoveResult, Error> {
-        match self {
-            RefereeByTurn::MyTurn(t) => t.their_turn_move_off_chain(
-                allocator,
-                details,
-                state_number,
-                coin
-            ),
-            RefereeByTurn::TheirTurn(t) => t.their_turn_move_off_chain(
-                allocator,
-                details,
-                state_number,
-                coin
-            )
+        let (new_self, result) =
+            match self {
+                RefereeByTurn::MyTurn(t) => {
+                    todo!();
+                }
+                RefereeByTurn::TheirTurn(t) => {
+                    t.their_turn_move_off_chain(
+                        allocator,
+                        details,
+                        state_number,
+                        coin
+                    )?
+                }
+            };
+
+        if let Some(new_self) = new_self {
+            *self = RefereeByTurn::MyTurn(new_self);
         }
+        Ok(result)
     }
 
     pub fn their_turn_coin_spent(
@@ -188,21 +196,28 @@ impl RefereeByTurn {
         conditions: &[CoinCondition],
         state_number: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        match self {
-            RefereeByTurn::MyTurn(t) => t.their_turn_coin_spent(
-                allocator,
-                coin_string,
-                conditions,
-                state_number
-            ),
-            RefereeByTurn::TheirTurn(t) => t.their_turn_coin_spent(
-                allocator,
-                coin_string,
-                conditions,
-                state_number
-            )
-        }
+        let (new_self, result) =
+            match self {
+                RefereeByTurn::MyTurn(t) => {
+                    todo!();
+                }
+                RefereeByTurn::TheirTurn(t) => t.their_turn_coin_spent(
+                    allocator,
+                    coin_string,
+                    conditions,
+                    state_number
+                )?
+            };
+
+        *self = new_self;
+        Ok(result)
     }
+}
+
+#[derive(Clone)]
+pub enum StateByTurn {
+    MyTurn(Rc<MyTurnRefereeMakerGameState>),
+    TheirTurn(Rc<TheirTurnRefereeMakerGameState>),
 }
 
 // XXX break out state so we can have a previous state and easily swap them.
@@ -228,6 +243,7 @@ impl RefereeMaker {
         their_puzzle_hash: &PuzzleHash,
         nonce: usize,
         agg_sig_me_additional_data: &Hash,
+        state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
         debug!("referee maker: game start {:?}", game_start_info);
         let initial_move = GameMoveStateInfo {
@@ -318,6 +334,7 @@ impl RefereeMaker {
                 their_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data,
+                state_number,
             )?;
             (RefereeByTurn::MyTurn(tr.0), tr.1)
         } else {
@@ -330,6 +347,7 @@ impl RefereeMaker {
                 their_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data,
+                state_number,
             )?;
             (RefereeByTurn::TheirTurn(tr.0), tr.1)
         };
@@ -368,17 +386,11 @@ impl RefereeMaker {
     }
 
     pub fn is_my_turn(&self) -> bool {
-        let my_turn = self.old_ref.is_my_turn();
-        let new_my_turn = matches!(self.referee, RefereeByTurn::MyTurn(_));
-        assert_eq!(my_turn, new_my_turn);
-        new_my_turn
+        matches!(self.referee, RefereeByTurn::MyTurn(_))
     }
 
     pub fn processing_my_turn(&self) -> bool {
-        let p_my_turn = self.old_ref.processing_my_turn();
-        let new_p_my_turn = matches!(self.referee, RefereeByTurn::TheirTurn(_));
-        assert_eq!(p_my_turn, new_p_my_turn);
-        new_p_my_turn
+        matches!(self.referee, RefereeByTurn::TheirTurn(_))
     }
 
     pub fn get_game_handler(&self) -> GameHandler {
@@ -659,10 +671,12 @@ impl RefereeMaker {
             state_number,
             coin
         );
+        debug!("old_val {old_val:?}");
         if old_val.is_err() {
             assert!(new_val.is_err());
             return new_val;
         }
+        debug!("new_val {new_val:?}");
         assert!(!new_val.is_err());
         new_val
     }

@@ -36,8 +36,6 @@ fn test_game_handler_their_move_slash() {
                     },
                     validation_info_hash: Hash::default(),
                 },
-                #[cfg(test)]
-                run_debug: true,
             },
         )
         .expect("should run");
@@ -86,8 +84,6 @@ fn test_game_handler_their_make_move() {
                     },
                     validation_info_hash: Hash::default(),
                 },
-                #[cfg(test)]
-                run_debug: true,
             },
         )
         .expect("should run");
@@ -137,8 +133,6 @@ fn test_game_handler_my_turn() {
                 last_mover_share: Amount::default(),
                 last_max_move_size: 100,
                 entropy: Hash::default(),
-                #[cfg(test)]
-                run_debug: true,
             },
         )
         .expect("should run");

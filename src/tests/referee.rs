@@ -141,6 +141,7 @@ impl RefereeTest {
             &their_identity.puzzle_hash,
             1,
             &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            0,
         )
         .expect("should construct");
         assert_eq!(
@@ -165,6 +166,7 @@ impl RefereeTest {
             &my_identity.puzzle_hash,
             1,
             &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            0,
         )
         .expect("should construct");
 

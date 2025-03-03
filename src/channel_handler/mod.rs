@@ -672,6 +672,7 @@ impl ChannelHandler {
                 &self.their_referee_puzzle_hash,
                 new_game_nonce,
                 &env.agg_sig_me_additional_data,
+                self.current_state_number,
             )?;
             res.push(LiveGame::new(
                 g.game_id.clone(),

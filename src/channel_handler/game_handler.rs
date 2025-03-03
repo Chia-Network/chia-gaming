@@ -50,17 +50,6 @@ pub struct MyTurnInputs<'a> {
     pub last_mover_share: Amount,
     pub last_max_move_size: usize,
     pub entropy: Hash,
-    #[cfg(test)]
-    pub run_debug: bool,
-}
-
-#[cfg(test)]
-fn get_my_turn_debug_flag(my_turn: &MyTurnInputs) -> bool {
-    my_turn.run_debug
-}
-#[cfg(not(test))]
-fn get_my_turn_debug_flag(_: &MyTurnInputs) -> bool {
-    false
 }
 
 #[derive(Debug)]
@@ -84,9 +73,6 @@ pub struct TheirTurnInputs<'a> {
 
     /// New move is a full move details.
     pub new_move: GameMoveDetails,
-
-    #[cfg(test)]
-    pub run_debug: bool,
 }
 
 fn get_their_turn_debug_flag(_: &TheirTurnInputs) -> bool {
@@ -188,7 +174,7 @@ impl GameHandler {
             allocator,
             driver_node,
             driver_args,
-            get_my_turn_debug_flag(inputs),
+            false,
         )?;
 
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
