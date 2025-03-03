@@ -1,10 +1,9 @@
 use std::cell::RefCell;
-use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::NodePtr;
 
-use clvm_tools_rs::compiler::comptypes::map_m;
+use crate::utils::map_m;
 
 use indoc::indoc;
 use log::debug;
@@ -399,7 +398,7 @@ impl Simulator {
         py: Python<'_>,
         allocator: &mut AllocEncoder,
         parent_coin: &CoinString,
-        puzzle_reveal: Rc<Puzzle>,
+        puzzle_reveal: Puzzle,
         solution: NodePtr,
     ) -> PyResult<PyObject> {
         let coin = self.make_coin(parent_coin)?;
@@ -526,7 +525,7 @@ impl Simulator {
         let tx = CoinSpend {
             bundle: Spend {
                 puzzle: identity_source.puzzle.clone(),
-                solution: Rc::new(Program::from_nodeptr(allocator, standard_solution)?),
+                solution: Program::from_nodeptr(allocator, standard_solution)?.into(),
                 signature,
             },
             coin: source_coin.clone(),
@@ -548,7 +547,9 @@ impl Simulator {
     ) -> Result<CoinString, Error> {
         let mut amount = Amount::default();
         let mut spends = Vec::new();
-        let nil = allocator.encode_atom(&[]).into_gen()?;
+        let nil = allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+            .into_gen()?;
 
         if coins.is_empty() {
             return Err(Error::StrErr("no coins".to_string()));
@@ -576,7 +577,7 @@ impl Simulator {
             spends.push(CoinSpend {
                 bundle: Spend {
                     puzzle: owner.puzzle.clone(),
-                    solution: Rc::new(Program::from_nodeptr(allocator, solution)?),
+                    solution: Program::from_nodeptr(allocator, solution)?.into(),
                     signature,
                 },
                 coin: c.clone(),

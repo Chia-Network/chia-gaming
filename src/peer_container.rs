@@ -619,7 +619,7 @@ impl SynchronousGameCradle {
             coin: parent_coin.clone(),
             bundle: Spend {
                 puzzle: self.state.identity.puzzle.clone(),
-                solution: Rc::new(Program::from_nodeptr(env.allocator, solution)?),
+                solution: Program::from_nodeptr(env.allocator, solution)?.into(),
                 signature,
             },
         });

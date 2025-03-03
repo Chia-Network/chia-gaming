@@ -1,8 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
-
 use clvm_traits::ToClvm;
 use log::debug;
 use rand::prelude::*;
@@ -16,7 +14,7 @@ use crate::common::standard_coin::{
     standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, PrivateKey, Program,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, Node, PrivateKey, Program,
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::calpoker::{
@@ -440,7 +438,7 @@ pub fn handshake<'a, R: Rng + 'a>(
                 coin: parent_coins[who].clone(),
                 bundle: Spend {
                     puzzle: identities[who].puzzle.clone(),
-                    solution: Rc::new(Program::from_nodeptr(env.allocator, solution)?),
+                    solution: Program::from_nodeptr(env.allocator, solution)?.into(),
                     signature,
                 },
             });
@@ -1145,8 +1143,8 @@ fn check_calpoker_economic_result(
         for (mn, the_move) in lui.opponent_moves.iter().enumerate() {
             let the_move_to_node = the_move.1.to_nodeptr(allocator).expect("should work");
             debug!(
-                "player {pn} opponent move {mn} {the_move:?} {}",
-                disassemble(allocator.allocator(), the_move_to_node, None)
+                "player {pn} opponent move {mn} {the_move:?} {:?}",
+                Node(the_move_to_node).to_hex(allocator)
             );
         }
     }

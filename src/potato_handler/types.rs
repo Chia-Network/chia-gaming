@@ -10,8 +10,8 @@ use crate::channel_handler::types::{
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, PublicKey, PuzzleHash,
-    SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, ProgramRef, PublicKey,
+    PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::referee::RefereeOnChainTransaction;
@@ -345,7 +345,7 @@ pub enum PeerMessage {
     Move(GameID, MoveResult),
     Message(GameID, Vec<u8>),
     Accept(GameID, Amount, PotatoSignatures),
-    Shutdown(Aggsig, Rc<Program>),
+    Shutdown(Aggsig, ProgramRef),
     RequestPotato(()),
     StartGames(PotatoSignatures, Vec<GameStartInfo>),
 }
