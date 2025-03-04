@@ -1093,7 +1093,7 @@ impl OldRefereeMaker {
                 return Ok(TheirTurnMoveResult {
                     puzzle_hash_for_unroll: None,
                     original: result.clone(),
-                })
+                });
             }
         };
 

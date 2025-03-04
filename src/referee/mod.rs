@@ -119,9 +119,7 @@ impl RefereeByTurn {
     ) -> Result<ReadableMove, Error> {
         match self {
             RefereeByTurn::MyTurn(t) => t.receive_readable(allocator, message),
-            RefereeByTurn::TheirTurn(t) => {
-                todo!();
-            }
+            RefereeByTurn::TheirTurn(t) => t.receive_readable(allocator, message),
         }
     }
 
@@ -150,13 +148,14 @@ impl RefereeByTurn {
     ) -> Result<ValidatorResult, Error> {
         match self {
             RefereeByTurn::MyTurn(t) => {
-                todo!();
-            },
-            RefereeByTurn::TheirTurn(t) => {
                 t.run_validator_for_their_move(
                     allocator,
-                    evidence
+                    t.get_game_state(),
+                    evidence,
                 )
+            },
+            RefereeByTurn::TheirTurn(t) => {
+                todo!();
             }
         }
     }
@@ -178,7 +177,7 @@ impl RefereeByTurn {
                         allocator,
                         details,
                         state_number,
-                        coin
+                        coin,
                     )?
                 }
             };
@@ -205,7 +204,7 @@ impl RefereeByTurn {
                     allocator,
                     coin_string,
                     conditions,
-                    state_number
+                    state_number,
                 )?
             };
 
@@ -382,7 +381,7 @@ impl RefereeMaker {
         puzzle_hash: &PuzzleHash,
     ) -> Result<Option<usize>, Error> {
         debug!("REWIND: find a way to proceed from {puzzle_hash:?}");
-        self.old_ref.rewind(allocator, puzzle_hash)
+        self.old_ref.rewind(allocator, puzzle_hash);
     }
 
     pub fn is_my_turn(&self) -> bool {
@@ -669,7 +668,7 @@ impl RefereeMaker {
             allocator,
             details,
             state_number,
-            coin
+            coin,
         );
         debug!("old_val {old_val:?}");
         if old_val.is_err() {
@@ -860,7 +859,7 @@ impl RefereeMaker {
             allocator,
             coin_string,
             conditions,
-            state_number
+            state_number,
         );
         if old_res.is_err() {
             assert!(new_res.is_err());
