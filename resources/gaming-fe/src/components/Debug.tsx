@@ -22,7 +22,8 @@ const onConnect = () => {
 */}
 
 //const onSetConnectString = () => { 0; }
-const setWCStringButtonHandler = () => { 0; }
+// const setWCStringButtonHandler = () => { 0; }
+const setWCStringButtonHandler = () => { }
 
 // Rename: DebugPanel, DebugSection ...
 const Debug: React.FC<DebugProps> = ({ connectString, setConnectString }) => {

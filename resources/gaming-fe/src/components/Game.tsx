@@ -46,7 +46,7 @@ const Game: React.FC = () => {
     }
   };
 
-  const onDisconnect = () => { 0; }
+  // const onDisconnect = () => { 0; }
 
   const {
     gameState,
