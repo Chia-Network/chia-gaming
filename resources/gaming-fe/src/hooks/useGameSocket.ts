@@ -1,9 +1,26 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import io, { Socket } from "socket.io-client";
 
 export type GameState = "idle" | "searching" | "playing";
 
-interface UseGameSocketReturn {
+interface StartGameData {
+  room: string;
+  playerHand: string[];
+  opponentHand: string[];
+  playerNumber: number;
+  opponentWager: string;
+  wagerAmount: string;
+  currentTurn: number;
+}
+
+interface ActionData {
+  type: "bet" | "endTurn" | "move";
+  actionBy: number;
+  amount?: number;
+  currentTurn?: number;
+}
+
+export interface UseGameSocketReturn {
   gameState: GameState;
   wagerAmount: string;
   setWagerAmount: (value: string) => void;
@@ -22,16 +39,12 @@ interface UseGameSocketReturn {
   handleEndTurn: () => void;
 }
 
+const SOCKET_URL = "http://localhost:3001";
+
 const useGameSocket = (): UseGameSocketReturn => {
   const socketRef = useRef<Socket | null>(null);
-
-  if (!socketRef.current) {
-    socketRef.current = io("http://localhost:3001");
-  }
-
-  const socket = socketRef.current;
-
   const playerNumberRef = useRef<number>(0);
+
   const [gameState, setGameState] = useState<GameState>("idle");
   const [wagerAmount, setWagerAmount] = useState<string>("");
   const [opponentWager, setOpponentWager] = useState<string>("");
@@ -45,114 +58,125 @@ const useGameSocket = (): UseGameSocketReturn => {
   const [playerNumber, setPlayerNumber] = useState<number>(0);
 
   useEffect(() => {
-    socket.on("waiting", (data: any) => {
-      setGameState("searching");
-    });
+    if (!socketRef.current) {
+      socketRef.current = io(SOCKET_URL);
+    }
+    const socket = socketRef.current;
 
-    socket.on("startGame", (data: any) => {
+    const handleWaiting = () => {
+      setGameState("searching");
+    };
+
+    const handleStartGame = (data: StartGameData) => {
       setGameState("playing");
       setRoom(data.room);
-      setLog((prevLog) => [...prevLog, "Opponent found! Starting game..."]);
-
+      setLog((prev) => [...prev, "Opponent found! Starting game..."]);
       setPlayerHand(data.playerHand);
       setOpponentHand(data.opponentHand);
-
       setPlayerNumber(data.playerNumber);
       playerNumberRef.current = data.playerNumber;
-
       setOpponentWager(data.opponentWager);
       setWagerAmount(data.wagerAmount);
-
       setIsPlayerTurn(data.currentTurn === data.playerNumber);
-    });
+    };
 
-    socket.on("action", (data: any) => {
-      const currentPlayerNumber = playerNumberRef.current;
-      if (data.type === "bet") {
-        if (data.actionBy === currentPlayerNumber) {
-          setPlayerCoins((prevCoins) => prevCoins - data.amount);
-          setLog((prevLog) => [...prevLog, `You bet ${data.amount} coins.`]);
-        } else {
-          setOpponentCoins((prevCoins) => prevCoins - data.amount);
-          setLog((prevLog) => [
-            ...prevLog,
-            `Opponent bets ${data.amount} coins.`,
+    const handleAction = (data: ActionData) => {
+      const currentPlayer = playerNumberRef.current;
+      switch (data.type) {
+        case "bet":
+          if (data.actionBy === currentPlayer) {
+            setPlayerCoins((coins) => coins - (data.amount || 0));
+            setLog((prev) => [...prev, `You bet ${data.amount} coins.`]);
+          } else {
+            setOpponentCoins((coins) => coins - (data.amount || 0));
+            setLog((prev) => [...prev, `Opponent bets ${data.amount} coins.`]);
+          }
+          break;
+        case "endTurn":
+          setIsPlayerTurn(data.currentTurn === currentPlayer);
+          setLog((prev) => [
+            ...prev,
+            data.actionBy === currentPlayer
+              ? "You ended your turn."
+              : "Opponent ended their turn.",
           ]);
-        }
-      } else if (data.type === "endTurn") {
-        setIsPlayerTurn(data.currentTurn === currentPlayerNumber);
-        if (data.actionBy === currentPlayerNumber) {
-          setLog((prevLog) => [...prevLog, "You ended your turn."]);
-        } else {
-          setLog((prevLog) => [...prevLog, "Opponent ended their turn."]);
-        }
-      } else if (data.type === "move") {
-        if (data.actionBy === currentPlayerNumber) {
-          setLog((prevLog) => [...prevLog, "You made a move."]);
-        } else {
-          setLog((prevLog) => [...prevLog, "Opponent made a move."]);
-        }
+          break;
+        case "move":
+          setLog((prev) => [
+            ...prev,
+            data.actionBy === currentPlayer
+              ? "You made a move."
+              : "Opponent made a move.",
+          ]);
+          break;
+        default:
+          break;
       }
-    });
+    };
+
+    socket.on("waiting", handleWaiting);
+    socket.on("startGame", handleStartGame);
+    socket.on("action", handleAction);
 
     return () => {
-      socket.off("waiting");
-      socket.off("startGame");
-      socket.off("action");
+      socket.off("waiting", handleWaiting);
+      socket.off("startGame", handleStartGame);
+      socket.off("action", handleAction);
     };
   }, []);
 
-  const handleFindOpponent = () => {
-    console.info("handle find opponent");
-    if (wagerAmount === "") {
+  // Handlers for emitting events
+  const handleFindOpponent = useCallback(() => {
+    if (!wagerAmount) {
       alert("Please enter a wager amount.");
       return;
     }
-    socket.emit("findOpponent", { wagerAmount });
-  };
+    socketRef.current?.emit("findOpponent", { wagerAmount });
+  }, [wagerAmount]);
 
-  const handleEndTurn = (): void => {
+  const handleEndTurn = useCallback(() => {
     if (!isPlayerTurn) {
       alert("It's not your turn.");
       return;
     }
-
-    socket.emit("action", {
+    socketRef.current?.emit("action", {
       room,
       type: "endTurn",
       actionBy: playerNumberRef.current,
     });
-  };
+  }, [isPlayerTurn, room]);
 
-  const handleBet = (amount: number): void => {
-    if (!isPlayerTurn) {
-      alert("It's not your turn.");
-      return;
-    }
-
-    if (playerCoins >= amount) {
-      socket.emit("action", {
+  const handleBet = useCallback(
+    (amount: number) => {
+      if (!isPlayerTurn) {
+        alert("It's not your turn.");
+        return;
+      }
+      if (playerCoins < amount) {
+        alert("You don't have enough coins.");
+        return;
+      }
+      socketRef.current?.emit("action", {
         room,
         type: "bet",
         amount,
         actionBy: playerNumberRef.current,
       });
-    } else {
-      alert("You don't have enough coins.");
-    }
-  };
+    },
+    [isPlayerTurn, playerCoins, room]
+  );
 
-  const handleMakeMove = (): void => {
+  const handleMakeMove = useCallback(() => {
     if (!isPlayerTurn) {
       alert("It's not your turn.");
       return;
     }
-    socket.emit("action", {
+    socketRef.current?.emit("action", {
       room,
       type: "move",
       actionBy: playerNumberRef.current,
     });
-  };
+  }, [isPlayerTurn, room]);
 
   return {
     gameState,
@@ -175,4 +199,3 @@ const useGameSocket = (): UseGameSocketReturn => {
 };
 
 export default useGameSocket;
-
