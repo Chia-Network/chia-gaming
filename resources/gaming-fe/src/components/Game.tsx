@@ -62,7 +62,6 @@ const Game: React.FC = () => {
 
   const { wcInfo, setWcInfo } = useDebug();
 
-  // Render idle state with lobby
   if (gameState === "idle") {
     return (
       <LobbyScreen

@@ -125,7 +125,6 @@ const useGameSocket = (): UseGameSocketReturn => {
     };
   }, []);
 
-  // Handlers for emitting events
   const handleFindOpponent = useCallback(() => {
     if (!wagerAmount) {
       alert("Please enter a wager amount.");
