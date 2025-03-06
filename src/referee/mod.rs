@@ -257,7 +257,7 @@ impl RefereeByTurn {
     }
 
     pub fn receive_readable(
-        &mut self,
+        &self,
         allocator: &mut AllocEncoder,
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
@@ -305,12 +305,12 @@ impl RefereeByTurn {
     }
 
     pub fn their_turn_move_off_chain(
-        &mut self,
+        &self,
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
         coin: Option<&CoinString>,
-    ) -> Result<TheirTurnMoveResult, Error> {
+    ) -> Result<(Option<RefereeByTurn>, TheirTurnMoveResult), Error> {
         let (new_self, result) =
             match self {
                 RefereeByTurn::MyTurn(t) => {
@@ -326,10 +326,7 @@ impl RefereeByTurn {
                 }
             };
 
-        if let Some(new_self) = new_self {
-            *self = RefereeByTurn::MyTurn(new_self);
-        }
-        Ok(result)
+        Ok((new_self.map(RefereeByTurn::MyTurn), result))
     }
 
     pub fn their_turn_coin_spent(

@@ -622,10 +622,11 @@ fn test_referee_can_slash_on_chain() {
         .expect("should assemble");
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
-    let _my_move_wire_data = reftest
+    let (new_ref, my_move_wire_data) = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
+    reftest.my_referee = new_ref;
 
     // We get the outcome puzzle hash for the most recent move to spend to.
     let spend_to_referee = reftest
@@ -729,10 +730,11 @@ fn test_referee_can_move_on_chain() {
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
 
-    let _my_move_wire_data = reftest
+    let (new_ref, my_move_wire_data) = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
+    reftest.my_referee = new_ref;
 
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 

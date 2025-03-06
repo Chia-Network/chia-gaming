@@ -960,12 +960,15 @@ impl LiveGame {
         coin: Option<&CoinString>,
     ) -> Result<TheirTurnMoveResult, Error> {
         assert!(!self.referee_maker.is_my_turn());
-        let their_move_result = self.referee_maker.their_turn_move_off_chain(
+        let (new_ref, their_move_result) = self.referee_maker.their_turn_move_off_chain(
             allocator,
             game_move,
             state_number,
             coin,
         )?;
+        if let Some(r) = new_ref {
+            self.referee_maker = Box::new(r);
+        }
         if let Some(ph) = &their_move_result.puzzle_hash_for_unroll {
             self.last_referee_puzzle_hash = ph.clone();
         }

@@ -233,10 +233,11 @@ fn test_referee_smoke() {
     let readable_move = ((), ()).to_clvm(&mut allocator).expect("should cvt");
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
-    let (reftest1, my_move_wire_data) = reftest
+    let (new_ref, my_move_wire_data) = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
+    reftest.my_referee = new_ref;
 
     assert!(my_move_wire_data.details.basic.move_made.is_empty());
     let mut off_chain_slash_gives_error = reftest.my_referee.clone();
@@ -260,10 +261,11 @@ fn test_referee_smoke() {
         unreachable!();
     }
 
-    let their_move_local_update = reftest
+    let (new_ref, their_move_local_update) = reftest
         .their_referee
         .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should move");
+    reftest.their_referee = new_ref.unwrap();
 
     debug!("their_move_wire_data {their_move_local_update:?}");
 
@@ -274,10 +276,11 @@ fn test_referee_smoke() {
     assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk)));
 
     assert!(reftest.my_referee.processing_my_turn());
-    let their_move_result = reftest
+    let (new_ref, their_move_result) = reftest
         .my_referee
         .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should run");
+    reftest.my_referee = new_ref.unwrap();
     let (readable_move, message) = match &their_move_result.original {
         TheirTurnResult::MakeMove(_, message, move_data) => {
             (move_data.readable_move.clone(), message.clone())
