@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::proper_list;
+use crate::utils::{map_m, proper_list};
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::run_program;
 use clvmr::NodePtr;
@@ -90,14 +90,14 @@ fn run_code(
         .map(|r| r.1)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TheirTurnMoveData {
-    pub readable_move: NodePtr,
-    pub slash_evidence: Vec<NodePtr>,
+    pub readable_move: ProgramRef,
+    pub slash_evidence: Vec<Evidence>,
     pub mover_share: Amount,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TheirTurnResult {
     FinalMove(TheirTurnMoveData),
     MakeMove(GameHandler, Vec<u8>, TheirTurnMoveData),
@@ -335,26 +335,30 @@ impl GameHandler {
                 )));
             }
 
-            let mut decode_slash_evidence = |index: Option<usize>| {
-                let mut lst = index
+            let mut decode_slash_evidence = |allocator: &mut AllocEncoder, index: Option<usize>| {
+                let mut lst_nodeptr = index
                     .and_then(|i| proper_list(allocator.allocator(), pl[i], true))
                     .unwrap_or_default();
-                lst.push(
+                lst_nodeptr.push(
                     allocator
                         .encode_atom(clvm_traits::Atom::Borrowed(&[]))
                         .into_gen()?,
                 );
+                let mut lst = Vec::new();
+                for v in lst_nodeptr.into_iter() {
+                    lst.push(Evidence::from_nodeptr(allocator, v)?);
+                }
                 Ok(lst)
             };
 
             let slash_evidence = if pl.len() >= 3 {
-                decode_slash_evidence(Some(2))
+                decode_slash_evidence(allocator, Some(2))
             } else {
-                decode_slash_evidence(None)
+                decode_slash_evidence(allocator, None)
             };
 
             let their_turn_move_data = TheirTurnMoveData {
-                readable_move: pl[1],
+                readable_move: Program::from_nodeptr(allocator, pl[1])?.into(),
                 mover_share: inputs.new_move.basic.mover_share.clone(),
                 slash_evidence: slash_evidence?,
             };
@@ -381,7 +385,7 @@ impl GameHandler {
                     Node(run_result).to_hex(allocator)?
                 )));
             }
-            Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(pl[1])))
+            Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(allocator, pl[1])?))
         } else {
             Err(Error::StrErr("unknown move result type".to_string()))
         }

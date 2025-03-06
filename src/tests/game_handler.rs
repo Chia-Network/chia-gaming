@@ -48,8 +48,7 @@ fn test_game_handler_their_move_slash() {
         let evidence_compare = (1337, ((), ((), ((), (Node(z32_node), ((), ((), ())))))))
             .to_clvm(&mut allocator)
             .expect("cvt");
-        let evidence_node = evidence.to_nodeptr();
-        let evidence_hex = Node(evidence_node).to_hex(&mut allocator).expect("cvt");
+        let evidence_hex = evidence.to_program().to_hex();
         assert_eq!(
             evidence_hex,
             Node(evidence_compare).to_hex(&mut allocator).expect("cvt")
@@ -97,9 +96,8 @@ fn test_game_handler_their_make_move() {
             .encode_atom(clvm_traits::Atom::Borrowed(&z32))
             .expect("cvt");
         assert_eq!(
-            Node(move_data.readable_move)
-                .to_hex(&mut allocator)
-                .expect("cvt"),
+            move_data.readable_move.p()
+                .to_hex(),
             hex_999
         );
         let node_list = (1337, ((), ((), ((), (node_z32, ((), ((), ())))))))

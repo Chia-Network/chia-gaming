@@ -371,8 +371,7 @@ impl PotatoHandler {
                 };
                 {
                     let (env, system_interface) = penv.env();
-                    let opponent_readable =
-                        ReadableMove::from_nodeptr(env.allocator, readable_move)?;
+                    let opponent_readable = ReadableMove::from_program(readable_move);
                     system_interface.opponent_moved(
                         env.allocator,
                         game_id,

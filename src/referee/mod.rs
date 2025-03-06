@@ -174,7 +174,7 @@ impl RefereeByTurn {
     pub fn run_validator_for_their_move(
         &self,
         allocator: &mut AllocEncoder,
-        evidence: NodePtr,
+        evidence: Evidence,
     ) -> Result<ValidatorResult, Error> {
         match self {
             RefereeByTurn::MyTurn(t) => {
@@ -782,11 +782,11 @@ impl RefereeMaker {
     pub fn run_validator_for_their_move(
         &self,
         allocator: &mut AllocEncoder,
-        evidence: NodePtr,
+        evidence: Evidence,
     ) -> Result<ValidatorResult, Error> {
         assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
         assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
-        let old_val = self.old_ref.run_validator_for_their_move(allocator, evidence);
+        let old_val = self.old_ref.run_validator_for_their_move(allocator, evidence.clone());
         let new_val = self.referee.run_validator_for_their_move(allocator, evidence);
         if old_val.is_err() {
             assert!(new_val.is_err());
@@ -817,13 +817,14 @@ impl RefereeMaker {
             state_number,
             coin,
         );
-        debug!("old_val {old_val:?}");
+        debug!("their_turn_move_off_chain old_val {old_val:?}");
+        debug!("their_turn_move_off_chain new_val {new_val:?}");
         if old_val.is_err() {
             assert!(new_val.is_err());
             return new_val;
         }
-        debug!("new_val {new_val:?}");
         assert!(!new_val.is_err());
+        assert_eq!(new_val.as_ref().unwrap(), old_val.as_ref().unwrap());
         assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
         assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         assert_eq!(self.old_ref.stored_versions(), self.referee.stored_versions());
@@ -852,7 +853,7 @@ impl RefereeMaker {
                     Node(validation_program_clvm),
                     (
                         RcNode::new(self.fixed.my_identity.puzzle.to_program()),
-                        (Node(slash_solution), (Node(evidence.to_nodeptr()), ())),
+                        (Node(slash_solution), (evidence, ())),
                     ),
                 ),
             ),
@@ -953,7 +954,7 @@ impl RefereeMaker {
     pub fn check_their_turn_for_slash(
         &self,
         allocator: &mut AllocEncoder,
-        evidence: NodePtr,
+        evidence: Evidence,
         coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
         let puzzle_args = self.spend_this_coin();
@@ -972,7 +973,7 @@ impl RefereeMaker {
         // my_inner_solution maker is just in charge of making aggsigs from
         // conditions.
         debug!("run validator for their move");
-        let full_slash_result = self.run_validator_for_their_move(allocator, evidence)?;
+        let full_slash_result = self.run_validator_for_their_move(allocator, evidence.clone())?;
         match full_slash_result {
             ValidatorResult::Slash(_slash) => {
                 // result is NodePtr containing solution and aggsig.
@@ -986,7 +987,7 @@ impl RefereeMaker {
                     new_puzzle,
                     &new_puzzle_hash,
                     &slash_spend,
-                    Evidence::from_nodeptr(evidence),
+                    evidence,
                 )
                 .map(Some)
             }
@@ -1021,6 +1022,7 @@ impl RefereeMaker {
             return new_res;
         }
         assert!(!new_res.is_err());
+        assert_eq!(old_res.as_ref().unwrap(), new_res.as_ref().unwrap());
         new_res
     }
 }

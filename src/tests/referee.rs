@@ -9,7 +9,7 @@ use rand_chacha::ChaCha8Rng;
 use log::debug;
 
 use crate::channel_handler::game_handler::{GameHandler, TheirTurnResult};
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
@@ -267,9 +267,7 @@ fn test_referee_smoke() {
 
     debug!("their_move_wire_data {their_move_local_update:?}");
 
-    let nil = allocator
-        .encode_atom(clvm_traits::Atom::Borrowed(&[]))
-        .expect("should encode");
+    let nil = Evidence::nil().expect("cvt");
     let validator_result = reftest
         .their_referee
         .run_validator_for_their_move(&mut allocator, nil);
@@ -282,15 +280,15 @@ fn test_referee_smoke() {
         .expect("should run");
     let (readable_move, message) = match &their_move_result.original {
         TheirTurnResult::MakeMove(_, message, move_data) => {
-            (move_data.readable_move, message.clone())
+            (move_data.readable_move.clone(), message.clone())
         }
-        TheirTurnResult::FinalMove(move_data) => (move_data.readable_move, vec![]),
+        TheirTurnResult::FinalMove(move_data) => (move_data.readable_move.clone(), vec![]),
         _ => {
             panic!();
         }
     };
     assert_eq!(message, b"message data");
-    let readable_prog = Program::from_nodeptr(&mut allocator, readable_move).expect("should cvt");
+    let readable_prog = readable_move.p();
     assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
     assert!(!reftest.my_referee.processing_my_turn());
 }

@@ -24,7 +24,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
     BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
+    Node, Program, ProgramRef, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
 };
 use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, GameMoveWireData, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, OnChainRefereeMove, IdentityCoinAndSolution, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome, REM_CONDITION_FIELDS};
 
@@ -989,7 +989,7 @@ impl OldRefereeMaker {
     pub fn run_validator_for_their_move(
         &self,
         allocator: &mut AllocEncoder,
-        evidence: NodePtr,
+        evidence: Evidence,
     ) -> Result<ValidatorResult, Error> {
         let previous_puzzle_args = self.args_for_this_coin();
         let puzzle_args = self.spend_this_coin();
@@ -1022,7 +1022,7 @@ impl OldRefereeMaker {
             max_move_size: puzzle_args.game_move.basic.max_move_size,
             referee_hash: new_puzzle_hash.clone(),
             move_args: ValidatorMoveArgs {
-                evidence: Rc::new(Program::from_nodeptr(allocator, evidence)?),
+                evidence: evidence.to_program(),
                 state: self.get_game_state(),
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
@@ -1139,9 +1139,10 @@ impl OldRefereeMaker {
             for evidence in move_data.slash_evidence.iter() {
                 debug!("calling slash for given evidence");
                 if self
-                    .check_their_turn_for_slash(allocator, *evidence, coin_string)?
+                    .check_their_turn_for_slash(allocator, evidence.clone(), coin_string)?
                     .is_some()
                 {
+                    debug!("OLD REFEREE: RETURN SLASH {result:?}");
                     // Slash isn't allowed in off chain, we'll go on chain via error.
                     debug!("slash was allowed");
                     self.state = original_state;
@@ -1189,7 +1190,7 @@ impl OldRefereeMaker {
                     Node(validation_program_clvm),
                     (
                         RcNode::new(self.fixed.my_identity.puzzle.to_program()),
-                        (Node(slash_solution), (Node(evidence.to_nodeptr()), ())),
+                        (Node(slash_solution), (Node(evidence.to_nodeptr(allocator)?), ())),
                     ),
                 ),
             ),
@@ -1288,7 +1289,7 @@ impl OldRefereeMaker {
     pub fn check_their_turn_for_slash(
         &self,
         allocator: &mut AllocEncoder,
-        evidence: NodePtr,
+        evidence: Evidence,
         coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
         let puzzle_args = self.spend_this_coin();
@@ -1307,7 +1308,7 @@ impl OldRefereeMaker {
         // my_inner_solution maker is just in charge of making aggsigs from
         // conditions.
         debug!("run validator for their move");
-        let full_slash_result = self.run_validator_for_their_move(allocator, evidence)?;
+        let full_slash_result = self.run_validator_for_their_move(allocator, evidence.clone())?;
         match full_slash_result {
             ValidatorResult::Slash(_slash) => {
                 // result is NodePtr containing solution and aggsig.
@@ -1321,7 +1322,7 @@ impl OldRefereeMaker {
                     new_puzzle,
                     &new_puzzle_hash,
                     &slash_spend,
-                    Evidence::from_nodeptr(evidence),
+                    evidence,
                 )
                 .map(Some)
             }
@@ -1374,8 +1375,9 @@ impl OldRefereeMaker {
             debug!("repeat: current state {:?}", self.state);
 
             if self.is_my_turn() {
+                let evidence_nil = Evidence::nil()?;
                 if let Some(result) =
-                    self.check_their_turn_for_slash(allocator, nil, &created_coin)?
+                    self.check_their_turn_for_slash(allocator, evidence_nil, &created_coin)?
                 {
                     // A repeat means that we tried a move but went on chain.
                     // if the move is slashable, then we should do that here.
@@ -1471,7 +1473,7 @@ impl OldRefereeMaker {
                 for evidence in move_data.slash_evidence.iter() {
                     debug!("check their turn for slash");
                     if let Some(result) =
-                        self.check_their_turn_for_slash(allocator, *evidence, &created_coin)?
+                        self.check_their_turn_for_slash(allocator, evidence.clone(), &created_coin)?
                     {
                         return Ok(result);
                     }
@@ -1483,7 +1485,7 @@ impl OldRefereeMaker {
                         &new_puzzle_hash,
                         &self.fixed.amount,
                     ),
-                    readable: ReadableMove::from_nodeptr(allocator, move_data.readable_move)?,
+                    readable: ReadableMove::from_program(move_data.readable_move.p()),
                     mover_share: args.game_move.basic.mover_share.clone(),
                 })
             };

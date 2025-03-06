@@ -51,13 +51,13 @@ pub struct GameMoveWireData {
     pub details: GameMoveDetails,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TheirTurnMoveResult {
     pub puzzle_hash_for_unroll: Option<PuzzleHash>,
     pub original: TheirTurnResult,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum SlashOutcome {
     NoReward,
     Reward {
@@ -79,7 +79,7 @@ pub struct LiveGameReplay {
     game_id: GameID,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,

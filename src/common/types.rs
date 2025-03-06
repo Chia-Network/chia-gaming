@@ -1097,7 +1097,7 @@ pub struct Spend {
     pub signature: Aggsig,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CoinSpend {
     pub coin: CoinString,
     pub bundle: Spend,

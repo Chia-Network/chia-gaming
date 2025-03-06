@@ -196,7 +196,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .into()
             };
             Ok(GameActionResult::MoveResult(
-                ui_result,
+                ui_result.to_nodeptr(self.env.allocator)?,
                 message,
                 decoded_message,
                 entropy,

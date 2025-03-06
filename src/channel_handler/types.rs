@@ -368,26 +368,34 @@ pub struct ChannelHandlerUnrollSpendInfo {
     pub signatures: PotatoSignatures,
 }
 
-#[derive(Debug, Clone)]
-pub struct Evidence(NodePtr);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Evidence(ProgramRef);
 
 impl Evidence {
-    pub fn from_nodeptr(n: NodePtr) -> Evidence {
-        Evidence(n)
+    pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Evidence, Error> {
+        Ok(Evidence(Program::from_nodeptr(allocator, n)?.into()))
     }
 
-    pub fn nil(allocator: &mut AllocEncoder) -> Evidence {
-        Evidence(allocator.allocator().nil())
+    pub fn nil() -> Result<Evidence, Error> {
+        Ok(Evidence(Program::from_hex("80")?.into()))
     }
 
-    pub fn to_nodeptr(&self) -> NodePtr {
-        self.0
+    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
+        self.0.to_nodeptr(allocator)
+    }
+
+    pub fn to_program(&self) -> Rc<Program> {
+        self.0.p()
+    }
+
+    pub fn from_program(program: Rc<Program>) -> Self {
+        Evidence(program.into())
     }
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Evidence {
-    fn to_clvm(&self, _encoder: &mut E) -> Result<NodePtr, ToClvmError> {
-        Ok(self.0)
+    fn to_clvm(&self, encoder: &mut E) -> Result<NodePtr, ToClvmError> {
+        self.0.to_clvm(encoder)
     }
 }
 
@@ -966,7 +974,7 @@ impl LiveGame {
     pub fn check_their_turn_for_slash(
         &self,
         allocator: &mut AllocEncoder,
-        evidence: NodePtr,
+        evidence: Evidence,
         coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
         self.referee_maker
