@@ -330,12 +330,12 @@ impl RefereeByTurn {
     }
 
     pub fn their_turn_coin_spent(
-        &mut self,
+        &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
         conditions: &[CoinCondition],
         state_number: usize,
-    ) -> Result<TheirTurnCoinSpentResult, Error> {
+    ) -> Result<(Option<RefereeByTurn>, TheirTurnCoinSpentResult), Error> {
         match self {
             // We could be called on to fast forward the most recent transaction
             // we ourselves took.  check_their_turn_coin_spent will return an
@@ -345,7 +345,7 @@ impl RefereeByTurn {
                 coin_string,
                 conditions,
                 state_number,
-            ),
+            ).map(|spend| (None, spend)),
             RefereeByTurn::TheirTurn(t) => {
                 let (new_self, result) =
                     t.their_turn_coin_spent(
@@ -355,8 +355,7 @@ impl RefereeByTurn {
                         state_number,
                     )?;
 
-                *self = new_self;
-                Ok(result)
+                Ok((Some(new_self), result))
             }
         }
     }
@@ -383,10 +382,10 @@ impl RefereeByTurn {
     }
 
     pub fn rewind(
-        &mut self,
+        &self,
         allocator: &mut AllocEncoder,
         puzzle_hash: &PuzzleHash,
-    ) -> Result<Option<usize>, Error> {
+    ) -> Result<Option<(RefereeByTurn, usize)>, Error> {
         let mut ancestors = vec![];
         self.generate_ancestor_list(&mut ancestors);
 
@@ -430,8 +429,7 @@ impl RefereeByTurn {
             );
             if *puzzle_hash == have_puzzle_hash && old_referee.is_my_turn() {
                 let state_number = old_referee.state_number();
-                self.clone_from(old_referee);
-                return Ok(Some(state_number));
+                return Ok(Some((old_referee.clone(), state_number)));
             }
         }
 
@@ -666,7 +664,7 @@ impl RefereeByTurn {
     /// Timeout unlike other actions applies to the current ph, not the one at the
     /// start of a turn proper.
     pub fn get_transaction_for_timeout(
-        &mut self,
+        &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {

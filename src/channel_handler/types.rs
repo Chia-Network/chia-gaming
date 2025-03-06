@@ -1024,12 +1024,15 @@ impl LiveGame {
         current_state: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         // assert!(self.referee_maker.processing_my_turn());
-        let res = self.referee_maker.their_turn_coin_spent(
+        let (new_ref, res) = self.referee_maker.their_turn_coin_spent(
             allocator,
             coin_string,
             conditions,
             current_state,
         )?;
+        if let Some(r) = new_ref {
+            self.referee_maker = Box::new(r);
+        }
         self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
         Ok(res)
     }
@@ -1046,10 +1049,11 @@ impl LiveGame {
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
         let result = self.referee_maker.rewind(allocator, want_ph)?;
-        if let Some(current_state) = &result {
-            self.rewind_outcome = Some(*current_state);
+        if let Some((new_ref, current_state)) = result {
+            self.referee_maker = Box::new(new_ref);
+            self.rewind_outcome = Some(current_state);
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
-            return Ok(Some((self.is_my_turn(), *current_state)));
+            return Ok(Some((self.is_my_turn(), current_state)));
         }
 
         if referee_puzzle_hash == *want_ph {
