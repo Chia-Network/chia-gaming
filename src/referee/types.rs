@@ -527,6 +527,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct RMFixed {
     pub referee_coin_puzzle: Puzzle,
     pub referee_coin_puzzle_hash: PuzzleHash,

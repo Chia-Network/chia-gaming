@@ -36,7 +36,7 @@ use crate::referee::old::{OldRefereeMaker, RefereeMakerGameState, StoredGameStat
 use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum RefereeByTurn {
     MyTurn(MyTurnReferee),
     TheirTurn(TheirTurnReferee),
@@ -82,11 +82,41 @@ impl RefereeByTurn {
         }
     }
 
+    pub fn is_my_turn(&self) -> bool {
+        match self {
+            RefereeByTurn::MyTurn(t) => true,
+            RefereeByTurn::TheirTurn(t) => false,
+        }
+    }
+
+    pub fn state_number(&self) -> usize {
+        match self {
+            RefereeByTurn::MyTurn(t) => t.state_number(),
+            RefereeByTurn::TheirTurn(t) => t.state_number()
+        }
+    }
+
+    pub fn fixed(&self) -> Rc<RMFixed> {
+        match self {
+            RefereeByTurn::MyTurn(t) => t.fixed.clone(),
+            RefereeByTurn::TheirTurn(t) => t.fixed.clone()
+        }
+    }
+
     pub fn get_validation_program(&self) -> Result<Rc<Program>, Error> {
         match self {
             RefereeByTurn::MyTurn(t) => t.get_validation_program(),
             RefereeByTurn::TheirTurn(t) => t.get_validation_program()
         }
+    }
+
+    pub fn stored_versions(&self) -> Vec<(Rc<RefereePuzzleArgs>, Rc<RefereePuzzleArgs>, usize)> {
+        let mut alist = vec![];
+        self.generate_ancestor_list(&mut alist);
+        let mut res: Vec<_> = alist.into_iter().rev().map(|a| {
+            (a.args_for_this_coin(), a.spend_this_coin(), a.state_number())
+        }).collect();
+        res
     }
 
     pub fn my_turn_make_move(
@@ -195,21 +225,108 @@ impl RefereeByTurn {
         conditions: &[CoinCondition],
         state_number: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        let (new_self, result) =
-            match self {
-                RefereeByTurn::MyTurn(t) => {
-                    todo!();
-                }
-                RefereeByTurn::TheirTurn(t) => t.their_turn_coin_spent(
-                    allocator,
-                    coin_string,
-                    conditions,
-                    state_number,
-                )?
-            };
+        match self {
+            // We could be called on to fast forward the most recent transaction
+            // we ourselves took.  check_their_turn_coin_spent will return an
+            // error if it was asked to do a non-fast-forward their turn spend.
+            RefereeByTurn::MyTurn(t) => t.check_their_turn_coin_spent(
+                allocator,
+                coin_string,
+                conditions,
+                state_number,
+            ),
+            RefereeByTurn::TheirTurn(t) => {
+                let (new_self, result) =
+                    t.their_turn_coin_spent(
+                        allocator,
+                        coin_string,
+                        conditions,
+                        state_number,
+                    )?;
 
-        *self = new_self;
-        Ok(result)
+                *self = new_self;
+                Ok(result)
+            }
+        }
+    }
+
+    pub fn generate_ancestor_list(&self, ref_list: &mut Vec<RefereeByTurn>) {
+        match self {
+            RefereeByTurn::MyTurn(t) => {
+                if let Some(p) = t.parent.as_ref() {
+                    let p_ref: &TheirTurnReferee = p.borrow();
+                    let their_turn = RefereeByTurn::TheirTurn(p_ref.clone());
+                    ref_list.push(their_turn.clone());
+                    their_turn.generate_ancestor_list(ref_list);
+                }
+            }
+            RefereeByTurn::TheirTurn(t) => {
+                if let Some(p) = t.parent.as_ref() {
+                    let p_ref: &MyTurnReferee = p.borrow();
+                    let my_turn = RefereeByTurn::MyTurn(p_ref.clone());
+                    ref_list.push(my_turn.clone());
+                    my_turn.generate_ancestor_list(ref_list);
+                }
+            }
+        }
+    }
+
+    pub fn rewind(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        puzzle_hash: &PuzzleHash,
+    ) -> Result<Option<usize>, Error> {
+        let mut ancestors = vec![];
+        self.generate_ancestor_list(&mut ancestors);
+
+        for old_referee in ancestors.iter() {
+            let start_args = old_referee.args_for_this_coin();
+            let end_args = old_referee.spend_this_coin();
+            debug!(
+                "end   puzzle hash {:?}",
+                curry_referee_puzzle_hash(
+                    allocator,
+                    &old_referee.fixed().referee_coin_puzzle_hash,
+                    &end_args
+                )
+            );
+            debug!(
+                "state {} is_my_turn {}",
+                old_referee.state_number(),
+                old_referee.is_my_turn()
+            );
+            debug!(
+                "start puzzle hash {:?}",
+                curry_referee_puzzle_hash(
+                    allocator,
+                    &old_referee.fixed().referee_coin_puzzle_hash,
+                    &start_args
+                )
+            );
+        }
+
+        for old_referee in ancestors.iter() {
+            let have_puzzle_hash = curry_referee_puzzle_hash(
+                allocator,
+                &old_referee.fixed().referee_coin_puzzle_hash,
+                &old_referee.args_for_this_coin(),
+            )?;
+            debug!(
+                "{} referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
+                old_referee.state_number(),
+                old_referee.is_my_turn(),
+                old_referee.state_number()
+            );
+            if *puzzle_hash == have_puzzle_hash && old_referee.is_my_turn() {
+                let state_number = old_referee.state_number();
+                self.clone_from(old_referee);
+                return Ok(Some(state_number));
+            }
+        }
+
+        debug!("referee rewind: no matching state");
+        debug!("still in state {:?}", self.state_number());
+        Ok(None)
     }
 }
 
@@ -380,8 +497,16 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         puzzle_hash: &PuzzleHash,
     ) -> Result<Option<usize>, Error> {
-        debug!("REWIND: find a way to proceed from {puzzle_hash:?}");
-        self.old_ref.rewind(allocator, puzzle_hash);
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
+        debug!("REWIND: old find a way to proceed from {puzzle_hash:?}");
+        let old_result = self.old_ref.rewind(allocator, puzzle_hash)?;
+        debug!("REWIND: new find a way to proceed from {puzzle_hash:?}");
+        let new_result = self.referee.rewind(allocator, puzzle_hash)?;
+        assert_eq!(old_result, new_result);
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
+        Ok(new_result)
     }
 
     pub fn is_my_turn(&self) -> bool {
@@ -448,6 +573,8 @@ impl RefereeMaker {
         new_entropy: Hash,
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         let old_res = self.old_ref.my_turn_make_move(
             allocator,
             readable_move,
@@ -461,6 +588,7 @@ impl RefereeMaker {
             state_number
         )?;
         assert_eq!(old_res, new_res);
+        assert_eq!(self.old_ref.stored_versions(), self.referee.stored_versions());
         Ok(new_res)
     }
 
@@ -469,6 +597,8 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         let old_res = self.old_ref.receive_readable(allocator, message)?;
         let new_res = self.referee.receive_readable(allocator, message)?;
         assert_eq!(old_res, new_res);
@@ -476,6 +606,8 @@ impl RefereeMaker {
     }
 
     pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         let args = self.args_for_this_coin();
         curry_referee_puzzle(
             allocator,
@@ -486,6 +618,8 @@ impl RefereeMaker {
     }
 
     pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         let args = self.spend_this_coin();
         curry_referee_puzzle(
             allocator,
@@ -521,6 +655,8 @@ impl RefereeMaker {
         targs: &RefereePuzzleArgs,
         args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         let our_move = self.is_my_turn();
 
         let my_mover_share = if our_move {
@@ -570,6 +706,8 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
         debug!(
             "mover share at start of action   {:?}",
@@ -630,6 +768,8 @@ impl RefereeMaker {
         coin_string: &CoinString,
         on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         let old_tx = self.old_ref.get_transaction_for_move(allocator, coin_string, on_chain)?;
         let new_tx = self.referee.get_transaction_for_move(allocator, coin_string, on_chain)?;
         assert_eq!(old_tx, new_tx);
@@ -641,6 +781,8 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         evidence: NodePtr,
     ) -> Result<ValidatorResult, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         let old_val = self.old_ref.run_validator_for_their_move(allocator, evidence);
         let new_val = self.referee.run_validator_for_their_move(allocator, evidence);
         if old_val.is_err() {
@@ -658,6 +800,8 @@ impl RefereeMaker {
         state_number: usize,
         coin: Option<&CoinString>,
     ) -> Result<TheirTurnMoveResult, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         let old_val = self.old_ref.their_turn_move_off_chain(
             allocator,
             details,
@@ -677,6 +821,7 @@ impl RefereeMaker {
         }
         debug!("new_val {new_val:?}");
         assert!(!new_val.is_err());
+        assert_eq!(self.old_ref.stored_versions(), self.referee.stored_versions());
         new_val
     }
 
@@ -721,6 +866,8 @@ impl RefereeMaker {
         slash_spend: &BrokenOutCoinSpendInfo,
         evidence: Evidence,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         // Probably readable_info overlaps solution.
         // Moving driver in that context is the signature.
         // My reward coin string is the coin that we'll make
@@ -849,12 +996,15 @@ impl RefereeMaker {
         conditions: &[CoinCondition],
         state_number: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
+        debug!("their turn coin spent is_my_turn {}", self.referee.is_my_turn());
+        assert_eq!(self.old_ref.is_my_turn(), self.referee.is_my_turn());
         let old_res = self.old_ref.their_turn_coin_spent(
             allocator,
             coin_string,
             conditions,
             state_number
         );
+        debug!("referee is {:?}", self.referee);
         let new_res = self.referee.their_turn_coin_spent(
             allocator,
             coin_string,

@@ -532,7 +532,7 @@ pub fn standard_solution_partial(
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChiaIdentity {
     pub private_key: PrivateKey,
     pub synthetic_public_key: PublicKey,

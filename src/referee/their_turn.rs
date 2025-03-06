@@ -96,7 +96,7 @@ impl TheirTurnRefereeMakerGameState {
 // Referee coin has two inner puzzles.
 // Throughout channel handler, the one that's ours is the standard format puzzle
 // to the pubkey of the referee private key (referred to in channel_handler).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TheirTurnReferee {
     pub fixed: Rc<RMFixed>,
 
@@ -203,68 +203,16 @@ impl TheirTurnReferee {
         ))
     }
 
+    pub fn state_number(&self) -> usize {
+        self.state_number
+    }
+
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.state.args_for_this_coin()
     }
 
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.state.spend_this_coin()
-    }
-
-    pub fn rewind(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        puzzle_hash: &PuzzleHash,
-    ) -> Result<Option<usize>, Error> {
-        debug!("REWIND: find a way to proceed from {puzzle_hash:?}");
-        todo!();
-        // for old_state in self.old_states.iter().skip(1).rev() {
-        //     let start_args = old_state.state.args_for_this_coin();
-        //     let end_args = old_state.state.spend_this_coin();
-        //     debug!(
-        //         "end   puzzle hash {:?}",
-        //         curry_referee_puzzle_hash(
-        //             allocator,
-        //             &self.fixed.referee_coin_puzzle_hash,
-        //             &end_args
-        //         )
-        //     );
-        //     debug!(
-        //         "state {} is_my_turn {}",
-        //         old_state.state_number,
-        //         old_state.state.is_my_turn()
-        //     );
-        //     debug!(
-        //         "start puzzle hash {:?}",
-        //         curry_referee_puzzle_hash(
-        //             allocator,
-        //             &self.fixed.referee_coin_puzzle_hash,
-        //             &start_args
-        //         )
-        //     );
-        // }
-
-        // for old_state in self.old_states.iter().skip(1).rev() {
-        //     let have_puzzle_hash = curry_referee_puzzle_hash(
-        //         allocator,
-        //         &self.fixed.referee_coin_puzzle_hash,
-        //         &old_state.state.args_for_this_coin(),
-        //     )?;
-        //     debug!(
-        //         "referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
-        //         old_state.state.is_my_turn(),
-        //         old_state.state_number
-        //     );
-        //     if *puzzle_hash == have_puzzle_hash && old_state.state.is_my_turn() {
-        //         self.state = old_state.state.clone();
-        //         debug!("referee rewind my turn: reassume state {:?}", self.state);
-        //         return Ok(Some(old_state.state_number));
-        //     }
-        // }
-
-        // debug!("referee rewind: no matching state");
-        // debug!("still in state {:?}", self.state);
-        // Ok(None)
     }
 
     pub fn is_my_turn(&self) -> bool {
@@ -343,43 +291,6 @@ impl TheirTurnReferee {
 
     pub fn get_their_current_share(&self) -> Amount {
         self.fixed.amount.clone() - self.get_our_current_share()
-    }
-
-    pub fn accept_this_move(
-        &mut self,
-        game_handler: &GameHandler,
-        current_puzzle_args: Rc<RefereePuzzleArgs>,
-        new_puzzle_args: Rc<RefereePuzzleArgs>,
-        my_turn_result: Rc<MyTurnResult>,
-        details: &GameMoveDetails,
-        state_number: usize,
-    ) -> Result<(), Error> {
-        debug!("{state_number} accept move {details:?}");
-        assert_ne!(
-            current_puzzle_args.mover_puzzle_hash,
-            new_puzzle_args.mover_puzzle_hash
-        );
-        assert_eq!(
-            current_puzzle_args.mover_puzzle_hash,
-            new_puzzle_args.waiter_puzzle_hash
-        );
-        assert_eq!(
-            self.fixed.my_identity.puzzle_hash,
-            current_puzzle_args.mover_puzzle_hash
-        );
-        let new_state = TheirTurnRefereeMakerGameState::AfterOurTurn {
-            game_handler: game_handler.clone(),
-            my_turn_result,
-            create_this_coin: current_puzzle_args,
-            spend_this_coin: new_puzzle_args,
-        };
-
-        // self.old_states.push(StoredGameState {
-        //     state: self.state.clone(),
-        //     state_number,
-        // });
-        self.state = Rc::new(new_state);
-        Ok(())
     }
 
     pub fn accept_their_move(
@@ -463,18 +374,22 @@ impl TheirTurnReferee {
             }
         };
 
+        let new_parent = TheirTurnReferee {
+            state_number,
+            .. self.clone()
+        };
         Ok(MyTurnReferee {
             finished: self.finished,
             fixed: self.fixed.clone(),
             state: Rc::new(new_state),
             state_number,
-            parent: Some(Rc::new(self.clone())),
             message_handler: self.message_handler.clone(),
+            parent: Some(Rc::new(new_parent)),
         })
     }
 
     pub fn receive_readable(
-        &mut self,
+        &self,
         allocator: &mut AllocEncoder,
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
@@ -524,7 +439,7 @@ impl TheirTurnReferee {
             ));
         };
 
-        self.message_handler = None;
+        // self.message_handler = None;
 
         Ok(result)
     }
@@ -620,7 +535,7 @@ impl TheirTurnReferee {
     /// Timeout unlike other actions applies to the current ph, not the one at the
     /// start of a turn proper.
     pub fn get_transaction_for_timeout(
-        &mut self,
+        &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {

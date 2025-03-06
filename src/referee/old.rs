@@ -227,6 +227,25 @@ impl OldRefereeMaker {
         ))
     }
 
+    pub fn stored_versions(&self) -> Vec<(Rc<RefereePuzzleArgs>, Rc<RefereePuzzleArgs>, usize)> {
+        let mut res: Vec<_> = self.old_states.iter().map(|s| {
+            debug!("{} {}", s.state_number, s.state.is_my_turn());
+            (s.state.args_for_this_coin(), s.state.spend_this_coin(), s.state_number)
+        }).collect();
+        if res.is_empty() {
+            return res;
+        }
+        let mut have_phase = self.old_states[self.old_states.len()-1].state.is_my_turn();
+        for i_rev in 1..self.old_states.len() {
+            let i = self.old_states.len() - 1 - i_rev;
+            if self.old_states[i].state.is_my_turn() == have_phase {
+                res.remove(i);
+            }
+            have_phase = self.old_states[i].state.is_my_turn();
+        }
+        res
+    }
+
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.state.args_for_this_coin()
     }
