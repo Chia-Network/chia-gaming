@@ -872,6 +872,7 @@ impl TheirTurnReferee {
 
     pub fn their_turn_coin_spent(
         &self,
+        my_rc: Rc<TheirTurnReferee>,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
         conditions: &[CoinCondition],
@@ -935,7 +936,7 @@ impl TheirTurnReferee {
             );
 
             debug!("game coin timed out: conditions {conditions:?}");
-            return Ok((RefereeByTurn::TheirTurn(self.clone()), TheirTurnCoinSpentResult::Timedout {
+            return Ok((RefereeByTurn::TheirTurn(my_rc), TheirTurnCoinSpentResult::Timedout {
                 my_reward_coin_string: Some(my_reward_coin_string),
             }));
         }
@@ -983,7 +984,7 @@ impl TheirTurnReferee {
 
             // Not my turn.
             let nil_readable = ReadableMove::from_program(Program::from_hex("80")?.into());
-            return Ok((RefereeByTurn::TheirTurn(self.clone()), TheirTurnCoinSpentResult::Moved {
+            return Ok((RefereeByTurn::TheirTurn(my_rc), TheirTurnCoinSpentResult::Moved {
                 new_coin_string: CoinString::from_parts(
                     &coin_string.to_coin_id(),
                     &after_puzzle_hash,
@@ -1032,7 +1033,6 @@ impl TheirTurnReferee {
         let final_result =
             match result.original {
                 TheirTurnResult::Slash(evidence) => {
-                    todo!();
                     let slash_spend = new_self.make_slash_spend(allocator, coin_string)?;
                     new_self.make_slash_for_their_turn(
                         allocator,
@@ -1050,7 +1050,7 @@ impl TheirTurnReferee {
             };
 
         final_result.map(|r| {
-            (RefereeByTurn::MyTurn(new_self), r)
+            (RefereeByTurn::MyTurn(Rc::new(new_self)), r)
         })
     }
 }

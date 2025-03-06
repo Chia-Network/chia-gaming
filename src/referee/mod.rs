@@ -36,8 +36,8 @@ use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameStat
 
 #[derive(Clone, Debug)]
 pub enum RefereeByTurn {
-    MyTurn(MyTurnReferee),
-    TheirTurn(TheirTurnReferee),
+    MyTurn(Rc<MyTurnReferee>),
+    TheirTurn(Rc<TheirTurnReferee>),
 }
 
 impl RefereeByTurn {
@@ -128,7 +128,7 @@ impl RefereeByTurn {
                 agg_sig_me_additional_data,
                 state_number,
             )?;
-            (RefereeByTurn::MyTurn(tr.0), tr.1)
+            (RefereeByTurn::MyTurn(Rc::new(tr.0)), tr.1)
         } else {
             let tr = TheirTurnReferee::new(
                 allocator,
@@ -141,7 +141,7 @@ impl RefereeByTurn {
                 agg_sig_me_additional_data,
                 state_number,
             )?;
-            (RefereeByTurn::TheirTurn(tr.0), tr.1)
+            (RefereeByTurn::TheirTurn(Rc::new(tr.0)), tr.1)
         };
         Ok((turn, puzzle_hash))
     }
@@ -326,7 +326,7 @@ impl RefereeByTurn {
                 }
             };
 
-        Ok((new_self.map(RefereeByTurn::MyTurn), result))
+        Ok((new_self.map(Rc::new).map(RefereeByTurn::MyTurn), result))
     }
 
     pub fn their_turn_coin_spent(
@@ -349,6 +349,7 @@ impl RefereeByTurn {
             RefereeByTurn::TheirTurn(t) => {
                 let (new_self, result) =
                     t.their_turn_coin_spent(
+                        t.clone(),
                         allocator,
                         coin_string,
                         conditions,
@@ -364,16 +365,14 @@ impl RefereeByTurn {
         match self {
             RefereeByTurn::MyTurn(t) => {
                 if let Some(p) = t.parent.as_ref() {
-                    let p_ref: &TheirTurnReferee = p.borrow();
-                    let their_turn = RefereeByTurn::TheirTurn(p_ref.clone());
+                    let their_turn = RefereeByTurn::TheirTurn(p.clone());
                     ref_list.push(their_turn.clone());
                     their_turn.generate_ancestor_list(ref_list);
                 }
             }
             RefereeByTurn::TheirTurn(t) => {
                 if let Some(p) = t.parent.as_ref() {
-                    let p_ref: &MyTurnReferee = p.borrow();
-                    let my_turn = RefereeByTurn::MyTurn(p_ref.clone());
+                    let my_turn = RefereeByTurn::MyTurn(p.clone());
                     ref_list.push(my_turn.clone());
                     my_turn.generate_ancestor_list(ref_list);
                 }

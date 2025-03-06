@@ -301,7 +301,7 @@ pub struct LiveGame {
     pub game_id: GameID,
     pub rewind_outcome: Option<usize>,
     pub last_referee_puzzle_hash: PuzzleHash,
-    referee_maker: Box<RefereeMaker>,
+    referee_maker: RefereeMaker,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
 }
@@ -906,7 +906,7 @@ impl LiveGame {
         LiveGame {
             game_id,
             last_referee_puzzle_hash,
-            referee_maker: Box::new(referee_maker),
+            referee_maker: referee_maker,
             my_contribution,
             their_contribution,
             rewind_outcome: None,
@@ -947,7 +947,7 @@ impl LiveGame {
             new_entropy.clone(),
             state_number,
         )?;
-        self.referee_maker = Box::new(new_ref);
+        self.referee_maker = new_ref;
         self.last_referee_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
         Ok(referee_result)
     }
@@ -967,7 +967,7 @@ impl LiveGame {
             coin,
         )?;
         if let Some(r) = new_ref {
-            self.referee_maker = Box::new(r);
+            self.referee_maker = r;
         }
         if let Some(ph) = &their_move_result.puzzle_hash_for_unroll {
             self.last_referee_puzzle_hash = ph.clone();
@@ -1031,7 +1031,7 @@ impl LiveGame {
             current_state,
         )?;
         if let Some(r) = new_ref {
-            self.referee_maker = Box::new(r);
+            self.referee_maker = r;
         }
         self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
         Ok(res)
@@ -1050,7 +1050,7 @@ impl LiveGame {
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
         let result = self.referee_maker.rewind(allocator, want_ph)?;
         if let Some((new_ref, current_state)) = result {
-            self.referee_maker = Box::new(new_ref);
+            self.referee_maker = new_ref;
             self.rewind_outcome = Some(current_state);
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
             return Ok(Some((self.is_my_turn(), current_state)));

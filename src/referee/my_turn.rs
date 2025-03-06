@@ -413,7 +413,7 @@ impl MyTurnReferee {
 
         debug!("new_curried_referee_puzzle_hash (our turn) {new_curried_referee_puzzle_hash:?}");
 
-        Ok((RefereeByTurn::TheirTurn(new_self), GameMoveWireData {
+        Ok((RefereeByTurn::TheirTurn(Rc::new(new_self)), GameMoveWireData {
             puzzle_hash_for_unroll: new_curried_referee_puzzle_hash,
             details: result.game_move.clone(),
         }))
