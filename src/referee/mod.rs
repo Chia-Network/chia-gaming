@@ -43,6 +43,127 @@ pub enum RefereeByTurn {
 }
 
 impl RefereeByTurn {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        referee_coin_puzzle: Puzzle,
+        referee_coin_puzzle_hash: PuzzleHash,
+        game_start_info: &GameStartInfo,
+        my_identity: ChiaIdentity,
+        their_puzzle_hash: &PuzzleHash,
+        nonce: usize,
+        agg_sig_me_additional_data: &Hash,
+        state_number: usize,
+    ) -> Result<(Self, PuzzleHash), Error> {
+        debug!("referee maker: game start {:?}", game_start_info);
+        let initial_move = GameMoveStateInfo {
+            mover_share: game_start_info.initial_mover_share.clone(),
+            move_made: game_start_info.initial_move.clone(),
+            max_move_size: game_start_info.initial_max_move_size,
+        };
+        let my_turn = game_start_info.game_handler.is_my_turn();
+        debug!("referee maker: my_turn {my_turn}");
+
+        let fixed_info = Rc::new(RMFixed {
+            referee_coin_puzzle: referee_coin_puzzle.clone(),
+            referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
+            their_referee_puzzle_hash: their_puzzle_hash.clone(),
+            my_identity: my_identity.clone(),
+            timeout: game_start_info.timeout.clone(),
+            amount: game_start_info.amount.clone(),
+            nonce,
+            agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
+        });
+
+        // TODO: Revisit how we create initial_move
+        let is_hash = game_start_info
+            .initial_state
+            .sha256tree(allocator)
+            .hash()
+            .clone();
+        let ip_hash = game_start_info
+            .initial_validation_program
+            .sha256tree(allocator)
+            .hash()
+            .clone();
+        let vi_hash = Sha256Input::Array(vec![
+            Sha256Input::Hash(&is_hash),
+            Sha256Input::Hash(&ip_hash),
+        ])
+        .hash();
+        let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
+            &fixed_info,
+            &initial_move,
+            None,
+            &vi_hash,
+            // Special for start: nobody can slash the first turn and both sides need to
+            // compute the same value for amount to sign.  The next move will set mover share
+            // and the polarity of the move will determine whether that applies to us or them
+            // from both frames of reference.
+            Some(&Amount::default()),
+            my_turn,
+        ));
+        // If this reflects my turn, then we will spend the next parameter set.
+        if my_turn {
+            assert_eq!(
+                fixed_info.my_identity.puzzle_hash,
+                ref_puzzle_args.mover_puzzle_hash
+            );
+        } else {
+            assert_eq!(
+                fixed_info.their_referee_puzzle_hash,
+                ref_puzzle_args.mover_puzzle_hash
+            );
+        }
+        let state = Rc::new(RefereeMakerGameState::Initial {
+            initial_state: game_start_info.initial_state.p(),
+            initial_validation_program: game_start_info.initial_validation_program.clone(),
+            initial_puzzle_args: ref_puzzle_args.clone(),
+            game_handler: game_start_info.game_handler.clone(),
+        });
+        let puzzle_hash =
+            curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
+
+        let (old_ref, or_ph) = OldRefereeMaker::new(
+            allocator,
+            referee_coin_puzzle.clone(),
+            referee_coin_puzzle_hash.clone(),
+            game_start_info,
+            my_identity.clone(),
+            their_puzzle_hash,
+            nonce,
+            agg_sig_me_additional_data
+        )?;
+        let (turn, t_ph) = if my_turn {
+            let tr = MyTurnReferee::new(
+                allocator,
+                referee_coin_puzzle.clone(),
+                referee_coin_puzzle_hash.clone(),
+                game_start_info,
+                my_identity.clone(),
+                their_puzzle_hash,
+                nonce,
+                agg_sig_me_additional_data,
+                state_number,
+            )?;
+            (RefereeByTurn::MyTurn(tr.0), tr.1)
+        } else {
+            let tr = TheirTurnReferee::new(
+                allocator,
+                referee_coin_puzzle,
+                referee_coin_puzzle_hash,
+                game_start_info,
+                my_identity,
+                their_puzzle_hash,
+                nonce,
+                agg_sig_me_additional_data,
+                state_number,
+            )?;
+            (RefereeByTurn::TheirTurn(tr.0), tr.1)
+        };
+        Ok((turn, puzzle_hash))
+    }
+
     fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         match self {
             RefereeByTurn::MyTurn(t) => t.args_for_this_coin(),
@@ -664,119 +785,20 @@ impl RefereeMaker {
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
-        debug!("referee maker: game start {:?}", game_start_info);
-        let initial_move = GameMoveStateInfo {
-            mover_share: game_start_info.initial_mover_share.clone(),
-            move_made: game_start_info.initial_move.clone(),
-            max_move_size: game_start_info.initial_max_move_size,
-        };
-        let my_turn = game_start_info.game_handler.is_my_turn();
-        debug!("referee maker: my_turn {my_turn}");
-
-        let fixed_info = Rc::new(RMFixed {
-            referee_coin_puzzle: referee_coin_puzzle.clone(),
-            referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
-            their_referee_puzzle_hash: their_puzzle_hash.clone(),
-            my_identity: my_identity.clone(),
-            timeout: game_start_info.timeout.clone(),
-            amount: game_start_info.amount.clone(),
-            nonce,
-            agg_sig_me_additional_data: agg_sig_me_additional_data.clone(),
-        });
-
-        // TODO: Revisit how we create initial_move
-        let is_hash = game_start_info
-            .initial_state
-            .sha256tree(allocator)
-            .hash()
-            .clone();
-        let ip_hash = game_start_info
-            .initial_validation_program
-            .sha256tree(allocator)
-            .hash()
-            .clone();
-        let vi_hash = Sha256Input::Array(vec![
-            Sha256Input::Hash(&is_hash),
-            Sha256Input::Hash(&ip_hash),
-        ])
-        .hash();
-        let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
-            &fixed_info,
-            &initial_move,
-            None,
-            &vi_hash,
-            // Special for start: nobody can slash the first turn and both sides need to
-            // compute the same value for amount to sign.  The next move will set mover share
-            // and the polarity of the move will determine whether that applies to us or them
-            // from both frames of reference.
-            Some(&Amount::default()),
-            my_turn,
-        ));
-        // If this reflects my turn, then we will spend the next parameter set.
-        if my_turn {
-            assert_eq!(
-                fixed_info.my_identity.puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
-            );
-        } else {
-            assert_eq!(
-                fixed_info.their_referee_puzzle_hash,
-                ref_puzzle_args.mover_puzzle_hash
-            );
-        }
-        let state = Rc::new(RefereeMakerGameState::Initial {
-            initial_state: game_start_info.initial_state.p(),
-            initial_validation_program: game_start_info.initial_validation_program.clone(),
-            initial_puzzle_args: ref_puzzle_args.clone(),
-            game_handler: game_start_info.game_handler.clone(),
-        });
-        let puzzle_hash =
-            curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
-
-        let (old_ref, or_ph) = OldRefereeMaker::new(
+        let (referee, ph) = RefereeByTurn::new(
             allocator,
-            referee_coin_puzzle.clone(),
-            referee_coin_puzzle_hash.clone(),
+            referee_coin_puzzle,
+            referee_coin_puzzle_hash,
             game_start_info,
-            my_identity.clone(),
+            my_identity,
             their_puzzle_hash,
             nonce,
-            agg_sig_me_additional_data
+            agg_sig_me_additional_data,
+            state_number
         )?;
-        let (turn, t_ph) = if my_turn {
-            let tr = MyTurnReferee::new(
-                allocator,
-                referee_coin_puzzle.clone(),
-                referee_coin_puzzle_hash.clone(),
-                game_start_info,
-                my_identity.clone(),
-                their_puzzle_hash,
-                nonce,
-                agg_sig_me_additional_data,
-                state_number,
-            )?;
-            (RefereeByTurn::MyTurn(tr.0), tr.1)
-        } else {
-            let tr = TheirTurnReferee::new(
-                allocator,
-                referee_coin_puzzle,
-                referee_coin_puzzle_hash,
-                game_start_info,
-                my_identity,
-                their_puzzle_hash,
-                nonce,
-                agg_sig_me_additional_data,
-                state_number,
-            )?;
-            (RefereeByTurn::TheirTurn(tr.0), tr.1)
-        };
-        assert_eq!(or_ph, t_ph);
-        Ok((
-            RefereeMaker {
-                referee: turn,
-            },
-            puzzle_hash,
-        ))
+        Ok((RefereeMaker {
+            referee,
+        }, ph))
     }
 
     fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
