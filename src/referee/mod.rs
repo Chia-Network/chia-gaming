@@ -506,6 +506,9 @@ impl RefereeMaker {
         assert_eq!(old_result, new_result);
         assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
         assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
+        assert_eq!(self.old_ref.is_my_turn(), self.referee.is_my_turn());
+        assert_eq!(self.old_ref.get_game_handler(), self.referee.get_game_handler());
+        assert_eq!(self.old_ref.get_game_state(), self.referee.get_game_state());
         Ok(new_result)
     }
 
@@ -821,6 +824,8 @@ impl RefereeMaker {
         }
         debug!("new_val {new_val:?}");
         assert!(!new_val.is_err());
+        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
+        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
         assert_eq!(self.old_ref.stored_versions(), self.referee.stored_versions());
         new_val
     }

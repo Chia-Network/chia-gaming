@@ -385,6 +385,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 return Ok(());
             }
 
+            debug!("{initial_potato} do on chain move {readable_move:?} cc {current_coin:?}");
+
             let (env, _system_interface) = penv.env();
             (
                 initial_potato,

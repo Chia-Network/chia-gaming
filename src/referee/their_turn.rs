@@ -601,7 +601,7 @@ impl TheirTurnReferee {
     ) -> Result<RefereeOnChainTransaction, Error> {
         // We can only do a move to replicate our turn.
         assert!(self.processing_my_turn());
-        let args = self.spend_this_coin();
+        let target_args = self.spend_this_coin();
         let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
 
         let prog = ValidationProgram::new(allocator, Rc::new(Program::from_bytes(&[0x80])));
@@ -612,9 +612,9 @@ impl TheirTurnReferee {
                 game_id: GameID::default(),
                 amount: self.get_amount(),
                 initial_state: self.get_game_state().clone().into(),
-                initial_max_move_size: args.game_move.basic.max_move_size,
-                initial_move: args.game_move.basic.move_made.clone(),
-                initial_mover_share: args.game_move.basic.mover_share.clone(),
+                initial_max_move_size: target_args.game_move.basic.max_move_size,
+                initial_move: target_args.game_move.basic.move_made.clone(),
+                initial_mover_share: target_args.game_move.basic.mover_share.clone(),
                 my_contribution_this_game: Amount::default(),
                 their_contribution_this_game: Amount::default(),
                 initial_validation_program: prog,
@@ -637,7 +637,6 @@ impl TheirTurnReferee {
 
         debug!("transaction for move: state {:?}", self.state);
         debug!("get_transaction_for_move: source curry {args:?}");
-        let target_args = self.spend_this_coin();
         debug!("get_transaction_for_move: target curry {target_args:?}");
         assert_ne!(
             target_args.mover_puzzle_hash,
