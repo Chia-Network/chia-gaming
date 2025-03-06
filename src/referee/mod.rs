@@ -100,6 +100,14 @@ impl RefereeByTurn {
         }
     }
 
+    pub fn get_amount(&self) -> Amount {
+        self.fixed().amount.clone()
+    }
+
+    pub fn get_their_current_share(&self) -> Amount {
+        self.fixed().amount.clone() - self.get_our_current_share()
+    }
+
     pub fn fixed(&self) -> Rc<RMFixed> {
         match self {
             RefereeByTurn::MyTurn(t) => t.fixed.clone(),
@@ -503,6 +511,129 @@ impl RefereeByTurn {
             .to_clvm(allocator)
             .into_gen()
     }
+
+    // Ensure this returns
+    pub fn get_transaction(
+        &self,
+        allocator: &mut AllocEncoder,
+        coin_string: &CoinString,
+        always_produce_transaction: bool,
+        puzzle: Puzzle,
+        targs: &RefereePuzzleArgs,
+        args: &OnChainRefereeSolution,
+    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
+        let our_move = self.is_my_turn();
+
+        let my_mover_share = if our_move {
+            targs.game_move.basic.mover_share.clone()
+        } else {
+            self.fixed().amount.clone() - targs.game_move.basic.mover_share.clone()
+        };
+
+        if always_produce_transaction || my_mover_share != Amount::default() {
+            let signature = args.get_signature().unwrap_or_default();
+
+            // The transaction solution is not the same as the solution for the
+            // inner puzzle as we take additional move or slash data.
+            //
+            // OnChainRefereeSolution encodes this properly.
+            let transaction_solution = args.to_clvm(allocator).into_gen()?;
+            debug!("transaction solution inputs {args:?}");
+            let transaction_bundle = Spend {
+                puzzle: puzzle.clone(),
+                solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
+                signature,
+            };
+            let output_coin_string = CoinString::from_parts(
+                &coin_string.to_coin_id(),
+                &puzzle.sha256tree(allocator),
+                &my_mover_share,
+            );
+            return Ok(Some(RefereeOnChainTransaction {
+                bundle: transaction_bundle,
+                amount: self.fixed().amount.clone(),
+                coin: output_coin_string,
+            }));
+        }
+
+        // Zero mover share case.
+        Ok(None)
+    }
+
+    /// Output coin_string:
+    /// Parent is hash of current_coin
+    /// Puzzle hash is my_referee_puzzle_hash.
+    ///
+    /// Timeout unlike other actions applies to the current ph, not the one at the
+    /// start of a turn proper.
+    pub fn get_transaction_for_timeout(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        coin_string: &CoinString,
+    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
+        debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
+        debug!(
+            "mover share at start of action   {:?}",
+            self.args_for_this_coin().game_move.basic.mover_share
+        );
+        debug!(
+            "mover share at end   of action   {:?}",
+            self.spend_this_coin().game_move.basic.mover_share
+        );
+
+        let targs = self.spend_this_coin();
+        let puzzle = curry_referee_puzzle(
+            allocator,
+            &self.fixed().referee_coin_puzzle,
+            &self.fixed().referee_coin_puzzle_hash,
+            &targs,
+        )?;
+
+        self.get_transaction(
+            allocator,
+            coin_string,
+            false,
+            puzzle,
+            &targs,
+            &OnChainRefereeSolution::Timeout,
+        )
+    }
+
+    pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
+        let args = self.args_for_this_coin();
+        curry_referee_puzzle(
+            allocator,
+            &self.fixed().referee_coin_puzzle,
+            &self.fixed().referee_coin_puzzle_hash,
+            &args,
+        )
+    }
+
+    pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
+        let args = self.spend_this_coin();
+        curry_referee_puzzle(
+            allocator,
+            &self.fixed().referee_coin_puzzle,
+            &self.fixed().referee_coin_puzzle_hash,
+            &args,
+        )
+    }
+
+    pub fn on_chain_referee_puzzle_hash(
+        &self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<PuzzleHash, Error> {
+        let args = self.args_for_this_coin();
+        curry_referee_puzzle_hash(allocator, &self.fixed().referee_coin_puzzle_hash, &args)
+    }
+
+    pub fn outcome_referee_puzzle_hash(
+        &self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<PuzzleHash, Error> {
+        let args = self.spend_this_coin();
+        curry_referee_puzzle_hash(allocator, &self.fixed().referee_coin_puzzle_hash, &args)
+    }
 }
 
 #[derive(Clone)]
@@ -726,7 +857,7 @@ impl RefereeMaker {
     }
 
     pub fn get_amount(&self) -> Amount {
-        self.fixed.amount.clone()
+        self.referee.get_amount()
     }
 
     pub fn get_our_current_share(&self) -> Amount {
@@ -734,7 +865,7 @@ impl RefereeMaker {
     }
 
     pub fn get_their_current_share(&self) -> Amount {
-        self.fixed.amount.clone() - self.get_our_current_share()
+        self.referee.get_their_current_share()
     }
 
     // Since we may need to know new_entropy at a higher layer, we'll need to ensure it
@@ -779,43 +910,25 @@ impl RefereeMaker {
     }
 
     pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
-        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
-        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
-        let args = self.args_for_this_coin();
-        curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &args,
-        )
+        self.referee.on_chain_referee_puzzle(allocator)
     }
 
     pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
-        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
-        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
-        let args = self.spend_this_coin();
-        curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &args,
-        )
+        self.referee.outcome_referee_puzzle(allocator)
     }
 
     pub fn on_chain_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
     ) -> Result<PuzzleHash, Error> {
-        let args = self.args_for_this_coin();
-        curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
+        self.referee.on_chain_referee_puzzle_hash(allocator)
     }
 
     pub fn outcome_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
     ) -> Result<PuzzleHash, Error> {
-        let args = self.spend_this_coin();
-        curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
+        self.referee.outcome_referee_puzzle_hash(allocator)
     }
 
     // Ensure this returns
@@ -830,42 +943,14 @@ impl RefereeMaker {
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
         assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
-        let our_move = self.is_my_turn();
-
-        let my_mover_share = if our_move {
-            targs.game_move.basic.mover_share.clone()
-        } else {
-            self.fixed.amount.clone() - targs.game_move.basic.mover_share.clone()
-        };
-
-        if always_produce_transaction || my_mover_share != Amount::default() {
-            let signature = args.get_signature().unwrap_or_default();
-
-            // The transaction solution is not the same as the solution for the
-            // inner puzzle as we take additional move or slash data.
-            //
-            // OnChainRefereeSolution encodes this properly.
-            let transaction_solution = args.to_clvm(allocator).into_gen()?;
-            debug!("transaction solution inputs {args:?}");
-            let transaction_bundle = Spend {
-                puzzle: puzzle.clone(),
-                solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
-                signature,
-            };
-            let output_coin_string = CoinString::from_parts(
-                &coin_string.to_coin_id(),
-                &puzzle.sha256tree(allocator),
-                &my_mover_share,
-            );
-            return Ok(Some(RefereeOnChainTransaction {
-                bundle: transaction_bundle,
-                amount: self.fixed.amount.clone(),
-                coin: output_coin_string,
-            }));
-        }
-
-        // Zero mover share case.
-        Ok(None)
+        self.referee.get_transaction(
+            allocator,
+            coin_string,
+            always_produce_transaction,
+            puzzle,
+            targs,
+            args
+        )
     }
 
     /// Output coin_string:
@@ -879,34 +964,7 @@ impl RefereeMaker {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        assert_eq!(self.old_ref.args_for_this_coin(), self.referee.args_for_this_coin());
-        assert_eq!(self.old_ref.spend_this_coin(), self.referee.spend_this_coin());
-        debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
-        debug!(
-            "mover share at start of action   {:?}",
-            self.args_for_this_coin().game_move.basic.mover_share
-        );
-        debug!(
-            "mover share at end   of action   {:?}",
-            self.spend_this_coin().game_move.basic.mover_share
-        );
-
-        let targs = self.spend_this_coin();
-        let puzzle = curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &targs,
-        )?;
-
-        self.get_transaction(
-            allocator,
-            coin_string,
-            false,
-            puzzle,
-            &targs,
-            &OnChainRefereeSolution::Timeout,
-        )
+        self.referee.get_transaction_for_timeout(allocator, coin_string)
     }
 
     /// The move transaction works like this:
