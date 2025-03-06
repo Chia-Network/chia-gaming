@@ -235,12 +235,12 @@ impl RefereeByTurn {
     }
 
     pub fn my_turn_make_move(
-        &mut self,
+        &self,
         allocator: &mut AllocEncoder,
         readable_move: &ReadableMove,
         new_entropy: Hash,
         state_number: usize,
-    ) -> Result<GameMoveWireData, Error> {
+    ) -> Result<(RefereeByTurn, GameMoveWireData), Error> {
         let (replacement, result) =
             match self {
                 RefereeByTurn::MyTurn(t) => t.my_turn_make_move(
@@ -253,8 +253,7 @@ impl RefereeByTurn {
                     todo!();
                 }
             };
-        *self = replacement;
-        Ok(result)
+        Ok((replacement, result))
     }
 
     pub fn receive_readable(

@@ -941,12 +941,13 @@ impl LiveGame {
         state_number: usize,
     ) -> Result<GameMoveWireData, Error> {
         // assert!(self.referee_maker.is_my_turn());
-        let referee_result = self.referee_maker.my_turn_make_move(
+        let (new_ref, referee_result) = self.referee_maker.my_turn_make_move(
             allocator,
             readable_move,
             new_entropy.clone(),
             state_number,
         )?;
+        self.referee_maker = Box::new(new_ref);
         self.last_referee_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
         Ok(referee_result)
     }

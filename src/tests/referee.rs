@@ -233,7 +233,7 @@ fn test_referee_smoke() {
     let readable_move = ((), ()).to_clvm(&mut allocator).expect("should cvt");
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
-    let my_move_wire_data = reftest
+    let (reftest1, my_move_wire_data) = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
