@@ -648,8 +648,6 @@ pub enum StateByTurn {
 // to the pubkey of the referee private key (referred to in channel_handler).
 #[derive(Clone)]
 pub struct RefereeMaker {
-    fixed: Rc<RMFixed>,
-
     referee: RefereeByTurn,
 }
 
@@ -775,7 +773,6 @@ impl RefereeMaker {
         assert_eq!(or_ph, t_ph);
         Ok((
             RefereeMaker {
-                fixed: fixed_info,
                 referee: turn,
             },
             puzzle_hash,
