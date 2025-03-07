@@ -136,7 +136,7 @@ impl UnrollCoin {
             program: env.unroll_puzzle.clone(),
             args: clvm_curried_args!(
                 shared_puzzle_hash,
-                self.get_old_state_number()? - 1,
+                self.get_old_state_number()?,
                 conditions_hash
             ),
         }
@@ -238,7 +238,7 @@ impl UnrollCoin {
         self.outcome = Some(UnrollCoinOutcome {
             conditions: unroll_conditions,
             conditions_without_hash: unroll_conditions,
-            state_number: self.state_number,
+            state_number: inputs.rem_condition_state,
             hash: conditions_hash,
             signature: unroll_signature.clone(),
         });
@@ -278,6 +278,7 @@ pub struct UnrollCoinConditionInputs {
     pub my_balance: Amount,
     pub their_balance: Amount,
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
+    pub rem_condition_state: usize,
 }
 
 #[derive(Clone, Debug)]
