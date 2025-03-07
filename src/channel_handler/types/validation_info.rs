@@ -1,0 +1,67 @@
+use clvmr::allocator::NodePtr;
+
+use crate::channel_handler::types::ValidationProgram;
+use crate::common::types::{AllocEncoder, Hash, Node, Sha256Input, Sha256tree};
+
+/// The pair of state and validation program is the source of the validation hash
+#[derive(Clone, Debug)]
+pub enum ValidationInfo {
+    FromProgram {
+        game_state: NodePtr,
+        validation_program: ValidationProgram,
+        hash: Hash,
+    },
+    FromProgramHash {
+        game_state: NodePtr,
+        validation_program_hash: Hash,
+        hash: Hash,
+    },
+    FromHash {
+        hash: Hash,
+    },
+}
+
+impl ValidationInfo {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        validation_program: ValidationProgram,
+        game_state: NodePtr,
+    ) -> Self {
+        let hash = Sha256Input::Array(vec![
+            Sha256Input::Hash(validation_program.hash()),
+            Sha256Input::Hash(Node(game_state).sha256tree(allocator).hash()),
+        ])
+        .hash();
+        ValidationInfo::FromProgram {
+            game_state,
+            validation_program,
+            hash,
+        }
+    }
+    pub fn new_hash(hash: Hash) -> Self {
+        ValidationInfo::FromHash { hash }
+    }
+    pub fn new_from_validation_program_hash_and_state(
+        allocator: &mut AllocEncoder,
+        validation_program_hash: Hash,
+        game_state: NodePtr,
+    ) -> Self {
+        let hash = Sha256Input::Array(vec![
+            Sha256Input::Hash(&validation_program_hash),
+            Sha256Input::Hash(Node(game_state).sha256tree(allocator).hash()),
+        ])
+        .hash();
+        ValidationInfo::FromProgramHash {
+            game_state,
+            validation_program_hash,
+            hash,
+        }
+    }
+    pub fn hash(&self) -> &Hash {
+        match self {
+            ValidationInfo::FromProgramHash { hash, .. }
+            | ValidationInfo::FromProgram { hash, .. }
+            | ValidationInfo::FromHash { hash } => hash,
+        }
+    }
+}
