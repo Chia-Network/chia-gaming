@@ -6,24 +6,24 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 use log::debug;
 
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, MyTurnResult, TheirTurnInputs,
-    TheirTurnMoveData, TheirTurnResult,
+    GameHandler, MessageHandler, MessageInputs, MyTurnResult, TheirTurnInputs, TheirTurnMoveData,
+    TheirTurnResult,
 };
-use crate::channel_handler::types::{
-    GameStartInfo, ReadableMove, ValidationProgram,
-};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::{
-    standard_solution_partial, ChiaIdentity,
-};
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
-    u64_from_atom, usize_from_atom, AllocEncoder, Amount,
-    CoinCondition, CoinString, Error, GameID, Hash, IntoErr,
-    Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
+    u64_from_atom, usize_from_atom, AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID,
+    Hash, IntoErr, Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
+};
+use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
+use crate::referee::types::{
+    curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
+    IdentityCoinAndSolution, OnChainRefereeMove, OnChainRefereeSolution, RMFixed,
+    RefereeOnChainTransaction, RefereePuzzleArgs, TheirTurnCoinSpentResult, TheirTurnMoveResult,
+    REM_CONDITION_FIELDS,
 };
 use crate::referee::RefereeByTurn;
-use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
-use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, OnChainRefereeMove, IdentityCoinAndSolution, TheirTurnMoveResult, TheirTurnCoinSpentResult, REM_CONDITION_FIELDS};
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
@@ -221,7 +221,9 @@ impl TheirTurnReferee {
     pub fn get_game_handler(&self) -> GameHandler {
         match self.state.borrow() {
             TheirTurnRefereeMakerGameState::Initial { game_handler, .. }
-            | TheirTurnRefereeMakerGameState::AfterOurTurn { game_handler, .. } => game_handler.clone(),
+            | TheirTurnRefereeMakerGameState::AfterOurTurn { game_handler, .. } => {
+                game_handler.clone()
+            }
         }
     }
 
@@ -249,10 +251,7 @@ impl TheirTurnReferee {
                 }
                 Ok((initial_state.clone(), initial_validation_program.clone()))
             }
-            TheirTurnRefereeMakerGameState::AfterOurTurn {
-                my_turn_result,
-                ..
-            } => Ok((
+            TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => Ok((
                 my_turn_result.state.clone(),
                 my_turn_result.validation_program.clone(),
             )),
@@ -371,7 +370,7 @@ impl TheirTurnReferee {
 
         let new_parent = TheirTurnReferee {
             state_number,
-            .. self.clone()
+            ..self.clone()
         };
         Ok(MyTurnReferee {
             finished: self.finished,
@@ -784,10 +783,13 @@ impl TheirTurnReferee {
 
             // Slash can't be used when we're off chain.
             TheirTurnResult::Slash(_evidence) => {
-                return Ok((None, TheirTurnMoveResult {
-                    puzzle_hash_for_unroll: None,
-                    original: result.clone(),
-                }))
+                return Ok((
+                    None,
+                    TheirTurnMoveResult {
+                        puzzle_hash_for_unroll: None,
+                        original: result.clone(),
+                    },
+                ))
             }
         };
 
@@ -809,17 +811,11 @@ impl TheirTurnReferee {
             state_number,
         )?;
 
-        let out_move = new_self.finish_their_turn(
-            allocator,
-            &move_data,
-            puzzle_args,
-            result,
-            coin,
-        )?;
+        let out_move =
+            new_self.finish_their_turn(allocator, &move_data, puzzle_args, result, coin)?;
 
         Ok((Some(new_self), out_move))
     }
-
 
     pub fn their_turn_coin_spent(
         &self,
@@ -887,9 +883,12 @@ impl TheirTurnReferee {
             );
 
             debug!("game coin timed out: conditions {conditions:?}");
-            return Ok((RefereeByTurn::TheirTurn(my_rc), TheirTurnCoinSpentResult::Timedout {
-                my_reward_coin_string: Some(my_reward_coin_string),
-            }));
+            return Ok((
+                RefereeByTurn::TheirTurn(my_rc),
+                TheirTurnCoinSpentResult::Timedout {
+                    my_reward_coin_string: Some(my_reward_coin_string),
+                },
+            ));
         }
 
         if rem_condition.len() != REM_CONDITION_FIELDS {
@@ -920,7 +919,8 @@ impl TheirTurnReferee {
             validation_info_hash,
         };
 
-        let (new_self, result) = self.their_turn_move_off_chain(allocator, &details, state_number, None)?;
+        let (new_self, result) =
+            self.their_turn_move_off_chain(allocator, &details, state_number, None)?;
 
         let new_self = if let Some(new_self) = new_self {
             new_self
@@ -935,15 +935,18 @@ impl TheirTurnReferee {
 
             // Not my turn.
             let nil_readable = ReadableMove::from_program(Program::from_hex("80")?.into());
-            return Ok((RefereeByTurn::TheirTurn(my_rc), TheirTurnCoinSpentResult::Moved {
-                new_coin_string: CoinString::from_parts(
-                    &coin_string.to_coin_id(),
-                    &after_puzzle_hash,
-                    &self.fixed.amount,
-                ),
-                readable: nil_readable,
-                mover_share: self.spend_this_coin().game_move.basic.mover_share.clone(),
-            }));
+            return Ok((
+                RefereeByTurn::TheirTurn(my_rc),
+                TheirTurnCoinSpentResult::Moved {
+                    new_coin_string: CoinString::from_parts(
+                        &coin_string.to_coin_id(),
+                        &after_puzzle_hash,
+                        &self.fixed.amount,
+                    ),
+                    readable: nil_readable,
+                    mover_share: self.spend_this_coin().game_move.basic.mover_share.clone(),
+                },
+            ));
         }
 
         let args = new_self.spend_this_coin();
@@ -962,9 +965,12 @@ impl TheirTurnReferee {
             |allocator: &mut AllocEncoder, move_data: &TheirTurnMoveData| {
                 for evidence in move_data.slash_evidence.iter() {
                     debug!("check their turn for slash");
-                    if let Some(result) =
-                        new_self.check_their_turn_for_slash(allocator, state.clone(), evidence.clone(), &created_coin)?
-                    {
+                    if let Some(result) = new_self.check_their_turn_for_slash(
+                        allocator,
+                        state.clone(),
+                        evidence.clone(),
+                        &created_coin,
+                    )? {
                         return Ok(result);
                     }
                 }
@@ -981,27 +987,24 @@ impl TheirTurnReferee {
             };
 
         debug!("referee move details {details:?}");
-        let final_result =
-            match result.original {
-                TheirTurnResult::Slash(evidence) => {
-                    let slash_spend = new_self.make_slash_spend(allocator, coin_string)?;
-                    new_self.make_slash_for_their_turn(
-                        allocator,
-                        coin_string,
-                        new_puzzle,
-                        &new_puzzle_hash,
-                        &slash_spend,
-                        evidence,
-                    )
-                }
-                TheirTurnResult::FinalMove(move_data) => check_and_report_slash(allocator, &move_data),
-                TheirTurnResult::MakeMove(_, _, move_data) => {
-                    check_and_report_slash(allocator, &move_data)
-                }
-            };
+        let final_result = match result.original {
+            TheirTurnResult::Slash(evidence) => {
+                let slash_spend = new_self.make_slash_spend(allocator, coin_string)?;
+                new_self.make_slash_for_their_turn(
+                    allocator,
+                    coin_string,
+                    new_puzzle,
+                    &new_puzzle_hash,
+                    &slash_spend,
+                    evidence,
+                )
+            }
+            TheirTurnResult::FinalMove(move_data) => check_and_report_slash(allocator, &move_data),
+            TheirTurnResult::MakeMove(_, _, move_data) => {
+                check_and_report_slash(allocator, &move_data)
+            }
+        };
 
-        final_result.map(|r| {
-            (RefereeByTurn::MyTurn(Rc::new(new_self)), r)
-        })
+        final_result.map(|r| (RefereeByTurn::MyTurn(Rc::new(new_self)), r))
     }
 }

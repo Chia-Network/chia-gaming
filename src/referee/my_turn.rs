@@ -8,24 +8,25 @@ use clvmr::run_program;
 use log::debug;
 
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult,
-    TheirTurnMoveData, TheirTurnResult,
+    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnMoveData,
+    TheirTurnResult,
 };
-use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, ValidationProgram,
-};
+use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::{
-    standard_solution_partial, ChiaIdentity,
-};
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
-    chia_dialect, AllocEncoder, Amount,
-    BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, Hash, IntoErr,
-    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend,
+    chia_dialect, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinSpend,
+    CoinString, Error, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input,
+    Sha256tree, Spend,
+};
+use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
+use crate::referee::types::{
+    curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
+    GameMoveWireData, InternalValidatorArgs, OnChainRefereeSolution, RMFixed,
+    RefereeOnChainTransaction, RefereePuzzleArgs, SlashOutcome, TheirTurnCoinSpentResult,
+    TheirTurnMoveResult, ValidatorMoveArgs, ValidatorResult,
 };
 use crate::referee::RefereeByTurn;
-use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
-use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, GameMoveWireData, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome};
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
@@ -229,7 +230,9 @@ impl MyTurnReferee {
     pub fn get_game_handler(&self) -> GameHandler {
         match self.state.borrow() {
             MyTurnRefereeMakerGameState::Initial { game_handler, .. }
-            | MyTurnRefereeMakerGameState::AfterTheirTurn { game_handler, .. } => game_handler.clone(),
+            | MyTurnRefereeMakerGameState::AfterTheirTurn { game_handler, .. } => {
+                game_handler.clone()
+            }
         }
     }
 
@@ -330,7 +333,7 @@ impl MyTurnReferee {
 
         let new_parent = MyTurnReferee {
             state_number,
-            .. self.clone()
+            ..self.clone()
         };
         Ok(TheirTurnReferee {
             fixed: self.fixed.clone(),
@@ -410,10 +413,13 @@ impl MyTurnReferee {
 
         debug!("new_curried_referee_puzzle_hash (our turn) {new_curried_referee_puzzle_hash:?}");
 
-        Ok((RefereeByTurn::TheirTurn(Rc::new(new_self)), GameMoveWireData {
-            puzzle_hash_for_unroll: new_curried_referee_puzzle_hash,
-            details: result.game_move.clone(),
-        }))
+        Ok((
+            RefereeByTurn::TheirTurn(Rc::new(new_self)),
+            GameMoveWireData {
+                puzzle_hash_for_unroll: new_curried_referee_puzzle_hash,
+                details: result.game_move.clone(),
+            },
+        ))
     }
 
     pub fn receive_readable(
@@ -758,7 +764,8 @@ impl MyTurnReferee {
         // my_inner_solution maker is just in charge of making aggsigs from
         // conditions.
         debug!("run validator for their move");
-        let full_slash_result = self.run_validator_for_their_move(allocator, state, evidence.clone())?;
+        let full_slash_result =
+            self.run_validator_for_their_move(allocator, state, evidence.clone())?;
         match full_slash_result {
             ValidatorResult::Slash(_slash) => {
                 // result is NodePtr containing solution and aggsig.
@@ -882,12 +889,11 @@ impl MyTurnReferee {
         debug!("repeat: current state {:?}", self.state);
 
         // This state was the state of our parent, a their turn handler.
-        let (state, spend_args) =
-            if let Some(p) = self.parent.as_ref() {
-                (p.get_game_state(), p.spend_this_coin())
-            } else {
-                return Err(Error::StrErr("my turn asked to replay a their turn fast forward but it is the first move in the game".to_string()));
-            };
+        let (state, spend_args) = if let Some(p) = self.parent.as_ref() {
+            (p.get_game_state(), p.spend_this_coin())
+        } else {
+            return Err(Error::StrErr("my turn asked to replay a their turn fast forward but it is the first move in the game".to_string()));
+        };
 
         let nil_evidence = Evidence::nil()?;
         if let Some(result) =
@@ -923,7 +929,12 @@ impl MyTurnReferee {
             for evidence in move_data.slash_evidence.iter() {
                 debug!("calling slash for given evidence");
                 if self
-                    .check_their_turn_for_slash(allocator, self.get_game_state(), evidence.clone(), coin_string)?
+                    .check_their_turn_for_slash(
+                        allocator,
+                        self.get_game_state(),
+                        evidence.clone(),
+                        coin_string,
+                    )?
                     .is_some()
                 {
                     // Slash isn't allowed in off chain, we'll go on chain via error.
