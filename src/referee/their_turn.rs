@@ -1,34 +1,29 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
-use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
-use clvm_utils::CurriedProgram;
-use clvmr::allocator::NodePtr;
-use clvmr::run_program;
+use clvm_traits::{ClvmEncoder, ToClvm};
 
 use log::debug;
 
-use serde::{Deserialize, Serialize};
-
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnInputs,
+    GameHandler, MessageHandler, MessageInputs, MyTurnResult, TheirTurnInputs,
     TheirTurnMoveData, TheirTurnResult,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, ValidationInfo, ValidationProgram,
+    GameStartInfo, ReadableMove, ValidationProgram,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial, ChiaIdentity,
+    standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
+    u64_from_atom, usize_from_atom, AllocEncoder, Amount,
+    CoinCondition, CoinString, Error, GameID, Hash, IntoErr,
+    Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
 };
 use crate::referee::RefereeByTurn;
 use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
-use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, GameMoveWireData, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, OnChainRefereeMove, IdentityCoinAndSolution, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome, REM_CONDITION_FIELDS};
+use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, OnChainRefereeMove, IdentityCoinAndSolution, TheirTurnMoveResult, TheirTurnCoinSpentResult, REM_CONDITION_FIELDS};
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
@@ -758,7 +753,6 @@ impl TheirTurnReferee {
     ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
         debug!("do their turn {details:?}");
 
-        let original_state = self.state.clone();
         let handler = self.get_game_handler();
         let last_state = self.get_game_state();
         let args = self.spend_this_coin();
@@ -820,55 +814,12 @@ impl TheirTurnReferee {
             &move_data,
             puzzle_args,
             result,
-            state_number,
             coin,
         )?;
 
         Ok((Some(new_self), out_move))
     }
 
-    // It me.
-    fn target_puzzle_hash_for_slash(&self) -> PuzzleHash {
-        self.fixed.my_identity.puzzle_hash.clone()
-    }
-
-    fn slashing_coin_solution(
-        &self,
-        allocator: &mut AllocEncoder,
-        state: NodePtr,
-        my_validation_info_hash: PuzzleHash,
-        validation_program_clvm: NodePtr,
-        slash_solution: NodePtr,
-        evidence: Evidence,
-    ) -> Result<NodePtr, Error> {
-        (
-            Node(state),
-            (
-                my_validation_info_hash,
-                (
-                    Node(validation_program_clvm),
-                    (
-                        RcNode::new(self.fixed.my_identity.puzzle.to_program()),
-                        (Node(slash_solution), (evidence, ())),
-                    ),
-                ),
-            ),
-        )
-            .to_clvm(allocator)
-            .into_gen()
-    }
-
-    fn make_slash_conditions(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
-        [(
-            CREATE_COIN,
-            (
-                self.target_puzzle_hash_for_slash(),
-                (self.fixed.amount.clone(), ()),
-            ),
-        )]
-        .to_clvm(allocator)
-        .into_gen()
-    }
 
     pub fn their_turn_coin_spent(
         &self,

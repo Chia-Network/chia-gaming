@@ -1,34 +1,31 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
-use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
-use clvm_utils::CurriedProgram;
+use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
 use clvmr::run_program;
 
 use log::debug;
 
-use serde::{Deserialize, Serialize};
-
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnInputs,
+    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult,
     TheirTurnMoveData, TheirTurnResult,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, ValidationInfo, ValidationProgram,
+    Evidence, GameStartInfo, ReadableMove, ValidationProgram,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial, ChiaIdentity,
+    standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
+    chia_dialect, AllocEncoder, Amount,
+    BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, Hash, IntoErr,
+    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend,
 };
 use crate::referee::RefereeByTurn;
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
-use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, GameMoveWireData, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, OnChainRefereeMove, IdentityCoinAndSolution, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome, REM_CONDITION_FIELDS};
+use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, GameMoveWireData, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome};
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
@@ -845,7 +842,6 @@ impl MyTurnReferee {
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
         conditions: &[CoinCondition],
-        state_number: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         let after_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
@@ -920,11 +916,8 @@ impl MyTurnReferee {
         move_data: &TheirTurnMoveData,
         puzzle_args: Rc<RefereePuzzleArgs>,
         result: TheirTurnResult,
-        state_number: usize,
         coin: Option<&CoinString>,
     ) -> Result<TheirTurnMoveResult, Error> {
-        let have_state = self.get_game_state();
-
         // If specified, check for slash.
         if let Some(coin_string) = coin {
             for evidence in move_data.slash_evidence.iter() {

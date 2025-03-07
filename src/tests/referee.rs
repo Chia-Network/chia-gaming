@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm};
+use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 use rand::prelude::*;
 use rand::SeedableRng;
@@ -240,7 +240,7 @@ fn test_referee_smoke() {
     reftest.my_referee = new_ref;
 
     assert!(my_move_wire_data.details.basic.move_made.is_empty());
-    let mut off_chain_slash_gives_error = reftest.my_referee.clone();
+    let off_chain_slash_gives_error = reftest.my_referee.clone();
     let their_move_result = off_chain_slash_gives_error.their_turn_move_off_chain(
         &mut allocator,
         &GameMoveDetails {

@@ -2,37 +2,28 @@ pub mod types;
 pub mod my_turn;
 pub mod their_turn;
 
-use std::borrow::Borrow;
 use std::rc::Rc;
 
-use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
-use clvm_utils::CurriedProgram;
+use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
-use clvmr::run_program;
 
 use log::debug;
 
-use serde::{Deserialize, Serialize};
-
-use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnInputs,
-    TheirTurnMoveData, TheirTurnResult,
-};
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, ValidationInfo, ValidationProgram,
+    Evidence, GameStartInfo, ReadableMove, ValidationProgram,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial, ChiaIdentity,
+    standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
+    AllocEncoder, Amount,
+    BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, Hash, IntoErr,
+    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend,
 };
-use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, GameMoveWireData, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, OnChainRefereeMove, IdentityCoinAndSolution, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome, REM_CONDITION_FIELDS};
-use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
-use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
+use crate::referee::types::{RefereePuzzleArgs, RMFixed, GameMoveStateInfo, curry_referee_puzzle_hash, GameMoveDetails, GameMoveWireData, curry_referee_puzzle, OnChainRefereeSolution, RefereeOnChainTransaction, ValidatorResult, TheirTurnMoveResult, TheirTurnCoinSpentResult, SlashOutcome};
+use crate::referee::my_turn::MyTurnReferee;
+use crate::referee::their_turn::TheirTurnReferee;
 
 #[derive(Clone, Debug)]
 pub enum RefereeByTurn {
@@ -116,7 +107,7 @@ impl RefereeByTurn {
         let puzzle_hash =
             curry_referee_puzzle_hash(allocator, &referee_coin_puzzle_hash, &ref_puzzle_args)?;
 
-        let (turn, t_ph) = if my_turn {
+        let (turn, _t_ph) = if my_turn {
             let tr = MyTurnReferee::new(
                 allocator,
                 referee_coin_puzzle.clone(),
@@ -160,36 +151,19 @@ impl RefereeByTurn {
         }
     }
 
-    fn get_game_handler(&self) -> GameHandler {
-        match self {
-            RefereeByTurn::MyTurn(t) => t.get_game_handler(),
-            RefereeByTurn::TheirTurn(t) => t.get_game_handler()
-        }
-    }
-
-    fn get_game_state(&self) -> Rc<Program> {
-        match self {
-            RefereeByTurn::MyTurn(t) => t.get_game_state(),
-            RefereeByTurn::TheirTurn(t) => t.get_game_state()
-        }
-    }
-
     pub fn get_validation_program_for_their_move(
         &self,
     ) -> Result<(&Program, ValidationProgram), Error> {
         match self {
             RefereeByTurn::MyTurn(t) => t.get_validation_program_for_their_move(),
-            RefereeByTurn::TheirTurn(t) => {
+            RefereeByTurn::TheirTurn(_) => {
                 todo!();
             }
         }
     }
 
     pub fn is_my_turn(&self) -> bool {
-        match self {
-            RefereeByTurn::MyTurn(t) => true,
-            RefereeByTurn::TheirTurn(t) => false,
-        }
+        matches!(self, RefereeByTurn::MyTurn(_))
     }
 
     pub fn processing_my_turn(&self) -> bool {
@@ -228,10 +202,9 @@ impl RefereeByTurn {
     pub fn stored_versions(&self) -> Vec<(Rc<RefereePuzzleArgs>, Rc<RefereePuzzleArgs>, usize)> {
         let mut alist = vec![];
         self.generate_ancestor_list(&mut alist);
-        let mut res: Vec<_> = alist.into_iter().rev().map(|a| {
+        alist.into_iter().rev().map(|a| {
             (a.args_for_this_coin(), a.spend_this_coin(), a.state_number())
-        }).collect();
-        res
+        }).collect()
     }
 
     pub fn my_turn_make_move(
@@ -249,7 +222,7 @@ impl RefereeByTurn {
                     new_entropy,
                     state_number
                 )?,
-                RefereeByTurn::TheirTurn(t) => {
+                RefereeByTurn::TheirTurn(_) => {
                     todo!();
                 }
             };
@@ -274,7 +247,7 @@ impl RefereeByTurn {
         on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
         match self {
-            RefereeByTurn::MyTurn(t) => {
+            RefereeByTurn::MyTurn(_) => {
                 todo!();
             }
             RefereeByTurn::TheirTurn(t) => t.get_transaction_for_move(
@@ -298,7 +271,7 @@ impl RefereeByTurn {
                     evidence,
                 )
             },
-            RefereeByTurn::TheirTurn(t) => {
+            RefereeByTurn::TheirTurn(_) => {
                 todo!();
             }
         }
@@ -313,7 +286,7 @@ impl RefereeByTurn {
     ) -> Result<(Option<RefereeByTurn>, TheirTurnMoveResult), Error> {
         let (new_self, result) =
             match self {
-                RefereeByTurn::MyTurn(t) => {
+                RefereeByTurn::MyTurn(_) => {
                     todo!();
                 }
                 RefereeByTurn::TheirTurn(t) => {
@@ -344,7 +317,6 @@ impl RefereeByTurn {
                 allocator,
                 coin_string,
                 conditions,
-                state_number,
             ).map(|spend| (None, spend)),
             RefereeByTurn::TheirTurn(t) => {
                 let (new_self, result) =
@@ -730,12 +702,6 @@ impl RefereeByTurn {
         let args = self.spend_this_coin();
         curry_referee_puzzle_hash(allocator, &self.fixed().referee_coin_puzzle_hash, &args)
     }
-}
-
-#[derive(Clone)]
-pub enum StateByTurn {
-    MyTurn(Rc<MyTurnRefereeMakerGameState>),
-    TheirTurn(Rc<TheirTurnRefereeMakerGameState>),
 }
 
 pub type RefereeMaker = RefereeByTurn;

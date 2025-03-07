@@ -4,27 +4,20 @@ use std::rc::Rc;
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
-use clvmr::run_program;
 
 use log::debug;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnInputs,
-    TheirTurnMoveData, TheirTurnResult,
-};
-use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, ValidationInfo, ValidationProgram,
-};
-use crate::common::constants::CREATE_COIN;
+use crate::channel_handler::game_handler::TheirTurnResult;
+use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{
-    calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial, ChiaIdentity,
+    calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, u64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
-    Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend, Timeout,
+    Aggsig, AllocEncoder, Amount,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
+    Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
 };
 
 pub const REM_CONDITION_FIELDS: usize = 4;
@@ -57,7 +50,7 @@ pub struct TheirTurnMoveResult {
     pub original: TheirTurnResult,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum SlashOutcome {
     NoReward,
     Reward {
@@ -66,7 +59,7 @@ pub enum SlashOutcome {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RefereeOnChainTransaction {
     pub bundle: Spend,
     pub amount: Amount,
@@ -79,7 +72,7 @@ pub struct LiveGameReplay {
     game_id: GameID,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,

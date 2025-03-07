@@ -23,10 +23,11 @@ use crate::common::types::{
     GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
     Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
-use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 use crate::utils::proper_list;
 
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
+use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
+
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, ConditionWaitKind, FromLocalUI, GameAction,
     GameStart, GameStartQueueEntry, GameType, HandshakeA, HandshakeB, HandshakeState,

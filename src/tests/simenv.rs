@@ -622,7 +622,7 @@ fn test_referee_can_slash_on_chain() {
         .expect("should assemble");
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
-    let (new_ref, my_move_wire_data) = reftest
+    let (new_ref, _my_move_wire_data) = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
@@ -730,7 +730,7 @@ fn test_referee_can_move_on_chain() {
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
 
-    let (new_ref, my_move_wire_data) = reftest
+    let (new_ref, _my_move_wire_data) = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");

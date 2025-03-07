@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{map_m, proper_list};
+use crate::utils::proper_list;
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::run_program;
 use clvmr::NodePtr;
@@ -335,7 +335,7 @@ impl GameHandler {
                 )));
             }
 
-            let mut decode_slash_evidence = |allocator: &mut AllocEncoder, index: Option<usize>| {
+            let decode_slash_evidence = |allocator: &mut AllocEncoder, index: Option<usize>| {
                 let mut lst_nodeptr = index
                     .and_then(|i| proper_list(allocator.allocator(), pl[i], true))
                     .unwrap_or_default();
