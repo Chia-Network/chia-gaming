@@ -84,11 +84,7 @@ impl UnrollCoin {
 
     fn get_old_state_number(&self) -> Result<usize, Error> {
         if let Some(r) = self.outcome.as_ref() {
-            if r.state_number > 0 {
-                Ok(r.state_number - 1)
-            } else {
-                Err(Error::StrErr("unroll impossible for first state".to_string()))
-            }
+            Ok(r.state_number)
         } else {
             Err(Error::StrErr("no default setup".to_string()))
         }
@@ -242,7 +238,7 @@ impl UnrollCoin {
         self.outcome = Some(UnrollCoinOutcome {
             conditions: unroll_conditions,
             conditions_without_hash: unroll_conditions,
-            state_number: self.state_number,
+            state_number: inputs.rem_condition_state,
             hash: conditions_hash,
             signature: unroll_signature.clone(),
         });
@@ -282,6 +278,7 @@ pub struct UnrollCoinConditionInputs {
     pub my_balance: Amount,
     pub their_balance: Amount,
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,
+    pub rem_condition_state: usize,
 }
 
 #[derive(Clone, Debug)]
