@@ -84,7 +84,11 @@ impl UnrollCoin {
 
     fn get_old_state_number(&self) -> Result<usize, Error> {
         if let Some(r) = self.outcome.as_ref() {
-            Ok(r.state_number)
+            if r.state_number > 0 {
+                Ok(r.state_number - 1)
+            } else {
+                Err(Error::StrErr("unroll impossible for first state".to_string()))
+            }
         } else {
             Err(Error::StrErr("no default setup".to_string()))
         }
@@ -136,7 +140,7 @@ impl UnrollCoin {
             program: env.unroll_puzzle.clone(),
             args: clvm_curried_args!(
                 shared_puzzle_hash,
-                self.get_old_state_number()? - 1,
+                self.get_old_state_number()?,
                 conditions_hash
             ),
         }
