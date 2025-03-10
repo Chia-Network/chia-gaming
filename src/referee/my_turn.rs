@@ -40,10 +40,8 @@ pub enum MyTurnRefereeMakerGameState {
     },
     AfterTheirTurn {
         game_handler: GameHandler,
-        #[allow(dead_code)]
-        our_turn_game_handler: GameHandler,
-        most_recent_our_validation_program: ValidationProgram,
-        most_recent_our_state_result: Rc<Program>,
+        my_turn_validation_program: ValidationProgram,
+        state_after_their_turn: Rc<Program>,
         create_this_coin: Rc<RefereePuzzleArgs>,
         spend_this_coin: Rc<RefereePuzzleArgs>,
     },
@@ -91,10 +89,73 @@ impl MyTurnRefereeMakerGameState {
     }
 }
 
-// XXX break out state so we can have a previous state and easily swap them.
-// Referee coin has two inner puzzles.
-// Throughout channel handler, the one that's ours is the standard format puzzle
-// to the pubkey of the referee private key (referred to in channel_handler).
+/// Referee coin has two inner puzzles.
+/// Throughout channel handler, the one that's ours is the standard format puzzle
+/// to the pubkey of the referee private key (referred to in channel_handler).
+///
+/// change step 1:
+///
+/// The flow of things:
+///
+/// our turn 0th move, we do not call the initial validation program
+/// but instead use initial state for the game state.  We pass that state to the game
+/// handler along with the local move to get a serialized move and send it.
+/// We'll produce a state update by applying the local move and the initial_state to the
+/// initial validation program.
+///
+/// their turn 0th move: we received a serialized move, so we'll use the initial_state with
+/// the their turn handler and the serialized move to produce a remote move.  we'll give the
+/// remote move to the initial validation program with the initial state and get the next
+/// state.
+///
+/// Each side needs two validation phases in a standard turn.
+///
+/// The last turn needs to leave behind 2 validation programs.
+///
+/// The first uses the local move along with the state output from the most recent validation
+/// program and produces a new state.
+///
+/// In the second case, we run the their turn handler with the most recent state and the
+/// serialized move, yielding a remove move.  We use the remote move and the most recent
+/// state to generate a new state from the their turn validation program.
+///
+/// The remote side never sees our entropy, that's the main thing that cannot be represented
+/// in the game state, as the game state must be shared.
+///
+/// Anything we must hide from the entropy must be curried into the game handler for use
+/// later.
+///
+/// The flow of a successful subsequent turn is:
+///
+/// my turn:                                   ┌-------------------------------------------┐
+///                                            v                                           |
+/// ┌-> my_turn_handler(serialized_our_move, state_after_their_turn0) ->                   |
+/// |   ┌------- { their_turn_handler,    └---------┐    |                                 |
+/// |   |          local_readable_move,             |    |                                 |
+/// |   |   ┌----- their_turn_validation_program,   |    |                                 |
+/// |   |   |    }                                  |    └------------┐                    |
+/// |   |   |                                       |                 |                    |
+/// |   |   |                                       v                 v                    |
+/// | ┌-|---|->my_turn_validation_program(serialized_our_move, state_after_their_turn0) -> |
+/// | | |   |    state_after_our_turn --------------------------------┐                    |
+/// | | |   |                                                         |                    |
+/// | | |   | their turn:                                             |                    |
+/// | | |   v                                                         v                    |
+/// | | |   their_turn_validation_program(serialized_their_move, state_after_our_turn) ->  |
+/// | | |     state_after_their_turn1 -┐                              |                    |
+/// | | |                              |                              |                    |
+/// | | v                              |                              |                    |
+/// | | their_turn_handler(            ├---------------------------------------------------┘
+/// | |   serialized_their_move,       |                              |
+/// | |   state_after_their_turn1 <----┘                              |
+/// | |   state_after_our_turn, <-------------------------------------┘
+/// | | ) ->
+/// | |   { remote_readable_move,
+/// | └---- my_turn_validation_program,
+/// └------ my_turn_handler,
+///         evidence, --------------> try these with their_turn_validation_program
+///       }
+///
 #[derive(Clone, Debug)]
 pub struct MyTurnReferee {
     pub fixed: Rc<RMFixed>,
@@ -240,9 +301,9 @@ impl MyTurnReferee {
         match self.state.borrow() {
             MyTurnRefereeMakerGameState::Initial { initial_state, .. } => initial_state.clone(),
             MyTurnRefereeMakerGameState::AfterTheirTurn {
-                most_recent_our_state_result,
+                state_after_their_turn,
                 ..
-            } => most_recent_our_state_result.clone(),
+            } => state_after_their_turn.clone(),
         }
     }
 
@@ -262,12 +323,12 @@ impl MyTurnReferee {
                 Ok((initial_state, initial_validation_program.clone()))
             }
             MyTurnRefereeMakerGameState::AfterTheirTurn {
-                most_recent_our_validation_program,
-                most_recent_our_state_result,
+                my_turn_validation_program,
+                state_after_their_turn,
                 ..
             } => Ok((
-                most_recent_our_state_result,
-                most_recent_our_validation_program.clone(),
+                state_after_their_turn,
+                my_turn_validation_program.clone(),
             )),
         }
     }
@@ -325,8 +386,9 @@ impl MyTurnReferee {
             current_puzzle_args.mover_puzzle_hash
         );
         let new_state = TheirTurnRefereeMakerGameState::AfterOurTurn {
-            game_handler: game_handler.clone(),
-            my_turn_result,
+            their_turn_game_handler: game_handler.clone(),
+            their_turn_validation_program: my_turn_result.validation_program.clone(),
+            state_after_our_turn: my_turn_result.state.clone(),
             create_this_coin: current_puzzle_args,
             spend_this_coin: new_puzzle_args,
         };
@@ -445,11 +507,11 @@ impl MyTurnReferee {
                 },
             ),
             MyTurnRefereeMakerGameState::AfterTheirTurn {
-                most_recent_our_state_result,
+                state_after_their_turn,
                 create_this_coin,
                 ..
             } => (
-                most_recent_our_state_result,
+                state_after_their_turn,
                 create_this_coin.game_move.basic.move_made.clone(),
                 self.fixed.amount.clone() - create_this_coin.game_move.basic.mover_share.clone(),
             ),

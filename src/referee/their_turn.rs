@@ -38,8 +38,9 @@ pub enum TheirTurnRefereeMakerGameState {
     // We were given a validation program back from the 'our turn' handler
     // as well as a state.
     AfterOurTurn {
-        game_handler: GameHandler,
-        my_turn_result: Rc<MyTurnResult>,
+        their_turn_game_handler: GameHandler,
+        their_turn_validation_program: ValidationProgram,
+        state_after_our_turn: Rc<Program>,
         create_this_coin: Rc<RefereePuzzleArgs>,
         spend_this_coin: Rc<RefereePuzzleArgs>,
     },
@@ -220,9 +221,11 @@ impl TheirTurnReferee {
 
     pub fn get_game_handler(&self) -> GameHandler {
         match self.state.borrow() {
-            TheirTurnRefereeMakerGameState::Initial { game_handler, .. }
-            | TheirTurnRefereeMakerGameState::AfterOurTurn { game_handler, .. } => {
+            TheirTurnRefereeMakerGameState::Initial { game_handler, .. } => {
                 game_handler.clone()
+            }
+            TheirTurnRefereeMakerGameState::AfterOurTurn { their_turn_game_handler, .. } => {
+                their_turn_game_handler.clone()
             }
         }
     }
@@ -230,8 +233,8 @@ impl TheirTurnReferee {
     pub fn get_game_state(&self) -> Rc<Program> {
         match self.state.borrow() {
             TheirTurnRefereeMakerGameState::Initial { initial_state, .. } => initial_state.clone(),
-            TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
-                my_turn_result.state.clone()
+            TheirTurnRefereeMakerGameState::AfterOurTurn { state_after_our_turn, .. } => {
+                state_after_our_turn.clone()
             }
         }
     }
@@ -251,9 +254,9 @@ impl TheirTurnReferee {
                 }
                 Ok((initial_state.clone(), initial_validation_program.clone()))
             }
-            TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => Ok((
-                my_turn_result.state.clone(),
-                my_turn_result.validation_program.clone(),
+            TheirTurnRefereeMakerGameState::AfterOurTurn { state_after_our_turn, their_turn_validation_program, .. } => Ok((
+                state_after_our_turn.clone(),
+                their_turn_validation_program.clone(),
             )),
         }
     }
@@ -264,8 +267,8 @@ impl TheirTurnReferee {
                 initial_validation_program,
                 ..
             } => Ok(initial_validation_program.to_program().clone()),
-            TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
-                Ok(my_turn_result.validation_program.to_program())
+            TheirTurnRefereeMakerGameState::AfterOurTurn { their_turn_validation_program, .. } => {
+                Ok(their_turn_validation_program.to_program())
             }
         }
     }
@@ -335,17 +338,15 @@ impl TheirTurnReferee {
                 debug!("accept their move: validation info hash {vi_hash:?}");
                 MyTurnRefereeMakerGameState::AfterTheirTurn {
                     game_handler: raw_game_handler.clone(),
-                    our_turn_game_handler: raw_game_handler.clone(),
-                    most_recent_our_state_result: initial_state.clone(),
-                    most_recent_our_validation_program: initial_validation_program.clone(),
+                    state_after_their_turn: initial_state.clone(),
+                    my_turn_validation_program: initial_validation_program.clone(),
                     create_this_coin: old_args,
                     spend_this_coin: referee_args,
                 }
             }
-            TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
-                let is_hash = my_turn_result.state.sha256tree(allocator).hash().clone();
-                let ip_hash = my_turn_result
-                    .validation_program
+            TheirTurnRefereeMakerGameState::AfterOurTurn { state_after_our_turn, their_turn_validation_program, .. } => {
+                let is_hash = state_after_our_turn.sha256tree(allocator).hash().clone();
+                let ip_hash = their_turn_validation_program
                     .sha256tree(allocator)
                     .hash()
                     .clone();
@@ -359,9 +360,8 @@ impl TheirTurnReferee {
                 debug!("accept their move: validation info hash {vi_hash:?}");
                 MyTurnRefereeMakerGameState::AfterTheirTurn {
                     game_handler: raw_game_handler.clone(),
-                    most_recent_our_state_result: my_turn_result.state.clone(),
-                    most_recent_our_validation_program: my_turn_result.validation_program.clone(),
-                    our_turn_game_handler: raw_game_handler.clone(),
+                    state_after_their_turn: state_after_our_turn.clone(),
+                    my_turn_validation_program: their_turn_validation_program.clone(),
                     create_this_coin: old_args,
                     spend_this_coin: referee_args,
                 }
@@ -405,11 +405,11 @@ impl TheirTurnReferee {
                 },
             ),
             TheirTurnRefereeMakerGameState::AfterOurTurn {
-                my_turn_result,
+                state_after_our_turn,
                 create_this_coin,
                 ..
             } => (
-                my_turn_result.state.clone(),
+                state_after_our_turn.clone(),
                 create_this_coin.game_move.basic.move_made.clone(),
                 self.fixed.amount.clone() - create_this_coin.game_move.basic.mover_share.clone(),
             ),
