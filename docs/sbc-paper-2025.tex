@@ -1,0 +1,256 @@
+\documentclass[a4paper]{article}
+
+% Packages
+\usepackage{geometry}
+\geometry{left=1.5cm, right=1.5cm, top=2.54cm, bottom=2.54cm}
+\usepackage{graphicx, hyperref, setspace, amsmath, amssymb, titlesec, fancyhdr, multicol, parskip, indentfirst, etoolbox, caption, cite, hyperref, xcolor}
+\usepackage{array}
+\renewcommand*{\arraystretch}{1.1}
+\setlength{\extrarowheight}{2pt}
+
+% Title Formatting
+\titleformat{\section}{\centering\large\scshape}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection.}{1em}{}
+
+% Document Title
+\title{
+    \textbf{Chia Gaming: Real Time Games of Skill With Enforced Rules and no Trusted Third Party} 
+    \thanks{
+        \sloppy
+        \textbf{Cite (APA):} Surname, N., Surname, N., \& Surname, N. (\the\year). Paper Title. \textit{Journal of Metaverse, Volume}(IssueNo), XX-XX. https://doi.org/10.57019/jmv.XXXXXXX
+    }
+}
+%\author
+
+\date{} % No date
+
+% Section Numbering
+% Define numbering format
+\renewcommand{\thesection}{\Roman{section}.}
+\renewcommand{\thesubsection}{\textit{\Alph{subsection}.}}
+\renewcommand{\thesubsubsection}{\textit{\arabic{subsubsection}.}}
+
+% Make titles italic as well
+
+\titleformat{\subsection}{\normalfont\large\itshape}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalfont\itshape}{\thesubsubsection}{1em}{}
+
+
+\setcounter{page}{5}
+
+% Fancy Header Configuration
+\pagestyle{fancy}
+\fancyhf{} % Clear all header/footer fields
+
+% First Page Header
+\fancypagestyle{firstpage}{
+    \fancyhead[C]{
+        \centering
+        {\fontsize{14pt}{12pt}\selectfont
+        \textbf{Science of Blockchain 2025}\\
+        \textbf{Conference Article}}\\
+        {\fontsize{8pt}{10pt}\selectfont
+        \textbf{Received:} 2025-03-13 \textbf{Reviewing:} 2025-MM-DD \& 2025-MM-DD \textbf{Accepted:} 2025-MM-DD \textbf{Online:} 2025-MM-DD \textbf{Issue Date:} 2025-MM-DD}\\
+        \textbf{Year:} 2025, \textbf{Volume:} X, \textbf{Issue:} X, \textbf{Pages:} XX-XX, \textbf{Doi:} 10.57019/jmv.XXXXXX
+    }
+}
+
+% Default Header for Other Pages
+\fancyhead[C]{\textbf{The Science of Blockchain Conference 2025}}
+
+%\fancyfoot[L]{\includegraphics[width=1.5cm]{cc-by.png}}  % Adjust path & size
+%\fancyfoot[R]{\includegraphics[width=1.5cm]{cc-by.png}}  % Adjust path & size
+%\fancyfoot[C]{This work is licensed under a Creative Commons Attribution 4.0 International License.\\ \thepage}
+
+
+\begin{document}
+
+
+
+% Multi-line left-aligned text with manual line breaks.
+% The base line is in centre.
+\newcommand*{\mline}[1]{%
+\begingroup
+    \renewcommand*{\arraystretch}{1.1}%
+   \begin{tabular}[c]{@{}>{\raggedright\arraybackslash}p{2cm}@{}}#1\end{tabular}%
+  \endgroup
+}
+
+
+\maketitle
+\vspace{-1.5cm}
+\thispagestyle{firstpage}
+
+% Authors Block
+\begin{multicols}{3}
+	\centering
+	\textbf{Bram Cohen}\\
+	\textit{Chia, Inc.}\\
+	\textit{bram@chia.net}\\
+	\vfill
+        \textbf{Adam Kelly}\\
+	\textit{Chia, Inc.}\\
+	\textit{adam@chia.net}\\
+	\vfill
+        \textbf{Art Yerkes}\\
+	\textit{Chia, Inc.}\\
+	\textit{a.yerkes@chia.net}\\
+	\vfill
+\end{multicols}
+
+\singlespacing
+\setlength{\parskip}{6pt}
+\setlength{\parindent}{0.5cm}
+
+\begin{multicols}{2}
+\setlength{\columnsep}{0.5cm}
+
+\section{Introduction}
+We give an explanation of an implementation of real-time gaming on top of Chia using state channels. It supports two-player, turn-based games. It enforces the game rules without requiring any trusted third party.
+
+\subsection{Background}
+TODO: Discuss the history and cite a few papers. 
+
+\subsubsection{State Channels vs. Payment Channels}
+Lightning network \cite{1} is by far the largest user of channels to date. It is a payment channel network that supports real-time payments between two counterparties who do not have a preexisting direct relationship with each other by routing through intermediaries. In order to support this, it requires pre-funding of payment channels. It does not support full-blown state channels because Bitcoin Script cannot support the complex logic required by unroll coins. State Channels are much more complex to route. 
+
+Chia gaming does not have a static channel network. Each session is ephemeral, requiring one transaction at the start of a session to set up the channel and another one at the end to tear it down. If there is an issue in the middle of a session, the state channel is unrolled to chain, and any hands pending at that time have to play out on chain.
+
+Routing of Chia state channels can be done, but has not been implemented yet. It has the benefit of not needing a new transaction on chain at the beginning of each session, but comes with the downsides of needing prepaid liquidity across an entire network and requires much more complex logic to implement than routed payments.
+
+
+\begin{table}
+  \caption{Comparing State Channels \& Payment Channels}
+  \label{xxx}
+ %\begin{tabular}{ |p{4cm}||p{2cm}|p{2cm}|  }
+ %\begin{tabular}{ |c|c|c| }
+ \begin{tabular}{ m{5em} | m{2em} | m{2em} }
+ \centering
+ \bfseries Property& \bfseries Lightning&\bfseries Chia Gaming\\
+ \hline
+ \mline{Real Time}   & Yes    &Yes\\
+ \hline
+ \mline{Based on ‘virtual’ coins which can be made real in an unroll}&   Yes  & Yes   \\
+  \hline
+ \mline{Requires setup at start of session} &no & Yes\\
+  \hline
+ \mline{Preexisting liquidity requirement}    &Yes & no\\
+  \hline
+ \mline{Supports Gaming}&   no  & Yes\\
+  \hline
+ \mline{Method of handling obsolete unroll}& Slash  & Update   \\
+  \hline
+ \mline{Supported Network}& Bitcoin  & Chia\\
+ \hline
+\end{tabular}
+\end{table}
+
+\subsubsection{The coin set model vs. the UTXO model}
+The Chia on chain programming environment is a good fit for channels because it was designed from the ground up to support them, based on lessons learned from Bitcoin. The table below contains an overview of the relevant differences:
+
+
+\begin{tabular}{ |p{4cm}|p{4cm}|  }
+ \hline
+ \multicolumn{2}{|c|}{Coin Set vs. UTXO} \\
+ \hline
+ Bitcoin & Chia\\
+ \hline\hline
+ UTXO model. Only UTXOs, their sizes, spend requirements, and birthdays are stored. & Coin set model. Only things stored are coins IDs, their sizes, spend requirements, and birthdays.\\
+ \hline
+ UTXOs are identified using hash of transaction and index & Coins are identified using parent id and puzzle hash and size\\
+ \hline
+ Scriptpubkeys are passed the transaction (which includes new output creation) and either fail or accept it & Puzzles are passed solutions and return conditions which include creation of new coins\\
+ \hline
+ Bitcoinscript only supports simple logic and can only support covenants via hash chaining & CLVM trivially supports covenants and can implement capabilities using shells around puzzles.\\
+ Signatures are required to be tied to a specific coin & Signatures can be tied to a specific coin, puzzle, or neither\\
+ \hline
+ Supports signature aggregation via multi-round protocol on top of sekp & Supports trivial signature aggregation using BLS\\
+ \hline
+\end{tabular}
+
+
+\section{Appendix}
+
+
+\onecolumn
+\begin{verbatim}
+---- MODULE potato_handler ----
+
+EXTENDS Integers, Sequences, FiniteSets, TLC
+
+VARIABLES a, b, ui_actions
+RECURSIVE ProcessQueueActions(_)
+
+\* States
+StepA == 0
+StepB == 1
+StepC == 2
+StepD == 3
+StepE == 4
+PostStepE == 5
+StepF == 6
+PostStepF == 7
+Finished == 8
+OnChainTransition == 9
+OnChainWaitingForUnrollTimeoutOrSpend == 10
+OnChainWaitForConditions == 11
+OnChainWaitingForUnrollSpend == 12
+OnChainWaitingForUnrollConditions == 13
+OnChain == 14
+Completed == 15
+MaxHandshakeState == 16
+Error == 1000
+
+\* Channel Handler
+ChannelHandlerEnded == 1001
+
+\* Potato states
+PotatoPresent == 1
+PotatoAbsent == -1
+PotatoRequested == 0
+
+\* Messages
+HandshakeA == 0
+HandshakeB == 1
+HandshakeE == 4
+HandshakeF == 5
+UIStartGames == 6
+UIStartGamesError == 7
+UIStartGamesLocalError == 107
+Nil == 10
+NilError == 11
+NilLocalError == 111
+StartGames == 12
+StartGamesError == 13
+StartGamesLocalError == 113
+Move == 14
+MoveError == 15
+\end{verbatim}
+
+\twocolumn
+\section*{Acknowledgement}
+We thank Dan Boneh for his advice, and Leslie Lamport for creating TLA+
+
+\section*{Authors' Contributions}
+All authors have participated in drafting the manuscript. All authors read and approved the final version of the manuscript.
+
+\section*{Conflict of Interest}
+The authors declare no conflict of interest.
+
+\section*{Data Availability}
+All code is available at \href{https://github.com/Chia-Network/chia-gaming}{github.com/Chia-Network/chia-gaming}
+
+\section*{Ethical Statement}
+In this article, the principles of scientific research and publication ethics were followed. No AGIs were harmed (or used) in this research, or the creation of this document.
+
+\begin{thebibliography}{8}
+\bibitem{1} Poon, J., \& Dryja, T. (2016). The Bitcoin Lightning Network:
+Scalable Off-Chain Instant Payments. https://lightning.network/lightning-network-paper.pdf
+
+TODO: Refs for: State Channels, Bitcoin Script
+
+
+\end{thebibliography}
+
+\end{multicols}
+\end{document}
