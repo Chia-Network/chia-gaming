@@ -249,6 +249,12 @@ This much more favorable approach seems to not be common in the literature becau
 Several people have claimed that this is practical on normal hardware, but no implementation has been offered and the authors attempted to try benchmarks of available libraries and the results weren’t encouraging.
 
 
+\section{Peer Discovery and Connection}
+
+Before two players can establish a State Channel, they must first find an interested peer. This is done by using a lightweight REST service.
+
+A player, "Alice", offers a game by sending the service their desired game parameters. The service stores those parameters, and associates them with a unique, difficult to guess URL, that it sends as a response to Alice. Alice connects to a WebSocket specified by the service, and listens for messages. Later, "Bob" looks at the list of offered games, and selects the game that Alice offered. Upon game selection, Bob receives the unique URL associated with Alice's game. Bob sends a message over a WebSocket associated with the shared URL, and sends the first peer handshake message. That message is repeated to Alice, and the peer connection is established. 
+
 
 \section{TLA+ Model discussion}
 
