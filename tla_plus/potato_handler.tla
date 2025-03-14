@@ -6,14 +6,14 @@ VARIABLES a, b, ui_actions
 RECURSIVE ProcessQueueActions(_)
 
 \* States
-StepA == 0
-StepB == 1
-StepC == 2
-StepD == 3
-StepE == 4
-PostStepE == 5
-StepF == 6
-PostStepF == 7
+HandshakeStepA == 0
+HandshakeStepB == 1
+HandshakeStepC == 2
+HandshakeStepD == 3
+HandshakeStepE == 4
+PostHandshakeStepE == 5
+HandshakeStepF == 6
+PostHandshakeStepF == 7
 Finished == 8
 OnChainTransition == 9
 OnChainWaitingForUnrollTimeoutOrSpend == 10
@@ -86,8 +86,8 @@ UIActions ==
   [ sent_moves |-> 0 ]
 
 Init ==
-  /\ a = PotatoHandler(StepA)
-  /\ b = PotatoHandler(StepB)
+  /\ a = PotatoHandler(HandshakeStepA)
+  /\ b = PotatoHandler(HandshakeStepB)
   /\ ui_actions = UIActions
 
 allvars == << a, b, ui_actions >>
@@ -192,7 +192,7 @@ NewChannelHandler(p) == [p EXCEPT !.channel_handler = 0]
 
 \* potato_handler/mod.rs:265
 Start(p) ==
-  SendMessage(NewState(p, StepC), HandshakeA)
+  SendMessage(NewState(p, HandshakeStepC), HandshakeA)
 
 \* potato_handler/mod.rs:567
 \* Return ( new_game, new_potato_handler )
@@ -341,7 +341,7 @@ PassOnChannelHandlerMessage(p0,msg) ==
       Err(p)
 
 TryCompleteStepE(p) ==
-  IF p.handshake_state = PostStepE /\ p.channel_initiation_transaction > 0 THEN
+  IF p.handshake_state = PostHandshakeStepE /\ p.channel_initiation_transaction > 0 THEN
     Ok(NewState(SendMessage(p,HandshakeE),Finished))
   ELSE
     Ok(p)
@@ -349,7 +349,7 @@ TryCompleteStepE(p) ==
 TryCompleteStepF(p) ==
   IF p.waiting_to_start > 0 THEN
     Ok(p)
-  ELSE IF p.handshake_state = PostStepF /\ p.channel_transaction_completed > 0 THEN
+  ELSE IF p.handshake_state = PostHandshakeStepF /\ p.channel_transaction_completed > 0 THEN
     Ok(NewState(SendMessage(p,HandshakeF),Finished))
   ELSE
     Ok(p)
@@ -411,16 +411,16 @@ ReceivedGameStart(p, g) ==
 
 \* potato_handler/mod.rs:874
 ProcessIncomingMessage(p,m) ==
-  IF p.handshake_state = StepB /\ m = HandshakeA THEN
-    Ok(SendMessage(NewState(NewChannelHandler(p), StepD), HandshakeB))
-  ELSE IF p.handshake_state = StepC /\ m = HandshakeB THEN
-    Ok(SendMessage(NewState(AskForChannelInitTransaction(NewChannelHandler(p)), StepE), Nil))
-  ELSE IF p.handshake_state = StepD THEN
-    Ok(SendMessage(NewState(p, StepF), Nil))
-  ELSE IF p.handshake_state = StepE THEN
-    TryCompleteStepE(NewState(p, PostStepE))
-  ELSE IF p.handshake_state = StepF THEN
-    TryCompleteStepF(ReceivedChannelOffer(NewState(PotatoState(p, PotatoAbsent), PostStepF)))
+  IF p.handshake_state = HandshakeStepB /\ m = HandshakeA THEN
+    Ok(SendMessage(NewState(NewChannelHandler(p), HandshakeStepD), HandshakeB))
+  ELSE IF p.handshake_state = HandshakeStepC /\ m = HandshakeB THEN
+    Ok(SendMessage(NewState(AskForChannelInitTransaction(NewChannelHandler(p)), HandshakeStepE), Nil))
+  ELSE IF p.handshake_state = HandshakeStepD THEN
+    Ok(SendMessage(NewState(p, HandshakeStepF), Nil))
+  ELSE IF p.handshake_state = HandshakeStepE THEN
+    TryCompleteStepE(NewState(p, PostHandshakeStepE))
+  ELSE IF p.handshake_state = HandshakeStepF THEN
+    TryCompleteStepF(ReceivedChannelOffer(NewState(PotatoState(p, PotatoAbsent), PostHandshakeStepF)))
   ELSE IF p.handshake_state # Finished /\ (m = UIStartGames \/ m = UIStartGamesError) THEN
     Ok(EnqueueGameAction(p, m))
   ELSE IF p.handshake_state = Finished THEN
@@ -472,7 +472,7 @@ HandleIncomingMessage(p) ==
 
 \* potato_handler/mod.rs:1835
 CoinCreated(p) ==
-  IF p.handshake_state = PostStepF THEN
+  IF p.handshake_state = PostHandshakeStepF THEN
     LET p1 == [p EXCEPT !.channel_transaction_completed = 1, !.channel_transaction_sent = 2, !.waiting_to_start = 0] IN
     TryCompleteStepF(p1)
   ELSE
@@ -506,7 +506,7 @@ FLUI_Shutdown(p, act) ==
   OkOf(DoGameAction(p, act))
 
 StartA ==
-  /\ a.handshake_state = StepA
+  /\ a.handshake_state = HandshakeStepA
   /\ a' = Start(a) /\ UNCHANGED << b, ui_actions >>
 
 Active(p) == p.channel_handler < ChannelHandlerEnded
@@ -648,7 +648,7 @@ Spec ==
   /\ [][Next]_allvars
 
 PHInvariant(p) ==
-  /\ p.handshake_state >= StepA
+  /\ p.handshake_state >= HandshakeStepA
   /\ p.handshake_state < MaxHandshakeState
   /\ p.have_potato >= PotatoAbsent
   /\ p.have_potato <= PotatoPresent
