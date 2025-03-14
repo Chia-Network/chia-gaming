@@ -14,7 +14,7 @@ HandshakeStepE == 4
 PostHandshakeStepE == 5
 HandshakeStepF == 6
 PostHandshakeStepF == 7
-Finished == 8
+HandshakeFinished == 8
 OnChainTransition == 9
 OnChainWaitingForUnrollTimeoutOrSpend == 10
 OnChainWaitForConditions == 11
@@ -342,7 +342,7 @@ PassOnChannelHandlerMessage(p0,msg) ==
 
 TryCompleteStepE(p) ==
   IF p.handshake_state = PostHandshakeStepE /\ p.channel_initiation_transaction > 0 THEN
-    Ok(NewState(SendMessage(p,HandshakeE),Finished))
+    Ok(NewState(SendMessage(p,HandshakeE),HandshakeFinished))
   ELSE
     Ok(p)
 
@@ -350,7 +350,7 @@ TryCompleteStepF(p) ==
   IF p.waiting_to_start > 0 THEN
     Ok(p)
   ELSE IF p.handshake_state = PostHandshakeStepF /\ p.channel_transaction_completed > 0 THEN
-    Ok(NewState(SendMessage(p,HandshakeF),Finished))
+    Ok(NewState(SendMessage(p,HandshakeF),HandshakeFinished))
   ELSE
     Ok(p)
 
@@ -377,7 +377,7 @@ SendPotatoRequestIfNeeded(p) ==
 
 \* potato_handler/mod.rs:1481
 DoGameAction(p,act) ==
-  IF p.handshake_state = Finished THEN
+  IF p.handshake_state = HandshakeFinished THEN
     IF act = SendPotato /\ p.have_potato = PotatoAbsent THEN
       Ok(p)
     ELSE
@@ -421,9 +421,9 @@ ProcessIncomingMessage(p,m) ==
     TryCompleteStepE(NewState(p, PostHandshakeStepE))
   ELSE IF p.handshake_state = HandshakeStepF THEN
     TryCompleteStepF(ReceivedChannelOffer(NewState(PotatoState(p, PotatoAbsent), PostHandshakeStepF)))
-  ELSE IF p.handshake_state # Finished /\ (m = UIStartGames \/ m = UIStartGamesError) THEN
+  ELSE IF p.handshake_state # HandshakeFinished /\ (m = UIStartGames \/ m = UIStartGamesError) THEN
     Ok(EnqueueGameAction(p, m))
-  ELSE IF p.handshake_state = Finished THEN
+  ELSE IF p.handshake_state = HandshakeFinished THEN
     IF m = HandshakeF THEN
       Ok(p)
     ELSE IF m = RequestPotato THEN
@@ -483,7 +483,7 @@ CoinCreated(p) ==
 \* potato_handler/mod.rs:1704
 FLUI_StartGames(p, i_initiated, s) ==
   IF i_initiated > 0 THEN
-    IF p.handshake_state # Finished THEN
+    IF p.handshake_state # HandshakeFinished THEN
       p \* error
     ELSE
       LET p1 == AppendMyStartQueue(p, s) IN
@@ -561,7 +561,7 @@ ChannelTransactionB ==
 
 StartGamesA ==
   /\ ui_actions.sent_moves < 1
-  /\ a.handshake_state >= Finished
+  /\ a.handshake_state >= HandshakeFinished
   /\ a.handshake_state < MaxHandshakeState
   /\ a' = FLUI_StartGames(a, 1, StartGames)
   /\ b' = FLUI_StartGames(b, 0, StartGames)
@@ -570,7 +570,7 @@ StartGamesA ==
 GameMoveA ==
   /\ ui_actions.sent_moves >= 1 
   /\ ui_actions.sent_moves < 7
-  /\ a.handshake_state >= Finished
+  /\ a.handshake_state >= HandshakeFinished
   /\ a.handshake_state < MaxHandshakeState
   /\ a' = FLUI_MakeMove(a, Move)
   /\ ui_actions' = [ui_actions EXCEPT !.sent_moves = ui_actions.sent_moves + 1]
@@ -579,7 +579,7 @@ GameMoveA ==
 GameMoveB ==
   /\ ui_actions.sent_moves >= 1 
   /\ ui_actions.sent_moves < 7
-  /\ b.handshake_state >= Finished
+  /\ b.handshake_state >= HandshakeFinished
   /\ b.handshake_state < MaxHandshakeState
   /\ b' = FLUI_MakeMove(b, Move)
   /\ ui_actions' = [ui_actions EXCEPT !.sent_moves = ui_actions.sent_moves + 1]
@@ -587,7 +587,7 @@ GameMoveB ==
 
 GameAcceptA ==
   /\ ui_actions.sent_moves = 7
-  /\ a.handshake_state >= Finished
+  /\ a.handshake_state >= HandshakeFinished
   /\ a.handshake_state < MaxHandshakeState
   /\ a' = FLUI_Accept(a, Accept)
   /\ ui_actions' = [ui_actions EXCEPT !.sent_moves = ui_actions.sent_moves + 1]
@@ -595,7 +595,7 @@ GameAcceptA ==
 
 GameAcceptB ==
   /\ ui_actions.sent_moves = 8
-  /\ b.handshake_state >= Finished
+  /\ b.handshake_state >= HandshakeFinished
   /\ b.handshake_state < MaxHandshakeState
   /\ b' = FLUI_Accept(b, Accept)
   /\ ui_actions' = [ui_actions EXCEPT !.sent_moves = ui_actions.sent_moves + 1]
@@ -603,7 +603,7 @@ GameAcceptB ==
 
 ShutdownA ==
   /\ ui_actions.sent_moves = 9
-  /\ a.handshake_state >= Finished
+  /\ a.handshake_state >= HandshakeFinished
   /\ a.handshake_state < MaxHandshakeState
   /\ a' = FLUI_Shutdown(a, Shutdown)
   /\ ui_actions' = [ui_actions EXCEPT !.sent_moves = ui_actions.sent_moves + 1]
@@ -611,7 +611,7 @@ ShutdownA ==
 
 ShutdownB ==
   /\ ui_actions.sent_moves = 10
-  /\ b.handshake_state >= Finished
+  /\ b.handshake_state >= HandshakeFinished
   /\ b.handshake_state < MaxHandshakeState
   /\ b' = FLUI_Shutdown(b, Shutdown)
   /\ ui_actions' = [ui_actions EXCEPT !.sent_moves = ui_actions.sent_moves + 1]
