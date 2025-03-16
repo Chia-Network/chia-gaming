@@ -21,7 +21,7 @@ use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
     IdentityCoinAndSolution, OnChainRefereeMove, OnChainRefereeSolution, RMFixed,
-    RefereeOnChainTransaction, RefereePuzzleArgs, TheirTurnCoinSpentResult, TheirTurnMoveResult, ValidatorResult, InternalValidatorArgs, ValidatorMoveArgs,
+    RefereeOnChainTransaction, RefereePuzzleArgs, TheirTurnCoinSpentResult, TheirTurnMoveResult, StateUpdateResult, InternalStateUpdateArgs, StateUpdateMoveArgs,
     REM_CONDITION_FIELDS,
 };
 use crate::referee::RefereeByTurn;
@@ -340,7 +340,6 @@ impl TheirTurnReferee {
                 MyTurnRefereeMakerGameState::AfterTheirTurn {
                     game_handler: raw_game_handler.clone(),
                     state_after_their_turn: initial_state.clone(),
-                    my_turn_validation_program: initial_validation_program.clone(),
                     create_this_coin: old_args,
                     spend_this_coin: referee_args,
                 }
@@ -362,7 +361,6 @@ impl TheirTurnReferee {
                 MyTurnRefereeMakerGameState::AfterTheirTurn {
                     game_handler: raw_game_handler.clone(),
                     state_after_their_turn: state_after_our_turn.clone(),
-                    my_turn_validation_program: their_turn_validation_program.clone(),
                     create_this_coin: old_args,
                     spend_this_coin: referee_args,
                 }
@@ -746,13 +744,13 @@ impl TheirTurnReferee {
 
     /// Run the initial validator for a their turn move.  We must run the their turn validator
     /// first before we run the turn handler to provide a new state to the turn handler.
-    pub fn run_initial_validation(
+    pub fn run_state_update(
         &self,
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
         coin: Option<&CoinString>,
-    ) -> Result<ValidatorResult, Error> {
+    ) -> Result<StateUpdateResult, Error> {
         let puzzle_args = self.args_for_this_coin();
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
@@ -770,7 +768,7 @@ impl TheirTurnReferee {
         )?;
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let evidence = Evidence::nil()?;
-        let validator_move_args = InternalValidatorArgs {
+        let validator_move_args = InternalStateUpdateArgs {
             move_made: details.basic.move_made.clone(),
             turn: false,
             // Unused by validator, present for the referee.
@@ -783,7 +781,7 @@ impl TheirTurnReferee {
             timeout: self.fixed.timeout.clone(),
             max_move_size: puzzle_args.game_move.basic.max_move_size,
             referee_hash: new_puzzle_hash.clone(),
-            move_args: ValidatorMoveArgs {
+            move_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
@@ -828,7 +826,7 @@ impl TheirTurnReferee {
         let pres = Program::from_nodeptr(allocator, raw_result.1)?;
         debug!("validator result {pres:?}");
 
-        ValidatorResult::from_nodeptr(allocator, raw_result.1)
+        StateUpdateResult::from_nodeptr(allocator, raw_result.1)
     }
 
     pub fn their_turn_move_off_chain(
@@ -845,7 +843,7 @@ impl TheirTurnReferee {
         let args = self.spend_this_coin();
 
         // Run the initial our turn validation to get the new state.
-        let initial_validation = self.run_initial_validation(
+        let initial_validation = self.run_state_update(
             allocator,
             details,
             state_number,
@@ -907,10 +905,16 @@ impl TheirTurnReferee {
             state_number,
         )?;
 
-        let out_move =
-            new_self.finish_their_turn(allocator, &move_data, puzzle_args, result, coin)?;
-
-        Ok((Some(new_self), out_move))
+        todo!();
+        // Pull in and translate finish_their_turn
+        // which used to live in my_turn.
+        //
+        // Now we have all necessary information here.
+        //
+        // let out_move =
+        // self.finish_their_turn(allocator, &move_data, puzzle_args, result, coin)?;
+        //
+        // Ok((Some(new_self), out_move))
     }
 
     pub fn their_turn_coin_spent(
@@ -1061,14 +1065,19 @@ impl TheirTurnReferee {
             |allocator: &mut AllocEncoder, move_data: &TheirTurnMoveData| {
                 for evidence in move_data.slash_evidence.iter() {
                     debug!("check their turn for slash");
-                    if let Some(result) = new_self.check_their_turn_for_slash(
-                        allocator,
-                        state.clone(),
-                        evidence.clone(),
-                        &created_coin,
-                    )? {
-                        return Ok(result);
-                    }
+                    todo!();
+                    // Move this over from my_turn.
+                    //
+                    // Now we have all the information here.
+                    //
+                    // if let Some(result) = self.check_their_turn_for_slash(
+                    //     allocator,
+                    //     state.clone(),
+                    //     evidence.clone(),
+                    //     &created_coin,
+                    // )? {
+                    //     return Ok(result);
+                    // }
                 }
 
                 Ok(TheirTurnCoinSpentResult::Moved {
@@ -1085,15 +1094,20 @@ impl TheirTurnReferee {
         debug!("referee move details {details:?}");
         let final_result = match result.original {
             TheirTurnResult::Slash(evidence) => {
-                let slash_spend = new_self.make_slash_spend(allocator, coin_string)?;
-                new_self.make_slash_for_their_turn(
-                    allocator,
-                    coin_string,
-                    new_puzzle,
-                    &new_puzzle_hash,
-                    &slash_spend,
-                    evidence,
-                )
+                todo!();
+                // Move this over from my_turn
+                //
+                // Now we have all the right information here.
+                //
+                // let slash_spend = new_self.make_slash_spend(allocator, coin_string)?;
+                // new_self.make_slash_for_their_turn(
+                //     allocator,
+                //     coin_string,
+                //     new_puzzle,
+                //     &new_puzzle_hash,
+                //     &slash_spend,
+                //     evidence,
+                // )
             }
             TheirTurnResult::FinalMove(move_data) => check_and_report_slash(allocator, &move_data),
             TheirTurnResult::MakeMove(_, _, move_data) => {

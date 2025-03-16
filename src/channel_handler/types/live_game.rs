@@ -100,16 +100,6 @@ impl LiveGame {
         Ok(their_move_result)
     }
 
-    pub fn check_their_turn_for_slash(
-        &self,
-        allocator: &mut AllocEncoder,
-        evidence: Evidence,
-        coin_string: &CoinString,
-    ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
-        self.referee_maker
-            .check_their_turn_for_slash(allocator, evidence, coin_string)
-    }
-
     pub fn get_rewind_outcome(&self) -> Option<usize> {
         self.rewind_outcome
     }

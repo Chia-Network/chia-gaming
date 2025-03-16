@@ -86,16 +86,16 @@ pub enum TheirTurnCoinSpentResult {
     Slash(Box<SlashOutcome>),
 }
 #[derive(Debug)]
-pub enum ValidatorResult {
+pub enum StateUpdateResult {
     MoveOk(Rc<Program>),
     Slash(NodePtr),
 }
 
-impl ValidatorResult {
+impl StateUpdateResult {
     pub fn from_nodeptr(
         allocator: &mut AllocEncoder,
         node: NodePtr
-    ) -> Result<ValidatorResult, Error> {
+    ) -> Result<StateUpdateResult, Error> {
         let lst =
             if let Some(p) = proper_list(allocator.allocator(), node, true) {
                 p
@@ -123,11 +123,11 @@ impl ValidatorResult {
                     allocator.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()?
                 };
 
-            return Ok(ValidatorResult::Slash(evidence))
+            return Ok(StateUpdateResult::Slash(evidence))
         }
 
         // Make move
-        Ok(ValidatorResult::MoveOk(Rc::new(Program::from_nodeptr(allocator, lst[1])?)))
+        Ok(StateUpdateResult::MoveOk(Rc::new(Program::from_nodeptr(allocator, lst[1])?)))
     }
 }
 
@@ -331,14 +331,14 @@ pub fn curry_referee_puzzle(
 /// Mover puzzle is a wallet puzzle for an ordinary value coin and the solution
 /// is next to it.
 ///
-pub struct ValidatorMoveArgs {
+pub struct StateUpdateMoveArgs {
     pub state: Rc<Program>,
     pub mover_puzzle: Rc<Program>,
     pub solution: Rc<Program>,
     pub evidence: Rc<Program>,
 }
 
-impl ValidatorMoveArgs {
+impl StateUpdateMoveArgs {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
         let me_program = Program::from_nodeptr(allocator, me)?;
         [
@@ -353,7 +353,7 @@ impl ValidatorMoveArgs {
     }
 }
 
-pub struct InternalValidatorArgs {
+pub struct InternalStateUpdateArgs {
     pub move_made: Vec<u8>,
     pub turn: bool,
     pub new_validation_info_hash: Hash,
@@ -365,10 +365,10 @@ pub struct InternalValidatorArgs {
     pub timeout: Timeout,
     pub max_move_size: usize,
     pub referee_hash: PuzzleHash,
-    pub move_args: ValidatorMoveArgs,
+    pub move_args: StateUpdateMoveArgs,
 }
 
-impl InternalValidatorArgs {
+impl InternalStateUpdateArgs {
     pub fn to_nodeptr(
         &self,
         allocator: &mut AllocEncoder,

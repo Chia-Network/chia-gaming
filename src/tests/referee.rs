@@ -16,7 +16,7 @@ use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidatorResult};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, StateUpdateResult};
 use crate::referee::RefereeMaker;
 
 pub struct DebugGamePrograms {
@@ -268,12 +268,6 @@ fn test_referee_smoke() {
     reftest.their_referee = new_ref.unwrap();
 
     debug!("their_move_wire_data {their_move_local_update:?}");
-
-    let nil = Evidence::nil().expect("cvt");
-    let validator_result = reftest
-        .their_referee
-        .run_validator_for_their_move(&mut allocator, nil);
-    assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk(_))));
 
     assert!(reftest.my_referee.processing_my_turn());
     let (new_ref, their_move_result) = reftest
