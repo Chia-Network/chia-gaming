@@ -9,7 +9,7 @@ use rand_chacha::ChaCha8Rng;
 use log::debug;
 
 use crate::channel_handler::game_handler::{GameHandler, TheirTurnResult};
-use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, StateUpdateProgram};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
@@ -205,7 +205,7 @@ fn test_referee_smoke() {
     let init_state =
         Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert");
     let initial_validation_program =
-        ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
+        StateUpdateProgram::new(&mut allocator, debug_game.my_validation_program);
 
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {
@@ -273,7 +273,7 @@ fn test_referee_smoke() {
     let validator_result = reftest
         .their_referee
         .run_validator_for_their_move(&mut allocator, nil);
-    assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk)));
+    assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk(_))));
 
     assert!(reftest.my_referee.processing_my_turn());
     let (new_ref, their_move_result) = reftest

@@ -16,8 +16,9 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    Program, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
+    Program, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout, atom_from_clvm, i64_from_atom,
 };
+use crate::utils::proper_list;
 
 pub const REM_CONDITION_FIELDS: usize = 4;
 
@@ -86,8 +87,48 @@ pub enum TheirTurnCoinSpentResult {
 }
 #[derive(Debug)]
 pub enum ValidatorResult {
-    MoveOk,
+    MoveOk(Rc<Program>),
     Slash(NodePtr),
+}
+
+impl ValidatorResult {
+    pub fn from_nodeptr(
+        allocator: &mut AllocEncoder,
+        node: NodePtr
+    ) -> Result<ValidatorResult, Error> {
+        let lst =
+            if let Some(p) = proper_list(allocator.allocator(), node, true) {
+                p
+            } else {
+                return Err(Error::StrErr("non-list in validator result".to_string()));
+            };
+
+        if lst.is_empty() {
+            return Err(Error::StrErr("empty list from validator".to_string()));
+        }
+
+        let selector =
+            if let Some(a) = atom_from_clvm(allocator, lst[0]).and_then(|a| i64_from_atom(&a)) {
+                a
+            } else {
+                return Err(Error::StrErr("not atom selector".to_string()));
+            };
+
+        if selector != 0 {
+            // Slash
+            let evidence =
+                if lst.len() > 1 {
+                    lst[1]
+                } else {
+                    allocator.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()?
+                };
+
+            return Ok(ValidatorResult::Slash(evidence))
+        }
+
+        // Make move
+        Ok(ValidatorResult::MoveOk(Rc::new(Program::from_nodeptr(allocator, lst[1])?)))
+    }
 }
 
 /// Adjudicates a two player turn based game
@@ -314,6 +355,7 @@ impl ValidatorMoveArgs {
 
 pub struct InternalValidatorArgs {
     pub move_made: Vec<u8>,
+    pub turn: bool,
     pub new_validation_info_hash: Hash,
     pub mover_share: Amount,
     pub previous_validation_info_hash: Hash,
@@ -343,22 +385,25 @@ impl InternalValidatorArgs {
                 (
                     Node(move_node),
                     (
-                        self.new_validation_info_hash.clone(),
+                        self.turn,
                         (
-                            self.mover_share.clone(),
+                            self.new_validation_info_hash.clone(),
                             (
-                                self.previous_validation_info_hash.clone(),
+                                self.mover_share.clone(),
                                 (
-                                    self.mover_puzzle_hash.clone(),
+                                    self.previous_validation_info_hash.clone(),
                                     (
-                                        self.waiter_puzzle_hash.clone(),
+                                        self.mover_puzzle_hash.clone(),
                                         (
-                                            self.amount.clone(),
+                                            self.waiter_puzzle_hash.clone(),
                                             (
-                                                self.timeout.clone(),
+                                                self.amount.clone(),
                                                 (
-                                                    self.max_move_size,
-                                                    (self.referee_hash.clone(), ()),
+                                                    self.timeout.clone(),
+                                                    (
+                                                        self.max_move_size,
+                                                        (self.referee_hash.clone(), ()),
+                                                    ),
                                                 ),
                                             ),
                                         ),

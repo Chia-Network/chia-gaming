@@ -33,9 +33,10 @@
         image (sha256 preimage)
         (list
             image
-            pokerb
+            pokera ; will be used to evaluate this move.
+            pokera_hash
+            pokerb ; will be used to evaluate bob's move.
             pokerb_hash
-            image
             16
             0
             (curry calpoker_alice_driver_b preimage image)
@@ -81,9 +82,10 @@
         new_commit (sha256 (concat salt my_picks))
         (list
             (concat PREIMAGE new_commit)
+            pokerc
+            pokerc_hash
             pokerd
             pokerd_hash
-            (list cards new_commit)
             1
             0
             (curry calpoker_alice_driver_d salt my_picks)
@@ -128,7 +130,7 @@
         (list MAKE_MOVE
             (list move (indices_to_bitfield my_picks) (indices_to_bitfield bob_picks)
                 my_hand_value bob_hand_value win_result) ()
-            (lambda ((& MY_SALT MY_PICKS my_picks split amount)) (list (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_picks))) 0 0 0 0 split 0 0))
+            (lambda ((& MY_SALT MY_PICKS my_picks split amount)) (list (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_picks))) 0 0 0 0 0 split 0 0))
             0
         )
     )
@@ -147,9 +149,10 @@
         seed (substr entropy 0 16)
         (list
             seed
+            pokerb
+            pokerb_hash
             pokerc
             pokerc_hash
-            (list ALICE_COMMIT seed)
             48
             0
             (curry calpoker_bob_driver_c seed)
@@ -204,9 +207,10 @@
         my_move (bitify local_move)
         (list
             my_move
+            pokerd
+            pokerd_hash
             pokere
             pokere_hash
-            (list my_move (list ALICE_CARDS BOB_CARDS) ALICE_COMMIT_2)
             18
             0
             calpoker_bob_driver_e

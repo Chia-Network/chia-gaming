@@ -11,7 +11,7 @@ use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnMoveData,
     TheirTurnResult,
 };
-use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, StateUpdateProgram, ValidationInfo};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
@@ -34,14 +34,17 @@ use crate::referee::RefereeByTurn;
 pub enum MyTurnRefereeMakerGameState {
     Initial {
         initial_state: Rc<Program>,
-        initial_validation_program: ValidationProgram,
+        initial_validation_program: StateUpdateProgram,
         initial_puzzle_args: Rc<RefereePuzzleArgs>,
         game_handler: GameHandler,
     },
     AfterTheirTurn {
+        // Live information for this turn.
         game_handler: GameHandler,
-        my_turn_validation_program: ValidationProgram,
+        my_turn_validation_program: StateUpdateProgram,
         state_after_their_turn: Rc<Program>,
+
+        // Stored info for referee args
         create_this_coin: Rc<RefereePuzzleArgs>,
         spend_this_coin: Rc<RefereePuzzleArgs>,
     },
@@ -129,8 +132,9 @@ impl MyTurnRefereeMakerGameState {
 ///
 /// my turn:                                   ┌-------------------------------------------┐
 ///                                            v                                           |
-/// ┌-> my_turn_handler(serialized_our_move, state_after_their_turn0) ->                   |
-/// |   ┌------- { their_turn_handler,    └---------┐    |                                 |
+/// ┌-> my_turn_handler(local_move, state_after_their_turn0) ->                            |
+/// |            { serialized_our_move, ------------┐    |                                 |
+/// |   ┌--------- their_turn_handler,              |    |                                 |
 /// |   |          local_readable_move,             |    |                                 |
 /// |   |   ┌----- their_turn_validation_program,   |    |                                 |
 /// |   |   |    }                                  |    └------------┐                    |
@@ -156,6 +160,23 @@ impl MyTurnRefereeMakerGameState {
 ///         evidence, --------------> try these with their_turn_validation_program
 ///       }
 ///
+/// This assumes an "out of time" aspect to the validation programs.
+///
+/// In bram's mind the validation programs are a single chain of events:
+///
+///   a.clsp -> b.clsp -> c.clsp -> d.clsp -> e.clsp -> lambda from e.
+///
+/// In reality, there are two progressions, one on each side:
+///
+/// alice: alice handler 0 -> move 0
+/// bob: move 0 -> a.clsp with state initial_state
+/// bob: bob handler 0 -> move 1
+/// alice: move 1 -> b.clsp
+/// ...
+///
+/// In bram's mind, there's no difference between move 0 _leaving_ alice and _arriving_
+/// at bob, so we need to ensure that an outgoing move uses the same validation program
+/// as the incoming move that follows.
 #[derive(Clone, Debug)]
 pub struct MyTurnReferee {
     pub fixed: Rc<RMFixed>,
@@ -309,7 +330,7 @@ impl MyTurnReferee {
 
     pub fn get_validation_program_for_their_move(
         &self,
-    ) -> Result<(&Program, ValidationProgram), Error> {
+    ) -> Result<(&Program, StateUpdateProgram), Error> {
         match self.state.borrow() {
             MyTurnRefereeMakerGameState::Initial {
                 game_handler,
@@ -367,8 +388,10 @@ impl MyTurnReferee {
         game_handler: &GameHandler,
         current_puzzle_args: Rc<RefereePuzzleArgs>,
         new_puzzle_args: Rc<RefereePuzzleArgs>,
+        new_state: Rc<Program>,
         my_turn_result: Rc<MyTurnResult>,
-        details: &GameMoveDetails,
+        details: &GameMoveStateInfo,
+        validation_info_hash: &ValidationInfo,
         message_handler: Option<MessageHandler>,
         state_number: usize,
     ) -> Result<TheirTurnReferee, Error> {
@@ -387,8 +410,8 @@ impl MyTurnReferee {
         );
         let new_state = TheirTurnRefereeMakerGameState::AfterOurTurn {
             their_turn_game_handler: game_handler.clone(),
-            their_turn_validation_program: my_turn_result.validation_program.clone(),
-            state_after_our_turn: my_turn_result.state.clone(),
+            their_turn_validation_program: my_turn_result.incoming_move_state_update_program.clone(),
+            state_after_our_turn: new_state.clone(),
             create_this_coin: current_puzzle_args,
             spend_this_coin: new_puzzle_args,
         };
@@ -435,29 +458,48 @@ impl MyTurnReferee {
             },
         )?);
         debug!("referee my turn referee move details {:?}", result);
-
         debug!("my turn result {result:?}");
-        debug!("new state {:?}", result.state);
 
+        let state_to_update =
+            match self.state.borrow() {
+                MyTurnRefereeMakerGameState::Initial {
+                    initial_state,
+                    ..
+                } => {
+                    initial_state.clone()
+                },
+                MyTurnRefereeMakerGameState::AfterTheirTurn {
+                    state_after_their_turn,
+                    ..
+                } => {
+                    state_after_their_turn.clone()
+                }
+            };
+
+        let (new_state_following_my_move, validation_info_hash) = self.run_validator_for_my_move(
+            allocator,
+            &args.game_move.basic.move_made,
+            state_to_update,
+            Evidence::nil()?,
+        )?;
+        debug!("new_state_for_my_move {new_state_following_my_move:?}");
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &self.fixed,
-            &result.game_move.basic,
+            &result.game_move,
             Some(&args.game_move.validation_info_hash),
-            &result.game_move.validation_info_hash,
+            &validation_info_hash.hash(),
             None,
             false,
         ));
-        assert_eq!(
-            Some(&args.game_move.validation_info_hash),
-            ref_puzzle_args.previous_validation_info_hash.as_ref()
-        );
 
         let new_self = self.accept_this_move(
             &result.waiting_driver,
             args.clone(),
             ref_puzzle_args.clone(),
+            new_state_following_my_move,
             result.clone(),
             &result.game_move,
+            &validation_info_hash,
             result.message_parser.clone(),
             state_number,
         )?;
@@ -479,7 +521,10 @@ impl MyTurnReferee {
             RefereeByTurn::TheirTurn(Rc::new(new_self)),
             GameMoveWireData {
                 puzzle_hash_for_unroll: new_curried_referee_puzzle_hash,
-                details: result.game_move.clone(),
+                details: GameMoveDetails {
+                    basic: result.game_move.clone(),
+                    validation_info_hash: validation_info_hash.hash().clone(),
+                },
             },
         ))
     }
@@ -663,6 +708,102 @@ impl MyTurnReferee {
         )
     }
 
+    pub fn run_validator_for_my_move(
+        &self,
+        allocator: &mut AllocEncoder,
+        serialized_move: &[u8],
+        state: Rc<Program>,
+        evidence: Evidence,
+    ) -> Result<(Rc<Program>, ValidationInfo), Error> {
+        let puzzle_args = self.args_for_this_coin();
+        let new_puzzle_hash = curry_referee_puzzle_hash(
+            allocator,
+            &self.fixed.referee_coin_puzzle_hash,
+            &puzzle_args
+        )?;
+
+        let solution = self.fixed.my_identity.standard_solution(
+            allocator,
+            &[(
+                self.fixed.my_identity.puzzle_hash.clone(),
+                Amount::default(),
+            )],
+        )?;
+        let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
+        let validator_move_args = InternalValidatorArgs {
+            move_made: serialized_move.to_vec(),
+            turn: false,
+            // Unused by validator, present for the referee.
+            new_validation_info_hash: Default::default(),
+            mover_share: puzzle_args.game_move.basic.mover_share.clone(),
+            previous_validation_info_hash: Default::default(),
+            mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
+            waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
+            amount: self.fixed.amount.clone(),
+            timeout: self.fixed.timeout.clone(),
+            max_move_size: puzzle_args.game_move.basic.max_move_size,
+            referee_hash: new_puzzle_hash.clone(),
+            move_args: ValidatorMoveArgs {
+                evidence: evidence.to_program(),
+                state: state.clone(),
+                mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
+                solution: solution_program,
+            },
+        };
+        let validation_program =
+            match self.state.borrow() {
+                MyTurnRefereeMakerGameState::Initial {
+                    initial_validation_program,
+                    ..
+                } => {
+                    initial_validation_program.clone()
+                }
+                MyTurnRefereeMakerGameState::AfterTheirTurn {
+                    my_turn_validation_program,
+                    ..
+                } => {
+                    my_turn_validation_program.clone()
+                }
+            };
+
+        let validation_program_mod_hash = validation_program.hash();
+        debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
+        let validation_program_nodeptr = validation_program.to_nodeptr(allocator)?;
+        let validator_full_args_node = validator_move_args.to_nodeptr(
+            allocator,
+            validation_program_nodeptr,
+            PuzzleHash::from_hash(validation_program_mod_hash.clone()),
+        )?;
+        let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
+
+        debug!("validator program {:?}", validation_program);
+        debug!("validator args {:?}", validator_full_args);
+        let raw_result = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            validation_program_nodeptr,
+            validator_full_args_node,
+            0,
+        ).into_gen()?;
+        let pres = Program::from_nodeptr(allocator, raw_result.1)?;
+        debug!("validator result {pres:?}");
+        let result = ValidatorResult::from_nodeptr(allocator, raw_result.1)?;
+
+        match result {
+            ValidatorResult::Slash(_) => {
+                Err(Error::StrErr("our own move was slashed by us".to_string()))
+            }
+            ValidatorResult::MoveOk(state) => {
+                let state_nodeptr = state.to_nodeptr(allocator)?;
+                Ok((state.clone(), ValidationInfo::new(
+                    allocator,
+                    validation_program.clone(),
+                    state_nodeptr,
+                )))
+            }
+        }
+    }
+
     pub fn run_validator_for_their_move(
         &self,
         allocator: &mut AllocEncoder,
@@ -687,6 +828,7 @@ impl MyTurnReferee {
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let validator_move_args = InternalValidatorArgs {
             move_made: puzzle_args.game_move.basic.move_made.clone(),
+            turn: true,
             new_validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
             mover_share: puzzle_args.game_move.basic.mover_share.clone(),
             previous_validation_info_hash: previous_puzzle_args
@@ -728,18 +870,18 @@ impl MyTurnReferee {
 
         // Error means validation should not work.
         // It should be handled later.
-        let result = run_program(
+        let raw_result = run_program(
             allocator.allocator(),
             &chia_dialect(),
             validation_program_nodeptr,
             validator_full_args_node,
             0,
-        );
+        ).into_gen()?;
 
-        Ok(match result {
-            Ok(res) => ValidatorResult::Slash(res.1),
-            Err(_) => ValidatorResult::MoveOk,
-        })
+        let result_prog = Program::from_nodeptr(allocator, raw_result.1)?;
+        debug!("their turn validator result {result_prog:?}");
+
+        ValidatorResult::from_nodeptr(allocator, raw_result.1)
     }
 
     // It me.
@@ -845,7 +987,7 @@ impl MyTurnReferee {
                 )
                 .map(Some)
             }
-            ValidatorResult::MoveOk => Ok(None),
+            ValidatorResult::MoveOk(_) => Ok(None),
         }
     }
 

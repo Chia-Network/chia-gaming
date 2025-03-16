@@ -210,7 +210,7 @@ HavePotatoStartGame(p) ==
         Ok(DropTheirStartQueue(SetChannelHandler(p, OkOf(ch2))))
   ELSE IF Len(p.my_start_queue) > 0 THEN
     LET desc == FirstMyStartQueue(p) IN
-    LET p2 == DropMyStartQueue(p) IN
+    LET p2 == DropMyStartQueue(p + 1) IN
     LET ch == ChannelHandler(p2) IN
     IF IsErr(ch) THEN
       Err(p2)
@@ -487,7 +487,6 @@ FLUI_StartGames(p, i_initiated, s) ==
       p \* error
     ELSE
       LET p1 == AppendMyStartQueue(p, s) IN
-      LET p2 == EnqueueGameAction(p, StartGames) IN
       LET p3 == SendPotatoRequestIfNeeded(p1) IN
       IF RvOf(p3) = 0 THEN
         OkOf(p3)

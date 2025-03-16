@@ -9,7 +9,7 @@ use clvmr::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, ValidationProgram};
+use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, StateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,
@@ -56,10 +56,11 @@ pub struct MyTurnInputs<'a> {
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub waiting_driver: GameHandler,
-    pub validation_program: ValidationProgram,
-    pub validation_program_hash: Hash,
-    pub state: Rc<Program>,
-    pub game_move: GameMoveDetails,
+    pub outgoing_move_state_update_program: StateUpdateProgram,
+    pub outgoing_move_state_update_program_hash: Hash,
+    pub incoming_move_state_update_program: StateUpdateProgram,
+    pub incoming_move_state_update_program_hash: Hash,
+    pub game_move: GameMoveStateInfo,
     pub message_parser: Option<MessageHandler>,
 }
 
@@ -170,7 +171,13 @@ impl GameHandler {
             .into_gen()?;
 
         let driver_node = self.get_my_turn_driver(allocator)?;
-        let run_result = run_code(allocator, driver_node, driver_args, false)?;
+        let run_result = run_code(allocator, driver_node, driver_args, false);
+
+        if run_result.is_err() {
+            debug!("MY TURN HANDLER RETURNED ERROR {run_result:?}");
+        }
+
+        let run_result = run_result?;
 
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
@@ -189,7 +196,7 @@ impl GameHandler {
             return Err(Error::GameMoveRejected(message_data));
         }
 
-        if pl.len() < 7 {
+        if pl.len() < 8 {
             return Err(Error::StrErr(format!(
                 "bad result from game driver: {}",
                 Node(run_result).to_hex(allocator)?
@@ -197,59 +204,61 @@ impl GameHandler {
         }
 
         let max_move_size =
-            if let Some(mm) = atom_from_clvm(allocator, pl[4]).and_then(|a| usize_from_atom(&a)) {
+            if let Some(mm) = atom_from_clvm(allocator, pl[3]).and_then(|a| usize_from_atom(&a)) {
                 mm
             } else {
                 return Err(Error::StrErr("bad max move size".to_string()));
             };
         let mover_share =
-            if let Some(ms) = atom_from_clvm(allocator, pl[5]).and_then(|a| u64_from_atom(&a)) {
+            if let Some(ms) = atom_from_clvm(allocator, pl[4]).and_then(|a| u64_from_atom(&a)) {
                 Amount::new(ms)
             } else {
                 return Err(Error::StrErr(format!(
                     "bad share {}",
-                    Node(pl[5]).to_hex(allocator)?
+                    Node(pl[4]).to_hex(allocator)?
                 )));
             };
         debug!("MOVER_SHARE {mover_share:?}");
-        let message_parser = if pl.len() <= 7 || pl[7] == allocator.allocator().nil() {
+        let message_parser = if pl.len() <= 6 || pl[6] == allocator.allocator().nil() {
             None
         } else {
-            Some(MessageHandler::from_nodeptr(allocator, pl[7])?)
+            Some(MessageHandler::from_nodeptr(allocator, pl[6])?)
         };
-        let validation_program_hash =
+
+        let get_hash = |allocator: &mut AllocEncoder, loc: usize| {
             if let Some(h) = atom_from_clvm(allocator, pl[2]).map(|a| Hash::from_slice(&a)) {
-                h
+                Ok(h)
             } else {
                 return Err(Error::StrErr("bad hash".to_string()));
-            };
+            }
+        };
+
+        let get_state_update_program = |allocator: &mut AllocEncoder, loc: usize| {
+            let validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[loc])?);
+            Ok(StateUpdateProgram::new(allocator, validation_prog))
+        };
+
+        let outgoing_move_state_update_program_hash = get_hash(allocator, 2)?;
+        let incoming_move_state_update_program_hash = get_hash(allocator, 4)?;
         let move_data = if let Some(m) = atom_from_clvm(allocator, pl[0]).map(|a| a.to_vec()) {
             m
         } else {
             return Err(Error::StrErr("bad move".to_string()));
         };
 
-        let validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[1])?);
-        let validation_program = ValidationProgram::new(allocator, validation_prog);
-        let state = Rc::new(Program::from_nodeptr(allocator, pl[3])?);
+        let outgoing_move_state_update_program = get_state_update_program(allocator, 1)?;
+        let incoming_move_state_update_program = get_state_update_program(allocator, 3)?;
+
         Ok(MyTurnResult {
-            waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[6])?,
-            validation_program,
-            validation_program_hash: validation_program_hash.clone(),
-            state,
-            game_move: GameMoveDetails {
-                basic: GameMoveStateInfo {
-                    move_made: move_data,
-                    max_move_size,
-                    mover_share,
-                },
-                validation_info_hash: ValidationInfo::new_from_validation_program_hash_and_state(
-                    allocator,
-                    validation_program_hash,
-                    pl[3],
-                )
-                .hash()
-                .clone(),
+            waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[5])?,
+            outgoing_move_state_update_program,
+            outgoing_move_state_update_program_hash,
+            incoming_move_state_update_program,
+            incoming_move_state_update_program_hash,
+            game_move: GameMoveStateInfo {
+                move_made: move_data,
+                max_move_size,
+                mover_share,
             },
             message_parser,
         })
@@ -418,13 +427,19 @@ impl MessageHandler {
         )
             .to_clvm(allocator)
             .into_gen()?;
-        eprintln!(
+        debug!("message parser program {:?}", self.0);
+        debug!(
             "running message handler on args {}",
             Node(args).to_hex(allocator)?
         );
         let run_prog = self.0.to_nodeptr(allocator)?;
-        let run_result = run_code(allocator, run_prog, args, false)?;
+        let run_result = run_code(allocator, run_prog, args, false);
 
-        ReadableMove::from_nodeptr(allocator, run_result)
+        if run_result.is_err() {
+            todo!();
+            debug!("MESSAGE PARSER RETURNED ERROR {run_result:?}");
+        }
+
+        ReadableMove::from_nodeptr(allocator, run_result?)
     }
 }

@@ -148,6 +148,9 @@ fn test_game_handler_my_turn() {
         waiting_hex,
         Node(encoded_result).to_hex(&mut allocator).expect("cvt")
     );
-    assert_eq!(result.game_move.basic.move_made, &[1]);
-    assert_eq!(result.state, Rc::new(Program::from_bytes(&[4])));
+    assert_eq!(result.game_move.move_made, &[1]);
+
+    // We need to call the validator to get the new state.
+    todo!();
+    // assert_eq!(result.state, Rc::new(Program::from_bytes(&[4])));
 }

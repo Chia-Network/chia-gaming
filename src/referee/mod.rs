@@ -9,7 +9,7 @@ use clvmr::allocator::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, StateUpdateProgram};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
@@ -153,7 +153,7 @@ impl RefereeByTurn {
 
     pub fn get_validation_program_for_their_move(
         &self,
-    ) -> Result<(&Program, ValidationProgram), Error> {
+    ) -> Result<(&Program, StateUpdateProgram), Error> {
         match self {
             RefereeByTurn::MyTurn(t) => t.get_validation_program_for_their_move(),
             RefereeByTurn::TheirTurn(_) => {
@@ -438,7 +438,7 @@ impl RefereeByTurn {
                 )
                 .map(Some)
             }
-            ValidatorResult::MoveOk => Ok(None),
+            ValidatorResult::MoveOk(_) => Ok(None),
         }
     }
 

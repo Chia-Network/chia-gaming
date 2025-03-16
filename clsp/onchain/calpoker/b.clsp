@@ -1,23 +1,22 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.c exposing (program_hash as chash))
+(import onchain.game_codes)
 (import std.and)
 (import std.assert)
 (import std.if_any_fail)
 (import std.shatree)
 
-; Alice challenging
-; state is alice's commit
-; move is bob's seed
-; evidence is empty
-(export (mod_hash (move new_validation_hash mover_share previous_validation_hash 
+;; old_state is the initial state of ()
+;; We receive alice's commit, producing a state consisting only of alice' commit.
+(export (mod_hash (old_state move entropy turn new_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     alice_commit me previous_validation_program mover_puzzle solution evidence)
-    (if_any_fail
-        (= new_validation_hash (sha256 chash (shatree (list alice_commit move))))
-        (= (strlen move) 16)
-        (= max_move_size 48)
-        0
-        (x)
+    (assign
+        state (list alice_commit move)
+        (if (= (strlen move) 16)
+            (list MAKE_MOVE (if turn old_state state) "B" move turn)
+            (list SLASH ())
+        )
     )
 )
