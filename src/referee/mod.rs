@@ -276,15 +276,13 @@ impl RefereeByTurn {
                 todo!();
             }
             RefereeByTurn::TheirTurn(t) => {
-                let (new_self, result) = t.their_turn_coin_spent(
+                t.their_turn_coin_spent(
                     t.clone(),
                     allocator,
                     coin_string,
                     conditions,
                     state_number,
-                )?;
-
-                Ok((Some(new_self), result))
+                )
             }
         }
     }

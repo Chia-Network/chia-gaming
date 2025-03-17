@@ -435,13 +435,14 @@ impl MyTurnReferee {
                 }
             };
 
-        let (new_state_following_my_move, validation_info_hash) = self.run_validator_for_my_move(
-            allocator,
-            &args.game_move.basic.move_made,
-            result.outgoing_move_state_update_program.clone(),
-            state_to_update,
-            Evidence::nil()?,
-        )?;
+        let (new_state_following_my_move, validation_info_hash) =
+            self.run_validator_for_my_move(
+                allocator,
+                &result.game_move.move_made,
+                result.outgoing_move_state_update_program.clone(),
+                state_to_update,
+                Evidence::nil()?,
+            )?;
         debug!("new_state_for_my_move {new_state_following_my_move:?}");
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &self.fixed,
@@ -692,6 +693,7 @@ impl MyTurnReferee {
         )?;
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let validator_move_args = InternalStateUpdateArgs {
+            old_state: self.get_game_state(),
             move_made: serialized_move.to_vec(),
             turn: false,
             // Unused by validator, present for the referee.
@@ -747,128 +749,5 @@ impl MyTurnReferee {
                 )))
             }
         }
-    }
-
-    pub fn run_validator_for_their_move(
-        &self,
-        allocator: &mut AllocEncoder,
-        outgoing_move_state_update_program: StateUpdateProgram,
-        state: Rc<Program>,
-        evidence: Evidence,
-    ) -> Result<StateUpdateResult, Error> {
-        let previous_puzzle_args = self.args_for_this_coin();
-        let puzzle_args = self.spend_this_coin();
-        let new_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &self.fixed.referee_coin_puzzle_hash,
-            &puzzle_args,
-        )?;
-
-        let solution = self.fixed.my_identity.standard_solution(
-            allocator,
-            &[(
-                self.fixed.my_identity.puzzle_hash.clone(),
-                Amount::default(),
-            )],
-        )?;
-        let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
-        let validator_move_args = InternalStateUpdateArgs {
-            move_made: puzzle_args.game_move.basic.move_made.clone(),
-            turn: true,
-            new_validation_info_hash: puzzle_args.game_move.validation_info_hash.clone(),
-            mover_share: puzzle_args.game_move.basic.mover_share.clone(),
-            previous_validation_info_hash: previous_puzzle_args
-                .game_move
-                .validation_info_hash
-                .clone(),
-            mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
-            waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
-            amount: self.fixed.amount.clone(),
-            timeout: self.fixed.timeout.clone(),
-            max_move_size: puzzle_args.game_move.basic.max_move_size,
-            referee_hash: new_puzzle_hash.clone(),
-            move_args: StateUpdateMoveArgs {
-                evidence: evidence.to_program(),
-                state: state.clone(),
-                mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
-                solution: solution_program,
-            },
-        };
-
-        debug!("getting validation program");
-        debug!("my turn {}", self.is_my_turn());
-        debug!("state {:?}", self.state);
-        debug!("outgoing_move_state_update_program {outgoing_move_state_update_program:?}");
-        let validation_program_mod_hash = outgoing_move_state_update_program.hash();
-        debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
-        let validation_program_nodeptr = outgoing_move_state_update_program.to_nodeptr(allocator)?;
-
-        let validator_full_args_node = validator_move_args.to_nodeptr(
-            allocator,
-            validation_program_nodeptr,
-            PuzzleHash::from_hash(validation_program_mod_hash.clone()),
-        )?;
-        let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
-
-        debug!("validator program {:?}", outgoing_move_state_update_program);
-        debug!("validator args {:?}", validator_full_args);
-
-        // Error means validation should not work.
-        // It should be handled later.
-        let raw_result = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
-            validation_program_nodeptr,
-            validator_full_args_node,
-            0,
-        ).into_gen()?;
-
-        let result_prog = Program::from_nodeptr(allocator, raw_result.1)?;
-        debug!("their turn validator result {result_prog:?}");
-
-        StateUpdateResult::from_nodeptr(allocator, raw_result.1)
-    }
-
-    // It me.
-    fn target_puzzle_hash_for_slash(&self) -> PuzzleHash {
-        self.fixed.my_identity.puzzle_hash.clone()
-    }
-
-    fn slashing_coin_solution(
-        &self,
-        allocator: &mut AllocEncoder,
-        state: NodePtr,
-        my_validation_info_hash: PuzzleHash,
-        validation_program_clvm: NodePtr,
-        slash_solution: NodePtr,
-        evidence: Evidence,
-    ) -> Result<NodePtr, Error> {
-        (
-            Node(state),
-            (
-                my_validation_info_hash,
-                (
-                    Node(validation_program_clvm),
-                    (
-                        RcNode::new(self.fixed.my_identity.puzzle.to_program()),
-                        (Node(slash_solution), (evidence, ())),
-                    ),
-                ),
-            ),
-        )
-            .to_clvm(allocator)
-            .into_gen()
-    }
-
-    fn make_slash_conditions(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
-        [(
-            CREATE_COIN,
-            (
-                self.target_puzzle_hash_for_slash(),
-                (self.fixed.amount.clone(), ()),
-            ),
-        )]
-        .to_clvm(allocator)
-        .into_gen()
     }
 }

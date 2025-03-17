@@ -85,7 +85,7 @@ pub enum TheirTurnCoinSpentResult {
     },
     Slash(Box<SlashOutcome>),
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StateUpdateResult {
     MoveOk(Rc<Program>),
     Slash(NodePtr),
@@ -355,6 +355,7 @@ impl StateUpdateMoveArgs {
 
 pub struct InternalStateUpdateArgs {
     pub move_made: Vec<u8>,
+    pub old_state: Rc<Program>,
     pub turn: bool,
     pub new_validation_info_hash: Hash,
     pub mover_share: Amount,
@@ -383,26 +384,29 @@ impl InternalStateUpdateArgs {
             validator_mod_hash,
             (
                 (
-                    Node(move_node),
+                    self.old_state.clone(),
                     (
-                        self.turn,
+                        Node(move_node),
                         (
-                            self.new_validation_info_hash.clone(),
+                            self.turn,
                             (
-                                self.mover_share.clone(),
+                                self.new_validation_info_hash.clone(),
                                 (
-                                    self.previous_validation_info_hash.clone(),
+                                    self.mover_share.clone(),
                                     (
-                                        self.mover_puzzle_hash.clone(),
+                                        self.previous_validation_info_hash.clone(),
                                         (
-                                            self.waiter_puzzle_hash.clone(),
+                                            self.mover_puzzle_hash.clone(),
                                             (
-                                                self.amount.clone(),
+                                                self.waiter_puzzle_hash.clone(),
                                                 (
-                                                    self.timeout.clone(),
+                                                    self.amount.clone(),
                                                     (
-                                                        self.max_move_size,
-                                                        (self.referee_hash.clone(), ()),
+                                                    self.timeout.clone(),
+                                                        (
+                                                            self.max_move_size,
+                                                            (self.referee_hash.clone(), ()),
+                                                        ),
                                                     ),
                                                 ),
                                             ),

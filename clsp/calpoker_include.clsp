@@ -3,7 +3,6 @@
 (import std.and)
 (import std.assert)
 (import calpoker_generate exposing calpoker_template)
-(import calpoker_validator_zero exposing (program as zero) (program_hash as zero_hash))
 
 (export calpoker_template)
 
@@ -53,10 +52,10 @@
                         their_contribution
 
                         ;; Initial validation program
-                        zero                        
+                        (validation-program-of-template template)
 
                         ;; Hash of initial validator program
-                        zero_hash
+                        (validation-program-hash-of-template template)
 
                         ;; Initial state
                         ()

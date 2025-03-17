@@ -12,7 +12,7 @@
 ; state is the cards for both players and alice's card pick commitment
 ; move is Bob's picks
 ; evidence is empty
-(export (mod_hash (bob_picks entropy turn new_validation_hash mover_share previous_validation_hash 
+(export (mod_hash (old_state bob_picks turn new_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     (cards alice_commit) me previous_validation_program mover_puzzle solution evidence)
     (assign

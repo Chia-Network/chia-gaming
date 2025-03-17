@@ -918,11 +918,11 @@ impl ChannelHandler {
                 message.clone(),
                 move_data.mover_share.clone(),
             ),
-            TheirTurnResult::Slash(_) => {
+            _ => {
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
                 ));
-            }
+            },
         };
 
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;

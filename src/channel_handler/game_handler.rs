@@ -204,13 +204,13 @@ impl GameHandler {
         }
 
         let max_move_size =
-            if let Some(mm) = atom_from_clvm(allocator, pl[3]).and_then(|a| usize_from_atom(&a)) {
+            if let Some(mm) = atom_from_clvm(allocator, pl[5]).and_then(|a| usize_from_atom(&a)) {
                 mm
             } else {
                 return Err(Error::StrErr("bad max move size".to_string()));
             };
         let mover_share =
-            if let Some(ms) = atom_from_clvm(allocator, pl[4]).and_then(|a| u64_from_atom(&a)) {
+            if let Some(ms) = atom_from_clvm(allocator, pl[6]).and_then(|a| u64_from_atom(&a)) {
                 Amount::new(ms)
             } else {
                 return Err(Error::StrErr(format!(
@@ -219,14 +219,14 @@ impl GameHandler {
                 )));
             };
         debug!("MOVER_SHARE {mover_share:?}");
-        let message_parser = if pl.len() <= 6 || pl[6] == allocator.allocator().nil() {
+        let message_parser = if pl.len() <= 8 || pl[8] == allocator.allocator().nil() {
             None
         } else {
-            Some(MessageHandler::from_nodeptr(allocator, pl[6])?)
+            Some(MessageHandler::from_nodeptr(allocator, pl[8])?)
         };
 
         let get_hash = |allocator: &mut AllocEncoder, loc: usize| {
-            if let Some(h) = atom_from_clvm(allocator, pl[2]).map(|a| Hash::from_slice(&a)) {
+            if let Some(h) = atom_from_clvm(allocator, pl[loc]).map(|a| Hash::from_slice(&a)) {
                 Ok(h)
             } else {
                 return Err(Error::StrErr("bad hash".to_string()));
@@ -250,7 +250,7 @@ impl GameHandler {
         let incoming_move_state_update_program = get_state_update_program(allocator, 3)?;
 
         Ok(MyTurnResult {
-            waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[5])?,
+            waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[7])?,
             outgoing_move_state_update_program,
             outgoing_move_state_update_program_hash,
             incoming_move_state_update_program,
@@ -340,15 +340,14 @@ impl GameHandler {
             }
 
             let decode_slash_evidence = |allocator: &mut AllocEncoder, index: Option<usize>| {
-                let mut lst_nodeptr = index
-                    .and_then(|i| proper_list(allocator.allocator(), pl[i], true))
-                    .unwrap_or_default();
-                lst_nodeptr.push(
-                    allocator
-                        .encode_atom(clvm_traits::Atom::Borrowed(&[]))
-                        .into_gen()?,
-                );
                 let mut lst = Vec::new();
+                let lst_nodeptr =
+                    index.and_then(|i| proper_list(
+                        allocator.allocator(),
+                        pl[i],
+                        true
+                    )).unwrap_or_default();
+
                 for v in lst_nodeptr.into_iter() {
                     lst.push(Evidence::from_nodeptr(allocator, v)?);
                 }
