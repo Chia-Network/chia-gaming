@@ -1,0 +1,3 @@
+;;; Placeholder for what will come later when dictionary is working
+;;; note: also fix constant export :-)
+(defun dictionary_key () ())

@@ -1,8 +1,10 @@
-(export krunk_factory)
+(include *standard-cl-23*)
+
 (import onchain.krunk.commit exposing commit_validate commit_validate_hash)
 (import std.assert)
 (import std.shatree)
 (import std.curry)
+(import std.li)
 
 (defun krunk_factory (i_am_initiator my_contribution their_contribution params)
     (assert
@@ -78,6 +80,7 @@
 ; return game handler is alice_driver_guess with preimage curried in
 ; return message parser is skipped
 (defun alice_driver_commit (local_move amount state mover_share entropy)
+  ()
 )
 
 ; their turn driver
@@ -89,6 +92,7 @@
 ; return game handler is alice_driver_clue with preimage curried
 ; return message parser is skipped
 (defun alice_driver_guess (PREIMAGE amount before_state before_mover_share move after_mover_share)
+  ()
 )
 
 ; my turn driver
@@ -111,12 +115,14 @@
 ; readable_move is nil
 ; next turn handler is bob_driver_guess
 (defun bob_driver_commit (amount before_state before_mover_share move after_mover_share)
+  ()
 )
 
 ; my turn driver
 ; local_move is a guess word. Needs to be in the dictionary
 ; next turn handler is bob_driver_clue
 (defun bob_driver_guess (local_move amount state mover_share entropy)
+  ()
 )
 
 ; their turn driver
@@ -125,4 +131,5 @@
 ; readable_move is a clue and optionally a reveal of Alice's word if done
 ; next turn handler is bob_driver_guess or nil if done
 (defun bob_driver_clue (amount before_state before_mover_share move after_mover_share)
+  ()
 )

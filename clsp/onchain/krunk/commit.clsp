@@ -1,8 +1,13 @@
 (include *standard-cl-23*)
 
-(export commit)
+(export commit_validate)
 (import onchain.krunk.guess exposing guess_validate_hash)
+(import onchain.game_codes)
 (import std.assert)
+(import std.relops)
+(import std.li)
+
+(import krunk.dictionary)
 
 ; Bob challenging
 ; state is nil
@@ -14,7 +19,7 @@
 
     (if (!= (strlen move) 32)
         (li SLASH 0)
-        (li MOVE guess_validation_hash (li 0 0 dictionary_key move) 5)
+        (li MAKE_MOVE guess_validate_hash (li 0 0 dictionary_key move) 5)
     )
 )
 
