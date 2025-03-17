@@ -1,28 +1,59 @@
 
+(import krunk.dictionary exposing krunk_dictionary)
+
 ; Words is a list of 5 letter words in sorted order all low caps
-; creates a BLS private key which it then destroys
-; returns (dictionary pubkey)
-; dictionary is a balanced tree of nodes which are either (leftnode word rightnode) or (minboundary maxboundary signature)
-(defun create_dictionary (words entropy)
-    booga booga
+; return dictionary node format is either signature of lower_boundary|upper_boundary or (low_dictionary word high_dictionary)
+(defun create_dictionary (words private_key)
+    (assert
+        (validate_words words)
+        (create_dictionary_inner 0x8000000000 0x7FFFFFFFFF words private_key)
+    )
 )
 
-; returns nil if word is in dictionary otherwise (mindboundary maxboundary signature)
-(defun find_exclusion_proof (word (@ node (thing1 thing2 thing3)))
-    (if (l thing1)
-        (assign
-            leftnode thing1
-            oldword thing2
-            rightnode thing3
-            (if (= word oldword) nil
-                (find_exclusion_proof word (<s word oldword) leftnode rightnode)
+(defun create_dictionary_inner (minword maxword words private_key)
+    (assign mylen (len words)
+        (if (not mylen)
+            (signature private_key (concat (pad minword 5) (pad maxword 5)))
+            (assign midpos (>> 1 mylen)
+                midword (index words midpos)
+                (li
+                    (create_dictionary_inner minword (- midword 1) (sublist words 0 midpos) private_key)
+                    midword
+                    (create_dictionary_inner (+ midword 1) maxword (sublist words (+ 1 midpos) mylen) private_key)
+                )
             )
         )
-        (assign
-            minboundary thing1
-            maxboundary thing2
-            signature thing3
-            (if (and (<=s mindboundary word) (>=s maxboundary word) node nil))
+    )
+)
+
+(defun validate_words (word1 @ other_words (word2))
+    (assert
+        (= (len word1) 5)
+        (if (not (isthere other_words))
+            0
+            (assert (< word1 word2)
+                (validate_words other_words)
+            )
         )
+    )
+)
+
+; returns nil if word is in dictionary otherwise (evidence signature)
+(defun find_exclusion_proof (word)
+    (find_exclusion_proof_inner word 0x8000000000 0x7FFFFFFFFF krunk_dictionary)
+)
+
+(defun find_exclusion_proof_inner (word minword maxword (@ evidence (low_dictionary oldword high_dictionary)))
+    (if (not (l evidence))
+        ; this entry is a signature of an exclusion range
+        (li (concat (pad minword 5) (pad maxword 5)) evidence)
+        (= word oldword)
+        ; this word is in the dictionary
+        0
+        (< word oldword)
+        ; recurse on the low side
+        (find_exclusion_proof_inner word minword (- oldword 1) low_dictionary)
+        ; recurse on the high side
+        (find_exclusion_proof_inner word (+ oldword 1) maxword high_dictionary)
     )
 )
