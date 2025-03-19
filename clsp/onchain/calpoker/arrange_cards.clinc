@@ -28,7 +28,8 @@
 )
 
 (defun pull_out_cards args
-    (assert (= (popcount (f args)) 5)
+    (if (= (popcount (f args)) 5)
         (pull_out_cards_inner &rest args)
+        (x "pull_out_cards got" args)
     )
 )

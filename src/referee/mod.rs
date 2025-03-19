@@ -48,7 +48,6 @@ impl RefereeByTurn {
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share.clone(),
             move_made: game_start_info.initial_move.clone(),
-            max_move_size: game_start_info.initial_max_move_size,
         };
         let my_turn = game_start_info.game_handler.is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
@@ -83,6 +82,7 @@ impl RefereeByTurn {
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &initial_move,
+            game_start_info.initial_max_move_size,
             None,
             &vi_hash,
             // Special for start: nobody can slash the first turn and both sides need to

@@ -31,7 +31,6 @@ fn test_game_handler_their_move_slash() {
                 new_move: GameMoveDetails {
                     basic: GameMoveStateInfo {
                         move_made: vec![],
-                        max_move_size: 0,
                         mover_share: Amount::default(),
                     },
                     validation_info_hash: Hash::default(),
@@ -78,7 +77,6 @@ fn test_game_handler_their_make_move() {
                 new_move: GameMoveDetails {
                     basic: GameMoveStateInfo {
                         move_made: vec![],
-                        max_move_size: 0,
                         mover_share: Amount::default(),
                     },
                     validation_info_hash: Hash::default(),

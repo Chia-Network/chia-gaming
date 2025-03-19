@@ -1,6 +1,7 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.e exposing (program_hash as ehash))
+(import onchain.calpoker.make_cards)
 (import onchain.game_codes)
 (import std.assert)
 (import std.shatree)
@@ -12,17 +13,17 @@
 ; state is the cards for both players and alice's card pick commitment
 ; move is Bob's picks
 ; evidence is empty
-(export (mod_hash (old_state bob_picks turn new_validation_hash mover_share previous_validation_hash 
+(export (mod_hash (old_state bob_picks new_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (cards alice_commit) me previous_validation_program mover_puzzle solution evidence)
+    ((alice_cards bob_cards) alice_commit bob_seed) me previous_validation_program mover_puzzle solution evidence)
     (assign
-        state (list bob_picks cards alice_commit)
+        state (list bob_picks (list alice_cards bob_cards) alice_commit)
         (if_any_fail
             (= (strlen bob_picks) 1)
             (= (popcount bob_picks) 4)
-            (= max_move_size 18)
-            (list SLASH () "D")
-            (list MAKE_MOVE state "D")
+            (= max_move_size 1)
+            (list SLASH () "D" old_state bob_picks max_move_size)
+            (list MAKE_MOVE state 18 "D")
         )
     )
 )

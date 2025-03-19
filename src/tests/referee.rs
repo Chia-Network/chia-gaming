@@ -246,7 +246,6 @@ fn test_referee_smoke() {
         &GameMoveDetails {
             basic: GameMoveStateInfo {
                 move_made: vec![1],
-                max_move_size: 100,
                 mover_share: Amount::default(),
             },
             validation_info_hash: my_move_wire_data.details.validation_info_hash.clone(),

@@ -9,14 +9,14 @@
 
 ;; old_state is the initial state of ()
 ;; We receive alice's commit, producing a state consisting only of alice' commit.
-(export (mod_hash (old_state move turn new_validation_hash mover_share previous_validation_hash 
+(export (mod_hash (old_state move new_validation_hash mover_share previous_validation_hash 
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
     alice_commit me previous_validation_program mover_puzzle solution evidence)
     (assign
         state (list alice_commit move)
         (if (= (strlen move) 16)
-            (list MAKE_MOVE state "B" move turn)
-            (list SLASH () "B slash" move turn)
+            (list MAKE_MOVE state 32 "B" move)
+            (list SLASH () "B slash" move)
         )
     )
 )

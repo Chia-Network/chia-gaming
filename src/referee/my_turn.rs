@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
+use clvmr::reduction::EvalErr;
 use clvmr::run_program;
 
 use log::debug;
@@ -39,7 +40,7 @@ pub enum MyTurnRefereeMakerGameState {
     },
     AfterTheirTurn {
         // Live information for this turn.
-        game_handler: GameHandler,
+        game_handler: Option<GameHandler>,
         state_after_their_turn: Rc<Program>,
 
         // Stored info for referee args
@@ -86,6 +87,13 @@ impl MyTurnRefereeMakerGameState {
             MyTurnRefereeMakerGameState::AfterTheirTurn {
                 spend_this_coin, ..
             } => spend_this_coin.clone(),
+        }
+    }
+
+    pub fn max_move_size(&self) -> usize {
+        match self {
+            MyTurnRefereeMakerGameState::Initial { initial_puzzle_args, .. } => initial_puzzle_args.max_move_size,
+            MyTurnRefereeMakerGameState::AfterTheirTurn { spend_this_coin, .. } => spend_this_coin.max_move_size,
         }
     }
 }
@@ -205,7 +213,6 @@ impl MyTurnReferee {
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share.clone(),
             move_made: game_start_info.initial_move.clone(),
-            max_move_size: game_start_info.initial_max_move_size,
         };
         let my_turn = game_start_info.game_handler.is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
@@ -240,6 +247,7 @@ impl MyTurnReferee {
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &initial_move,
+            game_start_info.initial_max_move_size,
             None,
             &vi_hash,
             // Special for start: nobody can slash the first turn and both sides need to
@@ -306,10 +314,12 @@ impl MyTurnReferee {
         false
     }
 
-    pub fn get_game_handler(&self) -> GameHandler {
+    pub fn get_game_handler(&self) -> Option<GameHandler> {
         match self.state.borrow() {
-            MyTurnRefereeMakerGameState::Initial { game_handler, .. }
-            | MyTurnRefereeMakerGameState::AfterTheirTurn { game_handler, .. } => {
+            MyTurnRefereeMakerGameState::Initial { game_handler, .. } => {
+                Some(game_handler.clone())
+            }
+            MyTurnRefereeMakerGameState::AfterTheirTurn { game_handler, .. } => {
                 game_handler.clone()
             }
         }
@@ -344,7 +354,7 @@ impl MyTurnReferee {
 
     pub fn accept_this_move(
         &self,
-        game_handler: &GameHandler,
+        game_handler: GameHandler,
         current_puzzle_args: Rc<RefereePuzzleArgs>,
         new_puzzle_args: Rc<RefereePuzzleArgs>,
         new_state: Rc<Program>,
@@ -355,18 +365,19 @@ impl MyTurnReferee {
         state_number: usize,
     ) -> Result<TheirTurnReferee, Error> {
         debug!("{state_number} accept move {details:?}");
-        assert_ne!(
-            current_puzzle_args.mover_puzzle_hash,
-            new_puzzle_args.mover_puzzle_hash
-        );
-        assert_eq!(
-            current_puzzle_args.mover_puzzle_hash,
-            new_puzzle_args.waiter_puzzle_hash
-        );
+        // assert_ne!(
+        //     current_puzzle_args.mover_puzzle_hash,
+        //     new_puzzle_args.mover_puzzle_hash
+        // );
+        // assert_eq!(
+        //     current_puzzle_args.mover_puzzle_hash,
+        //     new_puzzle_args.waiter_puzzle_hash
+        // );
         assert_eq!(
             self.fixed.my_identity.puzzle_hash,
-            current_puzzle_args.mover_puzzle_hash
+            new_puzzle_args.mover_puzzle_hash
         );
+
         let new_state = TheirTurnRefereeMakerGameState::AfterOurTurn {
             their_turn_game_handler: game_handler.clone(),
             their_turn_validation_program: my_turn_result.incoming_move_state_update_program.clone(),
@@ -400,8 +411,14 @@ impl MyTurnReferee {
     ) -> Result<(RefereeByTurn, GameMoveWireData), Error> {
         assert!(self.is_my_turn());
 
-        let game_handler = self.get_game_handler();
-        let args = self.spend_this_coin();
+        let game_handler =
+            if let Some(gh) = self.get_game_handler() {
+                gh
+            } else {
+                return Err(Error::StrErr("move made but we passed the final move".to_string()));
+            };
+
+        let args = self.args_for_this_coin();
 
         debug!("my turn state {:?}", self.state);
         debug!("entropy {state_number} {new_entropy:?}");
@@ -412,11 +429,10 @@ impl MyTurnReferee {
                 amount: self.fixed.amount.clone(),
                 last_move: &args.game_move.basic.move_made,
                 last_mover_share: args.game_move.basic.mover_share.clone(),
-                last_max_move_size: args.game_move.basic.max_move_size,
+                last_max_move_size: self.state.max_move_size(),
                 entropy: new_entropy.clone(),
             },
         )?);
-        debug!("referee my turn referee move details {:?}", result);
         debug!("my turn result {result:?}");
 
         let state_to_update =
@@ -435,7 +451,7 @@ impl MyTurnReferee {
                 }
             };
 
-        let (new_state_following_my_move, validation_info_hash) =
+        let (new_state_following_my_move, max_move_size, validation_info_hash) =
             self.run_validator_for_my_move(
                 allocator,
                 &result.game_move.move_made,
@@ -443,18 +459,18 @@ impl MyTurnReferee {
                 state_to_update,
                 Evidence::nil()?,
             )?;
-        debug!("new_state_for_my_move {new_state_following_my_move:?}");
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &self.fixed,
             &result.game_move,
+            max_move_size,
             Some(&args.game_move.validation_info_hash),
             &validation_info_hash.hash(),
             None,
-            false,
+            true,
         ));
 
         let new_self = self.accept_this_move(
-            &result.waiting_driver,
+            result.waiting_driver.clone(),
             args.clone(),
             ref_puzzle_args.clone(),
             new_state_following_my_move,
@@ -470,6 +486,7 @@ impl MyTurnReferee {
         //
         // Validation_info_hash is hashed together the state and the validation
         // puzzle.
+        debug!("<W> {ref_puzzle_args:?}");
         let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.fixed.referee_coin_puzzle_hash,
@@ -676,7 +693,7 @@ impl MyTurnReferee {
         outgoing_state_update_program: StateUpdateProgram,
         state: Rc<Program>,
         evidence: Evidence,
-    ) -> Result<(Rc<Program>, ValidationInfo), Error> {
+    ) -> Result<(Rc<Program>, usize, ValidationInfo), Error> {
         let puzzle_args = self.args_for_this_coin();
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
@@ -695,7 +712,6 @@ impl MyTurnReferee {
         let validator_move_args = InternalStateUpdateArgs {
             old_state: self.get_game_state(),
             move_made: serialized_move.to_vec(),
-            turn: false,
             // Unused by validator, present for the referee.
             new_validation_info_hash: Default::default(),
             mover_share: puzzle_args.game_move.basic.mover_share.clone(),
@@ -704,11 +720,13 @@ impl MyTurnReferee {
             waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
             amount: self.fixed.amount.clone(),
             timeout: self.fixed.timeout.clone(),
-            max_move_size: puzzle_args.game_move.basic.max_move_size,
+            max_move_size: self.state.max_move_size(),
             referee_hash: new_puzzle_hash.clone(),
             move_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
+                // XXX
+                previous_validation_program: solution_program.clone(),
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
             },
@@ -725,14 +743,20 @@ impl MyTurnReferee {
 
         debug!("validator program {:?}", outgoing_state_update_program);
         debug!("validator args {:?}", validator_full_args);
-        let raw_result = run_program(
+        let raw_result_e = run_program(
             allocator.allocator(),
             &chia_dialect(),
             validation_program_nodeptr,
             validator_full_args_node,
             0,
-        ).into_gen()?;
-        let pres = Program::from_nodeptr(allocator, raw_result.1)?;
+        ).into_gen();
+        if let Err(Error::ClvmErr(EvalErr(x, ty))) = &raw_result_e {
+            let dis = Program::from_nodeptr(allocator, *x)?;
+            debug!("error {ty} from clvm during validation: {dis:?}");
+        }
+        let raw_result = raw_result_e?;
+        let pres = Program::from_nodeptr(allocator, raw_result.1);
+
         debug!("validator result {pres:?}");
         let result = StateUpdateResult::from_nodeptr(allocator, raw_result.1)?;
 
@@ -740,9 +764,10 @@ impl MyTurnReferee {
             StateUpdateResult::Slash(_) => {
                 Err(Error::StrErr("our own move was slashed by us".to_string()))
             }
-            StateUpdateResult::MoveOk(state) => {
+            StateUpdateResult::MoveOk(state, max_move_size) => {
                 let state_nodeptr = state.to_nodeptr(allocator)?;
-                Ok((state.clone(), ValidationInfo::new(
+                debug!("<V> new state for my move {:?} {state:?}", outgoing_state_update_program.sha256tree(allocator));
+                Ok((state.clone(), max_move_size, ValidationInfo::new(
                     allocator,
                     outgoing_state_update_program.clone(),
                     state_nodeptr,
