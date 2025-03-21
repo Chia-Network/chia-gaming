@@ -20,7 +20,7 @@
 (import onchain.calpoker.arrange_cards exposing split_cards)
 
 ; initial_mover_handler initial_waiter_handler whether_paired required_size_factor
-; initial_max_move_size initial_validator initial_validator_hash 
+; initial_max_move_size initial_validator initial_validator_hash
 ; initial_state initial_mover_share_proportion
 (defun calpoker_template () (li calpoker_alice_driver_a calpoker_bob_driver_a 0 200 32 pokera pokera_hash 0 100))
 
@@ -63,7 +63,7 @@
 )
 
 (defun bitify (mylist)
-    (single-byte 
+    (single-byte
         (if (not mylist)
             0
             (logior (f mylist) (lsh (bitify (r mylist)) 1))
@@ -135,19 +135,21 @@
                 win_result
             )
             ()
-            (lambda ((& MY_SALT MY_PICKS my_selects bob_selects split amount))
-                (list
-                    (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_selects)))
-                    pokere
-                    pokere_hash
-                    ()
-                    ()
-                    0
-                    split
-                    ()
-                )
-            )
+            (curry calpoker_alice_driver_e (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_selects))) split)
         )
+    )
+)
+
+(defun calpoker_alice_driver_e (next_move split)
+    (list
+        next_move
+        pokere
+        pokere_hash
+        ()
+        ()
+        0
+        split
+        ()
     )
 )
 
@@ -236,28 +238,16 @@
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_picks
 ; either fraud proves or accepts split
-(defun calpoker_bob_driver_e (amount (@ state (bob_selects (alice_cards bob_cards) alice_commit_2)) move
+(defun calpoker_bob_driver_e (amount (@ state (bob_picks alice_selects alice_cards bob_cards alice_hand_value)) move
         validation_program_hash split)
     (assign
-        alice_my_picks (substr move 16 17)
+        alice_picks (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
-        (alice_cards_alice alice_cards_bob) (split_cards alice_my_picks alice_cards)
-        (bob_cards_bob bob_cards_alice) (split_cards bob_selects bob_cards)
-        alice_all_cards (map make_card (append alice_cards_alice bob_cards_alice))
-        bob_all_cards (map make_card (append bob_cards_bob alice_cards_bob))
-        (alice_hand_value alice_picks) (handcalc (map card_list_to_pair alice_all_cards))
-        (bob_hand_value bob_picks) (handcalc (map card_list_to_pair bob_all_cards))
-        win_result (list_compare alice_hand_value bob_hand_value)
-        ;; win_result 1 means alice wins.
-        correct_split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
-        
-        (if (!= split correct_split)
-            (list SLASH (indices_to_bitfield bob_picks))
-            (list MAKE_MOVE
-                (list alice_my_picks (indices_to_bitfield bob_picks) (indices_to_bitfield alice_picks)
-                      bob_hand_value alice_hand_value split)
-                (list bob_selects)
-            )
+        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_all_cards))
+        (list MAKE_MOVE
+            (list (indices_to_bitfield bob_picks) alice_picks bob_selects alice_selects
+                    bob_hand_value alice_hand_value)
+            (list bob_selects)
         )
     )
 )
