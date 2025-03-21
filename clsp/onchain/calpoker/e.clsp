@@ -21,7 +21,6 @@
     (if (not (= (strlen move) 18))
         (list SLASH () "E slash wrong move size" move)
 
-        bob_card_selections
         (assign
             alice_salted_picks (substr move 0 17)
             alice_picks (substr move 16 17)
@@ -29,32 +28,40 @@
 
             (alice_final_cards bob_final_cards) (split_cards_inner bob_picks bob_cards &rest (split_cards alice_picks alice_cards))
 
-            result (list_compare (onehandcalc (pull_out_cards alice_card_selections alice_final_cards))
-                                 (onehandcalc (pull_out_cards bob_card_selections bob_final_cards)))
-            correct-mover-share
-                (if_any_fail
-                    (= (sha256 alice_salted_picks) alice_commit)
-                    (= (popcount alice_picks) 4)
-                    (<= bob_share
-                        (if (not result)
-                            (/ amount 2)
-                            (if (= result 1)
-                                amount
-                                0
-                            )
-                        )
-                    )
-                    0
-                    1
-                )
+            alice_hand_value (onehandcalc (pull_out_cards alice_card_selections alice_final_cards)
 
-            (if correct-mover-share
-                (list MAKE_MOVE state 0 "E move evidence")
-                (list SLASH () "E slash")
+            (if (not bob_card_selections)
+                ;; Assert we aren't running on chain
+                (assert (not previous_validation_program)
+                    (list MAKE_MOVE (li bob_picks alice_cards bob_cards alice_hand_value) 0 "E move")
+                )
+                (assign
+                    result (list_compare alice_hand_value
+                                        (onehandcalc (pull_out_cards bob_card_selections bob_final_cards)))
+                    correct-mover-share
+                        (if_any_fail
+                            (= (sha256 alice_salted_picks) alice_commit)
+                            (= (popcount alice_picks) 4)
+                            (<= bob_share
+                                (if (not result)
+                                    (/ amount 2)
+                                    (if (= result 1)
+                                        amount
+                                        0
+                                    )
+                                )
+                            )
+                            0
+                            1
+                        )
+
+                    (if correct-mover-share
+                        (list MAKE_MOVE 0 0 "E move evidence")
+                        (list SLASH () "E slash")
+                    )
+                )
             )
         )
 
-        ;; Otherwise
-        (list MAKE_MOVE state 0 "E move")
     )
 )
