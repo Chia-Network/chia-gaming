@@ -243,7 +243,7 @@
     (assign
         alice_picks (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
-        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_all_cards))
+        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_cards))
         (list MAKE_MOVE
             (list (indices_to_bitfield bob_picks) alice_picks bob_selects alice_selects
                     bob_hand_value alice_hand_value)

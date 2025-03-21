@@ -28,12 +28,12 @@
 
             (alice_final_cards bob_final_cards) (split_cards_inner bob_picks bob_cards &rest (split_cards alice_picks alice_cards))
 
-            alice_hand_value (onehandcalc (pull_out_cards alice_card_selections alice_final_cards)
+            alice_hand_value (onehandcalc (pull_out_cards alice_card_selections alice_final_cards))
 
             (if (not bob_card_selections)
                 ;; Assert we aren't running on chain
                 (assert (not previous_validation_program)
-                    (list MAKE_MOVE (li bob_picks alice_cards bob_cards alice_hand_value) 0 "E move")
+                    (list MAKE_MOVE (list bob_picks alice_cards bob_cards alice_hand_value) 0 "E move")
                 )
                 (assign
                     result (list_compare alice_hand_value
@@ -62,6 +62,5 @@
                 )
             )
         )
-
     )
 )
