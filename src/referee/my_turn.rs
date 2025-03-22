@@ -725,8 +725,7 @@ impl MyTurnReferee {
             move_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
-                // XXX
-                previous_validation_program: solution_program.clone(),
+                previous_validation_program: None,
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
             },

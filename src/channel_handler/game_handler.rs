@@ -299,12 +299,18 @@ impl GameHandler {
             Node(driver_args).to_hex(allocator)?
         );
 
-        let run_result = run_code(
+        let run_result_e = run_code(
             allocator,
             driver_node,
             driver_args,
             get_their_turn_debug_flag(inputs),
-        )?;
+        );
+
+        if let Err(Error::ClvmErr(EvalErr(n, desc))) = &run_result_e {
+            debug!("error {desc} from their turn handler: {:?}", Program::from_nodeptr(allocator, *n));
+        }
+
+        let run_result = run_result_e?;
 
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
