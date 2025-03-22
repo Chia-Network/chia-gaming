@@ -339,7 +339,7 @@ pub fn curry_referee_puzzle(
 pub struct StateUpdateMoveArgs {
     pub state: Rc<Program>,
     pub mover_puzzle: Rc<Program>,
-    pub previous_validation_program: Rc<Program>,
+    pub previous_validation_program: Option<Rc<Program>>,
     pub solution: Rc<Program>,
     pub evidence: Rc<Program>,
 }
@@ -347,14 +347,20 @@ pub struct StateUpdateMoveArgs {
 impl StateUpdateMoveArgs {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
         let me_program = Program::from_nodeptr(allocator, me)?;
-        [
+        (
             &self.state,
-            &me_program,
-            &self.previous_validation_program,
-            &self.mover_puzzle,
-            &self.solution,
-            &self.evidence,
-        ]
+            (
+                &me_program,
+                (
+                    &self.previous_validation_program,
+                    [
+                        &self.mover_puzzle,
+                        &self.solution,
+                        &self.evidence,
+                    ]
+                )
+            )
+        )
         .to_clvm(allocator)
         .into_gen()
     }

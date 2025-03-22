@@ -8,11 +8,37 @@
 (import std.popcount)
 (import std.if_any_fail)
 (import std.and)
+(import std.map)
 
 ; Bob challenging
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_picks and alice's selections
 ; evidence is Bob's card selections
+(defun list-to-pair ((a b)) (c a b))
+
+(defun indices_to_bitfield_inner (mylist index)
+    (if (not mylist)
+        0
+        (= (f mylist) index)
+        (logior 1 (lsh (indices_to_bitfield_inner (r mylist) (+ index 1)) 1))
+        (lsh (indices_to_bitfield_inner mylist (+ index 1)) 1)
+    )
+)
+
+(defun single-byte (raw-indices)
+    (if raw-indices
+        (assign
+            indices-len (strlen raw-indices)
+            (substr raw-indices (- indices-len 1) indices-len)
+        )
+        0x00
+    )
+)
+
+(defun indices_to_bitfield (mylist)
+    (single-byte (indices_to_bitfield_inner mylist 0))
+)
+
 (export (mod_hash (old_state move next_validation_hash bob_share previous_validation_hash
     mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
     (@ state (bob_picks (alice_cards bob_cards) alice_commit)) me previous_validation_program mover_puzzle solution bob_card_selections)
@@ -26,7 +52,7 @@
 
             (alice_final_cards bob_final_cards) (split_cards_inner bob_picks bob_cards &rest (split_cards alice_picks alice_cards))
 
-            alice_hand_value (onehandcalc (pull_out_cards alice_card_selections alice_final_cards)
+            alice_hand_value (onehandcalc (map list-to-pair (pull_out_cards alice_card_selections alice_final_cards)))
 
             (if_any_fail
                 (= (sha256 alice_salted_picks) alice_commit)
@@ -49,7 +75,7 @@
                     )
                 )
                 (list SLASH () "E slash")
-                (list MAKE_MOVE (li bob_picks alice_cards bob_cards alice_hand_value) 0 "E move")
+                (list MAKE_MOVE (li bob_picks alice_card_selections (indices_to_bitfield alice_cards) bob_cards alice_hand_value alice_final_cards bob_final_cards) 0 "E move")
             )
         )
     )

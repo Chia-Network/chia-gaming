@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 use std::rc::Rc;
 
 use clvmr::{NodePtr, run_program};
+use clvmr::reduction::EvalErr;
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 use log::debug;
@@ -735,8 +736,7 @@ impl TheirTurnReferee {
             move_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
-                // XXX
-                previous_validation_program: solution_program.clone(),
+                previous_validation_program: None,
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
             },
@@ -754,13 +754,17 @@ impl TheirTurnReferee {
 
         debug!("validator program {:?}", validation_program);
         debug!("validator args {:?}", validator_full_args);
-        let raw_result = run_program(
+        let raw_result_p = run_program(
             allocator.allocator(),
             &chia_dialect(),
             validation_program_nodeptr,
             validator_full_args_node,
             0,
-        ).into_gen()?;
+        ).into_gen();
+        if let Err(Error::ClvmErr(EvalErr(n, e))) = &raw_result_p {
+            debug!("validator error {e} {:?}", Program::from_nodeptr(allocator, *n));
+        }
+        let raw_result = raw_result_p?;
         let pres = Program::from_nodeptr(allocator, raw_result.1)?;
         debug!("validator result {pres:?}");
 

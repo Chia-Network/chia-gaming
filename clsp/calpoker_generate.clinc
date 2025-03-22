@@ -12,6 +12,7 @@
 (import std.append)
 (import std.relops)
 (import std.list_compare)
+(import std.deep_compare)
 (import handcalc exposing handcalc)
 (import onchain.calpoker.onehandcalc exposing onehandcalc)
 (import onchain.game_codes)
@@ -133,6 +134,7 @@
                 my_hand_value
                 bob_hand_value
                 win_result
+                "D their turn result"
             )
             ()
             (curry calpoker_alice_driver_e (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_selects))) split)
@@ -243,10 +245,10 @@
     (assign
         alice_picks (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
-        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_all_cards))
+        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (map make_card bob_cards)))
         (list MAKE_MOVE
-            (list (indices_to_bitfield bob_picks) alice_picks bob_selects alice_selects
-                    bob_hand_value alice_hand_value)
+            (list bob_picks alice_selects (indices_to_bitfield bob_selects)
+                    bob_hand_value alice_hand_value (deep_compare (/ amount 2) split) "E their turn result")
             (list bob_selects)
         )
     )
