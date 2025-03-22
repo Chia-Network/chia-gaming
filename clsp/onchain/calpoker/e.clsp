@@ -1,8 +1,6 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.onehandcalc)
-(import onchain.calpoker.make_card)
-(import onchain.calpoker.arrange_cards)
 (import onchain.game_codes)
 (import std.list_compare)
 (import std.assert)
@@ -30,38 +28,29 @@
 
             alice_hand_value (onehandcalc (pull_out_cards alice_card_selections alice_final_cards)
 
-            (if (not bob_card_selections)
-                ;; Assert we aren't running on chain
-                (assert (not previous_validation_program)
-                    (list MAKE_MOVE (li bob_picks alice_cards bob_cards alice_hand_value) 0 "E move")
-                )
-                (assign
-                    result (list_compare alice_hand_value
-                                        (onehandcalc (pull_out_cards bob_card_selections bob_final_cards)))
-                    correct-mover-share
-                        (if_any_fail
-                            (= (sha256 alice_salted_picks) alice_commit)
-                            (= (popcount alice_picks) 4)
-                            (<= bob_share
-                                (if (not result)
-                                    (/ amount 2)
-                                    (if (= result 1)
-                                        amount
-                                        0
-                                    )
+            (if_any_fail
+                (= (sha256 alice_salted_picks) alice_commit)
+                (= (popcount alice_picks) 4)
+                (if (not bob_card_selections)
+                    ;; Assert we aren't running on chain
+                    (not previous_validation_program)
+                    (assign
+                        result (list_compare alice_hand_value (onehandcalc
+                                (pull_out_cards bob_card_selections bob_final_cards)))
+                        (<= bob_share
+                            (if (not result)
+                                (/ amount 2)
+                                (if (= result 1)
+                                    amount
+                                    0
                                 )
                             )
-                            0
-                            1
                         )
-
-                    (if correct-mover-share
-                        (list MAKE_MOVE 0 0 "E move evidence")
-                        (list SLASH () "E slash")
                     )
                 )
+                (list SLASH () "E slash")
+                (list MAKE_MOVE (li bob_picks alice_cards bob_cards alice_hand_value) 0 "E move")
             )
         )
-
     )
 )
