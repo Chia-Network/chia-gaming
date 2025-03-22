@@ -1,6 +1,7 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.onehandcalc)
+(import onchain.calpoker.arrange_cards)
 (import onchain.game_codes)
 (import std.list_compare)
 (import std.assert)
@@ -9,6 +10,7 @@
 (import std.if_any_fail)
 (import std.and)
 (import std.map)
+(import std.li)
 
 ; Bob challenging
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
@@ -62,7 +64,7 @@
                     (not previous_validation_program)
                     (assign
                         result (list_compare alice_hand_value (onehandcalc
-                                (pull_out_cards bob_card_selections bob_final_cards)))
+                                (map list-to-pair (pull_out_cards (indices_to_bitfield bob_card_selections) bob_final_cards))))
                         (<= bob_share
                             (if (not result)
                                 (/ amount 2)
@@ -75,7 +77,7 @@
                     )
                 )
                 (list SLASH () "E slash")
-                (list MAKE_MOVE (li bob_picks alice_card_selections (indices_to_bitfield alice_cards) bob_cards alice_hand_value alice_final_cards bob_final_cards) 0 "E move")
+                (list MAKE_MOVE (li bob_picks alice_card_selections (indices_to_bitfield alice_cards) bob_cards alice_hand_value alice_final_cards bob_final_cards) bob_share "E move")
             )
         )
     )
