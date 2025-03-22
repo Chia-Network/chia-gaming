@@ -56,10 +56,12 @@
 
             alice_hand_value (onehandcalc (map list-to-pair (pull_out_cards alice_card_selections alice_final_cards)))
 
+            potential-move (list MAKE_MOVE (list bob_picks alice_card_selections (indices_to_bitfield alice_cards) bob_cards alice_hand_value alice_final_cards bob_final_cards) bob_share)
+
             (if (not bob_card_selections)
                 ;; Assert we aren't running on chain
                 (if (not previous_validation_program)
-                    (list MAKE_MOVE (list bob_picks alice_card_selections alice_cards bob_cards alice_hand_value alice_final_cards bob_final_cards) bob_share)
+                    potential-move
                     (x "previous validation program was" previous_validation_program)
                 )
                 (assign
@@ -84,7 +86,7 @@
                         )
 
                     (if correct-mover-share
-                        (list MAKE_MOVE (list bob_picks alice_card_selections alice_cards bob_cards alice_hand_value alice_final_cards bob_final_cards) bob_share)
+                        potential-move
                         (list SLASH () "E slash")
                     )
                 )
