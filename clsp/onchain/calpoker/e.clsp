@@ -59,7 +59,7 @@
             (if (not bob_card_selections)
                 ;; Assert we aren't running on chain
                 (if (not previous_validation_program)
-                    (list MAKE_MOVE (list bob_picks alice_card_selections alice_cards bob_cards alice_hand_value alice_final_cards bob_final_cards "E move") bob_share)
+                    (list MAKE_MOVE (list bob_picks alice_card_selections alice_cards bob_cards alice_hand_value alice_final_cards bob_final_cards) bob_share)
                     (x "previous validation program was" previous_validation_program)
                 )
                 (assign
@@ -84,7 +84,7 @@
                         )
 
                     (if correct-mover-share
-                        (list MAKE_MOVE (list bob_picks alice_card_selections alice_cards bob_cards alice_hand_value alice_final_cards bob_final_cards "E move evidence") bob_share)
+                        (list MAKE_MOVE (list bob_picks alice_card_selections alice_cards bob_cards alice_hand_value alice_final_cards bob_final_cards) bob_share)
                         (list SLASH () "E slash")
                     )
                 )
