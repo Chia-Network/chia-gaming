@@ -249,6 +249,7 @@ impl MyTurnReferee {
             &initial_move,
             game_start_info.initial_max_move_size,
             None,
+            game_start_info.initial_validation_program.clone(),
             &vi_hash,
             // Special for start: nobody can slash the first turn and both sides need to
             // compute the same value for amount to sign.  The next move will set mover share
@@ -464,6 +465,7 @@ impl MyTurnReferee {
             &result.game_move,
             max_move_size,
             Some(&args.game_move.validation_info_hash),
+            result.outgoing_move_state_update_program.clone(),
             &validation_info_hash.hash(),
             None,
             true,
@@ -722,6 +724,7 @@ impl MyTurnReferee {
             timeout: self.fixed.timeout.clone(),
             max_move_size: self.state.max_move_size(),
             referee_hash: new_puzzle_hash.clone(),
+            validation_program: outgoing_state_update_program.clone(),
             move_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
@@ -730,35 +733,14 @@ impl MyTurnReferee {
                 solution: solution_program,
             },
         };
-        let outgoing_state_update_program_mod_hash = outgoing_state_update_program.hash();
-        debug!("state_update_program_mod_hash {outgoing_state_update_program_mod_hash:?}");
-        let validation_program_nodeptr = outgoing_state_update_program.to_nodeptr(allocator)?;
-        let validator_full_args_node = validator_move_args.to_nodeptr(
+        let result = validator_move_args.run(
             allocator,
-            validation_program_nodeptr,
-            PuzzleHash::from_hash(outgoing_state_update_program_mod_hash.clone()),
+            &puzzle_args,
+            &self.fixed.my_identity,
+            self.fixed.referee_coin_puzzle_hash.hash(),
+            self.state_number,
+            evidence,
         )?;
-        let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
-
-        debug!("validator program {:?}", outgoing_state_update_program);
-        debug!("validator args {:?}", validator_full_args);
-        let raw_result_e = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
-            validation_program_nodeptr,
-            validator_full_args_node,
-            0,
-        ).into_gen();
-        if let Err(Error::ClvmErr(EvalErr(x, ty))) = &raw_result_e {
-            let dis = Program::from_nodeptr(allocator, *x)?;
-            debug!("error {ty} from clvm during validation: {dis:?}");
-        }
-        let raw_result = raw_result_e?;
-        let pres = Program::from_nodeptr(allocator, raw_result.1);
-
-        debug!("validator result {pres:?}");
-        let result = StateUpdateResult::from_nodeptr(allocator, raw_result.1)?;
-
         match result {
             StateUpdateResult::Slash(_) => {
                 Err(Error::StrErr("our own move was slashed by us".to_string()))
