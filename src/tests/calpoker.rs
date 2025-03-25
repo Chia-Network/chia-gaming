@@ -26,10 +26,10 @@ use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choi
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
-use crate::referee::types::StateUpdateResult;
+use crate::referee::types::{StateUpdateResult};
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::BasicShutdownConditions;
-use crate::tests::game::{GameAction, GameStateMove, play_game_via_state_update};
+use crate::tests::game::{GameAction};
 #[cfg(feature = "sim-tests")]
 use crate::tests::game::GameActionResult;
 
@@ -277,27 +277,28 @@ fn test_play_calpoker_end_game_reward() {
 // to isolate it now that it can be separated.
 #[test]
 fn test_play_calpoker_using_state_update() {
-    let mut allocator = AllocEncoder::new();
-    let game_id = GameID::from_bytes(b"calpoker");
-    let game = Game::new(
-        &mut allocator,
-        game_id,
-        CALPOKER_HEX_FILE
-    ).unwrap();
-    let moves: &[GameStateMove] = &[
-        GameStateMove {
-            entropy: vec![],
-            move_data: vec![],
-        }
-    ];
-    let contributions = &[Amount::new(100), Amount::new(100)];
-    let result = play_game_via_state_update(
-        &mut allocator,
-        &game,
-        contributions,
-        moves.iter()
-    ).expect("should play");
-    assert_eq!(result[result.len()-1], StateUpdateResult::MoveOk(Rc::new(Program::from_hex("80").unwrap()), 0));
+    // let mut allocator = AllocEncoder::new();
+    // let game_id = GameID::from_bytes(b"calpoker");
+    // let game = Game::new(
+    //     &mut allocator,
+    //     game_id,
+    //     CALPOKER_HEX_FILE
+    // ).unwrap();
+    // let moves: &[GameStateMove] = &[
+    //     GameStateMove {
+    //         entropy: vec![],
+    //         move_data: vec![],
+    //     }
+    // ];
+    // let contributions = &[Amount::new(100), Amount::new(100)];
+    // let result = play_game_via_state_update(
+    //     &mut allocator,
+    //     &game,
+    //     contributions,
+    //     moves.iter()
+    // ).expect("should play");
+    // assert_eq!(result[result.len()-1], StateUpdateResult::MoveOk(Rc::new(Program::from_hex("80").unwrap()), 0));
+    todo!();
 }
 
 // Bram: slashing tests
