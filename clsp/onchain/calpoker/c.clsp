@@ -24,14 +24,14 @@
 
 (export (mod_hash
         (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
-            MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH
-            state previous_validation_program mover_puzzle solution evidence))
+            MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+            state previous_validation_program mover_puzzle solution evidence)
+        
     (assign
-        blarf (print "hi")
         ;TODO print old_state
-        new_state (list
-                (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT))
+        new_state (c
                 (substr MOVE 16 48)
+                (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT))
             )
         alice_commit (f state)
         bob_seed (f (r state))
@@ -41,5 +41,6 @@
             (list SLASH () "C" MOVE "with alice commit" alice_commit MAX_MOVE_SIZE new_state)
             (list MAKE_MOVE dhash new_state 1 "C")
         )
-    )
+        ;(list alice_commit bob_seed)
+        )
 )

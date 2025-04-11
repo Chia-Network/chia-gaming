@@ -45,8 +45,8 @@
 
 (export (mod_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH
-        (bob_picks alice_cards bob_cards alice_commit) previous_validation_program mover_puzzle solution bob_card_selections))
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        (bob_picks alice_cards bob_cards alice_commit) previous_validation_program mover_puzzle solution bob_card_selections)
     (if (not (= (strlen MOVE) 18))
         (list SLASH () "E slash wrong MOVE size" MOVE)
 
