@@ -16,6 +16,8 @@
 ; state is (Bob's picks (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_picks and alice's selections
 ; evidence is Bob's card selections
+
+; TODO: move helper functions to another file
 (defun list-to-pair ((a b)) (c a b))
 
 (defun indices_to_bitfield_inner (mylist index)
@@ -41,16 +43,17 @@
     (single-byte (indices_to_bitfield_inner mylist 0))
 )
 
-(export (mod_hash (old_state move next_validation_hash bob_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
-    (@ state (bob_picks (alice_cards bob_cards) alice_commit)) me previous_validation_program mover_puzzle solution bob_card_selections)
-    (if (not (= (strlen move) 18))
-        (list SLASH () "E slash wrong move size" move)
+(export (mod_hash
+    (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH
+        (bob_picks alice_cards bob_cards alice_commit) previous_validation_program mover_puzzle solution bob_card_selections))
+    (if (not (= (strlen MOVE) 18))
+        (list SLASH () "E slash wrong MOVE size" MOVE)
 
         (assign
-            alice_salted_picks (substr move 0 17)
-            alice_picks (substr move 16 17)
-            alice_card_selections (substr move 17 18)
+            alice_salted_picks (substr MOVE 0 17)
+            alice_picks (substr MOVE 16 17)
+            alice_card_selections (substr MOVE 17 18)
 
             (alice_final_cards bob_final_cards) (split_cards_inner bob_picks bob_cards &rest (split_cards alice_picks alice_cards))
 
@@ -61,15 +64,15 @@
                 (= (popcount alice_picks) 4)
                 (if (not bob_card_selections)
                     ;; Assert we aren't running on chain
-                    (not previous_validation_program)
+                    (not WAITER_PUZZLE_HASH)
                     (assign
                         result (list_compare alice_hand_value (onehandcalc
                                 (map list-to-pair (pull_out_cards (indices_to_bitfield bob_card_selections) bob_final_cards))))
-                        (<= bob_share
+                        (<= MOVER_SHARE
                             (if (not result)
-                                (/ amount 2)
+                                (/ AMOUNT 2)
                                 (if (= result 1)
-                                    amount
+                                    AMOUNT
                                     0
                                 )
                             )
@@ -77,7 +80,8 @@
                     )
                 )
                 (list SLASH () "E slash")
-                (list MAKE_MOVE (li bob_picks alice_card_selections (indices_to_bitfield alice_cards) bob_cards alice_hand_value alice_final_cards bob_final_cards) bob_share "E move")
+                (list MAKE_MOVE 0 (li bob_picks alice_card_selections (indices_to_bitfield alice_cards)
+                    bob_cards alice_hand_value alice_final_cards bob_final_cards MOVER_SHARE) 0 "E move")
             )
         )
     )

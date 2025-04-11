@@ -8,6 +8,8 @@
 (import std.condition_codes)
 (import std.match)
 (import std.li)
+(import std.and)
+(import std.if_any_fail)
 (import onchain.game_codes)
 
 ;
@@ -36,6 +38,7 @@
 ;     state me mover_puzzle solution evidence
 ; )
 ;
+; all_args is passed into the validation programs (a-e)
 (export (@ all_args ((MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH) . args))
     (if (not args)
@@ -48,7 +51,7 @@
         (l (f (r (r args))))
         ; slash
         (assign
-            (previous_state me previous_validation_program mover_puzzle solution evidence) args
+            (previous_state previous_validation_program mover_puzzle solution evidence) args
             previous_validation_program_hash (shatree previous_validation_program)
             
             (assert
@@ -56,35 +59,17 @@
                 (= PREVIOUS_VALIDATION_INFO_HASH (sha256 previous_validation_program_hash (shatree
                         previous_state)))
 
-                ; Intention here:
-                ; An empty remark indicating slash
-                ; The conditions returned by previous_validation_program
-                ; The conditions returned by mover_puzzle
-                (c (list REMARK)
-                    (concat
-                        (a previous_validation_program
-                            (c previous_validation_program_hash
-                                (c
-                                    (list
-                                        ;; The items from the onchain validators in
-                                        ;; clsp/onchain/calpoker/a-e.clsp
-                                        ;; (and above at line 33)
-                                        MOVE
-                                        VALIDATION_INFO_HASH
-                                        MOVER_SHARE
-                                        PREVIOUS_VALIDATION_INFO_HASH
-                                        MOVER_PUZZLE_HASH
-                                        WAITER_PUZZLE_HASH
-                                        AMOUNT
-                                        TIMEOUT
-                                        MAX_MOVE_SIZE
-                                        MOD_HASH ; referee_hash
-                                    )
-                                    args
-                                )
-                            )
+                (assign (validation_type new_validation_program_hash new_state new_max_move_size)
+                    (a previous_validation_program (list previous_validation_program_hash all_args))
+
+                    (if (= validation_type MAKE_MOVE)
+                        (if_any_fail
+                            (= new_max_move_size MAX_MOVE_SIZE)
+                            (= VALIDATION_INFO_HASH (sha256 new_validation_program_hash (shatree new_state)))
+                            (li (list REMARK) &rest (a mover_puzzle solution))
+                            (x)
                         )
-                        (a mover_puzzle solution)
+                        (li (list REMARK) &rest (concat new_validation_program_hash (a mover_puzzle solution)))
                     )
                 )
             )
