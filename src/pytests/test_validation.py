@@ -139,11 +139,11 @@ def print_validator_output(args):
     for name, arg in zip(output_names, args):
         print(f"    {name}: {arg}")
 
-def run_one_step(validator_hash, validator, amount, move, max_move_size, mover_share, state, evidence, step_n,
+def run_one_step(validator_hash, validator, amount: int, move, max_move_size: int, mover_share, state, evidence, step_n: int,
                  expected_slash: bool = False, on_chain: bool = False):
     # convert args & curry, etc
 
-    assert(expected_slash == False or expected_slash == True)
+    assert(expected_slash == False or expected_slash == True, expected_slash)
     # TODO: See if compose_validator_args will save code later XOR delete
     # WAITER_PUZZLE_HASH doubles as an "on_chain" indicator
     args = [validator_hash,
@@ -155,7 +155,9 @@ def run_one_step(validator_hash, validator, amount, move, max_move_size, mover_s
 
     try:
         # print("VALIDATOR first bytes: ", bytes(validator)[:32])
-        ret_val = validator.run(Program.to(args))
+        # largs = list
+        print("ARGS", args)
+        ret_val = validator.run(args)
     except Exception as e:
         print(e)
         assert(not expected_slash)
@@ -164,15 +166,17 @@ def run_one_step(validator_hash, validator, amount, move, max_move_size, mover_s
     # print("    (move_type, a, b, c)")
     # print(f"    {ret_val.as_python()}")
     print_validator_output(ret_val.as_python())
-    (move_type, a, b, c, *_) = ret_val.as_python()
+    
+    foo = ret_val.as_python()
+    (move_type, a, *_) = foo
     if move_type == MoveCode.SLASH:
         assert(expected_slash)
         return a
     else:
         assert(not expected_slash)
-        return (a, b, c)
+        return foo[1:]
 
-def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script, n=0):
+def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
     print(f"XXX {remaining_script}")
     if isinstance(remaining_script[0][0], list):
         for t in remaining_script[0]:
@@ -180,8 +184,10 @@ def run_game(validator_program_library, amount, validator_hash, state, max_move_
         return
 
     (move, mover_share, evidence, expected_slash, on_chain, *rest_of_args) = remaining_script[0]
-    print(f"\n    ---- Step {prog_names[n]}: ----")
+    print(f"\n    ---- Step {n}: ----")
     print(f"""
+        remaining_script: {remaining_script}
+        remaining_script[0]: {remaining_script[0]}
         move={move}
         max_move_size={max_move_size}
         mover_share={mover_share}
@@ -198,7 +204,7 @@ def run_game(validator_program_library, amount, validator_hash, state, max_move_
         raise
     print(f"full_return_val='{return_val}'")
     if not expected_slash:
-        (new_validation_program_hash, new_state, new_max_move_size) = return_val
+        (new_validation_program_hash, new_state, new_max_move_size, *_) = return_val
         new_max_move_size = int.from_bytes(new_max_move_size)
         print(f"YYY (new_validation_program_hash, new_state, new_max_move_size) = {(new_validation_program_hash, new_state, new_max_move_size)}")
         if len(remaining_script) > 1:
