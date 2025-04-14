@@ -236,6 +236,13 @@ def run_game(game_environment: GameEnvironment, last_move: Move, remaining_scrip
             if len(remaining_script) > 0:
                 run_game(game_environment, return_val, remaining_script[1:])
                 # run_game(validator_program_library, amount, new_validation_program_hash, new_state, new_max_move_size, remaining_script[1:])
+        if return_val.move_code == MoveCode.SLASH:
+            # Done with run, we got slashed.
+            # Figure out something to return from here when slashed.
+            return
+
+        # It's a move, reassign it.
+        last_move = return_val
 
 
 def bitfield_to_byte(x):
@@ -279,7 +286,7 @@ def test_run_a():
 
     # Move list entries:
     # (move, mover_share, evidence, expected_slash, on_chain)
-    first_move = alice_image
+    first_move = sha256(alice_seed).digest()
 
     move_list = [
         (first_move, 0, None, MoveCode.MAKE_MOVE, False),
