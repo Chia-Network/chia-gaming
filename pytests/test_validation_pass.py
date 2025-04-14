@@ -288,12 +288,15 @@ def test_run_a():
     # (move, mover_share, evidence, expected_slash, on_chain)
     first_move = sha256(alice_seed).digest()
 
+    # [43, 4, 51, 225, 61, 73, 50, 14, 241, 13, 228, 2, 91, 121, 59, 51, 170, 205]
+    bob_selects_byte = bytes([205])
+
     move_list = [
         (first_move, 0, None, MoveCode.MAKE_MOVE, False),
         (bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
         (alice_seed + sha256(alice_picks_salt + alice_picks_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
         (bob_picks_byte, 0, None, MoveCode.MAKE_MOVE, False),
-        (alice_picks_salt + alice_picks_byte + bob_picks_byte, 0, None, MoveCode.MAKE_MOVE, False)
+        (alice_picks_salt + alice_picks_byte + bob_selects_byte, 0, None, MoveCode.MAKE_MOVE, False)
     ]
     env = GameEnvironment(validator_program_library, amount)
     #move_zero = Move(step_a_hash, None, 32,)
