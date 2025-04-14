@@ -228,7 +228,7 @@ def test_run_a():
     bob_seed = b"0bob456789abcdef"
     #alice_bitfield = [0, 0, 0, 0, 1, 1, 1, 1]
     #bob_bitfield = [1, 0, 1, 0, 1, 0, 1, 0]
-    alice_picks_byte = 0b00001111.to_bytes(1, byteorder='big') #bitfield_to_byte(alice_bitfield)
+    alice_picks_byte = 0b01010101.to_bytes(1, byteorder='big') #bitfield_to_byte(alice_bitfield)
     bob_picks_byte = 0b10101010.to_bytes(1, byteorder='big') #bitfield_to_byte(bob_bitfield)
     print(f"ALICE PICKS: {alice_picks_byte} BOB PICKS: {bob_picks_byte}")
 
