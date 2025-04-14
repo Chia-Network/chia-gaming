@@ -28,8 +28,6 @@ import traceback
 
 from enum import Enum
 
-test_prog = load_clvm("test.clsp", include_standard_libraries=True, recompile=True)
-
 calpoker_clsp_dir = Path("../clsp/onchain/calpoker/")
 
 # List of validator program names, sans "clsp" extension

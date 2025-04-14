@@ -120,10 +120,7 @@ def load_serialized_clvm(
                     search_paths = [full_path.parent]
                     if include_standard_libraries:
                         # we can't get the dir, but we can get a file then get its parent.
-                        chia_puzzles_path = pathlib.Path(
-                            "/Users/aqk/clvm_tools_rs/resources/tests/module"
-                            #pkg_resources.resource_filename(__name__, "__init__.py")
-                        )
+                        chia_puzzles_path = pathlib.Path(os.path.dirname(__file__)) / "../clsp"
                         search_paths.append(chia_puzzles_path)
                         print(f"search_paths={search_paths}")
                     compile_clvm(full_path, output, search_paths=search_paths)
