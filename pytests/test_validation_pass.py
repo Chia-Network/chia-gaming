@@ -333,12 +333,6 @@ def test_run_a():
                 (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, MoveCode.SLASH, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
                 (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
                 (alice_picks_salt + alice_picks_byte + alice_bad_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False), # The game proceeds as expected, until step E. Alice
-            ],
-            [
-                # Slash fail cases
-                (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, MoveCode.SLASH, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
-                (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
-                (alice_picks_salt + alice_picks_byte + alice_bad_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False), # The game proceeds as expected, until step E. Alice
             ]
         ]
     ]
