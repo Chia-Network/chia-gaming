@@ -1,3 +1,4 @@
 *.hex
 tla_plus/states
 tla_plus/*_TTrace*
+__pycache__/
