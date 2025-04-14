@@ -259,7 +259,7 @@ def test_run_a():
         (bob_seed, 0, None, False, False),
         (alice_seed + sha256(alice_picks_salt + alice_picks_byte).digest(), 0, None, False, False),
         (bob_picks_byte, 0, None, False, False),
-        (alice_picks_salt + alice_picks_bytes + bob_picks_byte, 0, None, False, False)
+        (alice_picks_salt + alice_picks_byte + bob_picks_byte, 0, None, False, False)
     ]
 
     run_game(calpoker_validator_programs, 200, step_a_hash, None, 32, move_list)
