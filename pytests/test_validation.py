@@ -36,7 +36,7 @@ class Turn(Enum):
     TURN_E = 5
 
 
-calpoker_clsp_dir = Path("../../clsp/onchain/calpoker/")
+calpoker_clsp_dir = Path("../clsp/onchain/calpoker/")
 
 # List of validator program names, sans "clsp" extension
 prog_names = ["a", "b", "c", "d", "e"]
@@ -50,7 +50,7 @@ def create_validator_program_library():
     return lib
 
 calpoker_validator_programs = create_validator_program_library()
-print(calpoker_validator_programs)
+print("calpoker_validator_programs", calpoker_validator_programs)
 
 # validator_mod_hash
 # replacements: pass in values that you want to set to non-default values
@@ -177,7 +177,8 @@ def run_one_step(validator_hash, validator, amount: int, move, max_move_size: in
         return foo[1:]
 
 def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
-    print(f"XXX {remaining_script}")
+    print(f"111 {validator_program_library}")
+    # print(f"XXX {remaining_script}")
     if isinstance(remaining_script[0][0], list):
         for t in remaining_script[0]:
             run_game(validator_program_library, amount, validator_hash, state, max_move_size, t, n+1)
