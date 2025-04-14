@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Dict, List, Tuple
 from pathlib import Path
 from hashlib import sha256
 from validator_hashes import program_hashes_hex
 from clvm_tools_rs import start_clvm_program
 from load_clvm import load_clvm
-
+from validator_output import MoveCode, Move, Slash, MoveOrSlash
+from clvm_types.sized_bytes import bytes32
+from dataclasses import dataclass
 from clvm_types.program import Program
 import traceback
 
@@ -28,33 +30,50 @@ from enum import Enum
 
 test_prog = load_clvm("test.clsp", include_standard_libraries=True, recompile=True)
 
-class Turn(Enum):
-    TURN_A = 1
-    TURN_B = 2
-    TURN_C = 3
-    TURN_D = 4
-    TURN_E = 5
-
-
 calpoker_clsp_dir = Path("../clsp/onchain/calpoker/")
 
 # List of validator program names, sans "clsp" extension
 prog_names = ["a", "b", "c", "d", "e"]
 
+@dataclass(frozen=True)
+class ValidatorInfo:
+    program: Program
+    name: str
+
+
 def create_validator_program_library():
+    """
+    Gather CalPoker validator progarms and their hashes, allowing us to check the hash
+    that is output as the next validation program hash (called "bhash" in {a,b,c,d,e}.clsp)
+    """
     # TODO: Use the clsp feature that exports module hash
     lib = {}
     for hex_key, prog_name in zip(program_hashes_hex, prog_names):
-        lib[bytes.fromhex(hex_key)] = load_clvm(calpoker_clsp_dir / prog_name, recompile=False)
+        lib[bytes.fromhex(hex_key)] = ValidatorInfo(load_clvm(calpoker_clsp_dir / prog_name, recompile=False), prog_name)
     # TODO: sanity check step_a_hash = step_a.get_tree_hash()
     return lib
 
-calpoker_validator_programs = create_validator_program_library()
-print("calpoker_validator_programs", calpoker_validator_programs)
+validator_program_library = create_validator_program_library()
+
+def construct_validator_output(prog: Program) -> Move | Slash:
+    clvm_list = prog.as_python()
+    if len(clvm_list) < 2:
+        raise ValueError(f"Expected MoveType and at least one data item. Got: {prog}")
+    move_code = MoveCode(Program.to(clvm_list[0]).as_int())
+    max_move_size = Program.to(clvm_list[3]).as_int()
+    if move_code == MoveCode.MAKE_MOVE:
+        if int(max_move_size) < 0:
+            raise("Negative max_move_size")
+        return Move(move_code, bytes32(clvm_list[1]), clvm_list[2], max_move_size, Program.to(clvm_list[4:]))
+    else:
+        print(f"AAA {clvm_list}")
+        assert move_code == MoveCode.SLASH
+        return Slash(move_code, Program.to(clvm_list[1]), Program.to(clvm_list[2:]))
+
 
 # validator_mod_hash
 # replacements: pass in values that you want to set to non-default values
-def compose_validator_args(validator_mod_hash, replacements):
+def compose_validator_args(validator_mod_hash): # , replacements):
     """
     (mod_hash
         (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
@@ -96,7 +115,11 @@ def compose_validator_args(validator_mod_hash, replacements):
     return [validator_mod_hash, curry_args, previous_state, previous_validation_program, mover_puzzle, solution, evidence]
 
 
-
+game_arg_names = "MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH".lower().split()
+validator_arg_names = [
+        "validator_hash",
+        "arglist",
+        "previous_state", "previous_validation_program", "mover_puzzle", "solution", "evidence"]
 
 #def test_validate_picks():
 # 1. Pass in initial state and a series of moves
@@ -106,14 +129,6 @@ def compose_validator_args(validator_mod_hash, replacements):
 
 
 
-class MoveCode(Enum):
-    MAKE_MOVE = 0
-    ACCEPT = 1
-    SLASH = 2
-    TIMEOUT = 3
-    SLASHED = 4
-    TIMEDOUT = 5
-
 """
 (mod_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
@@ -122,13 +137,9 @@ class MoveCode(Enum):
 
 """
 
-def print_validator_input_args(args):
-    validator_arg_names = [
-        "validator_hash",
-        "arglist",
-        "previous_state", "previous_validation_program", "mover_puzzle", "solution", "evidence"]
+def print_validator_input_args(args, arg_names):
     print ("PYTHON INPUT ARGS: ")
-    for name, arg in zip(validator_arg_names, args):
+    for name, arg in zip(arg_names, args):
         print(f"{name}: {arg}")
     print ("CLVM INPUT ARGS: ")
     print(Program.to(args))
@@ -139,77 +150,94 @@ def print_validator_output(args):
     for name, arg in zip(output_names, args):
         print(f"    {name}: {arg}")
 
-def run_one_step(validator_hash, validator, amount: int, move, max_move_size: int, mover_share, state, evidence, step_n: int,
-                 expected_slash: bool = False, on_chain: bool = False):
-    # convert args & curry, etc
 
-    assert(expected_slash == False or expected_slash == True, expected_slash)
+#def run_one_step(validator_hash, validator, amount: int, move, max_move_size: int, mover_share, state, evidence,
+#                 expected_move_type: MoveCode, on_chain: bool) -> MoveOrSlash:
+
+def run_one_step(
+                game_env, # amount
+                script, # (move, mover_share, evidence, expected_move_type, on_chain)
+                last_move, # (next_validator_hash, next_max_move_size, state)
+                validator_program,
+                expected_move_type):
+
     # TODO: See if compose_validator_args will save code later XOR delete
     # WAITER_PUZZLE_HASH doubles as an "on_chain" indicator
-    args = [validator_hash,
-                            [None, on_chain, None, amount, None, None,
-                            move, max_move_size, None, mover_share, None],
-                            state, validator, None, None, evidence]
-    #print(f"VALIDATOR ARGS FOR '{prog_names[step_n]}'")
-    #print_validator_input_args(args) # problem here running e: can't cast 5-tuple to SExp
 
+    move_to_make = script[0]
+    mover_share = script[1]
+    evidence = script[2]
+    on_chain = script[4]
+    args = [last_move.next_validator_hash,
+                            [None, on_chain, None, game_env.amount, None, None,
+                            move_to_make, last_move.next_max_move_size, None, mover_share, None],
+                            last_move.state, validator_program, None, None, evidence]
     try:
-        # print("VALIDATOR first bytes: ", bytes(validator)[:32])
-        # largs = list
-        print("ARGS", args)
-        ret_val = validator.run(args)
+        print_validator_input_args(args[1], game_arg_names)
+        ret_val = validator_program.run(args)
     except Exception as e:
         print(e)
-        assert(not expected_slash)
+        assert expected_move_type == MoveCode.SLASH
         return None
-    # print(f"OUTPUT OF validator.run() is:")
-    # print("    (move_type, a, b, c)")
-    # print(f"    {ret_val.as_python()}")
-    print_validator_output(ret_val.as_python())
-    
-    foo = ret_val.as_python()
-    (move_type, a, *_) = foo
-    if move_type == MoveCode.SLASH:
-        assert(expected_slash)
-        return a
-    else:
-        assert(not expected_slash)
-        return foo[1:]
 
-def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
-    print(f"111 {validator_program_library}")
-    # print(f"XXX {remaining_script}")
-    if isinstance(remaining_script[0][0], list):
-        for t in remaining_script[0]:
-            run_game(validator_program_library, amount, validator_hash, state, max_move_size, t, n+1)
-        return
+    validator_output = construct_validator_output(ret_val)
+    print(f"validator_output.move_code={validator_output.move_code} expected_move_type={expected_move_type}")
+    print(f"ADAM {validator_output}")
+    assert validator_output.move_code == expected_move_type
+    return validator_output
 
-    (move, mover_share, evidence, expected_slash, on_chain, *rest_of_args) = remaining_script[0]
-    print(f"\n    ---- Step {n}: ----")
-    print(f"""
-        remaining_script: {remaining_script}
-        remaining_script[0]: {remaining_script[0]}
-        move={move}
-        max_move_size={max_move_size}
-        mover_share={mover_share}
-        evidence={evidence}
-        on_chain={on_chain}
-        rest_of_args={rest_of_args}""")
-    assert len(move) <= max_move_size
+@dataclass(frozen=True)
+class GameEnvironment:
+    validator_program_library: Dict[bytes32, ValidatorInfo]
+    amount: int
 
-    try:
-        #validator_hash, validator, amount, move, max_move_size, mover_share, state, evidence, step_n, expected_slash: bool, on_chain: bool 
-        return_val = run_one_step(validator_hash, validator_program_library[validator_hash], amount, move, max_move_size, mover_share, state, evidence, n, expected_slash, on_chain)
-    except Exception as e:
-        traceback.print_exc()
-        raise
-    print(f"full_return_val='{return_val}'")
-    if not expected_slash:
-        (new_validation_program_hash, new_state, new_max_move_size, *_) = return_val
-        new_max_move_size = int.from_bytes(new_max_move_size)
-        print(f"YYY (new_validation_program_hash, new_state, new_max_move_size) = {(new_validation_program_hash, new_state, new_max_move_size)}")
-        if len(remaining_script) > 1:
-            run_game(validator_program_library, amount, new_validation_program_hash, new_state, new_max_move_size, remaining_script[1:], n+1)
+
+# def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
+def run_game(game_environment: GameEnvironment, last_move: Move, remaining_script):
+    for script in remaining_script:
+        if isinstance(script, list):
+            run_game(game_environment, last_move, script)
+            return
+
+        # ENV: validator_program_library, amount,
+        # MOVE: validator_hash, state, max_move_size,
+        # t, n+1
+        (move, mover_share, evidence, expected_move_type, on_chain, *rest_of_args) = script
+        print(f"""
+            remaining_script: {remaining_script}
+            remaining_script[0]: {remaining_script[0]}
+            --
+            expected_move_type={expected_move_type}
+            move={move}
+            max_move_size={last_move.next_max_move_size}
+            mover_share={mover_share} # How much the player who is currently moving *would get* if the game is ended - comes from handler
+            evidence={evidence}
+            on_chain={on_chain}
+            rest_of_args={rest_of_args}
+
+    """)
+        assert len(move) <= last_move.next_max_move_size
+
+        try:
+            # return_val contains the new state, max_move_size ...
+            #def run_one_step(validator_hash, validator, amount: int, move, max_move_size: int, mover_share, state, evidence, step_n: int,
+                    #expected_move_type: MoveCode, on_chain: bool) -> MoveOrSlash:
+            validator_info = validator_program_library[last_move.next_validator_hash]
+            print(f"    ---- Running program {validator_info.name} ----")
+            return_val: MoveOrSlash = run_one_step(
+                game_environment, # amount
+                script, # (move, mover_share, evidence, expected_move_type, on_chain)
+                last_move, # (next_validator_hash, next_max_move_size, state)
+                validator_info.program,
+                expected_move_type)
+        except Exception as e:
+            traceback.print_exc()
+            raise
+        print(f"return_val='{return_val}'")
+        if expected_move_type == MoveCode.SLASH:
+            if len(remaining_script) > 0:
+                run_game(game_environment, return_val, remaining_script[1:])
+                # run_game(validator_program_library, amount, new_validation_program_hash, new_state, new_max_move_size, remaining_script[1:])
 
 
 def bitfield_to_byte(x):
@@ -231,6 +259,7 @@ def test_run_a():
     alice_picks_byte = 0b01010101.to_bytes(1, byteorder='big') #bitfield_to_byte(alice_bitfield)
     bob_picks_byte = 0b10101010.to_bytes(1, byteorder='big') #bitfield_to_byte(bob_bitfield)
     print(f"ALICE PICKS: {alice_picks_byte} BOB PICKS: {bob_picks_byte}")
+    amount = 200
 
     entropy_values = [
         bytes.fromhex("eb04c21e3ee58d1b494e0b5be68ee5e5ae5d4b7a0a01287005ff21e7b70c5ddc"),
@@ -255,14 +284,17 @@ def test_run_a():
     first_move = alice_image
 
     move_list = [
-        (first_move, 0, None, False, False),
-        (bob_seed, 0, None, False, False),
-        (alice_seed + sha256(alice_picks_salt + alice_picks_byte).digest(), 0, None, False, False),
-        (bob_picks_byte, 0, None, False, False),
-        (alice_picks_salt + alice_picks_byte + bob_picks_byte, 0, None, False, False)
+        (first_move, 0, None, MoveCode.MAKE_MOVE, False),
+        (bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
+        (alice_seed + sha256(alice_picks_salt + alice_picks_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
+        (bob_picks_byte, 0, None, MoveCode.MAKE_MOVE, False),
+        (alice_picks_salt + alice_picks_byte + bob_picks_byte, 0, None, MoveCode.MAKE_MOVE, False)
     ]
+    env = GameEnvironment(validator_program_library, amount)
+    #move_zero = Move(step_a_hash, None, 32,)
+    move_zero = Move(MoveCode.MAKE_MOVE, next_validator_hash=step_a_hash, state = Program.to(0), next_max_move_size=len(step_a_hash), extra_data=Program.to(0))
+    run_game(env, move_zero, move_list)
 
-    run_game(calpoker_validator_programs, 200, step_a_hash, None, 32, move_list)
 
 # types/blockchain_format/program.py:21:class Program(SExp):
 
