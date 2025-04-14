@@ -441,9 +441,6 @@ impl MessageHandler {
         let run_prog = self.0.to_nodeptr(allocator)?;
         let run_result = run_code(allocator, run_prog, args, false);
 
-        if let Err(Error::ClvmErr(EvalErr(n, e))) = &run_result {
-            debug!("message parser error {e}: {:?}", Program::from_nodeptr(allocator, *n));
-        }
         if run_result.is_err() {
             todo!();
             debug!("MESSAGE PARSER RETURNED ERROR {run_result:?}");

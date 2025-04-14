@@ -11,22 +11,19 @@
 
 ; Alice challenging
 ; state is the cards for both players and alice's card pick commitment
-; MOVE is Bob's picks
+; move is Bob's picks
 ; evidence is empty
-
-(export (mod_hash
-    (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (alice_commit alice_cards bob_cards) previous_validation_program mover_puzzle solution evidence)
+(export (mod_hash (old_state bob_picks new_validation_hash mover_share previous_validation_hash 
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
+    ((alice_cards bob_cards) alice_commit bob_seed) me previous_validation_program mover_puzzle solution evidence)
     (assign
-        bob_picks MOVE
-        old_state (list alice_commit alice_cards bob_cards)
-        new_state (list bob_picks alice_cards bob_cards alice_commit)
+        state (list bob_picks (list alice_cards bob_cards) alice_commit)
         (if_any_fail
             (= (strlen bob_picks) 1)
             (= (popcount bob_picks) 4)
-            (list SLASH () "D" old_state bob_picks MAX_MOVE_SIZE)
-            (list MAKE_MOVE ehash new_state 18 "D")
+            (= max_move_size 1)
+            (list SLASH () "D" old_state bob_picks max_move_size)
+            (list MAKE_MOVE state 18 "D")
         )
     )
 )

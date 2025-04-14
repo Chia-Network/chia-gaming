@@ -2,7 +2,7 @@
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
-use crate::common::types::{AllocEncoder, Error, PrivateKey, Program, PuzzleHash, Timeout};
+use crate::common::types::{AllocEncoder, PrivateKey, Program, PuzzleHash, Timeout};
 use crate::referee::types::{StateUpdateResult, RMFixed, InternalStateUpdateArgs};
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::ShutdownConditions;
@@ -37,7 +37,7 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
 };
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Amount, CoinString, IntoErr};
+use crate::common::types::{Amount, CoinString, Error, IntoErr};
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::Simulator;
@@ -227,111 +227,111 @@ pub fn new_channel_handler_game<R: Rng>(
     Ok((party, state_channel_coin))
 }
 
-// pub struct GameStateMove {
-//     pub entropy: Vec<u8>,
-//     pub move_data: Vec<u8>,
-//     pub state_update_program: StateUpdateProgram,
-// }
+pub struct GameStateMove {
+    pub entropy: Vec<u8>,
+    pub move_data: Vec<u8>,
+    pub state_update_program: StateUpdateProgram,
+}
 
-// pub fn play_game_via_state_update<'a, I: Iterator<Item = &'a GameStateMove>>(
-//     allocator: &mut AllocEncoder,
-//     game: &Game,
-//     contributions: &[Amount],
-//     moves: I
-// ) -> Result<Vec<StateUpdateResult>, Error> {
-//     // let seed: [u8; 32] = [0; 32];
-//     // let mut rng = ChaCha8Rng::from_seed(seed);
+pub fn play_game_via_state_update<'a, I: Iterator<Item = &'a GameStateMove>>(
+    allocator: &mut AllocEncoder,
+    game: &Game,
+    contributions: &[Amount],
+    moves: I
+) -> Result<Vec<StateUpdateResult>, Error> {
+    let seed: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed);
 
-//     // // Generate keys and puzzle hashes.
-//     // let my_private_key: PrivateKey = rng.gen();
-//     // let their_private_key: PrivateKey = rng.gen();
+    // Generate keys and puzzle hashes.
+    let my_private_key: PrivateKey = rng.gen();
+    let their_private_key: PrivateKey = rng.gen();
 
-//     // let identities = [
-//     //     ChiaIdentity::new(allocator, my_private_key).expect("should generate"),
-//     //     ChiaIdentity::new(allocator, their_private_key).expect("should generate"),
-//     // ];
+    let identities = [
+        ChiaIdentity::new(allocator, my_private_key).expect("should generate"),
+        ChiaIdentity::new(allocator, their_private_key).expect("should generate"),
+    ];
 
-//     // let mut env = channel_handler_env(allocator, &mut rng)?;
-//     // let timeout = Timeout::new(10);
+    let mut env = channel_handler_env(allocator, &mut rng)?;
+    let timeout = Timeout::new(10);
 
-//     // let (our_game_start, their_game_start) = game.symmetric_game_starts(
-//     //     &game.id,
-//     //     &contributions[0],
-//     //     &contributions[1],
-//     //     &timeout,
-//     // );
+    let (our_game_start, their_game_start) = game.symmetric_game_starts(
+        &game.id,
+        &contributions[0],
+        &contributions[1],
+        &timeout,
+    );
 
-//     // let game_starts = &[our_game_start, their_game_start];
-//     // let contributions = [Amount::new(100), Amount::new(100)];
-//     // let amount = contributions[0].clone() + contributions[1].clone();
-//     // let puzzle_hashes = map_m(&|identity: &ChiaIdentity| {
-//     //     identity.puzzle_hash.clone()
-//     // }, &identities);
+    let game_starts = &[our_game_start, their_game_start];
+    let contributions = [Amount::new(100), Amount::new(100)];
+    let amount = contributions[0].clone() + contributions[1].clone();
+    let puzzle_hashes = map_m(&|identity: &ChiaIdentity| {
+        identity.puzzle_hash.clone()
+    }, &identities);
 
-//     // let mut old_state = our_game_start.initial_state.clone();
-//     // let mut mover_share = our_game_start.initial_mover_share.clone();
-//     // let mut max_move_size = our_game_start.initial_max_move_size;
-//     // let mut turn = false;
-//     // let fixed_info = [
-//     //     RMFixed {
-//     //         referee_coin_puzzle: Program::from_hex("80").unwrap(),
-//     //         referee_coin_puzzle_hash: PuzzleHash::default(),
-//     //         my_identity: identities[0].clone(),
-//     //         their_referee_puzzle_hash: PuzzleHash::default(),
-//     //         agg_sig_me_additional_data: Hash::default(),
-//     //         timeout: timeout.clone(),
-//     //         amount: amount.clone(),
-//     //         nonce: 0,
-//     //     },
-//     //     RMFixed {
-//     //         referee_coin_puzzle: Program::from_hex("80").unwrap(),
-//     //         referee_coin_puzzle_hash: PuzzleHash::default(),
-//     //         my_identity: identities[0].clone(),
-//     //         their_referee_puzzle_hash: PuzzleHash::default(),
-//     //         agg_sig_me_additional_data: Hash::default(),
-//     //         timeout: timeout.clone(),
-//     //         amount: amount.clone(),
-//     //         nonce: 0,
-//     //     },
-//     // ];
-//     // let mut last_referee_puzzle_args = &[
-//     //     RefereePuzzleArgs::new(
-//     //         &fixed_info[turn as usize],
-//     //         &GameMoveStateInfo {
-//     //         },
-//     //         our_game_start.initial_max_move_size,
-//     //     ),
-//     //     RefereePuzzleArgs::new(
-//     //         &fixed_info[!turn as usize],
-//     //         &GameMoveStateInfo {
-//     //         },
-//     //         our_game_start.initial_max_move_size,
-//     //     ),
-//     // ];
+    let mut old_state = our_game_start.initial_state.clone();
+    let mut mover_share = our_game_start.initial_mover_share.clone();
+    let mut max_move_size = our_game_start.initial_max_move_size;
+    let mut turn = false;
+    let fixed_info = [
+        RMFixed {
+            referee_coin_puzzle: Program::from_hex("80").unwrap(),
+            referee_coin_puzzle_hash: PuzzleHash::default(),
+            my_identity: identities[0].clone(),
+            their_referee_puzzle_hash: PuzzleHash::default(),
+            agg_sig_me_additional_data: Hash::default(),
+            timeout: timeout.clone(),
+            amount: amount.clone(),
+            nonce: 0,
+        },
+        RMFixed {
+            referee_coin_puzzle: Program::from_hex("80").unwrap(),
+            referee_coin_puzzle_hash: PuzzleHash::default(),
+            my_identity: identities[0].clone(),
+            their_referee_puzzle_hash: PuzzleHash::default(),
+            agg_sig_me_additional_data: Hash::default(),
+            timeout: timeout.clone(),
+            amount: amount.clone(),
+            nonce: 0,
+        },
+    ];
+    let mut last_referee_puzzle_args = &[
+        RefereePuzzleArgs::new(
+            &fixed_info[turn as usize],
+            &GameMoveStateInfo {
+            },
+            our_game_start.initial_max_move_size,
+        ),
+        RefereePuzzleArgs::new(
+            &fixed_info[!turn as usize],
+            &GameMoveStateInfo {
+            },
+            our_game_start.initial_max_move_size,
+        ),
+    ];
 
-//     // for this_move in moves {
-//     //     let state_update = InternalStateUpdateArgs {
-//     //         move_made: this_move.move_data.clone(),
-//     //         old_state: old_state.clone(),
-//     //         new_validation_info_hash: Default::default(),
-//     //         mover_share: mover_share.clone(),
-//     //         previous_validation_info_hash: Default::default(),
-//     //         mover_puzzle_hash: identities[turn as usize].public_key.clone(),
-//     //         waiter_puzzle_hash: identities[!turn as usize].public_key.clone(),
-//     //         amount: amount.clone(),
-//     //         timeout: timeout.clone(),
-//     //         max_move_size: max_move_size,
-//     //         referee_hash: PuzzleHash::default(),
-//     //         move_args: StateUpdateMoveArgs {
-//     //         },
-//     //         validation_program: this_move.state_update_program.clone(),
-//     //     };
-//     //     let result = state_update.run(
-//     //         &mut allocator,
-//     //     ).unwrap();
-//     //     todo!();
-//     // }
+    for this_move in moves {
+        let state_update = InternalStateUpdateArgs {
+            move_made: this_move.move_data.clone(),
+            old_state: old_state.clone(),
+            new_validation_info_hash: Default::default(),
+            mover_share: mover_share.clone(),
+            previous_validation_info_hash: Default::default(),
+            mover_puzzle_hash: identities[turn as usize].public_key.clone(),
+            waiter_puzzle_hash: identities[!turn as usize].public_key.clone(),
+            amount: amount.clone(),
+            timeout: timeout.clone(),
+            max_move_size: max_move_size,
+            referee_hash: PuzzleHash::default(),
+            move_args: StateUpdateMoveArgs {
+            },
+            validation_program: this_move.state_update_program.clone(),
+        };
+        let result = state_update.run(
+            &mut allocator,
+        ).unwrap();
+        todo!();
+    }
 
-//     todo!();
-// }
+    todo!();
+}
 
