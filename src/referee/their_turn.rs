@@ -159,7 +159,6 @@ impl TheirTurnReferee {
             &initial_move,
             game_start_info.initial_max_move_size,
             None,
-            game_start_info.initial_validation_program.clone(),
             &vi_hash,
             // Special for start: nobody can slash the first turn and both sides need to
             // compute the same value for amount to sign.  The next move will set mover share
@@ -702,6 +701,7 @@ impl TheirTurnReferee {
         details: &GameMoveDetails,
         state_number: usize,
         evidence: Evidence,
+        coin: Option<&CoinString>,
     ) -> Result<StateUpdateResult, Error> {
         let puzzle_args = self.args_for_this_coin();
         let new_puzzle_hash = curry_referee_puzzle_hash(
@@ -709,7 +709,9 @@ impl TheirTurnReferee {
             &self.fixed.referee_coin_puzzle_hash,
             &puzzle_args
         )?;
+
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
+
         let solution = self.fixed.my_identity.standard_solution(
             allocator,
             &[(
@@ -731,23 +733,54 @@ impl TheirTurnReferee {
             timeout: self.fixed.timeout.clone(),
             max_move_size: self.spend_this_coin().max_move_size,
             referee_hash: new_puzzle_hash.clone(),
-            validation_program: validation_program.clone(),
             move_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
-                previous_validation_program: Some(puzzle_args.validation_program.to_program()),
+                previous_validation_program: None,
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
             },
         };
-        validator_move_args.run(
+
+        let validation_program_mod_hash = validation_program.hash();
+        debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
+        let validation_program_nodeptr = validation_program.to_nodeptr(allocator)?;
+        let validator_full_args_node = validator_move_args.to_nodeptr(
             allocator,
-            &puzzle_args,
-            &self.fixed.my_identity,
-            self.fixed.referee_coin_puzzle_hash.hash(),
-            state_number,
-            evidence,
-        )
+            validation_program_nodeptr,
+            PuzzleHash::from_hash(validation_program_mod_hash.clone()),
+        )?;
+        let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
+
+        debug!("validator program {:?}", validation_program);
+        debug!("validator args {:?}", validator_full_args);
+        let raw_result_p = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            validation_program_nodeptr,
+            validator_full_args_node,
+            0,
+        ).into_gen();
+        if let Err(Error::ClvmErr(EvalErr(n, e))) = &raw_result_p {
+            debug!("validator error {e} {:?}", Program::from_nodeptr(allocator, *n));
+        }
+        let raw_result = raw_result_p?;
+        let pres = Program::from_nodeptr(allocator, raw_result.1)?;
+        debug!("validator result {pres:?}");
+
+        let update_result = StateUpdateResult::from_nodeptr(allocator, raw_result.1)?;
+        if let StateUpdateResult::MoveOk(state, max_move_size) = &update_result {
+            debug!("<V> their turn state result {:?} {state:?}", validation_program.sha256tree(allocator));
+            let state_nodeptr = state.to_nodeptr(allocator)?;
+            let validation_info_hash = ValidationInfo::new(
+                allocator,
+                validation_program.clone(),
+                state_nodeptr,
+            );
+            assert_eq!(&details.validation_info_hash, validation_info_hash.hash());
+        }
+
+        Ok(update_result)
     }
 
     pub fn their_turn_move_off_chain(
@@ -770,6 +803,7 @@ impl TheirTurnReferee {
             details,
             state_number,
             evidence,
+            coin
         )?;
 
         // Retrieve evidence from their turn handler.
@@ -781,7 +815,7 @@ impl TheirTurnReferee {
                 StateUpdateResult::Slash(evidence) => {
                     return Ok((None, TheirTurnMoveResult {
                         puzzle_hash_for_unroll: None,
-                        original: TheirTurnResult::Slash(Evidence::new(evidence.clone())),
+                        original: TheirTurnResult::Slash(Evidence::from_nodeptr(allocator, *evidence)?),
                     }));
                 }
             };
@@ -821,7 +855,7 @@ impl TheirTurnReferee {
         let (_, validation_program) = self.get_validation_program_for_their_move()?;
         let new_validation = ValidationInfo::new(
             allocator,
-            validation_program.clone(),
+            validation_program,
             state_nodeptr
         );
 
@@ -831,7 +865,6 @@ impl TheirTurnReferee {
             &details.basic,
             max_move_size,
             Some(&my_turn_args.game_move.validation_info_hash),
-            validation_program.clone(),
             &details.validation_info_hash,
             Some(&move_data.mover_share),
             false,
@@ -858,10 +891,11 @@ impl TheirTurnReferee {
                     details,
                     state_number,
                     evidence.clone(),
+                    coin
                 )? {
                     return Ok((None, TheirTurnMoveResult {
                         puzzle_hash_for_unroll: None,
-                        original: TheirTurnResult::Slash(Evidence::new(result_evidence))
+                        original: TheirTurnResult::Slash(Evidence::from_nodeptr(allocator, result_evidence)?)
                     }));
                 }
             }

@@ -84,7 +84,6 @@ impl RefereeByTurn {
             &initial_move,
             game_start_info.initial_max_move_size,
             None,
-            game_start_info.initial_validation_program.clone(),
             &vi_hash,
             // Special for start: nobody can slash the first turn and both sides need to
             // compute the same value for amount to sign.  The next move will set mover share
