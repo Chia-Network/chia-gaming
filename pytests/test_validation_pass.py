@@ -58,8 +58,8 @@ def construct_validator_output(prog: Program) -> Move | Slash:
     if len(clvm_list) < 2:
         raise ValueError(f"Expected MoveType and at least one data item. Got: {prog}")
     move_code = MoveCode(Program.to(clvm_list[0]).as_int())
-    max_move_size = Program.to(clvm_list[3]).as_int()
     if move_code == MoveCode.MAKE_MOVE:
+        max_move_size = Program.to(clvm_list[3]).as_int()
         if int(max_move_size) < 0:
             raise("Negative max_move_size")
         new_hash = None
@@ -176,19 +176,22 @@ def run_one_step(
     try:
         print_validator_input_args(args[1], game_arg_names)
         ret_val = validator_program.run(args)
+        print(f"RAW VALIDATOR OUTPUT {ret_val}")
     except Exception as e:
         print(e)
         assert expected_move_type == MoveCode.SLASH
         return validator_output
 
     validator_output = construct_validator_output(ret_val)
-    if validator_output.next_validator_hash is None:
+
+    assert validator_output.move_code == expected_move_type
+
+    if validator_output.move_code == MoveCode.SLASH or validator_output.next_validator_hash is None:
         # XXX Maybe do additional checks
         return validator_output
 
     print(f"validator_output.move_code={validator_output.move_code} expected_move_type={expected_move_type}")
     print(f"ADAM {validator_output}")
-    assert validator_output.move_code == expected_move_type
     return validator_output
 
 @dataclass(frozen=True)
@@ -198,11 +201,12 @@ class GameEnvironment:
 
 
 # def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
-def run_game(game_environment: GameEnvironment, last_move: Move, remaining_script):
+def run_game(game_environment: GameEnvironment, last_move: Move, remaining_script, indent=0):
     for script in remaining_script:
+        print("SCRIPT IS", script)
         if isinstance(script, list):
-            run_game(game_environment, last_move, script)
-            return
+            run_game(game_environment, last_move, script, indent=indent + 2)
+            continue
 
         # ENV: validator_program_library, amount,
         # MOVE: validator_hash, state, max_move_size,
@@ -298,6 +302,11 @@ def test_run_a():
     # [43, 4, 51, 225, 61, 73, 50, 14, 241, 13, 228, 2, 91, 121, 59, 51, 170, 205]
     bob_selects_byte = bytes([205])
 
+    alice_good_selections = 0b01101110.to_bytes(1, byteorder='big')
+    alice_bad_selections = 0b10110011.to_bytes(1, byteorder='big')
+    bob_good_selections = 0b00011111.to_bytes(1, byteorder='big')
+    bob_bad_selections = 0b11111000.to_bytes(1, byteorder='big')
+
     move_list = [
         (first_move, 0, None, MoveCode.MAKE_MOVE, False),
         (bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
@@ -305,10 +314,41 @@ def test_run_a():
         (bob_picks_byte, 0, None, MoveCode.MAKE_MOVE, False),
         (alice_picks_salt + alice_picks_byte + bob_selects_byte, 0, None, MoveCode.MAKE_MOVE, False)
     ]
-    env = GameEnvironment(validator_program_library, amount)
-    #move_zero = Move(step_a_hash, None, 32,)
-    move_zero = Move(MoveCode.MAKE_MOVE, next_validator_hash=step_a_hash, state = Program.to(0), next_max_move_size=len(step_a_hash), extra_data=Program.to(0))
-    run_game(env, move_zero, move_list)
+
+    recursive_list_up_to_d = [
+        (first_move, 0, None, MoveCode.MAKE_MOVE, False),
+        (bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
+        (alice_seed + sha256(alice_picks_salt + alice_picks_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
+        (bob_picks_byte, 0, None, MoveCode.MAKE_MOVE, False),
+        [
+            # Slash succeed cases
+            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False),
+            (alice_picks_salt + alice_picks_byte + alice_good_selections, 0, bob_good_selections, MoveCode.SLASH, False),
+            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, bob_bad_selections, MoveCode.MAKE_MOVE, False),
+            (alice_picks_salt + alice_picks_byte + alice_good_selections, 0, bob_bad_selections, MoveCode.MAKE_MOVE, False),
+            (alice_picks_salt + alice_picks_byte + alice_bad_selections, 0, bob_good_selections, MoveCode.SLASH, False),
+            (alice_picks_salt + alice_picks_byte + alice_bad_selections, 100, bob_good_selections, MoveCode.SLASH, False),
+            [
+                # Slash fail cases
+                (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, MoveCode.SLASH, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
+                (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
+                (alice_picks_salt + alice_picks_byte + alice_bad_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False), # The game proceeds as expected, until step E. Alice
+            ],
+            [
+                # Slash fail cases
+                (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, MoveCode.SLASH, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
+                (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
+                (alice_picks_salt + alice_picks_byte + alice_bad_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False), # The game proceeds as expected, until step E. Alice
+            ]
+        ]
+    ]
+
+    for (name, move_set) in [("MOVE LIST", move_list), ("RECURSIVE LIST", recursive_list_up_to_d)]:
+        print(f'RUNNING {name}')
+        env = GameEnvironment(validator_program_library, amount)
+        #move_zero = Move(step_a_hash, None, 32,)
+        move_zero = Move(MoveCode.MAKE_MOVE, next_validator_hash=step_a_hash, state = Program.to(0), next_max_move_size=len(step_a_hash), extra_data=Program.to(0))
+        run_game(env, move_zero, move_set)
 
 
 # types/blockchain_format/program.py:21:class Program(SExp):

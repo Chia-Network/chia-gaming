@@ -67,7 +67,7 @@
                     (not WAITER_PUZZLE_HASH)
                     (assign
                         result (list_compare alice_hand_value (onehandcalc
-                                (map list-to-pair (pull_out_cards (indices_to_bitfield bob_card_selections) bob_final_cards))))
+                                (map list-to-pair (pull_out_cards bob_card_selections bob_final_cards))))
                         (<= MOVER_SHARE
                             (if (not result)
                                 (/ AMOUNT 2)
