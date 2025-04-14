@@ -1,4 +1,5 @@
 from load_clvm import load_clvm
+import os
 import sys
 from pathlib import Path
 
@@ -10,7 +11,8 @@ from pathlib import Path
 
 #dir = sys.argv[1]
 
-validator_paths = Path("/Users/aqk/chia-gaming/clsp/onchain/calpoker/").glob("?.clsp")
+my_path = path = os.path.dirname(__file__)
+validator_paths = (Path(my_path) / "../clsp/onchain/calpoker/").glob("?.clsp")
 validator_paths = sorted(list(validator_paths))
 print(validator_paths)
 
