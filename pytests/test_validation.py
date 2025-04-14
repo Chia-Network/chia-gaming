@@ -231,19 +231,7 @@ def test_run_a():
     alice_picks_byte = 0b00001111.to_bytes(1, byteorder='big') #bitfield_to_byte(alice_bitfield)
     bob_picks_byte = 0b10101010.to_bytes(1, byteorder='big') #bitfield_to_byte(bob_bitfield)    
     print(f"ALICE PICKS: {alice_picks_byte} BOB PICKS: {bob_picks_byte}")
-
-    entropy_values = [
-        bytes.fromhex("eb04c21e3ee58d1b494e0b5be68ee5e5ae5d4b7a0a01287005ff21e7b70c5ddc")
-        bytes.fromhex("ce173df1d1a7f2854f87d48cee0b17ac59dfad7b3d7ca077009b84808ae25b20")
-        bytes.fromhex("2b0433e13d49320ef10de4025b793b33df30ead99660f49b4dd4d11c836a407e")
-        bytes.fromhex("55218743c4fd53281f871d079483ace7cbf92d0e269093c23febd9f5e1b0dd44")
-        bytes.fromhex("5dec7b7c6c954f9f256900d7f67f2ab0b51f98ae7ee7bd71831eab4d62193b54")
-    ]
-
-    preimage = entropy_values[0][:16]
-    alice_image = sha256(preimage).digest()
-    bob_seed = entropy_values[1][:16]
-    alice_picks_salt = entropy_values[2][:16]
+    alice_picks_salt = b"alice_picks_salt"
 
     step_a = load_clvm(calpoker_clsp_dir / "a", recompile=False)
     step_a_hash = step_a.get_tree_hash()
@@ -253,7 +241,7 @@ def test_run_a():
     # Move list entries:
     # (move, mover_share, evidence, expected_slash, on_chain)
     fake_move = alice_seed + bob_seed
-    first_move = alice_image
+    first_move = sha256(alice_seed).digest()
 
     alice_good_selections = b'a'
     alice_bad_selections = b'a'
