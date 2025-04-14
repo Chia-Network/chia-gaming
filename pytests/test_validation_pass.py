@@ -62,7 +62,10 @@ def construct_validator_output(prog: Program) -> Move | Slash:
     if move_code == MoveCode.MAKE_MOVE:
         if int(max_move_size) < 0:
             raise("Negative max_move_size")
-        return Move(move_code, bytes32(clvm_list[1]), clvm_list[2], max_move_size, Program.to(clvm_list[4:]))
+        new_hash = None
+        if len(clvm_list[1]) > 0:
+            new_hash = bytes32(clvm_list[1])
+        return Move(move_code, new_hash, clvm_list[2], max_move_size, Program.to(clvm_list[4:]))
     else:
         print(f"AAA {clvm_list}")
         assert move_code == MoveCode.SLASH
@@ -176,9 +179,13 @@ def run_one_step(
     except Exception as e:
         print(e)
         assert expected_move_type == MoveCode.SLASH
-        return None
+        return validator_output
 
     validator_output = construct_validator_output(ret_val)
+    if validator_output.next_validator_hash is None:
+        # XXX Maybe do additional checks
+        return validator_output
+
     print(f"validator_output.move_code={validator_output.move_code} expected_move_type={expected_move_type}")
     print(f"ADAM {validator_output}")
     assert validator_output.move_code == expected_move_type
