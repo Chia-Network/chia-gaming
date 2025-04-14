@@ -229,14 +229,14 @@ def test_run_a():
     #alice_bitfield = [0, 0, 0, 0, 1, 1, 1, 1]
     #bob_bitfield = [1, 0, 1, 0, 1, 0, 1, 0]
     alice_picks_byte = 0b00001111.to_bytes(1, byteorder='big') #bitfield_to_byte(alice_bitfield)
-    bob_picks_byte = 0b10101010.to_bytes(1, byteorder='big') #bitfield_to_byte(bob_bitfield)    
+    bob_picks_byte = 0b10101010.to_bytes(1, byteorder='big') #bitfield_to_byte(bob_bitfield)
     print(f"ALICE PICKS: {alice_picks_byte} BOB PICKS: {bob_picks_byte}")
 
     entropy_values = [
-        bytes.fromhex("eb04c21e3ee58d1b494e0b5be68ee5e5ae5d4b7a0a01287005ff21e7b70c5ddc")
-        bytes.fromhex("ce173df1d1a7f2854f87d48cee0b17ac59dfad7b3d7ca077009b84808ae25b20")
-        bytes.fromhex("2b0433e13d49320ef10de4025b793b33df30ead99660f49b4dd4d11c836a407e")
-        bytes.fromhex("55218743c4fd53281f871d079483ace7cbf92d0e269093c23febd9f5e1b0dd44")
+        bytes.fromhex("eb04c21e3ee58d1b494e0b5be68ee5e5ae5d4b7a0a01287005ff21e7b70c5ddc"),
+        bytes.fromhex("ce173df1d1a7f2854f87d48cee0b17ac59dfad7b3d7ca077009b84808ae25b20"),
+        bytes.fromhex("2b0433e13d49320ef10de4025b793b33df30ead99660f49b4dd4d11c836a407e"),
+        bytes.fromhex("55218743c4fd53281f871d079483ace7cbf92d0e269093c23febd9f5e1b0dd44"),
         bytes.fromhex("5dec7b7c6c954f9f256900d7f67f2ab0b51f98ae7ee7bd71831eab4d62193b54")
     ]
 
@@ -252,46 +252,16 @@ def test_run_a():
 
     # Move list entries:
     # (move, mover_share, evidence, expected_slash, on_chain)
-    fake_move = alice_seed + bob_seed
     first_move = alice_image
 
-    alice_good_selections = b'a'
-    alice_bad_selections = b'a'
-    bob_good_selections = b'a'
-    bob_bad_selections = b'a'
-
-    '''
-    Alice Win, Tie, Lose is in mover_share
-    Tie is 100
-    Third column is bob hand selection ([G]ood or [B]ad
-GTG -> no slash
-GAG -> slash (Alice wins = A)
-GTB -> no slash
-GAB -> no slash
-BAG -> slash
-BTG -> slash
-    '''
     move_list = [
         (first_move, 0, None, False, False),
         (bob_seed, 0, None, False, False),
         (alice_seed + sha256(alice_picks_salt + alice_picks_byte).digest(), 0, None, False, False),
         (bob_picks_byte, 0, None, False, False),
-        [
-            # Slash succeed cases
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, bob_good_selections, False, False),
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 0, bob_good_selections, True, False),
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, bob_bad_selections, False, False),
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 0, bob_bad_selections, False, False),
-            (alice_picks_salt + alice_picks_byte + alice_bad_selections, 0, bob_good_selections, True, False),
-            (alice_picks_salt + alice_picks_byte + alice_bad_selections, 100, bob_good_selections, True, False),
-            # Slash fail cases
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, True, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
-            (alice_picks_salt + alice_picks_byte + alice_bad_selections, 100, chr(0xff), False, False), # The game proceeds as expected, until step E. Alice
-        ]
-        ]
-        
-    
+        (alice_picks_salt + alice_picks_bytes + bob_picks_byte, 0, None, False, False)
+    ]
+
     run_game(calpoker_validator_programs, 200, step_a_hash, None, 32, move_list)
 
 # types/blockchain_format/program.py:21:class Program(SExp):

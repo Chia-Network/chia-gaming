@@ -452,6 +452,7 @@ impl MyTurnReferee {
                 }
             };
 
+        debug!("MOVE MADE {:?}", result.game_move.move_made);
         let (new_state_following_my_move, max_move_size, validation_info_hash) =
             self.run_validator_for_my_move(
                 allocator,
