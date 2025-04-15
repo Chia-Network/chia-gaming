@@ -15,11 +15,10 @@ use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
 use crate::common::types::{
-    atom_from_clvm, i64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
-    Timeout,
+    Aggsig, AllocEncoder, Amount,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
+    Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
 };
-use crate::utils::proper_list;
 
 pub const REM_CONDITION_FIELDS: usize = 4;
 
@@ -27,6 +26,7 @@ pub const REM_CONDITION_FIELDS: usize = 4;
 pub struct GameMoveStateInfo {
     pub move_made: Vec<u8>,
     pub mover_share: Amount,
+    pub max_move_size: usize,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -85,60 +85,10 @@ pub enum TheirTurnCoinSpentResult {
     },
     Slash(Box<SlashOutcome>),
 }
-#[derive(Debug, Clone)]
-pub enum StateUpdateResult {
-    MoveOk(Rc<Program>, usize),
+#[derive(Debug)]
+pub enum ValidatorResult {
+    MoveOk,
     Slash(NodePtr),
-}
-
-impl StateUpdateResult {
-    pub fn from_nodeptr(
-        allocator: &mut AllocEncoder,
-        node: NodePtr,
-    ) -> Result<StateUpdateResult, Error> {
-        let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
-            p
-        } else {
-            return Err(Error::StrErr("non-list in validator result".to_string()));
-        };
-
-        if lst.is_empty() {
-            return Err(Error::StrErr("empty list from validator".to_string()));
-        }
-
-        let selector =
-            if let Some(a) = atom_from_clvm(allocator, lst[0]).and_then(|a| i64_from_atom(&a)) {
-                a
-            } else {
-                return Err(Error::StrErr("not atom selector".to_string()));
-            };
-
-        if selector != 0 {
-            // Slash
-            let evidence = if lst.len() > 1 {
-                lst[1]
-            } else {
-                allocator
-                    .encode_atom(clvm_traits::Atom::Borrowed(&[]))
-                    .into_gen()?
-            };
-
-            return Ok(StateUpdateResult::Slash(evidence));
-        }
-
-        if lst.len() < 3 {
-            return Err(Error::StrErr("short list for make move".to_string()));
-        }
-
-        // Make move
-        let max_move_size = atom_from_clvm(allocator, lst[2])
-            .and_then(|a| usize_from_atom(&a))
-            .unwrap_or_default();
-        Ok(StateUpdateResult::MoveOk(
-            Rc::new(Program::from_nodeptr(allocator, lst[1])?),
-            max_move_size,
-        ))
-    }
 }
 
 /// Adjudicates a two player turn based game
@@ -189,7 +139,6 @@ pub struct RefereePuzzleArgs {
     pub amount: Amount,
     pub nonce: usize,
     pub game_move: GameMoveDetails,
-    pub max_move_size: usize,
     pub previous_validation_info_hash: Option<Hash>,
 }
 
@@ -201,7 +150,6 @@ impl RefereePuzzleArgs {
     pub fn new(
         fixed_info: &RMFixed,
         initial_move: &GameMoveStateInfo,
-        max_move_size: usize,
         previous_validation_info_hash: Option<&Hash>,
         validation_info_hash: &Hash,
         mover_share: Option<&Amount>,
@@ -229,7 +177,6 @@ impl RefereePuzzleArgs {
             timeout: fixed_info.timeout.clone(),
             amount: fixed_info.amount.clone(),
             nonce: fixed_info.nonce,
-            max_move_size,
             game_move: GameMoveDetails {
                 basic: GameMoveStateInfo {
                     mover_share: mover_share
@@ -258,7 +205,11 @@ impl RefereePuzzleArgs {
             allocator
                 .encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))
                 .into_gen()?,
-            self.max_move_size.to_clvm(allocator).into_gen()?,
+            self.game_move
+                .basic
+                .max_move_size
+                .to_clvm(allocator)
+                .into_gen()?,
             self.game_move
                 .validation_info_hash
                 .to_clvm(allocator)
@@ -340,35 +291,30 @@ pub fn curry_referee_puzzle(
 /// Mover puzzle is a wallet puzzle for an ordinary value coin and the solution
 /// is next to it.
 ///
-pub struct StateUpdateMoveArgs {
+pub struct ValidatorMoveArgs {
     pub state: Rc<Program>,
     pub mover_puzzle: Rc<Program>,
-    pub previous_validation_program: Option<Rc<Program>>,
     pub solution: Rc<Program>,
     pub evidence: Rc<Program>,
 }
 
-impl StateUpdateMoveArgs {
+impl ValidatorMoveArgs {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
         let me_program = Program::from_nodeptr(allocator, me)?;
-        (
+        [
             &self.state,
-            (
-                &me_program,
-                (
-                    &self.previous_validation_program,
-                    [&self.mover_puzzle, &self.solution, &self.evidence],
-                ),
-            ),
-        )
-            .to_clvm(allocator)
-            .into_gen()
+            &me_program,
+            &self.mover_puzzle,
+            &self.solution,
+            &self.evidence,
+        ]
+        .to_clvm(allocator)
+        .into_gen()
     }
 }
 
-pub struct InternalStateUpdateArgs {
+pub struct InternalValidatorArgs {
     pub move_made: Vec<u8>,
-    pub old_state: Rc<Program>,
     pub new_validation_info_hash: Hash,
     pub mover_share: Amount,
     pub previous_validation_info_hash: Hash,
@@ -378,10 +324,10 @@ pub struct InternalStateUpdateArgs {
     pub timeout: Timeout,
     pub max_move_size: usize,
     pub referee_hash: PuzzleHash,
-    pub move_args: StateUpdateMoveArgs,
+    pub move_args: ValidatorMoveArgs,
 }
 
-impl InternalStateUpdateArgs {
+impl InternalValidatorArgs {
     pub fn to_nodeptr(
         &self,
         allocator: &mut AllocEncoder,
@@ -396,27 +342,24 @@ impl InternalStateUpdateArgs {
             validator_mod_hash,
             (
                 (
-                    self.old_state.clone(),
+                    Node(move_node),
                     (
-                        Node(move_node),
+                        self.new_validation_info_hash.clone(),
                         (
-                            self.new_validation_info_hash.clone(),
+                            self.mover_share.clone(),
                             (
-                                self.mover_share.clone(),
+                                self.previous_validation_info_hash.clone(),
                                 (
-                                    self.previous_validation_info_hash.clone(),
+                                    self.mover_puzzle_hash.clone(),
                                     (
-                                        self.mover_puzzle_hash.clone(),
+                                        self.waiter_puzzle_hash.clone(),
                                         (
-                                            self.waiter_puzzle_hash.clone(),
+                                            self.amount.clone(),
                                             (
-                                                self.amount.clone(),
+                                                self.timeout.clone(),
                                                 (
-                                                    self.timeout.clone(),
-                                                    (
-                                                        self.max_move_size,
-                                                        (self.referee_hash.clone(), ()),
-                                                    ),
+                                                    self.max_move_size,
+                                                    (self.referee_hash.clone(), ()),
                                                 ),
                                             ),
                                         ),
@@ -469,8 +412,6 @@ pub struct IdentityCoinAndSolution {
 pub struct OnChainRefereeMove {
     /// From the wire protocol.
     pub details: GameMoveDetails,
-    /// Max move size specified in on chain move REM.
-    pub max_move_size: usize,
     /// Coin puzzle and solution that are used to generate conditions for the
     /// next generation of the on chain refere coin.
     pub mover_coin: IdentityCoinAndSolution,
@@ -549,7 +490,7 @@ where
                         (
                             refmove.details.basic.mover_share.clone(),
                             (
-                                refmove.max_move_size,
+                                refmove.details.basic.max_move_size,
                                 (
                                     refmove.mover_coin.mover_coin_puzzle.clone(),
                                     (refmove_coin_solution_ref, ()),

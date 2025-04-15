@@ -918,7 +918,7 @@ impl ChannelHandler {
                 message.clone(),
                 move_data.mover_share.clone(),
             ),
-            _ => {
+            TheirTurnResult::Slash(_) => {
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
                 ));

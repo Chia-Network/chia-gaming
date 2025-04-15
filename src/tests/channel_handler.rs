@@ -8,8 +8,8 @@ use clvm_traits::ToClvm;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::runner::ChannelHandlerGame;
 use crate::channel_handler::types::{
-    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, GameStartInfo,
-    StateUpdateProgram, UnrollCoin, UnrollCoinConditionInputs,
+    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, GameStartInfo, UnrollCoin,
+    UnrollCoinConditionInputs, ValidationProgram,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{
@@ -133,7 +133,7 @@ fn test_smoke_can_start_game() {
     let initial_validation_puzzle = game_handler.clone();
     let initial_state = Program::from_bytes(&[0x80]).into();
     let initial_validation_program =
-        StateUpdateProgram::new(env.allocator, initial_validation_puzzle);
+        ValidationProgram::new(env.allocator, initial_validation_puzzle);
 
     let timeout = Timeout::new(1337);
     let game_handler = GameHandler::TheirTurnHandler(game_handler.into());

@@ -21,15 +21,14 @@
     (if (not cards)
         0
         (if (logand selections 1)
-            (c (make_card (f cards)) (pull_out_cards_inner (lsh selections -1) (r cards)))
-            (pull_out_cards_inner (lsh selections -1) (r cards))
+            (c (make_card (f cards)) (pull_out_cards (lsh -1 selections) (r cards)))
+            (pull_out_cards (lsh -1 selections) (r cards))
         )
     )
 )
 
 (defun pull_out_cards args
-    (if (= (popcount (f args)) 5)
+    (assert (= (popcount (f args)) 5)
         (pull_out_cards_inner &rest args)
-        (x "pull_out_cards got" args)
     )
 )

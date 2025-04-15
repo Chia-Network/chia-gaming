@@ -1293,7 +1293,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
 }
 
 #[test]
-fn sim_test_with_peer_container_piss_off_peer_timeout_1() {
+fn sim_test_with_peer_container_piss_off_peer_timeout() {
     let mut allocator = AllocEncoder::new();
 
     let mut moves = test_moves_1(&mut allocator).to_vec();
@@ -1304,28 +1304,6 @@ fn sim_test_with_peer_container_piss_off_peer_timeout_1() {
     moves.push(GameAction::WaitBlocks(120, 1));
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-    debug!("MOVES TO USE {moves:?}");
-
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
-
-    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
-    assert_eq!(p1_balance, p2_balance + 200);
-}
-#[test]
-fn sim_test_with_peer_container_piss_off_peer_timeout_2() {
-    let mut allocator = AllocEncoder::new();
-
-    let mut moves = test_moves_1(&mut allocator).to_vec();
-    let moves_len = moves.len();
-    moves.remove(moves_len - 3);
-    moves.remove(moves_len - 3);
-    moves.remove(moves_len - 3);
-    moves.push(GameAction::GoOnChain(0));
-    moves.push(GameAction::WaitBlocks(120, 1));
-    moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-    moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-    debug!("MOVES TO USE {moves:?}");
 
     let outcome =
         run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");

@@ -1,13 +1,13 @@
 use log::debug;
 
-use crate::channel_handler::types::Evidence;
 use crate::channel_handler::ReadableMove;
+use crate::channel_handler::types::Evidence;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult,
+    GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction,
+    TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 use crate::referee::RefereeMaker;
 
@@ -98,6 +98,16 @@ impl LiveGame {
             self.last_referee_puzzle_hash = ph.clone();
         }
         Ok(their_move_result)
+    }
+
+    pub fn check_their_turn_for_slash(
+        &self,
+        allocator: &mut AllocEncoder,
+        evidence: Evidence,
+        coin_string: &CoinString,
+    ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
+        self.referee_maker
+            .check_their_turn_for_slash(allocator, evidence, coin_string)
     }
 
     pub fn get_rewind_outcome(&self) -> Option<usize> {

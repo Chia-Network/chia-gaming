@@ -1,7 +1,6 @@
 (include *standard-cl-23*)
 (import prepend_count)
 (import handcalc)
-(import onchain.calpoker.onehandcalc)
 
 (export (kind . arguments)
   (if
@@ -22,9 +21,6 @@
 
      (= kind "pull_suit")
      (pull_suit &rest arguments)
-
-     (= kind "onehandcalc")
-     (onehandcalc &rest arguments)
 
      ;; Otherwise
      (handcalc &rest arguments)
