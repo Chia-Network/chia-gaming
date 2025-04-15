@@ -1,6 +1,6 @@
-use std::rc::Rc;
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::allocator::NodePtr;
+use std::rc::Rc;
 
 use crate::common::types::{AllocEncoder, Error, Program};
 

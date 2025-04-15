@@ -170,12 +170,7 @@ impl GameHandler {
             .into_gen()?;
 
         let driver_node = self.get_my_turn_driver(allocator)?;
-        let run_result = run_code(
-            allocator,
-            driver_node,
-            driver_args,
-            false,
-        )?;
+        let run_result = run_code(allocator, driver_node, driver_args, false)?;
 
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
@@ -385,7 +380,9 @@ impl GameHandler {
                     Node(run_result).to_hex(allocator)?
                 )));
             }
-            Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(allocator, pl[1])?))
+            Ok(TheirTurnResult::Slash(Evidence::from_nodeptr(
+                allocator, pl[1],
+            )?))
         } else {
             Err(Error::StrErr("unknown move result type".to_string()))
         }

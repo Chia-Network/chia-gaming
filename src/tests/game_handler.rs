@@ -95,11 +95,7 @@ fn test_game_handler_their_make_move() {
         let node_z32 = allocator
             .encode_atom(clvm_traits::Atom::Borrowed(&z32))
             .expect("cvt");
-        assert_eq!(
-            move_data.readable_move.p()
-                .to_hex(),
-            hex_999
-        );
+        assert_eq!(move_data.readable_move.p().to_hex(), hex_999);
         let node_list = (1337, ((), ((), ((), (node_z32, ((), ((), ())))))))
             .to_clvm(&mut allocator)
             .expect("cvt");

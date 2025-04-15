@@ -1,13 +1,13 @@
 use log::debug;
 
-use crate::channel_handler::ReadableMove;
 use crate::channel_handler::types::Evidence;
+use crate::channel_handler::ReadableMove;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction,
-    TheirTurnCoinSpentResult, TheirTurnMoveResult,
+    GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
+    TheirTurnMoveResult,
 };
 use crate::referee::RefereeMaker;
 
