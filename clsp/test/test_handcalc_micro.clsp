@@ -1,6 +1,7 @@
 (include *standard-cl-23*)
 (import prepend_count)
 (import handcalc)
+(import onchain.calpoker.make_cards)
 (import onchain.calpoker.onehandcalc)
 
 (export (kind . arguments)
@@ -25,6 +26,9 @@
 
      (= kind "onehandcalc")
      (onehandcalc &rest arguments)
+
+     (= kind "make_cards")
+     (make_cards &rest arguments)
 
      ;; Otherwise
      (handcalc &rest arguments)
