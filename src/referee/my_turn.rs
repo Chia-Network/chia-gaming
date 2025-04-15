@@ -301,6 +301,7 @@ impl MyTurnReferee {
         self.fixed.amount.clone() - self.get_our_current_share()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn accept_this_move(
         &self,
         game_handler: &GameHandler,
@@ -905,7 +906,7 @@ impl MyTurnReferee {
         }
 
         let nil_readable = ReadableMove::from_program(Program::from_hex("80")?.into());
-        return Ok(TheirTurnCoinSpentResult::Moved {
+        Ok(TheirTurnCoinSpentResult::Moved {
             new_coin_string: CoinString::from_parts(
                 &coin_string.to_coin_id(),
                 &after_puzzle_hash,
@@ -913,7 +914,7 @@ impl MyTurnReferee {
             ),
             readable: nil_readable,
             mover_share: spend_args.game_move.basic.mover_share.clone(),
-        });
+        })
     }
 
     pub fn finish_their_turn(

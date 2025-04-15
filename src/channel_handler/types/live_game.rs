@@ -31,7 +31,7 @@ impl LiveGame {
         LiveGame {
             game_id,
             last_referee_puzzle_hash,
-            referee_maker: referee_maker,
+            referee_maker,
             my_contribution,
             their_contribution,
             rewind_outcome: None,
