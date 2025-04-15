@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from clvm_types.byte_types import SizedBytes
+from chia.util.byte_types import SizedBytes
 
 
 class bytes4(SizedBytes):
