@@ -15,8 +15,9 @@ use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    Program, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout, atom_from_clvm, i64_from_atom, usize_from_atom
+    atom_from_clvm, i64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend,
+    CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
+    Timeout,
 };
 use crate::utils::proper_list;
 
@@ -93,14 +94,13 @@ pub enum StateUpdateResult {
 impl StateUpdateResult {
     pub fn from_nodeptr(
         allocator: &mut AllocEncoder,
-        node: NodePtr
+        node: NodePtr,
     ) -> Result<StateUpdateResult, Error> {
-        let lst =
-            if let Some(p) = proper_list(allocator.allocator(), node, true) {
-                p
-            } else {
-                return Err(Error::StrErr("non-list in validator result".to_string()));
-            };
+        let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
+            p
+        } else {
+            return Err(Error::StrErr("non-list in validator result".to_string()));
+        };
 
         if lst.is_empty() {
             return Err(Error::StrErr("empty list from validator".to_string()));
@@ -115,14 +115,15 @@ impl StateUpdateResult {
 
         if selector != 0 {
             // Slash
-            let evidence =
-                if lst.len() > 1 {
-                    lst[1]
-                } else {
-                    allocator.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()?
-                };
+            let evidence = if lst.len() > 1 {
+                lst[1]
+            } else {
+                allocator
+                    .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+                    .into_gen()?
+            };
 
-            return Ok(StateUpdateResult::Slash(evidence))
+            return Ok(StateUpdateResult::Slash(evidence));
         }
 
         if lst.len() < 3 {
@@ -130,8 +131,13 @@ impl StateUpdateResult {
         }
 
         // Make move
-        let max_move_size = atom_from_clvm(allocator, lst[2]).and_then(|a| usize_from_atom(&a)).unwrap_or_default();
-        Ok(StateUpdateResult::MoveOk(Rc::new(Program::from_nodeptr(allocator, lst[1])?), max_move_size))
+        let max_move_size = atom_from_clvm(allocator, lst[2])
+            .and_then(|a| usize_from_atom(&a))
+            .unwrap_or_default();
+        Ok(StateUpdateResult::MoveOk(
+            Rc::new(Program::from_nodeptr(allocator, lst[1])?),
+            max_move_size,
+        ))
     }
 }
 
@@ -252,9 +258,7 @@ impl RefereePuzzleArgs {
             allocator
                 .encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))
                 .into_gen()?,
-            self.max_move_size
-                .to_clvm(allocator)
-                .into_gen()?,
+            self.max_move_size.to_clvm(allocator).into_gen()?,
             self.game_move
                 .validation_info_hash
                 .to_clvm(allocator)
@@ -353,16 +357,12 @@ impl StateUpdateMoveArgs {
                 &me_program,
                 (
                     &self.previous_validation_program,
-                    [
-                        &self.mover_puzzle,
-                        &self.solution,
-                        &self.evidence,
-                    ]
-                )
-            )
+                    [&self.mover_puzzle, &self.solution, &self.evidence],
+                ),
+            ),
         )
-        .to_clvm(allocator)
-        .into_gen()
+            .to_clvm(allocator)
+            .into_gen()
     }
 }
 

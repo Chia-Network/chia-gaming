@@ -15,8 +15,8 @@ use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 
 use crate::common::types::{
-    atom_from_clvm, divmod, i64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    Program, Sha256Input,
+    atom_from_clvm, divmod, i64_from_atom, usize_from_atom, AllocEncoder, Amount, Error, Program,
+    Sha256Input,
 };
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -396,7 +396,10 @@ pub fn decode_calpoker_readable(
     amount: Amount,
     am_bob: bool,
 ) -> Result<CalpokerResult, Error> {
-    debug!("decode_calpoker_readable {:?}", Program::from_nodeptr(allocator, readable));
+    debug!(
+        "decode_calpoker_readable {:?}",
+        Program::from_nodeptr(allocator, readable)
+    );
     let as_list = if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
         as_list
     } else {

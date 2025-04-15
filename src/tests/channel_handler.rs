@@ -8,8 +8,8 @@ use clvm_traits::ToClvm;
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::runner::ChannelHandlerGame;
 use crate::channel_handler::types::{
-    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, GameStartInfo, UnrollCoin,
-    UnrollCoinConditionInputs, StateUpdateProgram,
+    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, GameStartInfo,
+    StateUpdateProgram, UnrollCoin, UnrollCoinConditionInputs,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{

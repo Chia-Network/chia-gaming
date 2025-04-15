@@ -13,9 +13,9 @@ mod potato;
 mod read;
 mod readable_move;
 mod result;
+mod state_update_program;
 mod unroll_coin;
 mod validation_info;
-mod state_update_program;
 
 pub use accept_transaction_state::AcceptTransactionState;
 pub use channel_coin::{
@@ -41,8 +41,8 @@ pub use potato::{
 pub use read::{read_unroll_metapuzzle, read_unroll_puzzle};
 pub use readable_move::ReadableMove;
 pub use result::{DispositionResult, HandshakeResult, MoveResult};
+pub use state_update_program::StateUpdateProgram;
 pub use unroll_coin::{
     prepend_rem_conditions, UnrollCoin, UnrollCoinConditionInputs, UnrollCoinOutcome, UnrollTarget,
 };
 pub use validation_info::ValidationInfo;
-pub use state_update_program::StateUpdateProgram;
