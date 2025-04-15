@@ -124,6 +124,10 @@ def onehandcalc(hand: Hand):
     result = test_handcalc_micro.run(["onehandcalc", hand.to_clvm()])
     return result.as_python()
 
+def handcalc(hand: Hand):
+    result = test_handcalc_micro.run(["handcalc", hand.to_clvm()])
+    print('handcalc', result.as_python())
+    return result.as_python()
 
 def int_to_clvm_bytes(i: int) -> bytes:
     return bytes(Program.to(i))
@@ -164,6 +168,14 @@ def clvm_byte_to_int(b: bytes) -> int:
     return ord(b)
 
 
+def exchange_cards(alice_hand, bob_hand, alice_picks, bob_picks):
+    alice_give_away = [card for (i,card) in enumerate(alice_hand) if i in alice_picks]
+    bob_give_away = [card for (i,card) in enumerate(bob_hand) if i in bob_picks]
+    alice_keep = [card for (i,card) in enumerate(alice_hand) if i not in alice_picks]
+    bob_keep = [card for (i,card) in enumerate(bob_hand) if i not in bob_picks]
+    return (alice_keep + bob_give_away, bob_keep + alice_give_away)
+
+
 # An example of a good hand:
 # good_hand = Hand([Card(14, 1), Card(14, 2), Card(14, 3), Card(14, 4), Card(2, 2)])
 # good_hand_rating = onehandcalc(good_hand)
@@ -178,14 +190,21 @@ def find_tie():
         bob_seed = sha256(("bob" + str(int_seed)).encode("utf8")).digest()
         seed = sha256(alice_seed + bob_seed + bytes(Program.to(200))).digest()
         r = make_cards(seed)
-        alice_hand = [CardIndex(clvm_byte_to_int(i)).to_card() for i in r[0]]
-        bob_hand = [CardIndex(clvm_byte_to_int(i)).to_card() for i in r[1]]
-        alice_hand_rating = onehandcalc(Hand(alice_hand))
-        bob_hand_rating = onehandcalc(Hand(bob_hand))
+        alice_initial_hand = [CardIndex(clvm_byte_to_int(i)).to_card() for i in r[0]]
+        bob_initial_hand = [CardIndex(clvm_byte_to_int(i)).to_card() for i in r[1]]
+        alice_picks = [1,3,4,7]
+        bob_picks = [0,2,4,6]
+        alice_final_cards, bob_final_cards = exchange_cards(alice_initial_hand, bob_initial_hand, alice_picks, bob_picks)
+        alice_handcalc = handcalc(Hand(alice_final_cards))
+        bob_handcalc = handcalc(Hand(bob_final_cards))
+        alice_picked_hand = [card for (i,card) in enumerate(alice_final_cards) if Program.to(i) in alice_handcalc[1]]
+        bob_picked_hand = [card for (i,card) in enumerate(bob_final_cards) if Program.to(i) in bob_handcalc[1]]
+        alice_hand_rating = onehandcalc(Hand(alice_picked_hand))
+        bob_hand_rating = onehandcalc(Hand(bob_picked_hand))
         int_seed += 1
 
     print(f"Tie found. int_seed={int_seed}")
-    print("Alice hand:", alice_hand)
+    print("Alice hand:", alice_picked_hand)
     print("  Bob hand:", [CardIndex(clvm_byte_to_int(i)) for i in r[1]])
 
 
