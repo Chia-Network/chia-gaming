@@ -192,7 +192,7 @@ def check_for_losing_selects(opponent_hand_rating, my_final_cards):
             continue
 
         tried.add(lose_bob_selects)
-        bob_hand = cards_for_picks(my_final_cards, lose_bob_selects)[0]
+        bob_hand = cards_for_discards(my_final_cards, lose_bob_selects)[0]
         bob_hand_rating = onehandcalc(Hand(bob_hand))
         print(f"checking bob selects {lose_bob_selects} alice rating {opponent_hand_rating} bob {bob_hand_rating}")
         if opponent_hand_rating > bob_hand_rating:
@@ -201,12 +201,12 @@ def check_for_losing_selects(opponent_hand_rating, my_final_cards):
     return None
 
 
-def find_win_and_loss(alice_initial_hand, bob_initial_hand, alice_picks, bob_picks, alice_selects, bob_selects):
+def find_win_and_loss(alice_initial_hand, bob_initial_hand, alice_discards, bob_discards, alice_selects, bob_selects):
     tried = set()
 
-    alice_final_cards, bob_final_cards = exchange_cards(alice_initial_hand, bob_initial_hand, alice_picks, bob_picks)
-    alice_hand_rating = onehandcalc(Hand(cards_for_picks(alice_final_cards, alice_selects)[0]))
-    bob_hand_rating = onehandcalc(Hand(cards_for_picks(bob_final_cards, bob_selects)[0]))
+    alice_final_cards, bob_final_cards = exchange_cards(alice_initial_hand, bob_initial_hand, alice_discards, bob_discards)
+    alice_hand_rating = onehandcalc(Hand(cards_for_discards(alice_final_cards, alice_selects)[0]))
+    bob_hand_rating = onehandcalc(Hand(cards_for_discards(bob_final_cards, bob_selects)[0]))
 
     lose_alice_selects = check_for_losing_selects(bob_hand_rating, alice_final_cards)
     lose_bob_selects = check_for_losing_selects(alice_hand_rating, bob_final_cards)
@@ -242,8 +242,8 @@ def find_tie():
         alice_selects = alice_handcalc[1]
         bob_selects = bob_handcalc[1]
 
-        alice_picked_hand = cards_for_picks(alice_final_cards, alice_selects)[0]
-        bob_picked_hand = cards_for_picks(bob_final_cards, bob_selects)[0]
+        alice_picked_hand = cards_for_discards(alice_final_cards, alice_selects)[0]
+        bob_picked_hand = cards_for_discards(bob_final_cards, bob_selects)[0]
 
         alice_hand_rating = onehandcalc(Hand(alice_picked_hand))
         bob_hand_rating = onehandcalc(Hand(bob_picked_hand))
@@ -252,7 +252,7 @@ def find_tie():
             print(f"{int_seed} alice and bob didn't tie on tie discards")
             continue
 
-        can_make_win_and_loss = find_win_and_loss(alice_initial_hand, bob_initial_hand, alice_picks, bob_picks, alice_selects, bob_selects)
+        can_make_win_and_loss = find_win_and_loss(alice_initial_hand, bob_initial_hand, alice_discards, bob_discards, alice_selects, bob_selects)
 
         if not can_make_win_and_loss:
             print(f"{int_seed} can't make win and loss")
@@ -266,11 +266,11 @@ def find_tie():
     print("  Bob hand:", [CardIndex(clvm_byte_to_int(i)) for i in r[1]])
     print(f"  Tie outcome: {alice_hand_rating}")
     print(f"Alice loss selects:", alice_loss_selects)
-    print(f"Alice loss cards:", cards_for_picks(alice_final_cards, alice_loss_selects)[0])
-    print(f"Alice loss outcome:", onehandcalc(Hand(cards_for_picks(alice_final_cards, alice_loss_selects)[0])))
+    print(f"Alice loss cards:", cards_for_discards(alice_final_cards, alice_loss_selects)[0])
+    print(f"Alice loss outcome:", onehandcalc(Hand(cards_for_discards(alice_final_cards, alice_loss_selects)[0])))
     print(f"  Bob loss selects:", bob_loss_selects)
-    print("  Bob loss cards:", cards_for_picks(bob_final_cards, bob_loss_selects)[0])
-    print(f"  Bob outcome:", onehandcalc(Hand(cards_for_picks(bob_final_cards, bob_loss_selects)[0])))
+    print("  Bob loss cards:", cards_for_discards(bob_final_cards, bob_loss_selects)[0])
+    print(f"  Bob outcome:", onehandcalc(Hand(cards_for_discards(bob_final_cards, bob_loss_selects)[0])))
 
 
 # TODO: discards, selects, and use handcalc
