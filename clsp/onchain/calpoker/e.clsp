@@ -11,6 +11,7 @@
 (import std.and)
 (import std.map)
 (import std.li)
+(import std.append)
 
 ; Bob challenging
 ; state is (Bob's discards (alice_cards bob_cards) alice_commit)
@@ -55,9 +56,12 @@
             alice_discards (substr MOVE 16 17)
             alice_card_selections (substr MOVE 17 18)
 
-            (alice_final_cards bob_final_cards) (split_cards_inner bob_discards bob_cards &rest (split_cards alice_discards alice_cards))
+            (my_cards_me my_cards_bob) (split_cards alice_discards alice_cards)
+            (bob_cards_bob bob_cards_me) (split_cards bob_discards bob_cards)
+            alice_final_cards (append my_cards_me bob_cards_me)
+            bob_final_cards (append bob_cards_bob my_cards_bob)
 
-            alice_hand_value (onehandcalc (map list-to-pair (pull_out_cards alice_card_selections alice_final_cards)))
+            alice_hand_value (onehandcalc (map list-to-pair (pull_out_cards (x "alice card selections" alice_card_selections) alice_final_cards)))
 
             (if_any_fail
                 (= (sha256 alice_salted_discards) alice_commit)
@@ -66,8 +70,9 @@
                     ;; Assert we aren't running on chain
                     (not WAITER_PUZZLE_HASH)
                     (assign
-                        result (list_compare alice_hand_value (onehandcalc
-                                (map list-to-pair (pull_out_cards bob_card_selections bob_final_cards))))
+                        bob_hand_value (onehandcalc
+                                (map list-to-pair (pull_out_cards bob_card_selections bob_final_cards)))
+                        result (x "hands " alice_hand_value bob_hand_value (list_compare alice_hand_value bob_hand_value))
                         (<= MOVER_SHARE
                             (if (not result)
                                 (/ AMOUNT 2)

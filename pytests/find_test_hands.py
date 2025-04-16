@@ -182,14 +182,15 @@ def clvm_byte_to_int(b: bytes) -> int:
 
 def cards_for_discards(cards, discards):
     """Cards is a list of cards, discards is a list of indices"""
-    return ([card for (i,card) in enumerate(cards) if i in discards], [card for (i,card) in enumerate(cards) if i not in discards])
-
-
+    return (
+        [card for (i,card) in enumerate(cards) if i not in discards],
+        [card for (i,card) in enumerate(cards) if i in discards]
+    )
 
 
 def exchange_cards(alice_hand, bob_hand, alice_discards, bob_discards):
-    alice_give_away, alice_keep = cards_for_discards(alice_hand, alice_discards)
-    bob_give_away, bob_keep = cards_for_discards(bob_hand, bob_discards)
+    alice_keep, alice_give_away = cards_for_discards(alice_hand, alice_discards)
+    bob_keep, bob_give_away = cards_for_discards(bob_hand, bob_discards)
     return (alice_keep + bob_give_away, bob_keep + alice_give_away)
 
 
@@ -203,7 +204,7 @@ def check_for_losing_selects(opponent_hand_rating, my_final_cards):
             continue
 
         tried.add(lose_bob_selects)
-        bob_hand = cards_for_discards(my_final_cards, lose_bob_selects)[0]
+        bob_hand = cards_for_discards(my_final_cards, lose_bob_selects)[1]
         bob_hand_rating = onehandcalc(Hand(bob_hand))
         print(f"checking bob selects {lose_bob_selects} alice rating {opponent_hand_rating} bob {bob_hand_rating}")
         if opponent_hand_rating > bob_hand_rating:
@@ -216,8 +217,8 @@ def find_win_and_loss(alice_initial_hand, bob_initial_hand, alice_discards, bob_
     tried = set()
 
     alice_final_cards, bob_final_cards = exchange_cards(alice_initial_hand, bob_initial_hand, alice_discards, bob_discards)
-    alice_hand_rating = onehandcalc(Hand(cards_for_discards(alice_final_cards, alice_selects)[0]))
-    bob_hand_rating = onehandcalc(Hand(cards_for_discards(bob_final_cards, bob_selects)[0]))
+    alice_hand_rating = onehandcalc(Hand(cards_for_discards(alice_final_cards, alice_selects)[1]))
+    bob_hand_rating = onehandcalc(Hand(cards_for_discards(bob_final_cards, bob_selects)[1]))
 
     lose_alice_selects = check_for_losing_selects(bob_hand_rating, alice_final_cards)
     lose_bob_selects = check_for_losing_selects(alice_hand_rating, bob_final_cards)
@@ -232,7 +233,7 @@ def find_win_and_loss(alice_initial_hand, bob_initial_hand, alice_discards, bob_
 # good_hand_rating = onehandcalc(good_hand)
 # print(f"good_hand_rating: {good_hand_rating}")
 def find_tie():
-    int_seed = 490
+    int_seed = 190
     alice_hand_rating = 0
     bob_hand_rating = 1
     can_make_win_and_loss = None
@@ -251,8 +252,8 @@ def find_tie():
         alice_selects = alice_handcalc[1]
         bob_selects = bob_handcalc[1]
 
-        alice_picked_hand = cards_for_discards(alice_final_cards, alice_selects)[0]
-        bob_picked_hand = cards_for_discards(bob_final_cards, bob_selects)[0]
+        alice_picked_hand = cards_for_discards(alice_final_cards, alice_selects)[1]
+        bob_picked_hand = cards_for_discards(bob_final_cards, bob_selects)[1]
 
         alice_hand_rating = onehandcalc(Hand(alice_picked_hand))
         bob_hand_rating = onehandcalc(Hand(bob_picked_hand))
@@ -272,15 +273,19 @@ def find_tie():
 
     # Note that we never compare alice "loss" selections to bob's "loss" selections
     print(f"\n\n***\n\nTie found. int_seed={int_seed}")
+    print(f'Make cards seed: {Program.to(game_seed.seed)}')
     print("Alice hand:", sorted(alice_picked_hand))
     print("  Bob hand:", sorted(bob_picked_hand))
     print(f"  Tie outcome: {alice_hand_rating}")
     print(f"Alice loss selects:", alice_loss_selects)
-    print(f"Alice loss cards:", cards_for_discards(alice_final_cards, alice_loss_selects)[0])
-    print(f"Alice loss outcome:", onehandcalc(Hand(cards_for_discards(alice_final_cards, alice_loss_selects)[0])))
+    print(f"Alice loss cards:", cards_for_discards(alice_final_cards, alice_loss_selects)[1])
+    print(f"Alice loss outcome:", onehandcalc(Hand(cards_for_discards(alice_final_cards, alice_loss_selects)[1])))
     print(f"  Bob loss selects:", bob_loss_selects)
-    print("  Bob loss cards:", cards_for_discards(bob_final_cards, bob_loss_selects)[0])
-    print(f"  Bob outcome:", onehandcalc(Hand(cards_for_discards(bob_final_cards, bob_loss_selects)[0])))
+    print("  Bob loss cards:", cards_for_discards(bob_final_cards, bob_loss_selects)[1])
+    print(f"  Bob outcome:", onehandcalc(Hand(cards_for_discards(bob_final_cards, bob_loss_selects)[1])))
+    print(f"alice final cards: {alice_final_cards}")
+    print(f"bob_final_cards: {bob_final_cards}")
+
     test_input = {
         "amount": 200,
         "seed": int_seed,

@@ -217,17 +217,17 @@ def byte_from_indices(indices):
     return res
 
 # def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
-def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_from_last_turn: int, remaining_script, indent=0):
-    for script in remaining_script:
+def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_from_last_turn: int, remaining_script, indent=0, path=''):
+    for i, script in enumerate(remaining_script):
         print("SCRIPT IS", script)
         if isinstance(script, list):
-            run_game(game_environment, last_move, max_move_size_from_last_turn, script, indent=indent + 2)
+            run_game(game_environment, last_move, max_move_size_from_last_turn, script, indent=indent + 2, path=path+f'{i}.')
             continue
 
         # ENV: validator_program_library, amount,
         # MOVE: validator_hash, state, max_move_size,
         # t, n+1
-        (move, mover_share, evidence, expected_move_type, on_chain, *rest_of_args) = script
+        (move, mover_share, evidence, expected_move_type, on_chain, name, *rest_of_args) = script
         print(f"""
             remaining_script: {remaining_script}
             remaining_script[0]: {remaining_script[0]}
@@ -248,7 +248,7 @@ def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_f
         validator_info = validator_program_library[last_move.next_validator_hash]
         print(f'comparing validator name {validator_info.name} to expected {script[-1]}')
         assert validator_info.name == script[-1]
-        print(f"    ---- Running program {validator_info.name} ----")
+        print(f"    ---- step {path}{i} Running program {validator_info.name} ----")
         return_val: MoveOrSlash = run_one_step(
             game_environment, # amount
             script, # (move, mover_share, evidence, expected_move_type, on_chain)
@@ -385,8 +385,8 @@ def normal_outcome_move_list():
 
 
 def test_run_a():
-    seed_511_case = read_test_case("seed_511.json")
-    test_run_with_moves(generate_test_set(seed_511_case), seed_511_case["amount"])
+    seed_192_case = read_test_case("seed_192.json")
+    test_run_with_moves(generate_test_set(seed_192_case), seed_192_case["amount"])
 
     # test_run_with_moves(normal_outcome_move_list(), 200)
 
