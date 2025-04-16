@@ -163,11 +163,12 @@ def print_validator_output(args):
 #                 expected_move_type: MoveCode, on_chain: bool) -> MoveOrSlash:
 
 def run_one_step(
-                game_env, # amount
-                script, # (move, mover_share, evidence, expected_move_type, on_chain)
-                last_move, # (next_validator_hash, next_max_move_size, state)
-                validator_program,
-                expected_move_type):
+        game_env, # amount
+        script, # (move, mover_share, evidence, expected_move_type, on_chain)
+        last_move, # (next_validator_hash, next_max_move_size, state)
+        max_move_size_to_apply,
+        validator_program,
+        expected_move_type):
 
     # TODO: See if compose_validator_args will save code later XOR delete
     # WAITER_PUZZLE_HASH doubles as an "on_chain" indicator
@@ -176,18 +177,20 @@ def run_one_step(
     mover_share = script[1]
     evidence = script[2]
     on_chain = script[4]
-    args = [last_move.next_validator_hash,
-                            [None, on_chain, None, game_env.amount, None, None,
-                            move_to_make, last_move.next_max_move_size, None, mover_share, None],
-                            last_move.state, validator_program, None, None, evidence]
-    try:
-        print_validator_input_args(args[1], game_arg_names)
-        ret_val = validator_program.run(args)
-        print(f"RAW VALIDATOR OUTPUT {ret_val}")
-    except Exception as e:
-        print(e)
-        assert expected_move_type == MoveCode.SLASH
-        return validator_output
+    args = [
+        last_move.next_validator_hash,
+        [None, on_chain, None, game_env.amount, None, None,
+         move_to_make, last_move.next_max_move_size, None, mover_share, None],
+        last_move.state, validator_program, None, None, evidence
+    ]
+
+    print(f'max_move_size_to_apply {max_move_size_to_apply}')
+    print(f'move is {move_to_make}')
+    assert len(move_to_make) <= max_move_size_to_apply
+
+    print_validator_input_args(args[1], game_arg_names)
+    ret_val = validator_program.run(args)
+    print(f"RAW VALIDATOR OUTPUT {ret_val}")
 
     validator_output = construct_validator_output(ret_val)
 
@@ -214,11 +217,11 @@ def byte_from_indices(indices):
     return res
 
 # def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
-def run_game(game_environment: GameEnvironment, last_move: Move, remaining_script, indent=0):
+def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_from_last_turn: int, remaining_script, indent=0):
     for script in remaining_script:
         print("SCRIPT IS", script)
         if isinstance(script, list):
-            run_game(game_environment, last_move, script, indent=indent + 2)
+            run_game(game_environment, last_move, max_move_size_from_last_turn, script, indent=indent + 2)
             continue
 
         # ENV: validator_program_library, amount,
@@ -236,34 +239,36 @@ def run_game(game_environment: GameEnvironment, last_move: Move, remaining_scrip
             evidence={evidence}
             on_chain={on_chain}
             rest_of_args={rest_of_args}
+        """)
+        # assert len(move) <= last_move.next_max_move_size
 
-    """)
-        assert len(move) <= last_move.next_max_move_size
+        # return_val contains the new state, max_move_size ...
+        #def run_one_step(validator_hash, validator, amount: int, move, max_move_size: int, mover_share, state, evidence, step_n: int,
+        #expected_move_type: MoveCode, on_chain: bool) -> MoveOrSlash:
+        validator_info = validator_program_library[last_move.next_validator_hash]
+        print(f'comparing validator name {validator_info.name} to expected {script[-1]}')
+        assert validator_info.name == script[-1]
+        print(f"    ---- Running program {validator_info.name} ----")
+        return_val: MoveOrSlash = run_one_step(
+            game_environment, # amount
+            script, # (move, mover_share, evidence, expected_move_type, on_chain)
+            last_move, # (next_validator_hash, next_max_move_size, state)
+            max_move_size_from_last_turn,
+            validator_info.program,
+            expected_move_type
+        )
 
-        try:
-            # return_val contains the new state, max_move_size ...
-            #def run_one_step(validator_hash, validator, amount: int, move, max_move_size: int, mover_share, state, evidence, step_n: int,
-                    #expected_move_type: MoveCode, on_chain: bool) -> MoveOrSlash:
-            validator_info = validator_program_library[last_move.next_validator_hash]
-            print(f"    ---- Running program {validator_info.name} ----")
-            return_val: MoveOrSlash = run_one_step(
-                game_environment, # amount
-                script, # (move, mover_share, evidence, expected_move_type, on_chain)
-                last_move, # (next_validator_hash, next_max_move_size, state)
-                validator_info.program,
-                expected_move_type)
-        except Exception as e:
-            traceback.print_exc()
-            raise
         print(f"return_val='{return_val}'")
         if expected_move_type == MoveCode.SLASH:
             if len(remaining_script) > 0:
-                run_game(game_environment, return_val, remaining_script[1:])
+                run_game(game_environment, return_val, max_move_size_from_last_turn, remaining_script[1:])
                 # run_game(validator_program_library, amount, new_validation_program_hash, new_state, new_max_move_size, remaining_script[1:])
         if return_val.move_code == MoveCode.SLASH:
             # Done with run, we got slashed.
             # Figure out something to return from here when slashed.
             return
+
+        max_move_size_from_last_turn = return_val.next_max_move_size
 
         # It's a move, reassign it.
         last_move = return_val
@@ -271,14 +276,10 @@ def run_game(game_environment: GameEnvironment, last_move: Move, remaining_scrip
 
 def bitfield_to_byte(x):
     v = 0
-    xp = x
-    xp.reverse()
-    for bit in xp:
-        v = (v << 1) | bit
+    for bit in x:
+        v |= 1 << bit
         # print(bit, v)
-    b = bytes(v)
-    #assert(len(b) == 1)
-    return b[-1:]
+    return bytes([v])
 
 def substitute_selections(test_inputs, ):
     pass
@@ -300,7 +301,6 @@ def generate_test_set(test_inputs: Dict):
     seed = GameSeed(test_inputs['seed'])
     preimage = seed.alice_seed
     alice_image = sha256(preimage).digest()
-    bob_seed = seed.bob_seed
     alice_discards_salt = seed.seed[:16]
     first_move = sha256(seed.alice_seed).digest()
     alice_discards_byte = bitfield_to_byte(test_inputs['alice_discards'])
@@ -310,25 +310,25 @@ def generate_test_set(test_inputs: Dict):
     bob_good_selections = bitfield_to_byte(test_inputs['bob_good_selections'])
     bob_loss_selections = bitfield_to_byte(test_inputs['bob_loss_selections'])
 
+    print(bob_discards_byte)
+
     recursive_list_up_to_d = [
-        (first_move, 0, None, MoveCode.MAKE_MOVE, False),
-        (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
-        (seed.alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
-        (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False),
+        (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
+        (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
+        (seed.alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False, 'c'),
+        (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
         [
             # Slash succeed cases
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, MoveCode.SLASH, False),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_loss_selections, MoveCode.MAKE_MOVE, False),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_loss_selections, MoveCode.MAKE_MOVE, False),
-            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 0, bob_good_selections, MoveCode.SLASH, False),
-            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, bob_good_selections, MoveCode.SLASH, False),
-            [
-                # Slash fail cases
-                (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.SLASH, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
-                (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
-                (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False), # The game proceeds as expected, until step E. Alice
-            ]
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
+            # Slash fail cases
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.SLASH, False, 'e'), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.MAKE_MOVE, True, 'e'), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
+            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False, 'e'), # The game proceeds as expected, until step E. Alice
         ]
     ]
     return recursive_list_up_to_d
@@ -343,7 +343,7 @@ def test_run_with_moves(move_list, amount):
     env = GameEnvironment(validator_program_library, amount)
     #move_zero = Move(step_a_hash, None, 32,)
     move_zero = Move(MoveCode.MAKE_MOVE, next_validator_hash=step_a_hash, state = Program.to(0), next_max_move_size=len(step_a_hash), extra_data=Program.to(0))
-    run_game(env, move_zero, move_list)
+    run_game(env, move_zero, 32, move_list)
 
 def normal_outcome_move_list():
     alice_seed = b"0alice6789abcdef"
@@ -385,9 +385,10 @@ def normal_outcome_move_list():
 
 
 def test_run_a():
-    test_run_with_moves(normal_outcome_move_list(), 200)
     seed_511_case = read_test_case("seed_511.json")
     test_run_with_moves(generate_test_set(seed_511_case), seed_511_case["amount"])
+
+    # test_run_with_moves(normal_outcome_move_list(), 200)
 
     # alice_good_selections = 0b01101110.to_bytes(1, byteorder='big')
     # alice_loss_selections = 0b10110011.to_bytes(1, byteorder='big')
