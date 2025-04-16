@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from clvm_types.program import Program
 import traceback
 import json
+from seed import GameSeed
 
 # TODO: check returned/next max_move size value
 
@@ -42,7 +43,7 @@ class ValidatorInfo:
 
 def read_test_case(file: Path):
     with open(file, "r", encoding="utf8") as test_file:
-        return json.reads(test_file.read())
+        return json.loads(test_file.read())
 
 def create_validator_program_library():
     """
@@ -206,6 +207,12 @@ class GameEnvironment:
     amount: int
 
 
+def byte_from_indices(indices):
+    res = 0
+    for i in indices:
+        res |= (1 << i)
+    return res
+
 # def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
 def run_game(game_environment: GameEnvironment, last_move: Move, remaining_script, indent=0):
     for script in remaining_script:
@@ -276,24 +283,37 @@ def bitfield_to_byte(x):
 def substitute_selections(test_inputs, ):
     pass
 
-def generate_test_set(first_move, test_inputs: Dict):
-    alice_discards_salt
+def generate_test_set(test_inputs: Dict):
     alice_good_selections = test_inputs["alice_good_selections"]
-    alice_discards_byte
 
     '''
-            "seed": int_seed,
+        "seed": int_seed,
         "alice_discards": alice_discards,
         "bob_discards": bob_discards,
         # selects in the format of "move" in the validation programs
         "alice_good_selections": alice_selects, # ???
         "bob_good_selections": bob_selects, # ???
         "alice_loss_selections": alice_loss_selects,
-        "bob_loss_selections": bob_loss_selects,'''
+        "bob_loss_selections": bob_loss_selects,
+    '''
+
+    seed = GameSeed(test_inputs['seed'])
+    preimage = seed.alice_seed
+    alice_image = sha256(preimage).digest()
+    bob_seed = seed.bob_seed
+    alice_discards_salt = seed.seed[:16]
+    first_move = sha256(seed.alice_seed).digest()
+    alice_discards_byte = bitfield_to_byte(test_inputs['alice_discards'])
+    bob_discards_byte = bitfield_to_byte(test_inputs['bob_discards'])
+    alice_good_selections = bitfield_to_byte(test_inputs['alice_good_selections'])
+    alice_loss_selections = bitfield_to_byte(test_inputs['alice_loss_selections'])
+    bob_good_selections = bitfield_to_byte(test_inputs['bob_good_selections'])
+    bob_loss_selections = bitfield_to_byte(test_inputs['bob_loss_selections'])
+
     recursive_list_up_to_d = [
         (first_move, 0, None, MoveCode.MAKE_MOVE, False),
-        (bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
-        (alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
+        (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
+        (seed.alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
         (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False),
         [
             # Slash succeed cases
@@ -314,8 +334,18 @@ def generate_test_set(first_move, test_inputs: Dict):
     return recursive_list_up_to_d
 
 
-def test_run_a(file):
-    inputs = read_test_case(file)
+def test_run_with_moves(move_list, amount):
+    step_a = load_clvm(calpoker_clsp_dir / "a", recompile=False)
+    step_a_hash = step_a.get_tree_hash()
+    print("\nstep_a_hash and hash returned:")
+    print(step_a_hash)
+
+    env = GameEnvironment(validator_program_library, amount)
+    #move_zero = Move(step_a_hash, None, 32,)
+    move_zero = Move(MoveCode.MAKE_MOVE, next_validator_hash=step_a_hash, state = Program.to(0), next_max_move_size=len(step_a_hash), extra_data=Program.to(0))
+    run_game(env, move_zero, move_list)
+
+def normal_outcome_move_list():
     alice_seed = b"0alice6789abcdef"
     bob_seed = b"0bob456789abcdef"
     #alice_bitfield = [0, 0, 0, 0, 1, 1, 1, 1]
@@ -324,6 +354,9 @@ def test_run_a(file):
     bob_discards_byte = 0b10101010.to_bytes(1, byteorder='big') #bitfield_to_byte(bob_bitfield)
     print(f"ALICE PICKS: {alice_discards_byte} BOB PICKS: {bob_discards_byte}")
     amount = 200
+
+    # [43, 4, 51, 225, 61, 73, 50, 14, 241, 13, 228, 2, 91, 121, 59, 51, 170, 205]
+    bob_selects_byte = bytes([205])
 
     entropy_values = [
         bytes.fromhex("eb04c21e3ee58d1b494e0b5be68ee5e5ae5d4b7a0a01287005ff21e7b70c5ddc"),
@@ -338,24 +371,11 @@ def test_run_a(file):
     bob_seed = entropy_values[1][:16]
     alice_discards_salt = entropy_values[2][:16]
 
-    step_a = load_clvm(calpoker_clsp_dir / "a", recompile=False)
-    step_a_hash = step_a.get_tree_hash()
-    print("\nstep_a_hash and hash returned:")
-    print(step_a_hash)
-
     # Move list entries:
     # (move, mover_share, evidence, expected_slash, on_chain)
     first_move = sha256(alice_seed).digest()
 
-    # [43, 4, 51, 225, 61, 73, 50, 14, 241, 13, 228, 2, 91, 121, 59, 51, 170, 205]
-    bob_selects_byte = bytes([205])
-
-    # alice_good_selections = 0b01101110.to_bytes(1, byteorder='big')
-    # alice_loss_selections = 0b10110011.to_bytes(1, byteorder='big')
-    # bob_good_selections = 0b00011111.to_bytes(1, byteorder='big')
-    # bob_loss_selections = 0b11111000.to_bytes(1, byteorder='big')
-
-    move_list = [
+    return [
         (first_move, 0, None, MoveCode.MAKE_MOVE, False),
         (bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
         (alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
@@ -363,12 +383,17 @@ def test_run_a(file):
         (alice_discards_salt + alice_discards_byte + bob_selects_byte, 0, None, MoveCode.MAKE_MOVE, False)
     ]
 
-    for (name, move_set) in [("MOVE LIST", move_list), ("RECURSIVE LIST", recursive_list_up_to_d)]:
-        print(f'RUNNING {name}')
-        env = GameEnvironment(validator_program_library, amount)
-        #move_zero = Move(step_a_hash, None, 32,)
-        move_zero = Move(MoveCode.MAKE_MOVE, next_validator_hash=step_a_hash, state = Program.to(0), next_max_move_size=len(step_a_hash), extra_data=Program.to(0))
-        run_game(env, move_zero, move_set)
+
+def test_run_a():
+    test_run_with_moves(normal_outcome_move_list(), 200)
+    seed_511_case = read_test_case("seed_511.json")
+    test_run_with_moves(generate_test_set(seed_511_case), seed_511_case["amount"])
+
+    # alice_good_selections = 0b01101110.to_bytes(1, byteorder='big')
+    # alice_loss_selections = 0b10110011.to_bytes(1, byteorder='big')
+    # bob_good_selections = 0b00011111.to_bytes(1, byteorder='big')
+    # bob_loss_selections = 0b11111000.to_bytes(1, byteorder='big')
+
 
 
 # def run_test_from_file(file):
@@ -378,7 +403,7 @@ def test_run_a(file):
 
 # types/blockchain_format/program.py:21:class Program(SExp):
 
-# test_run_a()
+test_run_a()
 
 """
 A alice_commit

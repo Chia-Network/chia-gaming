@@ -14,6 +14,7 @@ from itertools import permutations
 from functools import total_ordering
 
 from clvm_types.program import Program
+from seed import GameSeed
 
 # src/games/calpoker.rs
 
@@ -238,10 +239,8 @@ def find_tie():
 
     while (can_make_win_and_loss is None) and alice_hand_rating != bob_hand_rating:
         int_seed += 1
-        alice_seed = sha256(("alice" + str(int_seed)).encode("utf8")).digest()
-        bob_seed = sha256(("bob" + str(int_seed)).encode("utf8")).digest()
-        seed = sha256(alice_seed + bob_seed + bytes(Program.to(200))).digest()
-        r = make_cards(seed)
+        game_seed = GameSeed(int_seed)
+        r = make_cards(game_seed.seed)
         alice_initial_hand = [CardIndex(clvm_byte_to_int(i)).to_card() for i in r[0]]
         bob_initial_hand = [CardIndex(clvm_byte_to_int(i)).to_card() for i in r[1]]
         alice_discards = [1,3,4,7]
@@ -283,6 +282,7 @@ def find_tie():
     print("  Bob loss cards:", cards_for_discards(bob_final_cards, bob_loss_selects)[0])
     print(f"  Bob outcome:", onehandcalc(Hand(cards_for_discards(bob_final_cards, bob_loss_selects)[0])))
     test_input = {
+        "amount": 200,
         "seed": int_seed,
         "alice_discards": alice_discards,
         "bob_discards": bob_discards,
