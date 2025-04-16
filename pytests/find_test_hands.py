@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
+import json
+
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -261,6 +263,7 @@ def find_tie():
 
     alice_loss_selects, bob_loss_selects = can_make_win_and_loss
 
+    # Note that we never compare alice "loss" selections to bob's "loss" selections
     print(f"\n\n***\n\nTie found. int_seed={int_seed}")
     print("Alice hand:", alice_picked_hand)
     print("  Bob hand:", bob_picked_hand)
@@ -271,7 +274,18 @@ def find_tie():
     print(f"  Bob loss selects:", bob_loss_selects)
     print("  Bob loss cards:", cards_for_discards(bob_final_cards, bob_loss_selects)[0])
     print(f"  Bob outcome:", onehandcalc(Hand(cards_for_discards(bob_final_cards, bob_loss_selects)[0])))
-
+    test_input = {
+        "seed": int_seed,
+        "alice_discards": alice_discards,
+        "bob_discards": bob_discards,
+        # selects in the format of "move" in the validation programs
+        "alice_good_selections": alice_selects, # ???
+        "bob_good_selections": bob_selects, # ???
+        "alice_loss_selections": alice_loss_selects,
+        "bob_loss_selections": bob_loss_selects,
+    }
+    print()
+    print(json.dumps(test_input))
 
 # TODO: discards, selects, and use handcalc
 

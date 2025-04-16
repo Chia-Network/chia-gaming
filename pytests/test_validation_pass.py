@@ -11,6 +11,7 @@ from clvm_types.sized_bytes import bytes32
 from dataclasses import dataclass
 from clvm_types.program import Program
 import traceback
+import json
 
 # TODO: check returned/next max_move size value
 
@@ -38,6 +39,10 @@ class ValidatorInfo:
     program: Program
     name: str
 
+
+def read_test_case(file: Path):
+    with open(file, "r", encoding="utf8") as test_file:
+        return json.reads(test_file.read())
 
 def create_validator_program_library():
     """
@@ -268,7 +273,49 @@ def bitfield_to_byte(x):
     #assert(len(b) == 1)
     return b[-1:]
 
-def test_run_a():
+def substitute_selections(test_inputs, ):
+    pass
+
+def generate_test_set(first_move, test_inputs: Dict):
+    alice_discards_salt
+    alice_good_selections = test_inputs["alice_good_selections"]
+    alice_discards_byte
+
+    '''
+            "seed": int_seed,
+        "alice_discards": alice_discards,
+        "bob_discards": bob_discards,
+        # selects in the format of "move" in the validation programs
+        "alice_good_selections": alice_selects, # ???
+        "bob_good_selections": bob_selects, # ???
+        "alice_loss_selections": alice_loss_selects,
+        "bob_loss_selections": bob_loss_selects,'''
+    recursive_list_up_to_d = [
+        (first_move, 0, None, MoveCode.MAKE_MOVE, False),
+        (bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
+        (alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
+        (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False),
+        [
+            # Slash succeed cases
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, MoveCode.SLASH, False),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_loss_selections, MoveCode.MAKE_MOVE, False),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_loss_selections, MoveCode.MAKE_MOVE, False),
+            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 0, bob_good_selections, MoveCode.SLASH, False),
+            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, bob_good_selections, MoveCode.SLASH, False),
+            [
+                # Slash fail cases
+                (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.SLASH, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
+                (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
+                (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False), # The game proceeds as expected, until step E. Alice
+            ]
+        ]
+    ]
+    return recursive_list_up_to_d
+
+
+def test_run_a(file):
+    inputs = read_test_case(file)
     alice_seed = b"0alice6789abcdef"
     bob_seed = b"0bob456789abcdef"
     #alice_bitfield = [0, 0, 0, 0, 1, 1, 1, 1]
@@ -303,10 +350,10 @@ def test_run_a():
     # [43, 4, 51, 225, 61, 73, 50, 14, 241, 13, 228, 2, 91, 121, 59, 51, 170, 205]
     bob_selects_byte = bytes([205])
 
-    alice_good_selections = 0b01101110.to_bytes(1, byteorder='big')
-    alice_bad_selections = 0b10110011.to_bytes(1, byteorder='big')
-    bob_good_selections = 0b00011111.to_bytes(1, byteorder='big')
-    bob_bad_selections = 0b11111000.to_bytes(1, byteorder='big')
+    # alice_good_selections = 0b01101110.to_bytes(1, byteorder='big')
+    # alice_loss_selections = 0b10110011.to_bytes(1, byteorder='big')
+    # bob_good_selections = 0b00011111.to_bytes(1, byteorder='big')
+    # bob_loss_selections = 0b11111000.to_bytes(1, byteorder='big')
 
     move_list = [
         (first_move, 0, None, MoveCode.MAKE_MOVE, False),
@@ -314,28 +361,6 @@ def test_run_a():
         (alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
         (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False),
         (alice_discards_salt + alice_discards_byte + bob_selects_byte, 0, None, MoveCode.MAKE_MOVE, False)
-    ]
-
-    recursive_list_up_to_d = [
-        (first_move, 0, None, MoveCode.MAKE_MOVE, False),
-        (bob_seed, 0, None, MoveCode.MAKE_MOVE, False),
-        (alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False),
-        (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False),
-        [
-            # Slash succeed cases
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, MoveCode.SLASH, False),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_bad_selections, MoveCode.MAKE_MOVE, False),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_bad_selections, MoveCode.MAKE_MOVE, False),
-            (alice_discards_salt + alice_discards_byte + alice_bad_selections, 0, bob_good_selections, MoveCode.SLASH, False),
-            (alice_discards_salt + alice_discards_byte + alice_bad_selections, 100, bob_good_selections, MoveCode.SLASH, False),
-            [
-                # Slash fail cases
-                (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.SLASH, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
-                (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
-                (alice_discards_salt + alice_discards_byte + alice_bad_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False), # The game proceeds as expected, until step E. Alice
-            ]
-        ]
     ]
 
     for (name, move_set) in [("MOVE LIST", move_list), ("RECURSIVE LIST", recursive_list_up_to_d)]:
@@ -346,9 +371,14 @@ def test_run_a():
         run_game(env, move_zero, move_set)
 
 
+# def run_test_from_file(file):
+#     inputs = read_test_case(file)
+
+
+
 # types/blockchain_format/program.py:21:class Program(SExp):
 
-test_run_a()
+# test_run_a()
 
 """
 A alice_commit
