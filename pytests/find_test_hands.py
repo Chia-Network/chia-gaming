@@ -263,7 +263,7 @@ def find_tie():
 
     print(f"\n\n***\n\nTie found. int_seed={int_seed}")
     print("Alice hand:", alice_picked_hand)
-    print("  Bob hand:", [CardIndex(clvm_byte_to_int(i)) for i in r[1]])
+    print("  Bob hand:", bob_picked_hand)
     print(f"  Tie outcome: {alice_hand_rating}")
     print(f"Alice loss selects:", alice_loss_selects)
     print(f"Alice loss cards:", cards_for_discards(alice_final_cards, alice_loss_selects)[0])
