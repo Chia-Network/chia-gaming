@@ -61,7 +61,7 @@
             alice_final_cards (append my_cards_me bob_cards_me)
             bob_final_cards (append bob_cards_bob my_cards_bob)
 
-            alice_hand_value (onehandcalc (map list-to-pair (pull_out_cards alice_card_selections alice_final_cards)))
+            alice_hand_value (onehandcalc (x "alice and bob cards" alice_final_cards bob_final_cards (map list-to-pair (pull_out_cards alice_card_selections alice_final_cards))))
 
             (if_any_fail
                 (= (sha256 alice_salted_discards) alice_commit)
