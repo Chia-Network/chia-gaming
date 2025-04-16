@@ -9,6 +9,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import List
 from itertools import permutations
+from functools import total_ordering
 
 from clvm_types.program import Program
 
@@ -82,9 +83,16 @@ class Suit:
 
 
 @dataclass  # (frozen=True)
+@total_ordering
 class Card:
     rank: Rank
     suit: Suit
+
+    def __eq__(self, other):
+        return self.rank == other.rank and self.suit == other.suit
+
+    def __lt__(self, other):
+        return self.rank < other.rank or self.rank == other.rank and self.suit < other.suit
 
     def to_index():
         return None
@@ -262,8 +270,8 @@ def find_tie():
     alice_loss_selects, bob_loss_selects = can_make_win_and_loss
 
     print(f"\n\n***\n\nTie found. int_seed={int_seed}")
-    print("Alice hand:", alice_picked_hand)
-    print("  Bob hand:", bob_picked_hand)
+    print("Alice hand:", sorted(alice_picked_hand))
+    print("  Bob hand:", sorted(bob_picked_hand))
     print(f"  Tie outcome: {alice_hand_rating}")
     print(f"Alice loss selects:", alice_loss_selects)
     print(f"Alice loss cards:", cards_for_discards(alice_final_cards, alice_loss_selects)[0])
