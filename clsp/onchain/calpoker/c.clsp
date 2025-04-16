@@ -20,7 +20,7 @@
 ;    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
 ;    (alice_commit bob_seed) me previous_calidation_program mover_puzzle solution evidence))
 ; alice_commit: commit to pre-image (for rnd)
-; alice's new commit is a commit to picks that's not revealed yet.
+; alice's new commit is a commit to discards that's not revealed yet.
 
 (export (mod_hash
         (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE

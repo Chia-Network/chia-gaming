@@ -98,7 +98,7 @@ def compose_validator_args(validator_mod_hash, replacements):
 
 
 
-#def test_validate_picks():
+#def test_validate_discards():
 # 1. Pass in initial state and a series of moves
 # 2. Call the next validation program with (move, movershare) for that turn
 # 3. Save return values to be passed on
@@ -223,10 +223,10 @@ def test_run_a():
     bob_seed = b"0bob456789abcdef"
     #alice_bitfield = [0, 0, 0, 0, 1, 1, 1, 1]
     #bob_bitfield = [1, 0, 1, 0, 1, 0, 1, 0]
-    alice_picks_byte = 0b00001111.to_bytes(1, byteorder='big') #bitfield_to_byte(alice_bitfield)
-    bob_picks_byte = 0b10101010.to_bytes(1, byteorder='big') #bitfield_to_byte(bob_bitfield)
-    print(f"ALICE PICKS: {alice_picks_byte} BOB PICKS: {bob_picks_byte}")
-    alice_picks_salt = b"alice_picks_salt"
+    alice_discards_byte = 0b00001111.to_bytes(1, byteorder='big') #bitfield_to_byte(alice_bitfield)
+    bob_discards_byte = 0b10101010.to_bytes(1, byteorder='big') #bitfield_to_byte(bob_bitfield)
+    print(f"ALICE PICKS: {alice_discards_byte} BOB PICKS: {bob_discards_byte}")
+    alice_discards_salt = b"alice_discards_salt"
 
     step_a = load_clvm(calpoker_clsp_dir / "a", recompile=False)
     step_a_hash = step_a.get_tree_hash()
@@ -257,20 +257,20 @@ BTG -> slash
     move_list = [
         (first_move, 0, None, False, False),
         (bob_seed, 0, None, False, False),
-        (alice_seed + sha256(alice_picks_salt + alice_picks_byte).digest(), 0, None, False, False),
-        (bob_picks_byte, 0, None, False, False),
+        (alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, False, False),
+        (bob_discards_byte, 0, None, False, False),
         [
             # Slash succeed cases
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, bob_good_selections, False, False),
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 0, bob_good_selections, True, False),
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, bob_bad_selections, False, False),
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 0, bob_bad_selections, False, False),
-            (alice_picks_salt + alice_picks_byte + alice_bad_selections, 0, bob_good_selections, True, False),
-            (alice_picks_salt + alice_picks_byte + alice_bad_selections, 100, bob_good_selections, True, False),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, False, False),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, True, False),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_bad_selections, False, False),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_bad_selections, False, False),
+            (alice_discards_salt + alice_discards_byte + alice_bad_selections, 0, bob_good_selections, True, False),
+            (alice_discards_salt + alice_discards_byte + alice_bad_selections, 100, bob_good_selections, True, False),
             # Slash fail cases
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, True, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
-            (alice_picks_salt + alice_picks_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
-            (alice_picks_salt + alice_picks_byte + alice_bad_selections, 100, chr(0xff), False, False), # The game proceeds as expected, until step E. Alice
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, True, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
+            (alice_discards_salt + alice_discards_byte + alice_bad_selections, 100, chr(0xff), False, False), # The game proceeds as expected, until step E. Alice
         ]
         ]
 
@@ -286,11 +286,11 @@ A alice_commit
     alice_commit
 B bob_seed
     alice_commit bob_seed
-C alice_reveal alice_picks_commit
-    (alice_cards bob_cards) alice_picks_commit
-D bob_picks
-    bob_picks alice_cards bob_cards alice_picks_commit
-E alice_picks_reveal alice_selects
+C alice_reveal alice_discards_commit
+    (alice_cards bob_cards) alice_discards_commit
+D bob_discards
+    bob_discards alice_cards bob_cards alice_discards_commit
+E alice_discards_reveal alice_selects
 
 Pass tests
 
@@ -304,11 +304,11 @@ slash succeed tests
         alice reveal doesn't match
     D
         move wrong length
-        bob picks too few/too many cards
+        bob discards too few/too many cards
     E
         move wrong length
-        alice picks reveal doesn't match
-        alice picks wrong number of cards
+        alice discards reveal doesn't match
+        alice discards wrong number of cards
         alice selects wrong number of cards
 
 slashing fail tests
@@ -321,7 +321,7 @@ slashing fail tests
 
 
 # GTG -> no slash
-# Alice picks good cards (a high hand)
+# Alice discards good cards (a high hand)
 # We expect Bob not to slash
 
 
