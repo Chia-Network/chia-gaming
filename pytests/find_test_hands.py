@@ -222,8 +222,8 @@ def check_for_losing_selects(opponent_hand_rating, my_final_cards):
 
         tried.add(lose_bob_selects)
         # taking 5 of the 8 cards. The "selected" cards become our hand
-        bob_hand = selected_cards_by_index(my_final_cards, lose_bob_selects).selected
-        bob_hand_rating = onehandcalc(Hand(bob_hand))
+        bob_hand = poker_selected_cards(my_final_cards, lose_bob_selects)
+        bob_hand_rating = onehandcalc(bob_hand)
         print(f"checking bob selects {lose_bob_selects} alice rating {opponent_hand_rating} bob {bob_hand_rating}")
         if opponent_hand_rating > bob_hand_rating:
             return lose_bob_selects
@@ -235,8 +235,8 @@ def find_win_and_loss(alice_initial_hand, bob_initial_hand, alice_discards, bob_
     tried = set()
 
     alice_final_cards, bob_final_cards = exchange_cards(alice_initial_hand, bob_initial_hand, alice_discards, bob_discards)
-    alice_hand_rating = onehandcalc(Hand(selected_cards_by_index(alice_final_cards, alice_selects)[1]))
-    bob_hand_rating = onehandcalc(Hand(selected_cards_by_index(bob_final_cards, bob_selects)[1]))
+    alice_hand_rating = onehandcalc(poker_selected_cards(alice_final_cards, alice_selects))
+    bob_hand_rating = onehandcalc(poker_selected_cards(bob_final_cards, bob_selects))
 
     lose_alice_selects = check_for_losing_selects(bob_hand_rating, alice_final_cards)
     lose_bob_selects = check_for_losing_selects(alice_hand_rating, bob_final_cards)
@@ -273,8 +273,8 @@ def find_tie():
         alice_picked_hand = poker_selected_cards(alice_final_cards, alice_selects)
         bob_picked_hand = poker_selected_cards(bob_final_cards, bob_selects)
 
-        alice_hand_rating = onehandcalc(Hand(alice_picked_hand))
-        bob_hand_rating = onehandcalc(Hand(bob_picked_hand))
+        alice_hand_rating = onehandcalc(alice_picked_hand)
+        bob_hand_rating = onehandcalc(bob_picked_hand)
 
         if alice_hand_rating != bob_hand_rating:
             print(f"{int_seed} alice and bob didn't tie on tie discards")
