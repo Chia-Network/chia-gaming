@@ -115,8 +115,15 @@
 (defun calpoker_alice_driver_d (MY_SALT MY_PICKS amount
             (@ state (bob_discards (alice_cards bob_cards) my_commit)) move validation_program_hash split)
     (assign
-        (my_all_cards . bob_all_cards) (get_final_cards_in_canonical_order
+        (my_all_cards_indices . bob_all_cards_indices) (get_final_cards_in_canonical_order
             alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
+
+        (my_all_cards . bob_all_cards)
+            (c
+               (map make_card my_all_cards_indices)
+               (map make_card bob_all_cards_indices)
+            )
+        
         (my_hand_value my_selects) (handcalc (map card_list_to_pair my_all_cards))
         (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_all_cards))
         ;; win_result is 1 if my_hand_value is greater than bob_hand_value

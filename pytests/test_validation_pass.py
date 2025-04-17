@@ -10,6 +10,7 @@ from validator_output import MoveCode, Move, Slash, MoveOrSlash
 from clvm_types.sized_bytes import bytes32
 from dataclasses import dataclass
 from clvm_types.program import Program
+import subprocess
 import traceback
 import json
 from seed import GameSeed
@@ -189,7 +190,15 @@ def run_one_step(
     assert len(move_to_make) <= max_move_size_to_apply
 
     print_validator_input_args(args[1], game_arg_names)
+
+    print("CLDB RUN")
+    program_hex = bytes(Program.to(validator_program)).hex()
+    args_hex = bytes(Program.to(args)).hex()
+    cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
+    print(cldb_output.decode('utf8'))
+
     ret_val = validator_program.run(args)
+
     print(f"RAW VALIDATOR OUTPUT {ret_val}")
 
     validator_output = construct_validator_output(ret_val)

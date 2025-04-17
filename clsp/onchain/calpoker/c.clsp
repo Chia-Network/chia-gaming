@@ -31,7 +31,7 @@
         ;TODO print old_state
         new_state (c
                 (substr MOVE 16 48)
-                (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT))
+                (print "show diagnostic output of cards" (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT)))
             )
         alice_commit (f state)
         bob_seed (f (r state))

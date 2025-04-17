@@ -2,6 +2,7 @@
 
 (import onchain.calpoker.onehandcalc)
 (import onchain.calpoker.arrange_cards)
+(import onchain.calpoker.make_card)
 (import onchain.game_codes)
 (import std.list_compare)
 (import std.assert)
@@ -12,6 +13,7 @@
 (import std.map)
 (import std.li)
 (import std.append)
+(import std.print)
 
 ; Bob challenging
 ; state is (Bob's discards (alice_cards bob_cards) alice_commit)
@@ -56,10 +58,11 @@
             alice_discards (substr MOVE 16 17)
             alice_card_selections (substr MOVE 17 18)
 
-            alice_pcards (map list-to-pair alice_cards) ;; xxx here
-            bob_pcards (map list-to-pair bob_cards)
-            (alice_final_cards . bob_final_cards) (get_final_cards_in_canonical_order alice_pcards alice_discards bob_pcards bob_discards)
-            alice_hand_value (onehandcalc (x "alice and bob cards" alice_final_cards bob_final_cards (map list-to-pair (pull_out_cards alice_card_selections alice_final_cards))))
+            (alice_final_cards bob_final_cards) (print "these should be indices" (get_final_cards_in_canonical_order alice_cards alice_discards bob_cards bob_discards))
+            alice_hand_value
+                (print "alice onehandcalc" (onehandcalc
+                     (print "pull out cards alice" (map list-to-pair (pull_out_cards alice_card_selections alice_final_cards)))
+                ))
 
             (if_any_fail
                 (= (sha256 alice_salted_discards) alice_commit)
@@ -68,9 +71,11 @@
                     ;; Assert we aren't running on chain
                     (not WAITER_PUZZLE_HASH)
                     (assign
-                        bob_hand_value (onehandcalc
-                                (map list-to-pair (pull_out_cards bob_card_selections bob_final_cards)))
-                        result (x "hands " alice_hand_value bob_hand_value (list_compare alice_hand_value bob_hand_value))
+                        bob_hand_value
+                            (print "bob onehandcalc" (onehandcalc
+                                (print "pull out cards bob" (map list-to-pair (pull_out_cards bob_card_selections bob_final_cards)))
+                            ))
+                        result (print "alice v bob result" (list_compare alice_hand_value bob_hand_value))
                         (<= MOVER_SHARE
                             (if (not result)
                                 (/ AMOUNT 2)

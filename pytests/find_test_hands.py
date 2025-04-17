@@ -300,8 +300,8 @@ def find_tie():
     # Note that we never compare alice "loss" selections to bob's "loss" selections
     print(f"\n\n***\n\nTie found. int_seed={int_seed}")
     print(f'Make cards seed: {Program.to(game_seed.seed)}')
-    print("Alice hand:", sorted(alice_picked_hand))
-    print("  Bob hand:", sorted(bob_picked_hand))
+    print("Alice hand:", sorted(alice_picked_hand.cards))
+    print("  Bob hand:", sorted(bob_picked_hand.cards))
     print(f"  Tie outcome: {alice_hand_rating}")
     print(f"Alice loss selects:", alice_loss_selects)
     print(f"Alice loss cards:", poker_selected_cards(alice_final_cards, alice_loss_selects))
