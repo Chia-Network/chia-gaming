@@ -5,7 +5,7 @@ from pathlib import Path
 from hashlib import sha256
 from validator_hashes import program_hashes_hex
 from clvm_tools_rs import start_clvm_program
-from load_clvm import load_clvm
+from load_clvm_hex import load_clvm_hex
 from validator_output import MoveCode, Move, Slash, MoveOrSlash
 from clvm_types.sized_bytes import bytes32
 from dataclasses import dataclass
@@ -53,7 +53,7 @@ def create_validator_program_library():
     # TODO: Use the clsp feature that exports module hash
     lib = {}
     for hex_key, prog_name in zip(program_hashes_hex, prog_names):
-        lib[bytes.fromhex(hex_key)] = ValidatorInfo(load_clvm(calpoker_clsp_dir / prog_name, recompile=False), prog_name)
+        lib[bytes.fromhex(hex_key)] = ValidatorInfo(load_clvm_hex(calpoker_clsp_dir / f"{prog_name}.hex"), prog_name)
     # TODO: sanity check step_a_hash = step_a.get_tree_hash()
     return lib
 
@@ -335,7 +335,7 @@ def generate_test_set(test_inputs: Dict):
 
 
 def test_run_with_moves(move_list, amount):
-    step_a = load_clvm(calpoker_clsp_dir / "a", recompile=False)
+    step_a = load_clvm_hex(calpoker_clsp_dir / "a.hex")
     step_a_hash = step_a.get_tree_hash()
     print("\nstep_a_hash and hash returned:")
     print(step_a_hash)

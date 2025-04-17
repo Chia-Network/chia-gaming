@@ -1,4 +1,4 @@
-from load_clvm import load_clvm
+from load_clvm_hex import load_clvm_hex
 import os
 import sys
 from pathlib import Path
@@ -12,16 +12,15 @@ from pathlib import Path
 #dir = sys.argv[1]
 
 my_path = path = os.path.dirname(__file__)
-validator_paths = (Path(my_path) / "../clsp/onchain/calpoker/").glob("?.clsp")
+validator_paths = (Path(my_path) / "../clsp/onchain/calpoker/").glob("?.hex")
 validator_paths = sorted(list(validator_paths))
-print(validator_paths)
 
 output = """
 program_hashes_hex = [
 """
 
 for filename in validator_paths:
-    program = load_clvm(filename, recompile=False)
+    program = load_clvm_hex(filename)
     program_treehash = program.get_tree_hash()
     output += f"    '{program_treehash}',\n"
 
