@@ -5,7 +5,7 @@ use clvm_traits::ToClvm;
 use clvmr::{run_program, ChiaDialect};
 use clvmr::reduction::EvalErr;
 
-use crate::utils::first;
+use crate::utils::{first, proper_list};
 
 use log::debug;
 
@@ -909,6 +909,14 @@ fn test_handcalc() {
             vec![(14, 1), (13, 2), (12, 3), (11, 4), (9, 1)],
             vec![(14, 2), (13, 3), (12, 4), (11, 1), (9, 2)],
         ),
+        (
+            "80",
+            vec![
+                "test case which should fail by giving 6 output choices",
+            ],
+            vec![(2, 3), (4, 4), (10, 2), (10, 4), (2, 2), (3, 1), (3, 4), (13, 4)],
+            vec![(2, 4), (3, 2), (11, 3), (1, 1), (4, 2), (5, 2), (7, 1), (12, 3)],
+        ),
     ];
 
     let program =
@@ -944,6 +952,15 @@ fn test_handcalc() {
             .expect("should run")
             .1;
             debug!("{explanation:?}");
+
+            let check_result_len = |allocator: &mut AllocEncoder, result| {
+                let result_list = proper_list(allocator.allocator(), result, true).unwrap();
+                let result_check_l = proper_list(allocator.allocator(), result_list[1], true).unwrap();
+                assert_eq!(result_check_l.len(), 5);
+            };
+            check_result_len(&mut allocator, result_1);
+            check_result_len(&mut allocator, result_2);
+
             let deep_compare_args = [
                 Node(first(allocator.allocator(), result_1).expect("ok")),
                 Node(first(allocator.allocator(), result_2).expect("ok")),
