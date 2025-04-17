@@ -42,6 +42,6 @@
         (bob_cards_bob bob_cards_me) (split_cards bob_picks bob_cards)
         my_all_cards (map make_card (append my_cards_me bob_cards_me))
         bob_all_cards (map make_card (append bob_cards_bob my_cards_bob))
-        (x my_all_cards bob_all_cards)
+        (list my_all_cards bob_all_cards)
     )
 )
