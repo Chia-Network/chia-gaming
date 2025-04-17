@@ -5,6 +5,7 @@ from pathlib import Path
 
 from clvm_types.program import Program
 from load_clvm_hex import load_clvm_hex
+from util import dbg_assert_eq
 
 calpoker_clsp_dir = Path("../clsp/onchain/calpoker/")
 cwd = Path(os.path.dirname(__file__))
@@ -16,12 +17,6 @@ functions = "pull_out_cards"
 # class TestItem:
 #     args: Any
 #     expected_output: Any
-
-def dbg_assert_eq(expected, actual, msg):
-    if expected != actual:
-        print(f"\n{msg}:\nexpected={expected}\nactual={actual}\n")
-    # else:
-    #    print("OK:", expected, actual)
 
 make_cards_tests = []
 def test_make_cards():

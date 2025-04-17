@@ -15,6 +15,7 @@ from functools import total_ordering
 
 from clvm_types.program import Program
 from seed import GameSeed
+from util import dbg_assert_eq
 
 # src/games/calpoker.rs
 
@@ -193,7 +194,7 @@ def selected_cards_by_index(cards, indicies):
 
 def poker_selected_cards(cards, indicies) -> Hand:
     assert len(cards) == 8
-    assert len(indicies) == 5
+    dbg_assert_eq(len(indicies), 5)
     """The local game driver code will choose the best hand for us"""
     hand = selected_cards_by_index(cards, indicies).selected
     assert len(hand) == 5
@@ -252,13 +253,14 @@ def find_win_and_loss(alice_initial_hand, bob_initial_hand, alice_discards, bob_
 # good_hand_rating = onehandcalc(good_hand)
 # print(f"good_hand_rating: {good_hand_rating}")
 def find_tie():
-    int_seed = 190
+    int_seed = 528
     alice_hand_rating = 0
     bob_hand_rating = 1
     can_make_win_and_loss = None
 
     while (can_make_win_and_loss is None) and alice_hand_rating != bob_hand_rating:
         int_seed += 1
+        print(f"int_seed={int_seed}")
         game_seed = GameSeed(int_seed)
         r = make_cards(game_seed.seed)
         alice_initial_hand = [CardIndex(clvm_byte_to_int(i)).to_card() for i in r[0]]
@@ -266,8 +268,11 @@ def find_tie():
         alice_discards = [1,3,4,7]
         bob_discards = [0,2,4,6]
         alice_final_cards, bob_final_cards = exchange_cards(alice_initial_hand, bob_initial_hand, alice_discards, bob_discards)
+        print(f"alice_final_cards, bob_final_cards = {alice_final_cards, bob_final_cards}")
         alice_handcalc = handcalc(Hand(alice_final_cards))
         bob_handcalc = handcalc(Hand(bob_final_cards))
+        dbg_assert_eq(len(alice_handcalc[1]), 5, msg=f"alice_handcalc={alice_handcalc}")
+        dbg_assert_eq(len(bob_handcalc[1]), 5, msg=f"bob_handcalc={bob_handcalc}")
         alice_selects = alice_handcalc[1]
         bob_selects = bob_handcalc[1]
 
