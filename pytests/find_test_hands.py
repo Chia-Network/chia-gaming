@@ -46,10 +46,7 @@ def card_to_index(card: Card) -> CardIndex:
 def index_to_card(card_index: CardIndex) -> Card:
     rank = card_index.index // 4
     suit = card_index.index % 4
-    if rank == 12:
-        return Card(1, suit + 1)
-    else:
-        return Card(rank=rank + 2, suit=suit + 1)
+    return Card(rank=rank + 2, suit=suit + 1)
 
 
 @dataclass  # (frozen=True)
@@ -91,6 +88,11 @@ class Suit:
 class Card:
     rank: Rank
     suit: Suit
+
+    def __init__(self, rank, suit):
+        _, _ = Rank(rank), Suit(suit)
+        self.rank = rank
+        self.suit = suit
 
     def __eq__(self, other):
         return self.rank == other.rank and self.suit == other.suit
