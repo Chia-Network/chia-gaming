@@ -385,7 +385,7 @@ def normal_outcome_move_list():
 
 
 def test_run_a():
-    seed_192_case = read_test_case("test_input.json")
+    seed_192_case = read_test_case("seed.json")
     test_run_with_moves(generate_test_set(seed_192_case), seed_192_case["amount"])
 
     # test_run_with_moves(normal_outcome_move_list(), 200)
