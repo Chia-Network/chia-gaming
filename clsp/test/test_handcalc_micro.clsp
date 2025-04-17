@@ -3,6 +3,7 @@
 (import handcalc)
 (import onchain.calpoker.make_cards)
 (import onchain.calpoker.onehandcalc)
+(import onchain.calpoker.arrange_cards)
 
 (export (kind . arguments)
   (if
@@ -29,6 +30,9 @@
 
      (= kind "make_cards")
      (make_cards &rest arguments)
+
+     (= kind "get_final_cards_in_canonical_order")
+     (get_final_cards_in_canonical_order &rest arguments)
 
      ;; Otherwise
      (handcalc &rest arguments)

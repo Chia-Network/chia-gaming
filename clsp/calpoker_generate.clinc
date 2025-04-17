@@ -18,7 +18,7 @@
 (import onchain.game_codes)
 (import onchain.calpoker.make_card exposing make_card)
 (import onchain.calpoker.make_cards exposing make_cards)
-(import onchain.calpoker.arrange_cards exposing split_cards)
+(import onchain.calpoker.arrange_cards exposing split_cards get_final_cards_in_canonical_order)
 
 ; initial_mover_handler initial_waiter_handler whether_paired required_size_factor
 ; initial_max_move_size initial_validator initial_validator_hash
@@ -115,10 +115,8 @@
 (defun calpoker_alice_driver_d (MY_SALT MY_PICKS amount
             (@ state (bob_discards (alice_cards bob_cards) my_commit)) move validation_program_hash split)
     (assign
-        (my_cards_me my_cards_bob) (split_cards MY_PICKS alice_cards)
-        (bob_cards_bob bob_cards_me) (split_cards move bob_cards)
-        my_all_cards (map make_card (append my_cards_me bob_cards_me))
-        bob_all_cards (map make_card (append bob_cards_bob my_cards_bob))
+        (my_all_cards . bob_all_cards) (get_final_cards_in_canonical_order
+            alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
         (my_hand_value my_selects) (handcalc (map card_list_to_pair my_all_cards))
         (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_all_cards))
         ;; win_result is 1 if my_hand_value is greater than bob_hand_value

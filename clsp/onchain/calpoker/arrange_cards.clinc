@@ -1,6 +1,8 @@
 (import onchain.calpoker.make_card)
 (import std.assert)
 (import std.popcount)
+(import std.map)
+(import std.append)
 
 (defun split_cards (mask cards)
     (split_cards_inner mask cards 0 0)
@@ -31,5 +33,15 @@
     (if (= (popcount (f args)) 5)
         (pull_out_cards_inner &rest args)
         (x "pull_out_cards got" args)
+    )
+)
+
+(defun get_final_cards_in_canonical_order (alice_cards alice_picks bob_cards bob_picks)
+    (assign
+        (my_cards_me my_cards_bob) (split_cards alice_picks alice_cards)
+        (bob_cards_bob bob_cards_me) (split_cards bob_picks bob_cards)
+        my_all_cards (map make_card (append my_cards_me bob_cards_me))
+        bob_all_cards (map make_card (append bob_cards_bob my_cards_bob))
+        (x my_all_cards bob_all_cards)
     )
 )

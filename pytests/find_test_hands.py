@@ -203,6 +203,7 @@ def cards_for_discards(cards, discards):
     return selected_cards_by_index(cards, discards)
 
 def exchange_cards(alice_hand, bob_hand, alice_discards, bob_discards):
+    """"""
     alice_selections = cards_for_discards(alice_hand, alice_discards)
     alice_give_away, alice_keep = alice_selections.selected, alice_selections.leftover
     bob_selections = cards_for_discards(bob_hand, bob_discards)

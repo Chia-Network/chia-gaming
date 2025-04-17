@@ -56,11 +56,9 @@
             alice_discards (substr MOVE 16 17)
             alice_card_selections (substr MOVE 17 18)
 
-            (my_cards_me my_cards_bob) (split_cards alice_discards alice_cards)
-            (bob_cards_bob bob_cards_me) (split_cards bob_discards bob_cards)
-            alice_final_cards (append my_cards_me bob_cards_me)
-            bob_final_cards (append bob_cards_bob my_cards_bob)
-
+            alice_pcards (map list-to-pair alice_cards) ;; xxx here
+            bob_pcards (map list-to-pair bob_cards)
+            (alice_final_cards . bob_final_cards) (get_final_cards_in_canonical_order alice_pcards alice_discards bob_pcards bob_discards)
             alice_hand_value (onehandcalc (x "alice and bob cards" alice_final_cards bob_final_cards (map list-to-pair (pull_out_cards alice_card_selections alice_final_cards))))
 
             (if_any_fail
