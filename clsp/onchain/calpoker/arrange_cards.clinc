@@ -34,7 +34,7 @@
 (defun pull_out_cards args
     (if (= (popcount (f args)) 5)
         (pull_out_cards_inner &rest args)
-        (x "pull_out_cards got" args)
+        (x "pull_out_cards got bad data:" args)
     )
 )
 

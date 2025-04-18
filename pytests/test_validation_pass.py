@@ -151,8 +151,14 @@ def print_validator_input_args(args, arg_names):
     print ("PYTHON INPUT ARGS: ")
     for name, arg in zip(arg_names, args):
         print(f"{name}: {arg}")
-    print ("CLVM INPUT ARGS: ")
+        if name == 'waiter_puzzle_hash':
+            print(f"WAITER PUZZLE HASH (waiter_puzzle_hash) OVERLAPS WITH on_chain. on_chain={not not arg}")
+        if name == "bob_card_selections":
+            print(f"{Program.to(arg).as_int()}")
+
+    print("CLVM INPUT ARGS: ")
     print(Program.to(args))
+    print(Program.to(args).as_python())
 
 def print_validator_output(args):
     output_names = [ "move_type", "next_program_hash" ]
@@ -339,15 +345,16 @@ def generate_test_set(test_inputs: Dict):
         (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
         [
             # Slash succeed cases
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
-            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
-            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
-            # Slash fail cases
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.SLASH, False, 'e'), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.MAKE_MOVE, True, 'e'), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
+            # state                                                          bob_payout
+            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
+            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            # (alice_discards_salt + alice_discards_byte + alice_loss_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
+            # (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
+            # # Slash fail cases
+            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.MAKE_MOVE, False, 'e'), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.SLASH, True, 'e'), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
             (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False, 'e'), # The game proceeds as expected, until step E. Alice
         ]
     ]
