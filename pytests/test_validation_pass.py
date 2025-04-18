@@ -14,6 +14,7 @@ import subprocess
 import traceback
 import json
 from seed import GameSeed
+from util import dbg_assert_eq
 
 # TODO: check returned/next max_move size value
 
@@ -203,7 +204,7 @@ def run_one_step(
 
     validator_output = construct_validator_output(ret_val)
 
-    assert validator_output.move_code == expected_move_type
+    dbg_assert_eq(expected_move_type, validator_output.move_code)
 
     if validator_output.move_code == MoveCode.SLASH or validator_output.next_validator_hash is None:
         # XXX Maybe do additional checks
