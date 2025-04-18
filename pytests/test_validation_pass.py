@@ -167,16 +167,13 @@ def print_validator_output(args):
         print(f"    {name}: {arg}")
 
 
-#def run_one_step(validator_hash, validator, amount: int, move, max_move_size: int, mover_share, state, evidence,
-#                 expected_move_type: MoveCode, on_chain: bool) -> MoveOrSlash:
-
 def run_one_step(
         game_env, # amount
         script, # (move, mover_share, evidence, expected_move_type, on_chain)
         last_move, # (next_validator_hash, next_max_move_size, state)
         max_move_size_to_apply,
         validator_program,
-        expected_move_type):
+        expected_move_type): # -> MoveOrSlash
 
     # TODO: See if compose_validator_args will save code later XOR delete
     # WAITER_PUZZLE_HASH doubles as an "on_chain" indicator
@@ -232,6 +229,17 @@ def byte_from_indices(indices):
         res |= (1 << i)
     return res
 
+@dataclass
+class CLVMExceptionInformation:
+    message: str
+    hexstr: str
+    def __repr__(self):
+        return f"""
+    {self.message}
+    {self.hexstr}
+    {Program.fromhex(self.hexstr).as_python()}
+"""
+
 # def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
 def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_from_last_turn: int, remaining_script, indent=0, path=''):
     for i, script in enumerate(remaining_script):
@@ -275,14 +283,26 @@ def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_f
         print(f'comparing validator name {validator_info.name} to expected {script[-1]}')
         assert validator_info.name == script[-1]
         print(f"    ---- step {path}{i} Running program {validator_info.name} ----")
-        return_val: MoveOrSlash = run_one_step(
-            game_environment, # amount
-            script, # (move, mover_share, evidence, expected_move_type, on_chain)
-            last_move, # (next_validator_hash, next_max_move_size, state)
-            max_move_size_from_last_turn,
-            validator_info.program,
-            expected_move_type
-        )
+
+        try:
+            return_val: MoveOrSlash = run_one_step(
+                game_environment, # amount
+                script, # (move, mover_share, evidence, expected_move_type, on_chain)
+                last_move, # (next_validator_hash, next_max_move_size, state)
+                max_move_size_from_last_turn,
+                validator_info.program,
+                expected_move_type
+            )
+        except Exception as e:
+            if expected_move_type == MoveCode.CLVM_EXCEPTION:
+                # Note: clvm throws ValueError as of 2025 April 18
+                # But, we always expect a Tuple from a clean CLVM invocation
+                if isinstance(e.args, tuple):
+                    # print(e)
+                    print(CLVMExceptionInformation(*e.args))
+                    # Completed test sucessfully - received the expected exception
+                    return
+            raise e
 
         print(f"return_val='{return_val}'")
         if expected_move_type == MoveCode.SLASH:
@@ -345,17 +365,19 @@ def generate_test_set(test_inputs: Dict):
         (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
         [
             # Slash succeed cases
-            # state                                                          bob_payout
-            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
-            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
-            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
-            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
-            # (alice_discards_salt + alice_discards_byte + alice_loss_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
-            # (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
-            # # Slash fail cases
-            # (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.MAKE_MOVE, False, 'e'), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.SLASH, True, 'e'), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
-            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, chr(0xff), MoveCode.MAKE_MOVE, False, 'e'), # The game proceeds as expected, until step E. Alice
+            # state                                                       bob_payout,  bob selections,  expected_result, on_chain, validator
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_loss_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 0, bob_good_selections, MoveCode.SLASH, False, 'e'),
+            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
+            # Slash fail cases
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.MAKE_MOVE, False, 'e'), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
+            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, MoveCode.CLVM_EXCEPTION, True, 'e'), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
+
+            #
+            (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, bytes([0xff]), MoveCode.CLVM_EXCEPTION, False, 'e'), # The game proceeds as expected, until step E. Alice
         ]
     ]
     return recursive_list_up_to_d
