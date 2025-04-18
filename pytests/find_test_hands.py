@@ -22,10 +22,13 @@ from util import dbg_assert_eq
 seed = 0
 
 # Note on card formats:
+def load_clvm_hex(path: Path) -> Program:
+    with open(path, "r") as hexfile:
+        return Program.fromhex(hexfile.read())
 
 
-# make_cards = load_clvm("onchain/calpoker/make_cards.clinc")  # choose
-# onehandcalc = load_clvm("clsp/onchain/calpoker/onehandcalc.clinc")
+cwd = Path(os.path.dirname(__file__))
+test_handcalc_micro = load_clvm_hex(cwd / "../clsp/test/test_handcalc_micro.hex")
 
 
 @dataclass  # (frozen=True)
@@ -40,7 +43,7 @@ class Hand:
 
 
 def card_to_index(card: Card) -> CardIndex:
-    return CardIndex(card.rank + card.suit * 4)
+    return CardIndex((card.rank - 2) * 4 + (card.suit - 1))
 
 
 def index_to_card(card_index: CardIndex) -> Card:
@@ -104,20 +107,11 @@ class Card:
         return None
 
     def to_card_index(self) -> CardIndex:
-        return card_to_index(self.rank, self.suit)
+        return card_to_index(self)
 
 
 # Rank 2-14
 # Suit 1-4
-
-
-def load_clvm_hex(path: Path) -> Program:
-    with open(path, "r") as hexfile:
-        return Program.fromhex(hexfile.read())
-
-
-cwd = Path(os.path.dirname(__file__))
-test_handcalc_micro = load_clvm_hex(cwd / "../clsp/test/test_handcalc_micro.hex")
 
 
 # def cards_to_hand(cards) -> Hand:
@@ -206,14 +200,26 @@ def cards_for_discards(cards, discards):
     return selected_cards_by_index(cards, discards)
 
 def exchange_cards(alice_hand, bob_hand, alice_discards, bob_discards):
-    """"""
-    alice_selections = cards_for_discards(alice_hand, alice_discards)
-    alice_give_away, alice_keep = alice_selections.selected, alice_selections.leftover
-    bob_selections = cards_for_discards(bob_hand, bob_discards)
-    # bob_give_away is the cards selected to give away
-    bob_give_away, bob_keep = bob_selections.selected, bob_selections.leftover
-    return (alice_keep + bob_give_away, bob_keep + alice_give_away)
+    def cards_to_indices(cards):
+        return [x.to_card_index().index for x in cards]
 
+    def bytes_to_int(b):
+        if len(b) == 0:
+            return 0
+        return b[0]
+
+    def indices_to_cards(indices):
+        return [CardIndex(bytes_to_int(i)).to_card() for i in indices]
+
+    def indices_to_number(i):
+        res = 0
+        for x in i:
+            res |= 1 << x
+        return res
+
+    raw_input = Program.to(["get_final_cards_in_canonical_order", cards_to_indices(alice_hand), indices_to_number(alice_discards), cards_to_indices(bob_hand), indices_to_number(bob_discards)])
+    raw_output = test_handcalc_micro.run(raw_input).as_python()
+    return (indices_to_cards(raw_output[0]), indices_to_cards(raw_output[1]))
 
 def check_for_losing_selects(opponent_hand_rating, my_final_cards):
     potential_choices = list(range(8))

@@ -255,6 +255,10 @@ def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_f
         # return_val contains the new state, max_move_size ...
         #def run_one_step(validator_hash, validator, amount: int, move, max_move_size: int, mover_share, state, evidence, step_n: int,
         #expected_move_type: MoveCode, on_chain: bool) -> MoveOrSlash:
+
+        if last_move.next_validator_hash is None:
+            break
+
         validator_info = validator_program_library[last_move.next_validator_hash]
         print(f'comparing validator name {validator_info.name} to expected {script[-1]}')
         assert validator_info.name == script[-1]
