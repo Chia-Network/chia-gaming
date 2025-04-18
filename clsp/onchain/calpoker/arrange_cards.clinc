@@ -3,6 +3,8 @@
 (import std.popcount)
 (import std.map)
 (import std.append)
+(import std.sort)
+(import std.deep_compare)
 
 (defun split_cards (mask cards)
     (split_cards_inner mask cards 0 0)
@@ -40,8 +42,8 @@
     (assign
         (my_cards_me my_cards_bob) (split_cards alice_picks alice_cards)
         (bob_cards_bob bob_cards_me) (split_cards bob_picks bob_cards)
-        my_all_cards (append my_cards_me bob_cards_me)
-        bob_all_cards (append bob_cards_bob my_cards_bob)
+        my_all_cards (sort deep< (append my_cards_me bob_cards_me))
+        bob_all_cards (sort deep< (append bob_cards_bob my_cards_bob))
         (list my_all_cards bob_all_cards)
     )
 )

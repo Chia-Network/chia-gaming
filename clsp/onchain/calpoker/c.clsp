@@ -29,11 +29,11 @@
         
     (assign
         ;TODO print old_state
-        new_state (c
+        new_state (print "new state from move C was" (c
                 (substr MOVE 16 48)
                 (print "show diagnostic output of cards" (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT)))
-            )
-        alice_commit (f state)
+            ))
+        alice_commit (f (print "original state into C was" state))
         bob_seed (f (r state))
         (if_any_fail
             (= (strlen MOVE) 48)

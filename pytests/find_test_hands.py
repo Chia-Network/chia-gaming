@@ -255,10 +255,12 @@ def find_win_and_loss(alice_initial_hand, bob_initial_hand, alice_discards, bob_
 # good_hand_rating = onehandcalc(good_hand)
 # print(f"good_hand_rating: {good_hand_rating}")
 def find_tie():
-    int_seed = 528
+    int_seed = 1000
     alice_hand_rating = 0
     bob_hand_rating = 1
     can_make_win_and_loss = None
+    alice_initial_hand = None
+    bob_initial_hand = None
 
     while (can_make_win_and_loss is None) and alice_hand_rating != bob_hand_rating:
         int_seed += 1
@@ -299,7 +301,11 @@ def find_tie():
 
     # Note that we never compare alice "loss" selections to bob's "loss" selections
     print(f"\n\n***\n\nTie found. int_seed={int_seed}")
+    print("Alice pre picks cards:", alice_initial_hand)
+    print("  Bob pre picks cards:", bob_initial_hand)
     print(f'Make cards seed: {Program.to(game_seed.seed)}')
+    print("Alice full hand:", sorted(alice_final_cards))
+    print("  Bob full hand:", sorted(bob_final_cards))
     print("Alice hand:", sorted(alice_picked_hand.cards))
     print("  Bob hand:", sorted(bob_picked_hand.cards))
     print(f"  Tie outcome: {alice_hand_rating}")

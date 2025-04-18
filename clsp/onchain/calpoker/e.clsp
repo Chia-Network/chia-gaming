@@ -58,10 +58,10 @@
             alice_discards (substr MOVE 16 17)
             alice_card_selections (substr MOVE 17 18)
 
-            (alice_final_cards bob_final_cards) (print "these should be indices" (get_final_cards_in_canonical_order alice_cards alice_discards bob_cards bob_discards))
+            (alice_final_cards bob_final_cards) (print "these should be indices" (get_final_cards_in_canonical_order (print "alice pre picks cards" alice_cards) alice_discards (print "bob pre picks cards" bob_cards) bob_discards))
             alice_hand_value
                 (print "alice onehandcalc" (onehandcalc
-                     (print "pull out cards alice" (map list-to-pair (pull_out_cards alice_card_selections alice_final_cards)))
+                     (print "pull out cards alice" (map list-to-pair (pull_out_cards alice_card_selections (print "alice final cards" alice_final_cards))))
                 ))
 
             (if_any_fail
@@ -73,7 +73,7 @@
                     (assign
                         bob_hand_value
                             (print "bob onehandcalc" (onehandcalc
-                                (print "pull out cards bob" (map list-to-pair (pull_out_cards bob_card_selections bob_final_cards)))
+                                (print "pull out cards bob" (map list-to-pair (pull_out_cards bob_card_selections (print "bob final cards" bob_final_cards))))
                             ))
                         result (print "alice v bob result" (list_compare alice_hand_value bob_hand_value))
                         (<= MOVER_SHARE
