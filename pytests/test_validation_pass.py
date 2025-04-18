@@ -231,7 +231,13 @@ def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_f
     for i, script in enumerate(remaining_script):
         print("SCRIPT IS", script)
         if isinstance(script, list):
-            run_game(game_environment, last_move, max_move_size_from_last_turn, script, indent=indent + 2, path=path+f'{i}.')
+            for j, raw_element in enumerate(script):
+                use_path = path + f'{i}.'
+                element = raw_element
+                if not isinstance(raw_element, list):
+                    use_path = path + f'{i} alternative {j}.'
+                    element = [raw_element]
+                run_game(game_environment, last_move, max_move_size_from_last_turn, element, indent=indent + 2, path=use_path)
             continue
 
         # ENV: validator_program_library, amount,
@@ -257,7 +263,7 @@ def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_f
         #expected_move_type: MoveCode, on_chain: bool) -> MoveOrSlash:
 
         if last_move.next_validator_hash is None:
-            break
+            continue
 
         validator_info = validator_program_library[last_move.next_validator_hash]
         print(f'comparing validator name {validator_info.name} to expected {script[-1]}')
