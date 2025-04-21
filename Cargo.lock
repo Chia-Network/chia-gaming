@@ -518,7 +518,7 @@ dependencies = [
 [[package]]
 name = "clvm_tools_rs"
 version = "0.1.46"
-source = "git+https://github.com/Chia-Network/clvm_tools_rs.git?rev=c3ecaa49cf16b56e3842f93b450ce8dce6bddb2d#c3ecaa49cf16b56e3842f93b450ce8dce6bddb2d"
+source = "git+https://github.com/Chia-Network/clvm_tools_rs.git?rev=f5f6ebd339b4782d9b3c65db8796af554d341bd8#f5f6ebd339b4782d9b3c65db8796af554d341bd8"
 dependencies = [
  "binascii",
  "bls12_381",

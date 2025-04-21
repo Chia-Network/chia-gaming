@@ -15,7 +15,7 @@ mod readable_move;
 mod result;
 mod unroll_coin;
 mod validation_info;
-mod state_update_program;
+mod validation_program;
 
 pub use accept_transaction_state::AcceptTransactionState;
 pub use channel_coin::{
@@ -45,4 +45,4 @@ pub use unroll_coin::{
     prepend_rem_conditions, UnrollCoin, UnrollCoinConditionInputs, UnrollCoinOutcome, UnrollTarget,
 };
 pub use validation_info::ValidationInfo;
-pub use state_update_program::StateUpdateProgram;
+pub use validation_program::ValidationProgram;

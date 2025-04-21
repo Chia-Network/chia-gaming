@@ -1,6 +1,7 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.onehandcalc)
+(import onchain.calpoker.make_card)
 (import onchain.calpoker.arrange_cards)
 (import onchain.calpoker.make_card)
 (import onchain.game_codes)
@@ -20,21 +21,11 @@
 ; state is (Bob's discards (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_discards and alice's selections
 ; evidence is Bob's card selections
-
-; TODO: move helper functions to another file
-(defun list-to-pair ((a b)) (c a b))
-
-(defun indices_to_bitfield_inner (mylist index)
-    (if (not mylist)
-        0
-        (= (f mylist) index)
-        (logior 1 (lsh (indices_to_bitfield_inner (r mylist) (+ index 1)) 1))
-        (lsh (indices_to_bitfield_inner mylist (+ index 1)) 1)
-    )
-)
-
-(defun single-byte (raw-indices)
-    (if raw-indices
+(export (mod_hash (move next_validation_hash bob_share previous_validation_hash
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
+    (bob_picks (alice_cards bob_cards) alice_commit) me previous_validation_program mover_puzzle solution bob_card_selections)
+    (if_any_fail
+        (= (strlen move) 18)
         (assign
             indices-len (strlen raw-indices)
             (substr raw-indices (- indices-len 1) indices-len)
@@ -106,5 +97,7 @@
                     bob_cards alice_hand_value alice_final_cards bob_final_cards MOVER_SHARE) 0 "E move")
             )
         )
+        0
+        (x)
     )
 )

@@ -14,7 +14,7 @@ use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Amount, Program};
+use crate::common::types::Amount;
 use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
@@ -26,27 +26,21 @@ use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choi
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
-use crate::referee::types::{StateUpdateResult};
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::BasicShutdownConditions;
-use crate::tests::game::{GameAction};
+use crate::tests::game::GameAction;
 #[cfg(feature = "sim-tests")]
 use crate::tests::game::GameActionResult;
 
 #[cfg(feature = "sim-tests")]
 use crate::tests::simenv::SimulatorEnvironment;
 
-use crate::common::types::Node;
-use clvmr::{run_program, Allocator, NodePtr};
-
-pub const CALPOKER_HEX_FILE: &'static str = "clsp/calpoker_include_calpoker_template.hex";
-
 #[cfg(feature = "sim-tests")]
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
     Game::new(
         allocator,
         game_id,
-        CALPOKER_HEX_FILE,
+        "clsp/calpoker_include_calpoker_template.hex",
     )
 }
 
@@ -83,94 +77,32 @@ fn run_calpoker_play_test(
     simenv.play_game(moves)
 }
 
-// pub fn test_to_clvm_on_array(allocator: &mut AllocEncoder) {
-//     let alice_word: &[u8; 16] = b"0alice6789abcdef";
-//     let alice_picks = [0, 1, 0, 1, 0, 1, 0, 1];
-//     let alice_picks_byte = 0b01010101u8;
-//     let mut alice_picks_salt = b"alice_picks_salt".to_vec();
-//     let mut alice_picks_preimage = alice_picks_salt;
-//     alice_picks_preimage.push(alice_picks_byte);
-
-//     let alice_picks_preimage_hash = Sha256Input::Bytes(alice_picks_preimage()).hash().bytes();
-//     //let alice_c_move: <[&[u8; 16]] as Concat<_>>::Output = [alice_word, alice_picks_preimage_hash].concat();// (alice_word + hash(alice_picks_salt + alice_picks))
-//     //let alice_correct_move: &[u8] = [alice_word, alice_picks_preimage_hash].concat();
-//     assert_eq!(alice_word.len() + alice_picks_preimage_hash.len(), 48);
-// }
-
 pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
-    let alice_word = b"0alice6789abcdef"; // alice seed
+    let alice_word = b"0alice6789abcdef";
     let alice_word_hash = Sha256Input::Bytes(alice_word)
         .hash()
         .to_clvm(allocator)
         .expect("should work");
-    let bob_word = allocator // bob seed
+    let bob_word = allocator
         .encode_atom(clvm_traits::Atom::Borrowed(b"0bob456789abcdef"))
         .expect("should work");
     let alice_picks = [0, 1, 0, 1, 0, 1, 0, 1]
         .to_clvm(allocator)
         .expect("should work");
-    let alice_picks_salt = b"alice_picks_salt";
-    let alice_picks_byte = 0b01010101u8;
-    let alice_picks_vec = &[alice_picks_byte];
-    //let alice_c_move = [alice_word, sha256([alice_picks_salt, alice_picks].concat())].concat();// (alice_word + hash(alice_picks_salt + alice_picks))
-    //let mut alice_c_move = alice_word.to_clvm(allocator).expect("ya");
-    //let mut alice_c_move = alice_word.
-    let alice_picks_preimage = Sha256Input::Array(
-        vec![
-        Sha256Input::Bytes(alice_picks_salt),
-        Sha256Input::Bytes(&[alice_picks_byte]),
-        ])
-        .hash()
-        .bytes()
-        .to_vec();
-    let mut alice_c_move = Vec::new();
-        alice_c_move.extend_from_slice(alice_word);
-        alice_c_move.extend_from_slice(&alice_picks_preimage);
-
-    // let alice_c_move = vec![alice_word, x].join("")
-    //     .to_clvm(allocator)
-    //     .expect("should work");
-
-    //debug!("alice_c_move {alice_c_move:?}");
-    
-    let mut alice_picks_preimage = Sha256Input::Array(
-        vec![
-        Sha256Input::Bytes(alice_word),
-        Sha256Input::Bytes(alice_picks_vec),
-        ])
-        .hash()
-        .bytes()
-        .to_vec();
-    
-
     let bob_picks = [1, 0, 1, 0, 1, 0, 1, 0]
         .to_clvm(allocator)
         .expect("should work");
+    let win_move_200 = 200.to_clvm(allocator).expect("should work");
 
-    // TODO: Adam: Check that *_picks is one byte in length.
-    let alice_selects =  [0, 1, 0, 1, 0, 1, 0, 1].to_clvm(allocator).expect("");
-    let alice_selects_byte =  0b01010101u8;
-    // alice move E is the reveal: concat(alice_picks_salt, alice_picks, alice_selects)
-    //let win_move_200 = 200.to_clvm(allocator).expect("should work");
-    // *_picks is a string of len == 1
-
-    // alice_salted_picks (substr MOVE 0 17)
-    // alice_picks (substr MOVE 16 17)
-    // alice_card_selections (substr MOVE 17 18)
-    let alice_move_e: NodePtr = [
-        alice_picks_salt.to_clvm(allocator).expect("alice_picks_salt.to_clvm"),
-        alice_picks_byte.to_clvm(allocator).expect("alice_picks_byte.to_clvm"),
-        alice_selects_byte.to_clvm(allocator).expect("alice_selects_byte.to_clvm")
-        ].to_clvm(allocator).expect("Array.to_clvm");
     [
         GameAction::Move(0, alice_word_hash, true),
         GameAction::Move(1, bob_word, true),
         // Alice's reveal of her card generating seed and her commit to which
         // cards she's picking.
-        GameAction::Move(0, alice_c_move.to_clvm(allocator).expect("converting alice_c_move to CLVM failed"), true), // 48 bytes: (alice_word + alice_picks_hash)
+        GameAction::Move(0, alice_picks, true),
         GameAction::Move(1, bob_picks, true),
         // Move is a declared split.
-        GameAction::Move(0, alice_move_e, true), // 18 bytes
+        GameAction::Move(0, win_move_200, true),
     ]
 }
 
@@ -335,35 +267,6 @@ fn test_play_calpoker_end_game_reward() {
 
     debug!("running moves {moves:?}");
     let _game_action_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
-}
-
-// Test calpoker only using the state update programs.
-// We can now drive the game just via the state update program and I've done more
-// to isolate it now that it can be separated.
-#[test]
-fn test_play_calpoker_using_state_update() {
-    // let mut allocator = AllocEncoder::new();
-    // let game_id = GameID::from_bytes(b"calpoker");
-    // let game = Game::new(
-    //     &mut allocator,
-    //     game_id,
-    //     CALPOKER_HEX_FILE
-    // ).unwrap();
-    // let moves: &[GameStateMove] = &[
-    //     GameStateMove {
-    //         entropy: vec![],
-    //         move_data: vec![],
-    //     }
-    // ];
-    // let contributions = &[Amount::new(100), Amount::new(100)];
-    // let result = play_game_via_state_update(
-    //     &mut allocator,
-    //     &game,
-    //     contributions,
-    //     moves.iter()
-    // ).expect("should play");
-    // assert_eq!(result[result.len()-1], StateUpdateResult::MoveOk(Rc::new(Program::from_hex("80").unwrap()), 0));
-    todo!();
 }
 
 // Bram: slashing tests
