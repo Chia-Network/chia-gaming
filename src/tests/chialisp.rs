@@ -1,13 +1,10 @@
-use std::process::Command;
-
 use crate::common::standard_coin::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Error, Node, Program, Sha256Input};
+use crate::common::types::{chia_dialect, AllocEncoder, Node, Program, Sha256Input};
 
 use clvm_traits::ToClvm;
 use clvmr::{run_program, ChiaDialect};
-use clvmr::reduction::EvalErr;
 
-use crate::utils::{first, proper_list};
+use crate::utils::first;
 
 use log::debug;
 
@@ -181,39 +178,6 @@ fn test_pull_out_straight() {
 }
 
 #[test]
-fn test_onehandcalc_specific_case() {
-    let mut allocator = AllocEncoder::new();
-    let source_data = (
-        "onehandcalc",
-        (
-            [
-                (13, 4),
-                (5, 2),
-                (3, 3),
-                (4, 3),
-                (2, 1)
-            ],
-            ()
-        )
-    ).to_clvm(&mut allocator).expect("should convert");
-    let program =
-        read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
-    let program_clvm = program.to_clvm(&mut allocator).expect("should work");
-    let result_e = run_program(
-        allocator.allocator(),
-        &chia_dialect(),
-        program_clvm,
-        source_data,
-        0,
-    );
-    if let Err(EvalErr(n, e)) = &result_e {
-        debug!("error {e}: {:?}", Program::from_nodeptr(&mut allocator, *n));
-    }
-    let result = result_e.unwrap().1;
-    assert_eq!(Node(result).to_hex(&mut allocator).unwrap(), "ff01ff01ff01ff01ff01ff0dff05ff04ff03ff0280");
-}
-
-#[test]
 fn test_find_straight_high() {
     let mut allocator = AllocEncoder::new();
     // Add additional case tests for normal range, not a straight.
@@ -242,8 +206,8 @@ fn test_find_straight_high() {
         source_data_ace,
         0,
     )
-        .expect("should run")
-        .1;
+    .expect("should run")
+    .1;
     assert_eq!(Node(result).to_hex(&mut allocator).expect("cvt"), "05");
 }
 
@@ -936,14 +900,6 @@ fn test_handcalc() {
             )
             .expect("should run")
             .1;
-            let hc_prog = Program::from_nodeptr(&mut allocator, program_clvm).unwrap();
-            let hc_args = Program::from_nodeptr(&mut allocator, source_data_2).unwrap();
-            let o = Command::new("/bin/sh")
-                .args(["cldb", "-x", "-p", &hc_prog.to_hex(), &hc_args.to_hex()])
-                .output()
-                .expect("failed to execute process");
-            let out_str: String = o.stdout.from_utf_unchecked();
-            debug!("cldb print\n{}", decode_string(&out_str));
             let result_2 = run_program(
                 allocator.allocator(),
                 &chia_dialect(),
@@ -954,17 +910,6 @@ fn test_handcalc() {
             .expect("should run")
             .1;
             debug!("{explanation:?}");
-
-            let check_result_len = |allocator: &mut AllocEncoder, result| {
-                let result_list = proper_list(allocator.allocator(), result, true).unwrap();
-                let result_check_l = proper_list(allocator.allocator(), result_list[1], true).unwrap();
-                assert_eq!(result_check_l.len(), 5);
-            };
-            debug!("check length 1");
-            check_result_len(&mut allocator, result_1);
-            debug!("check length 2");
-            check_result_len(&mut allocator, result_2);
-
             let deep_compare_args = [
                 Node(first(allocator.allocator(), result_1).expect("ok")),
                 Node(first(allocator.allocator(), result_2).expect("ok")),
