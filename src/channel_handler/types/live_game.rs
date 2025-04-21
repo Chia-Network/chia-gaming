@@ -31,7 +31,7 @@ impl LiveGame {
         LiveGame {
             game_id,
             last_referee_puzzle_hash,
-            referee_maker: referee_maker,
+            referee_maker,
             my_contribution,
             their_contribution,
             rewind_outcome: None,
@@ -98,6 +98,16 @@ impl LiveGame {
             self.last_referee_puzzle_hash = ph.clone();
         }
         Ok(their_move_result)
+    }
+
+    pub fn check_their_turn_for_slash(
+        &self,
+        allocator: &mut AllocEncoder,
+        evidence: Evidence,
+        coin_string: &CoinString,
+    ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
+        self.referee_maker
+            .check_their_turn_for_slash(allocator, evidence, coin_string)
     }
 
     pub fn get_rewind_outcome(&self) -> Option<usize> {

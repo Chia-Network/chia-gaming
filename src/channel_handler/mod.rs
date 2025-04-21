@@ -218,6 +218,7 @@ impl ChannelHandler {
             my_balance,
             their_balance,
             puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
+            rem_condition_state: self.current_state_number,
         }
     }
 
@@ -329,7 +330,7 @@ impl ChannelHandler {
 
             cached_last_action: None,
 
-            current_state_number: 1,
+            current_state_number: 0,
             next_nonce_number: 0,
 
             state_channel: ChannelCoinInfo {
@@ -382,6 +383,7 @@ impl ChannelHandler {
             // XXX might need to mutate slightly.
             &inputs,
         )?;
+        myself.current_state_number += 1;
 
         let channel_coin_spend =
             myself.create_conditions_and_signature_of_channel_coin(env, &myself.unroll.coin)?;
@@ -495,9 +497,6 @@ impl ChannelHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<PotatoSignatures, Error> {
-        self.current_state_number += 1;
-        self.unroll.coin.state_number = self.current_state_number;
-
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
             self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
@@ -506,6 +505,9 @@ impl ChannelHandler {
             self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
             &new_game_coins_on_chain,
         );
+
+        self.current_state_number += 1;
+        self.unroll.coin.state_number = self.current_state_number;
 
         // Now update our unroll state.
         self.unroll.coin.update(
@@ -918,11 +920,11 @@ impl ChannelHandler {
                 message.clone(),
                 move_data.mover_share.clone(),
             ),
-            _ => {
+            TheirTurnResult::Slash(_) => {
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
                 ));
-            },
+            }
         };
 
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;

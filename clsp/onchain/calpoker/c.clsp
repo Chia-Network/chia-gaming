@@ -4,16 +4,13 @@
 (import std.shatree)
 (import std.relops)
 (import std.and)
-(import std.print)
 (import std.if_any_fail)
 (import onchain.calpoker.d exposing (program_hash as dhash))
 (import onchain.calpoker.make_cards)
-(import onchain.game_codes)
 
 ; Bob challenging
 ; state is alice's commit and bob's seed
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
-; MOVE = [16] + [32]
 ; evidence is empty
 
 ;(export (@ all_args (mod_hash (old_state move new_validation_hash mover_share previous_validation_hash

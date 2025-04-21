@@ -1,6 +1,7 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.onehandcalc)
+(import onchain.calpoker.make_card)
 (import onchain.calpoker.arrange_cards)
 (import onchain.calpoker.make_card)
 (import onchain.game_codes)
@@ -20,21 +21,11 @@
 ; state is (Bob's discards (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_discards and alice's selections
 ; evidence is Bob's card selections
-
-; TODO: move helper functions to another file
-(defun list-to-pair ((a b)) (c a b))
-
-(defun indices_to_bitfield_inner (mylist index)
-    (if (not mylist)
-        0
-        (= (f mylist) index)
-        (logior 1 (lsh (indices_to_bitfield_inner (r mylist) (+ index 1)) 1))
-        (lsh (indices_to_bitfield_inner mylist (+ index 1)) 1)
-    )
-)
-
-(defun single-byte (raw-indices)
-    (if raw-indices
+(export (mod_hash (move next_validation_hash bob_share previous_validation_hash
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
+    (bob_picks (alice_cards bob_cards) alice_commit) me previous_validation_program mover_puzzle solution bob_card_selections)
+    (if_any_fail
+        (= (strlen move) 18)
         (assign
             indices-len (strlen raw-indices)
             (substr raw-indices (- indices-len 1) indices-len)
@@ -104,7 +95,31 @@
                 ; e.g. (() () (85 -8 2 (r 8 15 24 26 27 41 42) (a 2 1 14 8 12) (q 6 15 25 26 41 49 50) (x 14 24 27 38 42 48 51) ()) () "E move")
                 (list MAKE_MOVE 0 (li bob_discards alice_card_selections (indices_to_bitfield alice_cards)
                     bob_cards alice_hand_value alice_final_cards bob_final_cards MOVER_SHARE) 0 "E move")
+=======
+            alice_salted_picks (substr move 0 17)
+            alice_picks (substr move 16 17)
+            alice_card_selections (substr move 17 18)
+            (alice_final_cards bob_final_cards) (split_cards_inner bob_picks bob_cards &rest (split_cards alice_picks alice_cards))
+            result (list_compare (onehandcalc (pull_out_cards alice_card_selections alice_final_cards))
+                (onehandcalc (pull_out_cards bob_card_selections bob_final_cards)))
+            (if_any_fail
+                (= (sha256 alice_salted_picks alice_commit))
+                (= (popcount alice_picks) 4)
+                (<= bob_share
+                    (if (not result)
+                        (/ amount 2)
+                        (if (= result 1)
+                            amount
+                            0
+                        )
+                    )
+                )
+                0
+                1
+>>>>>>> main
             )
         )
+        0
+        (x)
     )
 )
