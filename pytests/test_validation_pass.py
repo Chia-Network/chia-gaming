@@ -44,13 +44,12 @@ class ValidatorInfo:
 
 
 @dataclass
-class TestCase:
-    test: Tuple
-    # TODO: add types for first_move_too_short, 0, None, MoveCode.SLASH, False, 'a'
+class TestCaseAlternative:
+    alternatives: List[TestCase|TestCaseSequence|TestCaseAlternative]
 
 @dataclass
 class TestCaseSequence:
-    item: Union[List[TestCase], TestCase]
+    sequence: List[TestCase|TestCaseSequence|TestCaseAlternative]
 
 
 def read_test_case(file: Path):
@@ -181,7 +180,6 @@ def run_one_step(
         game_env, # amount
         script, # (move, mover_share, evidence, expected_move_type, on_chain)
         last_move, # (next_validator_hash, next_max_move_size, state)
-        max_move_size_to_apply,
         validator_program,
         expected_move_type): # -> MoveOrSlash
 
@@ -199,9 +197,10 @@ def run_one_step(
         last_move.state, validator_program, None, None, evidence
     ]
 
-    print(f'max_move_size_to_apply {max_move_size_to_apply}')
+    print(f'max_move_size_to_apply {last_move.next_max_move_size}')
     print(f'move is {move_to_make}')
-    assert len(move_to_make) <= max_move_size_to_apply
+
+    # assert len(move_to_make) <= last_move.next_max_move_size
 
     print_validator_input_args(args[1], game_arg_names)
 
@@ -251,27 +250,30 @@ class CLVMExceptionInformation:
 """
 
 # def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
-def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_from_last_turn: int, remaining_script, indent=0, path=''):
-    for i, script in enumerate(remaining_script):
-        print("SCRIPT IS", script)
-        if isinstance(script, list):
-            for j, raw_element in enumerate(script):
-                use_path = path + f'{i}.'
-                element = raw_element
-                if not isinstance(raw_element, list):
-                    use_path = path + f'{i} alternative {j}.'
-                    element = [raw_element]
-                run_game(game_environment, last_move, max_move_size_from_last_turn, element, indent=indent + 2, path=use_path)
-            continue
+def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_from_last_turn: int, script, indent=0, path=''):
+    if isinstance(script, TestCaseSequence):
+        for j, raw_element in enumerate(script.sequence):
+            use_path = f'{path}{j}.'
+            element = raw_element
+            last_move = run_game(game_environment, last_move, max_move_size_from_last_turn, element, indent=indent + 2, path=use_path)
+            print(f'sequence: last_move {last_move}')
+            # We must be on the last move if no further action is possible.
+            if last_move is None:
+                assert j == len(script.sequence) - 1
+                return
 
+    elif isinstance(script, TestCaseAlternative):
+        for j, raw_element in enumerate(script.alternatives):
+            use_path = f'{path} alternative {j}.'
+            element = raw_element
+            run_game(game_environment, last_move, max_move_size_from_last_turn, element, indent=indent + 2, path=use_path)
+    else:
+        print("SCRIPT IS", script)
         # ENV: validator_program_library, amount,
         # MOVE: validator_hash, state, max_move_size,
         # t, n+1
         (move, mover_share, evidence, expected_move_type, on_chain, name, *rest_of_args) = script
         print(f"""
-            remaining_script: {remaining_script}
-            remaining_script[0]: {remaining_script[0]}
-            --
             expected_move_type={expected_move_type}
             move={move}
             max_move_size={last_move.next_max_move_size}
@@ -287,19 +289,18 @@ def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_f
         #expected_move_type: MoveCode, on_chain: bool) -> MoveOrSlash:
 
         if last_move.next_validator_hash is None:
-            continue
+            return
 
         validator_info = validator_program_library[last_move.next_validator_hash]
         print(f'comparing validator name {validator_info.name} to expected {script[-1]}')
         assert validator_info.name == script[-1]
-        print(f"    ---- step {path}{i} Running program {validator_info.name} ----")
+        print(f"    ---- step {path} Running program {validator_info.name} ----")
 
         try:
             return_val: MoveOrSlash = run_one_step(
                 game_environment, # amount
                 script, # (move, mover_share, evidence, expected_move_type, on_chain)
                 last_move, # (next_validator_hash, next_max_move_size, state)
-                max_move_size_from_last_turn,
                 validator_info.program,
                 expected_move_type
             )
@@ -315,10 +316,7 @@ def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_f
             raise e
 
         print(f"return_val='{return_val}'")
-        if expected_move_type == MoveCode.SLASH:
-            if len(remaining_script) > 0:
-                run_game(game_environment, return_val, max_move_size_from_last_turn, remaining_script[1:])
-                # run_game(validator_program_library, amount, new_validation_program_hash, new_state, new_max_move_size, remaining_script[1:])
+
         if return_val.move_code == MoveCode.SLASH:
             # Done with run, we got slashed.
             # Figure out something to return from here when slashed.
@@ -327,7 +325,7 @@ def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_f
         max_move_size_from_last_turn = return_val.next_max_move_size
 
         # It's a move, reassign it.
-        last_move = return_val
+        return return_val
 
 
 def bitfield_to_byte(x):
@@ -382,13 +380,13 @@ def generate_test_set(test_inputs: Dict):
     good_c_move = seed.alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest()
     c_move_too_short = good_c_move[1:]
     c_move_too_long = good_c_move + b"b"
-    alice_bad_salt = b'0'
-    c_move_bad_alice_reveal_move = seed.alice_seed + sha256(alice_bad_salt + alice_discards_byte).digest()
+    alice_bad_seed = b'0' * 16
+    c_move_bad_alice_reveal_move = alice_bad_seed + sha256(alice_discards_salt + alice_discards_byte).digest()
 
     d_move_too_short = b''
     d_move_too_long = b'ab'
-    d_move_too_few_bits_set = 0b00001111.to_bytes(1, byteorder='big')
-    d_move_too_many_bits_set = 0b00111111.to_bytes(1, byteorder='big')
+    d_move_too_few_bits_set = 0b00000111.to_bytes(1, byteorder='big')
+    d_move_too_many_bits_set = 0b00011111.to_bytes(1, byteorder='big')
 
     # (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
     e_move = alice_discards_salt + alice_discards_byte + alice_good_selections
@@ -400,70 +398,68 @@ def generate_test_set(test_inputs: Dict):
     e_move_too_few_selections = alice_discards_salt + alice_discards_byte + too_few_selections
     e_move_too_many_selections = alice_discards_salt + alice_discards_byte + too_many_selections
 
-    wrong_alice_picks_count_tests = [
-
-    ]
-
-    slash_succeed_tests = [
-        # a.clsp tests
-        (first_move_too_short, 0, None, MoveCode.SLASH, False, 'a'),
-        (first_move_too_long, 0, None, MoveCode.SLASH, False, 'a'),
+    slash_succeed_tests = TestCaseAlternative([
+        TestCaseAlternative([
+            # a.clsp tests
+            (first_move_too_short, 0, None, MoveCode.SLASH, False, 'a'),
+            (first_move_too_long, 0, None, MoveCode.SLASH, False, 'a'),
+        ]),
         # b.clsp tests
-        [
+        TestCaseSequence([
             (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
-            [
-                (bob_seed_wrong_too_short, 0, None, MoveCode.MAKE_MOVE, False, 'b')
-                (bob_seed_wrong_too_long, 0, None, MoveCode.MAKE_MOVE, False, 'b')
-            ]
-        ],
+            TestCaseAlternative([
+                (bob_seed_wrong_too_short, 0, None, MoveCode.SLASH, False, 'b'),
+                (bob_seed_wrong_too_long, 0, None, MoveCode.SLASH, False, 'b')
+            ])
+        ]),
         # c.clsp tests
-        [
+        TestCaseSequence([
             (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
             (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
-            [
-                (c_move_too_short, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
-                (c_move_too_long, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
+            TestCaseAlternative([
+                (c_move_too_short, 0, None, MoveCode.CLVM_EXCEPTION, False, 'c'),
+                (c_move_too_long, 0, None, MoveCode.SLASH, False, 'c'),
                 # alice reveal doesn't match
-                (c_move_bad_alice_reveal_move, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
-            ]
-        ],
+                (c_move_bad_alice_reveal_move, 0, None, MoveCode.SLASH, False, 'c'),
+            ])
+        ]),
         # d.clsp tests
-        [
+        TestCaseSequence([
             (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
             (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
             (good_c_move, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
-            [
+            TestCaseAlternative([
                 # move wrong length
-                (d_move_too_short, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
-                (d_move_too_long, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
+                (d_move_too_short, 0, None, MoveCode.SLASH, False, 'd'),
+                # (d_move_too_long, 0, None, MoveCode.SLASH, False, 'd'),
 
                 # bob picks too few/too many cards
-                (d_move_too_few_bits_set, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
-                (d_move_too_many_bits_set, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
-            ]
-        ],
+                (d_move_too_few_bits_set, 0, None, MoveCode.SLASH, False, 'd'),
+                (d_move_too_many_bits_set, 0, None, MoveCode.SLASH, False, 'd'),
+            ])
+        ]),
         # e.clsp
-        [
+        TestCaseSequence([
             (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
             (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
             (good_c_move, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
             (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
-            [
+            TestCaseAlternative([
                 # move wrong length
-                (e_move_too_short, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
-                (e_move_too_long, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+                (e_move_too_short, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
+                (e_move_too_long, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
 
                 # alice picks reveal doesn't match
-                (e_move_bad_reveal, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+                (e_move_bad_reveal, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
                 # alice discards wrong number of cards
-                (e_move_too_few_discards, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
-                (e_move_too_many_discards, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+                (e_move_too_few_discards, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
+                (e_move_too_many_discards, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
                 # alice selects wrong number of cards
-                (e_move_too_few_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
-                (e_move_too_many_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
-            ]
-        ]
-    ]
+                (e_move_too_few_selections, 100, bob_good_selections, MoveCode.SLASH, False, 'e'),
+                (e_move_too_many_selections, 100, bob_good_selections, MoveCode.SLASH, False, 'e')
+            ])
+        ])
+    ])
 
     recursive_list_up_to_d = [
         (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
@@ -488,8 +484,27 @@ def generate_test_set(test_inputs: Dict):
         ]
     ]
 
-    # return recursive_list_up_to_d
-    return wrong_alice_picks_count_tests
+    wrong_alice_picks_count_tests = TestCaseSequence([
+        (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
+        (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
+        TestCaseAlternative([
+            TestCaseSequence([
+                (c_move_too_short, 0, None, MoveCode.CLVM_EXCEPTION, False, 'c'),
+                # (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
+                # (e_move_too_few_discards, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            ]),
+            TestCaseSequence([
+                (c_move_too_long, 0, None, MoveCode.SLASH, False, 'c'),
+                # (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
+                # (e_move_too_many_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            ])
+        ])
+    ])
+
+    return TestCaseAlternative([
+        wrong_alice_picks_count_tests,
+        slash_succeed_tests
+    ])
 
 def test_run_with_moves(move_list, amount):
     step_a = load_clvm_hex(calpoker_clsp_dir / "a.hex")

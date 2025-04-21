@@ -26,7 +26,7 @@
         (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
             MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
             state previous_validation_program mover_puzzle solution evidence)
-        
+
     (assign
         ;TODO print old_state
         new_state (print "new state from move C was" (c
@@ -42,5 +42,5 @@
             (list MAKE_MOVE dhash new_state 1 "C")
         )
         ;(list alice_commit bob_seed)
-        )
+    )
 )
