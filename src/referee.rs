@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnInputs,
-    TheirTurnResult,
+    TheirTurnMoveData, TheirTurnResult,
 };
 use crate::channel_handler::types::{
     Evidence, GameStartInfo, ReadableMove, ValidationInfo, ValidationProgram,
@@ -1603,11 +1603,12 @@ impl RefereeMaker {
             },
         )?;
 
-        let (handler, mover_share) = match &result {
-            TheirTurnResult::FinalMove(_readable_move, mover_share) => (None, mover_share.clone()),
-            TheirTurnResult::MakeMove(_, handler, _, mover_share) => {
-                (Some(handler.clone()), mover_share.clone())
+        let (handler, move_data) = match &result {
+            TheirTurnResult::FinalMove(move_data) => (None, move_data.clone()),
+            TheirTurnResult::MakeMove(handler, _, move_data) => {
+                (Some(handler.clone()), move_data.clone())
             }
+
             // Slash can't be used when we're off chain.
             TheirTurnResult::Slash(_evidence) => {
                 return Ok(TheirTurnMoveResult {
@@ -1622,7 +1623,7 @@ impl RefereeMaker {
             &details.basic,
             Some(&args.game_move.validation_info_hash),
             &details.validation_info_hash,
-            Some(&mover_share),
+            Some(&move_data.mover_share),
             true,
         ));
 
@@ -1637,16 +1638,17 @@ impl RefereeMaker {
 
         // If specified, check for slash.
         if let Some(coin_string) = coin {
-            let slash_no_evidence = allocator.encode_atom(&[]).into_gen()?;
-            debug!("calling slash");
-            if self
-                .check_their_turn_for_slash(allocator, slash_no_evidence, coin_string)?
-                .is_some()
-            {
-                // Slash isn't allowed in off chain, we'll go on chain via error.
-                debug!("slash was allowed");
-                self.state = original_state;
-                return Err(Error::StrErr("slashable when off chain".to_string()));
+            for evidence in move_data.slash_evidence.iter() {
+                debug!("calling slash for given evidence");
+                if self
+                    .check_their_turn_for_slash(allocator, *evidence, coin_string)?
+                    .is_some()
+                {
+                    // Slash isn't allowed in off chain, we'll go on chain via error.
+                    debug!("slash was allowed");
+                    self.state = original_state;
+                    return Err(Error::StrErr("slashable when off chain".to_string()));
+                }
             }
         }
 
@@ -1974,25 +1976,27 @@ impl RefereeMaker {
             curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)?;
         debug!("THEIR TURN MOVE OFF CHAIN SUCCEEDED {new_puzzle_hash:?}");
 
-        let check_and_report_slash = |allocator: &mut AllocEncoder,
-                                      readable_move: NodePtr,
-                                      _mover_share: Amount| {
-            let nil = allocator.encode_atom(&[]).into_gen()?;
-            debug!("check their turn for slash");
-            if let Some(result) = self.check_their_turn_for_slash(allocator, nil, &created_coin)? {
-                Ok(result)
-            } else {
+        let check_and_report_slash =
+            |allocator: &mut AllocEncoder, move_data: &TheirTurnMoveData| {
+                for evidence in move_data.slash_evidence.iter() {
+                    debug!("check their turn for slash");
+                    if let Some(result) =
+                        self.check_their_turn_for_slash(allocator, *evidence, &created_coin)?
+                    {
+                        return Ok(result);
+                    }
+                }
+
                 Ok(TheirTurnCoinSpentResult::Moved {
                     new_coin_string: CoinString::from_parts(
                         &coin_string.to_coin_id(),
                         &new_puzzle_hash,
                         &self.fixed.amount,
                     ),
-                    readable: ReadableMove::from_nodeptr(allocator, readable_move)?,
+                    readable: ReadableMove::from_nodeptr(allocator, move_data.readable_move)?,
                     mover_share: args.game_move.basic.mover_share.clone(),
                 })
-            }
-        };
+            };
 
         debug!("referee move details {details:?}");
         match result.original {
@@ -2007,11 +2011,9 @@ impl RefereeMaker {
                     evidence,
                 )
             }
-            TheirTurnResult::FinalMove(readable_move, mover_share) => {
-                check_and_report_slash(allocator, readable_move, mover_share)
-            }
-            TheirTurnResult::MakeMove(readable_move, _, _, _) => {
-                check_and_report_slash(allocator, readable_move, mover_share)
+            TheirTurnResult::FinalMove(move_data) => check_and_report_slash(allocator, &move_data),
+            TheirTurnResult::MakeMove(_, _, move_data) => {
+                check_and_report_slash(allocator, &move_data)
             }
         }
     }

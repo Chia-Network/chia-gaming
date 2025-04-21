@@ -1,57 +1,54 @@
 (include *standard-cl-23*)
 
+(export clue_validate)
 (import std.assert_fail)
 (import onchain.krunk.krunk_make_clue exposing make_clue)
 
+; Bob challenging
+; state is (bob_guesses alice_clues guess_validate_hash dictionary_key alice_commit)
+; move is an Alice clue or word reveal if hit
+; evidence can be index where clue is wrong
+; evidence can be exclusion range if Alice's committed word is not in the dictionary
+(defun clue_validate (mod_hash (move new_validation_hash mover_share previous_validation_hash
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
+    (bob_guesses alice_clues guess_validation_hash @ tail (dictionary_key alice_commit))
+    me previous_calidation_program mover_puzzle solution evidence)
 
-; state is (guess_hash image guesses clues)
-; move is clue or preimage reveal
-; evidence is index of wrong clue or range signed to not be in dictionary
-(export (quine_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (guess_hash image guesses clues) me mover_puzzle solution evidence)
-
-    (if (= (strlen move)) 5
-        ; clue
+    (if (= (strlen move)) 1
+        ; alice gave a clue
         (if_any_fail
-            (= new_validation hash (sha256 guess_hash (shatree (li image guesses (c move clues)))))
+            (= new_validation hash (sha256 guess_validation_hash (shatree
+                (li bob_guesses (c move alice_clues) &rest tail))))
             (!= (len clues) 4)
             (= max_move_size 5)
             0
             (x)
         )
-        ; game end
-        (if_any_fail
-            (= (strlen move) 21)
-            (! new_validation_hash)
-            (! max_move_size)
-            (= image (sha256 move))
-            (assign word (substr move 0 5)
-                (= move_share 
-                    (* (/ amount 100)
-                        (assign mylen (len guesses)
-                            (if (= mylen 5)
-                                (if (= guess5 word) 1 0)
-                                (index (li 0 100 100 20 5) mylen)
-                            )
-                        )
+        ; alice did a reveal
+        (if (= (strlen evidence) 1)
+            ; index of wrong clue
+            (assert (!= (make_clue (index bob_guesses evidence)) (index alice_clues evidence)) 0)
+            evidence
+            ; proof
+            (assert
+                (>= (substr move 0 5) (substr evidence 0 5))
+                (<= (substr move 0 5) (substr evidence 5 10))
+                (li (li AGGSIG_UNSAFE dictionary_key evidence))
+            )
+            (if_any_fail
+                (= (strlen move) 21)
+                (! new_validation_hash)
+                (! max_move_size)
+                (= alice_commit (sha256 move))
+                (= mover_share
+                    (if (= (f bob_guesses) (substr move 0 5))
+                        (index (len bob_guesses) (li 100 100 20 5 1))
+                        (assert (= (len bob_guesses 5)) 0)
                     )
                 )
-            )
-            0
-            (if (= (strlen evidence) 1)
-                ; index of wrong clue
-                (assert (!= (make_clue (index guesses evidence)) (index clues evidence)) 0)
-                ; proof
-                (assert
-                    (>= (substr move 0 5) (substr evidence 0 5))
-                    (<= (substr move 0 5) (substr evidence 5 10))
-                    (li (li AGGSIG_UNSAFE my_trusted_key evidence))
-                )
+                0
+                (x)
             )
         )
     )
 )
-
-
-

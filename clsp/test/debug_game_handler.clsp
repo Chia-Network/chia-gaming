@@ -151,6 +151,8 @@
         0
         ;; new readable move
         (c set_share set_cheated) ;; readable move
+        ;; evidence if desired
+        ()
         ;; new validation program
         (curry (curried_puzzle CURRIED) other_turn)
         ;; output message

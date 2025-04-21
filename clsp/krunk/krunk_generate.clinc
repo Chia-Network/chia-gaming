@@ -1,0 +1,103 @@
+(export krunk_factory)
+(import onchain.krunk.commit exposing commit_validate commit_validate_hash)
+(import std.assert)
+(import std.shatree)
+(import std.curry)
+
+(defun krunk_factory (i_am_initiator my_contribution their_contribution params)
+    (assert
+        (= my_contribution their_contribution)
+        (assign
+            my_guess (list
+                ; Amount
+                (+ my_contribution their_contribution)
+                ; My turn
+                0
+                ; Handler
+                bob_driver_commit
+                ; My contribution this game
+                0
+                ; Their contribution
+                their_contribution
+                ; Initial validation program
+                commit_validate
+                ; Hash of initial validator program
+                commit_validate_hash
+                ; Initial state
+                0
+                ; Initial move
+                0
+                ; Initial max move size
+                32
+                ; Initial mover share
+                0
+            )
+            their_guess (li
+                ; Amount
+                (+ my_contribution their_contribution)
+                ; My turn
+                1
+                ; Handler
+                alice_driver_commit
+                ; My contribution this game
+                my_contribution
+                ; Their contribution
+                0
+                ; Initial validation program
+                commit_validate
+                ; Hash of initial validator program
+                commit_validate_hash
+                ; Initial state
+                0
+                ; Initial move
+                0
+                ; Initial max move size
+                32
+                ; Initial mover share
+                0
+            )
+            (if i_am_initiator (li my_guess their_guess) (li their_guess my_guess))
+        )
+    )
+)
+
+; my turn driver
+; local_move is the picked word. Needs to be in the dictionary
+; checks that word is in dictionary
+; next turn handler is a curried alice_driver_guess
+(defun alice_driver_commit (local_move amount split max_move_size entropy)
+)
+
+; their turn driver
+; checks for Bob's guess being in dictionary
+; readable_move is Bob's guess
+; next turn handler is alice_driver_clue or nil if Bob guessed right or ran out of guesses
+(defun alice_driver_guess (PREIMAGE amount state_unused move validation_info_hash max_move_size split)
+)
+
+; my turn driver
+; local_move is nil (should be called immediately)
+; next turn handler is alice_driver_guess
+(defun alice_driver_clue (PREIMAGE local_move amount split max_move_size entropy)
+)
+
+; their turn driver
+; no special checks
+; readable_move is nil
+; next turn handler is bob_driver_guess
+(defun bob_driver_commit (amount state_unused move validation_info_hash max_move_size split)
+)
+
+; my turn driver
+; local_move is a guess word. Needs to be in the dictionary
+; next turn handler is bob_driver_clue
+(defun bob_driver_guess (local_move amount split max_move_size entropy)
+)
+
+; their turn driver
+; when there's a reveal, special check is Alice's word being in dictionary
+; when there's a reveal possible evidence is indices of alice clues
+; readable_move is a clue and optionally a reveal of Alice's word if done
+; next turn handler is bob_driver_guess or nil if done
+(defun bob_driver_clue (amount state_unused move validation_info_hash max_move_size split)
+)

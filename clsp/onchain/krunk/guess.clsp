@@ -1,20 +1,31 @@
 (include *standard-cl-23*)
 
-(import onchain.krunk.clue exposing (program_hash as cluehash))
+(export guess)
+(import onchain.krunk.clue exposing clue_validate_hash)
 (import std.assert)
 
+; Alice challenging
+; state is a (bob_guesses alice_clues dictionary_public_key alice_commit)
+; move is a Bob guess
+; evidence may be range of exclusion if Alice is showing Bob's word is invalid
+(defun guess_validate (mod_hash (move new_validation_hash mover_share previous_validation_hash
+    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
+    (bob_guesses alice_clues @ tail (dictionary_public_key alice_commit)) me
+    previous_validation_program mover_puzzle solution evidence)
 
-; state is (image gusses clues)
-; move is a word guess
-(export (quine_hash (move new_validation_hash max_move_size mover_share previous_validation_hash 
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash) 
-    (image guesses clues) me mover_puzzle solution evidence)
-
-    (if_any_fail
-        (= new_validation hash (sha256 cluehash (shatree (li quine_hash image (c move guesses) clues))))
-        (= (strlen move) 5)
-        (= max_move_size 21)
-        0
-        (x)
+    (if evidence
+        (assert
+            (>=s move (substr evidence 0 5))
+            (<=s move (substr evidence 5 10))
+            (list (list AGG_SIG_UNSAFE evidence dictionary_key))
+        )
+        (if_any_fail
+            (= (strlen move) 5)
+            (= next_validation_hash (sha256 clue_validation_hash (shatree
+                (li (c move bob_guesses) alice_clues mod_hash &rest tail))))
+            (= max_move_size 21)
+            0
+            (x)
+        )
     )
 )

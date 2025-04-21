@@ -164,9 +164,16 @@ fn run_code(
 }
 
 #[derive(Debug, Clone)]
+pub struct TheirTurnMoveData {
+    pub readable_move: NodePtr,
+    pub slash_evidence: Vec<NodePtr>,
+    pub mover_share: Amount,
+}
+
+#[derive(Debug, Clone)]
 pub enum TheirTurnResult {
-    FinalMove(NodePtr, Amount),
-    MakeMove(NodePtr, GameHandler, Vec<u8>, Amount),
+    FinalMove(TheirTurnMoveData),
+    MakeMove(GameHandler, Vec<u8>, TheirTurnMoveData),
     Slash(Evidence),
 }
 
@@ -260,6 +267,15 @@ impl GameHandler {
                 "bad result from game driver: not a list".to_string(),
             ));
         };
+
+        if pl.len() == 2 {
+            let message_data = if pl.len() >= 2 {
+                allocator.allocator().atom(pl[1]).to_vec()
+            } else {
+                vec![]
+            };
+            return Err(Error::GameMoveRejected(message_data));
+        }
 
         if pl.len() != 8 {
             return Err(Error::StrErr(format!(
@@ -369,6 +385,11 @@ impl GameHandler {
             get_their_turn_debug_flag(inputs),
         )?;
 
+        debug!(
+            "run result {}",
+            disassemble(allocator.allocator(), run_result, None)
+        );
+
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
         } else {
@@ -376,6 +397,8 @@ impl GameHandler {
                 "bad result from game driver: not a list".to_string(),
             ));
         };
+
+        debug!("got move result len {}", pl.len());
 
         if pl.is_empty() {
             return Err(Error::StrErr(
@@ -392,30 +415,45 @@ impl GameHandler {
 
         if move_type == 0 {
             if pl.len() < 2 {
-                Err(Error::StrErr(format!(
+                return Err(Error::StrErr(format!(
                     "bad length for move result {}",
                     disassemble(allocator.allocator(), run_result, None)
-                )))
-            } else if pl.len() < 3 {
-                debug!(
-                    "final move with data {}",
-                    disassemble(allocator.allocator(), pl[1], None)
-                );
-                Ok(TheirTurnResult::FinalMove(
-                    pl[1],
-                    inputs.new_move.basic.mover_share.clone(),
-                ))
+                )));
+            }
+
+            let mut decode_slash_evidence = |index: Option<usize>| {
+                let mut lst = index
+                    .and_then(|i| proper_list(allocator.allocator(), pl[i], true))
+                    .unwrap_or_default();
+                lst.push(allocator.encode_atom(&[]).into_gen()?);
+                Ok(lst)
+            };
+
+            let slash_evidence = if pl.len() >= 3 {
+                decode_slash_evidence(Some(2))
             } else {
-                let message_data = if pl.len() == 4 {
-                    allocator.allocator().atom(pl[3]).to_vec()
-                } else {
-                    vec![]
-                };
+                decode_slash_evidence(None)
+            };
+
+            let their_turn_move_data = TheirTurnMoveData {
+                readable_move: pl[1],
+                mover_share: inputs.new_move.basic.mover_share.clone(),
+                slash_evidence: slash_evidence?,
+            };
+
+            let message_data = if pl.len() >= 5 {
+                allocator.allocator().atom(pl[4]).to_vec()
+            } else {
+                vec![]
+            };
+
+            if pl.len() < 5 {
+                Ok(TheirTurnResult::FinalMove(their_turn_move_data))
+            } else {
                 Ok(TheirTurnResult::MakeMove(
-                    pl[1],
-                    GameHandler::my_driver_from_nodeptr(allocator, pl[2])?,
+                    GameHandler::my_driver_from_nodeptr(allocator, pl[3])?,
                     message_data,
-                    inputs.new_move.basic.mover_share.clone(),
+                    their_turn_move_data,
                 ))
             }
         } else if move_type == 2 {

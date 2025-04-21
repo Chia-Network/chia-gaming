@@ -277,10 +277,10 @@ fn test_referee_smoke() {
         .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should run");
     let (readable_move, message) = match &their_move_result.original {
-        TheirTurnResult::MakeMove(readable_node, _, message, _) => {
-            (*readable_node, message.clone())
+        TheirTurnResult::MakeMove(_, message, move_data) => {
+            (move_data.readable_move, message.clone())
         }
-        TheirTurnResult::FinalMove(readable_node, _) => (*readable_node, vec![]),
+        TheirTurnResult::FinalMove(move_data) => (move_data.readable_move, vec![]),
         _ => {
             panic!();
         }

@@ -48,7 +48,7 @@
 ; move is bob's seed
 ; immediately sends a message giving Alice's seed
 (defun calpoker_alice_driver_b (PREIMAGE IMAGE amount state_unused move validation_info_hash max_move_size split)
-    (list MAKE_MOVE (make_cards_readable (sha256 PREIMAGE move amount))
+    (list MAKE_MOVE (make_cards_readable (sha256 PREIMAGE move amount)) ()
             (curry calpoker_alice_driver_c PREIMAGE move) PREIMAGE)
 )
 
@@ -127,7 +127,7 @@
         split (if (= win_result 1) 0 (= win_result 0) (lsh amount -1) amount)
         (list MAKE_MOVE
             (list move (indices_to_bitfield my_picks) (indices_to_bitfield bob_picks)
-                my_hand_value bob_hand_value win_result)
+                my_hand_value bob_hand_value win_result) ()
             (lambda ((& MY_SALT MY_PICKS my_picks split amount)) (list (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_picks))) 0 0 0 0 split 0 0))
             0
         )
@@ -137,7 +137,7 @@
 ; state is empty
 ; move is alice commit to a salted word
 (defun calpoker_bob_driver_a (amount state move validation_program_hash max_move_size split)
-    (list MAKE_MOVE 0 (curry calpoker_bob_driver_b move) 0)
+    (list MAKE_MOVE 0 () (curry calpoker_bob_driver_b move) 0)
 )
 
 ; state is alice_commit
@@ -178,6 +178,7 @@
 
         (list MAKE_MOVE
             (list (make_readable_card_descriptions alice_cards) readable_bob_cards)
+            ()
             (curry calpoker_bob_driver_d
                    alice_cards
                    bob_cards
