@@ -417,7 +417,7 @@ def generate_test_set(test_inputs: Dict):
             (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
             (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
             TestCaseAlternative([
-                (c_move_too_short, 0, None, MoveCode.CLVM_EXCEPTION, False, 'c'),
+                (c_move_too_short, 0, None, MoveCode.SLASH, False, 'c'),
                 (c_move_too_long, 0, None, MoveCode.SLASH, False, 'c'),
                 # alice reveal doesn't match
                 (c_move_bad_alice_reveal_move, 0, None, MoveCode.SLASH, False, 'c'),
@@ -431,7 +431,7 @@ def generate_test_set(test_inputs: Dict):
             TestCaseAlternative([
                 # move wrong length
                 (d_move_too_short, 0, None, MoveCode.SLASH, False, 'd'),
-                # (d_move_too_long, 0, None, MoveCode.SLASH, False, 'd'),
+                (d_move_too_long, 0, None, MoveCode.SLASH, False, 'd'),
 
                 # bob picks too few/too many cards
                 (d_move_too_few_bits_set, 0, None, MoveCode.SLASH, False, 'd'),
@@ -489,7 +489,7 @@ def generate_test_set(test_inputs: Dict):
         (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
         TestCaseAlternative([
             TestCaseSequence([
-                (c_move_too_short, 0, None, MoveCode.CLVM_EXCEPTION, False, 'c'),
+                (c_move_too_short, 0, None, MoveCode.SLASH, False, 'c'),
                 # (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
                 # (e_move_too_few_discards, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
             ]),

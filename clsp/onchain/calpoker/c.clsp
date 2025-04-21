@@ -27,8 +27,8 @@
             MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
             state previous_validation_program mover_puzzle solution evidence)
 
-    (if (= (strlen MOVE) 48)
-        (list SLASH () "C" MOVE "with alice commit" alice_commit MAX_MOVE_SIZE new_state)
+    (if (not (= (strlen MOVE) 48))
+        (list SLASH () "C" MOVE "wrong move length")
 
         (assign
             ;TODO print old_state
