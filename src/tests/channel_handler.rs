@@ -24,12 +24,12 @@ use crate::tests::game::DEFAULT_UNROLL_TIME_LOCK;
 fn test_smoke_can_initiate_channel_handler() {
     let mut allocator = AllocEncoder::new();
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
-    let unroll_metapuzzle = Rc::new(read_unroll_metapuzzle(&mut allocator).unwrap());
-    let unroll_puzzle = Rc::new(read_unroll_puzzle(&mut allocator).unwrap());
+    let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
+    let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
     // XXX
-    let nil = allocator.allocator().null();
-    let ref_puz = Rc::new(Puzzle::from_nodeptr(&mut allocator, nil).expect("should work"));
-    let standard_puzzle = Rc::new(get_standard_coin_puzzle(&mut allocator).expect("should load"));
+    let nil = allocator.allocator().nil();
+    let ref_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
+    let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
@@ -87,12 +87,12 @@ fn test_smoke_can_initiate_channel_handler() {
 fn test_smoke_can_start_game() {
     let mut allocator = AllocEncoder::new();
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
-    let unroll_metapuzzle = Rc::new(read_unroll_metapuzzle(&mut allocator).unwrap());
-    let unroll_puzzle = Rc::new(read_unroll_puzzle(&mut allocator).unwrap());
+    let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
+    let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
     // XXX
-    let nil = allocator.allocator().null();
-    let ref_coin_puz = Rc::new(Puzzle::from_nodeptr(&mut allocator, nil).expect("should work"));
-    let standard_puzzle = Rc::new(get_standard_coin_puzzle(&mut allocator).expect("should load"));
+    let nil = allocator.allocator().nil();
+    let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
+    let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
@@ -131,12 +131,12 @@ fn test_smoke_can_start_game() {
     // Fake
     let game_handler = Rc::new(Program::from_bytes(&[0x80]));
     let initial_validation_puzzle = game_handler.clone();
-    let initial_state = Rc::new(Program::from_bytes(&[0x80]));
+    let initial_state = Program::from_bytes(&[0x80]).into();
     let initial_validation_program =
         ValidationProgram::new(env.allocator, initial_validation_puzzle);
 
     let timeout = Timeout::new(1337);
-    let game_handler = GameHandler::TheirTurnHandler(game_handler.clone());
+    let game_handler = GameHandler::TheirTurnHandler(game_handler.into());
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
         &mut env,
         &[GameStartInfo {
@@ -177,12 +177,12 @@ fn test_unroll_can_verify_own_signature() {
     let ref_puzzle_hash_1 = puzzle_hash_for_pk(&mut allocator, &public_key_1).expect("should work");
     let ref_puzzle_hash_2 = puzzle_hash_for_pk(&mut allocator, &public_key_2).expect("should work");
 
-    let unroll_metapuzzle = Rc::new(read_unroll_metapuzzle(&mut allocator).unwrap());
-    let unroll_puzzle = Rc::new(read_unroll_puzzle(&mut allocator).unwrap());
-    let nil = allocator.allocator().null();
-    let ref_coin_puz = Rc::new(Puzzle::from_nodeptr(&mut allocator, nil).expect("should work"));
+    let unroll_metapuzzle = read_unroll_metapuzzle(&mut allocator).unwrap();
+    let unroll_puzzle = read_unroll_puzzle(&mut allocator).unwrap();
+    let nil = allocator.allocator().nil();
+    let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
     let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
-    let standard_puzzle = Rc::new(get_standard_coin_puzzle(&mut allocator).expect("should load"));
+    let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,

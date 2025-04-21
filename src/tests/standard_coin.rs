@@ -1,13 +1,9 @@
-use std::borrow::Borrow;
-
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
+use clvmr::{run_program, ChiaDialect};
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
-use clvm_tools_rs::classic::clvm_tools::stages::stage_0::{DefaultProgramRunner, TRunProgram};
 
 use log::debug;
 
@@ -33,7 +29,7 @@ fn test_standard_puzzle() {
     let puzzle = puzzle_for_pk(&mut allocator, &test_key).expect("should work");
     let puzzle_hash = puzzle.sha256tree(&mut allocator);
     let expected_puzzle =
-        hex_to_sexp(&mut allocator, EXPECTED_PUZZLE_HEX.clone()).expect("should convert");
+        hex_to_sexp(&mut allocator, &EXPECTED_PUZZLE_HEX).expect("should convert");
     let expected_hash = Node(expected_puzzle).sha256tree(&mut allocator);
     assert_eq!(expected_hash, puzzle_hash);
 }
@@ -186,24 +182,29 @@ fn test_standard_puzzle_solution_maker() {
     );
     let spend_info =
         standard_solution_unsafe(&mut allocator, &private_key, conditions).expect("should work");
-    let conditions_borrowed: &Program = spend_info.conditions.borrow();
+    let conditions_borrowed: &Program = spend_info.conditions.pref();
     let expected_full_conditions = (expected_added_condition, conditions_borrowed)
         .to_clvm(&mut allocator)
         .expect("should work");
     debug!("solution {:?}", spend_info.solution);
-    let runner = DefaultProgramRunner::new();
     let puzzle_node = puzzle.to_clvm(&mut allocator).expect("should convert");
     let solution_node = spend_info
         .solution
         .to_clvm(&mut allocator)
         .expect("should convert");
-    let res = runner
-        .run_program(allocator.allocator(), puzzle_node, solution_node, None)
-        .expect("should run");
-    assert_eq!(
-        disassemble(allocator.allocator(), res.1, None),
-        disassemble(allocator.allocator(), expected_full_conditions, None)
-    );
+    let res = run_program(
+        allocator.allocator(),
+        &ChiaDialect::new(0),
+        puzzle_node,
+        solution_node,
+        0,
+    )
+    .expect("should run");
+    let res_1_hex = Node(res.1).to_hex(&mut allocator).unwrap();
+    let expected_full_hex = Node(expected_full_conditions)
+        .to_hex(&mut allocator)
+        .unwrap();
+    assert_eq!(res_1_hex, expected_full_hex);
     assert!(spend_info
         .signature
         .verify(&public_key, quoted_conditions_hash.bytes()));

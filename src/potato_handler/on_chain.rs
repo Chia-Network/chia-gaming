@@ -19,7 +19,7 @@ use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
     ToLocalUI, WalletSpendInterface,
 };
-use crate::referee::{RefereeOnChainTransaction, SlashOutcome, TheirTurnCoinSpentResult};
+use crate::referee::types::{RefereeOnChainTransaction, SlashOutcome, TheirTurnCoinSpentResult};
 use crate::shutdown::ShutdownConditions;
 
 pub struct OnChainPotatoHandler {
@@ -333,7 +333,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             }
 
             // XXX Have a notification for this.
-            let nil = env.allocator.encode_atom(&[]).into_gen()?;
+            let nil = env
+                .allocator
+                .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+                .into_gen()?;
             let readable = ReadableMove::from_nodeptr(env.allocator, nil)?;
             let mover_share = Amount::default();
 
@@ -381,6 +384,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 ));
                 return Ok(());
             }
+
+            debug!("{initial_potato} do on chain move {readable_move:?} cc {current_coin:?}");
 
             let (env, _system_interface) = penv.env();
             (

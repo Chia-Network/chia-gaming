@@ -7,12 +7,8 @@ use clvm_traits::ToClvm;
 use clvmr::serde::node_from_bytes;
 use clvmr::{run_program, Allocator, NodePtr};
 
-use clvm_tools_rs::classic::clvm_tools::binutils::disassemble;
-
 use log::debug;
 use rand::Rng;
-
-use clvm_tools_rs::classic::clvm::sexp::proper_list;
 
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
@@ -27,6 +23,8 @@ use crate::common::types::{
     GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
     Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
 };
+use crate::utils::proper_list;
+
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 
@@ -327,15 +325,15 @@ impl PotatoHandler {
         if let HandshakeState::Finished(hs) = &mut self.handshake_state {
             let (env, _) = penv.env();
             debug!("hs spend is {:?}", hs.spend);
-            let channel_coin_puzzle = Rc::new(puzzle_for_synthetic_public_key(
+            let channel_coin_puzzle = puzzle_for_synthetic_public_key(
                 env.allocator,
                 &env.standard_puzzle,
                 &channel_public_key,
-            )?);
+            )?;
             hs.spend.spends = vec![CoinSpend {
                 coin: channel_coin,
                 bundle: Spend {
-                    solution: spend.solution.clone(),
+                    solution: spend.solution.clone().into(),
                     signature: spend.aggsig.clone(),
                     puzzle: channel_coin_puzzle,
                 },
@@ -374,8 +372,7 @@ impl PotatoHandler {
                 };
                 {
                     let (env, system_interface) = penv.env();
-                    let opponent_readable =
-                        ReadableMove::from_nodeptr(env.allocator, readable_move)?;
+                    let opponent_readable = ReadableMove::from_program(readable_move);
                     system_interface.opponent_moved(
                         env.allocator,
                         game_id,
@@ -445,11 +442,11 @@ impl PotatoHandler {
                 let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
 
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
-                let puzzle = Rc::new(puzzle_for_synthetic_public_key(
+                let puzzle = puzzle_for_synthetic_public_key(
                     env.allocator,
                     &env.standard_puzzle,
                     &channel_puzzle_public_key,
-                )?);
+                )?;
                 let spend = Spend {
                     solution: full_spend.solution.clone(),
                     puzzle,
@@ -717,7 +714,7 @@ impl PotatoHandler {
                     Rc::new(Program::from_nodeptr(env.allocator, real_conditions)?);
                 system_interface.send_message(&PeerMessage::Shutdown(
                     spend.signature.clone(),
-                    shutdown_condition_program,
+                    shutdown_condition_program.into(),
                 ))?;
 
                 self.handshake_state =
@@ -1424,8 +1421,7 @@ impl PotatoHandler {
         let curried_unroll_puzzle = finished_unroll_coin
             .coin
             .make_curried_unroll_puzzle(env, &player_ch.get_aggregate_unroll_public_key())?;
-        let curried_unroll_program =
-            Rc::new(Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?);
+        let curried_unroll_program = Puzzle::from_nodeptr(env.allocator, curried_unroll_puzzle)?;
         let unroll_solution = finished_unroll_coin
             .coin
             .make_unroll_puzzle_solution(env, &player_ch.get_aggregate_unroll_public_key())?;
@@ -1447,21 +1443,12 @@ impl PotatoHandler {
         ));
 
         debug!("{} SPEND: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", player_ch.is_initial_potato());
-        debug!(
-            "Internal solution {}",
-            disassemble(env.allocator.allocator(), unroll_puzzle_solution, None)
-        );
-        debug!(
-            "Given solution {}",
-            disassemble(env.allocator.allocator(), unroll_solution, None)
-        );
-
         system_interface.spend_transaction_and_add_fee(&SpendBundle {
             name: Some("create unroll".to_string()),
             spends: vec![CoinSpend {
                 bundle: Spend {
                     puzzle: curried_unroll_program,
-                    solution: Rc::new(unroll_solution_program),
+                    solution: unroll_solution_program.into(),
                     signature: aggregate_unroll_signature,
                 },
                 coin: unroll_coin.clone(),

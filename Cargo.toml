@@ -10,21 +10,20 @@ server = ["dep:tokio","dep:salvo","dep:exec"]
 used_linker = []
 
 [dependencies]
-clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "ec75759377791c9b785123d2d3e2457d08ac6621" }
-clvmr = { version = "=0.3.2", features = ["pre-eval"] }
+clvmr = { version = "=0.12.0", features = ["pre-eval"] }
 serde_json = "1.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-clvm-traits = "0.7.0"
+clvm-traits = "0.20.0"
 blst = "=0.3.13"
 subtle = "2.5.0"
 num-bigint = "0.4.4"
 num-traits = "0.2.15"
 chia-bls = "=0.9.0"
-clvm-utils = "0.7.0"
+clvm-utils = "0.20.0"
 lazy_static = "1.4.0"
 ff = { version = "0.13.0", features = ["derive"] }
-bson = "2.11.0"
+bson = "2.13.0"
 sha2 = "0.10.8"
 indoc = "2.0.5"
 serde = "1.0.203"
@@ -46,8 +45,8 @@ exec = "0.3.1"
 [build-dependencies]
 serde = "1.0.203"
 toml = "0.8.14"
-clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "ec75759377791c9b785123d2d3e2457d08ac6621" }
-clvmr = { version = "=0.3.2", features = ["pre-eval"] }
+clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "f5f6ebd339b4782d9b3c65db8796af554d341bd8" }
+clvmr = { version = "=0.12.0", features = ["pre-eval"] }
 
 [lib]
 name = "chia_gaming"

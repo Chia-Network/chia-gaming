@@ -1,26 +1,22 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::read_to_string;
-use std::rc::Rc;
 
+use hex::FromHex;
 use log::debug;
 use num_bigint::{BigInt, Sign};
 
 use chia_bls;
 
 use clvm_traits::{clvm_curried_args, ToClvm};
+use clvm_utils::CurriedProgram;
 
 use clvmr::serde::node_from_bytes;
 use clvmr::NodePtr;
 
-use clvm_tools_rs::util::{number_from_u8, u8_from_number};
+use crate::utils::{number_from_u8, u8_from_number};
 
-use clvm_tools_rs::classic::clvm::__type_compatibility__::{
-    Bytes, Stream, UnvalidatedBytesFromType,
-};
-use clvm_tools_rs::compiler::comptypes::map_m;
-
-use clvm_utils::CurriedProgram;
+use crate::utils::map_m;
 
 use crate::common::constants::{
     A_KW, CREATE_COIN, C_KW, DEFAULT_HIDDEN_PUZZLE_HASH, DEFAULT_PUZZLE_HASH, GROUP_ORDER, ONE,
@@ -43,14 +39,9 @@ pub fn wasm_deposit_file(name: &str, data: &str) {
     });
 }
 
-pub fn hex_to_sexp(
-    allocator: &mut AllocEncoder,
-    hex_data: String,
-) -> Result<NodePtr, types::Error> {
-    let hex_stream = Stream::new(Some(
-        Bytes::new_validated(Some(UnvalidatedBytesFromType::Hex(hex_data))).into_gen()?,
-    ));
-    node_from_bytes(allocator.allocator(), hex_stream.get_value().data()).into_gen()
+pub fn hex_to_sexp(allocator: &mut AllocEncoder, hex_data: &str) -> Result<NodePtr, types::Error> {
+    let hex_stream = Vec::<u8>::from_hex(hex_data.trim()).into_gen()?;
+    node_from_bytes(allocator.allocator(), &hex_stream).into_gen()
 }
 
 pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, types::Error> {
@@ -59,7 +50,7 @@ pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzl
     } else {
         read_to_string(name).into_gen()?
     };
-    let hex_sexp = hex_to_sexp(allocator, hex_data)?;
+    let hex_sexp = hex_to_sexp(allocator, &hex_data)?;
     Puzzle::from_nodeptr(allocator, hex_sexp)
 }
 
@@ -251,8 +242,7 @@ pub fn puzzle_hash_for_synthetic_public_key(
 fn test_puzzle_for_synthetic_public_key() {
     let mut allocator = AllocEncoder::new();
     let expect_hex = "ff02ffff01ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080ffff04ffff01b0a3bbced33d27329da1e360ff4b0f00db1747eee8e66c0c0ae450f90b760f42972216c2ff027636aeeb5268bc2be2cedbff018080";
-    let expect_program =
-        hex_to_sexp(&mut allocator, expect_hex.to_string()).expect("should be good hex");
+    let expect_program = hex_to_sexp(&mut allocator, &expect_hex).expect("should be good hex");
     let expect_hash = Node(expect_program).sha256tree(&mut allocator);
 
     let pk_bytes: [u8; 48] = [
@@ -313,8 +303,7 @@ fn test_puzzle_for_pk() {
     let pk = PublicKey::from_bytes(pk_bytes).expect("should be ok");
 
     let want_puzzle_for_pk = "ff02ffff01ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080ffff04ffff01b093bd85128d0e9fbcfca547b964bd3180777c6fe9fad808dda415bb32887022864774b5ff04452b88bc9829408fb7f887ff018080";
-    let want_puzzle =
-        hex_to_sexp(&mut allocator, want_puzzle_for_pk.to_string()).expect("should be ok hex");
+    let want_puzzle = hex_to_sexp(&mut allocator, want_puzzle_for_pk).expect("should be ok hex");
     let want_puzzle_hash = Node(want_puzzle).sha256tree(&mut allocator);
 
     let got_puzzle = puzzle_for_pk(&mut allocator, &pk).expect("should be ok");
@@ -342,7 +331,7 @@ pub fn solution_for_conditions(
     conditions: NodePtr,
 ) -> Result<NodePtr, types::Error> {
     let delegated_puzzle = conditions.to_quoted_program(allocator)?;
-    let nil = allocator.allocator().null();
+    let nil = allocator.allocator().nil();
     solution_for_delegated_puzzle(allocator, delegated_puzzle, nil)
 }
 
@@ -421,8 +410,8 @@ pub fn standard_solution_unsafe(
     let (_, sig) = signer(private_key, &message);
     let conditions_program = Program::from_nodeptr(allocator, conditions)?;
     Ok(BrokenOutCoinSpendInfo {
-        solution: Rc::new(solution_program),
-        conditions: Rc::new(conditions_program),
+        solution: solution_program.into(),
+        conditions: conditions_program.into(),
         message,
         signature: sig,
     })
@@ -531,9 +520,9 @@ pub fn standard_solution_partial(
         let solution_program = Program::from_nodeptr(allocator, solution)?;
         let conditions_program = Program::from_nodeptr(allocator, conditions)?;
         Ok(BrokenOutCoinSpendInfo {
-            solution: Rc::new(solution_program.clone()),
+            solution: solution_program.into(),
             signature,
-            conditions: Rc::new(conditions_program.clone()),
+            conditions: conditions_program.into(),
             message: coin_agg_sig_me_message,
         })
     } else {
@@ -543,13 +532,13 @@ pub fn standard_solution_partial(
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChiaIdentity {
     pub private_key: PrivateKey,
     pub synthetic_public_key: PublicKey,
     pub public_key: PublicKey,
     pub synthetic_private_key: PrivateKey,
-    pub puzzle: Rc<Puzzle>,
+    pub puzzle: Puzzle,
     pub puzzle_hash: PuzzleHash,
 }
 
@@ -563,7 +552,7 @@ impl ChiaIdentity {
             calculate_synthetic_secret_key(&private_key, &default_hidden_puzzle_hash)?;
         let public_key = private_to_public_key(&private_key);
         let synthetic_public_key = private_to_public_key(&synthetic_private_key);
-        let puzzle = Rc::new(puzzle_for_pk(allocator, &public_key)?);
+        let puzzle = puzzle_for_pk(allocator, &public_key)?;
         let puzzle_hash = puzzle_hash_for_pk(allocator, &public_key)?;
         assert_eq!(puzzle.sha256tree(allocator), puzzle_hash);
         Ok(ChiaIdentity {

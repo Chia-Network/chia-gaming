@@ -602,7 +602,7 @@ struct JsIdleResult {
 fn spend_to_js(spend: &Spend) -> JsSpend {
     JsSpend {
         puzzle: spend.puzzle.to_hex(),
-        solution: spend.solution.to_hex(),
+        solution: spend.solution.p().to_hex(),
         signature: hex::encode(&spend.signature.bytes()),
     }
 }

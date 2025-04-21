@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm};
+use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 use rand::prelude::*;
 use rand::SeedableRng;
@@ -9,14 +9,15 @@ use rand_chacha::ChaCha8Rng;
 use log::debug;
 
 use crate::channel_handler::game_handler::{GameHandler, TheirTurnResult};
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::referee::{GameMoveDetails, GameMoveStateInfo, RefereeMaker, ValidatorResult};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidatorResult};
+use crate::referee::RefereeMaker;
 
 pub struct DebugGamePrograms {
     pub my_validation_program: Rc<Program>,
@@ -111,7 +112,7 @@ pub struct RefereeTest {
     pub their_referee: RefereeMaker,
 
     #[allow(dead_code)]
-    pub referee_coin_puzzle: Rc<Puzzle>,
+    pub referee_coin_puzzle: Puzzle,
     #[allow(dead_code)]
     pub referee_coin_puzzle_hash: PuzzleHash,
 }
@@ -128,9 +129,8 @@ impl RefereeTest {
         game_start: &GameStartInfo,
     ) -> RefereeTest {
         // Load up the real referee coin.
-        let referee_coin_puzzle = Rc::new(
-            read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable"),
-        );
+        let referee_coin_puzzle =
+            read_hex_puzzle(allocator, "clsp/onchain/referee.hex").expect("should be readable");
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
         let (my_referee, first_puzzle_hash) = RefereeMaker::new(
             allocator,
@@ -141,6 +141,7 @@ impl RefereeTest {
             &their_identity.puzzle_hash,
             1,
             &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            0,
         )
         .expect("should construct");
         assert_eq!(
@@ -165,6 +166,7 @@ impl RefereeTest {
             &my_identity.puzzle_hash,
             1,
             &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            0,
         )
         .expect("should construct");
 
@@ -201,7 +203,7 @@ fn test_referee_smoke() {
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
     let init_state_node = ((), ()).to_clvm(&mut allocator).expect("should assemble");
     let init_state =
-        Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
+        Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert");
     let initial_validation_program =
         ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
 
@@ -214,7 +216,7 @@ fn test_referee_smoke() {
         my_contribution_this_game: Amount::new(50),
         their_contribution_this_game: Amount::new(50),
         initial_validation_program,
-        initial_state: init_state,
+        initial_state: init_state.into(),
         initial_move: vec![],
         initial_max_move_size: 0,
         initial_mover_share: Amount::default(),
@@ -231,13 +233,14 @@ fn test_referee_smoke() {
     let readable_move = ((), ()).to_clvm(&mut allocator).expect("should cvt");
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
-    let my_move_wire_data = reftest
+    let (new_ref, my_move_wire_data) = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
+    reftest.my_referee = new_ref;
 
     assert!(my_move_wire_data.details.basic.move_made.is_empty());
-    let mut off_chain_slash_gives_error = reftest.my_referee.clone();
+    let off_chain_slash_gives_error = reftest.my_referee.clone();
     let their_move_result = off_chain_slash_gives_error.their_turn_move_off_chain(
         &mut allocator,
         &GameMoveDetails {
@@ -258,35 +261,37 @@ fn test_referee_smoke() {
         unreachable!();
     }
 
-    let their_move_local_update = reftest
+    let (new_ref, their_move_local_update) = reftest
         .their_referee
         .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should move");
+    reftest.their_referee = new_ref.unwrap();
 
     debug!("their_move_wire_data {their_move_local_update:?}");
 
-    let nil = allocator.encode_atom(&[]).expect("should encode");
+    let nil = Evidence::nil().expect("cvt");
     let validator_result = reftest
         .their_referee
         .run_validator_for_their_move(&mut allocator, nil);
     assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk)));
 
     assert!(reftest.my_referee.processing_my_turn());
-    let their_move_result = reftest
+    let (new_ref, their_move_result) = reftest
         .my_referee
         .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
         .expect("should run");
+    reftest.my_referee = new_ref.unwrap();
     let (readable_move, message) = match &their_move_result.original {
         TheirTurnResult::MakeMove(_, message, move_data) => {
-            (move_data.readable_move, message.clone())
+            (move_data.readable_move.clone(), message.clone())
         }
-        TheirTurnResult::FinalMove(move_data) => (move_data.readable_move, vec![]),
+        TheirTurnResult::FinalMove(move_data) => (move_data.readable_move.clone(), vec![]),
         _ => {
             panic!();
         }
     };
     assert_eq!(message, b"message data");
-    let readable_prog = Program::from_nodeptr(&mut allocator, readable_move).expect("should cvt");
+    let readable_prog = readable_move.p();
     assert_eq!(format!("{:?}", readable_prog), "Program(ff8080)");
     assert!(!reftest.my_referee.processing_my_turn());
 }

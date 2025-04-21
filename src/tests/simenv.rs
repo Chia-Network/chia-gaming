@@ -7,8 +7,6 @@ use rand_chacha::ChaCha8Rng;
 use clvm_traits::ToClvm;
 use clvmr::{run_program, NodePtr};
 
-use clvm_tools_rs::classic::clvm_tools::binutils::{assemble, disassemble};
-
 use log::debug;
 
 use crate::channel_handler::game::Game;
@@ -136,7 +134,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             coin: state_channel.clone(),
             bundle: Spend {
                 puzzle: cc_spend.channel_puzzle_reveal.clone(),
-                solution: cc_spend.spend.solution.clone(),
+                solution: cc_spend.spend.solution.into(),
                 signature,
             },
         };
@@ -198,7 +196,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .into()
             };
             Ok(GameActionResult::MoveResult(
-                ui_result,
+                ui_result.to_nodeptr(self.env.allocator)?,
                 message,
                 decoded_message,
                 entropy,
@@ -366,15 +364,6 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
                 let game_coins = self.do_unroll_spend_to_games(*player, unroll_coin)?;
 
-                debug!(
-                    "channel coin conditions {}",
-                    disassemble(
-                        self.env.allocator.allocator(),
-                        channel_coin_conditions,
-                        None
-                    )
-                );
-
                 self.on_chain = OnChainState::OnChain(game_coins);
                 Ok(GameActionResult::MoveToOnChain)
             }
@@ -435,11 +424,11 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .player(*player)
                     .ch
                     .get_aggregate_channel_public_key();
-                let puzzle = Rc::new(puzzle_for_synthetic_public_key(
+                let puzzle = puzzle_for_synthetic_public_key(
                     self.env.allocator,
                     &self.env.standard_puzzle,
                     &channel_puzzle_public_key,
-                )?);
+                )?;
                 let included = self
                     .simulator
                     .push_tx(
@@ -582,7 +571,7 @@ fn test_referee_can_slash_on_chain() {
     let timeout = Timeout::new(10);
 
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
-    let init_state_node = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let init_state_node = (0, 0).to_clvm(&mut allocator).expect("should assemble");
     let init_state =
         Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
     let initial_validation_program =
@@ -597,7 +586,7 @@ fn test_referee_can_slash_on_chain() {
         my_contribution_this_game: Amount::new(50),
         their_contribution_this_game: Amount::new(50),
         initial_validation_program,
-        initial_state: init_state,
+        initial_state: init_state.into(),
         initial_move: vec![],
         initial_max_move_size: 100,
         initial_mover_share: Amount::default(),
@@ -628,13 +617,16 @@ fn test_referee_can_slash_on_chain() {
 
     // Timeout applies after this move.  It will be their move, with their claim being 0.
     // Therefore, the timeout gives _us_ 100.
-    let readable_move = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let readable_move = (0, 0)
+        .to_clvm(allocator.allocator())
+        .expect("should assemble");
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
-    let _my_move_wire_data = reftest
+    let (new_ref, _my_move_wire_data) = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
+    reftest.my_referee = new_ref;
 
     // We get the outcome puzzle hash for the most recent move to spend to.
     let spend_to_referee = reftest
@@ -694,7 +686,7 @@ fn test_referee_can_move_on_chain() {
     let max_move_size = 100;
 
     let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
-    let init_state_node = assemble(allocator.allocator(), "(0 . 0)").expect("should assemble");
+    let init_state_node = (0, 0).to_clvm(&mut allocator).expect("should assemble");
     let init_state =
         Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
     let my_validation_program =
@@ -708,7 +700,7 @@ fn test_referee_can_move_on_chain() {
         my_contribution_this_game: Amount::new(50),
         their_contribution_this_game: Amount::new(50),
         initial_validation_program: my_validation_program,
-        initial_state: init_state,
+        initial_state: init_state.into(),
         initial_move: vec![],
         initial_max_move_size: max_move_size,
         initial_mover_share: Amount::default(),
@@ -726,7 +718,9 @@ fn test_referee_can_move_on_chain() {
         &game_start_info,
     );
 
-    let readable_move = assemble(allocator.allocator(), "(100 . 0)").expect("should assemble");
+    let readable_move = (100, 0)
+        .to_clvm(allocator.allocator())
+        .expect("should assemble");
     assert_eq!(
         reftest.my_referee.get_our_current_share(),
         Amount::default()
@@ -736,10 +730,11 @@ fn test_referee_can_move_on_chain() {
     let readable_my_move =
         ReadableMove::from_nodeptr(&mut allocator, readable_move).expect("should work");
 
-    let _my_move_wire_data = reftest
+    let (new_ref, _my_move_wire_data) = reftest
         .my_referee
         .my_turn_make_move(&mut allocator, &readable_my_move, rng.gen(), 0)
         .expect("should move");
+    reftest.my_referee = new_ref;
 
     assert_eq!(reftest.my_referee.get_our_current_share(), Amount::new(0));
 
@@ -759,14 +754,7 @@ fn test_referee_can_move_on_chain() {
         .my_referee
         .on_chain_referee_puzzle(&mut allocator)
         .expect("should work");
-    let spend_to_referee_clvm = spend_to_referee
-        .to_clvm(&mut allocator)
-        .expect("should work");
     let referee_puzzle_hash = spend_to_referee.sha256tree(&mut allocator);
-    debug!(
-        "referee start state {}",
-        disassemble(allocator.allocator(), spend_to_referee_clvm, None)
-    );
     let referee_coins = s
         .spend_coin_to_puzzle_hash(
             &mut allocator,
