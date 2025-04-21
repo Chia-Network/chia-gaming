@@ -95,7 +95,7 @@
                     (does_alice_claim_small_enough alice_hand_value bob_card_selections bob_final_cards MOVER_SHARE AMOUNT)
                 )
                 (list SLASH () "E slash")
-                ; (() () (85 -8 2 (r 8 15 24 26 27 41 42) (a 2 1 14 8 12) (q 6 15 25 26 41 49 50) (x 14 24 27 38 42 48 51) ()) () "E move")
+                ; e.g. (() () (85 -8 2 (r 8 15 24 26 27 41 42) (a 2 1 14 8 12) (q 6 15 25 26 41 49 50) (x 14 24 27 38 42 48 51) ()) () "E move")
                 (list MAKE_MOVE 0 (li bob_discards alice_card_selections (indices_to_bitfield alice_cards)
                     bob_cards alice_hand_value alice_final_cards bob_final_cards MOVER_SHARE) 0 "E move")
             )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Dict, List, Tuple
+from typing import Any, Optional, Dict, List, Tuple, Union
 from pathlib import Path
 from hashlib import sha256
 from validator_hashes import program_hashes_hex
@@ -41,6 +41,16 @@ prog_names = ["a", "b", "c", "d", "e"]
 class ValidatorInfo:
     program: Program
     name: str
+
+
+@dataclass
+class TestCase:
+    test: Tuple
+    # TODO: add types for first_move_too_short, 0, None, MoveCode.SLASH, False, 'a'
+
+@dataclass
+class TestCaseSequence:
+    item: Union[List[TestCase], TestCase]
 
 
 def read_test_case(file: Path):
@@ -358,10 +368,107 @@ def generate_test_set(test_inputs: Dict):
 
     print(bob_discards_byte)
 
+    too_few_discards = 0b00000111.to_bytes(1, byteorder='big')
+    too_many_discards = 0b00111111.to_bytes(1, byteorder='big')
+    too_few_selections = 0b00001111.to_bytes(1, byteorder='big')
+    too_many_selections = 0b00111111.to_bytes(1, byteorder='big')
+
+    first_move_too_short = first_move[1:]
+    first_move_too_long = first_move + b"b"
+
+    bob_seed_wrong_too_long = seed.bob_seed + b"a"
+    bob_seed_wrong_too_short = seed.bob_seed[1:]
+
+    good_c_move = seed.alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest()
+    c_move_too_short = good_c_move[1:]
+    c_move_too_long = good_c_move + b"b"
+    alice_bad_salt = b'0'
+    c_move_bad_alice_reveal_move = seed.alice_seed + sha256(alice_bad_salt + alice_discards_byte).digest()
+
+    d_move_too_short = b''
+    d_move_too_long = b'ab'
+    d_move_too_few_bits_set = 0b00001111.to_bytes(1, byteorder='big')
+    d_move_too_many_bits_set = 0b00111111.to_bytes(1, byteorder='big')
+
+    # (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+    e_move = alice_discards_salt + alice_discards_byte + alice_good_selections
+    e_move_too_short = e_move[1:]
+    e_move_too_long = e_move + b'a'
+    e_move_bad_reveal = alice_discards_salt + alice_discards_byte + b'\0x00'
+    e_move_too_few_discards = alice_discards_salt + too_few_discards + alice_good_selections
+    e_move_too_many_discards = alice_discards_salt + too_many_discards + alice_good_selections
+    e_move_too_few_selections = alice_discards_salt + alice_discards_byte + too_few_selections
+    e_move_too_many_selections = alice_discards_salt + alice_discards_byte + too_many_selections
+
+    wrong_alice_picks_count_tests = [
+
+    ]
+
+    slash_succeed_tests = [
+        # a.clsp tests
+        (first_move_too_short, 0, None, MoveCode.SLASH, False, 'a'),
+        (first_move_too_long, 0, None, MoveCode.SLASH, False, 'a'),
+        # b.clsp tests
+        [
+            (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
+            [
+                (bob_seed_wrong_too_short, 0, None, MoveCode.MAKE_MOVE, False, 'b')
+                (bob_seed_wrong_too_long, 0, None, MoveCode.MAKE_MOVE, False, 'b')
+            ]
+        ],
+        # c.clsp tests
+        [
+            (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
+            (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
+            [
+                (c_move_too_short, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
+                (c_move_too_long, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
+                # alice reveal doesn't match
+                (c_move_bad_alice_reveal_move, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
+            ]
+        ],
+        # d.clsp tests
+        [
+            (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
+            (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
+            (good_c_move, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
+            [
+                # move wrong length
+                (d_move_too_short, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
+                (d_move_too_long, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
+
+                # bob picks too few/too many cards
+                (d_move_too_few_bits_set, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
+                (d_move_too_many_bits_set, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
+            ]
+        ],
+        # e.clsp
+        [
+            (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
+            (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
+            (good_c_move, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
+            (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
+            [
+                # move wrong length
+                (e_move_too_short, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+                (e_move_too_long, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+
+                # alice picks reveal doesn't match
+                (e_move_bad_reveal, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+                # alice discards wrong number of cards
+                (e_move_too_few_discards, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+                (e_move_too_many_discards, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+                # alice selects wrong number of cards
+                (e_move_too_few_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+                (e_move_too_many_selections, 100, bob_good_selections, MoveCode.MAKE_MOVE, False, 'e'),
+            ]
+        ]
+    ]
+
     recursive_list_up_to_d = [
         (first_move, 0, None, MoveCode.MAKE_MOVE, False, 'a'),
         (seed.bob_seed, 0, None, MoveCode.MAKE_MOVE, False, 'b'),
-        (seed.alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, MoveCode.MAKE_MOVE, False, 'c'),
+        (good_c_move, 0, None, MoveCode.MAKE_MOVE, False, 'c'),
         (bob_discards_byte, 0, None, MoveCode.MAKE_MOVE, False, 'd'),
         [
             # Slash succeed cases
@@ -380,8 +487,9 @@ def generate_test_set(test_inputs: Dict):
             (alice_discards_salt + alice_discards_byte + alice_loss_selections, 100, bytes([0xff]), MoveCode.CLVM_EXCEPTION, False, 'e'), # The game proceeds as expected, until step E. Alice
         ]
     ]
-    return recursive_list_up_to_d
 
+    # return recursive_list_up_to_d
+    return wrong_alice_picks_count_tests
 
 def test_run_with_moves(move_list, amount):
     step_a = load_clvm_hex(calpoker_clsp_dir / "a.hex")
@@ -455,7 +563,7 @@ def test_run_a():
 
 test_run_a()
 
-"""
+'''
 A alice_commit
     alice_commit
 B bob_seed
@@ -513,7 +621,7 @@ slashing fail tests
 
 
 
-'''
+
 
 factorial = (
     "ff02ffff01ff02ff02ffff04ff02ffff04ff05ff80808080ffff04ffff01ff02"
