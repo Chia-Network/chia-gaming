@@ -27,20 +27,22 @@
             MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
             state previous_validation_program mover_puzzle solution evidence)
 
-    (assign
-        ;TODO print old_state
-        new_state (print "new state from move C was" (c
-                (substr MOVE 16 48)
-                (print "show diagnostic output of cards" (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT)))
-            ))
-        alice_commit (f (print "original state into C was" state))
-        bob_seed (f (r state))
-        (if_any_fail
-            (= (strlen MOVE) 48)
-            (= (sha256 (substr MOVE 0 16)) alice_commit)
-            (list SLASH () "C" MOVE "with alice commit" alice_commit MAX_MOVE_SIZE new_state)
-            (list MAKE_MOVE dhash new_state 1 "C")
+    (if (= (strlen MOVE) 48)
+        (list SLASH () "C" MOVE "with alice commit" alice_commit MAX_MOVE_SIZE new_state)
+
+        (assign
+            ;TODO print old_state
+            new_state (print "new state from move C was" (c
+                    (substr MOVE 16 48)
+                    (print "show diagnostic output of cards" (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT)))
+                ))
+            alice_commit (f (print "original state into C was" state))
+            bob_seed (f (r state))
+            (if_any_fail
+                (= (sha256 (substr MOVE 0 16)) alice_commit)
+                (list SLASH () "C" MOVE "with alice commit" alice_commit MAX_MOVE_SIZE new_state)
+                (list MAKE_MOVE dhash new_state 1 "C")
+            )
         )
-        ;(list alice_commit bob_seed)
     )
 )
