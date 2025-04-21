@@ -21,11 +21,21 @@
 ; state is (Bob's discards (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_discards and alice's selections
 ; evidence is Bob's card selections
-(export (mod_hash (move next_validation_hash bob_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
-    (bob_picks (alice_cards bob_cards) alice_commit) me previous_validation_program mover_puzzle solution bob_card_selections)
-    (if_any_fail
-        (= (strlen move) 18)
+
+; TODO: move helper functions to another file
+(defun list-to-pair ((a b)) (c a b))
+
+(defun indices_to_bitfield_inner (mylist index)
+    (if (not mylist)
+        0
+        (= (f mylist) index)
+        (logior 1 (lsh (indices_to_bitfield_inner (r mylist) (+ index 1)) 1))
+        (lsh (indices_to_bitfield_inner mylist (+ index 1)) 1)
+    )
+)
+
+(defun single-byte (raw-indices)
+    (if raw-indices
         (assign
             indices-len (strlen raw-indices)
             (substr raw-indices (- indices-len 1) indices-len)
@@ -93,11 +103,23 @@
                 )
                 (list SLASH () "E slash")
                 ; e.g. (() () (85 -8 2 (r 8 15 24 26 27 41 42) (a 2 1 14 8 12) (q 6 15 25 26 41 49 50) (x 14 24 27 38 42 48 51) ()) () "E move")
-                (list MAKE_MOVE 0 (li bob_discards alice_card_selections (indices_to_bitfield alice_cards)
-                    bob_cards alice_hand_value alice_final_cards bob_final_cards MOVER_SHARE) 0 "E move")
+                (list
+                    MAKE_MOVE
+                    0
+                    (li
+                        bob_discards
+                        alice_card_selections
+                        (indices_to_bitfield alice_cards)
+                        bob_cards
+                        alice_hand_value
+                        alice_final_cards
+                        bob_final_cards
+                        MOVER_SHARE
+                    )
+                    0
+                    "E move"
+                )
             )
         )
-        0
-        (x)
     )
 )
