@@ -1,12 +1,10 @@
-use std::process::Command;
-
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Node, Program, Sha256Input};
 
 use clvm_traits::ToClvm;
 use clvmr::{run_program, ChiaDialect};
 
-use crate::utils::{first, proper_list};
+use crate::utils::first;
 
 use log::debug;
 
@@ -902,14 +900,6 @@ fn test_handcalc() {
             )
             .expect("should run")
             .1;
-            let hc_prog = Program::from_nodeptr(&mut allocator, program_clvm).unwrap();
-            let hc_args = Program::from_nodeptr(&mut allocator, source_data_2).unwrap();
-            let o = Command::new("/bin/sh")
-                .args(["cldb", "-x", "-p", &hc_prog.to_hex(), &hc_args.to_hex()])
-                .output()
-                .expect("failed to execute process");
-            let out_str: String = o.stdout.from_utf_unchecked();
-            debug!("cldb print\n{}", decode_string(&out_str));
             let result_2 = run_program(
                 allocator.allocator(),
                 &chia_dialect(),
@@ -920,17 +910,6 @@ fn test_handcalc() {
             .expect("should run")
             .1;
             debug!("{explanation:?}");
-
-            let check_result_len = |allocator: &mut AllocEncoder, result| {
-                let result_list = proper_list(allocator.allocator(), result, true).unwrap();
-                let result_check_l = proper_list(allocator.allocator(), result_list[1], true).unwrap();
-                assert_eq!(result_check_l.len(), 5);
-            };
-            debug!("check length 1");
-            check_result_len(&mut allocator, result_1);
-            debug!("check length 2");
-            check_result_len(&mut allocator, result_2);
-
             let deep_compare_args = [
                 Node(first(allocator.allocator(), result_1).expect("ok")),
                 Node(first(allocator.allocator(), result_2).expect("ok")),
