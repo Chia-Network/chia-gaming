@@ -15,8 +15,7 @@ from clvm_types.sized_bytes import bytes32
 from load_clvm_hex import load_clvm_hex
 from seed import GameSeed
 from util import (TestCaseSequence, ValidatorInfo, bitfield_to_byte,
-                  calpoker_clsp_dir, dbg_assert_eq, prog_names, read_test_case,
-                  TestCase)
+                  calpoker_clsp_dir, dbg_assert_eq, prog_names, read_test_case)
 from validator_hashes import program_hashes_hex
 from validator_output import Move, MoveCode, MoveOrSlash, Slash
 from validator import GameEnvironment, create_validator_program_library, run_validator
@@ -36,11 +35,12 @@ calpoker_factory = load_clvm_hex(calpoker_clsp_dir / "calpoker_include_calpoker_
 # (i_am_initiator my_contribution their_contribution params)
 
 I_AM_INITIATOR = 1  # I am "Alice"
-calpoker_factory_hex = calpoker_factory.run([I_AM_INITIATOR, 100, 100, None])
-calpoker_handler_data = Program.to(calpoker_factory_hex).as_python()
-game_list = calpoker_handler_data
-our_info = game_list[0]
-bob_info = game_list[1]
+calpoker_factory_alice = calpoker_factory.run([I_AM_INITIATOR, 100, 100, None])
+calpoker_handler_alice_data = Program.to(calpoker_factory_alice).as_python()
+our_info = calpoker_handler_alice_data[0]
+calpoker_factory_bob = calpoker_factory.run([not I_AM_INITIATOR, 100, 100, None])
+calpoker_handler_bob_data = Program.to(calpoker_factory_bob).as_python()
+bob_info = calpoker_handler_bob_data[0]
 
 #handlers = None
 # data: 2-5, 7,8

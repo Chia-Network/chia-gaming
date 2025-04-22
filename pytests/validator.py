@@ -1,3 +1,12 @@
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
+from clvm_types.sized_bytes import bytes32
+from util import ValidatorInfo
+from validator_hashes import program_hashes_hex
+from util import prog_names
+from load_clvm_hex import load_clvm_hex
+from util import calpoker_clsp_dir
+
 def create_validator_program_library():
     """
     Gather CalPoker validator progarms and their hashes, allowing us to check the hash

@@ -28,11 +28,11 @@ class ValidatorInfo:
 
 @dataclass
 class TestCaseAlternative:
-    alternatives: List[TestCase|TestCaseSequence|TestCaseAlternative]
+    alternatives: List["TestCaseSequence|TestCaseAlternative"]
 
 @dataclass
 class TestCaseSequence:
-    sequence: List[TestCase|TestCaseSequence|TestCaseAlternative]
+    sequence: List["TestCaseSequence|TestCaseAlternative"]
 
 def dbg_assert_eq(expected, actual, msg=""):
     if expected != actual:
