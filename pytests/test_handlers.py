@@ -19,7 +19,7 @@ from util import (TestCaseSequence, ValidatorInfo, bitfield_to_byte,
 from validator_hashes import program_hashes_hex
 from validator_output import Move, MoveCode, MoveOrSlash, Slash
 from validator import GameEnvironment, create_validator_program_library, run_validator
-
+from seed import GameSeed
 from calpoker import Card
 
 """
@@ -159,23 +159,27 @@ def get_happy_path(test_inputs: Dict):
     alice_all_cards = [Card(rank=2, suit=2), Card(rank=5, suit=3), Card(rank=8, suit=2), Card(rank=11, suit=3), Card(rank=14, suit=1), Card(rank=14, suit=2), Card(rank=14, suit=3), Card(rank=14, suit=4)]
     bob_all_cards = [Card(rank=3, suit=3), Card(rank=4, suit=1), Card(rank=5, suit=4), Card(rank=8, suit=1), Card(rank=8, suit=3), Card(rank=8, suit=4), Card(rank=12, suit=2), Card(rank=12, suit=3)]
 
+    alice_hand_value = test_inputs["alice_hand_rating"]
+    bob_hand_value = test_inputs["bob_hand_rating"]
+
     alice_all_cards = [card.as_list() for card in alice_all_cards]
     bob_all_cards = [card.as_list() for card in bob_all_cards]
-    d_results = [bob_discards, alice_selects, bob_selects, alice_hand_value, bob_hand_value]
-    e_results = [alice_discards, alice_selects, bob_selects, alice_hand_value, bob_hand_value]
+    d_results = [bob_discards_byte, alice_good_selections, bob_good_selections, alice_hand_value, bob_hand_value]
+    e_results = [alice_discards_byte, alice_good_selections, bob_good_selections, alice_hand_value, bob_hand_value]
     alice_initial_handler = None  # my_turn_handler
     bob_initial_handler = None    # their_turn_handler
 
 
     # Note: possible todo: display the initial_state in a compatible format
 
+    entropy_data = [GameSeed(seed + test_inputs["seed"]) for seed in range(5)]
     happy_path = [
         # our_readable, entropy, move, mover_share, their_readable
-        (None, entropy, first_move, 0, None),
-        (None, entropy, seed.bob_seed, 0, [alice_all_cards, bob_all_cards]),
-        (alice_discards_byte, entropy, good_c_move, 0, [alice_all_cards, bob_all_cards]),
-        (bob_discards_byte, entropy, bob_discards_byte, 0, d_results),
-        (None, entropy, e_move, 100, e_results)
+        (None, entropy_data[0].alice_seed, first_move, 0, None),
+        (None, entropy_data[1].bob_seed, seed.bob_seed, 0, [alice_all_cards, bob_all_cards]),
+        (alice_discards_byte, entropy_data[2].alice_seed, good_c_move, 0, [alice_all_cards, bob_all_cards]),
+        (bob_discards_byte, entropy_data[3].bob_seed, bob_discards_byte, 0, d_results),
+        (None, entropy_data[4].alice_seed, e_move, 100, e_results)
     ]
     return TestCaseSequence(happy_path)
 
@@ -218,23 +222,32 @@ class Player:
         # My Turn
         local_move, entropy, wire_move, mover_share, their_readable = move
         my_turn_result = call_my_turn_handler(
-            self.my_turn_handler,
+            Program.to(self.my_turn_handler),
             local_move,
-            amount,
-            split,
+            self.amount,
+            self.state.mover_share,
             entropy
         )
 
+        print(f'expected move bytes {wire_move} have {my_turn_result.move_bytes}')
         assert my_turn_result.move_bytes == wire_move
-        assert my_turn_result.new_mover_share == mover_share
+        print(f'expected mover_share {mover_share} have {self.state.mover_share}')
+        assert self.state.mover_share == Program.to(mover_share).as_python()
 
-        self.their_turn_validator = my_turn_result.validator_for_their_move
+        self.their_turn_validator = my_turn_result.validator_for_their_next_move
         self.their_turn_validation_program_hash = my_turn_result.validator_for_their_move_hash
 
         validator_result = run_validator(
             env,
             (wire_move, mover_share, None, None, False),
-            (my_turn_result.validator_for_their_move_hash, self.state.state),
+            Move(
+                MoveCode.MAKE_MOVE,
+                my_turn_result.validator_for_their_move_hash,
+                self.state.state,
+                my_turn_result.max_move_size,
+                None
+            ),
+            Program.to(my_turn_result.validator_for_my_move),
             None,
         )
 
@@ -242,35 +255,51 @@ class Player:
 
         self.state = GameRuntimeInfo(
             validator_result.state,
-            move.my_turn_result.move_bytes,
+            my_turn_result.move_bytes,
             my_turn_result.max_move_size,
-            my_turn_result.mover_share
+            my_turn_result.new_mover_share
         )
 
         self.their_turn_handler = my_turn_result.their_turn_handler
 
-    def run_their_turn(self, env, move_bytes, mover_share, expected_readable_move):
+    def get_state(self):
+        return self.state.state
+
+    def run_their_turn(self, env, move_bytes, mover_share, expected_readable_move, state_to_check):
         validator_result = run_validator(
             env,
             (move_bytes, mover_share, None, None, False),
-            (self.their_turn_validation_program_hash, self.state.state),
+            Move(
+                MoveCode.MAKE_MOVE,
+                self.their_turn_validation_program_hash,
+                self.state.state,
+                self.state.max_move_size,
+                None
+            ),
+            Program.to(self.their_turn_validator),
+            None,
         )
+
+        assert state_to_check == validator_result.state
+
         their_turn_result = call_their_turn_handler(
-            self.their_turn_handler,
+            Program.to(self.their_turn_handler),
             TheirTurnHandlerArgs(
                 self.amount,
                 self.state.state,
                 move_bytes,
-                self.validation_program_hash,
-                self.state.new_mover_share
+                self.their_turn_validation_program_hash,
+                self.state.mover_share
             )
         )
-        assert their_turn_result.kind == MoveCode.MAKE_MOVE.value
-        assert expected_readable_move == their_turn_result.readable_move
+
+        assert their_turn_result.kind == Program.to(MoveCode.MAKE_MOVE.value).as_python()
+        print(f'expected readable move {expected_readable_move} want {their_turn_result.readable_move}')
+        assert Program.to(expected_readable_move).as_python() == Program.to(their_turn_result.readable_move).as_python()
 
         self.my_turn_handler = their_turn_result.my_turn_handler
 
-def test_run_with_moves(game_runtime_info, move_list, amount):
+def test_run_with_moves(seed, state, move_list, amount):
     # step_a = load_clvm_hex(calpoker_clsp_dir / "a.hex")
     # step_a_hash = step_a.get_tree_hash()
     # print("\nstep_a_hash and hash returned:")
@@ -282,13 +311,10 @@ def test_run_with_moves(game_runtime_info, move_list, amount):
     # run_game(s, env, move_zero, 32, move_list)
 
     # run
-    alice_my_handler = our_data["handler"]
-    bob_their_handler = bob_data["handler"]
-
     players = [
         Player(
             True,
-            our_data["handler"],
+            our_data["handler_program"],
             our_data["initial_validation_program"],
             our_data["initial_validation_program_hash"],
             state,
@@ -296,7 +322,7 @@ def test_run_with_moves(game_runtime_info, move_list, amount):
         ),
         Player(
             False,
-            bob_data["handler"],
+            bob_data["handler_program"],
             bob_data["initial_validation_program"],
             bob_data["initial_validation_program_hash"],
             state,
@@ -305,25 +331,29 @@ def test_run_with_moves(game_runtime_info, move_list, amount):
     ]
     whose_move = 0
 
-    for move in move_list:
+    for move in move_list.sequence:
+
         players[whose_move].run_my_turn(
             env,
             move,
         )
+
+        p1_new_computed_state = players[whose_move].get_state()
 
         whose_move = whose_move ^ 1
         players[whose_move].run_their_turn(
             env,
             move[2], # wire move
             move[3], # mover share
-            move[-1] # their readable
+            move[-1], # their readable
+            p1_new_computed_state,
         )
 
 def run_test():
     seed_case = read_test_case("seed.json")
     test_case = get_happy_path(seed_case)
     game_runtime_info = GameRuntimeInfo(*our_info[7:])
-    test_run_with_moves(game_runtime_info, test_case, 200)
+    test_run_with_moves(seed_case['seed'], game_runtime_info, test_case, 200)
 
 def decode_end_move(d: Program):
     pass
@@ -339,3 +369,4 @@ handler_test_0 = [
     # bob_move run alice_next_validator()
 ]
 
+run_test()

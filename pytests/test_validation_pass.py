@@ -49,26 +49,6 @@ def create_validator_program_library():
 
 validator_program_library = create_validator_program_library()
 
-def construct_validator_output(prog: Program) -> Move | Slash:
-    clvm_list = prog.as_python()
-    if len(clvm_list) < 2:
-        raise ValueError(f"Expected MoveType and at least one data item. Got: {prog}")
-    move_code = MoveCode(Program.to(clvm_list[0]).as_int())
-    if move_code == MoveCode.MAKE_MOVE:
-        max_move_size = Program.to(clvm_list[3]).as_int()
-        if int(max_move_size) < 0:
-            raise("Negative max_move_size")
-        new_hash = None
-        # Handle special case in output of e.clsp
-        if len(clvm_list[1]) > 0:
-            new_hash = bytes32(clvm_list[1])
-        return Move(move_code, new_hash, clvm_list[2], max_move_size, Program.to(clvm_list[4:]))
-    else:
-        print(f"As Python: {clvm_list}")
-        assert move_code == MoveCode.SLASH
-        return Slash(move_code, Program.to(clvm_list[1]), Program.to(clvm_list[2:]))
-
-
 # validator_mod_hash
 # replacements: pass in values that you want to set to non-default values
 def compose_validator_args(validator_mod_hash): # , replacements):

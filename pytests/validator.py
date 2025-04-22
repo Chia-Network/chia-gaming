@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
+from clvm_types.program import Program
 from clvm_types.sized_bytes import bytes32
 from util import ValidatorInfo
 from validator_hashes import program_hashes_hex
 from util import prog_names
 from load_clvm_hex import load_clvm_hex
 from util import calpoker_clsp_dir
+from validator_output import Move, Slash, MoveCode
 
 def create_validator_program_library():
     """
@@ -57,6 +61,25 @@ class GameEnvironment:
     validator_program_library: Dict[bytes32, ValidatorInfo]
     amount: int
 
+def construct_validator_output(prog: Program) -> Move | Slash:
+    clvm_list = prog.as_python()
+    if len(clvm_list) < 2:
+        raise ValueError(f"Expected MoveType and at least one data item. Got: {prog}")
+    move_code = MoveCode(Program.to(clvm_list[0]).as_int())
+    if move_code == MoveCode.MAKE_MOVE:
+        max_move_size = Program.to(clvm_list[3]).as_int()
+        if int(max_move_size) < 0:
+            raise("Negative max_move_size")
+        new_hash = None
+        # Handle special case in output of e.clsp
+        if len(clvm_list[1]) > 0:
+            new_hash = bytes32(clvm_list[1])
+        return Move(move_code, new_hash, clvm_list[2], max_move_size, Program.to(clvm_list[4:]))
+    else:
+        print(f"As Python: {clvm_list}")
+        assert move_code == MoveCode.SLASH
+        return Slash(move_code, Program.to(clvm_list[1]), Program.to(clvm_list[2:]))
+
 def run_validator(
         game_env, # amount
         script, # (move, mover_share, evidence, expected_move_type, on_chain)
@@ -98,7 +121,8 @@ def run_validator(
 
     validator_output = construct_validator_output(ret_val)
 
-    dbg_assert_eq(expected_move_type, validator_output.move_code)
+    if expected_move_type is not None:
+        dbg_assert_eq(expected_move_type, validator_output.move_code)
 
     if validator_output.move_code == MoveCode.SLASH or validator_output.next_validator_hash is None:
         # XXX Maybe do additional checks

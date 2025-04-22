@@ -337,6 +337,8 @@ def find_tie():
         "bob_good_selections": bob_selects, # ???
         "alice_loss_selections": alice_loss_selects,
         "bob_loss_selections": bob_loss_selects,
+        "alice_hand_rating": [x[0] for x in alice_hand_rating],
+        "bob_hand_rating": [x[0] for x in bob_hand_rating],
     }
     print()
     print(json.dumps(test_input))

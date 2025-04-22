@@ -77,6 +77,7 @@ class Card:
     suit: Suit
 
     def __init__(self, rank, suit):
+        # XXX maybe put rank and suit?
         _, _ = Rank(rank), Suit(suit)
         self.rank = rank
         self.suit = suit
@@ -94,5 +95,5 @@ class Card:
         return card_to_index(self)
 
     def as_list(self) -> List[int]:
-        return [self.rank.value, self.suit.value]
+        return [self.rank, self.suit]
 
