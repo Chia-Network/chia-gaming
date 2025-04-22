@@ -13,7 +13,6 @@ class MoveCode(Enum):
     TIMEOUT = 3
     SLASHED = 4
     TIMEDOUT = 5
-    # 
     CLVM_EXCEPTION = 6
 
 

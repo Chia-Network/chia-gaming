@@ -19,6 +19,7 @@ from util import (TestCaseSequence, ValidatorInfo, bitfield_to_byte,
                   TestCaseAlternative, load_clvm_hex)
 from validator_hashes import program_hashes_hex
 from validator_output import Move, MoveCode, MoveOrSlash, Slash
+from validator import GameEnvironment, create_validator_program_library, run_validator
 
 # TODO: check returned/next max_move size value
 
@@ -111,104 +112,11 @@ def compose_validator_args(validator_mod_hash): # , replacements):
     """
     return [validator_mod_hash, curry_args, previous_state, previous_validation_program, mover_puzzle, solution, evidence]
 
-
-game_arg_names = "MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH".lower().split()
-validator_arg_names = [
-        "validator_hash",
-        "arglist",
-        "previous_state", "previous_validation_program", "mover_puzzle", "solution", "evidence"]
-
 #def test_validate_discards():
 # 1. Pass in initial state and a series of moves
 # 2. Call the next validation program with (move, movershare) for that turn
 # 3. Save return values to be passed on
 # Check that we got "Not slash" as expected, new mover puzzle hash, and the
-
-
-
-"""
-(mod_hash
-    (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        previous_state previous_validation_program mover_puzzle solution evidence)
-
-"""
-
-def print_validator_input_args(args, arg_names):
-    print ("PYTHON INPUT ARGS: ")
-    for name, arg in zip(arg_names, args):
-        print(f"{name}: {arg}")
-        if name == 'waiter_puzzle_hash':
-            print(f"WAITER PUZZLE HASH (waiter_puzzle_hash) OVERLAPS WITH on_chain. on_chain={not not arg}")
-        if name == "bob_card_selections":
-            print(f"{Program.to(arg).as_int()}")
-
-    print("CLVM INPUT ARGS: ")
-    print(Program.to(args))
-    print(Program.to(args).as_python())
-
-def print_validator_output(args):
-    output_names = [ "move_type", "next_program_hash" ]
-    print("VALIDATOR OUTPUT:")
-    for name, arg in zip(output_names, args):
-        print(f"    {name}: {arg}")
-
-
-def run_one_step(
-        game_env, # amount
-        script, # (move, mover_share, evidence, expected_move_type, on_chain)
-        last_move, # (next_validator_hash, next_max_move_size, state)
-        validator_program,
-        expected_move_type): # -> MoveOrSlash
-
-    # TODO: See if compose_validator_args will save code later XOR delete
-    # WAITER_PUZZLE_HASH doubles as an "on_chain" indicator
-
-    move_to_make = script[0]
-    mover_share = script[1]
-    evidence = script[2]
-    on_chain = script[4]
-    args = [
-        last_move.next_validator_hash,
-        [None, on_chain, None, game_env.amount, None, None,
-         move_to_make, last_move.next_max_move_size, None, mover_share, None],
-        last_move.state, validator_program, None, None, evidence
-    ]
-
-    print(f'max_move_size_to_apply {last_move.next_max_move_size}')
-    print(f'move is {move_to_make}')
-
-    # assert len(move_to_make) <= last_move.next_max_move_size
-
-    print_validator_input_args(args[1], game_arg_names)
-
-    # Use this code to automatically run cldb on the program and args that failed
-    # print("CLDB RUN")
-    # program_hex = bytes(Program.to(validator_program)).hex()
-    # args_hex = bytes(Program.to(args)).hex()
-    # cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
-    # print(cldb_output.decode('utf8'))
-
-    ret_val = validator_program.run(args)
-
-    print(f"RAW VALIDATOR OUTPUT {ret_val}")
-
-    validator_output = construct_validator_output(ret_val)
-
-    dbg_assert_eq(expected_move_type, validator_output.move_code)
-
-    if validator_output.move_code == MoveCode.SLASH or validator_output.next_validator_hash is None:
-        # XXX Maybe do additional checks
-        return validator_output
-
-    print(f"validator_output.move_code={validator_output.move_code} expected_move_type={expected_move_type}")
-    print(f"ADAM {validator_output}")
-    return validator_output
-
-@dataclass(frozen=True)
-class GameEnvironment:
-    validator_program_library: Dict[bytes32, ValidatorInfo]
-    amount: int
 
 
 def byte_from_indices(indices):
