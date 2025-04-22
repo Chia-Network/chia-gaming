@@ -204,11 +204,12 @@ def run_one_step(
 
     print_validator_input_args(args[1], game_arg_names)
 
-    print("CLDB RUN")
-    program_hex = bytes(Program.to(validator_program)).hex()
-    args_hex = bytes(Program.to(args)).hex()
-    cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
-    print(cldb_output.decode('utf8'))
+    # Use this code to automatically run cldb on the program and args that failed
+    # print("CLDB RUN")
+    # program_hex = bytes(Program.to(validator_program)).hex()
+    # args_hex = bytes(Program.to(args)).hex()
+    # cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
+    # print(cldb_output.decode('utf8'))
 
     ret_val = validator_program.run(args)
 

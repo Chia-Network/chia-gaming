@@ -109,6 +109,29 @@ jobs:
           cargo test
           cargo test --features=sim-tests
 
+  calpoker_onchain_tests:
+    runs-on: ubuntu-22.04 # ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        name: Install Python 3.9
+        with:
+          python-version: 3.9
+      - uses: chia-network/actions/create-venv@main
+        id: create-venv
+      - name: install
+        run: |
+          python -m pip install setuptools==75.0.0
+          python -m pip install chia-blockchain==2.3.0
+      - name: calpoker_onchain_tests
+        run: |
+          cd pytests
+          # We need 'cargo build' to have been run
+          python compute_hashes.py
+          python ./test_validation_pass.py
+
   coverage:
     runs-on: ubuntu-latest
     steps:
