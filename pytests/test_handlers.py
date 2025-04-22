@@ -1,26 +1,35 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Dict, List, Tuple, Union
-from pathlib import Path
-from hashlib import sha256
-from validator_hashes import program_hashes_hex
-from clvm_tools_rs import start_clvm_program
-from load_clvm_hex import load_clvm_hex
-from validator_output import MoveCode, Move, Slash, MoveOrSlash
-from clvm_types.sized_bytes import bytes32
-from dataclasses import dataclass
-from clvm_types.program import Program
+import json
 import subprocess
 import traceback
-import json
+from dataclasses import dataclass
+from hashlib import sha256
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from clvm_tools_rs import start_clvm_program
+
+from clvm_types.program import Program
+from clvm_types.sized_bytes import bytes32
+from load_clvm_hex import load_clvm_hex
 from seed import GameSeed
-from util import dbg_assert_eq
+from util import (TestCaseSequence, ValidatorInfo, bitfield_to_byte,
+                  calpoker_clsp_dir, dbg_assert_eq, prog_names, read_test_case,
+                  TestCase)
+from validator_hashes import program_hashes_hex
+from validator_output import Move, MoveCode, MoveOrSlash, Slash
+from calpoker import Card
+
+"""
+test_handlers.py:
+
+Test off-chain chialisp.
+"""
 
 # calpoker_generate.clinc
 calpoker_clsp_dir = Path("../clsp/")
 calpoker_factory = load_clvm_hex(calpoker_clsp_dir / "calpoker_include_calpoker_factory.hex")
-
-
 
 # (i_am_initiator my_contribution their_contribution params)
 
@@ -69,6 +78,7 @@ first_handler = Program.to(our_data["handler_program"])
 # Program.to(our_data["handler_program"]).run()
 
 def call_my_turn_handler(handler: Program, local_move, amount, split, entropy):
+    "Mover handler"
     ret = handler.run([local_move, amount, split, entropy])
     return ret
 
@@ -83,6 +93,7 @@ class TheirTurnHandlerArgs:
         return Program.to([self.amount, self.state, self.move, self.validation_program_hash, self.mover_share])
 
 def call_their_turn_handler(handler, args: TheirTurnHandlerArgs):
+    "Waiter handler"
     ret = handler.run(args.as_clvm())
     return ret
 
@@ -101,15 +112,104 @@ class MyTurnHandlerResult:
     validator_for_my_move_hash: bytes32
     validator_for_their_next_move: Program
     validator_for_their_move_hash: bytes32
-    max_move_size: int  # for bob XXX to remove
-    new_max_mover_share: int
+    max_move_size: int  # (for bob) TODO: remove this param?
+    new_max_mover_share: int  # TODO: remove this param?
     their_turn_handler: Program  # If we are Alice, this is the newly parameterized program that will recv Bob's move
 
 entropy = sha256(b"1").digest()
-ret =  MyTurnHandlerResult(*call_my_turn_handler(first_handler, 0, 200, 0, entropy).as_python())
-
-print(ret)
-
+# ret =  MyTurnHandlerResult(*call_my_turn_handler(first_handler, 0, 200, 0, entropy).as_python())
+# print(ret)
 
 def print_step():
     pass
+
+
+def get_happy_path(test_inputs: Dict):
+    seed = GameSeed(test_inputs['seed'])
+    preimage = seed.alice_seed
+    alice_image = sha256(preimage).digest()
+    alice_discards_salt = seed.seed[:16]
+    first_move = sha256(seed.alice_seed).digest()
+    alice_discards_byte = bitfield_to_byte(test_inputs['alice_discards'])
+    good_c_move = seed.alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest()
+    bob_discards_byte = bitfield_to_byte(test_inputs['bob_discards'])
+    alice_good_selections = bitfield_to_byte(test_inputs['alice_good_selections'])
+    # alice_loss_selections = bitfield_to_byte(test_inputs['alice_loss_selections'])
+    bob_good_selections = bitfield_to_byte(test_inputs['bob_good_selections'])
+    e_move = alice_discards_salt + alice_discards_byte + alice_good_selections
+
+    # All 8 cards initially shown to each player (pre discards and picks)
+    alice_all_cards = [Card(rank=2, suit=2), Card(rank=5, suit=3), Card(rank=8, suit=2), Card(rank=11, suit=3), Card(rank=14, suit=1), Card(rank=14, suit=2), Card(rank=14, suit=3), Card(rank=14, suit=4)]
+    bob_all_cards = [Card(rank=3, suit=3), Card(rank=4, suit=1), Card(rank=5, suit=4), Card(rank=8, suit=1), Card(rank=8, suit=3), Card(rank=8, suit=4), Card(rank=12, suit=2), Card(rank=12, suit=3)]
+
+    alice_all_cards = [card.as_list() for card in alice_all_cards]
+    bob_all_cards = [card.as_list() for card in bob_all_cards]
+    d_results = [bob_discards, alice_selects, bob_selects, alice_hand_value, bob_hand_value]
+    e_results = [alice_discards, alice_selects, bob_selects, alice_hand_value, bob_hand_value]
+    alice_initial_handler = None  # my_turn_handler
+    bob_initial_handler = None    # their_turn_handler
+
+
+    # Note: possible todo: display the initial_state in a compatible format
+
+    happy_path = [
+        # our_readable, entropy, move, mover_share, their_readable
+        (None, entropy, first_move, 0, None),
+        (None, entropy, seed.bob_seed, 0, [alice_all_cards, bob_all_cards]),
+        (alice_discards_byte, entropy, good_c_move, 0, [alice_all_cards, bob_all_cards]),
+        (bob_discards_byte, entropy, bob_discards_byte, 0, d_results),
+        (None, entropy, e_move, 100, e_results)
+    ]
+    return TestCaseSequence(happy_path)
+
+def run_game(state: S, move_list, mover_handler, waiter_handler):
+    pass
+
+@dataclass
+class S:
+    state
+    move
+    max_move_size
+    mover_share
+
+
+
+def test_run_with_moves(move, state, max_move_size, mover_share, move_list, amount):
+
+    s = S(our_info[7:10])
+
+    # step_a = load_clvm_hex(calpoker_clsp_dir / "a.hex")
+    # step_a_hash = step_a.get_tree_hash()
+    # print("\nstep_a_hash and hash returned:")
+    # print(step_a_hash)
+
+    env = GameEnvironment(validator_program_library, amount)
+    #move_zero = Move(step_a_hash, None, 32,)
+    move_zero = Move(MoveCode.MAKE_MOVE, next_validator_hash=step_a_hash, state = Program.to(0), next_max_move_size=len(step_a_hash), extra_data=Program.to(0))
+    run_game(s, env, move_zero, 32, move_list)
+
+    # run
+    my_handler = our_data["handler"]
+
+    local_move = move_list[0][0]
+    call_my_turn_handler(my_handler, local_move, amount, split, entropy):
+
+def run_test():
+    seed_case = read_test_case("seed.json")
+    test_case = get_happy_path(seed_case)
+    test_run_with_moves(test_case, 200)
+
+def decode_end_move(d: Program):
+    pass
+
+# Protocol arg shape types
+# class Test
+
+# we don't share state, we both sep. compute it identically
+handler_test_0 = [
+    # initial state, alice_handler, alice_handler_args(move, entropy), alice_validator
+    # state, bob validator(alice_move) --(state)--> bob_their_turn_handler --readable move-->,
+    # we never get state from bob
+    # bob_move run alice_next_validator()
+]
+

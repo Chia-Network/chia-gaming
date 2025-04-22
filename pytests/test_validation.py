@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Optional
-from pathlib import Path
+import traceback
+from enum import Enum
 from hashlib import sha256
-from validator_hashes import program_hashes_hex
+from pathlib import Path
+from typing import Any, Optional
+
 from clvm_tools_rs import start_clvm_program
 from load_clvm import load_clvm
 
 from clvm_types.program import Program
-import traceback
+from validator_hashes import program_hashes_hex
 
 # TODO: check returned/next max_move size value
 
@@ -24,7 +26,6 @@ import traceback
 
 # TODO: Generate initial state & initial moves
 
-from enum import Enum
 
 test_prog = load_clvm("test.clsp", include_standard_libraries=True, recompile=True)
 

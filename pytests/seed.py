@@ -1,5 +1,7 @@
 from hashlib import sha256
+
 from clvm_types.program import Program
+
 
 class GameSeed:
     def __init__(self, int_seed):

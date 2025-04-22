@@ -1,7 +1,8 @@
-from load_clvm_hex import load_clvm_hex
 import os
 import sys
 from pathlib import Path
+
+from load_clvm_hex import load_clvm_hex
 
 # TODO: clsp / hex
 

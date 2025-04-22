@@ -1,20 +1,24 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Dict, List, Tuple, Union
-from pathlib import Path
-from hashlib import sha256
-from validator_hashes import program_hashes_hex
-from clvm_tools_rs import start_clvm_program
-from load_clvm_hex import load_clvm_hex
-from validator_output import MoveCode, Move, Slash, MoveOrSlash
-from clvm_types.sized_bytes import bytes32
-from dataclasses import dataclass
-from clvm_types.program import Program
+import json
 import subprocess
 import traceback
-import json
+from dataclasses import dataclass
+from hashlib import sha256
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from clvm_tools_rs import start_clvm_program
+
+from clvm_types.program import Program
+from clvm_types.sized_bytes import bytes32
+from load_clvm_hex import load_clvm_hex
 from seed import GameSeed
-from util import dbg_assert_eq
+from util import (TestCaseSequence, ValidatorInfo, bitfield_to_byte,
+                  calpoker_clsp_dir, dbg_assert_eq, prog_names, read_test_case,
+                  TestCaseAlternative, load_clvm_hex)
+from validator_hashes import program_hashes_hex
+from validator_output import Move, MoveCode, MoveOrSlash, Slash
 
 # TODO: check returned/next max_move size value
 
@@ -29,32 +33,6 @@ from util import dbg_assert_eq
 # e.clsp: evidence == bob's selections (on-chain)
 
 # TODO: Generate initial state & initial moves
-
-from enum import Enum
-
-calpoker_clsp_dir = Path("../clsp/onchain/calpoker/")
-
-# List of validator program names, sans "clsp" extension
-prog_names = ["a", "b", "c", "d", "e"]
-
-@dataclass(frozen=True)
-class ValidatorInfo:
-    program: Program
-    name: str
-
-
-@dataclass
-class TestCaseAlternative:
-    alternatives: List[TestCase|TestCaseSequence|TestCaseAlternative]
-
-@dataclass
-class TestCaseSequence:
-    sequence: List[TestCase|TestCaseSequence|TestCaseAlternative]
-
-
-def read_test_case(file: Path):
-    with open(file, "r", encoding="utf8") as test_file:
-        return json.loads(test_file.read())
 
 def create_validator_program_library():
     """
@@ -329,12 +307,6 @@ def run_game(game_environment: GameEnvironment, last_move: Move, max_move_size_f
         return return_val
 
 
-def bitfield_to_byte(x):
-    v = 0
-    for bit in x:
-        v |= 1 << bit
-        # print(bit, v)
-    return bytes([v])
 
 def substitute_selections(test_inputs, ):
     pass
@@ -558,8 +530,8 @@ def normal_outcome_move_list():
 
 
 def test_run_a():
-    seed_192_case = read_test_case("seed.json")
-    test_run_with_moves(generate_test_set(seed_192_case), seed_192_case["amount"])
+    seed_case = read_test_case("seed.json")
+    test_run_with_moves(generate_test_set(seed_case), seed_case["amount"])
 
     # test_run_with_moves(normal_outcome_move_list(), 200)
 

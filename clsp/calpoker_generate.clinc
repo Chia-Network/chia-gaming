@@ -123,7 +123,7 @@
                (map make_card my_all_cards_indices)
                (map make_card bob_all_cards_indices)
             )
-        
+
         (my_hand_value my_selects) (handcalc (map card_list_to_pair my_all_cards))
         (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_all_cards))
         ;; win_result is 1 if my_hand_value is greater than bob_hand_value
@@ -147,6 +147,10 @@
     )
 )
 
+; output of e.clsp:
+;    (alice_discards alice_card_selections alice_cards bob_cards alice_final_cards bob_final_cards)
+; run after e.clsp
+; alice makes a nil move to message bob who won
 (defun calpoker_alice_driver_e (next_move split)
     (list
         next_move

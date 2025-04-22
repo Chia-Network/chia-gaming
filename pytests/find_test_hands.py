@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
-import json
-
 from dataclasses import dataclass
+from functools import total_ordering
 from hashlib import sha256
+from itertools import permutations
 from pathlib import Path
 from typing import List
-from itertools import permutations
-from functools import total_ordering
 
 from clvm_types.program import Program
 from seed import GameSeed
-from util import dbg_assert_eq
+from util import dbg_assert_eq,load_clvm_hex
+from calpoker import Hand, Card, CardIndex, Rank, Suit, index_to_card
+
+cwd = Path(os.path.dirname(__file__))
+test_handcalc_micro = load_clvm_hex(cwd / "../clsp/test/test_handcalc_micro.hex")
 
 # src/games/calpoker.rs
 

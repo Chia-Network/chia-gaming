@@ -1,8 +1,9 @@
-from enum import Enum
 from dataclasses import dataclass
+from enum import Enum
+from typing import TypeVar, Union
+
 from clvm_types.program import Program
 from clvm_types.sized_bytes import bytes32
-from typing import TypeVar, Union
 
 
 class MoveCode(Enum):
