@@ -162,7 +162,7 @@ class TheirTurnHandlerResult:
     my_turn_handler: Program
     message: bytes
 
-    def __init__(self, kind, readable_move, evidence_list, my_turn_handler, message=None):
+    def __init__(self, kind, readable_move, evidence_list, my_turn_handler=None, message=None):
         self.kind = kind
         self.readable_move = readable_move
         self.evidence_list = evidence_list
@@ -349,8 +349,8 @@ class Player:
 
         print(f"expected move bytes {wire_move} have {my_turn_result.move_bytes}")
         assert my_turn_result.move_bytes == wire_move
-        print(f"expected mover_share {mover_share} have {self.state.mover_share}")
-        assert self.state.mover_share == Program.to(mover_share).as_python()
+        print(f"expected mover_share {mover_share} have {my_turn_result.new_mover_share}")
+        assert Program.to(my_turn_result.new_mover_share).as_python() == Program.to(mover_share).as_python()
 
         self.their_turn_validator = my_turn_result.validator_for_their_next_move
         self.their_turn_validation_program_hash = (
