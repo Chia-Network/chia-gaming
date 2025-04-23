@@ -13,21 +13,20 @@ from util import dbg_assert_eq
 seed = 0
 
 
-
-
 @dataclass  # (frozen=True)
 class Hand:
     cards: List[Card]
 
     def __init__(self, card_list):
         self.cards = card_list
+
     def to_clvm(self):
         # print("self.cards", self.cards)
         return Program.to([(card.rank, card.suit) for card in self.cards])
 
 
 def card_to_index(card: Card) -> CardIndex:
-    return CardIndex((card.rank - 2) * 4 + (card.suit - 1))
+    return CardIndex((card.rank.value - 2) * 4 + (card.suit.value - 1))
 
 
 def index_to_card(card_index: CardIndex) -> Card:
@@ -77,7 +76,6 @@ class Card:
     suit: Suit
 
     def __init__(self, rank, suit):
-        # XXX maybe put rank and suit?
         _, _ = Rank(rank), Suit(suit)
         self.rank = rank
         self.suit = suit
@@ -86,14 +84,15 @@ class Card:
         return self.rank == other.rank and self.suit == other.suit
 
     def __lt__(self, other):
-        return self.rank < other.rank or self.rank == other.rank and self.suit < other.suit
+        return (
+            self.rank < other.rank or self.rank == other.rank and self.suit < other.suit
+        )
 
-    def to_index():
+    def to_index(self):
         return None
 
     def to_card_index(self) -> CardIndex:
         return card_to_index(self)
 
     def as_list(self) -> List[int]:
-        return [self.rank, self.suit]
-
+        return [self.rank.value, self.suit.value]

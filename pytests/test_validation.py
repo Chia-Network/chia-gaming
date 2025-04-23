@@ -29,6 +29,7 @@ from validator_hashes import program_hashes_hex
 
 test_prog = load_clvm("test.clsp", include_standard_libraries=True, recompile=True)
 
+
 class Turn(Enum):
     TURN_A = 1
     TURN_B = 2
@@ -42,16 +43,21 @@ calpoker_clsp_dir = Path("../clsp/onchain/calpoker/")
 # List of validator program names, sans "clsp" extension
 prog_names = ["a", "b", "c", "d", "e"]
 
+
 def create_validator_program_library():
     # TODO: Use the clsp feature that exports module hash
     lib = {}
     for hex_key, prog_name in zip(program_hashes_hex, prog_names):
-        lib[bytes.fromhex(hex_key)] = load_clvm(calpoker_clsp_dir / prog_name, recompile=False)
+        lib[bytes.fromhex(hex_key)] = load_clvm(
+            calpoker_clsp_dir / prog_name, recompile=False
+        )
     # TODO: sanity check step_a_hash = step_a.get_tree_hash()
     return lib
 
+
 calpoker_validator_programs = create_validator_program_library()
 print("calpoker_validator_programs", calpoker_validator_programs)
+
 
 # validator_mod_hash
 # replacements: pass in values that you want to set to non-default values
@@ -65,7 +71,7 @@ def compose_validator_args(validator_mod_hash, replacements):
 
     amount = 200
     max_move_size = 0
-    #mover share: xch the current player will recv if a timeout happens (no way to concede directly in protocol)
+    # mover share: xch the current player will recv if a timeout happens (no way to concede directly in protocol)
     mover_share = 10
     previous_state = 0
     evidence = 0
@@ -73,7 +79,7 @@ def compose_validator_args(validator_mod_hash, replacements):
     mover_puzzle_hash = 0
     waiter_puzzle_hash = 0
     timeout = 0
-    mod_hash = "" # TODO
+    mod_hash = ""  # TODO
     nonce = 0
     previous_validation_program = 0
 
@@ -84,27 +90,50 @@ def compose_validator_args(validator_mod_hash, replacements):
     solution = 0
 
     move = ""
-    args = [previous_state, previous_validation_program, mover_puzzle, solution, evidence]
-    curry_args = (mover_puzzle_hash, waiter_puzzle_hash, timeout, amount, mod_hash, nonce, move, max_move_size, validation_info_hash, mover_share, previous_validation_info_hash)
+    args = [
+        previous_state,
+        previous_validation_program,
+        mover_puzzle,
+        solution,
+        evidence,
+    ]
+    curry_args = (
+        mover_puzzle_hash,
+        waiter_puzzle_hash,
+        timeout,
+        amount,
+        mod_hash,
+        nonce,
+        move,
+        max_move_size,
+        validation_info_hash,
+        mover_share,
+        previous_validation_info_hash,
+    )
     # a_curry_args = (mover_puzzle_hash, waiter_puzzle_hash, timeout, amount, mod_hash, nonce, move, max_move_size, validation_info_hash, mover_share, previous_validation_info_hash)
-    #return { "args": args, "curry_args": curry_args }
+    # return { "args": args, "curry_args": curry_args }
     """
     (mod_hash
         (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
             MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
             previous_state previous_validation_program mover_puzzle solution evidence)
     """
-    return [validator_mod_hash, curry_args, previous_state, previous_validation_program, mover_puzzle, solution, evidence]
+    return [
+        validator_mod_hash,
+        curry_args,
+        previous_state,
+        previous_validation_program,
+        mover_puzzle,
+        solution,
+        evidence,
+    ]
 
 
-
-
-#def test_validate_discards():
+# def test_validate_discards():
 # 1. Pass in initial state and a series of moves
 # 2. Call the next validation program with (move, movershare) for that turn
 # 3. Save return values to be passed on
 # Check that we got "Not slash" as expected, new mover puzzle hash, and the
-
 
 
 class MoveCode(Enum):
@@ -115,6 +144,7 @@ class MoveCode(Enum):
     SLASHED = 4
     TIMEDOUT = 5
 
+
 """
 (mod_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
@@ -123,40 +153,76 @@ class MoveCode(Enum):
 
 """
 
+
 def print_validator_input_args(args):
     validator_arg_names = [
         "validator_hash",
         "arglist",
-        "previous_state", "previous_validation_program", "mover_puzzle", "solution", "evidence"]
-    print ("PYTHON INPUT ARGS: ")
+        "previous_state",
+        "previous_validation_program",
+        "mover_puzzle",
+        "solution",
+        "evidence",
+    ]
+    print("PYTHON INPUT ARGS: ")
     for name, arg in zip(validator_arg_names, args):
         print(f"{name}: {arg}")
-    print ("CLVM INPUT ARGS: ")
+    print("CLVM INPUT ARGS: ")
     # print(Program.to(args))
 
+
 def print_validator_output(args):
-    output_names = [ "move_type", "next_program_hash" ]
+    output_names = ["move_type", "next_program_hash"]
     print("VALIDATOR OUTPUT:")
     for name, arg in zip(output_names, args):
         print(f"    {name}: {arg}")
 
-def run_one_step(validator_hash, validator, amount: int, move, max_move_size: int, mover_share, state, evidence, step_n: int,
-                 expected_slash: bool = False, on_chain: bool = False):
+
+def run_one_step(
+    validator_hash,
+    validator,
+    amount: int,
+    move,
+    max_move_size: int,
+    mover_share,
+    state,
+    evidence,
+    step_n: int,
+    expected_slash: bool = False,
+    on_chain: bool = False,
+):
     # convert args & curry, etc
 
-    assert(expected_slash == False or expected_slash == True, expected_slash)
+    assert (expected_slash == False or expected_slash == True, expected_slash)
     # TODO: See if compose_validator_args will save code later XOR delete
     # WAITER_PUZZLE_HASH doubles as an "on_chain" indicator
-    args = [validator_hash,
-                            [None, on_chain, None, amount, None, None,
-                            move, max_move_size, None, mover_share, None],
-                            state, validator, None, None, evidence]
+    args = [
+        validator_hash,
+        [
+            None,
+            on_chain,
+            None,
+            amount,
+            None,
+            None,
+            move,
+            max_move_size,
+            None,
+            mover_share,
+            None,
+        ],
+        state,
+        validator,
+        None,
+        None,
+        evidence,
+    ]
 
     try:
         ret_val = validator.run(args)
     except Exception as e:
         print(e)
-        assert(not expected_slash)
+        assert not expected_slash
         return None
     # print(f"OUTPUT OF validator.run() is:")
     # print("    (move_type, a, b, c)")
@@ -166,23 +232,43 @@ def run_one_step(validator_hash, validator, amount: int, move, max_move_size: in
     foo = ret_val.as_python()
     (move_type, a, *_) = foo
     if move_type == MoveCode.SLASH:
-        assert(expected_slash)
+        assert expected_slash
         return a
     else:
-        assert(not expected_slash)
+        assert not expected_slash
         return foo[1:]
 
-def run_game(validator_program_library, amount, validator_hash, state, max_move_size: int, remaining_script: List, n=0):
+
+def run_game(
+    validator_program_library,
+    amount,
+    validator_hash,
+    state,
+    max_move_size: int,
+    remaining_script: List,
+    n=0,
+):
     print(f"111 {validator_program_library}")
     # print(f"XXX {remaining_script}")
     if isinstance(remaining_script[0][0], list):
         for t in remaining_script[0]:
-            run_game(validator_program_library, amount, validator_hash, state, max_move_size, t, n+1)
+            run_game(
+                validator_program_library,
+                amount,
+                validator_hash,
+                state,
+                max_move_size,
+                t,
+                n + 1,
+            )
         return
 
-    (move, mover_share, evidence, expected_slash, on_chain, *rest_of_args) = remaining_script[0]
+    (move, mover_share, evidence, expected_slash, on_chain, *rest_of_args) = (
+        remaining_script[0]
+    )
     print(f"\n    ---- Step {n}: ----")
-    print(f"""
+    print(
+        f"""
         remaining_script: {remaining_script}
         remaining_script[0]: {remaining_script[0]}
         move={move}
@@ -190,12 +276,25 @@ def run_game(validator_program_library, amount, validator_hash, state, max_move_
         mover_share={mover_share}
         evidence={evidence}
         on_chain={on_chain}
-        rest_of_args={rest_of_args}""")
+        rest_of_args={rest_of_args}"""
+    )
     assert len(move) <= max_move_size
 
     try:
-        #validator_hash, validator, amount, move, max_move_size, mover_share, state, evidence, step_n, expected_slash: bool, on_chain: bool
-        return_val = run_one_step(validator_hash, validator_program_library[validator_hash], amount, move, max_move_size, mover_share, state, evidence, n, expected_slash, on_chain)
+        # validator_hash, validator, amount, move, max_move_size, mover_share, state, evidence, step_n, expected_slash: bool, on_chain: bool
+        return_val = run_one_step(
+            validator_hash,
+            validator_program_library[validator_hash],
+            amount,
+            move,
+            max_move_size,
+            mover_share,
+            state,
+            evidence,
+            n,
+            expected_slash,
+            on_chain,
+        )
     except Exception as e:
         traceback.print_exc()
         raise
@@ -205,7 +304,15 @@ def run_game(validator_program_library, amount, validator_hash, state, max_move_
         new_max_move_size = int.from_bytes(new_max_move_size)
         # print(f"YYY (new_validation_program_hash, new_state, new_max_move_size) = {(new_validation_program_hash, new_state, new_max_move_size)}")
         if len(remaining_script) > 1:
-            run_game(validator_program_library, amount, new_validation_program_hash, new_state, new_max_move_size, remaining_script[1:], n+1)
+            run_game(
+                validator_program_library,
+                amount,
+                new_validation_program_hash,
+                new_state,
+                new_max_move_size,
+                remaining_script[1:],
+                n + 1,
+            )
 
 
 def bitfield_to_byte(x):
@@ -216,16 +323,21 @@ def bitfield_to_byte(x):
         v = (v << 1) | bit
         # print(bit, v)
     b = bytes(v)
-    #assert(len(b) == 1)
+    # assert(len(b) == 1)
     return b[-1:]
+
 
 def test_run_a():
     alice_seed = b"0alice6789abcdef"
     bob_seed = b"0bob456789abcdef"
-    #alice_bitfield = [0, 0, 0, 0, 1, 1, 1, 1]
-    #bob_bitfield = [1, 0, 1, 0, 1, 0, 1, 0]
-    alice_discards_byte = 0b00001111.to_bytes(1, byteorder='big') #bitfield_to_byte(alice_bitfield)
-    bob_discards_byte = 0b10101010.to_bytes(1, byteorder='big') #bitfield_to_byte(bob_bitfield)
+    # alice_bitfield = [0, 0, 0, 0, 1, 1, 1, 1]
+    # bob_bitfield = [1, 0, 1, 0, 1, 0, 1, 0]
+    alice_discards_byte = 0b00001111.to_bytes(
+        1, byteorder="big"
+    )  # bitfield_to_byte(alice_bitfield)
+    bob_discards_byte = 0b10101010.to_bytes(
+        1, byteorder="big"
+    )  # bitfield_to_byte(bob_bitfield)
     print(f"ALICE PICKS: {alice_discards_byte} BOB PICKS: {bob_discards_byte}")
     alice_discards_salt = b"alice_discards_salt"
 
@@ -239,12 +351,12 @@ def test_run_a():
     fake_move = alice_seed + bob_seed
     first_move = sha256(alice_seed).digest()
 
-    alice_good_selections = b'a'
-    alice_bad_selections = b'a'
-    bob_good_selections = b'a'
-    bob_bad_selections = b'a'
+    alice_good_selections = b"a"
+    alice_bad_selections = b"a"
+    bob_good_selections = b"a"
+    bob_bad_selections = b"a"
 
-    '''
+    """
     Alice Win, Tie, Lose is in mover_share
     Tie is 100
     Third column is bob hand selection ([G]ood or [B]ad
@@ -254,29 +366,89 @@ GTB -> no slash
 GAB -> no slash
 BAG -> slash
 BTG -> slash
-    '''
+    """
     move_list = [
         (first_move, 0, None, False, False),
         (bob_seed, 0, None, False, False),
-        (alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(), 0, None, False, False),
+        (
+            alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest(),
+            0,
+            None,
+            False,
+            False,
+        ),
         (bob_discards_byte, 0, None, False, False),
         [
             # Slash succeed cases
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_good_selections, False, False),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_good_selections, True, False),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, bob_bad_selections, False, False),
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 0, bob_bad_selections, False, False),
-            (alice_discards_salt + alice_discards_byte + alice_bad_selections, 0, bob_good_selections, True, False),
-            (alice_discards_salt + alice_discards_byte + alice_bad_selections, 100, bob_good_selections, True, False),
+            (
+                alice_discards_salt + alice_discards_byte + alice_good_selections,
+                100,
+                bob_good_selections,
+                False,
+                False,
+            ),
+            (
+                alice_discards_salt + alice_discards_byte + alice_good_selections,
+                0,
+                bob_good_selections,
+                True,
+                False,
+            ),
+            (
+                alice_discards_salt + alice_discards_byte + alice_good_selections,
+                100,
+                bob_bad_selections,
+                False,
+                False,
+            ),
+            (
+                alice_discards_salt + alice_discards_byte + alice_good_selections,
+                0,
+                bob_bad_selections,
+                False,
+                False,
+            ),
+            (
+                alice_discards_salt + alice_discards_byte + alice_bad_selections,
+                0,
+                bob_good_selections,
+                True,
+                False,
+            ),
+            (
+                alice_discards_salt + alice_discards_byte + alice_bad_selections,
+                100,
+                bob_good_selections,
+                True,
+                False,
+            ),
             # Slash fail cases
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, True, False ), # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
-            (alice_discards_salt + alice_discards_byte + alice_good_selections, 100, None, False, True), # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
-            (alice_discards_salt + alice_discards_byte + alice_bad_selections, 100, chr(0xff), False, False), # The game proceeds as expected, until step E. Alice
-        ]
-        ]
-
+            (
+                alice_discards_salt + alice_discards_byte + alice_good_selections,
+                100,
+                None,
+                True,
+                False,
+            ),  # The game proceeds as expected, until Bob sends nil evidence. But we are off-chain (waiter_puzzle_hash == nil), so no slash-fail # TODO: We need to also check that the program does not assert fail i.e. does not run "(x)"
+            (
+                alice_discards_salt + alice_discards_byte + alice_good_selections,
+                100,
+                None,
+                False,
+                True,
+            ),  # The game proceeds as expected, until Bob sends nil evidence. waiter_puzzle_hash is not nil (we are on-chain). Slash Expected.
+            (
+                alice_discards_salt + alice_discards_byte + alice_bad_selections,
+                100,
+                chr(0xFF),
+                False,
+                False,
+            ),  # The game proceeds as expected, until step E. Alice
+        ],
+    ]
 
     run_game(calpoker_validator_programs, 200, step_a_hash, None, 32, move_list)
+
 
 # types/blockchain_format/program.py:21:class Program(SExp):
 
@@ -320,27 +492,12 @@ slashing fail tests
     on E should fail if bob selects too many cards (counter against bad alice hand)"""
 
 
-
 # GTG -> no slash
 # Alice discards good cards (a high hand)
 # We expect Bob not to slash
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-'''
+"""
 
 factorial = (
     "ff02ffff01ff02ff02ffff04ff02ffff04ff05ff80808080ffff04ffff01ff02"
@@ -373,4 +530,4 @@ def a_test_simple_program_run() -> None:
         assert "Final" in last
         assert int(last["Final"]) == 120
         assert location.startswith("factorial")
-'''
+"""

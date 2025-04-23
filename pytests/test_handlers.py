@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-import subprocess
-import traceback
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -10,17 +7,23 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from clvm_tools_rs import start_clvm_program
 
+from calpoker import Card
 from clvm_types.program import Program
 from clvm_types.sized_bytes import bytes32
 from load_clvm_hex import load_clvm_hex
 from seed import GameSeed
-from util import (TestCaseSequence, ValidatorInfo, bitfield_to_byte,
-                  calpoker_clsp_dir, dbg_assert_eq, prog_names, read_test_case)
+from util import (
+    TestCaseSequence,
+    ValidatorInfo,
+    bitfield_to_byte,
+    calpoker_clsp_dir,
+    dbg_assert_eq,
+    read_test_case,
+    validator_program_filenames,
+)
+from validator import GameEnvironment, create_validator_program_library, run_validator
 from validator_hashes import program_hashes_hex
 from validator_output import Move, MoveCode, MoveOrSlash, Slash
-from validator import GameEnvironment, create_validator_program_library, run_validator
-from seed import GameSeed
-from calpoker import Card
 
 """
 test_handlers.py:
@@ -28,9 +31,10 @@ test_handlers.py:
 Test off-chain chialisp.
 """
 
-# calpoker_generate.clinc
-calpoker_clsp_dir = Path("../clsp/")
-calpoker_factory = load_clvm_hex(calpoker_clsp_dir / "calpoker_include_calpoker_factory.hex")
+# See also calpoker_generate.clinc
+calpoker_factory = load_clvm_hex(
+    calpoker_clsp_dir / "calpoker_include_calpoker_factory.hex"
+)
 
 # (i_am_initiator my_contribution their_contribution params)
 
@@ -42,7 +46,7 @@ calpoker_factory_bob = calpoker_factory.run([not I_AM_INITIATOR, 100, 100, None]
 calpoker_handler_bob_data = Program.to(calpoker_factory_bob).as_python()
 bob_info = calpoker_handler_bob_data[0]
 
-#handlers = None
+# handlers = None
 # data: 2-5, 7,8
 # programs: list elements 0 & 1
 dataf = {
@@ -56,16 +60,18 @@ dataf = {
     7: "initial_state",
     8: "initial_move",
     9: "initial_max_move_size",
-    10: "initial_mover_share"
+    10: "initial_mover_share",
 }
 
 # our_data = [x for i,x in enumerate(our_info) if i in [2,3,4,6,7]]
-our_data = { name:our_info[index] for index,name in dataf.items() }
-bob_data = { name:bob_info[index] for index,name in dataf.items() }
+our_data = {name: our_info[index] for index, name in dataf.items()}
+bob_data = {name: bob_info[index] for index, name in dataf.items()}
+
 
 def print_dict(d):
-    for k,v in d.items():
-        print(f"    {k,v}")
+    for k, v in d.items():
+        print(f"    {k, v}")
+
 
 print_dict(our_data)
 first_handler = Program.to(our_data["handler_program"])
@@ -81,6 +87,7 @@ first_handler = Program.to(our_data["handler_program"])
 # handler_args = (new_move, amount, last_mover_share, last_max_move_size, entropy)
 # Program.to(our_data["handler_program"]).run()
 
+
 @dataclass
 class MyTurnHandlerResult:
     move_bytes: bytes
@@ -92,10 +99,12 @@ class MyTurnHandlerResult:
     new_mover_share: int  # TODO: remove this param?
     their_turn_handler: Program  # If we are Alice, this is the newly parameterized program that will recv Bob's move
 
+
 def call_my_turn_handler(handler: Program, local_move, amount, split, entropy):
     "Mover handler"
     ret = handler.run([local_move, amount, split, entropy])
     return MyTurnHandlerResult(*ret.as_python())
+
 
 @dataclass
 class TheirTurnHandlerArgs:
@@ -104,8 +113,18 @@ class TheirTurnHandlerArgs:
     move: bytes
     validation_program_hash: bytes32
     mover_share: int
+
     def as_clvm(self):
-        return Program.to([self.amount, self.state, self.move, self.validation_program_hash, self.mover_share])
+        return Program.to(
+            [
+                self.amount,
+                self.state,
+                self.move,
+                self.validation_program_hash,
+                self.mover_share,
+            ]
+        )
+
 
 @dataclass
 class TheirTurnHandlerResult:
@@ -120,10 +139,12 @@ class TheirTurnHandlerResult:
         self.my_turn_handler = my_turn_handler
         self.message = message
 
+
 def call_their_turn_handler(handler, args: TheirTurnHandlerArgs):
     "Waiter handler"
     ret = handler.run(args.as_clvm())
     return TheirTurnHandlerResult(*ret.as_python())
+
 
 # my turn: alice a,c,e # we have the current game state locally in "my_turn" handlers
 # (local_move amount split entropy)
@@ -137,38 +158,70 @@ entropy = sha256(b"1").digest()
 # ret =  MyTurnHandlerResult(*call_my_turn_handler(first_handler, 0, 200, 0, entropy).as_python())
 # print(ret)
 
+
 def print_step():
     pass
 
 
 def get_happy_path(test_inputs: Dict):
-    seed = GameSeed(test_inputs['seed'])
+    seed = GameSeed(test_inputs["seed"])
     preimage = seed.alice_seed
     alice_image = sha256(preimage).digest()
     alice_discards_salt = seed.seed[:16]
     first_move = sha256(seed.alice_seed).digest()
-    alice_discards_byte = bitfield_to_byte(test_inputs['alice_discards'])
-    good_c_move = seed.alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest()
-    bob_discards_byte = bitfield_to_byte(test_inputs['bob_discards'])
-    alice_good_selections = bitfield_to_byte(test_inputs['alice_good_selections'])
+    alice_discards_byte = bitfield_to_byte(test_inputs["alice_discards"])
+    good_c_move = (
+        seed.alice_seed + sha256(alice_discards_salt + alice_discards_byte).digest()
+    )
+    bob_discards_byte = bitfield_to_byte(test_inputs["bob_discards"])
+    alice_good_selections = bitfield_to_byte(test_inputs["alice_good_selections"])
     # alice_loss_selections = bitfield_to_byte(test_inputs['alice_loss_selections'])
-    bob_good_selections = bitfield_to_byte(test_inputs['bob_good_selections'])
+    bob_good_selections = bitfield_to_byte(test_inputs["bob_good_selections"])
     e_move = alice_discards_salt + alice_discards_byte + alice_good_selections
 
     # All 8 cards initially shown to each player (pre discards and picks)
-    alice_all_cards = [Card(rank=2, suit=2), Card(rank=5, suit=3), Card(rank=8, suit=2), Card(rank=11, suit=3), Card(rank=14, suit=1), Card(rank=14, suit=2), Card(rank=14, suit=3), Card(rank=14, suit=4)]
-    bob_all_cards = [Card(rank=3, suit=3), Card(rank=4, suit=1), Card(rank=5, suit=4), Card(rank=8, suit=1), Card(rank=8, suit=3), Card(rank=8, suit=4), Card(rank=12, suit=2), Card(rank=12, suit=3)]
+    alice_all_cards = [
+        Card(rank=2, suit=2),
+        Card(rank=5, suit=3),
+        Card(rank=8, suit=2),
+        Card(rank=11, suit=3),
+        Card(rank=14, suit=1),
+        Card(rank=14, suit=2),
+        Card(rank=14, suit=3),
+        Card(rank=14, suit=4),
+    ]
+    bob_all_cards = [
+        Card(rank=3, suit=3),
+        Card(rank=4, suit=1),
+        Card(rank=5, suit=4),
+        Card(rank=8, suit=1),
+        Card(rank=8, suit=3),
+        Card(rank=8, suit=4),
+        Card(rank=12, suit=2),
+        Card(rank=12, suit=3),
+    ]
 
     alice_hand_value = test_inputs["alice_hand_rating"]
     bob_hand_value = test_inputs["bob_hand_rating"]
 
     alice_all_cards = [card.as_list() for card in alice_all_cards]
     bob_all_cards = [card.as_list() for card in bob_all_cards]
-    d_results = [bob_discards_byte, alice_good_selections, bob_good_selections, alice_hand_value, bob_hand_value]
-    e_results = [alice_discards_byte, alice_good_selections, bob_good_selections, alice_hand_value, bob_hand_value]
+    d_results = [
+        bob_discards_byte,
+        alice_good_selections,
+        bob_good_selections,
+        alice_hand_value,
+        bob_hand_value,
+    ]
+    e_results = [
+        alice_discards_byte,
+        alice_good_selections,
+        bob_good_selections,
+        alice_hand_value,
+        bob_hand_value,
+    ]
     alice_initial_handler = None  # my_turn_handler
-    bob_initial_handler = None    # their_turn_handler
-
+    bob_initial_handler = None  # their_turn_handler
 
     # Note: possible todo: display the initial_state in a compatible format
 
@@ -176,17 +229,32 @@ def get_happy_path(test_inputs: Dict):
     happy_path = [
         # our_readable, entropy, move, mover_share, their_readable
         (None, entropy_data[0].alice_seed, first_move, 0, None),
-        (None, entropy_data[1].bob_seed, seed.bob_seed, 0, [alice_all_cards, bob_all_cards]),
-        (alice_discards_byte, entropy_data[2].alice_seed, good_c_move, 0, [alice_all_cards, bob_all_cards]),
+        (
+            None,
+            entropy_data[1].bob_seed,
+            seed.bob_seed,
+            0,
+            [alice_all_cards, bob_all_cards],
+        ),
+        (
+            alice_discards_byte,
+            entropy_data[2].alice_seed,
+            good_c_move,
+            0,
+            [alice_all_cards, bob_all_cards],
+        ),
         (bob_discards_byte, entropy_data[3].bob_seed, bob_discards_byte, 0, d_results),
-        (None, entropy_data[4].alice_seed, e_move, 100, e_results)
+        (None, entropy_data[4].alice_seed, e_move, 100, e_results),
     ]
     return TestCaseSequence(happy_path)
 
-def run_game(state: S, move_list, mover_handler, waiter_handler):
+
+def run_game(state, move_list, mover_handler, waiter_handler):
     pass
 
+
 validator_program_library = create_validator_program_library()
+
 
 @dataclass
 class GameRuntimeInfo:
@@ -195,15 +263,16 @@ class GameRuntimeInfo:
     max_move_size: int
     mover_share: int
 
+
 class Player:
     def __init__(
-            self,
-            whose_turn,
-            initial_turn_handler,
-            initial_their_turn_validator,
-            their_turn_vp_hash,
-            state,
-            amount
+        self,
+        whose_turn,
+        initial_turn_handler,
+        initial_their_turn_validator,
+        their_turn_vp_hash,
+        state,
+        amount,
     ):
         self.state = state
         self.amount = amount
@@ -226,16 +295,18 @@ class Player:
             local_move,
             self.amount,
             self.state.mover_share,
-            entropy
+            entropy,
         )
 
-        print(f'expected move bytes {wire_move} have {my_turn_result.move_bytes}')
+        print(f"expected move bytes {wire_move} have {my_turn_result.move_bytes}")
         assert my_turn_result.move_bytes == wire_move
-        print(f'expected mover_share {mover_share} have {self.state.mover_share}')
+        print(f"expected mover_share {mover_share} have {self.state.mover_share}")
         assert self.state.mover_share == Program.to(mover_share).as_python()
 
         self.their_turn_validator = my_turn_result.validator_for_their_next_move
-        self.their_turn_validation_program_hash = my_turn_result.validator_for_their_move_hash
+        self.their_turn_validation_program_hash = (
+            my_turn_result.validator_for_their_move_hash
+        )
 
         validator_result = run_validator(
             env,
@@ -245,19 +316,21 @@ class Player:
                 my_turn_result.validator_for_their_move_hash,
                 self.state.state,
                 my_turn_result.max_move_size,
-                None
+                None,
             ),
             Program.to(my_turn_result.validator_for_my_move),
             None,
         )
 
-        assert validator_result.move_code == MoveCode.MAKE_MOVE, f"Expected to make move, but got {validator_result.move_code}"
+        assert (
+            validator_result.move_code == MoveCode.MAKE_MOVE
+        ), f"Expected to make move, but got {validator_result.move_code}"
 
         self.state = GameRuntimeInfo(
             validator_result.state,
             my_turn_result.move_bytes,
             my_turn_result.max_move_size,
-            my_turn_result.new_mover_share
+            my_turn_result.new_mover_share,
         )
 
         self.their_turn_handler = my_turn_result.their_turn_handler
@@ -265,7 +338,9 @@ class Player:
     def get_state(self):
         return self.state.state
 
-    def run_their_turn(self, env, move_bytes, mover_share, expected_readable_move, state_to_check):
+    def run_their_turn(
+        self, env, move_bytes, mover_share, expected_readable_move, state_to_check
+    ):
         validator_result = run_validator(
             env,
             (move_bytes, mover_share, None, None, False),
@@ -274,7 +349,7 @@ class Player:
                 self.their_turn_validation_program_hash,
                 self.state.state,
                 self.state.max_move_size,
-                None
+                None,
             ),
             Program.to(self.their_turn_validator),
             None,
@@ -289,15 +364,23 @@ class Player:
                 self.state.state,
                 move_bytes,
                 self.their_turn_validation_program_hash,
-                self.state.mover_share
-            )
+                self.state.mover_share,
+            ),
         )
 
-        assert their_turn_result.kind == Program.to(MoveCode.MAKE_MOVE.value).as_python()
-        print(f'expected readable move {expected_readable_move} want {their_turn_result.readable_move}')
-        assert Program.to(expected_readable_move).as_python() == Program.to(their_turn_result.readable_move).as_python()
+        assert (
+            their_turn_result.kind == Program.to(MoveCode.MAKE_MOVE.value).as_python()
+        )
+        print(
+            f"expected readable move {expected_readable_move} want {their_turn_result.readable_move}"
+        )
+        assert (
+            Program.to(expected_readable_move).as_python()
+            == Program.to(their_turn_result.readable_move).as_python()
+        )
 
         self.my_turn_handler = their_turn_result.my_turn_handler
+
 
 def test_run_with_moves(seed, state, move_list, amount):
     # step_a = load_clvm_hex(calpoker_clsp_dir / "a.hex")
@@ -306,7 +389,7 @@ def test_run_with_moves(seed, state, move_list, amount):
     # print(step_a_hash)
 
     env = GameEnvironment(validator_program_library, amount)
-    #move_zero = Move(step_a_hash, None, 32,)
+    # move_zero = Move(step_a_hash, None, 32,)
     # move_zero = Move(MoveCode.MAKE_MOVE, next_validator_hash=step_a_hash, state = Program.to(0), next_max_move_size=len(step_a_hash), extra_data=Program.to(0))
     # run_game(s, env, move_zero, 32, move_list)
 
@@ -318,7 +401,7 @@ def test_run_with_moves(seed, state, move_list, amount):
             our_data["initial_validation_program"],
             our_data["initial_validation_program_hash"],
             state,
-            amount
+            amount,
         ),
         Player(
             False,
@@ -326,8 +409,8 @@ def test_run_with_moves(seed, state, move_list, amount):
             bob_data["initial_validation_program"],
             bob_data["initial_validation_program_hash"],
             state,
-            amount
-        )
+            amount,
+        ),
     ]
     whose_move = 0
 
@@ -343,20 +426,23 @@ def test_run_with_moves(seed, state, move_list, amount):
         whose_move = whose_move ^ 1
         players[whose_move].run_their_turn(
             env,
-            move[2], # wire move
-            move[3], # mover share
-            move[-1], # their readable
+            move[2],  # wire move
+            move[3],  # mover share
+            move[-1],  # their readable
             p1_new_computed_state,
         )
+
 
 def run_test():
     seed_case = read_test_case("seed.json")
     test_case = get_happy_path(seed_case)
     game_runtime_info = GameRuntimeInfo(*our_info[7:])
-    test_run_with_moves(seed_case['seed'], game_runtime_info, test_case, 200)
+    test_run_with_moves(seed_case["seed"], game_runtime_info, test_case, 200)
+
 
 def decode_end_move(d: Program):
     pass
+
 
 # Protocol arg shape types
 # class Test

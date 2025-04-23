@@ -6,11 +6,11 @@ from load_clvm_hex import load_clvm_hex
 
 # TODO: clsp / hex
 
-#if len(sys.argv) <= 1:
+# if len(sys.argv) <= 1:
 #    print(f"Usage: {sys.argv[0]} prog.clsp")
 #    sys.exit(1)
 
-#dir = sys.argv[1]
+# dir = sys.argv[1]
 
 my_path = path = os.path.dirname(__file__)
 validator_paths = (Path(my_path) / "../clsp/onchain/calpoker/").glob("?.hex")

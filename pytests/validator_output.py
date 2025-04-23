@@ -24,13 +24,15 @@ class Move:
     next_max_move_size: int
     extra_data: Program
 
-    #def __repr__():
+    # def __repr__():
     #    return
+
 
 @dataclass(frozen=True)
 class Slash:
     move_code: MoveCode
     evidence: Program
     extra_data: Program
+
 
 MoveOrSlash = TypeVar("MoveOrSlash", bound=Union["Slash", "Move"])
