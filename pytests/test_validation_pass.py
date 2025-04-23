@@ -22,10 +22,15 @@ from util import (
     calpoker_onchain_clsp_dir,
     dbg_assert_eq,
     load_clvm_hex,
-    validator_program_filenames,
     read_test_case,
+    validator_program_filenames,
 )
-from validator import GameEnvironment, create_validator_program_library, run_validator, run_one_step
+from validator import (
+    GameEnvironment,
+    create_validator_program_library,
+    run_one_step,
+    run_validator,
+)
 from validator_hashes import program_hashes_hex
 from validator_output import Move, MoveCode, MoveOrSlash, Slash
 

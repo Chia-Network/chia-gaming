@@ -70,7 +70,8 @@ bob_data = {name: bob_info[index] for index, name in dataf.items()}
 
 def print_dict(d):
     for k, v in d.items():
-        print(f"    {k, v}")
+        if k not in ["handler_program", "initial_validation_program"]:
+            print(f"    {k, v}")
 
 
 print_dict(our_data)
@@ -102,8 +103,12 @@ class MyTurnHandlerResult:
 
 def call_my_turn_handler(handler: Program, local_move, amount, split, entropy):
     "Mover handler"
+    print(f"Running handler {handler.get_tree_hash()}")
     ret = handler.run([local_move, amount, split, entropy])
-    return MyTurnHandlerResult(*ret.as_python())
+    # x = BaseException(ret)
+    print("XXX", ret.as_python())
+    # return MyTurnHandlerResult(*ret.as_python())
+    return MyTurnHandlerResult(*(list(ret.as_python())))
 
 
 @dataclass
@@ -414,8 +419,9 @@ def test_run_with_moves(seed, state, move_list, amount):
     ]
     whose_move = 0
 
-    for move in move_list.sequence:
-
+    for index,move in enumerate(move_list.sequence):
+        print("STEP:", index)
+        print("MOVE:", move)
         players[whose_move].run_my_turn(
             env,
             move,
@@ -436,7 +442,7 @@ def test_run_with_moves(seed, state, move_list, amount):
 def run_test():
     seed_case = read_test_case("seed.json")
     test_case = get_happy_path(seed_case)
-    game_runtime_info = GameRuntimeInfo(*our_info[7:])
+    game_runtime_info = GameRuntimeInfo(our_data["initial_state"], our_data["initial_move"], our_data["initial_max_move_size"], our_data["initial_mover_share"])
     test_run_with_moves(seed_case["seed"], game_runtime_info, test_case, 200)
 
 

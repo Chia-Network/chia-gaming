@@ -50,7 +50,7 @@ class CardIndex:
 
 
 @dataclass  # (frozen=True)
-class Rank:
+class Rank:  # TODO: Enum
     value: int
 
     def __init__(self, value):
@@ -95,4 +95,4 @@ class Card:
         return card_to_index(self)
 
     def as_list(self) -> List[int]:
-        return [self.rank.value, self.suit.value]
+        return [self.rank, self.suit]
