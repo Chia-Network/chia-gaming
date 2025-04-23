@@ -14,6 +14,7 @@
     "@walletconnect/types": "^2.19.0",
     "@walletconnect/utils": "^2.19.0",
     "@web3modal/standalone": "^2.4.3",
+    "axios": "^1.8.4",
     "express": "^4.21.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
