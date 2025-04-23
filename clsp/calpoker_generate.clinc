@@ -256,8 +256,14 @@
         alice_selects (substr move 17 (strlen move))
         (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (map make_card bob_cards)))
         (list MAKE_MOVE
-            (list bob_discards alice_selects (indices_to_bitfield bob_selects)
-                    bob_hand_value alice_hand_value (deep_compare split (/ amount 2)))
+            (list
+                bob_discards
+                alice_selects
+                (indices_to_bitfield bob_selects)
+                bob_hand_value
+                alice_hand_value
+                (deep_compare split (/ amount 2))
+            )
             (list bob_selects)
         )
     )

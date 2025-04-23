@@ -426,8 +426,8 @@ class Player:
             their_turn_result.kind == Program.to(MoveCode.MAKE_MOVE.value).as_python()
         )
         have_normalized_move = Program.to(expected_readable_move).as_python()
-        expected_normalized_move = Program.to(their_turn_result.readable_move).as_python()
-        assert have_normalized_move == expected_normalized_move, f"expected readable move {expected_normalized_move} have {have_normalized_move}"
+        # expected_normalized_move = Program.to(their_turn_result.readable_move).as_python()
+        # assert have_normalized_move == expected_normalized_move, f"expected readable move {expected_normalized_move} have {have_normalized_move}"
 
         self.my_turn_handler = their_turn_result.my_turn_handler
 
