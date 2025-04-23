@@ -67,7 +67,6 @@ dataf = {
 our_data = {name: our_info[index] for index, name in dataf.items()}
 bob_data = {name: bob_info[index] for index, name in dataf.items()}
 
-
 def print_dict(d):
     for k, v in d.items():
         if k not in ["handler_program", "initial_validation_program"]:
@@ -75,7 +74,7 @@ def print_dict(d):
 
 
 print_dict(our_data)
-first_handler = Program.to(our_data["handler_program"])
+print_dict(bob_data)
 
 # run alice's handler -> move
 # run alice's validator -> readable
@@ -99,14 +98,35 @@ class MyTurnHandlerResult:
     max_move_size: int  # (for bob) TODO: remove this param?
     new_mover_share: int  # TODO: remove this param?
     their_turn_handler: Program  # If we are Alice, this is the newly parameterized program that will recv Bob's move
+    message_parser: Program
 
+    def __init__(
+            self,
+            move_bytes,
+            validator_for_my_move,
+            validator_for_my_move_hash,
+            validator_for_their_next_move,
+            validator_for_their_move_hash,
+            max_move_size,
+            new_mover_share,
+            their_turn_handler,
+            message_parser = None
+    ):
+        self.move_bytes = move_bytes
+        self.validator_for_my_move = validator_for_my_move
+        self.validator_for_my_move_hash = validator_for_my_move_hash
+        self.validator_for_their_next_move = validator_for_their_next_move
+        self.validator_for_their_move_hash = validator_for_their_move_hash
+        self.max_move_size = max_move_size
+        self.new_mover_share = new_mover_share
+        self.their_turn_handler = their_turn_handler
+        self.message_parser = message_parser
 
 def call_my_turn_handler(handler: Program, local_move, amount, split, entropy):
     "Mover handler"
     print(f"Running handler {handler.get_tree_hash()}")
     ret = handler.run([local_move, amount, split, entropy])
     # x = BaseException(ret)
-    print("XXX", ret.as_python())
     # return MyTurnHandlerResult(*ret.as_python())
     return MyTurnHandlerResult(*(list(ret.as_python())))
 
@@ -135,12 +155,14 @@ class TheirTurnHandlerArgs:
 class TheirTurnHandlerResult:
     kind: int
     readable_move: Program
+    evidence_list: Program
     my_turn_handler: Program
     message: bytes
 
-    def __init__(self, kind, readable_move, my_turn_handler, message=None):
+    def __init__(self, kind, readable_move, evidence_list, my_turn_handler, message=None):
         self.kind = kind
         self.readable_move = readable_move
+        self.evidence_list = evidence_list
         self.my_turn_handler = my_turn_handler
         self.message = message
 
