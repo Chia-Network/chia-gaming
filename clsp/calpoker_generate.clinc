@@ -275,9 +275,6 @@
 (defun make_card_readable (val)
     (assign
         (rank . suit) (divmod val 4)
-        (if (= rank 12)
-            (list 1 (+ 1 suit))
-            (list (+ 2 rank) (+ 1 suit))
-        )
+        (list (+ 2 rank) (+ 1 suit))
     )
 )

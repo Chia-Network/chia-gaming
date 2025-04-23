@@ -258,7 +258,7 @@ def get_happy_path(test_inputs: Dict):
         (None, entropy_data[0].alice_seed, first_move, 0, None),
         (
             None,
-            entropy_data[1].bob_seed,
+            entropy_data[0].bob_seed,
             seed.bob_seed,
             0,
             [alice_all_cards, bob_all_cards],
@@ -366,7 +366,7 @@ class Player:
         return self.state.state
 
     def run_their_turn(
-        self, env, move_bytes, mover_share, expected_readable_move, state_to_check
+        self, env, move_bytes, mover_share, expected_readable_move
     ):
         validator_result = run_validator(
             env,
@@ -382,7 +382,12 @@ class Player:
             None,
         )
 
-        assert state_to_check == validator_result.state
+        self.state = GameRuntimeInfo(
+            validator_result.state,
+            move_bytes,
+            self.state.max_move_size,
+            self.state.mover_share,
+        )
 
         their_turn_result = call_their_turn_handler(
             Program.to(self.their_turn_handler),
@@ -398,13 +403,9 @@ class Player:
         assert (
             their_turn_result.kind == Program.to(MoveCode.MAKE_MOVE.value).as_python()
         )
-        print(
-            f"expected readable move {expected_readable_move} want {their_turn_result.readable_move}"
-        )
-        assert (
-            Program.to(expected_readable_move).as_python()
-            == Program.to(their_turn_result.readable_move).as_python()
-        )
+        have_normalized_move = Program.to(expected_readable_move).as_python()
+        expected_normalized_move = Program.to(their_turn_result.readable_move).as_python()
+        assert have_normalized_move == expected_normalized_move, f"expected readable move {expected_normalized_move} have {have_normalized_move}"
 
         self.my_turn_handler = their_turn_result.my_turn_handler
 
@@ -439,10 +440,11 @@ def test_run_with_moves(seed, state, move_list, amount):
             amount,
         ),
     ]
+    player_names = ["alice", "bob"]
     whose_move = 0
 
     for index,move in enumerate(move_list.sequence):
-        print("STEP:", index)
+        print(f"STEP: {index} PLAYER {player_names[whose_move]} MY TURN")
         print("MOVE:", move)
         players[whose_move].run_my_turn(
             env,
@@ -452,13 +454,18 @@ def test_run_with_moves(seed, state, move_list, amount):
         p1_new_computed_state = players[whose_move].get_state()
 
         whose_move = whose_move ^ 1
+        print(f"STEP: {index} PLAYER {player_names[whose_move]} THEIR TURN")
         players[whose_move].run_their_turn(
             env,
             move[2],  # wire move
             move[3],  # mover share
             move[-1],  # their readable
-            p1_new_computed_state,
         )
+
+        p2_new_computed_state = players[whose_move].get_state()
+        print(f'comparing state {p1_new_computed_state} to {p2_new_computed_state}')
+        assert p1_new_computed_state == p2_new_computed_state
+
 
 
 def run_test():
