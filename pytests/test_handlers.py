@@ -170,13 +170,16 @@ class TheirTurnHandlerResult:
         self.message = message
 
 
-def call_their_turn_handler(handler, args: TheirTurnHandlerArgs):
+def call_their_turn_handler(handler, args: TheirTurnHandlerArgs, step=None):
     "Waiter handler"
-    # print("CLDB RUN")
-    # program_hex = bytes(Program.to(handler)).hex()
-    # args_hex = bytes(args.as_clvm()).hex()
-    # cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
-    # print(cldb_output.decode('utf8'))
+
+    # if step == 4:
+    #     print("CLDB RUN")
+    #     program_hex = bytes(Program.to(handler)).hex()
+    #     args_hex = bytes(args.as_clvm()).hex()
+    #     cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
+    #     print(cldb_output.decode('utf8'))
+
     ret = handler.run(args.as_clvm())
     return TheirTurnHandlerResult(*ret.as_python())
 
@@ -388,7 +391,7 @@ class Player:
         return self.state.state
 
     def run_their_turn(
-        self, env, move_bytes, mover_share, expected_readable_move
+            self, env, move_bytes, mover_share, expected_readable_move, step = None
     ):
         validator_result = run_validator(
             env,
@@ -408,7 +411,7 @@ class Player:
             validator_result.state,
             move_bytes,
             self.state.max_move_size,
-            self.state.mover_share,
+            mover_share,
         )
 
         their_turn_result = call_their_turn_handler(
@@ -418,16 +421,17 @@ class Player:
                 self.state.state,
                 move_bytes,
                 self.their_turn_validation_program_hash,
-                self.state.mover_share,
+                mover_share,
             ),
+            step
         )
 
         assert (
             their_turn_result.kind == Program.to(MoveCode.MAKE_MOVE.value).as_python()
         )
-        have_normalized_move = Program.to(expected_readable_move).as_python()
-        # expected_normalized_move = Program.to(their_turn_result.readable_move).as_python()
-        # assert have_normalized_move == expected_normalized_move, f"expected readable move {expected_normalized_move} have {have_normalized_move}"
+        have_normalized_move = Program.to(their_turn_result.readable_move).as_python()
+        expected_normalized_move = Program.to(expected_readable_move).as_python()
+        assert have_normalized_move == expected_normalized_move, f"expected readable move {expected_normalized_move} have {have_normalized_move}"
 
         self.my_turn_handler = their_turn_result.my_turn_handler
 
@@ -482,6 +486,7 @@ def test_run_with_moves(seed, state, move_list, amount):
             move[2],  # wire move
             move[3],  # mover share
             move[-1],  # their readable
+            index,
         )
 
         p2_new_computed_state = players[whose_move].get_state()

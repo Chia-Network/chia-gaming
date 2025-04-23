@@ -110,7 +110,18 @@
 
                 ;; selections of both sides, value of both sides
                 ; (alice hand - 5 cards) (bob hand - 5 cards) alice_hand_value bob_hand_value
-                (list MAKE_MOVE 0 (li alice_discards alice_card_selections alice_cards bob_cards alice_final_cards bob_final_cards) 0 "E move")
+                (list MAKE_MOVE 0
+                    (li
+                        bob_discards
+                        alice_cards
+                        bob_cards
+                        alice_final_cards
+                        bob_final_cards
+                        alice_hand_value
+                    )
+                    0
+                    "E move"
+                )
                 ;(list MAKE_MOVE 0 (li bob_discards alice_card_selections (indices_to_bitfield alice_cards)
                 ;    bob_cards alice_hand_value alice_final_cards bob_final_cards MOVER_SHARE) 0 "E move")
             )

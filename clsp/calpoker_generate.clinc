@@ -249,20 +249,33 @@
 ; state is (Bob's discards (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_discards
 ; either fraud proves or accepts split
-(defun calpoker_bob_driver_e (amount (@ state (bob_discards alice_selects alice_cards bob_cards alice_hand_value)) move
-        validation_program_hash split)
+(defun calpoker_bob_driver_e
+    (amount
+     (@ state
+        (bob_discards
+         alice_cards
+         bob_cards
+         alice_final_cards
+         bob_final_cards
+         alice_hand_value
+         )
+        )
+     move
+     validation_program_hash
+     split
+     )
     (assign
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
-        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (map make_card bob_cards)))
+        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (map make_card bob_final_cards)))
         (list MAKE_MOVE
             (list
-                bob_discards
-                alice_selects
-                (indices_to_bitfield bob_selects)
-                bob_hand_value
-                alice_hand_value
-                (deep_compare split (/ amount 2))
+                (print "alice discards" alice_discards)
+                (print "alice selects" alice_selects)
+                (print "bob selects" (indices_to_bitfield bob_selects))
+                (print "alice hand value" alice_hand_value)
+                (print "bob hand value" bob_hand_value)
+                (print "compare result" (deep_compare (print "split was" split) (print "amt div 2" (/ amount 2))))
             )
             (list bob_selects)
         )
