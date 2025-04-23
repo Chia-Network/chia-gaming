@@ -25,7 +25,7 @@ from util import (
     validator_program_filenames,
     read_test_case,
 )
-from validator import GameEnvironment, create_validator_program_library, run_validator
+from validator import GameEnvironment, create_validator_program_library, run_validator, run_one_step
 from validator_hashes import program_hashes_hex
 from validator_output import Move, MoveCode, MoveOrSlash, Slash
 

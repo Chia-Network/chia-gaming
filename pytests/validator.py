@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from clvm_types.program import Program
 from clvm_types.sized_bytes import bytes32
 from load_clvm_hex import load_clvm_hex
-from util import ValidatorInfo, calpoker_onchain_clsp_dir, validator_program_filenames
+from util import ValidatorInfo, calpoker_onchain_clsp_dir, validator_program_filenames, dbg_assert_eq
 from validator_hashes import program_hashes_hex
 from validator_output import Move, MoveCode, Slash
 
@@ -96,6 +96,57 @@ def construct_validator_output(prog: Program) -> Move | Slash:
         assert move_code == MoveCode.SLASH
         return Slash(move_code, Program.to(clvm_list[1]), Program.to(clvm_list[2:]))
 
+
+def run_one_step(
+        game_env, # amount
+        script, # (move, mover_share, evidence, expected_move_type, on_chain)
+        last_move, # (next_validator_hash, next_max_move_size, state)
+        validator_program,
+        expected_move_type): # -> MoveOrSlash
+
+    # TODO: See if compose_validator_args will save code later XOR delete
+    # WAITER_PUZZLE_HASH doubles as an "on_chain" indicator
+
+    move_to_make = script[0]
+    mover_share = script[1]
+    evidence = script[2]
+    on_chain = script[4]
+    args = [
+        last_move.next_validator_hash,
+        [None, on_chain, None, game_env.amount, None, None,
+         move_to_make, last_move.next_max_move_size, None, mover_share, None],
+        last_move.state, validator_program, None, None, evidence
+    ]
+
+    print(f'max_move_size_to_apply {last_move.next_max_move_size}')
+    print(f'move is {move_to_make}')
+
+    # assert len(move_to_make) <= last_move.next_max_move_size
+
+    print_validator_input_args(args[1], game_arg_names)
+
+    # Use this code to automatically run cldb on the program and args that failed
+    # print("CLDB RUN")
+    # program_hex = bytes(Program.to(validator_program)).hex()
+    # args_hex = bytes(Program.to(args)).hex()
+    # cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
+    # print(cldb_output.decode('utf8'))
+
+    ret_val = validator_program.run(args)
+
+    print(f"RAW VALIDATOR OUTPUT {ret_val}")
+
+    validator_output = construct_validator_output(ret_val)
+
+    dbg_assert_eq(expected_move_type, validator_output.move_code)
+
+    if validator_output.move_code == MoveCode.SLASH or validator_output.next_validator_hash is None:
+        # XXX Maybe do additional checks
+        return validator_output
+
+    print(f"validator_output.move_code={validator_output.move_code} expected_move_type={expected_move_type}")
+    print(f"ADAM {validator_output}")
+    return validator_output
 
 def run_validator(
     game_env,  # amount
