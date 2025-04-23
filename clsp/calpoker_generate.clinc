@@ -13,6 +13,7 @@
 (import std.relops)
 (import std.list_compare)
 (import std.deep_compare)
+(import std.print)
 (import handcalc exposing handcalc)
 (import onchain.calpoker.onehandcalc exposing onehandcalc)
 (import onchain.game_codes)
@@ -77,7 +78,7 @@
 (defun calpoker_alice_driver_c (PREIMAGE BOB_SEED local_move amount split entropy)
     (assign
         cards (make_cards (sha256 PREIMAGE BOB_SEED amount))
-        my_discards (bitify local_move)
+        my_discards local_move
         salt (substr entropy 0 16)
         new_commit (sha256 (concat salt my_discards))
         (list
@@ -113,19 +114,19 @@
 ; move is Bob's discards
 ; should immediately respond with a move revealing discards and selecting best cards and final split
 (defun calpoker_alice_driver_d (MY_SALT MY_PICKS amount
-            (@ state (bob_discards (alice_cards bob_cards) my_commit)) move validation_program_hash split)
+            (@ state (bob_discards alice_cards bob_cards my_commit)) move validation_program_hash split)
     (assign
-        (my_all_cards_indices . bob_all_cards_indices) (get_final_cards_in_canonical_order
+        (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
             alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
 
         (my_all_cards . bob_all_cards)
             (c
-               (map make_card my_all_cards_indices)
-               (map make_card bob_all_cards_indices)
+               (map make_card (print "make card alice" my_all_cards_indices))
+               (map make_card (print "make card bob" bob_all_cards_indices))
             )
 
-        (my_hand_value my_selects) (handcalc (map card_list_to_pair my_all_cards))
-        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair bob_all_cards))
+        (my_hand_value my_selects) (handcalc (map card_list_to_pair (print "my all cards" my_all_cards)))
+        (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (print "bob all cards" bob_all_cards)))
         ;; win_result is 1 if my_hand_value is greater than bob_hand_value
         win_result (list_compare my_hand_value bob_hand_value)
         ;; split is captured in a their turn handler below so it's the opposite of what
@@ -139,7 +140,6 @@
                 my_hand_value
                 bob_hand_value
                 win_result
-                "D their turn result"
             )
             ()
             (curry calpoker_alice_driver_e (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_selects))) split)
@@ -231,7 +231,7 @@
 ; move is Bob's discards
 (defun calpoker_bob_driver_d (ALICE_CARDS BOB_CARDS ALICE_COMMIT_2 local_move amount)
     (assign
-        my_move (bitify local_move)
+        my_move local_move
         (list
             my_move
             pokerd
@@ -257,7 +257,7 @@
         (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (map make_card bob_cards)))
         (list MAKE_MOVE
             (list bob_discards alice_selects (indices_to_bitfield bob_selects)
-                    bob_hand_value alice_hand_value (deep_compare split (/ amount 2)) "E their turn result")
+                    bob_hand_value alice_hand_value (deep_compare split (/ amount 2)))
             (list bob_selects)
         )
     )

@@ -24,6 +24,7 @@ from util import (
 from validator import GameEnvironment, create_validator_program_library, run_validator
 from validator_hashes import program_hashes_hex
 from validator_output import Move, MoveCode, MoveOrSlash, Slash
+import subprocess
 
 """
 test_handlers.py:
@@ -109,7 +110,7 @@ class MyTurnHandlerResult:
             validator_for_their_move_hash,
             max_move_size,
             new_mover_share,
-            their_turn_handler,
+            their_turn_handler = None,
             message_parser = None
     ):
         self.move_bytes = move_bytes
@@ -125,7 +126,9 @@ class MyTurnHandlerResult:
 def call_my_turn_handler(handler: Program, local_move, amount, split, entropy):
     "Mover handler"
     print(f"Running handler {handler.get_tree_hash()}")
-    ret = handler.run([local_move, amount, split, entropy])
+    raw_args = Program.to([local_move, amount, split, entropy])
+    print(f"raw args {raw_args}")
+    ret = handler.run(raw_args)
     # x = BaseException(ret)
     # return MyTurnHandlerResult(*ret.as_python())
     return MyTurnHandlerResult(*(list(ret.as_python())))
@@ -169,6 +172,11 @@ class TheirTurnHandlerResult:
 
 def call_their_turn_handler(handler, args: TheirTurnHandlerArgs):
     "Waiter handler"
+    # print("CLDB RUN")
+    # program_hex = bytes(Program.to(handler)).hex()
+    # args_hex = bytes(args.as_clvm()).hex()
+    # cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
+    # print(cldb_output.decode('utf8'))
     ret = handler.run(args.as_clvm())
     return TheirTurnHandlerResult(*ret.as_python())
 
@@ -239,6 +247,7 @@ def get_happy_path(test_inputs: Dict):
         bob_good_selections,
         alice_hand_value,
         bob_hand_value,
+        0, # Win result tie
     ]
     e_results = [
         alice_discards_byte,
@@ -246,6 +255,7 @@ def get_happy_path(test_inputs: Dict):
         bob_good_selections,
         alice_hand_value,
         bob_hand_value,
+        0, # Win result tie
     ]
     alice_initial_handler = None  # my_turn_handler
     bob_initial_handler = None  # their_turn_handler
@@ -265,13 +275,25 @@ def get_happy_path(test_inputs: Dict):
         ),
         (
             alice_discards_byte,
-            entropy_data[2].alice_seed,
+            entropy_data[0].seed,
             good_c_move,
             0,
             [alice_all_cards, bob_all_cards],
         ),
-        (bob_discards_byte, entropy_data[3].bob_seed, bob_discards_byte, 0, d_results),
-        (None, entropy_data[4].alice_seed, e_move, 100, e_results),
+        (
+            bob_discards_byte,
+            entropy_data[0].bob_seed,
+            bob_discards_byte,
+            0,
+            d_results
+        ),
+        (
+            None,
+            entropy_data[0].alice_seed,
+            e_move,
+            100,
+            e_results
+        ),
     ]
     return TestCaseSequence(happy_path)
 
