@@ -487,14 +487,14 @@ class Player:
                 Program.to(self.their_turn_validator),
                 None,
             )
-            dbg_assert_eq(MoveCode(int.from_bytes(expected_validator_result)), validator_result.move_code)
+            dbg_assert_eq(MoveCode(int.from_bytes(expected_validator_result, byteorder="big")), validator_result.move_code)
 
         if test_type != TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
             dbg_assert_eq (expected_validator_result, their_turn_result.kind)
 
         have_normalized_move = Program.to(their_turn_result.readable_move).as_python()
         expected_normalized_move = Program.to(expected_readable_move).as_python()
-        assert have_normalized_move == expected_normalized_move, f"expected readable move {expected_normalized_move} have {have_normalized_move}"
+        assert have_normalized_move == expected_normalized_move, f"\n--\nexpected readable move:\n    {expected_normalized_move} \nhave:\n    {have_normalized_move}\n--\n"
 
         self.my_turn_handler = their_turn_result.my_turn_handler
 
@@ -550,11 +550,18 @@ def test_run_with_moves(seed, state, move_list, amount):
         whose_move = whose_move ^ 1
         print(f"STEP: {index} PLAYER {player_names[whose_move]} THEIR TURN")
 
+        expected_readable_report = old_move.their_turn_report
+        #if move.:
+            #have_normalized_move
+            #old_move.their_turn_report
+            #expected_readable_report.var = val
+
         players[whose_move].run_their_turn(
             env,
             move.move_bytes,  # wire move
             move.new_mover_share,  # mover share
-            old_move.their_turn_report,  # their readable
+
+            expected_readable_report,  # their readable
             old_move.test_type
         )
 
