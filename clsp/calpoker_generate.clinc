@@ -277,7 +277,7 @@
                 (print "bob hand value" bob_hand_value)
                 (print "compare result" (deep_compare (print "split was" split) (print "amt div 2" (/ amount 2))))
             )
-            (list bob_selects)
+            (list (indices_to_bitfield bob_selects))
         )
     )
 )

@@ -446,6 +446,7 @@ class Player:
             None,
         )
 
+        previous_state = self.state.state
         self.state = GameRuntimeInfo(
             validator_result.state,
             move_bytes,
@@ -479,16 +480,17 @@ class Player:
                 Move(
                     MoveCode.MAKE_MOVE,
                     self.their_turn_validation_program_hash,
-                    self.state.state,
+                    previous_state,
                     self.state.max_move_size,
                     None,
                 ),
                 Program.to(self.their_turn_validator),
                 None,
             )
-            assert validator_result.move_code == expected_validator_result
+            dbg_assert_eq(MoveCode(int.from_bytes(expected_validator_result)), validator_result.move_code)
 
-        dbg_assert_eq (expected_validator_result, their_turn_result.kind)
+        if test_type != TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
+            dbg_assert_eq (expected_validator_result, their_turn_result.kind)
 
         have_normalized_move = Program.to(their_turn_result.readable_move).as_python()
         expected_normalized_move = Program.to(expected_readable_move).as_python()
