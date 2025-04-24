@@ -739,7 +739,7 @@ impl PotatoHandler {
         penv: &mut dyn PeerEnv<'a, G, R>,
         i_initiated: bool,
         game_start: &GameStart,
-    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
+    ) -> Result<Vec<GameStartInfo>, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
@@ -789,34 +789,23 @@ impl PotatoHandler {
                 }
             };
 
-        // The result is two parallel lists of opposite sides of game starts.
+        // The result one list containing the game start info for the current player.
         // Well re-glue these together into a list of pairs.
-        let pair_of_output_lists = to_list(
-            env.allocator.allocator(),
-            program_output,
-            "not a pair of lists",
-        )?;
+        // let pair_of_output_lists = to_list(
+        //     env.allocator.allocator(),
+        //     program_output,
+        //     "not a single list",
+        // )?;
 
-        if pair_of_output_lists.len() != 2 {
-            return Err(Error::StrErr("output wasn't a list of 2 items".to_string()));
-        }
+        // if pair_of_output_lists.len() != 1 {
+        //     return Err(Error::StrErr("output wasn't a list of 1 item".to_string()));
+        // }
 
         let my_info_list = to_list(
             env.allocator.allocator(),
-            pair_of_output_lists[0],
+            program_output,
             "not a list (first)",
         )?;
-        let their_info_list = to_list(
-            env.allocator.allocator(),
-            pair_of_output_lists[1],
-            "not a list (second)",
-        )?;
-
-        if their_info_list.len() != my_info_list.len() {
-            return Err(Error::StrErr(
-                "mismatched my and their game starts".to_string(),
-            ));
-        }
 
         let mut game_ids = Vec::new();
         for _ in my_info_list.iter() {
@@ -840,9 +829,8 @@ impl PotatoHandler {
         };
 
         let my_result_start_info = convert_info_list(env.allocator, &my_info_list)?;
-        let their_result_start_info = convert_info_list(env.allocator, &their_info_list)?;
 
-        Ok((my_result_start_info, their_result_start_info))
+        Ok(my_result_start_info)
     }
 
     fn next_game_id(&mut self) -> Result<GameID, Error> {
@@ -1725,7 +1713,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        let (my_games, their_games) = self.get_games_by_start_type(penv, i_initiated, game)?;
+        let my_games = self.get_games_by_start_type(penv, i_initiated, game)?;
+        let their_games = self.get_games_by_start_type(penv, !i_initiated, game)?;
 
         let game_id_list = my_games.iter().map(|g| g.game_id.clone()).collect();
 
