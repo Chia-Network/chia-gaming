@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from enum import Enum
 
 from clvm_tools_rs import start_clvm_program
 
@@ -88,6 +89,14 @@ print_dict(bob_data)
 # handler_args = (new_move, amount, last_mover_share, last_max_move_size, entropy)
 # Program.to(our_data["handler_program"]).run()
 
+@dataclass
+class HandlerMove:
+    input_move_to_our_turn: Program
+    entropy: bytes
+    blockchain_move_bytes: bytes #output_bytes_from_our_turn
+    mover_share: int
+    their_turn_report: Program
+    test_type: TestType
 
 @dataclass
 class MyTurnHandlerResult:
@@ -169,7 +178,6 @@ class TheirTurnHandlerResult:
         self.my_turn_handler = my_turn_handler
         self.message = message
 
-
 def call_their_turn_handler(handler, args: TheirTurnHandlerArgs, step=None):
     "Waiter handler"
 
@@ -201,7 +209,16 @@ def print_step():
     pass
 
 
-def get_happy_path(test_inputs: Dict):
+def refactor_me(test_inputs: Dict):
+    pass
+
+
+class TestType(Enum):
+    NORMAL = 0
+    MUTATE_D_OUTPUT = 1
+    CHECK_FOR_ALICE_TRIES_TO_CHEAT = 2
+
+def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[HandlerMove]:
     seed = GameSeed(test_inputs["seed"])
     preimage = seed.alice_seed
     alice_image = sha256(preimage).digest()
@@ -268,34 +285,43 @@ def get_happy_path(test_inputs: Dict):
     entropy_data = [GameSeed(seed + test_inputs["seed"]) for seed in range(5)]
     happy_path = [
         # our_readable, entropy, move, mover_share, their_readable
-        (None, entropy_data[0].alice_seed, first_move, 0, None),
-        (
+        HandlerMove(None, entropy_data[0].alice_seed, first_move, 0, None, TestType.NORMAL),
+        HandlerMove(
             None,
             entropy_data[0].bob_seed,
             seed.bob_seed,
             0,
             [alice_all_cards, bob_all_cards],
+            TestType.NORMAL
         ),
-        (
+        HandlerMove(
             alice_discards_byte,
             entropy_data[0].seed,
             good_c_move,
             0,
             [alice_all_cards, bob_all_cards],
+            TestType.NORMAL
         ),
-        (
+        HandlerMove(
             bob_discards_byte,
             entropy_data[0].bob_seed,
             bob_discards_byte,
             0,
-            d_results
+            d_results,  # d_results is from alice's their_turn handler
+            # in the `do_evil` case, we will expect a slash from bob, because:
+            # TODO: edit comment
+            # d case: take alice's d instruction and mutate into
+            # pass to bob's e, with 'mover_share' set to 0.
+            # pass case: bob tries to slash
+            TestType.MUTATE_D_OUTPUT if do_evil else TestType.NORMAL,
         ),
-        (
+        HandlerMove(
             None,
             entropy_data[0].alice_seed,
             e_move,
             100,
-            e_results
+            e_results,
+            TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT if do_evil else TestType.NORMAL
         ),
     ]
     return TestCaseSequence(happy_path)
@@ -339,21 +365,29 @@ class Player:
         self.their_turn_validator = initial_their_turn_validator
         self.their_turn_validation_program_hash = their_turn_vp_hash
 
-    def run_my_turn(self, env, move):
+    def run_my_turn_and_generate_move(self, env, move) -> MyTurnHandlerResult:
         # My Turn
-        local_move, entropy, wire_move, mover_share, their_readable = move
+        #local_move, entropy, wire_move, mover_share, their_readable = move
+
         my_turn_result = call_my_turn_handler(
             Program.to(self.my_turn_handler),
-            local_move,
+            move.input_move_to_our_turn,
             self.amount,
             self.state.mover_share,
-            entropy,
+            move.entropy,
         )
 
-        print(f"expected move bytes {wire_move} have {my_turn_result.move_bytes}")
-        assert my_turn_result.move_bytes == wire_move
-        print(f"expected mover_share {mover_share} have {my_turn_result.new_mover_share}")
-        assert Program.to(my_turn_result.new_mover_share).as_python() == Program.to(mover_share).as_python()
+        if move.test_type == TestType.MUTATE_D_OUTPUT:
+            print("hit test_type == TestType.MUTATE_D_OUTPUT")
+            assert my_turn_result.new_mover_share != 0
+            # We will falsely claim
+            my_turn_result.new_mover_share = 0
+            assert my_turn_result.new_mover_share == 0
+
+        print(f"expected move bytes {move.blockchain_move_bytes} have {my_turn_result.move_bytes}")
+        assert my_turn_result.move_bytes == move.blockchain_move_bytes
+        print(f"expected mover_share {move.mover_share} have {my_turn_result.new_mover_share}")
+        assert Program.to(my_turn_result.new_mover_share).as_python() == Program.to(move.mover_share).as_python()
 
         self.their_turn_validator = my_turn_result.validator_for_their_next_move
         self.their_turn_validation_program_hash = (
@@ -362,7 +396,7 @@ class Player:
 
         validator_result = run_validator(
             env,
-            (wire_move, mover_share, None, None, False),
+            (move.blockchain_move_bytes, move.mover_share, None, None, False),
             Move(
                 MoveCode.MAKE_MOVE,
                 my_turn_result.validator_for_their_move_hash,
@@ -386,13 +420,18 @@ class Player:
         )
 
         self.their_turn_handler = my_turn_result.their_turn_handler
+        return my_turn_result
 
     def get_state(self):
         return self.state.state
 
     def run_their_turn(
-            self, env, move_bytes, mover_share, expected_readable_move, step = None
+            self, env, move_bytes, mover_share, expected_readable_move, test_type
     ):
+
+        if test_type == TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
+            mover_share = 0
+
         validator_result = run_validator(
             env,
             (move_bytes, mover_share, None, None, False),
@@ -422,13 +461,35 @@ class Player:
                 move_bytes,
                 self.their_turn_validation_program_hash,
                 mover_share,
-            ),
-            step
+            )
         )
 
-        assert (
-            their_turn_result.kind == Program.to(MoveCode.MAKE_MOVE.value).as_python()
-        )
+        # their_turn_result
+        # if test_type == TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT and their_turn_result.evidence_list != None:
+
+        expected_validator_result = Program.to(MoveCode.MAKE_MOVE.value).as_python()
+        if test_type == TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
+            expected_validator_result = Program.to(MoveCode.SLASH.value).as_python()
+
+        # if e.clsp returns "evidence", we will check
+        for e in their_turn_result.evidence_list:
+            validator_result = run_validator(
+                env,
+                (move_bytes, mover_share, e, None, False),
+                Move(
+                    MoveCode.MAKE_MOVE,
+                    self.their_turn_validation_program_hash,
+                    self.state.state,
+                    self.state.max_move_size,
+                    None,
+                ),
+                Program.to(self.their_turn_validator),
+                None,
+            )
+            assert validator_result.move_code == expected_validator_result
+
+        dbg_assert_eq (expected_validator_result, their_turn_result.kind)
+
         have_normalized_move = Program.to(their_turn_result.readable_move).as_python()
         expected_normalized_move = Program.to(expected_readable_move).as_python()
         assert have_normalized_move == expected_normalized_move, f"expected readable move {expected_normalized_move} have {have_normalized_move}"
@@ -469,24 +530,30 @@ def test_run_with_moves(seed, state, move_list, amount):
     player_names = ["alice", "bob"]
     whose_move = 0
 
-    for index,move in enumerate(move_list.sequence):
-        print(f"STEP: {index} PLAYER {player_names[whose_move]} MY TURN")
-        print("MOVE:", move)
-        players[whose_move].run_my_turn(
+    # TODO: Genericise to Seq & Item
+    # old_move is the move we got from our test script
+    for index, old_move in enumerate(move_list.sequence):
+        print(f"\n    ---- STEP: {index} PLAYER {player_names[whose_move]} MY TURN")
+        print("MOVE:", old_move)
+
+        # move is a MyTurnHandlerResult which may have been synthesized
+        move = players[whose_move].run_my_turn_and_generate_move(
             env,
-            move,
+            old_move
         )
 
+        # print(f"Mutated move: {move}")
         p1_new_computed_state = players[whose_move].get_state()
 
         whose_move = whose_move ^ 1
         print(f"STEP: {index} PLAYER {player_names[whose_move]} THEIR TURN")
+
         players[whose_move].run_their_turn(
             env,
-            move[2],  # wire move
-            move[3],  # mover share
-            move[-1],  # their readable
-            index,
+            move.move_bytes,  # wire move
+            move.new_mover_share,  # mover share
+            old_move.their_turn_report,  # their readable
+            old_move.test_type
         )
 
         p2_new_computed_state = players[whose_move].get_state()
@@ -495,9 +562,9 @@ def test_run_with_moves(seed, state, move_list, amount):
 
 
 
-def run_test():
+def run_test(do_evil: bool):
     seed_case = read_test_case("seed.json")
-    test_case = get_happy_path(seed_case)
+    test_case = get_happy_path(seed_case, do_evil)
     game_runtime_info = GameRuntimeInfo(our_data["initial_state"], our_data["initial_move"], our_data["initial_max_move_size"], our_data["initial_mover_share"])
     test_run_with_moves(seed_case["seed"], game_runtime_info, test_case, 200)
 
@@ -517,4 +584,4 @@ handler_test_0 = [
     # bob_move run alice_next_validator()
 ]
 
-run_test()
+run_test(do_evil=True)

@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, TypeVar, Generic
 
 from clvm_types.program import Program
 
@@ -29,14 +29,16 @@ class ValidatorInfo:
 #     test: TestCase
 
 
+TestCaseType = TypeVar("TestCaseType")
+
 @dataclass
-class TestCaseAlternative:
-    alternatives: List["TestCaseSequence|TestCaseAlternative"]
+class TestCaseAlternative(Generic[TestCaseType]):
+    alternatives: List["TestCaseSequence[TestCaseType]|TestCaseAlternative[TestCaseType]"]
 
 
 @dataclass
-class TestCaseSequence:
-    sequence: List["TestCaseSequence|TestCaseAlternative"]
+class TestCaseSequence(Generic[TestCaseType]):
+    sequence: List["TestCaseSequence[TestCaseType]|TestCaseAlternative[TestCaseType]"]
 
 
 def dbg_assert_eq(expected, actual, msg=""):
