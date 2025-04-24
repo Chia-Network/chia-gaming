@@ -156,16 +156,16 @@ impl TheirTurnReferee {
         .hash();
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
-            &initial_move,
+            &GameMoveDetails {
+                basic: GameMoveStateInfo {
+                    mover_share: Amount::default(),
+                    .. initial_move
+                },
+                validation_info_hash: vi_hash.clone()
+            },
             game_start_info.initial_max_move_size,
             None,
             game_start_info.initial_validation_program.clone(),
-            &vi_hash,
-            // Special for start: nobody can slash the first turn and both sides need to
-            // compute the same value for amount to sign.  The next move will set mover share
-            // and the polarity of the move will determine whether that applies to us or them
-            // from both frames of reference.
-            Some(&Amount::default()),
             my_turn,
         ));
         // If this reflects my turn, then we will spend the next parameter set.
@@ -719,26 +719,28 @@ impl TheirTurnReferee {
         )?;
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let validator_move_args = InternalStateUpdateArgs {
-            old_state: self.get_game_state(),
-            move_made: details.basic.move_made.clone(),
-            // Unused by validator, present for the referee.
-            new_validation_info_hash: Default::default(),
-            mover_share: puzzle_args.game_move.basic.mover_share.clone(),
-            previous_validation_info_hash: Default::default(),
-            mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
-            waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
-            amount: self.fixed.amount.clone(),
-            timeout: self.fixed.timeout.clone(),
-            max_move_size: self.spend_this_coin().max_move_size,
-            referee_hash: new_puzzle_hash.clone(),
+            mod_hash: self.fixed.referee_coin_puzzle_hash.clone(),
             validation_program: validation_program.clone(),
-            move_args: StateUpdateMoveArgs {
+            referee_args: puzzle_args.clone(),
+            state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
                 previous_validation_program: Some(puzzle_args.validation_program.to_program()),
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
             },
+            // old_state: self.get_game_state(),
+            // move_made: details.basic.move_made.clone(),
+            // // Unused by validator, present for the referee.
+            // new_validation_info_hash: Default::default(),
+            // mover_share: puzzle_args.game_move.basic.mover_share.clone(),
+            // previous_validation_info_hash: Default::default(),
+            // mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
+            // waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
+            // amount: self.fixed.amount.clone(),
+            // timeout: self.fixed.timeout.clone(),
+            // max_move_size: self.spend_this_coin().max_move_size,
+            // referee_hash: new_puzzle_hash.clone(),
         };
         validator_move_args.run(
             allocator,
@@ -828,12 +830,16 @@ impl TheirTurnReferee {
         assert_eq!(new_validation.hash(), &details.validation_info_hash);
         let puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &self.fixed,
-            &details.basic,
+            &GameMoveDetails {
+                basic: GameMoveStateInfo {
+                    mover_share: move_data.mover_share.clone(),
+                    .. details.basic.clone()
+                },
+                .. details.clone()
+            },
             max_move_size,
-            Some(&my_turn_args.game_move.validation_info_hash),
+            None,
             validation_program.clone(),
-            &details.validation_info_hash,
-            Some(&move_data.mover_share),
             false,
         ));
 

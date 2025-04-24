@@ -44,24 +44,24 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameHandler {
     }
 }
 
-pub struct MyTurnInputs<'a> {
+pub struct MyTurnInputs {
     pub readable_new_move: ReadableMove,
     pub amount: Amount,
-    pub last_move: &'a [u8],
     pub last_mover_share: Amount,
-    pub last_max_move_size: usize,
     pub entropy: Hash,
 }
 
 #[derive(Debug)]
 pub struct MyTurnResult {
     // Next player's turn game handler.
-    pub waiting_driver: GameHandler,
+    pub move_bytes: Vec<u8>,
     pub outgoing_move_state_update_program: StateUpdateProgram,
     pub outgoing_move_state_update_program_hash: Hash,
     pub incoming_move_state_update_program: StateUpdateProgram,
     pub incoming_move_state_update_program_hash: Hash,
-    pub game_move: GameMoveStateInfo,
+    pub max_move_size: usize,
+    pub mover_share: Amount,
+    pub waiting_driver: GameHandler,
     pub message_parser: Option<MessageHandler>,
 }
 
@@ -257,10 +257,9 @@ impl GameHandler {
             outgoing_move_state_update_program_hash,
             incoming_move_state_update_program,
             incoming_move_state_update_program_hash,
-            game_move: GameMoveStateInfo {
-                move_made: move_data,
-                mover_share,
-            },
+            move_bytes: move_data,
+            mover_share,
+            max_move_size,
             message_parser,
         })
     }

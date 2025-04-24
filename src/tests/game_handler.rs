@@ -121,9 +121,7 @@ fn test_game_handler_my_turn() {
                     0x80,
                 ]))),
                 amount: Amount::default(),
-                last_move: &[],
                 last_mover_share: Amount::default(),
-                last_max_move_size: 100,
                 entropy: Hash::default(),
             },
         )
@@ -146,7 +144,7 @@ fn test_game_handler_my_turn() {
         waiting_hex,
         Node(encoded_result).to_hex(&mut allocator).expect("cvt")
     );
-    assert_eq!(result.game_move.move_made, &[1]);
+    assert_eq!(result.move_bytes, &[1]);
 
     // We need to call the validator to get the new state.
     todo!();

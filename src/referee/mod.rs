@@ -81,16 +81,16 @@ impl RefereeByTurn {
         .hash();
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
-            &initial_move,
+            &GameMoveDetails {
+                basic: GameMoveStateInfo {
+                    mover_share: Amount::default(),
+                    .. initial_move.clone()
+                },
+                validation_info_hash: vi_hash.clone(),
+            },
             game_start_info.initial_max_move_size,
             None,
             game_start_info.initial_validation_program.clone(),
-            &vi_hash,
-            // Special for start: nobody can slash the first turn and both sides need to
-            // compute the same value for amount to sign.  The next move will set mover share
-            // and the polarity of the move will determine whether that applies to us or them
-            // from both frames of reference.
-            Some(&Amount::default()),
             my_turn,
         ));
         // If this reflects my turn, then we will spend the next parameter set.
