@@ -44,13 +44,13 @@ impl RefereeByTurn {
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Self, PuzzleHash), Error> {
-        debug!("referee maker: game start {:?}", game_start_info);
+        //debug!("referee maker: game start {:?}", game_start_info);
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share.clone(),
             move_made: game_start_info.initial_move.clone(),
         };
         let my_turn = game_start_info.game_handler.is_my_turn();
-        debug!("referee maker: my_turn {my_turn}");
+        //debug!("referee maker: my_turn {my_turn}");
 
         let fixed_info = Rc::new(RMFixed {
             referee_coin_puzzle: referee_coin_puzzle.clone(),

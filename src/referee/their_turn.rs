@@ -549,22 +549,22 @@ impl TheirTurnReferee {
         let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
 
         let prog = StateUpdateProgram::new(allocator, Rc::new(Program::from_bytes(&[0x80])));
-        debug!(
-            "referee maker: get transaction for move {:?}",
-            GameStartInfo {
-                game_handler: self.get_game_handler(),
-                game_id: GameID::default(),
-                amount: self.get_amount(),
-                initial_state: self.get_game_state().clone().into(),
-                initial_max_move_size: target_args.max_move_size,
-                initial_move: target_args.game_move.basic.move_made.clone(),
-                initial_mover_share: target_args.game_move.basic.mover_share.clone(),
-                my_contribution_this_game: Amount::default(),
-                their_contribution_this_game: Amount::default(),
-                initial_validation_program: prog,
-                timeout: self.fixed.timeout.clone(),
-            }
-        );
+        // debug!(
+        //     "referee maker: get transaction for move {:?}",
+        //     GameStartInfo {
+        //         game_handler: self.get_game_handler(),
+        //         game_id: GameID::default(),
+        //         amount: self.get_amount(),
+        //         initial_state: self.get_game_state().clone().into(),
+        //         initial_max_move_size: target_args.max_move_size,
+        //         initial_move: target_args.game_move.basic.move_made.clone(),
+        //         initial_mover_share: target_args.game_move.basic.mover_share.clone(),
+        //         my_contribution_this_game: Amount::default(),
+        //         their_contribution_this_game: Amount::default(),
+        //         initial_validation_program: prog,
+        //         timeout: self.fixed.timeout.clone(),
+        //     }
+        // );
 
         // Get the puzzle hash for the next referee state.
         // This reflects a "their turn" state with the updated state from the
@@ -579,7 +579,7 @@ impl TheirTurnReferee {
         debug!("get_transaction_for_move: previous curry");
         let args = self.args_for_this_coin();
 
-        debug!("transaction for move: state {:?}", self.state);
+        //debug!("transaction for move: state {:?}", self.state);
         debug!("get_transaction_for_move: source curry {args:?}");
         debug!("get_transaction_for_move: target curry {target_args:?}");
         assert_eq!(
@@ -620,10 +620,10 @@ impl TheirTurnReferee {
             Some(&args.game_move.validation_info_hash),
             target_args.previous_validation_info_hash.as_ref()
         );
-        debug!(
-            "transaction for move: from {:?} to {target_args:?}",
-            self.args_for_this_coin()
-        );
+        // debug!(
+        //     "transaction for move: from {:?} to {target_args:?}",
+        //     self.args_for_this_coin()
+        // );
         let target_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.fixed.referee_coin_puzzle_hash,

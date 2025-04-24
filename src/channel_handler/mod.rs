@@ -740,11 +740,16 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         start_info_list: &[GameStartInfo],
     ) -> Result<ChannelCoinSpendInfo, Error> {
+
+        let game_ids: Vec<GameID> = start_info_list.iter().map(
+            |g| g.game_id.clone()
+        ).collect();
         debug!(
-            "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",
+            "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {} game ID is {:?}",
             self.is_initial_potato(),
             self.current_state_number,
-            self.unroll.coin.state_number
+            self.unroll.coin.state_number,
+            game_ids
         );
         let mut new_games = self.add_games(env, start_info_list)?;
 
