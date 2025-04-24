@@ -14,7 +14,7 @@ use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
-use crate::common::types::Amount;
+use crate::common::types::{Amount, Program};
 use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
@@ -26,6 +26,7 @@ use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choi
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
+use crate::referee::types::StateUpdateResult;
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::BasicShutdownConditions;
 use crate::tests::game::GameAction;
@@ -35,12 +36,14 @@ use crate::tests::game::GameActionResult;
 #[cfg(feature = "sim-tests")]
 use crate::tests::simenv::SimulatorEnvironment;
 
+pub const CALPOKER_HEX_FILE: &'static str = "clsp/calpoker_include_calpoker_template.hex";
+
 #[cfg(feature = "sim-tests")]
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
     Game::new(
         allocator,
         game_id,
-        "clsp/calpoker_include_calpoker_template.hex",
+        CALPOKER_HEX_FILE,
     )
 }
 

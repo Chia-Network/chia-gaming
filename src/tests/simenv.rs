@@ -12,7 +12,7 @@ use log::debug;
 use crate::channel_handler::game::Game;
 use crate::channel_handler::runner::{channel_handler_env, ChannelHandlerGame};
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, GameStartInfo, ReadableMove, ValidationProgram,
+    ChannelHandlerEnv, GameStartInfo, ReadableMove, StateUpdateProgram,
 };
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
@@ -575,7 +575,7 @@ fn test_referee_can_slash_on_chain() {
     let init_state =
         Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
     let initial_validation_program =
-        ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
+        StateUpdateProgram::new(&mut allocator, debug_game.my_validation_program);
 
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {
@@ -690,7 +690,7 @@ fn test_referee_can_move_on_chain() {
     let init_state =
         Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
     let my_validation_program =
-        ValidationProgram::new(&mut allocator, debug_game.my_validation_program);
+        StateUpdateProgram::new(&mut allocator, debug_game.my_validation_program);
 
     let game_start_info = GameStartInfo {
         game_id: GameID::from_bytes(b"test"),

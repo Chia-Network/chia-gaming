@@ -2,9 +2,11 @@
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
-use crate::common::types::Timeout;
+use crate::common::types::{AllocEncoder, PrivateKey, Program, PuzzleHash, Timeout};
+use crate::referee::types::{StateUpdateResult, RMFixed, InternalStateUpdateArgs};
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::ShutdownConditions;
+use crate::utils::map_m;
 #[cfg(feature = "sim-tests")]
 use std::rc::Rc;
 
@@ -14,6 +16,7 @@ use lazy_static::lazy_static;
 
 #[cfg(feature = "sim-tests")]
 use rand::prelude::*;
+use rand_chacha::ChaCha8Rng;
 
 #[cfg(feature = "sim-tests")]
 use log::debug;
@@ -26,8 +29,9 @@ lazy_static! {
 use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::runner::ChannelHandlerGame;
+use crate::channel_handler::runner::channel_handler_env;
 #[cfg(feature = "sim-tests")]
-use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::channel_handler::types::{ChannelHandlerEnv, StateUpdateProgram};
 #[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
@@ -160,7 +164,7 @@ pub fn new_channel_handler_game<R: Rng>(
         &contributions.clone(),
         (*DEFAULT_UNROLL_TIME_LOCK).clone(),
     )
-    .expect("should work");
+        .expect("should work");
 
     // Combine u1 and u0 into a single person aggregate key coin.
     let aggregate_public_key = private_to_public_key(&party.player(0).ch.channel_private_key())

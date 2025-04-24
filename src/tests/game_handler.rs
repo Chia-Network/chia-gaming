@@ -31,7 +31,6 @@ fn test_game_handler_their_move_slash() {
                 new_move: GameMoveDetails {
                     basic: GameMoveStateInfo {
                         move_made: vec![],
-                        max_move_size: 0,
                         mover_share: Amount::default(),
                     },
                     validation_info_hash: Hash::default(),
@@ -78,7 +77,6 @@ fn test_game_handler_their_make_move() {
                 new_move: GameMoveDetails {
                     basic: GameMoveStateInfo {
                         move_made: vec![],
-                        max_move_size: 0,
                         mover_share: Amount::default(),
                     },
                     validation_info_hash: Hash::default(),
@@ -148,6 +146,9 @@ fn test_game_handler_my_turn() {
         waiting_hex,
         Node(encoded_result).to_hex(&mut allocator).expect("cvt")
     );
-    assert_eq!(result.game_move.basic.move_made, &[1]);
-    assert_eq!(result.state, Rc::new(Program::from_bytes(&[4])));
+    assert_eq!(result.game_move.move_made, &[1]);
+
+    // We need to call the validator to get the new state.
+    todo!();
+    // assert_eq!(result.state, Rc::new(Program::from_bytes(&[4])));
 }

@@ -9,7 +9,7 @@ use clvmr::allocator::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, ValidationProgram};
+use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, StateUpdateProgram};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
@@ -22,7 +22,7 @@ use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
     GameMoveWireData, OnChainRefereeSolution, RMFixed, RefereeOnChainTransaction,
     RefereePuzzleArgs, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult,
-    ValidatorResult,
+    StateUpdateResult,
 };
 
 #[derive(Clone, Debug)]
@@ -48,7 +48,6 @@ impl RefereeByTurn {
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share.clone(),
             move_made: game_start_info.initial_move.clone(),
-            max_move_size: game_start_info.initial_max_move_size,
         };
         let my_turn = game_start_info.game_handler.is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
@@ -83,7 +82,9 @@ impl RefereeByTurn {
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &initial_move,
+            game_start_info.initial_max_move_size,
             None,
+            game_start_info.initial_validation_program.clone(),
             &vi_hash,
             // Special for start: nobody can slash the first turn and both sides need to
             // compute the same value for amount to sign.  The next move will set mover share
@@ -151,17 +152,6 @@ impl RefereeByTurn {
         }
     }
 
-    pub fn get_validation_program_for_their_move(
-        &self,
-    ) -> Result<(&Program, ValidationProgram), Error> {
-        match self {
-            RefereeByTurn::MyTurn(t) => t.get_validation_program_for_their_move(),
-            RefereeByTurn::TheirTurn(_) => {
-                todo!();
-            }
-        }
-    }
-
     pub fn is_my_turn(&self) -> bool {
         matches!(self, RefereeByTurn::MyTurn(_))
     }
@@ -189,13 +179,6 @@ impl RefereeByTurn {
         match self {
             RefereeByTurn::MyTurn(t) => t.fixed.clone(),
             RefereeByTurn::TheirTurn(t) => t.fixed.clone(),
-        }
-    }
-
-    pub fn get_validation_program(&self) -> Result<Rc<Program>, Error> {
-        match self {
-            RefereeByTurn::MyTurn(t) => t.get_validation_program(),
-            RefereeByTurn::TheirTurn(t) => t.get_validation_program(),
         }
     }
 
@@ -260,21 +243,6 @@ impl RefereeByTurn {
         }
     }
 
-    pub fn run_validator_for_their_move(
-        &self,
-        allocator: &mut AllocEncoder,
-        evidence: Evidence,
-    ) -> Result<ValidatorResult, Error> {
-        match self {
-            RefereeByTurn::MyTurn(t) => {
-                t.run_validator_for_their_move(allocator, t.get_game_state(), evidence)
-            }
-            RefereeByTurn::TheirTurn(_) => {
-                todo!();
-            }
-        }
-    }
-
     pub fn their_turn_move_off_chain(
         &self,
         allocator: &mut AllocEncoder,
@@ -305,19 +273,17 @@ impl RefereeByTurn {
             // We could be called on to fast forward the most recent transaction
             // we ourselves took.  check_their_turn_coin_spent will return an
             // error if it was asked to do a non-fast-forward their turn spend.
-            RefereeByTurn::MyTurn(t) => t
-                .check_their_turn_coin_spent(allocator, coin_string, conditions)
-                .map(|spend| (None, spend)),
+            RefereeByTurn::MyTurn(t) => {
+                todo!();
+            }
             RefereeByTurn::TheirTurn(t) => {
-                let (new_self, result) = t.their_turn_coin_spent(
+                t.their_turn_coin_spent(
                     t.clone(),
                     allocator,
                     coin_string,
                     conditions,
                     state_number,
-                )?;
-
-                Ok((Some(new_self), result))
+                )
             }
         }
     }
@@ -398,50 +364,6 @@ impl RefereeByTurn {
         Ok(None)
     }
 
-    pub fn check_their_turn_for_slash(
-        &self,
-        allocator: &mut AllocEncoder,
-        evidence: Evidence,
-        coin_string: &CoinString,
-    ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
-        let puzzle_args = self.spend_this_coin();
-        let new_puzzle = curry_referee_puzzle(
-            allocator,
-            &self.fixed().referee_coin_puzzle,
-            &self.fixed().referee_coin_puzzle_hash,
-            &puzzle_args,
-        )?;
-
-        let new_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &self.fixed().referee_coin_puzzle_hash,
-            &puzzle_args,
-        )?;
-        // my_inner_solution maker is just in charge of making aggsigs from
-        // conditions.
-        debug!("run validator for their move");
-        let full_slash_result = self.run_validator_for_their_move(allocator, evidence.clone())?;
-        match full_slash_result {
-            ValidatorResult::Slash(_slash) => {
-                // result is NodePtr containing solution and aggsig.
-                // The aggsig for the nil slash is the same as the slash
-                // below, having been created for the reward coin by using
-                // the standard solution signer.
-                let slash_spend = self.make_slash_spend(allocator, coin_string)?;
-                self.make_slash_for_their_turn(
-                    allocator,
-                    coin_string,
-                    new_puzzle,
-                    &new_puzzle_hash,
-                    &slash_spend,
-                    evidence,
-                )
-                .map(Some)
-            }
-            ValidatorResult::MoveOk => Ok(None),
-        }
-    }
-
     fn make_slash_conditions(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         [(
             CREATE_COIN,
@@ -470,63 +392,6 @@ impl RefereeByTurn {
             &self.fixed().agg_sig_me_additional_data,
             false,
         )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn make_slash_for_their_turn(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-        new_puzzle: Puzzle,
-        new_puzzle_hash: &PuzzleHash,
-        slash_spend: &BrokenOutCoinSpendInfo,
-        evidence: Evidence,
-    ) -> Result<TheirTurnCoinSpentResult, Error> {
-        // Probably readable_info overlaps solution.
-        // Moving driver in that context is the signature.
-        // My reward coin string is the coin that we'll make
-        // after the transaction below has been spent so its
-        // parent is the coin id of that coin.
-        let current_mover_share = self.get_our_current_share();
-
-        let (state, validation_program) = self.get_validation_program_for_their_move()?;
-        let reward_amount = self.fixed().amount.clone() - current_mover_share;
-        if reward_amount == Amount::default() {
-            return Ok(TheirTurnCoinSpentResult::Slash(Box::new(
-                SlashOutcome::NoReward,
-            )));
-        }
-
-        let state_nodeptr = state.to_nodeptr(allocator)?;
-        let validation_program_node = validation_program.to_nodeptr(allocator)?;
-        let validation_program_hash = validation_program.sha256tree(allocator);
-        let solution_nodeptr = slash_spend.solution.to_nodeptr(allocator)?;
-        let slashing_coin_solution = self.slashing_coin_solution(
-            allocator,
-            state_nodeptr,
-            validation_program_hash,
-            validation_program_node,
-            solution_nodeptr,
-            evidence,
-        )?;
-
-        let coin_string_of_output_coin =
-            CoinString::from_parts(&coin_string.to_coin_id(), new_puzzle_hash, &reward_amount);
-
-        Ok(TheirTurnCoinSpentResult::Slash(Box::new(
-            SlashOutcome::Reward {
-                transaction: Box::new(CoinSpend {
-                    // Ultimate parent of these coins.
-                    coin: coin_string.clone(),
-                    bundle: Spend {
-                        puzzle: new_puzzle.clone(),
-                        solution: Program::from_nodeptr(allocator, slashing_coin_solution)?.into(),
-                        signature: slash_spend.signature.clone(),
-                    },
-                }),
-                my_reward_coin_string: coin_string_of_output_coin,
-            },
-        )))
     }
 
     // It me.
