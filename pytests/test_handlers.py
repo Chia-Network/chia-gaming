@@ -97,6 +97,7 @@ class HandlerMove:
     mover_share: int
     their_turn_report: Program
     test_type: TestType
+    expected_message_result: Program
 
 @dataclass
 class MyTurnHandlerResult:
@@ -219,6 +220,7 @@ class TestType(Enum):
     CHECK_FOR_ALICE_TRIES_TO_CHEAT = 2
 
 def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[HandlerMove]:
+    """Test move script"""
     seed = GameSeed(test_inputs["seed"])
     preimage = seed.alice_seed
     alice_image = sha256(preimage).digest()
@@ -285,14 +287,18 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
     entropy_data = [GameSeed(seed + test_inputs["seed"]) for seed in range(5)]
     happy_path = [
         # our_readable, entropy, move, mover_share, their_readable
-        HandlerMove(None, entropy_data[0].alice_seed, first_move, 0, None, TestType.NORMAL),
+        HandlerMove(None, entropy_data[0].alice_seed, first_move, 0, None, TestType.NORMAL, Program.to(0)),
         HandlerMove(
             None,
             entropy_data[0].bob_seed,
             seed.bob_seed,
             0,
             [alice_all_cards, bob_all_cards],
-            TestType.NORMAL
+            TestType.NORMAL,
+            # Allow bob to choose cards early before Alice
+            # Otherwise, Alice could choose her cards before bob could start choosing
+            Program.fromhex("ffffff02ff0280ffff05ff0380ffff08ff0280ffff0bff0380ffff0eff0180ffff0eff0280ffff0eff0380ffff0eff048080ffffff03ff0380ffff04ff0180ffff05ff0480ffff08ff0180ffff08ff0380ffff08ff0480ffff0cff0280ffff0cff03808080")
+            # Program.to(0),
         ),
         HandlerMove(
             alice_discards_byte,
@@ -300,7 +306,8 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
             good_c_move,
             0,
             [alice_all_cards, bob_all_cards],
-            TestType.NORMAL
+            TestType.NORMAL,
+            Program.to(0),
         ),
         HandlerMove(
             bob_discards_byte,
@@ -314,6 +321,7 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
             # pass to bob's e, with 'mover_share' set to 0.
             # pass case: bob tries to slash
             TestType.MUTATE_D_OUTPUT if do_evil else TestType.NORMAL,
+            Program.to(0),
         ),
         HandlerMove(
             None,
@@ -321,7 +329,8 @@ def get_happy_path(test_inputs: Dict, do_evil: bool) -> TestCaseSequence[Handler
             e_move,
             100,
             e_results,
-            TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT if do_evil else TestType.NORMAL
+            TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT if do_evil else TestType.NORMAL,
+            Program.to(0),
         ),
     ]
     return TestCaseSequence(happy_path)
@@ -332,6 +341,10 @@ def run_game(state, move_list, mover_handler, waiter_handler):
 
 
 validator_program_library = create_validator_program_library()
+
+
+def are_any_slash(validator_results: List[MoveOrSlash]) -> bool:
+    return any([result.move_code == MoveCode.SLASH for result in validator_results])
 
 
 @dataclass
@@ -351,9 +364,11 @@ class Player:
         their_turn_vp_hash,
         state,
         amount,
+        last_their_turn_message_parser,
     ):
         self.state = state
         self.amount = amount
+        self.last_their_turn_message_parser = last_their_turn_message_parser
 
         if whose_turn:
             self.my_turn_handler = initial_turn_handler
@@ -389,6 +404,7 @@ class Player:
         print(f"expected mover_share {move.mover_share} have {my_turn_result.new_mover_share}")
         assert Program.to(my_turn_result.new_mover_share).as_python() == Program.to(move.mover_share).as_python()
 
+        self.last_their_turn_message_parser = Program.to(my_turn_result.message_parser)
         self.their_turn_validator = my_turn_result.validator_for_their_next_move
         self.their_turn_validation_program_hash = (
             my_turn_result.validator_for_their_move_hash
@@ -425,9 +441,15 @@ class Player:
     def get_state(self):
         return self.state.state
 
+    def handle_message(self, message_from_opponent: bytes, expected_readable, amount):
+        if message_from_opponent != b'':
+            # Note the use of self.get_state
+            decoded_readable_message = self.last_their_turn_message_parser.run([message_from_opponent, self.get_state(), amount])
+            dbg_assert_eq(expected_readable, decoded_readable_message)
+
     def run_their_turn(
             self, env, move_bytes, mover_share, expected_readable_move, test_type
-    ):
+    ) -> TheirTurnHandlerResult:
 
         if test_type == TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
             mover_share = 0
@@ -472,6 +494,7 @@ class Player:
         if test_type == TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
             expected_validator_result = Program.to(MoveCode.SLASH.value).as_python()
 
+        validator_results = []
         # if e.clsp returns "evidence", we will check
         for e in their_turn_result.evidence_list:
             validator_result = run_validator(
@@ -487,6 +510,7 @@ class Player:
                 Program.to(self.their_turn_validator),
                 None,
             )
+            validator_results.append(validator_result)
             dbg_assert_eq(MoveCode(int.from_bytes(expected_validator_result, byteorder="big")), validator_result.move_code)
 
         if test_type != TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
@@ -494,10 +518,15 @@ class Player:
 
         have_normalized_move = Program.to(their_turn_result.readable_move).as_python()
         expected_normalized_move = Program.to(expected_readable_move).as_python()
-        assert have_normalized_move == expected_normalized_move, f"\n--\nexpected readable move:\n    {expected_normalized_move} \nhave:\n    {have_normalized_move}\n--\n"
+        if test_type == TestType.CHECK_FOR_ALICE_TRIES_TO_CHEAT:
+            # We expect a slash
+            if are_any_slash(validator_results):
+                return their_turn_result
+        else:
+            assert have_normalized_move == expected_normalized_move, f"\n--\nexpected readable move:\n    {expected_normalized_move} \nhave:\n    {have_normalized_move}\n--\n"
 
         self.my_turn_handler = their_turn_result.my_turn_handler
-
+        return their_turn_result
 
 def test_run_with_moves(seed, state, move_list, amount):
     # step_a = load_clvm_hex(calpoker_clsp_dir / "a.hex")
@@ -519,6 +548,7 @@ def test_run_with_moves(seed, state, move_list, amount):
             our_data["initial_validation_program_hash"],
             state,
             amount,
+            Program.to(0),
         ),
         Player(
             False,
@@ -527,6 +557,7 @@ def test_run_with_moves(seed, state, move_list, amount):
             bob_data["initial_validation_program_hash"],
             state,
             amount,
+            Program.to(0),
         ),
     ]
     player_names = ["alice", "bob"]
@@ -548,6 +579,7 @@ def test_run_with_moves(seed, state, move_list, amount):
         p1_new_computed_state = players[whose_move].get_state()
 
         whose_move = whose_move ^ 1
+
         print(f"STEP: {index} PLAYER {player_names[whose_move]} THEIR TURN")
 
         expected_readable_report = old_move.their_turn_report
@@ -556,14 +588,16 @@ def test_run_with_moves(seed, state, move_list, amount):
             #old_move.their_turn_report
             #expected_readable_report.var = val
 
-        players[whose_move].run_their_turn(
+        their_turn_result = players[whose_move].run_their_turn(
             env,
             move.move_bytes,  # wire move
             move.new_mover_share,  # mover share
 
             expected_readable_report,  # their readable
-            old_move.test_type
+            old_move.test_type,
         )
+
+        players[whose_move ^ 1].handle_message(their_turn_result.message, old_move.expected_message_result, amount)
 
         p2_new_computed_state = players[whose_move].get_state()
         print(f'comparing state {p1_new_computed_state} to {p2_new_computed_state}')
