@@ -126,13 +126,6 @@ def run_one_step(
 
     print_validator_input_args(args[1], game_arg_names)
 
-    # Use this code to automatically run cldb on the program and args that failed
-    # print("CLDB RUN")
-    # program_hex = bytes(Program.to(validator_program)).hex()
-    # args_hex = bytes(Program.to(args)).hex()
-    # cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
-    # print(cldb_output.decode('utf8'))
-
     ret_val = validator_program.run(args)
 
     print(f"RAW VALIDATOR OUTPUT {ret_val}")
@@ -192,13 +185,6 @@ def run_validator(
     # assert len(move_to_make) <= last_move.next_max_move_size
 
     print_validator_input_args(args[1], game_arg_names)
-
-    # Use this code to automatically run cldb on the program and args that failed
-    print("CLDB RUN")
-    program_hex = bytes(Program.to(validator_program)).hex()
-    args_hex = bytes(Program.to(args)).hex()
-    cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
-    print(cldb_output.decode('utf8'))
 
     ret_val = validator_program.run(args)
 

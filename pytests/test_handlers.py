@@ -181,14 +181,6 @@ class TheirTurnHandlerResult:
 
 def call_their_turn_handler(handler, args: TheirTurnHandlerArgs, step=None):
     "Waiter handler"
-
-    # if step == 4:
-    #     print("CLDB RUN")
-    #     program_hex = bytes(Program.to(handler)).hex()
-    #     args_hex = bytes(args.as_clvm()).hex()
-    #     cldb_output = subprocess.check_output(['/usr/bin/env','cldb','-x','-p',program_hex,args_hex])
-    #     print(cldb_output.decode('utf8'))
-
     ret = handler.run(args.as_clvm())
     return TheirTurnHandlerResult(*ret.as_python())
 

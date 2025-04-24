@@ -132,6 +132,12 @@ jobs:
           python compute_hashes.py
           python ./test_validation_pass.py
 
+      - name: calpoker_handlers
+        run: |
+          cd pytests
+          python compute_hashes.py
+          python ./test_handlers.py
+
   coverage:
     runs-on: ubuntu-latest
     steps:
