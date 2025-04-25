@@ -3,14 +3,14 @@ use std::cmp::Ordering;
 use log::debug;
 
 use crate::channel_handler::types::ReadableMove;
-use clvm_traits::ToClvm;
 #[cfg(all(test, feature = "sim-tests"))]
 use clvm_traits::ClvmEncoder;
+use clvm_traits::ToClvm;
 use clvmr::{run_program, NodePtr};
 
-use crate::common::types::{chia_dialect, IntoErr};
 #[cfg(all(test, feature = "sim-tests"))]
 use crate::common::types::Node;
+use crate::common::types::{chia_dialect, IntoErr};
 
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::utils::{map_m, proper_list};
@@ -279,29 +279,40 @@ pub fn card_to_clvm(allocator: &mut AllocEncoder, card: &Card) -> Result<NodePtr
     [card.0, card.1].to_clvm(allocator).into_gen()
 }
 
-pub fn card_list_to_clvm(allocator: &mut AllocEncoder, cards: &[Card]) -> Result<Vec<NodePtr>, Error> {
+pub fn card_list_to_clvm(
+    allocator: &mut AllocEncoder,
+    cards: &[Card],
+) -> Result<Vec<NodePtr>, Error> {
     map_m(&mut |card: &Card| card_to_clvm(allocator, card), cards)
 }
 
-pub fn card_list_from_clvm(allocator: &mut AllocEncoder, nodeptr: NodePtr) -> Result<Vec<Card>, Error> {
-    let main_list =
-        if let Some(p) = proper_list(allocator.allocator(), nodeptr, true) {
-            p
-        } else {
-            return Err(Error::StrErr("improper card list".to_string()));
-        };
-    map_m(&mut |card_node: &NodePtr| {
-        let card_list =
-            if let Some(c) = proper_list(allocator.allocator(), *card_node, true) {
+pub fn card_list_from_clvm(
+    allocator: &mut AllocEncoder,
+    nodeptr: NodePtr,
+) -> Result<Vec<Card>, Error> {
+    let main_list = if let Some(p) = proper_list(allocator.allocator(), nodeptr, true) {
+        p
+    } else {
+        return Err(Error::StrErr("improper card list".to_string()));
+    };
+    map_m(
+        &mut |card_node: &NodePtr| {
+            let card_list = if let Some(c) = proper_list(allocator.allocator(), *card_node, true) {
                 c
             } else {
                 return Err(Error::StrErr("improper card in list".to_string()));
             };
-        Ok((
-            atom_from_clvm(allocator, card_list[0]).and_then(|a| usize_from_atom(&a)).unwrap_or_default(),
-            atom_from_clvm(allocator, card_list[1]).and_then(|a| usize_from_atom(&a)).unwrap_or_default()
-        ))
-    }, &main_list)
+            Ok((
+                atom_from_clvm(allocator, card_list[0])
+                    .and_then(|a| usize_from_atom(&a))
+                    .unwrap_or_default(),
+                atom_from_clvm(allocator, card_list[1])
+                    .and_then(|a| usize_from_atom(&a))
+                    .unwrap_or_default(),
+            ))
+        },
+        &main_list,
+    )
 }
 
 pub fn get_final_cards_in_canonical_order(
@@ -309,7 +320,7 @@ pub fn get_final_cards_in_canonical_order(
     alice_initial_cards: &[Card],
     alice_discards: u8,
     bob_initial_cards: &[Card],
-    bob_discards: u8
+    bob_discards: u8,
 ) -> Result<(Vec<Card>, Vec<Card>), Error> {
     let split_cards_prog = read_hex_puzzle(allocator, "clsp/test/test_handcalc_micro.hex")?;
     // Generate the final split cards from the discards.
@@ -319,29 +330,29 @@ pub fn get_final_cards_in_canonical_order(
         "get_final_cards_in_canonical_order",
         (
             alice_cards_node,
-            (
-                alice_discards,
-                (
-                    bob_cards_node,
-                    (bob_discards, ())
-                )
-            )
-        )
-    ).to_clvm(allocator).into_gen()?;
+            (alice_discards, (bob_cards_node, (bob_discards, ()))),
+        ),
+    )
+        .to_clvm(allocator)
+        .into_gen()?;
     let split_cards_node = split_cards_prog.to_clvm(allocator).into_gen()?;
     let split_result = run_program(
         allocator.allocator(),
         &chia_dialect(),
         split_cards_node,
         split_cards_args,
-        0
-    ).into_gen()?.1;
+        0,
+    )
+    .into_gen()?
+    .1;
     if let Some(l) = proper_list(allocator.allocator(), split_result, true) {
         let alice_final_cards = card_list_from_clvm(allocator, l[0])?;
         let bob_final_cards = card_list_from_clvm(allocator, l[1])?;
         Ok((alice_final_cards, bob_final_cards))
     } else {
-        return Err(Error::StrErr("bad list result from get_final_cards_in_canonical_order".to_string()));
+        return Err(Error::StrErr(
+            "bad list result from get_final_cards_in_canonical_order".to_string(),
+        ));
     }
 }
 
@@ -382,15 +393,12 @@ pub fn decode_calpoker_readable(
         return Err(Error::StrErr("not all bitmasks converted".to_string()));
     }
 
-    let alice_hand_value =
-        decode_hand_result(allocator, as_list[3])?;
-    let bob_hand_value =
-        decode_hand_result(allocator, as_list[4])?;
+    let alice_hand_value = decode_hand_result(allocator, as_list[3])?;
+    let bob_hand_value = decode_hand_result(allocator, as_list[4])?;
 
-    let raw_win_direction =
-        atom_from_clvm(allocator, as_list[5]).
-        and_then(|a| i64_from_atom(&a)).
-        unwrap_or_default();
+    let raw_win_direction = atom_from_clvm(allocator, as_list[5])
+        .and_then(|a| i64_from_atom(&a))
+        .unwrap_or_default();
     let win_direction = match raw_win_direction.cmp(&0) {
         Ordering::Greater => Some(WinDirectionUser::Bob),
         Ordering::Less => Some(WinDirectionUser::Alice),
@@ -398,12 +406,11 @@ pub fn decode_calpoker_readable(
     };
 
     let opponent_discards = bitmasks[0] as u8;
-    let (alice_discards, bob_discards) =
-        if i_am_alice {
-            (my_discards, opponent_discards)
-        } else {
-            (opponent_discards, my_discards)
-        };
+    let (alice_discards, bob_discards) = if i_am_alice {
+        (my_discards, opponent_discards)
+    } else {
+        (opponent_discards, my_discards)
+    };
 
     let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
         allocator,
@@ -415,7 +422,8 @@ pub fn decode_calpoker_readable(
 
     let raw_alice_selects = bitmasks[1] as u8;
     let raw_bob_selects = bitmasks[2] as u8;
-    let (alice_final_hand, _) = select_cards_using_bits(&alice_final_cards, raw_alice_selects as usize);
+    let (alice_final_hand, _) =
+        select_cards_using_bits(&alice_final_cards, raw_alice_selects as usize);
     let (bob_final_hand, _) = select_cards_using_bits(&bob_final_cards, raw_bob_selects as usize);
 
     Ok(CalpokerResult {
@@ -437,8 +445,12 @@ pub fn decode_calpoker_readable(
 #[test]
 fn test_decode_calpoker_readable() {
     let mut allocator = AllocEncoder::new();
-    let alice_selects_node = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0xf8])).expect("ok");
-    let bob_selects_node = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0xce])).expect("ok");
+    let alice_selects_node = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(&[0xf8]))
+        .expect("ok");
+    let bob_selects_node = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(&[0xce]))
+        .expect("ok");
     let assembled = (
         0x55, // Opponent discards
         (
@@ -449,11 +461,11 @@ fn test_decode_calpoker_readable() {
                     [2, 2, 1, 14, 8, 12], // Alice hand value
                     (
                         [2, 2, 1, 14, 8, 12], // Bob hand value
-                        (0, ())
-                    )
-                )
-            )
-        )
+                        (0, ()),
+                    ),
+                ),
+            ),
+        ),
     )
         .to_clvm(&mut allocator)
         .expect("should work");
@@ -485,7 +497,8 @@ fn test_decode_calpoker_readable() {
         0xaa,
         bob_initial_cards,
         0x55,
-    ).expect("should pick");
+    )
+    .expect("should pick");
 
     let (alice_final_hand, _) = select_cards_using_bits(&alice_final_cards, 0xf8);
     let (bob_final_hand, _) = select_cards_using_bits(&bob_final_cards, 0xce);
@@ -498,7 +511,7 @@ fn test_decode_calpoker_readable() {
         alice_initial_cards,
         bob_initial_cards,
     )
-        .expect("should work");
+    .expect("should work");
 
     let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Alice hand value
 

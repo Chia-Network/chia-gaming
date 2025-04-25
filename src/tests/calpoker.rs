@@ -21,7 +21,9 @@ use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choices};
 #[cfg(feature = "sim-tests")]
-use crate::games::calpoker::{RawCalpokerHandValue, get_final_cards_in_canonical_order, select_cards_using_bits};
+use crate::games::calpoker::{
+    get_final_cards_in_canonical_order, select_cards_using_bits, RawCalpokerHandValue,
+};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
 #[cfg(feature = "sim-tests")]
@@ -76,7 +78,7 @@ fn run_calpoker_play_test(
 pub struct CalpokerMoveData {
     pub alice_discards: u8,
     pub bob_discards: u8,
-    pub moves: Vec<GameAction>
+    pub moves: Vec<GameAction>,
 }
 
 pub fn test_moves_1(allocator: &mut AllocEncoder) -> CalpokerMoveData {
@@ -108,7 +110,7 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> CalpokerMoveData {
             GameAction::Move(1, bob_picks, true),
             // Move is a declared split.
             GameAction::Move(0, win_move_200, true),
-        ]
+        ],
     }
 }
 
@@ -125,31 +127,35 @@ fn test_play_calpoker_happy_path() {
 fn test_verify_endgame_data() {
     let mut allocator = AllocEncoder::new();
     let game = test_moves_1(&mut allocator);
-    let game_action_results = run_calpoker_play_test(&mut allocator, &game.moves).expect("should work");
+    let game_action_results =
+        run_calpoker_play_test(&mut allocator, &game.moves).expect("should work");
     debug!("play_result {game_action_results:?}");
     if let GameActionResult::MoveResult(penultimate_game_data, _, _, _) =
         game_action_results[game_action_results.len() - 1]
     {
         let is_alice_move: bool = true;
-        let with_message: Vec<ReadableMove> = game_action_results.iter().filter_map(|m| {
-            if let GameActionResult::MoveResult(_, _, msg, _) = m {
-                msg.clone()
-            } else {
-                None
-            }
-        }).collect();
+        let with_message: Vec<ReadableMove> = game_action_results
+            .iter()
+            .filter_map(|m| {
+                if let GameActionResult::MoveResult(_, _, msg, _) = m {
+                    msg.clone()
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert_eq!(with_message.len(), 1);
-        let (alice_initial_cards, bob_initial_cards) = decode_readable_card_choices(
-            &mut allocator,
-            with_message[0].clone()
-        ).expect("should decode");
+        let (alice_initial_cards, bob_initial_cards) =
+            decode_readable_card_choices(&mut allocator, with_message[0].clone())
+                .expect("should decode");
         let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
             &mut allocator,
             &alice_initial_cards,
             0xaa,
             &bob_initial_cards,
             0x55,
-        ).expect("should work");
+        )
+        .expect("should work");
         let (alice_final_hand, _) = select_cards_using_bits(&alice_final_cards, 227);
         let (bob_final_hand, _) = select_cards_using_bits(&bob_final_cards, 143);
 
@@ -206,8 +212,13 @@ fn test_play_calpoker_on_chain_after_1_move_p1() {
 fn test_play_calpoker_on_chain_after_1_move_p0_lost_message() {
     let mut allocator = AllocEncoder::new();
     let game = test_moves_1(&mut allocator);
-    let mut on_chain_moves_2: Vec<GameAction> =
-        game.moves.iter().cloned().take(1).map(|x| x.lose()).collect();
+    let mut on_chain_moves_2: Vec<GameAction> = game
+        .moves
+        .iter()
+        .cloned()
+        .take(1)
+        .map(|x| x.lose())
+        .collect();
     on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
     let test3 = run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
     debug!("play_result {test3:?}");
@@ -257,10 +268,12 @@ fn test_play_calpoker_end_game_reward() {
 
     let mut game = test_moves_1(&mut allocator);
     game.moves.push(GameAction::Accept(1));
-    game.moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+    game.moves
+        .push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
 
     debug!("running moves {:?}", game.moves);
-    let _game_action_results = run_calpoker_play_test(&mut allocator, &game.moves).expect("should work");
+    let _game_action_results =
+        run_calpoker_play_test(&mut allocator, &game.moves).expect("should work");
 }
 
 // Bram: slashing tests
