@@ -350,9 +350,9 @@ pub fn get_final_cards_in_canonical_order(
         let bob_final_cards = card_list_from_clvm(allocator, l[1])?;
         Ok((alice_final_cards, bob_final_cards))
     } else {
-        return Err(Error::StrErr(
+        Err(Error::StrErr(
             "bad list result from get_final_cards_in_canonical_order".to_string(),
-        ));
+        ))
     }
 }
 
