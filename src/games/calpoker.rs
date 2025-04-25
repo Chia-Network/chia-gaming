@@ -3,12 +3,12 @@ use std::cmp::Ordering;
 use log::debug;
 
 use crate::channel_handler::types::ReadableMove;
-#[cfg(all(test, feature = "sim-tests"))]
+#[cfg(test)]
 use clvm_traits::ClvmEncoder;
 use clvm_traits::ToClvm;
 use clvmr::{run_program, NodePtr};
 
-#[cfg(all(test, feature = "sim-tests"))]
+#[cfg(test)]
 use crate::common::types::Node;
 use crate::common::types::{chia_dialect, IntoErr};
 
