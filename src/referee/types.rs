@@ -90,13 +90,14 @@ pub enum TheirTurnCoinSpentResult {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateUpdateResult {
-    MoveOk(Rc<Program>, usize),
+    MoveOk(Rc<Program>, ValidationInfo, usize),
     Slash(Rc<Program>),
 }
 
 impl StateUpdateResult {
     pub fn from_nodeptr(
         allocator: &mut AllocEncoder,
+        validation_info: ValidationInfo,
         node: NodePtr,
     ) -> Result<StateUpdateResult, Error> {
         let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
@@ -140,6 +141,7 @@ impl StateUpdateResult {
             .unwrap_or_default();
         Ok(StateUpdateResult::MoveOk(
             Rc::new(Program::from_nodeptr(allocator, lst[2])?),
+            validation_info,
             max_move_size,
         ))
     }
@@ -395,6 +397,10 @@ impl InternalStateUpdateArgs {
             PuzzleHash::from_hash(validation_program_mod_hash.clone()),
         )?;
         let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
+        let node_ptr = self.state_update_args.state.to_clvm(allocator).into_gen()?;
+        let validation_info = ValidationInfo::new_from_state_update_program_hash_and_state(
+            allocator, validation_program_mod_hash.clone(),node_ptr
+        );
 
         debug!("validator program {:?}", self.validation_program);
         debug!("validator args {:?}", validator_full_args);
@@ -413,10 +419,10 @@ impl InternalStateUpdateArgs {
             );
         }
         let raw_result = raw_result_p?;
-        let pres = Program::from_nodeptr(allocator, raw_result.1)?;
+        let pres = Program::from_nodeptr(allocator,raw_result.1)?;
         debug!("validator result {pres:?}");
 
-        let update_result = StateUpdateResult::from_nodeptr(allocator, raw_result.1)?;
+        let update_result = StateUpdateResult::from_nodeptr(allocator, validation_info, raw_result.1)?;
         Ok(update_result)
     }
 }

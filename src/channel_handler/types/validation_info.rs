@@ -4,7 +4,7 @@ use crate::channel_handler::types::StateUpdateProgram;
 use crate::common::types::{AllocEncoder, Hash, Node, Sha256Input, Sha256tree};
 
 /// The pair of state and validation program is the source of the validation hash
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq)]
 pub enum ValidationInfo {
     FromProgram {
         game_state: NodePtr,
@@ -19,6 +19,14 @@ pub enum ValidationInfo {
     FromHash {
         hash: Hash,
     },
+}
+
+impl PartialEq<Self> for ValidationInfo
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.hash() == other.hash()
+    }
+
 }
 
 impl ValidationInfo {

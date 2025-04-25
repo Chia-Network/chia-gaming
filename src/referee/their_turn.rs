@@ -705,8 +705,8 @@ impl TheirTurnReferee {
         debug!("XXX their_turn state_update: {state_update:?}");
 
         // Retrieve evidence from their turn handler.
-        let (new_state, max_move_size) = match &state_update {
-            StateUpdateResult::MoveOk(state, max_move_size) => (state.clone(), *max_move_size),
+        let (new_state, validation_info, max_move_size) = match &state_update {
+            StateUpdateResult::MoveOk(state, validation_info, max_move_size) => (state.clone(), validation_info, *max_move_size),
             StateUpdateResult::Slash(evidence) => {
                 return Ok((
                     None,
@@ -751,10 +751,10 @@ impl TheirTurnReferee {
         };
 
         let (_, validation_program) = self.get_validation_program_for_their_move()?;
-        let new_validation =
-            ValidationInfo::new(allocator, validation_program.clone(), state_nodeptr);
+        // let new_validation =
+        //     ValidationInfo::new(allocator, validation_program.clone(), state_nodeptr);
 
-        assert_eq!(new_validation.hash(), &details.validation_info_hash);
+        assert_eq!(validation_info.hash(), &details.validation_info_hash);
         let puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &self.fixed,
             details,
