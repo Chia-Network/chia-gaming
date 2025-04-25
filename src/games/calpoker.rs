@@ -3,23 +3,22 @@ use std::cmp::Ordering;
 use log::debug;
 
 use crate::channel_handler::types::ReadableMove;
-use clvm_traits::{ClvmEncoder, ToClvm};
+use clvm_traits::ToClvm;
+#[cfg(all(test, feature = "sim-tests"))]
+use clvm_traits::ClvmEncoder;
 use clvmr::{run_program, NodePtr};
 
-use crate::common::types::{chia_dialect, IntoErr, Node};
+use crate::common::types::{chia_dialect, IntoErr};
+#[cfg(all(test, feature = "sim-tests"))]
+use crate::common::types::Node;
+
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::utils::{map_m, proper_list};
 
-use num_bigint::{BigInt, ToBigInt};
-use num_traits::ToPrimitive;
-
 use serde::{Deserialize, Serialize};
 
-#[cfg(all(test, feature = "sim-tests"))]
-use crate::common::types::Amount;
-
 use crate::common::types::{
-    atom_from_clvm, divmod, i64_from_atom, usize_from_atom, AllocEncoder, Error, Program,
+    atom_from_clvm, i64_from_atom, usize_from_atom, AllocEncoder, Error, Program,
 };
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -181,74 +180,6 @@ pub struct CalpokerResult {
     pub win_direction: Option<WinDirectionUser>,
     pub alice_final_hand: Vec<Card>,
     pub bob_final_hand: Vec<Card>,
-}
-
-fn mergein(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
-    if inner.is_empty() {
-        outer.to_vec()
-    } else {
-        let first = inner[0] + offset;
-        let mut res = Vec::new();
-        if outer.is_empty() {
-            res.push(first);
-            res.append(&mut mergein(&[], &inner[1..], offset));
-        } else if outer[0] <= first {
-            res.push(outer[0]);
-            res.append(&mut mergein(&outer[1..], inner, offset + 1));
-        } else {
-            res.push(first);
-            res.append(&mut mergein(outer, &inner[1..], offset));
-        }
-        res
-    }
-}
-
-fn mergeover(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
-    if inner.is_empty() {
-        vec![]
-    } else {
-        let first = inner[0] + offset;
-        let mut res = Vec::new();
-        if outer.is_empty() {
-            res.push(first);
-            res.append(&mut mergeover(&[], &inner[1..], offset));
-        } else if outer[0] <= first {
-            return mergeover(&outer[1..], inner, offset + 1);
-        } else {
-            res.push(first);
-            res.append(&mut mergeover(outer, &inner[1..], offset));
-        }
-        res
-    }
-}
-
-// Pick numchoose things out of numcards options with randomness extracted from vals
-// returns (cards newvals).
-fn choose(numcards: usize, numchoose: usize, randomness: BigInt) -> (Vec<usize>, BigInt) {
-    if numchoose == 1 {
-        let (newrandomness, card) = divmod(randomness, numcards.to_bigint().unwrap());
-        (vec![card.to_usize().unwrap()], newrandomness)
-    } else {
-        let half = numchoose >> 1;
-        let (cards1, newrandomness2) = choose(numcards, half, randomness);
-        let (cards2, newrandomness3) = choose(numcards - half, numchoose - half, newrandomness2);
-        (mergein(&cards1, &cards2, 0), newrandomness3)
-    }
-}
-
-fn cards_to_hand(cards: &[usize]) -> Vec<Card> {
-    cards
-        .iter()
-        .map(|val| {
-            let rank = val / 4;
-            let suit = val % 4;
-            if rank == 12 {
-                (1, suit + 1)
-            } else {
-                (rank + 2, suit + 1)
-            }
-        })
-        .collect()
 }
 
 pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> Vec<(usize, usize)> {
@@ -572,8 +503,6 @@ fn test_decode_calpoker_readable() {
     let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Alice hand value
 
     let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Bob hand value same
-    let alicer = alicev.hand_value().unwrap();
-    let bobr = bobv.hand_value().unwrap();
     assert_eq!(
         decoded,
         CalpokerResult {

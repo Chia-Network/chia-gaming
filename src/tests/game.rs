@@ -95,6 +95,7 @@ impl GameAction {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 #[cfg(feature = "sim-tests")]
 pub enum GameActionResult {
     MoveResult(NodePtr, Vec<u8>, Option<ReadableMove>, Hash),

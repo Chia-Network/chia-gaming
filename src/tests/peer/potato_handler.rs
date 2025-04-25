@@ -521,9 +521,9 @@ fn test_peer_smoke() {
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
-    let (ad, bd, moves) = test_moves_1(&mut allocator);
+    let game = test_moves_1(&mut allocator);
 
-    for this_move in moves.iter() {
+    for this_move in game.moves.iter() {
         let (who, what) = if let GameAction::Move(who, what, _) = this_move {
             (who, what)
         } else {
