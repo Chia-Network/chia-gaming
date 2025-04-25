@@ -217,7 +217,7 @@ impl GameHandler {
             } else {
                 return Err(Error::StrErr(format!(
                     "bad share {}",
-                    Node(pl[4]).to_hex(allocator)?
+                    Node(pl[6]).to_hex(allocator)?
                 )));
             };
         debug!("MOVER_SHARE {mover_share:?}");

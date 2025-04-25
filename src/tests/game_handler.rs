@@ -110,7 +110,7 @@ fn test_game_handler_their_make_move() {
 #[test]
 fn test_game_handler_my_turn() {
     let mut allocator = AllocEncoder::new();
-    let program = Program::from_hex("ff04ffff0101ffff04ffff0102ffff04ffff0103ffff04ffff0104ffff04ffff0105ffff04ffff0106ffff04ffff04ffff01820539ff0180ffff04ffff0108ff808080808080808080").expect("cvt").to_clvm(&mut allocator).expect("cvt");
+    let program = Program::from_hex("ff04ffff0101ffff04ffff0102ffff04ffff0103ffff04ffff0104ffff04ffff0105ffff04ffff0106ffff04ffff0107ffff04ffff04ffff01820539ff0180ffff04ffff0108ff80808080808080808080").expect("cvt").to_clvm(&mut allocator).expect("cvt");
     let my_turn_handler =
         GameHandler::my_driver_from_nodeptr(&mut allocator, program).expect("should cvt");
     let result = my_turn_handler
@@ -134,7 +134,7 @@ fn test_game_handler_my_turn() {
     let encoded_z32 = allocator
         .encode_atom(clvm_traits::Atom::Borrowed(&z32))
         .expect("cvt");
-    let encoded_result = (1337, ((), ((), ((), (100, (Node(encoded_z32), ()))))))
+    let encoded_result = (1337, ((), ((), ((), (Node(encoded_z32), ())))))
         .to_clvm(&mut allocator)
         .expect("cvt");
     let waiting_hex = Node(waiting_driver_node)
@@ -145,8 +145,4 @@ fn test_game_handler_my_turn() {
         Node(encoded_result).to_hex(&mut allocator).expect("cvt")
     );
     assert_eq!(result.move_bytes, &[1]);
-
-    // We need to call the validator to get the new state.
-    todo!();
-    // assert_eq!(result.state, Rc::new(Program::from_bytes(&[4])));
 }
