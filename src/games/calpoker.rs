@@ -357,6 +357,12 @@ pub fn get_final_cards_in_canonical_order(
 }
 
 /// Given a readable move, decode it as a calpoker outcome.
+/// This is the last reply that each side receives
+/// > opd ff81aaff81e3ff818fffff02ff01ff01ff01ff03ff0eff0dff0b80ffff02ff02ff01ff04ff02ff0c80ff81ff80
+/// (-86 -29 -113 (a 1 1 1 3 14 13 11) (a 2 1 4 2 12) -1)
+/// > opd ff55ff81e3ff818fffff02ff01ff01ff01ff03ff0eff0dff0b80ffff02ff02ff01ff04ff02ff0c80ff0180
+/// (85 -29 -113 (a 1 1 1 3 14 13 11) (a 2 1 4 2 12) 1)
+
 pub fn decode_calpoker_readable(
     allocator: &mut AllocEncoder,
     readable: NodePtr,
@@ -396,9 +402,16 @@ pub fn decode_calpoker_readable(
     let alice_hand_value = decode_hand_result(allocator, as_list[3])?;
     let bob_hand_value = decode_hand_result(allocator, as_list[4])?;
 
-    let raw_win_direction = atom_from_clvm(allocator, as_list[5])
+    let mut raw_win_direction = atom_from_clvm(allocator, as_list[5])
         .and_then(|a| i64_from_atom(&a))
         .unwrap_or_default();
+
+    raw_win_direction = if i_am_alice {
+            raw_win_direction * -1
+        } else {
+            raw_win_direction
+        };
+
     let win_direction = match raw_win_direction.cmp(&0) {
         Ordering::Greater => Some(WinDirectionUser::Bob),
         Ordering::Less => Some(WinDirectionUser::Alice),
@@ -444,6 +457,98 @@ pub fn decode_calpoker_readable(
 
 #[test]
 fn test_decode_calpoker_readable() {
+    let mut allocator = AllocEncoder::new();
+    let alice_selects_node = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(&[0xf8]))
+        .expect("ok");
+    let bob_selects_node = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(&[0xce]))
+        .expect("ok");
+    let assembled = (
+        0x55, // Opponent discards
+        (
+            Node(alice_selects_node), // Alice selects
+            (
+                Node(bob_selects_node), // Bob selects
+                (
+                    [2, 2, 1, 14, 8, 12], // Alice hand value
+                    (
+                        [2, 2, 1, 14, 8, 12], // Bob hand value
+                        (0, ()),
+                    ),
+                ),
+            ),
+        ),
+    )
+        .to_clvm(&mut allocator)
+        .expect("should work");
+
+    let alice_initial_cards = &[
+        (2, 2),
+        (5, 3),
+        (8, 2),
+        (11, 3),
+        (14, 1),
+        (14, 2),
+        (14, 3),
+        (14, 4),
+    ];
+    let bob_initial_cards = &[
+        (3, 3),
+        (4, 1),
+        (5, 4),
+        (8, 1),
+        (8, 3),
+        (8, 4),
+        (12, 2),
+        (12, 3),
+    ];
+
+    let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
+        &mut allocator,
+        alice_initial_cards,
+        0xaa,
+        bob_initial_cards,
+        0x55,
+    )
+    .expect("should pick");
+
+    let (alice_final_hand, _) = select_cards_using_bits(&alice_final_cards, 0xf8);
+    let (bob_final_hand, _) = select_cards_using_bits(&bob_final_cards, 0xce);
+
+    let decoded = decode_calpoker_readable(
+        &mut allocator,
+        assembled,
+        true,
+        0xaa as u8,
+        alice_initial_cards,
+        bob_initial_cards,
+    )
+    .expect("should work");
+
+    let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Alice hand value
+
+    let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Bob hand value same
+    assert_eq!(
+        decoded,
+        CalpokerResult {
+            my_discards: 0xaa as u8,
+            opponent_discards: 0x55 as u8,
+            raw_alice_selects: 0xf8 as u8,
+            raw_bob_selects: 0xce as u8,
+            alice_hand_value: alicev,
+            bob_hand_value: bobv,
+            raw_win_direction: 0 as i64,
+            alice_final_hand,
+            bob_final_hand,
+            win_direction: None,
+        }
+    );
+}
+
+
+#[test]
+fn test_decode_calpoker_readable_outcome_matches() {
     let mut allocator = AllocEncoder::new();
     let alice_selects_node = allocator
         .encode_atom(clvm_traits::Atom::Borrowed(&[0xf8]))

@@ -1150,9 +1150,9 @@ fn check_calpoker_economic_result(
         }
     }
 
-    let (alice_cards, _) = decode_readable_card_choices(allocator, p0_view_of_cards.1.clone())
+    let alice_cards = decode_readable_card_choices(allocator, p0_view_of_cards.1.clone())
         .expect("should get cards");
-    let (_, bob_cards) =
+    let bob_cards =
         decode_readable_card_choices(allocator, p1_view_of_cards.1.clone()).expect("should work");
 
     let alice_outcome_node = alice_outcome_move
@@ -1165,8 +1165,8 @@ fn check_calpoker_economic_result(
         alice_outcome_node,
         true,
         alice_discards,
-        &alice_cards,
-        &bob_cards,
+        &alice_cards.0,
+        &bob_cards.1,
     )
     .expect("should work");
     let bob_outcome_node = bob_outcome_move
@@ -1178,11 +1178,12 @@ fn check_calpoker_economic_result(
         bob_outcome_node,
         false,
         bob_discards,
-        &alice_cards,
-        &bob_cards,
+        &alice_cards.0,
+        &bob_cards.1,
     )
     .expect("should work");
 
+    // Compare alice's view of exchanged cards, and bob's view of exchanged cards
     assert_eq!(alice_cards, bob_cards);
 
     debug!("alice_used_cards {:?}", alice_outcome.alice_final_hand);

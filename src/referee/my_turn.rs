@@ -459,6 +459,7 @@ impl MyTurnReferee {
                 state_to_update,
                 Evidence::nil()?,
             )?;
+        debug!("XXX my_turn validation_info_hash: {validation_info_hash:?}");
         let game_move_details = GameMoveDetails {
             basic: GameMoveStateInfo {
                 move_made: result.move_bytes.clone(),
@@ -642,6 +643,8 @@ impl MyTurnReferee {
         debug!("run validator with move: {serialized_move:?}");
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
+        let state_as_clvm = state.to_clvm(allocator).into_gen()?;
+        let v = ValidationInfo::new(allocator, outgoing_state_update_program.clone(), state_as_clvm);
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: outgoing_state_update_program.clone(),
             referee_args: Rc::new(RefereePuzzleArgs {
@@ -652,10 +655,11 @@ impl MyTurnReferee {
                         move_made: serialized_move.to_vec(),
                         mover_share: puzzle_args.game_move.basic.mover_share.clone(),
                     },
-                    validation_info_hash: outgoing_state_update_program
-                        .sha256tree(allocator)
-                        .hash()
-                        .clone(),
+                    validation_info_hash: v.hash().clone(),
+                    // validation_info_hash: outgoing_state_update_program
+                    //     .sha256tree(allocator)
+                    //     .hash()
+                    //     .clone(),
                 },
                 max_move_size: self.state.max_move_size(),
                 ..ref_puzzle_args.clone()

@@ -702,6 +702,7 @@ impl TheirTurnReferee {
         // Run the initial our turn validation to get the new state.
         let evidence = Evidence::nil()?;
         let state_update = self.run_state_update(allocator, details, evidence)?;
+        debug!("XXX their_turn state_update: {state_update:?}");
 
         // Retrieve evidence from their turn handler.
         let (new_state, max_move_size) = match &state_update {
