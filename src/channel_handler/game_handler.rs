@@ -405,10 +405,8 @@ impl GameHandler {
 
 pub struct MessageInputs {
     pub message: Vec<u8>,
+    pub state: ProgramRef,
     pub amount: Amount,
-    pub state: NodePtr,
-    pub move_data: Vec<u8>,
-    pub mover_share: Amount,
 }
 
 #[derive(Clone, Debug)]
@@ -428,7 +426,7 @@ impl MessageHandler {
             .into_gen()?;
         let args = (
             Node(input_msg_atom),
-            (Node(inputs.state), (inputs.amount.clone(), ())),
+            (inputs.state.clone(), (inputs.amount.clone(), ())),
         )
             .to_clvm(allocator)
             .into_gen()?;
@@ -441,8 +439,8 @@ impl MessageHandler {
         let run_result = run_code(allocator, run_prog, args, false);
 
         if run_result.is_err() {
-            todo!();
             debug!("MESSAGE PARSER RETURNED ERROR {run_result:?}");
+            todo!();
         }
 
         ReadableMove::from_nodeptr(allocator, run_result?)

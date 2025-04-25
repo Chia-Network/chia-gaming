@@ -17,6 +17,7 @@ use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
     chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID,
     Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend,
+    ProgramRef,
 };
 use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::types::{
@@ -338,31 +339,15 @@ impl TheirTurnReferee {
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
         // Do stuff with message handler.
-        let (state, move_data, mover_share) = match self.state.borrow() {
+        let state = match self.state.borrow() {
             TheirTurnRefereeMakerGameState::Initial {
-                game_handler,
                 initial_state,
-                initial_puzzle_args,
                 ..
-            } => (
-                initial_state.clone(),
-                initial_puzzle_args.game_move.basic.move_made.clone(),
-                if matches!(game_handler, GameHandler::MyTurnHandler(_)) {
-                    initial_puzzle_args.game_move.basic.mover_share.clone()
-                } else {
-                    self.fixed.amount.clone()
-                        - initial_puzzle_args.game_move.basic.mover_share.clone()
-                },
-            ),
+            } => initial_state.clone(),
             TheirTurnRefereeMakerGameState::AfterOurTurn {
                 state_after_our_turn,
-                create_this_coin,
                 ..
-            } => (
-                state_after_our_turn.clone(),
-                create_this_coin.game_move.basic.move_made.clone(),
-                self.fixed.amount.clone() - create_this_coin.game_move.basic.mover_share.clone(),
-            ),
+            } => state_after_our_turn.clone(),
         };
 
         let result = if let Some(handler) = self.message_handler.as_ref() {
@@ -372,9 +357,7 @@ impl TheirTurnReferee {
                 &MessageInputs {
                     message: message.to_vec(),
                     amount: self.fixed.amount.clone(),
-                    state: state_nodeptr,
-                    move_data,
-                    mover_share,
+                    state: ProgramRef::new(state.clone()),
                 },
             )?
         } else {
@@ -718,10 +701,14 @@ impl TheirTurnReferee {
             )],
         )?;
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
+        let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let validator_move_args = InternalStateUpdateArgs {
             mod_hash: self.fixed.referee_coin_puzzle_hash.clone(),
             validation_program: validation_program.clone(),
-            referee_args: puzzle_args.clone(),
+            referee_args: Rc::new(RefereePuzzleArgs {
+                game_move: details.clone(),
+                .. ref_puzzle_args.clone()
+            }),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
@@ -830,15 +817,9 @@ impl TheirTurnReferee {
         assert_eq!(new_validation.hash(), &details.validation_info_hash);
         let puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &self.fixed,
-            &GameMoveDetails {
-                basic: GameMoveStateInfo {
-                    mover_share: move_data.mover_share.clone(),
-                    .. details.basic.clone()
-                },
-                .. details.clone()
-            },
+            details,
             max_move_size,
-            None,
+            Some(&my_turn_args.game_move.validation_info_hash),
             validation_program.clone(),
             false,
         ));

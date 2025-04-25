@@ -18,7 +18,7 @@ use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinSpend,
     CoinString, Error, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input,
-    Sha256tree, Spend,
+    Sha256tree, Spend, ProgramRef,
 };
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 use crate::referee::types::{
@@ -520,43 +520,24 @@ impl MyTurnReferee {
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
         // Do stuff with message handler.
-        let (state, move_data, mover_share) = match self.state.borrow() {
+        let state = match self.state.borrow() {
             MyTurnRefereeMakerGameState::Initial {
-                game_handler,
                 initial_state,
-                initial_puzzle_args,
                 ..
-            } => (
-                initial_state,
-                initial_puzzle_args.game_move.basic.move_made.clone(),
-                if matches!(game_handler, GameHandler::MyTurnHandler(_)) {
-                    initial_puzzle_args.game_move.basic.mover_share.clone()
-                } else {
-                    self.fixed.amount.clone()
-                        - initial_puzzle_args.game_move.basic.mover_share.clone()
-                },
-            ),
+            } => initial_state,
             MyTurnRefereeMakerGameState::AfterTheirTurn {
                 state_after_their_turn,
-                create_this_coin,
                 ..
-            } => (
-                state_after_their_turn,
-                create_this_coin.game_move.basic.move_made.clone(),
-                self.fixed.amount.clone() - create_this_coin.game_move.basic.mover_share.clone(),
-            ),
+            } => state_after_their_turn
         };
 
         let result = if let Some(handler) = self.message_handler.as_ref() {
-            let state_nodeptr = state.to_nodeptr(allocator)?;
             handler.run(
                 allocator,
                 &MessageInputs {
                     message: message.to_vec(),
                     amount: self.fixed.amount.clone(),
-                    state: state_nodeptr,
-                    move_data,
-                    mover_share,
+                    state: ProgramRef::new(state.clone()),
                 },
             )?
         } else {
