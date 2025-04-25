@@ -2,11 +2,9 @@
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
-use crate::common::types::{AllocEncoder, PrivateKey, Program, PuzzleHash, Timeout};
-use crate::referee::types::{InternalStateUpdateArgs, RMFixed, StateUpdateResult};
+use crate::common::types::Timeout;
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::ShutdownConditions;
-use crate::utils::map_m;
 #[cfg(feature = "sim-tests")]
 use std::rc::Rc;
 
@@ -16,7 +14,6 @@ use lazy_static::lazy_static;
 
 #[cfg(feature = "sim-tests")]
 use rand::prelude::*;
-use rand_chacha::ChaCha8Rng;
 
 #[cfg(feature = "sim-tests")]
 use log::debug;
@@ -27,11 +24,10 @@ lazy_static! {
 
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
-use crate::channel_handler::runner::channel_handler_env;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::runner::ChannelHandlerGame;
 #[cfg(feature = "sim-tests")]
-use crate::channel_handler::types::{ChannelHandlerEnv, StateUpdateProgram};
+use crate::channel_handler::types::ChannelHandlerEnv;
 #[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,

@@ -2,32 +2,25 @@ use std::borrow::Borrow;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::allocator::NodePtr;
-use clvmr::reduction::EvalErr;
-use clvmr::run_program;
 
 use log::debug;
 
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnMoveData,
-    TheirTurnResult,
+    GameHandler, MessageHandler, MyTurnInputs, MyTurnResult,
 };
 use crate::channel_handler::types::{
     Evidence, GameStartInfo, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
-use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
+use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    chia_dialect, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinSpend,
-    CoinString, Error, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash, RcNode,
+    AllocEncoder, Amount, CoinString, Error, Hash, IntoErr, Program, Puzzle, PuzzleHash,
     Sha256Input, Sha256tree, Spend,
 };
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
     GameMoveWireData, InternalStateUpdateArgs, OnChainRefereeSolution, RMFixed,
-    RefereeOnChainTransaction, RefereePuzzleArgs, SlashOutcome, StateUpdateMoveArgs,
-    StateUpdateResult, TheirTurnCoinSpentResult, TheirTurnMoveResult,
+    RefereeOnChainTransaction, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
 use crate::referee::RefereeByTurn;
 
@@ -523,22 +516,12 @@ impl MyTurnReferee {
 
     pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.args_for_this_coin();
-        curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &args,
-        )
+        curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)
     }
 
     pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.spend_this_coin();
-        curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &args,
-        )
+        curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)
     }
 
     pub fn on_chain_referee_puzzle_hash(
@@ -627,12 +610,7 @@ impl MyTurnReferee {
         );
 
         let targs = self.spend_this_coin();
-        let puzzle = curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &targs,
-        )?;
+        let puzzle = curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &targs)?;
 
         self.get_transaction(
             allocator,
@@ -653,12 +631,6 @@ impl MyTurnReferee {
         evidence: Evidence,
     ) -> Result<(Rc<Program>, usize, ValidationInfo), Error> {
         let puzzle_args = self.args_for_this_coin();
-        let new_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &self.fixed.referee_coin_puzzle_hash,
-            &puzzle_args,
-        )?;
-
         let solution = self.fixed.my_identity.standard_solution(
             allocator,
             &[(
@@ -670,7 +642,6 @@ impl MyTurnReferee {
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let validator_move_args = InternalStateUpdateArgs {
-            mod_hash: self.fixed.referee_coin_puzzle_hash.clone(),
             validation_program: outgoing_state_update_program.clone(),
             referee_args: Rc::new(RefereePuzzleArgs {
                 mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
@@ -691,7 +662,6 @@ impl MyTurnReferee {
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
-                previous_validation_program: None,
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
             },
@@ -701,13 +671,7 @@ impl MyTurnReferee {
             // timeout: self.fixed.timeout.clone(),
             // referee_hash: new_puzzle_hash.clone(),
         };
-        let result = validator_move_args.run(
-            allocator,
-            &self.fixed.my_identity,
-            self.fixed.referee_coin_puzzle_hash.hash(),
-            self.state_number,
-            evidence,
-        )?;
+        let result = validator_move_args.run(allocator)?;
         match result {
             StateUpdateResult::Slash(_) => {
                 Err(Error::StrErr("our own move was slashed by us".to_string()))

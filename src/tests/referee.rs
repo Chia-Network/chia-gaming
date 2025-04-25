@@ -9,14 +9,14 @@ use rand_chacha::ChaCha8Rng;
 use log::debug;
 
 use crate::channel_handler::game_handler::{GameHandler, TheirTurnResult};
-use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, StateUpdateProgram};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, StateUpdateProgram};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, StateUpdateResult};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 use crate::referee::RefereeMaker;
 
 pub struct DebugGamePrograms {

@@ -1,5 +1,5 @@
 use crate::common::standard_coin::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Error, Node, Program, Sha256Input};
+use crate::common::types::{chia_dialect, AllocEncoder, Node, Program, Sha256Input};
 
 use clvm_traits::ToClvm;
 use clvmr::reduction::EvalErr;

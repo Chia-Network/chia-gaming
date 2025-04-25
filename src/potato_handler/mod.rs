@@ -832,7 +832,7 @@ impl PotatoHandler {
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<GameStartInfo>, Error> {
             let mut result_start_info = Vec::new();
-            for (i, node) in my_info_list.iter().enumerate() {
+            for node in my_info_list.iter() {
                 let new_game = GameStartInfo::from_clvm(allocator, *node)?;
                 // Timeout and game_id are supplied here.
                 result_start_info.push(new_game);

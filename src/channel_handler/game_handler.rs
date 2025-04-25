@@ -10,12 +10,12 @@ use clvmr::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, ValidationInfo};
+use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
+use crate::referee::types::GameMoveDetails;
 
 // How to call the clvm program in this object:
 //

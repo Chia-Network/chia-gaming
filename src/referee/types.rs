@@ -296,7 +296,6 @@ pub fn curry_referee_puzzle_hash(
 pub fn curry_referee_puzzle(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle: &Puzzle,
-    referee_coin_puzzle_hash: &PuzzleHash,
     args: &RefereePuzzleArgs,
 ) -> Result<Puzzle, Error> {
     let combined_args = args.to_clvm(allocator).into_gen()?;
@@ -338,7 +337,6 @@ pub fn curry_referee_puzzle(
 pub struct StateUpdateMoveArgs {
     pub state: Rc<Program>,
     pub mover_puzzle: Rc<Program>,
-    pub previous_validation_program: Option<Rc<Program>>,
     pub solution: Rc<Program>,
     pub evidence: Rc<Program>,
 }
@@ -359,7 +357,6 @@ impl StateUpdateMoveArgs {
 }
 
 pub struct InternalStateUpdateArgs {
-    pub mod_hash: PuzzleHash,
     pub validation_program: StateUpdateProgram,
     pub referee_args: Rc<RefereePuzzleArgs>,
     pub state_update_args: StateUpdateMoveArgs,
@@ -375,11 +372,6 @@ impl InternalStateUpdateArgs {
         let converted_vma = self
             .state_update_args
             .to_nodeptr(allocator, validation_program_node)?;
-        let move_node = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(
-                &self.referee_args.game_move.basic.move_made,
-            ))
-            .into_gen()?;
         (
             validator_mod_hash,
             (
@@ -394,14 +386,7 @@ impl InternalStateUpdateArgs {
             .into_gen()
     }
 
-    pub fn run(
-        &self,
-        allocator: &mut AllocEncoder,
-        my_identity: &ChiaIdentity,
-        referee_coin_puzzle_hash: &Hash,
-        state_number: usize,
-        evidence: Evidence,
-    ) -> Result<StateUpdateResult, Error> {
+    pub fn run(&self, allocator: &mut AllocEncoder) -> Result<StateUpdateResult, Error> {
         let validation_program_mod_hash = self.referee_args.validation_program.hash();
         debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
         let validation_program_nodeptr = self.validation_program.to_nodeptr(allocator)?;
@@ -432,16 +417,6 @@ impl InternalStateUpdateArgs {
         debug!("validator result {pres:?}");
 
         let update_result = StateUpdateResult::from_nodeptr(allocator, raw_result.1)?;
-        if let StateUpdateResult::MoveOk(state, max_move_size) = &update_result {
-            debug!(
-                "<V> their turn state result {:?} {state:?}",
-                self.validation_program.sha256tree(allocator)
-            );
-            let state_nodeptr = state.to_nodeptr(allocator)?;
-            let validation_info_hash =
-                ValidationInfo::new(allocator, self.validation_program.clone(), state_nodeptr);
-        }
-
         Ok(update_result)
     }
 }

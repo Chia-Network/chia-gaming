@@ -13,9 +13,9 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
-use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Amount, Program};
+use crate::common::types::Amount;
+use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
@@ -26,7 +26,6 @@ use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choi
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
-use crate::referee::types::StateUpdateResult;
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::BasicShutdownConditions;
 use crate::tests::game::GameAction;

@@ -5,24 +5,21 @@ pub mod types;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::allocator::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, StateUpdateProgram};
-use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, StateUpdateProgram};
+use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinSpend, CoinString, Error,
-    Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend,
+    AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinString, Error, Hash, IntoErr,
+    Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
 };
 use crate::referee::my_turn::MyTurnReferee;
 use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
     GameMoveWireData, OnChainRefereeSolution, RMFixed, RefereeOnChainTransaction,
-    RefereePuzzleArgs, SlashOutcome, StateUpdateResult, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult,
+    RefereePuzzleArgs, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 
 #[derive(Clone, Debug)]
@@ -222,7 +219,7 @@ impl RefereeByTurn {
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
         match self {
-            RefereeByTurn::MyTurn(t) => todo!(),
+            RefereeByTurn::MyTurn(_t) => todo!(),
             RefereeByTurn::TheirTurn(t) => t.receive_readable(allocator, message),
         }
     }
@@ -273,7 +270,7 @@ impl RefereeByTurn {
             // We could be called on to fast forward the most recent transaction
             // we ourselves took.  check_their_turn_coin_spent will return an
             // error if it was asked to do a non-fast-forward their turn spend.
-            RefereeByTurn::MyTurn(t) => {
+            RefereeByTurn::MyTurn(_t) => {
                 todo!();
             }
             RefereeByTurn::TheirTurn(t) => {
@@ -358,41 +355,6 @@ impl RefereeByTurn {
         Ok(None)
     }
 
-    fn make_slash_conditions(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
-        [(
-            CREATE_COIN,
-            (
-                self.target_puzzle_hash_for_slash(),
-                (self.fixed().amount.clone(), ()),
-            ),
-        )]
-        .to_clvm(allocator)
-        .into_gen()
-    }
-
-    fn make_slash_spend(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_id: &CoinString,
-    ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        debug!("slash spend: parent coin is {coin_id:?}");
-        let slash_conditions = self.make_slash_conditions(allocator)?;
-        standard_solution_partial(
-            allocator,
-            &self.fixed().my_identity.synthetic_private_key,
-            &coin_id.to_coin_id(),
-            slash_conditions,
-            &self.fixed().my_identity.synthetic_public_key,
-            &self.fixed().agg_sig_me_additional_data,
-            false,
-        )
-    }
-
-    // It me.
-    fn target_puzzle_hash_for_slash(&self) -> PuzzleHash {
-        self.fixed().my_identity.puzzle_hash.clone()
-    }
-
     pub fn get_our_current_share(&self) -> Amount {
         let args = self.spend_this_coin();
         if self.processing_my_turn() {
@@ -400,32 +362,6 @@ impl RefereeByTurn {
         } else {
             args.game_move.basic.mover_share.clone()
         }
-    }
-
-    fn slashing_coin_solution(
-        &self,
-        allocator: &mut AllocEncoder,
-        state: NodePtr,
-        my_validation_info_hash: PuzzleHash,
-        validation_program_clvm: NodePtr,
-        slash_solution: NodePtr,
-        evidence: Evidence,
-    ) -> Result<NodePtr, Error> {
-        (
-            Node(state),
-            (
-                my_validation_info_hash,
-                (
-                    Node(validation_program_clvm),
-                    (
-                        RcNode::new(self.fixed().my_identity.puzzle.to_program()),
-                        (Node(slash_solution), (evidence, ())),
-                    ),
-                ),
-            ),
-        )
-            .to_clvm(allocator)
-            .into_gen()
     }
 
     // Ensure this returns
@@ -498,12 +434,7 @@ impl RefereeByTurn {
         );
 
         let targs = self.spend_this_coin();
-        let puzzle = curry_referee_puzzle(
-            allocator,
-            &self.fixed().referee_coin_puzzle,
-            &self.fixed().referee_coin_puzzle_hash,
-            &targs,
-        )?;
+        let puzzle = curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &targs)?;
 
         self.get_transaction(
             allocator,
@@ -517,22 +448,12 @@ impl RefereeByTurn {
 
     pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.args_for_this_coin();
-        curry_referee_puzzle(
-            allocator,
-            &self.fixed().referee_coin_puzzle,
-            &self.fixed().referee_coin_puzzle_hash,
-            &args,
-        )
+        curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)
     }
 
     pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.spend_this_coin();
-        curry_referee_puzzle(
-            allocator,
-            &self.fixed().referee_coin_puzzle,
-            &self.fixed().referee_coin_puzzle_hash,
-            &args,
-        )
+        curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)
     }
 
     pub fn on_chain_referee_puzzle_hash(
