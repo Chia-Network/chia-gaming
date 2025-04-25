@@ -385,7 +385,7 @@ impl InternalStateUpdateArgs {
         (
             validator_mod_hash,
             (
-                self.referee_args.to_clvm(allocator).into_gen()?,
+                self.referee_args.off_chain().to_clvm(allocator).into_gen()?,
                 Node(converted_vma),
             ),
         )
@@ -396,14 +396,12 @@ impl InternalStateUpdateArgs {
     pub fn run(
         &self,
         allocator: &mut AllocEncoder,
-        on_chain_puzzle_args: &RefereePuzzleArgs,
         my_identity: &ChiaIdentity,
         referee_coin_puzzle_hash: &Hash,
         state_number: usize,
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
-        let puzzle_args = on_chain_puzzle_args.off_chain();
-        let validation_program_mod_hash = puzzle_args.validation_program.hash();
+        let validation_program_mod_hash = self.referee_args.validation_program.hash();
         debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
         let validation_program_nodeptr = self.validation_program.to_nodeptr(allocator)?;
         let validator_full_args_node = self.to_nodeptr(

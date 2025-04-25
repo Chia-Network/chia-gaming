@@ -731,7 +731,6 @@ impl TheirTurnReferee {
         };
         validator_move_args.run(
             allocator,
-            &puzzle_args,
             &self.fixed.my_identity,
             self.fixed.referee_coin_puzzle_hash.hash(),
             state_number,
