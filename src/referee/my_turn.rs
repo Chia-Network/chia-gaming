@@ -351,6 +351,7 @@ impl MyTurnReferee {
         self.fixed.amount.clone() - self.get_our_current_share()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn accept_this_move(
         &self,
         game_handler: GameHandler,

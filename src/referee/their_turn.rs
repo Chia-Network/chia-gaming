@@ -952,8 +952,8 @@ impl TheirTurnReferee {
                 )?;
                 Ok((None, slash))
             }
-            TheirTurnResult::FinalMove(move_data) => finish_result(allocator, &move_data),
-            TheirTurnResult::MakeMove(_, _, move_data) => finish_result(allocator, &move_data),
+            TheirTurnResult::FinalMove(move_data) => finish_result(allocator, move_data),
+            TheirTurnResult::MakeMove(_, _, move_data) => finish_result(allocator, move_data),
         }
     }
 
