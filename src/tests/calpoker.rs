@@ -89,10 +89,10 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
     let bob_word = allocator
         .encode_atom(clvm_traits::Atom::Borrowed(b"0bob456789abcdef"))
         .expect("should work");
-    let alice_picks = [0, 1, 0, 1, 0, 1, 0, 1]
+    let alice_picks = (0x55 as u8)
         .to_clvm(allocator)
         .expect("should work");
-    let bob_picks = [1, 0, 1, 0, 1, 0, 1, 0]
+    let bob_picks = (0xaa as u8)
         .to_clvm(allocator)
         .expect("should work");
     let win_move_200 = 200.to_clvm(allocator).expect("should work");

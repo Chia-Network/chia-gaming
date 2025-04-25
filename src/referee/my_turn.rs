@@ -378,6 +378,7 @@ impl MyTurnReferee {
             new_puzzle_args.mover_puzzle_hash
         );
 
+        debug!("MY TURN FINISHED WITH STATE {new_state:?} REPLACING {:?}", self.get_game_state());
         let new_state = TheirTurnRefereeMakerGameState::AfterOurTurn {
             their_turn_game_handler: game_handler.clone(),
             their_turn_validation_program: my_turn_result.incoming_move_state_update_program.clone(),

@@ -134,8 +134,8 @@ impl StateUpdateResult {
         }
 
         // Make move
-        let max_move_size = atom_from_clvm(allocator, lst[2]).and_then(|a| usize_from_atom(&a)).unwrap_or_default();
-        Ok(StateUpdateResult::MoveOk(Rc::new(Program::from_nodeptr(allocator, lst[1])?), max_move_size))
+        let max_move_size = atom_from_clvm(allocator, lst[3]).and_then(|a| usize_from_atom(&a)).unwrap_or_default();
+        Ok(StateUpdateResult::MoveOk(Rc::new(Program::from_nodeptr(allocator, lst[2])?), max_move_size))
     }
 }
 

@@ -968,6 +968,12 @@ impl ChannelHandler {
         game_id: &GameID,
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
+        debug!(
+            "{} RECEIVED_MESSAGE {} {message:?}",
+            self.is_initial_potato(),
+            self.current_state_number
+        );
+
         let game_idx = self.get_game_by_id(game_id)?;
 
         self.live_games[game_idx].receive_readable(env.allocator, message)
