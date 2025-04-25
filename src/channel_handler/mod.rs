@@ -740,10 +740,7 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         start_info_list: &[GameStartInfo],
     ) -> Result<ChannelCoinSpendInfo, Error> {
-
-        let game_ids: Vec<GameID> = start_info_list.iter().map(
-            |g| g.game_id.clone()
-        ).collect();
+        let game_ids: Vec<GameID> = start_info_list.iter().map(|g| g.game_id.clone()).collect();
         debug!(
             "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {} game ID is {:?}",
             self.is_initial_potato(),
@@ -927,7 +924,7 @@ impl ChannelHandler {
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
                 ));
-            },
+            }
         };
 
         let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;

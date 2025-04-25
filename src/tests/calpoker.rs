@@ -13,9 +13,9 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
+use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Amount, Program};
-use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
@@ -40,11 +40,7 @@ pub const CALPOKER_HEX_FILE: &'static str = "clsp/calpoker_include_calpoker_temp
 
 #[cfg(feature = "sim-tests")]
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
-    Game::new(
-        allocator,
-        game_id,
-        CALPOKER_HEX_FILE,
-    )
+    Game::new(allocator, game_id, CALPOKER_HEX_FILE)
 }
 
 #[cfg(feature = "sim-tests")]
@@ -89,9 +85,11 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
     let bob_word = allocator
         .encode_atom(clvm_traits::Atom::Borrowed(b"0bob456789abcdef"))
         .expect("should work");
-    let alice_picks = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0x55]))
+    let alice_picks = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(&[0x55]))
         .expect("should work");
-    let bob_picks = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0xaa]))
+    let bob_picks = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(&[0xaa]))
         .expect("should work");
     let win_move_200 = 200.to_clvm(allocator).expect("should work");
 

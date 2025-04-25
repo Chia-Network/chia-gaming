@@ -3,7 +3,7 @@ use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
 use crate::common::types::{AllocEncoder, PrivateKey, Program, PuzzleHash, Timeout};
-use crate::referee::types::{StateUpdateResult, RMFixed, InternalStateUpdateArgs};
+use crate::referee::types::{InternalStateUpdateArgs, RMFixed, StateUpdateResult};
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::ShutdownConditions;
 use crate::utils::map_m;
@@ -27,9 +27,9 @@ lazy_static! {
 
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
+use crate::channel_handler::runner::channel_handler_env;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::runner::ChannelHandlerGame;
-use crate::channel_handler::runner::channel_handler_env;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::{ChannelHandlerEnv, StateUpdateProgram};
 #[cfg(feature = "sim-tests")]
@@ -164,7 +164,7 @@ pub fn new_channel_handler_game<R: Rng>(
         &contributions.clone(),
         (*DEFAULT_UNROLL_TIME_LOCK).clone(),
     )
-        .expect("should work");
+    .expect("should work");
 
     // Combine u1 and u0 into a single person aggregate key coin.
     let aggregate_public_key = private_to_public_key(&party.player(0).ch.channel_private_key())

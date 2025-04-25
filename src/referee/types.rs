@@ -17,8 +17,9 @@ use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    Program, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout, atom_from_clvm, chia_dialect, i64_from_atom, usize_from_atom
+    atom_from_clvm, chia_dialect, i64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
+    Sha256tree, Spend, Timeout,
 };
 use crate::referee::StateUpdateProgram;
 use crate::utils::proper_list;
@@ -96,14 +97,13 @@ pub enum StateUpdateResult {
 impl StateUpdateResult {
     pub fn from_nodeptr(
         allocator: &mut AllocEncoder,
-        node: NodePtr
+        node: NodePtr,
     ) -> Result<StateUpdateResult, Error> {
-        let lst =
-            if let Some(p) = proper_list(allocator.allocator(), node, true) {
-                p
-            } else {
-                return Err(Error::StrErr("non-list in validator result".to_string()));
-            };
+        let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
+            p
+        } else {
+            return Err(Error::StrErr("non-list in validator result".to_string()));
+        };
 
         if lst.is_empty() {
             return Err(Error::StrErr("empty list from validator".to_string()));
@@ -118,15 +118,16 @@ impl StateUpdateResult {
 
         if selector != 0 {
             // Slash
-            let evidence_node =
-                if lst.len() > 1 {
-                    lst[1]
-                } else {
-                    allocator.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()?
-                };
+            let evidence_node = if lst.len() > 1 {
+                lst[1]
+            } else {
+                allocator
+                    .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+                    .into_gen()?
+            };
             let evidence = Rc::new(Program::from_nodeptr(allocator, evidence_node)?);
 
-            return Ok(StateUpdateResult::Slash(evidence))
+            return Ok(StateUpdateResult::Slash(evidence));
         }
 
         if lst.len() < 3 {
@@ -134,8 +135,13 @@ impl StateUpdateResult {
         }
 
         // Make move
-        let max_move_size = atom_from_clvm(allocator, lst[3]).and_then(|a| usize_from_atom(&a)).unwrap_or_default();
-        Ok(StateUpdateResult::MoveOk(Rc::new(Program::from_nodeptr(allocator, lst[2])?), max_move_size))
+        let max_move_size = atom_from_clvm(allocator, lst[3])
+            .and_then(|a| usize_from_atom(&a))
+            .unwrap_or_default();
+        Ok(StateUpdateResult::MoveOk(
+            Rc::new(Program::from_nodeptr(allocator, lst[2])?),
+            max_move_size,
+        ))
     }
 }
 
@@ -259,23 +265,15 @@ where
             self.amount.to_clvm(encoder)?,
             self.referee_coin_puzzle_hash.to_clvm(encoder)?,
             self.nonce.to_clvm(encoder)?,
-            encoder
-                .encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))
-                ?,
-            self.max_move_size
-                .to_clvm(encoder)
-                ?,
-            self.game_move
-                .validation_info_hash
-                .to_clvm(encoder)
-                ?,
-            self.game_move
-                .basic
-                .mover_share
-                .to_clvm(encoder)
-                ?,
-            self.previous_validation_info_hash.as_ref().to_clvm(encoder)?,
-        ].to_clvm(encoder)
+            encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
+            self.max_move_size.to_clvm(encoder)?,
+            self.game_move.validation_info_hash.to_clvm(encoder)?,
+            self.game_move.basic.mover_share.to_clvm(encoder)?,
+            self.previous_validation_info_hash
+                .as_ref()
+                .to_clvm(encoder)?,
+        ]
+        .to_clvm(encoder)
     }
 }
 
@@ -352,15 +350,11 @@ impl StateUpdateMoveArgs {
             &self.state,
             (
                 &me_program,
-                [
-                    &self.mover_puzzle,
-                    &self.solution,
-                    &self.evidence,
-                ]
-            )
+                [&self.mover_puzzle, &self.solution, &self.evidence],
+            ),
         )
-        .to_clvm(allocator)
-        .into_gen()
+            .to_clvm(allocator)
+            .into_gen()
     }
 }
 
@@ -378,14 +372,21 @@ impl InternalStateUpdateArgs {
         validator_mod_hash: PuzzleHash,
     ) -> Result<NodePtr, Error> {
         let validation_program_node = self.referee_args.validation_program.to_nodeptr(allocator)?;
-        let converted_vma = self.state_update_args.to_nodeptr(allocator, validation_program_node)?;
+        let converted_vma = self
+            .state_update_args
+            .to_nodeptr(allocator, validation_program_node)?;
         let move_node = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&self.referee_args.game_move.basic.move_made))
+            .encode_atom(clvm_traits::Atom::Borrowed(
+                &self.referee_args.game_move.basic.move_made,
+            ))
             .into_gen()?;
         (
             validator_mod_hash,
             (
-                self.referee_args.off_chain().to_clvm(allocator).into_gen()?,
+                self.referee_args
+                    .off_chain()
+                    .to_clvm(allocator)
+                    .into_gen()?,
                 Node(converted_vma),
             ),
         )
@@ -418,9 +419,13 @@ impl InternalStateUpdateArgs {
             validation_program_nodeptr,
             validator_full_args_node,
             0,
-        ).into_gen();
+        )
+        .into_gen();
         if let Err(Error::ClvmErr(EvalErr(n, e))) = &raw_result_p {
-            debug!("validator error {e} {:?}", Program::from_nodeptr(allocator, *n));
+            debug!(
+                "validator error {e} {:?}",
+                Program::from_nodeptr(allocator, *n)
+            );
         }
         let raw_result = raw_result_p?;
         let pres = Program::from_nodeptr(allocator, raw_result.1)?;
@@ -428,13 +433,13 @@ impl InternalStateUpdateArgs {
 
         let update_result = StateUpdateResult::from_nodeptr(allocator, raw_result.1)?;
         if let StateUpdateResult::MoveOk(state, max_move_size) = &update_result {
-            debug!("<V> their turn state result {:?} {state:?}", self.validation_program.sha256tree(allocator));
-            let state_nodeptr = state.to_nodeptr(allocator)?;
-            let validation_info_hash = ValidationInfo::new(
-                allocator,
-                self.validation_program.clone(),
-                state_nodeptr,
+            debug!(
+                "<V> their turn state result {:?} {state:?}",
+                self.validation_program.sha256tree(allocator)
             );
+            let state_nodeptr = state.to_nodeptr(allocator)?;
+            let validation_info_hash =
+                ValidationInfo::new(allocator, self.validation_program.clone(), state_nodeptr);
         }
 
         Ok(update_result)

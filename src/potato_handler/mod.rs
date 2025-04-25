@@ -734,8 +734,12 @@ impl PotatoHandler {
         }
     }
 
-    fn set_game_ids(&mut self, games: &[GameStartInfo], game_ids: &[GameID], timeout: Timeout) -> Vec<GameStartInfo>
-    {
+    fn set_game_ids(
+        &mut self,
+        games: &[GameStartInfo],
+        game_ids: &[GameID],
+        timeout: Timeout,
+    ) -> Vec<GameStartInfo> {
         assert_eq!(games.len(), game_ids.len());
 
         let mut result_start_info = Vec::new();
@@ -749,7 +753,6 @@ impl PotatoHandler {
             });
         }
         result_start_info
-
     }
 
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(

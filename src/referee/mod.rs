@@ -21,8 +21,8 @@ use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
     GameMoveWireData, OnChainRefereeSolution, RMFixed, RefereeOnChainTransaction,
-    RefereePuzzleArgs, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult,
-    StateUpdateResult,
+    RefereePuzzleArgs, SlashOutcome, StateUpdateResult, TheirTurnCoinSpentResult,
+    TheirTurnMoveResult,
 };
 
 #[derive(Clone, Debug)]
@@ -84,7 +84,7 @@ impl RefereeByTurn {
             &GameMoveDetails {
                 basic: GameMoveStateInfo {
                     mover_share: Amount::default(),
-                    .. initial_move.clone()
+                    ..initial_move.clone()
                 },
                 validation_info_hash: vi_hash.clone(),
             },
@@ -277,13 +277,7 @@ impl RefereeByTurn {
                 todo!();
             }
             RefereeByTurn::TheirTurn(t) => {
-                t.their_turn_coin_spent(
-                    t.clone(),
-                    allocator,
-                    coin_string,
-                    conditions,
-                    state_number,
-                )
+                t.their_turn_coin_spent(t.clone(), allocator, coin_string, conditions, state_number)
             }
         }
     }

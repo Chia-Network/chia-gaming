@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::proper_list;
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
+use clvmr::reduction::EvalErr;
 use clvmr::run_program;
 use clvmr::NodePtr;
-use clvmr::reduction::EvalErr;
 
 use log::debug;
 
-use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, StateUpdateProgram};
+use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, ValidationInfo};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,
@@ -306,7 +306,10 @@ impl GameHandler {
         );
 
         if let Err(Error::ClvmErr(EvalErr(n, desc))) = &run_result_e {
-            debug!("error {desc} from their turn handler: {:?}", Program::from_nodeptr(allocator, *n));
+            debug!(
+                "error {desc} from their turn handler: {:?}",
+                Program::from_nodeptr(allocator, *n)
+            );
         }
 
         let run_result = run_result_e?;
@@ -314,9 +317,10 @@ impl GameHandler {
         let pl = if let Some(pl) = proper_list(allocator.allocator(), run_result, true) {
             pl
         } else {
-            return Err(Error::StrErr(
-                format!("bad result from game driver: not a list {:?}", Program::from_nodeptr(allocator, run_result)?)
-            ));
+            return Err(Error::StrErr(format!(
+                "bad result from game driver: not a list {:?}",
+                Program::from_nodeptr(allocator, run_result)?
+            )));
         };
 
         debug!("got move result len {}", pl.len());
@@ -348,7 +352,10 @@ impl GameHandler {
         }
 
         if move_type != 0 {
-            return Err(Error::StrErr(format!("unknown move result type {:?}", Program::from_nodeptr(allocator, run_result)?)));
+            return Err(Error::StrErr(format!(
+                "unknown move result type {:?}",
+                Program::from_nodeptr(allocator, run_result)?
+            )));
         }
 
         if pl.len() < 2 {
@@ -360,12 +367,9 @@ impl GameHandler {
 
         let decode_slash_evidence = |allocator: &mut AllocEncoder, index: Option<usize>| {
             let mut lst = Vec::new();
-            let lst_nodeptr =
-                index.and_then(|i| proper_list(
-                    allocator.allocator(),
-                    pl[i],
-                    true
-                )).unwrap_or_default();
+            let lst_nodeptr = index
+                .and_then(|i| proper_list(allocator.allocator(), pl[i], true))
+                .unwrap_or_default();
 
             for v in lst_nodeptr.into_iter() {
                 lst.push(Evidence::from_nodeptr(allocator, v)?);
