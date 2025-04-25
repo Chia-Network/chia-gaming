@@ -514,43 +514,6 @@ impl MyTurnReferee {
         ))
     }
 
-    pub fn receive_readable(
-        &self,
-        allocator: &mut AllocEncoder,
-        message: &[u8],
-    ) -> Result<ReadableMove, Error> {
-        // Do stuff with message handler.
-        let state = match self.state.borrow() {
-            MyTurnRefereeMakerGameState::Initial {
-                initial_state,
-                ..
-            } => initial_state,
-            MyTurnRefereeMakerGameState::AfterTheirTurn {
-                state_after_their_turn,
-                ..
-            } => state_after_their_turn
-        };
-
-        let result = if let Some(handler) = self.message_handler.as_ref() {
-            handler.run(
-                allocator,
-                &MessageInputs {
-                    message: message.to_vec(),
-                    amount: self.fixed.amount.clone(),
-                    state: ProgramRef::new(state.clone()),
-                },
-            )?
-        } else {
-            return Err(Error::StrErr(
-                "no message handler but have a message".to_string(),
-            ));
-        };
-
-        // self.message_handler = None;
-
-        Ok(result)
-    }
-
     pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.args_for_this_coin();
         curry_referee_puzzle(

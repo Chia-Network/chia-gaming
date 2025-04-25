@@ -222,7 +222,7 @@ impl RefereeByTurn {
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.receive_readable(allocator, message),
+            RefereeByTurn::MyTurn(t) => todo!(),
             RefereeByTurn::TheirTurn(t) => t.receive_readable(allocator, message),
         }
     }
