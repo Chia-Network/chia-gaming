@@ -1662,11 +1662,9 @@ impl PotatoHandler {
         }
 
         for coin in game_map.keys() {
-            todo!();
             let player_ch = self.channel_handler_mut()?;
             let (env, _system_interface) = penv.env();
             if let Some(redo_move) = player_ch.get_redo_action(env, coin)? {
-                todo!();
                 debug!("redo move: {redo_move:?}");
                 self.game_action_queue.push_front(redo_move);
             }

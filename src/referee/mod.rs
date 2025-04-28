@@ -382,13 +382,11 @@ impl RefereeByTurn {
                 &old_referee.args_for_this_coin(),
             )?;
             debug!(
-                "{} referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
+                "referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
                 old_referee.state_number(),
                 old_referee.is_my_turn(),
-                old_referee.state_number()
             );
-            if *puzzle_hash == have_puzzle_hash && old_referee.is_my_turn() {
-                todo!();
+            if *puzzle_hash == have_puzzle_hash {
                 let state_number = old_referee.state_number();
                 return Ok(Some((old_referee.clone(), state_number)));
             }
