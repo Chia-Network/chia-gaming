@@ -275,7 +275,7 @@ impl GameHandler {
 
         Ok(MyTurnResult {
             name: name.to_string(),
-            waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[7])?,
+            waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[8])?,
             outgoing_move_state_update_program: MyStateUpdateProgram(outgoing_move_state_update_program),
             outgoing_move_state_update_program_hash,
             incoming_move_state_update_program: TheirStateUpdateProgram(incoming_move_state_update_program),
