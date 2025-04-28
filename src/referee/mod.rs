@@ -8,8 +8,8 @@ use clvm_traits::ToClvm;
 
 use log::debug;
 
-use crate::channel_handler::types::{GameStartInfo, ReadableMove, StateUpdateProgram};
 use crate::channel_handler::game_handler::{MyStateUpdateProgram, TheirStateUpdateProgram};
+use crate::channel_handler::types::{GameStartInfo, ReadableMove, StateUpdateProgram};
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinString, Error, Hash, IntoErr,
@@ -180,7 +180,13 @@ impl RefereeByTurn {
         }
     }
 
-    pub fn stored_versions(&self) -> Vec<(Rc<RefereePuzzleArgs<StateUpdateProgram>>, Rc<RefereePuzzleArgs<StateUpdateProgram>>, usize)> {
+    pub fn stored_versions(
+        &self,
+    ) -> Vec<(
+        Rc<RefereePuzzleArgs<StateUpdateProgram>>,
+        Rc<RefereePuzzleArgs<StateUpdateProgram>>,
+        usize,
+    )> {
         let mut alist = vec![];
         self.generate_ancestor_list(&mut alist);
         alist

@@ -10,7 +10,9 @@ use clvmr::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, HasStateUpdateProgram};
+use crate::channel_handler::types::{
+    Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
+};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,
@@ -127,13 +129,16 @@ fn get_state_update_program(
     name: &str,
     suffix: &str,
     pl: &[NodePtr],
-    loc: usize)
-    -> Result<StateUpdateProgram, Error> {
+    loc: usize,
+) -> Result<StateUpdateProgram, Error> {
     let final_name = format!("{} {}", name, suffix);
     let validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[loc])?);
-    Ok(StateUpdateProgram::new(allocator, &final_name, validation_prog))
+    Ok(StateUpdateProgram::new(
+        allocator,
+        &final_name,
+        validation_prog,
+    ))
 }
-
 
 impl GameHandler {
     pub fn their_driver_from_nodeptr(
@@ -270,15 +275,21 @@ impl GameHandler {
             return Err(Error::StrErr("bad move".to_string()));
         };
 
-        let outgoing_move_state_update_program = get_state_update_program(allocator, &name, "my turn", &pl, 2)?;
-        let incoming_move_state_update_program = get_state_update_program(allocator, &name, "their_turn", &pl, 4)?;
+        let outgoing_move_state_update_program =
+            get_state_update_program(allocator, &name, "my turn", &pl, 2)?;
+        let incoming_move_state_update_program =
+            get_state_update_program(allocator, &name, "their_turn", &pl, 4)?;
 
         Ok(MyTurnResult {
             name: name.to_string(),
             waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[8])?,
-            outgoing_move_state_update_program: MyStateUpdateProgram(outgoing_move_state_update_program),
+            outgoing_move_state_update_program: MyStateUpdateProgram(
+                outgoing_move_state_update_program,
+            ),
             outgoing_move_state_update_program_hash,
-            incoming_move_state_update_program: TheirStateUpdateProgram(incoming_move_state_update_program),
+            incoming_move_state_update_program: TheirStateUpdateProgram(
+                incoming_move_state_update_program,
+            ),
             incoming_move_state_update_program_hash,
             move_bytes: move_data,
             mover_share,

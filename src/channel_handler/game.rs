@@ -81,7 +81,8 @@ impl Game {
             .and_then(|a| usize_from_atom(&a))
             .expect("should be an atom");
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);
-        let initial_validation_program = StateUpdateProgram::new(allocator, "initial", validation_prog);
+        let initial_validation_program =
+            StateUpdateProgram::new(allocator, "initial", validation_prog);
         let initial_validation_program_hash =
             if let Some(a) = atom_from_clvm(allocator, template_list[6]) {
                 Hash::from_slice(&a)

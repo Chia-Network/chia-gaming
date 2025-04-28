@@ -7,10 +7,12 @@ use clvmr::NodePtr;
 use log::debug;
 
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnMoveData, TheirTurnResult, TheirStateUpdateProgram, MyStateUpdateProgram,
+    GameHandler, MessageHandler, MessageInputs, MyStateUpdateProgram, TheirStateUpdateProgram,
+    TheirTurnInputs, TheirTurnMoveData, TheirTurnResult,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, StateUpdateProgram, ValidationInfo, HasStateUpdateProgram,
+    Evidence, GameStartInfo, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
+    ValidationInfo,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
@@ -182,7 +184,9 @@ impl TheirTurnReferee {
         }
         let state = Rc::new(TheirTurnRefereeMakerGameState::Initial {
             initial_state: game_start_info.initial_state.p(),
-            initial_validation_program: TheirStateUpdateProgram(game_start_info.initial_validation_program.clone()),
+            initial_validation_program: TheirStateUpdateProgram(
+                game_start_info.initial_validation_program.clone(),
+            ),
             initial_puzzle_args: ref_puzzle_args.clone(),
             game_handler: game_start_info.game_handler.clone(),
         });
@@ -649,7 +653,11 @@ impl TheirTurnReferee {
     ) -> Result<StateUpdateResult, Error> {
         let puzzle_args = self.spend_this_coin();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
-        debug!("their turn running state update {} with state {:?}", validation_program.name(), state);
+        debug!(
+            "their turn running state update {} with state {:?}",
+            validation_program.name(),
+            state
+        );
         let solution = self.fixed.my_identity.standard_solution(
             allocator,
             &[(
@@ -707,7 +715,9 @@ impl TheirTurnReferee {
 
         // Retrieve evidence from their turn handler.
         let (new_state, validation_info, max_move_size) = match &state_update {
-            StateUpdateResult::MoveOk(state, validation_info, max_move_size) => (state.clone(), validation_info, *max_move_size),
+            StateUpdateResult::MoveOk(state, validation_info, max_move_size) => {
+                (state.clone(), validation_info, *max_move_size)
+            }
             StateUpdateResult::Slash(evidence) => {
                 return Ok((
                     None,

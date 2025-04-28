@@ -21,12 +21,10 @@ pub enum ValidationInfo {
     },
 }
 
-impl PartialEq<Self> for ValidationInfo
-{
+impl PartialEq<Self> for ValidationInfo {
     fn eq(&self, other: &Self) -> bool {
         self.hash() == other.hash()
     }
-
 }
 
 impl ValidationInfo {

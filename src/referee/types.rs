@@ -11,7 +11,9 @@ use log::debug;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::{TheirTurnResult, MyStateUpdateProgram, TheirStateUpdateProgram};
+use crate::channel_handler::game_handler::{
+    MyStateUpdateProgram, TheirStateUpdateProgram, TheirTurnResult,
+};
 use crate::channel_handler::types::HasStateUpdateProgram;
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{
@@ -416,7 +418,11 @@ impl<StateP: HasStateUpdateProgram + Clone> InternalStateUpdateArgs<StateP> {
         allocator: &mut AllocEncoder,
         validator_mod_hash: PuzzleHash,
     ) -> Result<NodePtr, Error> {
-        let validation_program_node = self.referee_args.validation_program.p().to_nodeptr(allocator)?;
+        let validation_program_node = self
+            .referee_args
+            .validation_program
+            .p()
+            .to_nodeptr(allocator)?;
         let converted_vma = self
             .state_update_args
             .to_nodeptr(allocator, validation_program_node)?;
@@ -446,7 +452,9 @@ impl<StateP: HasStateUpdateProgram + Clone> InternalStateUpdateArgs<StateP> {
         let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
         let node_ptr = self.state_update_args.state.to_clvm(allocator).into_gen()?;
         let validation_info = ValidationInfo::new_from_state_update_program_hash_and_state(
-            allocator, validation_program_mod_hash.clone(), node_ptr
+            allocator,
+            validation_program_mod_hash.clone(),
+            node_ptr,
         );
 
         debug!("validator program {:?}", self.validation_program);
@@ -466,10 +474,11 @@ impl<StateP: HasStateUpdateProgram + Clone> InternalStateUpdateArgs<StateP> {
             );
         }
         let raw_result = raw_result_p?;
-        let pres = Program::from_nodeptr(allocator,raw_result.1)?;
+        let pres = Program::from_nodeptr(allocator, raw_result.1)?;
         debug!("validator result {pres:?}");
 
-        let update_result = StateUpdateResult::from_nodeptr(allocator, validation_info, raw_result.1)?;
+        let update_result =
+            StateUpdateResult::from_nodeptr(allocator, validation_info, raw_result.1)?;
         Ok(update_result)
     }
 }

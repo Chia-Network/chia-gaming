@@ -407,10 +407,10 @@ pub fn decode_calpoker_readable(
         .unwrap_or_default();
 
     raw_win_direction = if i_am_alice {
-            raw_win_direction * -1
-        } else {
-            raw_win_direction
-        };
+        raw_win_direction * -1
+    } else {
+        raw_win_direction
+    };
 
     let win_direction = match raw_win_direction.cmp(&0) {
         Ordering::Greater => Some(WinDirectionUser::Bob),
@@ -545,7 +545,6 @@ fn test_decode_calpoker_readable() {
         }
     );
 }
-
 
 #[test]
 fn test_decode_calpoker_readable_outcome_matches() {

@@ -18,7 +18,11 @@ pub struct StateUpdateProgram {
 }
 
 impl StateUpdateProgram {
-    pub fn new(allocator: &mut AllocEncoder, name: &str, state_update_program: Rc<Program>) -> Self {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        name: &str,
+        state_update_program: Rc<Program>,
+    ) -> Self {
         let state_update_program_hash = state_update_program.sha256tree(allocator).hash().clone();
         StateUpdateProgram {
             name: name.to_string(),
@@ -27,7 +31,11 @@ impl StateUpdateProgram {
         }
     }
 
-    pub fn new_hash(state_update_program: Rc<Program>, name: &str, state_update_program_hash: Hash) -> Self {
+    pub fn new_hash(
+        state_update_program: Rc<Program>,
+        name: &str,
+        state_update_program_hash: Hash,
+    ) -> Self {
         StateUpdateProgram {
             name: name.to_string(),
             state_update_program: state_update_program.into(),
@@ -56,9 +64,13 @@ impl ToClvm<AllocEncoder> for StateUpdateProgram {
 
 pub trait HasStateUpdateProgram {
     fn p(&self) -> StateUpdateProgram;
-    fn name(&self) -> String { self.p().name.clone() }
+    fn name(&self) -> String {
+        self.p().name.clone()
+    }
 }
 
 impl HasStateUpdateProgram for StateUpdateProgram {
-    fn p(&self) -> StateUpdateProgram { self.clone() }
+    fn p(&self) -> StateUpdateProgram {
+        self.clone()
+    }
 }

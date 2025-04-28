@@ -8,10 +8,11 @@ use log::debug;
 use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MyTurnInputs, MyTurnResult,
 };
-use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, StateUpdateProgram, ValidationInfo, HasStateUpdateProgram,
-};
 use crate::channel_handler::game_handler::{MyStateUpdateProgram, TheirStateUpdateProgram};
+use crate::channel_handler::types::{
+    Evidence, GameStartInfo, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
+    ValidationInfo,
+};
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     AllocEncoder, Amount, CoinString, Error, Hash, IntoErr, Program, Puzzle, PuzzleHash,
