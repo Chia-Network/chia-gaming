@@ -316,30 +316,6 @@ impl RefereeByTurn {
         let mut ancestors = vec![];
         self.generate_ancestor_list(&mut ancestors);
 
-        let mut old_end = None;
-        // Check whether our ancestors have consistent hashes stored.
-        // The first to second move transition should have the same start hash but
-        // end in a different hash and each other start should have the same hash
-        // as the previous end.
-        for old_referee in ancestors.iter().rev().skip(1) {
-            let start_args = old_referee.args_for_this_coin();
-            let end_args = old_referee.spend_this_coin();
-            let start_hash = curry_referee_puzzle_hash(
-                allocator,
-                &old_referee.fixed().referee_coin_puzzle_hash,
-                &end_args
-            )?;
-            let end_hash =  curry_referee_puzzle_hash(
-                allocator,
-                &old_referee.fixed().referee_coin_puzzle_hash,
-                &end_args
-            )?;
-            if let Some(e) = &old_end {
-                assert_eq!(start_hash, *e);
-            }
-            old_end = Some(end_hash.clone());
-        }
-
         for old_referee in ancestors.iter() {
             let start_args = old_referee.args_for_this_coin();
             let end_args = old_referee.spend_this_coin();
@@ -357,6 +333,14 @@ impl RefereeByTurn {
                 old_referee.is_my_turn()
             );
             debug!(
+                "game move at end {:?}",
+                end_args.game_move.basic.move_made
+            );
+            debug!(
+                "game move at start {:?}",
+                start_args.game_move.basic.move_made
+            );
+            debug!(
                 "start puzzle hash {:?}",
                 curry_referee_puzzle_hash(
                     allocator,
@@ -364,6 +348,31 @@ impl RefereeByTurn {
                     &start_args
                 )
             );
+        }
+
+        let mut old_end = None;
+        // Check whether our ancestors have consistent hashes stored.
+        // The first to second move transition should have the same start hash but
+        // end in a different hash and each other start should have the same hash
+        // as the previous end.
+        for old_referee in ancestors.iter().rev().skip(1) {
+            let start_args = old_referee.args_for_this_coin();
+            let end_args = old_referee.spend_this_coin();
+            let start_hash = curry_referee_puzzle_hash(
+                allocator,
+                &old_referee.fixed().referee_coin_puzzle_hash,
+                &start_args
+            )?;
+            let end_hash =  curry_referee_puzzle_hash(
+                allocator,
+                &old_referee.fixed().referee_coin_puzzle_hash,
+                &end_args
+            )?;
+            debug!("have old end {old_end:?} checking {start_hash:?}:{end_hash:?}");
+            if let Some(e) = &old_end {
+                assert_eq!(start_hash, *e);
+            }
+            old_end = Some(end_hash.clone());
         }
 
         for old_referee in ancestors.iter() {

@@ -780,7 +780,7 @@ impl TheirTurnReferee {
         let new_self = self.accept_their_move(
             handler,
             new_state.clone(),
-            my_turn_args.clone(),
+            Rc::new(args.fake_mine()),
             puzzle_args.clone(),
             details,
             state_number,
