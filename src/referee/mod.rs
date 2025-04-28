@@ -9,6 +9,7 @@ use clvm_traits::ToClvm;
 use log::debug;
 
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, StateUpdateProgram};
+use crate::channel_handler::game_handler::{MyStateUpdateProgram, TheirStateUpdateProgram};
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinString, Error, Hash, IntoErr,
@@ -135,17 +136,17 @@ impl RefereeByTurn {
         Ok((turn, puzzle_hash))
     }
 
-    fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs<StateUpdateProgram>> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.args_for_this_coin(),
-            RefereeByTurn::TheirTurn(t) => t.args_for_this_coin(),
+            RefereeByTurn::MyTurn(t) => Rc::new(t.args_for_this_coin().neutralize()),
+            RefereeByTurn::TheirTurn(t) => Rc::new(t.args_for_this_coin().neutralize()),
         }
     }
 
-    fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs<StateUpdateProgram>> {
         match self {
-            RefereeByTurn::MyTurn(t) => t.spend_this_coin(),
-            RefereeByTurn::TheirTurn(t) => t.spend_this_coin(),
+            RefereeByTurn::MyTurn(t) => Rc::new(t.spend_this_coin().neutralize()),
+            RefereeByTurn::TheirTurn(t) => Rc::new(t.spend_this_coin().neutralize()),
         }
     }
 
@@ -179,7 +180,7 @@ impl RefereeByTurn {
         }
     }
 
-    pub fn stored_versions(&self) -> Vec<(Rc<RefereePuzzleArgs>, Rc<RefereePuzzleArgs>, usize)> {
+    pub fn stored_versions(&self) -> Vec<(Rc<RefereePuzzleArgs<StateUpdateProgram>>, Rc<RefereePuzzleArgs<StateUpdateProgram>>, usize)> {
         let mut alist = vec![];
         self.generate_ancestor_list(&mut alist);
         alist
@@ -187,8 +188,8 @@ impl RefereeByTurn {
             .rev()
             .map(|a| {
                 (
-                    a.args_for_this_coin(),
-                    a.spend_this_coin(),
+                    Rc::new(a.args_for_this_coin().neutralize()),
+                    Rc::new(a.spend_this_coin().neutralize()),
                     a.state_number(),
                 )
             })
@@ -371,7 +372,7 @@ impl RefereeByTurn {
         coin_string: &CoinString,
         always_produce_transaction: bool,
         puzzle: Puzzle,
-        targs: &RefereePuzzleArgs,
+        targs: &RefereePuzzleArgs<StateUpdateProgram>,
         args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         let our_move = self.is_my_turn();
@@ -441,7 +442,7 @@ impl RefereeByTurn {
             coin_string,
             false,
             puzzle,
-            &targs,
+            &targs.neutralize(),
             &OnChainRefereeSolution::Timeout,
         )
     }

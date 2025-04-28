@@ -7,10 +7,10 @@ use clvmr::NodePtr;
 use log::debug;
 
 use crate::channel_handler::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnMoveData, TheirTurnResult,
+    GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnMoveData, TheirTurnResult, TheirStateUpdateProgram, MyStateUpdateProgram,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, StateUpdateProgram, ValidationInfo,
+    Evidence, GameStartInfo, ReadableMove, StateUpdateProgram, ValidationInfo, HasStateUpdateProgram,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
@@ -33,18 +33,18 @@ use crate::referee::{BrokenOutCoinSpendInfo, RefereeByTurn, SlashOutcome};
 pub enum TheirTurnRefereeMakerGameState {
     Initial {
         initial_state: Rc<Program>,
-        initial_validation_program: StateUpdateProgram,
-        initial_puzzle_args: Rc<RefereePuzzleArgs>,
+        initial_validation_program: TheirStateUpdateProgram,
+        initial_puzzle_args: Rc<RefereePuzzleArgs<TheirStateUpdateProgram>>,
         game_handler: GameHandler,
     },
     // We were given a validation program back from the 'our turn' handler
     // as well as a state.
     AfterOurTurn {
         their_turn_game_handler: GameHandler,
-        their_turn_validation_program: StateUpdateProgram,
+        their_turn_validation_program: TheirStateUpdateProgram,
         state_after_our_turn: Rc<Program>,
-        create_this_coin: Rc<RefereePuzzleArgs>,
-        spend_this_coin: Rc<RefereePuzzleArgs>,
+        create_this_coin: Rc<RefereePuzzleArgs<MyStateUpdateProgram>>,
+        spend_this_coin: Rc<RefereePuzzleArgs<TheirStateUpdateProgram>>,
     },
 }
 
@@ -65,19 +65,19 @@ impl TheirTurnRefereeMakerGameState {
         }
     }
 
-    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs<MyStateUpdateProgram>> {
         match self {
             TheirTurnRefereeMakerGameState::Initial {
                 initial_puzzle_args,
                 ..
-            } => initial_puzzle_args.clone(),
+            } => Rc::new(initial_puzzle_args.fake_mine()),
             TheirTurnRefereeMakerGameState::AfterOurTurn {
                 create_this_coin, ..
             } => create_this_coin.clone(),
         }
     }
 
-    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs<TheirStateUpdateProgram>> {
         match self {
             TheirTurnRefereeMakerGameState::Initial {
                 initial_puzzle_args,
@@ -165,7 +165,7 @@ impl TheirTurnReferee {
             },
             game_start_info.initial_max_move_size,
             None,
-            game_start_info.initial_validation_program.clone(),
+            TheirStateUpdateProgram(game_start_info.initial_validation_program.clone()),
             my_turn,
         ));
         // If this reflects my turn, then we will spend the next parameter set.
@@ -182,7 +182,7 @@ impl TheirTurnReferee {
         }
         let state = Rc::new(TheirTurnRefereeMakerGameState::Initial {
             initial_state: game_start_info.initial_state.p(),
-            initial_validation_program: game_start_info.initial_validation_program.clone(),
+            initial_validation_program: TheirStateUpdateProgram(game_start_info.initial_validation_program.clone()),
             initial_puzzle_args: ref_puzzle_args.clone(),
             game_handler: game_start_info.game_handler.clone(),
         });
@@ -206,11 +206,11 @@ impl TheirTurnReferee {
         self.state_number
     }
 
-    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs<MyStateUpdateProgram>> {
         self.state.args_for_this_coin()
     }
 
-    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs<TheirStateUpdateProgram>> {
         self.state.spend_this_coin()
     }
 
@@ -244,7 +244,7 @@ impl TheirTurnReferee {
 
     pub fn get_validation_program_for_their_move(
         &self,
-    ) -> Result<(Rc<Program>, StateUpdateProgram), Error> {
+    ) -> Result<(Rc<Program>, TheirStateUpdateProgram), Error> {
         match self.state.borrow() {
             TheirTurnRefereeMakerGameState::Initial {
                 game_handler,
@@ -273,11 +273,11 @@ impl TheirTurnReferee {
             TheirTurnRefereeMakerGameState::Initial {
                 initial_validation_program,
                 ..
-            } => Ok(initial_validation_program.to_program().clone()),
+            } => Ok(initial_validation_program.p().to_program().clone()),
             TheirTurnRefereeMakerGameState::AfterOurTurn {
                 their_turn_validation_program,
                 ..
-            } => Ok(their_turn_validation_program.to_program()),
+            } => Ok(their_turn_validation_program.p().to_program()),
         }
     }
 
@@ -302,8 +302,8 @@ impl TheirTurnReferee {
         &self,
         game_handler: Option<GameHandler>,
         new_state: Rc<Program>,
-        old_args: Rc<RefereePuzzleArgs>,
-        referee_args: Rc<RefereePuzzleArgs>,
+        old_args: Rc<RefereePuzzleArgs<MyStateUpdateProgram>>,
+        referee_args: Rc<RefereePuzzleArgs<TheirStateUpdateProgram>>,
         details: &GameMoveDetails,
         state_number: usize,
     ) -> Result<MyTurnReferee, Error> {
@@ -403,7 +403,7 @@ impl TheirTurnReferee {
         coin_string: &CoinString,
         always_produce_transaction: bool,
         puzzle: Puzzle,
-        targs: &RefereePuzzleArgs,
+        targs: &RefereePuzzleArgs<StateUpdateProgram>,
         args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         let our_move = self.is_my_turn();
@@ -465,7 +465,7 @@ impl TheirTurnReferee {
             self.spend_this_coin().game_move.basic.mover_share
         );
 
-        let targs = self.spend_this_coin();
+        let targs = self.spend_this_coin().neutralize();
         let puzzle = curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &targs)?;
 
         self.get_transaction(
@@ -627,7 +627,7 @@ impl TheirTurnReferee {
             coin_string,
             true,
             spend_puzzle,
-            &target_args,
+            &target_args.neutralize(),
             &args_list,
         )? {
             Ok(transaction)
@@ -647,8 +647,9 @@ impl TheirTurnReferee {
         details: &GameMoveDetails,
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
-        let puzzle_args = self.args_for_this_coin();
+        let puzzle_args = self.spend_this_coin();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
+        debug!("their turn running state update {} with state {:?}", validation_program.name(), state);
         let solution = self.fixed.my_identity.standard_solution(
             allocator,
             &[(
@@ -657,9 +658,9 @@ impl TheirTurnReferee {
             )],
         )?;
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
-        let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
+        let ref_puzzle_args: &RefereePuzzleArgs<TheirStateUpdateProgram> = puzzle_args.borrow();
         let validator_move_args = InternalStateUpdateArgs {
-            validation_program: validation_program.clone(),
+            validation_program: validation_program.p(),
             referee_args: Rc::new(RefereePuzzleArgs {
                 game_move: details.clone(),
                 ..ref_puzzle_args.clone()
@@ -1045,8 +1046,8 @@ impl TheirTurnReferee {
         }
 
         let state_nodeptr = state.to_nodeptr(allocator)?;
-        let validation_program_node = validation_program.to_nodeptr(allocator)?;
-        let validation_program_hash = validation_program.sha256tree(allocator);
+        let validation_program_node = validation_program.p().to_nodeptr(allocator)?;
+        let validation_program_hash = validation_program.p().sha256tree(allocator);
         let solution_nodeptr = slash_spend.solution.to_nodeptr(allocator)?;
         let slashing_coin_solution = self.slashing_coin_solution(
             allocator,
@@ -1079,7 +1080,7 @@ impl TheirTurnReferee {
     pub fn finish_their_turn(
         &self,
         allocator: &mut AllocEncoder,
-        puzzle_args: Rc<RefereePuzzleArgs>,
+        puzzle_args: Rc<RefereePuzzleArgs<TheirStateUpdateProgram>>,
         result: TheirTurnResult,
     ) -> Result<TheirTurnMoveResult, Error> {
         let puzzle_hash_for_unroll = curry_referee_puzzle_hash(

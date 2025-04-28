@@ -10,7 +10,7 @@ use clvmr::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
+use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, HasStateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,
@@ -51,13 +51,29 @@ pub struct MyTurnInputs {
     pub entropy: Hash,
 }
 
+#[derive(Clone, Debug)]
+pub struct MyStateUpdateProgram(pub StateUpdateProgram);
+impl HasStateUpdateProgram for MyStateUpdateProgram {
+    fn p(&self) -> StateUpdateProgram {
+        self.0.clone()
+    }
+}
+#[derive(Clone, Debug)]
+pub struct TheirStateUpdateProgram(pub StateUpdateProgram);
+impl HasStateUpdateProgram for TheirStateUpdateProgram {
+    fn p(&self) -> StateUpdateProgram {
+        self.0.clone()
+    }
+}
+
 #[derive(Debug)]
 pub struct MyTurnResult {
     // Next player's turn game handler.
+    pub name: String,
     pub move_bytes: Vec<u8>,
-    pub outgoing_move_state_update_program: StateUpdateProgram,
+    pub outgoing_move_state_update_program: MyStateUpdateProgram,
     pub outgoing_move_state_update_program_hash: Hash,
-    pub incoming_move_state_update_program: StateUpdateProgram,
+    pub incoming_move_state_update_program: TheirStateUpdateProgram,
     pub incoming_move_state_update_program_hash: Hash,
     pub max_move_size: usize,
     pub mover_share: Amount,
@@ -105,6 +121,19 @@ pub enum TheirTurnResult {
     MakeMove(GameHandler, Vec<u8>, TheirTurnMoveData),
     Slash(Evidence),
 }
+
+fn get_state_update_program(
+    allocator: &mut AllocEncoder,
+    name: &str,
+    suffix: &str,
+    pl: &[NodePtr],
+    loc: usize)
+    -> Result<StateUpdateProgram, Error> {
+    let final_name = format!("{} {}", name, suffix);
+    let validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[loc])?);
+    Ok(StateUpdateProgram::new(allocator, &final_name, validation_prog))
+}
+
 
 impl GameHandler {
     pub fn their_driver_from_nodeptr(
@@ -190,41 +219,39 @@ impl GameHandler {
         };
 
         if pl.len() == 2 {
-            let message_data = if pl.len() >= 2 {
-                allocator.allocator().atom(pl[1]).to_vec()
-            } else {
-                vec![]
-            };
+            let message_data = allocator.allocator().atom(pl[1]).to_vec();
             return Err(Error::GameMoveRejected(message_data));
         }
 
-        if pl.len() < 8 {
+        if pl.len() < 9 {
             return Err(Error::StrErr(format!(
                 "bad result from game driver: {}",
                 Node(run_result).to_hex(allocator)?
             )));
         }
 
+        let name_atom = &atom_from_clvm(allocator, pl[0]).unwrap_or_default();
+        let name = std::str::from_utf8(name_atom).expect("remove this in the final version");
         let max_move_size =
-            if let Some(mm) = atom_from_clvm(allocator, pl[5]).and_then(|a| usize_from_atom(&a)) {
+            if let Some(mm) = atom_from_clvm(allocator, pl[6]).and_then(|a| usize_from_atom(&a)) {
                 mm
             } else {
                 return Err(Error::StrErr("bad max move size".to_string()));
             };
         let mover_share =
-            if let Some(ms) = atom_from_clvm(allocator, pl[6]).and_then(|a| u64_from_atom(&a)) {
+            if let Some(ms) = atom_from_clvm(allocator, pl[7]).and_then(|a| u64_from_atom(&a)) {
                 Amount::new(ms)
             } else {
                 return Err(Error::StrErr(format!(
                     "bad share {}",
-                    Node(pl[6]).to_hex(allocator)?
+                    Node(pl[7]).to_hex(allocator)?
                 )));
             };
         debug!("MOVER_SHARE {mover_share:?}");
-        let message_parser = if pl.len() <= 8 || pl[8] == allocator.allocator().nil() {
+        let message_parser = if pl.len() <= 9 || pl[9] == allocator.allocator().nil() {
             None
         } else {
-            Some(MessageHandler::from_nodeptr(allocator, pl[8])?)
+            Some(MessageHandler::from_nodeptr(allocator, pl[9])?)
         };
 
         let get_hash = |allocator: &mut AllocEncoder, loc: usize| {
@@ -235,27 +262,23 @@ impl GameHandler {
             }
         };
 
-        let get_state_update_program = |allocator: &mut AllocEncoder, loc: usize| {
-            let validation_prog = Rc::new(Program::from_nodeptr(allocator, pl[loc])?);
-            Ok(StateUpdateProgram::new(allocator, validation_prog))
-        };
-
-        let outgoing_move_state_update_program_hash = get_hash(allocator, 2)?;
-        let incoming_move_state_update_program_hash = get_hash(allocator, 4)?;
-        let move_data = if let Some(m) = atom_from_clvm(allocator, pl[0]).map(|a| a.to_vec()) {
+        let outgoing_move_state_update_program_hash = get_hash(allocator, 3)?;
+        let incoming_move_state_update_program_hash = get_hash(allocator, 5)?;
+        let move_data = if let Some(m) = atom_from_clvm(allocator, pl[1]).map(|a| a.to_vec()) {
             m
         } else {
             return Err(Error::StrErr("bad move".to_string()));
         };
 
-        let outgoing_move_state_update_program = get_state_update_program(allocator, 1)?;
-        let incoming_move_state_update_program = get_state_update_program(allocator, 3)?;
+        let outgoing_move_state_update_program = get_state_update_program(allocator, &name, "my turn", &pl, 2)?;
+        let incoming_move_state_update_program = get_state_update_program(allocator, &name, "their_turn", &pl, 4)?;
 
         Ok(MyTurnResult {
+            name: name.to_string(),
             waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[7])?,
-            outgoing_move_state_update_program,
+            outgoing_move_state_update_program: MyStateUpdateProgram(outgoing_move_state_update_program),
             outgoing_move_state_update_program_hash,
-            incoming_move_state_update_program,
+            incoming_move_state_update_program: TheirStateUpdateProgram(incoming_move_state_update_program),
             incoming_move_state_update_program_hash,
             move_bytes: move_data,
             mover_share,

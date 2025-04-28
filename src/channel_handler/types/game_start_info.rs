@@ -70,7 +70,7 @@ impl GameStartInfo {
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[5])?);
         let validation_program_hash = Hash::from_nodeptr(allocator, lst[6])?;
         let validation_program =
-            StateUpdateProgram::new_hash(validation_prog, validation_program_hash);
+            StateUpdateProgram::new_hash(validation_prog, "initial", validation_program_hash);
         let initial_state = Program::from_nodeptr(allocator, lst[7])?.into();
         let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
             a.to_vec()

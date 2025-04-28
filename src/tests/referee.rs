@@ -205,7 +205,7 @@ fn test_referee_smoke() {
     let init_state =
         Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert");
     let initial_validation_program =
-        StateUpdateProgram::new(&mut allocator, debug_game.my_validation_program);
+        StateUpdateProgram::new(&mut allocator, "debug", debug_game.my_validation_program);
 
     let amount = Amount::new(100);
     let game_start_info = GameStartInfo {

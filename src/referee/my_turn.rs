@@ -9,8 +9,9 @@ use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MyTurnInputs, MyTurnResult,
 };
 use crate::channel_handler::types::{
-    Evidence, GameStartInfo, ReadableMove, StateUpdateProgram, ValidationInfo,
+    Evidence, GameStartInfo, ReadableMove, StateUpdateProgram, ValidationInfo, HasStateUpdateProgram,
 };
+use crate::channel_handler::game_handler::{MyStateUpdateProgram, TheirStateUpdateProgram};
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     AllocEncoder, Amount, CoinString, Error, Hash, IntoErr, Program, Puzzle, PuzzleHash,
@@ -30,7 +31,7 @@ use crate::referee::RefereeByTurn;
 pub enum MyTurnRefereeMakerGameState {
     Initial {
         initial_state: Rc<Program>,
-        initial_puzzle_args: Rc<RefereePuzzleArgs>,
+        initial_puzzle_args: Rc<RefereePuzzleArgs<MyStateUpdateProgram>>,
         game_handler: GameHandler,
     },
     AfterTheirTurn {
@@ -39,8 +40,8 @@ pub enum MyTurnRefereeMakerGameState {
         state_after_their_turn: Rc<Program>,
 
         // Stored info for referee args
-        create_this_coin: Rc<RefereePuzzleArgs>,
-        spend_this_coin: Rc<RefereePuzzleArgs>,
+        create_this_coin: Rc<RefereePuzzleArgs<MyStateUpdateProgram>>,
+        spend_this_coin: Rc<RefereePuzzleArgs<TheirStateUpdateProgram>>,
     },
 }
 
@@ -61,24 +62,24 @@ impl MyTurnRefereeMakerGameState {
         }
     }
 
-    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs<MyStateUpdateProgram>> {
         match self {
             MyTurnRefereeMakerGameState::Initial {
                 initial_puzzle_args,
                 ..
-            } => initial_puzzle_args.clone(),
+            } => Rc::new(initial_puzzle_args.fake_mine()),
             MyTurnRefereeMakerGameState::AfterTheirTurn {
                 create_this_coin, ..
             } => create_this_coin.clone(),
         }
     }
 
-    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs<TheirStateUpdateProgram>> {
         match self {
             MyTurnRefereeMakerGameState::Initial {
                 initial_puzzle_args,
                 ..
-            } => initial_puzzle_args.clone(),
+            } => Rc::new(initial_puzzle_args.fake_theirs()),
             MyTurnRefereeMakerGameState::AfterTheirTurn {
                 spend_this_coin, ..
             } => spend_this_coin.clone(),
@@ -272,7 +273,7 @@ impl MyTurnReferee {
         }
         let state = Rc::new(MyTurnRefereeMakerGameState::Initial {
             initial_state: game_start_info.initial_state.p(),
-            initial_puzzle_args: ref_puzzle_args.clone(),
+            initial_puzzle_args: Rc::new(ref_puzzle_args.fake_mine()),
             game_handler: game_start_info.game_handler.clone(),
         });
         let puzzle_hash =
@@ -299,11 +300,11 @@ impl MyTurnReferee {
         self.state_number
     }
 
-    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs<MyStateUpdateProgram>> {
         self.state.args_for_this_coin()
     }
 
-    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
+    pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs<TheirStateUpdateProgram>> {
         self.state.spend_this_coin()
     }
 
@@ -355,9 +356,9 @@ impl MyTurnReferee {
     pub fn accept_this_move(
         &self,
         game_handler: GameHandler,
-        current_puzzle_args: Rc<RefereePuzzleArgs>,
-        new_puzzle_args: Rc<RefereePuzzleArgs>,
         new_state: Rc<Program>,
+        current_puzzle_args: Rc<RefereePuzzleArgs<MyStateUpdateProgram>>,
+        new_puzzle_args: Rc<RefereePuzzleArgs<TheirStateUpdateProgram>>,
         my_turn_result: Rc<MyTurnResult>,
         details: &GameMoveDetails,
         message_handler: Option<MessageHandler>,
@@ -467,20 +468,20 @@ impl MyTurnReferee {
             },
             validation_info_hash: validation_info_hash.hash().clone(),
         };
-        let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
+        let ref_puzzle_args = Rc::new(RefereePuzzleArgs::<TheirStateUpdateProgram>::new(
             &self.fixed,
             &game_move_details,
             max_move_size,
             Some(&args.game_move.validation_info_hash),
-            result.outgoing_move_state_update_program.clone(),
+            result.incoming_move_state_update_program.clone(),
             true,
         ));
 
         let new_self = self.accept_this_move(
             result.waiting_driver.clone(),
+            new_state_following_my_move,
             args.clone(),
             ref_puzzle_args.clone(),
-            new_state_following_my_move,
             result.clone(),
             &game_move_details,
             result.message_parser.clone(),
@@ -549,7 +550,7 @@ impl MyTurnReferee {
         coin_string: &CoinString,
         always_produce_transaction: bool,
         puzzle: Puzzle,
-        targs: &RefereePuzzleArgs,
+        targs: &RefereePuzzleArgs<StateUpdateProgram>,
         args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         let our_move = self.is_my_turn();
@@ -619,7 +620,7 @@ impl MyTurnReferee {
             coin_string,
             false,
             puzzle,
-            &targs,
+            &targs.neutralize(),
             &OnChainRefereeSolution::Timeout,
         )
     }
@@ -628,11 +629,11 @@ impl MyTurnReferee {
         &self,
         allocator: &mut AllocEncoder,
         serialized_move: &[u8],
-        outgoing_state_update_program: StateUpdateProgram,
+        outgoing_state_update_program: MyStateUpdateProgram,
         state: Rc<Program>,
         evidence: Evidence,
     ) -> Result<(Rc<Program>, usize, ValidationInfo), Error> {
-        let puzzle_args = self.args_for_this_coin();
+        let puzzle_args = self.spend_this_coin();
         let solution = self.fixed.my_identity.standard_solution(
             allocator,
             &[(
@@ -642,11 +643,11 @@ impl MyTurnReferee {
         )?;
         debug!("run validator with move: {serialized_move:?}");
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
-        let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
+        let ref_puzzle_args: &RefereePuzzleArgs<TheirStateUpdateProgram> = puzzle_args.borrow();
         let state_as_clvm = state.to_clvm(allocator).into_gen()?;
-        let v = ValidationInfo::new(allocator, outgoing_state_update_program.clone(), state_as_clvm);
+        let v = ValidationInfo::new(allocator, outgoing_state_update_program.p(), state_as_clvm);
         let validator_move_args = InternalStateUpdateArgs {
-            validation_program: outgoing_state_update_program.clone(),
+            validation_program: outgoing_state_update_program.p(),
             referee_args: Rc::new(RefereePuzzleArgs {
                 mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
                 waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
@@ -681,18 +682,18 @@ impl MyTurnReferee {
             StateUpdateResult::Slash(_) => {
                 Err(Error::StrErr("our own move was slashed by us".to_string()))
             }
-            StateUpdateResult::MoveOk(state, validation_info, max_move_size) => {
+            StateUpdateResult::MoveOk(new_state, validation_info, max_move_size) => {
                 let state_nodeptr = state.to_nodeptr(allocator)?;
                 debug!(
                     "<V> new state for my move {:?} {state:?}",
-                    outgoing_state_update_program.sha256tree(allocator)
+                    outgoing_state_update_program.p().sha256tree(allocator)
                 );
                 Ok((
-                    state.clone(),
+                    new_state.clone(),
                     max_move_size,
                     ValidationInfo::new(
                         allocator,
-                        outgoing_state_update_program.clone(),
+                        outgoing_state_update_program.p(),
                         state_nodeptr,
                     ),
                 ))

@@ -34,6 +34,7 @@
         preimage (substr entropy 0 16)
         image (sha256 preimage)
         (list
+            "calpoker_alice_driver_a"
             image
             pokera ; will be used to evaluate this move.
             pokera_hash
@@ -82,6 +83,7 @@
         salt (substr entropy 0 16)
         new_commit (sha256 (concat salt my_discards))
         (list
+            "calpoker_alice_driver_c"
             (concat PREIMAGE new_commit)
             pokerc
             pokerc_hash
@@ -153,6 +155,7 @@
 ; alice makes a nil move to message bob who won
 (defun calpoker_alice_driver_e (next_move split)
     (list
+        "calpoker_alice_driver_e"
         next_move
         pokere
         pokere_hash
@@ -176,6 +179,7 @@
     (assign
         seed (substr entropy 0 16)
         (list
+            "calpoker_bob_driver_b"
             seed
             pokerb
             pokerb_hash
@@ -233,6 +237,7 @@
     (assign
         my_move local_move
         (list
+            "calpoker_bob_driver_d"
             my_move
             pokerd
             pokerd_hash

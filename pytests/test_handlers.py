@@ -101,6 +101,7 @@ class HandlerMove:
 
 @dataclass
 class MyTurnHandlerResult:
+    name: str
     move_bytes: bytes
     validator_for_my_move: Program  # validator to run for this move: the move that our handler will produce
     validator_for_my_move_hash: bytes32
@@ -113,6 +114,7 @@ class MyTurnHandlerResult:
 
     def __init__(
             self,
+            name,
             move_bytes,
             validator_for_my_move,
             validator_for_my_move_hash,
@@ -123,6 +125,7 @@ class MyTurnHandlerResult:
             their_turn_handler = None,
             message_parser = None
     ):
+        self.name = name
         self.move_bytes = move_bytes
         self.validator_for_my_move = validator_for_my_move
         self.validator_for_my_move_hash = validator_for_my_move_hash

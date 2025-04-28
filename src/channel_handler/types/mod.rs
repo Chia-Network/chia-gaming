@@ -41,7 +41,7 @@ pub use potato::{
 pub use read::{read_unroll_metapuzzle, read_unroll_puzzle};
 pub use readable_move::ReadableMove;
 pub use result::{DispositionResult, HandshakeResult, MoveResult};
-pub use state_update_program::StateUpdateProgram;
+pub use state_update_program::{StateUpdateProgram, HasStateUpdateProgram};
 pub use unroll_coin::{
     prepend_rem_conditions, UnrollCoin, UnrollCoinConditionInputs, UnrollCoinOutcome, UnrollTarget,
 };
