@@ -181,13 +181,7 @@ impl RefereeByTurn {
         }
     }
 
-    pub fn stored_versions(
-        &self,
-    ) -> Vec<(
-        StateUpdateProgramRef,
-        StateUpdateProgramRef,
-        usize,
-    )> {
+    pub fn stored_versions(&self) -> Vec<(StateUpdateProgramRef, StateUpdateProgramRef, usize)> {
         let mut alist = vec![];
         self.generate_ancestor_list(&mut alist);
         alist
