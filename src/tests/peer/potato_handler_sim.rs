@@ -17,7 +17,7 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, Node, PrivateKey, Program,
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choices};
+use crate::games::calpoker::{WinDirectionUser, decode_calpoker_readable, decode_readable_card_choices};
 use crate::games::poker_collection;
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
@@ -1191,12 +1191,20 @@ fn check_calpoker_economic_result(
 
     debug!("game outcome {bob_outcome:?}");
     debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
-    if bob_outcome.raw_win_direction == 1 {
-        assert_eq!(p2_balance + 200, p1_balance);
-    } else if bob_outcome.raw_win_direction == -1 {
-        assert_eq!(p2_balance, p1_balance + 200);
-    } else {
-        assert_eq!(p2_balance, p1_balance);
+
+    assert_eq!(alice_outcome.raw_win_direction, bob_outcome.raw_win_direction);
+    assert_eq!(alice_outcome.win_direction, bob_outcome.win_direction);
+
+    match &alice_outcome.win_direction {
+        None => {
+            assert_eq!(p2_balance, p1_balance);
+        }
+        Some(WinDirectionUser::Alice) => {
+            assert_eq!(p2_balance + 200, p1_balance);
+        }
+        Some(WinDirectionUser::Bob) => {
+            assert_eq!(p2_balance, p1_balance + 200);
+        }
     }
 }
 
