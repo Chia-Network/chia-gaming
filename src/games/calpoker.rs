@@ -407,7 +407,7 @@ pub fn decode_calpoker_readable(
         .unwrap_or_default();
 
     raw_win_direction = if i_am_alice {
-        raw_win_direction * -1
+        -raw_win_direction
     } else {
         raw_win_direction
     };
