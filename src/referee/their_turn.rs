@@ -336,6 +336,7 @@ impl TheirTurnReferee {
             state_number,
             message_handler: self.message_handler.clone(),
             parent: Some(Rc::new(new_parent)),
+            enable_cheating: None,
         })
     }
 
@@ -944,6 +945,7 @@ impl TheirTurnReferee {
         match &result.original {
             TheirTurnResult::Slash(evidence) => {
                 // Slash specified.
+                todo!();
                 let args = self.spend_this_coin();
                 let slash_spend = self.make_slash_spend(allocator, coin_string)?;
                 let new_puzzle =
@@ -1045,6 +1047,7 @@ impl TheirTurnReferee {
         // after the transaction below has been spent so its
         // parent is the coin id of that coin.
         let current_mover_share = self.get_our_current_share();
+        todo!();
 
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
         let reward_amount = self.fixed.amount.clone() - current_mover_share;

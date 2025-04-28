@@ -171,6 +171,12 @@ impl ChannelHandler {
         self.their_out_of_game_balance.clone()
     }
 
+    pub fn enable_cheating(&mut self, make_move: &[u8]) {
+        for l in self.live_games.iter_mut() {
+            l.enable_cheating(make_move);
+        }
+    }
+
     pub fn get_reward_puzzle_hash<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,

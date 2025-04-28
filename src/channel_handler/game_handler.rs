@@ -68,7 +68,7 @@ impl HasStateUpdateProgram for TheirStateUpdateProgram {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub name: String,
@@ -272,7 +272,8 @@ impl GameHandler {
         let move_data = if let Some(m) = atom_from_clvm(allocator, pl[1]).map(|a| a.to_vec()) {
             m
         } else {
-            return Err(Error::StrErr("bad move".to_string()));
+            let run_result_prog = Program::from_nodeptr(allocator, run_result)?;
+            return Err(Error::StrErr(format!("bad move in my turn handler result {:?}", run_result_prog)));
         };
 
         let outgoing_move_state_update_program =

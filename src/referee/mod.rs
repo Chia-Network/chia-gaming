@@ -181,6 +181,14 @@ impl RefereeByTurn {
         }
     }
 
+    pub fn enable_cheating(&self, make_move: &[u8]) -> Option<RefereeByTurn> {
+        if let RefereeByTurn::MyTurn(t) = self {
+            return Some(RefereeByTurn::MyTurn(Rc::new(t.enable_cheating(make_move))));
+        }
+
+        None
+    }
+
     pub fn stored_versions(&self) -> Vec<(StateUpdateProgramRef, StateUpdateProgramRef, usize)> {
         let mut alist = vec![];
         self.generate_ancestor_list(&mut alist);

@@ -224,6 +224,12 @@ impl PotatoHandler {
         Err(Error::StrErr("no channel handler".to_string()))
     }
 
+    pub fn enable_cheating(&mut self, make_move: &[u8]) -> Result<(), Error> {
+        let ch = self.channel_handler_mut()?;
+        ch.enable_cheating(make_move);
+        Ok(())
+    }
+
     pub fn handshake_finished(&self) -> bool {
         matches!(
             self.handshake_state,

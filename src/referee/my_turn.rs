@@ -190,6 +190,7 @@ pub struct MyTurnReferee {
     pub fixed: Rc<RMFixed>,
 
     pub finished: bool,
+    pub enable_cheating: Option<Vec<u8>>,
 
     pub message_handler: Option<MessageHandler>,
 
@@ -288,6 +289,7 @@ impl MyTurnReferee {
                 state_number,
                 message_handler: None,
                 parent: None,
+                enable_cheating: None,
             },
             puzzle_hash,
         ))
@@ -315,6 +317,13 @@ impl MyTurnReferee {
 
     pub fn processing_my_turn(&self) -> bool {
         false
+    }
+
+    pub fn enable_cheating(&self, make_move: &[u8]) -> MyTurnReferee {
+        MyTurnReferee {
+            enable_cheating: Some(make_move.to_vec()),
+            .. self.clone()
+        }
     }
 
     pub fn get_game_handler(&self) -> Option<GameHandler> {
@@ -430,7 +439,7 @@ impl MyTurnReferee {
 
         debug!("my turn state {:?}", self.state);
         debug!("entropy {state_number} {new_entropy:?}");
-        let result = Rc::new(game_handler.call_my_turn_driver(
+        let mut result = Rc::new(game_handler.call_my_turn_driver(
             allocator,
             &MyTurnInputs {
                 readable_new_move: readable_move.clone(),
@@ -439,6 +448,16 @@ impl MyTurnReferee {
                 entropy: new_entropy.clone(),
             },
         )?);
+
+        if let Some(fake_move) = &self.enable_cheating {
+            let result_borrow: &MyTurnResult = result.borrow();
+            debug!("cheating with move bytes {fake_move:?}");
+            result = Rc::new(MyTurnResult {
+                move_bytes: fake_move.clone(),
+                .. result_borrow.clone()
+            });
+        }
+
         debug!("my turn result {result:?}");
 
         let state_to_update = match self.state.borrow() {
@@ -681,7 +700,20 @@ impl MyTurnReferee {
         let result = validator_move_args.run(allocator)?;
         match result {
             StateUpdateResult::Slash(_) => {
-                Err(Error::StrErr("our own move was slashed by us".to_string()))
+                if self.enable_cheating.is_some() {
+                    let state_nodeptr = state.to_nodeptr(allocator)?;
+                    Ok((
+                        state.clone(),
+                        10000,
+                        ValidationInfo::new(
+                            allocator,
+                            outgoing_state_update_program.p(),
+                            state_nodeptr,
+                        )
+                    ))
+                } else {
+                    Err(Error::StrErr("our own move was slashed by us".to_string()))
+                }
             }
             StateUpdateResult::MoveOk(new_state, _validation_info, max_move_size) => {
                 let state_nodeptr = state.to_nodeptr(allocator)?;
