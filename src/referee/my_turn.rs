@@ -488,11 +488,12 @@ impl MyTurnReferee {
             },
             validation_info_hash: validation_info_hash.hash().clone(),
         };
+        let spend_args = self.spend_this_coin();
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::<TheirStateUpdateProgram>::new(
             &self.fixed,
             &game_move_details,
             max_move_size,
-            Some(&args.game_move.validation_info_hash),
+            Some(&spend_args.game_move.validation_info_hash),
             result.incoming_move_state_update_program.clone(),
             true,
         ));
@@ -500,7 +501,7 @@ impl MyTurnReferee {
         let new_self = self.accept_this_move(
             result.waiting_driver.clone(),
             new_state_following_my_move,
-            args.clone(),
+            Rc::new(spend_args.fake_mine()),
             ref_puzzle_args.clone(),
             result.clone(),
             &game_move_details,

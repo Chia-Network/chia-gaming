@@ -1731,6 +1731,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         coin: &CoinString,
     ) -> Result<Option<GameAction>, Error> {
+        todo!();
         debug!(
             "{} GET REDO ACTION {} vs {}",
             self.is_initial_potato(),
@@ -1825,6 +1826,7 @@ impl ChannelHandler {
                     )?;
 
                     debug!("{} redo move data {move_data:?}", self.is_initial_potato());
+                    todo!();
                     return Ok(Some(GameAction::RedoMove(
                         move_data.game_id.clone(),
                         coin.clone(),

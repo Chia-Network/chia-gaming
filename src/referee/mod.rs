@@ -316,6 +316,30 @@ impl RefereeByTurn {
         let mut ancestors = vec![];
         self.generate_ancestor_list(&mut ancestors);
 
+        let mut old_end = None;
+        // Check whether our ancestors have consistent hashes stored.
+        // The first to second move transition should have the same start hash but
+        // end in a different hash and each other start should have the same hash
+        // as the previous end.
+        for old_referee in ancestors.iter().rev().skip(1) {
+            let start_args = old_referee.args_for_this_coin();
+            let end_args = old_referee.spend_this_coin();
+            let start_hash = curry_referee_puzzle_hash(
+                allocator,
+                &old_referee.fixed().referee_coin_puzzle_hash,
+                &end_args
+            )?;
+            let end_hash =  curry_referee_puzzle_hash(
+                allocator,
+                &old_referee.fixed().referee_coin_puzzle_hash,
+                &end_args
+            )?;
+            if let Some(e) = &old_end {
+                assert_eq!(start_hash, *e);
+            }
+            old_end = Some(end_hash.clone());
+        }
+
         for old_referee in ancestors.iter() {
             let start_args = old_referee.args_for_this_coin();
             let end_args = old_referee.spend_this_coin();
@@ -355,6 +379,7 @@ impl RefereeByTurn {
                 old_referee.state_number()
             );
             if *puzzle_hash == have_puzzle_hash && old_referee.is_my_turn() {
+                todo!();
                 let state_number = old_referee.state_number();
                 return Ok(Some((old_referee.clone(), state_number)));
             }

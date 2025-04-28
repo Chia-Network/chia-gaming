@@ -770,7 +770,7 @@ impl TheirTurnReferee {
             &self.fixed,
             details,
             max_move_size,
-            Some(&my_turn_args.game_move.validation_info_hash),
+            Some(&args.game_move.validation_info_hash),
             validation_program.clone(),
             false,
         ));
