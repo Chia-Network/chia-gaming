@@ -28,6 +28,8 @@ pub enum RefereeByTurn {
     TheirTurn(Rc<TheirTurnReferee>),
 }
 
+pub type StateUpdateProgramRef = Rc<RefereePuzzleArgs<StateUpdateProgram>>;
+
 impl RefereeByTurn {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -182,8 +184,8 @@ impl RefereeByTurn {
     pub fn stored_versions(
         &self,
     ) -> Vec<(
-        Rc<RefereePuzzleArgs<StateUpdateProgram>>,
-        Rc<RefereePuzzleArgs<StateUpdateProgram>>,
+        StateUpdateProgramRef,
+        StateUpdateProgramRef,
         usize,
     )> {
         let mut alist = vec![];

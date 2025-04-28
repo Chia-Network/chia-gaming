@@ -356,12 +356,12 @@ pub fn get_final_cards_in_canonical_order(
     }
 }
 
-/// Given a readable move, decode it as a calpoker outcome.
-/// This is the last reply that each side receives
-/// > opd ff81aaff81e3ff818fffff02ff01ff01ff01ff03ff0eff0dff0b80ffff02ff02ff01ff04ff02ff0c80ff81ff80
-/// (-86 -29 -113 (a 1 1 1 3 14 13 11) (a 2 1 4 2 12) -1)
-/// > opd ff55ff81e3ff818fffff02ff01ff01ff01ff03ff0eff0dff0b80ffff02ff02ff01ff04ff02ff0c80ff0180
-/// (85 -29 -113 (a 1 1 1 3 14 13 11) (a 2 1 4 2 12) 1)
+// Given a readable move, decode it as a calpoker outcome.
+// This is the last reply that each side receives
+// > opd ff81aaff81e3ff818fffff02ff01ff01ff01ff03ff0eff0dff0b80ffff02ff02ff01ff04ff02ff0c80ff81ff80
+// (-86 -29 -113 (a 1 1 1 3 14 13 11) (a 2 1 4 2 12) -1)
+// > opd ff55ff81e3ff818fffff02ff01ff01ff01ff03ff0eff0dff0b80ffff02ff02ff01ff04ff02ff0c80ff0180
+// (85 -29 -113 (a 1 1 1 3 14 13 11) (a 2 1 4 2 12) 1)
 
 pub fn decode_calpoker_readable(
     allocator: &mut AllocEncoder,

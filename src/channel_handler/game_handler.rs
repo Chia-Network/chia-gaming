@@ -276,9 +276,9 @@ impl GameHandler {
         };
 
         let outgoing_move_state_update_program =
-            get_state_update_program(allocator, &name, "my turn", &pl, 2)?;
+            get_state_update_program(allocator, name, "my turn", &pl, 2)?;
         let incoming_move_state_update_program =
-            get_state_update_program(allocator, &name, "their_turn", &pl, 4)?;
+            get_state_update_program(allocator, name, "their_turn", &pl, 4)?;
 
         Ok(MyTurnResult {
             name: name.to_string(),
