@@ -12,7 +12,6 @@ use crate::channel_handler::game_handler::{
 };
 use crate::channel_handler::types::{
     Evidence, GameStartInfo, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
-    ValidationInfo,
 };
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};

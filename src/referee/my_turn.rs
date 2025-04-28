@@ -683,7 +683,7 @@ impl MyTurnReferee {
             StateUpdateResult::Slash(_) => {
                 Err(Error::StrErr("our own move was slashed by us".to_string()))
             }
-            StateUpdateResult::MoveOk(new_state, validation_info, max_move_size) => {
+            StateUpdateResult::MoveOk(new_state, _validation_info, max_move_size) => {
                 let state_nodeptr = state.to_nodeptr(allocator)?;
                 debug!(
                     "<V> new state for my move {:?} {state:?}",

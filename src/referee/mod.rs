@@ -8,7 +8,6 @@ use clvm_traits::ToClvm;
 
 use log::debug;
 
-use crate::channel_handler::game_handler::{MyStateUpdateProgram, TheirStateUpdateProgram};
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, StateUpdateProgram};
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
