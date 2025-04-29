@@ -124,6 +124,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         // A game coin was spent and we have the puzzle and solution.
         let (env, system_interface) = penv.env();
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+
+        //let reward_puzzle_hash = self.player_ch.get_reward_puzzle_hash(env)?;
+        // Do we know if we slashed?
+
         let result =
             self.player_ch
                 .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);

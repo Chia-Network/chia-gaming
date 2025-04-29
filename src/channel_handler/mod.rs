@@ -1712,8 +1712,14 @@ impl ChannelHandler {
         };
 
         if reward_puzzle_hash == ph {
-            debug!("was our turn, reward {ph:?} {amt:?}");
+            debug!("game_coin_spent: self.is_initiator={} reward_puzzle_hash={reward_puzzle_hash:?} was our turn, reward ({ph:?} {amt:?})",
+                self.is_initial_potato(),
+            );
             return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
+        } else {
+            debug!("game_coin_spent: self.is_initiator={} reward_puzzle_hash={reward_puzzle_hash:?} NOT OUR TURN, reward {ph:?} {amt:?}",
+                self.is_initial_potato(),
+            );
         }
 
         Ok(CoinSpentInformation::TheirSpend(

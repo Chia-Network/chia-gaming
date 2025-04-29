@@ -455,7 +455,7 @@ impl MyTurnReferee {
 
         if let Some(fake_move) = &self.enable_cheating {
             let result_borrow: &MyTurnResult = result.borrow();
-            debug!("cheating with move bytes {fake_move:?}");
+            debug!("my_turn_make_move: cheating with move bytes {fake_move:?}");
             result = Rc::new(MyTurnResult {
                 move_bytes: fake_move.clone(),
                 ..result_borrow.clone()
@@ -484,7 +484,10 @@ impl MyTurnReferee {
                 state_to_update,
                 Evidence::nil()?,
             )?;
+        // validation_info_hash is a hash of the hashes of both sides' (current?) (next?) validation program
+        // note: look up state that comes from / out of it
         debug!("XXX my_turn validation_info_hash: {validation_info_hash:?}");
+        // make game move details for the upcoming move, to send across the wire
         let game_move_details = GameMoveDetails {
             basic: GameMoveStateInfo {
                 move_made: result.move_bytes.clone(),

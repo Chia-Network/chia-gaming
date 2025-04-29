@@ -456,6 +456,9 @@ impl TheirTurnReferee {
         state_number: usize,
         coin: Option<&CoinString>,
     ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
+
+        // Did we get a slash?
+
         debug!("do their turn {details:?}");
 
         let handler = self.get_game_handler();
@@ -566,69 +569,23 @@ impl TheirTurnReferee {
         &self,
         my_rc: Rc<TheirTurnReferee>,
         allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
+        referee_coin_string: &CoinString,
         conditions: &[CoinCondition],
         state_number: usize,
+        rem_conditions: &[Vec<u8>],
     ) -> Result<(Option<RefereeByTurn>, TheirTurnCoinSpentResult), Error> {
-        let after_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &self.fixed.referee_coin_puzzle_hash,
-            &self.spend_this_coin(),
-        )?;
+        debug!("their_turn_coin_spent: current ref coinstring: {:?}", referee_coin_string);
+        debug!("their_turn_coin_spent: current ref coinstring: {:?}", conditions);
 
-        // XXX Revisit this in conjuction with rewind.  There is a better way to do this.
-        let repeat = if let Some(CoinCondition::CreateCoin(ph, _amt)) = conditions
-            .iter()
-            .find(|cond| matches!(cond, CoinCondition::CreateCoin(_, _)))
-        {
-            after_puzzle_hash == *ph
-        } else {
-            false
-        };
-        debug!("rems in spend {conditions:?}");
-
-        // Read parameters off conditions
-        let rem_condition = if let Some(CoinCondition::Rem(rem_condition)) = conditions
-            .iter()
-            .find(|cond| matches!(cond, CoinCondition::Rem(_)))
-        {
-            // Got rem condition
-            rem_condition.to_vec()
-        } else {
-            Vec::default()
-        };
-
-        let mover_share = self.get_our_current_share();
-
-        // Check properties of conditions
-        if rem_condition.is_empty() {
-            // Timeout case
-            // Return enum timeout and we give the coin string of our reward
-            // coin if any.
-            let my_reward_coin_string = CoinString::from_parts(
-                &coin_string.to_coin_id(),
-                &self.fixed.my_identity.puzzle_hash,
-                &mover_share,
-            );
-
-            debug!("game coin timed out: conditions {conditions:?}");
-            return Ok((
-                Some(RefereeByTurn::TheirTurn(my_rc)),
-                TheirTurnCoinSpentResult::Timedout {
-                    my_reward_coin_string: Some(my_reward_coin_string),
-                },
-            ));
-        }
-
-        if rem_condition.len() != REM_CONDITION_FIELDS {
+        if rem_conditions.len() != REM_CONDITION_FIELDS {
             return Err(Error::StrErr(
                 "rem condition should have the right number of fields".to_string(),
             ));
         }
 
-        let new_move = &rem_condition[0];
-        let validation_info_hash = Hash::from_slice(&rem_condition[1]);
-        let new_mover_share = if let Some(share) = u64_from_atom(&rem_condition[2]) {
+        let new_move = &rem_conditions[0];
+        let validation_info_hash = Hash::from_slice(&rem_conditions[1]);
+        let new_mover_share = if let Some(share) = u64_from_atom(&rem_conditions[2]) {
             Amount::new(share)
         } else {
             return Err(Error::StrErr(
@@ -636,6 +593,7 @@ impl TheirTurnReferee {
             ));
         };
 
+        // reconstruct details of an off-chain move
         let details = GameMoveDetails {
             basic: GameMoveStateInfo {
                 move_made: new_move.clone(),
@@ -648,25 +606,6 @@ impl TheirTurnReferee {
             self.their_turn_move_off_chain(allocator, &details, state_number, None)?;
 
         let finish_result = |allocator: &mut AllocEncoder, move_data: &TheirTurnMoveData| {
-            if repeat {
-                debug!("repeat: current state {:?}", self.state);
-
-                // Not my turn.
-                let nil_readable = ReadableMove::from_program(Program::from_hex("80")?.into());
-                return Ok((
-                    Some(RefereeByTurn::TheirTurn(my_rc)),
-                    TheirTurnCoinSpentResult::Moved {
-                        new_coin_string: CoinString::from_parts(
-                            &coin_string.to_coin_id(),
-                            &after_puzzle_hash,
-                            &self.fixed.amount,
-                        ),
-                        readable: nil_readable,
-                        mover_share: self.spend_this_coin().game_move.basic.mover_share.clone(),
-                    },
-                ));
-            }
-
             let new_self = if let Some(new_self) = new_self {
                 new_self
             } else {
@@ -684,7 +623,7 @@ impl TheirTurnReferee {
 
             let final_move = TheirTurnCoinSpentResult::Moved {
                 new_coin_string: CoinString::from_parts(
-                    &coin_string.to_coin_id(),
+                    &referee_coin_string.to_coin_id(),
                     &new_puzzle_hash,
                     &self.fixed.amount,
                 ),
@@ -699,7 +638,7 @@ impl TheirTurnReferee {
             TheirTurnResult::Slash(evidence) => {
                 // Slash specified.
                 let args = self.spend_this_coin();
-                let slash_spend = self.make_slash_spend(allocator, coin_string)?;
+                let slash_spend = self.make_slash_spend(allocator, referee_coin_string)?;
                 let new_puzzle =
                     curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
                 let new_puzzle_hash = curry_referee_puzzle_hash(
@@ -709,7 +648,7 @@ impl TheirTurnReferee {
                 )?;
                 let slash = self.make_slash_for_their_turn(
                     allocator,
-                    coin_string,
+                    referee_coin_string,
                     new_puzzle,
                     &new_puzzle_hash,
                     &slash_spend,

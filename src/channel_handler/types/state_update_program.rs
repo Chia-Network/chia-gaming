@@ -10,11 +10,20 @@ use serde::{Deserialize, Serialize};
 /// other kinds of things that are related.
 ///
 /// This can give a validation program hash or a validation info hash, given state.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct StateUpdateProgram {
     name: String,
     state_update_program: ProgramRef,
     state_update_program_hash: Hash,
+}
+
+impl std::fmt::Debug for StateUpdateProgram {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(formatter, "StateUpdateProgram\n    name={}\n    hash={:?}\n",
+        self.name,
+        self.state_update_program_hash,
+    )
+    }
 }
 
 impl StateUpdateProgram {

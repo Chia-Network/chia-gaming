@@ -828,13 +828,14 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
         )
     };
 
+    const STEP_TIMEOUT: usize = 200;
     while !matches!(ending, Some(0)) {
         num_steps += 1;
         debug!("{num_steps} can move {can_move} {moves:?}");
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
         debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
 
-        assert!(num_steps < 200);
+        assert!(num_steps < STEP_TIMEOUT);
 
         if matches!(wait_blocks, Some((0, _))) {
             wait_blocks = None;
@@ -862,7 +863,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
             if cradles[i].handshake_finished() || cradles[i].finished() {
                 let reward_ph = cradles[i].get_reward_puzzle_hash(allocator, &mut rng)?;
                 let reward_coins = simulator.get_my_coins(&reward_ph).into_gen()?;
-                debug!("{i} reward coins {reward_coins:?}");
+                debug!("player={i} reward coins: {reward_coins:?}");
                 // Spend the reward coin to the player.
                 if !reward_coins.is_empty() {
                     let spends = cradles[i].spend_reward_coins(
