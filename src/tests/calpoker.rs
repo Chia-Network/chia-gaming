@@ -133,7 +133,7 @@ fn test_verify_endgame_data() {
     if let GameActionResult::MoveResult(penultimate_game_data, _, _, _) =
         game_action_results[game_action_results.len() - 1]
     {
-        let is_alice_move: bool = true;
+        let is_alice_move: bool = false;
         let with_message: Vec<ReadableMove> = game_action_results
             .iter()
             .filter_map(|m| {
@@ -151,9 +151,9 @@ fn test_verify_endgame_data() {
         let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
             &mut allocator,
             &alice_initial_cards,
-            0xaa,
-            &bob_initial_cards,
             0x55,
+            &bob_initial_cards,
+            0xaa,
         )
         .expect("should work");
         let (alice_final_hand, _) = select_cards_using_bits(&alice_final_cards, 227);
