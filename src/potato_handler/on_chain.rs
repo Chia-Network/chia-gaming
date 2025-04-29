@@ -148,6 +148,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 debug!("{initial_potato} got an expected spend {ph:?} {amt:?}");
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
 
+                let my_turn_in_game = self.player_ch.game_is_my_turn(&old_definition.game_id);
+                debug!("{initial_potato} my turn in game with expected spend {my_turn_in_game:?}");
+
                 // An expected their spend arrived.  We can do our next action.
                 debug!("{initial_potato} changing game map");
                 self.game_map.insert(
