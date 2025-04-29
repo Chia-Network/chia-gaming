@@ -1341,7 +1341,7 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
         for go_on_chain in [0, 1].iter() {
             let mut game = test_moves_1(&mut allocator);
             let moves_len = game.moves.len();
-            for i in (0..*last_move) {
+            for _i in 0..*last_move {
                 game.moves.remove(moves_len - last_move);
             }
             game.moves.push(GameAction::GoOnChain(*go_on_chain));

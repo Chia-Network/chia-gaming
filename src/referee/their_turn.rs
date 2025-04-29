@@ -10,9 +10,7 @@ use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MessageInputs, MyStateUpdateProgram, TheirStateUpdateProgram,
     TheirTurnInputs, TheirTurnMoveData, TheirTurnResult,
 };
-use crate::channel_handler::types::{
-    Evidence, GameStartInfo, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
-};
+use crate::channel_handler::types::{Evidence, GameStartInfo, HasStateUpdateProgram, ReadableMove};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
@@ -22,8 +20,7 @@ use crate::common::types::{
 use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
-    IdentityCoinAndSolution, InternalStateUpdateArgs, OnChainRefereeMove, OnChainRefereeSolution,
-    RMFixed, RefereeOnChainTransaction, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    InternalStateUpdateArgs, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
     TheirTurnCoinSpentResult, TheirTurnMoveResult, REM_CONDITION_FIELDS,
 };
 use crate::referee::{BrokenOutCoinSpendInfo, RefereeByTurn, SlashOutcome};
@@ -462,7 +459,6 @@ impl TheirTurnReferee {
         debug!("do their turn {details:?}");
 
         let handler = self.get_game_handler();
-        let my_turn_args = self.args_for_this_coin();
         let args = self.spend_this_coin();
 
         // Run the initial our turn validation to get the new state.

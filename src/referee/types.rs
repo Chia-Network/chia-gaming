@@ -555,6 +555,7 @@ pub struct OnChainRefereeSlash {
 pub enum OnChainRefereeSolution {
     Timeout,
     Move(OnChainRefereeMove),
+    #[allow(dead_code)]
     Slash(OnChainRefereeSlash),
 }
 

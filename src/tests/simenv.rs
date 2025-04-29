@@ -1,5 +1,4 @@
 use std::borrow::Borrow;
-use std::rc::Rc;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -11,20 +10,17 @@ use log::debug;
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::runner::{channel_handler_env, ChannelHandlerGame};
-use crate::channel_handler::types::{
-    ChannelHandlerEnv, GameStartInfo, ReadableMove, StateUpdateProgram,
-};
+use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, PrivateKey, Program, PuzzleHash, Sha256tree, Spend, Timeout,
+    chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash, IntoErr,
+    PrivateKey, PuzzleHash, Sha256tree, Spend,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
 use crate::tests::game::{new_channel_handler_game, GameAction, GameActionResult};
-use crate::tests::referee::{make_debug_game_handler, RefereeTest};
 
 #[derive(Debug, Clone)]
 pub enum OnChainState {
