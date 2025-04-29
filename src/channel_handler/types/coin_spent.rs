@@ -7,7 +7,6 @@ pub enum CoinSpentInformation {
     OurReward(PuzzleHash, Amount),
     OurSpend(PuzzleHash, Amount),
     TheirSpend(TheirTurnCoinSpentResult),
-    Expected(PuzzleHash, Amount),
 }
 
 #[derive(Debug, Clone)]

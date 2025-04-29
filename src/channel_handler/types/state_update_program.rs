@@ -19,10 +19,11 @@ pub struct StateUpdateProgram {
 
 impl std::fmt::Debug for StateUpdateProgram {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(formatter, "StateUpdateProgram\n    name={}\n    hash={:?}\n",
-        self.name,
-        self.state_update_program_hash,
-    )
+        write!(
+            formatter,
+            "StateUpdateProgram\n    name={}\n    hash={:?}\n",
+            self.name, self.state_update_program_hash,
+        )
     }
 }
 

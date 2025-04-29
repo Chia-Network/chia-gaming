@@ -264,44 +264,24 @@ impl RefereeByTurn {
         conditions: &[CoinCondition],
         state_number: usize,
     ) -> Result<(Option<RefereeByTurn>, TheirTurnCoinSpentResult), Error> {
-            debug!("their_turn_coin_spent: state={}", state_number);
-
-        let after_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &self.fixed().referee_coin_puzzle_hash,
-            &self.spend_this_coin(),
-        )?;
+        debug!("their_turn_coin_spent: state={}", state_number);
 
         // XXX Revisit this in conjuction with rewind.  There is a better way to do this.
-        let repeat = if let Some(CoinCondition::CreateCoin(ph, _amt)) = conditions
+        if let Some(CoinCondition::CreateCoin(ph, amt)) = conditions
             .iter()
             .find(|cond| matches!(cond, CoinCondition::CreateCoin(_, _)))
         {
-            after_puzzle_hash == *ph
-        } else {
-            false
-        };
-        debug!("rems in spend {conditions:?}");
-        debug!("game coin timed out: conditions {conditions:?}");
-
-        if repeat {
-            //debug!("repeat: current state {:?}", self.state);
+            // debug!("repeat: current state {:?}", self.state);
 
             // Not my turn.
-            let nil_readable = ReadableMove::from_program(Program::from_hex("80")?.into());
             return Ok((
                 Some(self.clone()),
-                TheirTurnCoinSpentResult::Moved {
-                    new_coin_string: CoinString::from_parts(
-                        &referee_coin_string.to_coin_id(),
-                        &after_puzzle_hash,
-                        &self.fixed().amount,
-                    ),
-                    readable: nil_readable,
-                    mover_share: self.spend_this_coin().game_move.basic.mover_share.clone(),
-                },
+                TheirTurnCoinSpentResult::Expected(ph.clone(), amt.clone()),
             ));
-        }
+        };
+
+        debug!("rems in spend {conditions:?}");
+        debug!("game coin timed out: conditions {conditions:?}");
 
         // Read parameters off conditions
         let rem_conditions = if let Some(CoinCondition::Rem(rem_condition)) = conditions
@@ -340,20 +320,16 @@ impl RefereeByTurn {
             // we ourselves took.  check_their_turn_coin_spent will return an
             // error if it was asked to do a non-fast-forward their turn spend.
             RefereeByTurn::MyTurn(_t) => {
-                // seeing a spend we make, repeated
-                // xxx
-                let after_puzzle_hash = curry_referee_puzzle_hash(
-                    allocator,
-                    &self.fixed().referee_coin_puzzle_hash,
-                    &self.spend_this_coin(),
-                )?;
-
                 todo!();
             }
 
-            RefereeByTurn::TheirTurn(t) => {
-                t.their_turn_coin_spent(t.clone(), allocator, referee_coin_string, conditions, state_number, &rem_conditions)
-            }
+            RefereeByTurn::TheirTurn(t) => t.their_turn_coin_spent(
+                allocator,
+                referee_coin_string,
+                conditions,
+                state_number,
+                &rem_conditions,
+            ),
         }
     }
 

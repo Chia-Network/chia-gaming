@@ -456,7 +456,6 @@ impl TheirTurnReferee {
         state_number: usize,
         coin: Option<&CoinString>,
     ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
-
         // Did we get a slash?
 
         debug!("do their turn {details:?}");
@@ -567,15 +566,20 @@ impl TheirTurnReferee {
 
     pub fn their_turn_coin_spent(
         &self,
-        my_rc: Rc<TheirTurnReferee>,
         allocator: &mut AllocEncoder,
         referee_coin_string: &CoinString,
         conditions: &[CoinCondition],
         state_number: usize,
         rem_conditions: &[Vec<u8>],
     ) -> Result<(Option<RefereeByTurn>, TheirTurnCoinSpentResult), Error> {
-        debug!("their_turn_coin_spent: current ref coinstring: {:?}", referee_coin_string);
-        debug!("their_turn_coin_spent: current ref coinstring: {:?}", conditions);
+        debug!(
+            "their_turn_coin_spent: current ref coinstring: {:?}",
+            referee_coin_string
+        );
+        debug!(
+            "their_turn_coin_spent: current ref coinstring: {:?}",
+            conditions
+        );
 
         if rem_conditions.len() != REM_CONDITION_FIELDS {
             return Err(Error::StrErr(
