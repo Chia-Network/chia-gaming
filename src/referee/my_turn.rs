@@ -295,6 +295,10 @@ impl MyTurnReferee {
         ))
     }
 
+    pub fn parent(&self) -> Option<Rc<TheirTurnReferee>> {
+        self.parent.clone()
+    }
+
     pub fn state(&self) -> Rc<MyTurnRefereeMakerGameState> {
         self.state.clone()
     }
@@ -322,7 +326,7 @@ impl MyTurnReferee {
     pub fn enable_cheating(&self, make_move: &[u8]) -> MyTurnReferee {
         MyTurnReferee {
             enable_cheating: Some(make_move.to_vec()),
-            .. self.clone()
+            ..self.clone()
         }
     }
 
@@ -454,7 +458,7 @@ impl MyTurnReferee {
             debug!("cheating with move bytes {fake_move:?}");
             result = Rc::new(MyTurnResult {
                 move_bytes: fake_move.clone(),
-                .. result_borrow.clone()
+                ..result_borrow.clone()
             });
         }
 
@@ -710,7 +714,7 @@ impl MyTurnReferee {
                             allocator,
                             outgoing_state_update_program.p(),
                             state_nodeptr,
-                        )
+                        ),
                     ))
                 } else {
                     Err(Error::StrErr("our own move was slashed by us".to_string()))

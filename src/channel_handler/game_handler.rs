@@ -273,7 +273,10 @@ impl GameHandler {
             m
         } else {
             let run_result_prog = Program::from_nodeptr(allocator, run_result)?;
-            return Err(Error::StrErr(format!("bad move in my turn handler result {:?}", run_result_prog)));
+            return Err(Error::StrErr(format!(
+                "bad move in my turn handler result {:?}",
+                run_result_prog
+            )));
         };
 
         let outgoing_move_state_update_program =

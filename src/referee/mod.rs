@@ -9,7 +9,8 @@ use clvm_traits::ToClvm;
 use log::debug;
 
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, StateUpdateProgram};
-use crate::common::standard_coin::ChiaIdentity;
+use crate::common::constants::CREATE_COIN;
+use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
     AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinString, Error, Hash, IntoErr,
     Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
@@ -18,8 +19,9 @@ use crate::referee::my_turn::MyTurnReferee;
 use crate::referee::their_turn::TheirTurnReferee;
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
-    GameMoveWireData, OnChainRefereeSolution, RMFixed, RefereeOnChainTransaction,
-    RefereePuzzleArgs, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult,
+    GameMoveWireData, IdentityCoinAndSolution, OnChainRefereeMove, OnChainRefereeSolution, RMFixed,
+    RefereeOnChainTransaction, RefereePuzzleArgs, SlashOutcome, TheirTurnCoinSpentResult,
+    TheirTurnMoveResult,
 };
 
 #[derive(Clone, Debug)]
@@ -234,22 +236,6 @@ impl RefereeByTurn {
         }
     }
 
-    pub fn get_transaction_for_move(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-        on_chain: bool,
-    ) -> Result<RefereeOnChainTransaction, Error> {
-        match self {
-            RefereeByTurn::MyTurn(_) => {
-                todo!();
-            }
-            RefereeByTurn::TheirTurn(t) => {
-                t.get_transaction_for_move(allocator, coin_string, on_chain)
-            }
-        }
-    }
-
     pub fn their_turn_move_off_chain(
         &self,
         allocator: &mut AllocEncoder,
@@ -281,6 +267,30 @@ impl RefereeByTurn {
             // we ourselves took.  check_their_turn_coin_spent will return an
             // error if it was asked to do a non-fast-forward their turn spend.
             RefereeByTurn::MyTurn(_t) => {
+                let after_puzzle_hash = curry_referee_puzzle_hash(
+                    allocator,
+                    &self.fixed().referee_coin_puzzle_hash,
+                    &self.spend_this_coin(),
+                )?;
+
+                // XXX Revisit this in conjuction with rewind.  There is a better way to do this.
+                let repeat = if let Some(CoinCondition::CreateCoin(ph, _amt)) = conditions
+                    .iter()
+                    .find(|cond| matches!(cond, CoinCondition::CreateCoin(_, _)))
+                {
+                    after_puzzle_hash == *ph
+                } else {
+                    false
+                };
+
+                if repeat {
+                    debug!("repeat spend {after_puzzle_hash:?}");
+                    return Ok((
+                        None,
+                        TheirTurnCoinSpentResult::Slash(Box::new(SlashOutcome::NoReward)),
+                    ));
+                }
+
                 todo!();
             }
             RefereeByTurn::TheirTurn(t) => {
@@ -332,10 +342,7 @@ impl RefereeByTurn {
                 old_referee.state_number(),
                 old_referee.is_my_turn()
             );
-            debug!(
-                "game move at end {:?}",
-                end_args.game_move.basic.move_made
-            );
+            debug!("game move at end {:?}", end_args.game_move.basic.move_made);
             debug!(
                 "game move at start {:?}",
                 start_args.game_move.basic.move_made
@@ -361,12 +368,12 @@ impl RefereeByTurn {
             let start_hash = curry_referee_puzzle_hash(
                 allocator,
                 &old_referee.fixed().referee_coin_puzzle_hash,
-                &start_args
+                &start_args,
             )?;
-            let end_hash =  curry_referee_puzzle_hash(
+            let end_hash = curry_referee_puzzle_hash(
                 allocator,
                 &old_referee.fixed().referee_coin_puzzle_hash,
-                &end_args
+                &end_args,
             )?;
             debug!("have old end {old_end:?} checking {start_hash:?}:{end_hash:?}");
             if let Some(e) = &old_end {
@@ -386,7 +393,7 @@ impl RefereeByTurn {
                 old_referee.state_number(),
                 old_referee.is_my_turn(),
             );
-            if *puzzle_hash == have_puzzle_hash {
+            if *puzzle_hash == have_puzzle_hash && old_referee.is_my_turn() {
                 let state_number = old_referee.state_number();
                 return Ok(Some((old_referee.clone(), state_number)));
             }
@@ -404,54 +411,6 @@ impl RefereeByTurn {
         } else {
             args.game_move.basic.mover_share.clone()
         }
-    }
-
-    // Ensure this returns
-    pub fn get_transaction(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-        always_produce_transaction: bool,
-        puzzle: Puzzle,
-        targs: &RefereePuzzleArgs<StateUpdateProgram>,
-        args: &OnChainRefereeSolution,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let our_move = self.is_my_turn();
-
-        let my_mover_share = if our_move {
-            targs.game_move.basic.mover_share.clone()
-        } else {
-            self.fixed().amount.clone() - targs.game_move.basic.mover_share.clone()
-        };
-
-        if always_produce_transaction || my_mover_share != Amount::default() {
-            let signature = args.get_signature().unwrap_or_default();
-
-            // The transaction solution is not the same as the solution for the
-            // inner puzzle as we take additional move or slash data.
-            //
-            // OnChainRefereeSolution encodes this properly.
-            let transaction_solution = args.to_clvm(allocator).into_gen()?;
-            debug!("transaction solution inputs {args:?}");
-            let transaction_bundle = Spend {
-                puzzle: puzzle.clone(),
-                solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
-                signature,
-            };
-            let output_coin_string = CoinString::from_parts(
-                &coin_string.to_coin_id(),
-                &puzzle.sha256tree(allocator),
-                &my_mover_share,
-            );
-            return Ok(Some(RefereeOnChainTransaction {
-                bundle: transaction_bundle,
-                amount: self.fixed().amount.clone(),
-                coin: output_coin_string,
-            }));
-        }
-
-        // Zero mover share case.
-        Ok(None)
     }
 
     /// Output coin_string:
@@ -512,6 +471,201 @@ impl RefereeByTurn {
     ) -> Result<PuzzleHash, Error> {
         let args = self.spend_this_coin();
         curry_referee_puzzle_hash(allocator, &self.fixed().referee_coin_puzzle_hash, &args)
+    }
+
+    // Ensure this returns
+    fn get_transaction(
+        &self,
+        allocator: &mut AllocEncoder,
+        coin_string: &CoinString,
+        always_produce_transaction: bool,
+        puzzle: Puzzle,
+        targs: &RefereePuzzleArgs<StateUpdateProgram>,
+        args: &OnChainRefereeSolution,
+    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
+        let our_move = self.is_my_turn();
+
+        let my_mover_share = if our_move {
+            targs.game_move.basic.mover_share.clone()
+        } else {
+            self.fixed().amount.clone() - targs.game_move.basic.mover_share.clone()
+        };
+
+        if always_produce_transaction || my_mover_share != Amount::default() {
+            let signature = args.get_signature().unwrap_or_default();
+
+            // The transaction solution is not the same as the solution for the
+            // inner puzzle as we take additional move or slash data.
+            //
+            // OnChainRefereeSolution encodes this properly.
+            let transaction_solution = args.to_clvm(allocator).into_gen()?;
+            debug!("transaction solution inputs {args:?}");
+            let transaction_bundle = Spend {
+                puzzle: puzzle.clone(),
+                solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
+                signature,
+            };
+            let output_coin_string = CoinString::from_parts(
+                &coin_string.to_coin_id(),
+                &puzzle.sha256tree(allocator),
+                &my_mover_share,
+            );
+            return Ok(Some(RefereeOnChainTransaction {
+                bundle: transaction_bundle,
+                amount: self.fixed().amount.clone(),
+                coin: output_coin_string,
+            }));
+        }
+
+        // Zero mover share case.
+        Ok(None)
+    }
+
+    /// The move transaction works like this:
+    ///
+    /// The referee puzzle has the hash of the puzzle of another locking coin,
+    /// possibly the standard coin, and uses that to secure against another person
+    /// commanding it.  This isn't the be confused with the coin that serves as the
+    /// parent of the referee coin which is also assumed to be a standard puzzle
+    /// coin.
+    ///
+    /// The inner coin, assuming it is a standard coin, takes the puzzle reveal
+    /// for the above puzzle and the solution for that inner puzzle as the last two
+    /// arguments to the move case of how it's invoked.
+    ///
+    /// The output conditions to step it are therefore built into those conditions
+    /// which needs to include the puzzle hash of the target state of the referee
+    /// (their move, the state precipitated by our move set as the current game
+    /// state).
+    ///
+    /// We do the spend of the inner puzzle to that puzzle hash to progress the
+    /// referee coin.
+    ///
+    /// One consequence of this is that we must sign it with the synthetic private
+    /// key as the standard puzzle embeds a synthetic public key based on it.
+    ///
+    /// In all cases, we're spending a referee coin that already exists.  The use
+    /// of the mover coin here is purely to take advantage of its puzzle to provide
+    /// a signature requirement.
+    pub fn get_transaction_for_move(
+        &self,
+        allocator: &mut AllocEncoder,
+        coin_string: &CoinString,
+        on_chain: bool,
+    ) -> Result<RefereeOnChainTransaction, Error> {
+        // We can only do a move to replicate our turn.
+        let target_args = self.spend_this_coin();
+        let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
+
+        // Get the puzzle hash for the next referee state.
+        // This reflects a "their turn" state with the updated state from the
+        // game handler returned by consuming our move.  This is assumed to
+        // have been done by consuming the move in a different method call.
+
+        // Get the current state of the referee on chain.  This reflects the
+        // current state at the time the move was made.
+        // The current referee uses the previous state since we have already
+        // taken the move.
+        //
+        debug!("get_transaction_for_move: previous curry");
+        let args = self.args_for_this_coin();
+
+        //debug!("transaction for move: state {:?}", self.state);
+        debug!("get_transaction_for_move: source curry {args:?}");
+        debug!("get_transaction_for_move: target curry {target_args:?}");
+
+        if let Some((_, ph, _)) = coin_string.to_parts() {
+            if on_chain {
+                let start_ph = curry_referee_puzzle_hash(
+                    allocator,
+                    &self.fixed().referee_coin_puzzle_hash,
+                    &args,
+                )?;
+                let end_ph = curry_referee_puzzle_hash(
+                    allocator,
+                    &self.fixed().referee_coin_puzzle_hash,
+                    &target_args,
+                )?;
+                debug!("spend puzzle hash {ph:?}");
+                debug!("this coin start {start_ph:?}");
+                debug!("this coin end   {end_ph:?}");
+                // assert_eq!(ph, start_ph);
+            }
+        }
+
+        assert_eq!(
+            Some(&args.game_move.validation_info_hash),
+            target_args.previous_validation_info_hash.as_ref()
+        );
+        // debug!(
+        //     "transaction for move: from {:?} to {target_args:?}",
+        //     self.args_for_this_coin()
+        // );
+        let target_referee_puzzle_hash = curry_referee_puzzle_hash(
+            allocator,
+            &self.fixed().referee_coin_puzzle_hash,
+            &target_args,
+        )?;
+        let target_referee_puzzle =
+            curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &target_args)?;
+        assert_eq!(
+            target_referee_puzzle.sha256tree(allocator),
+            target_referee_puzzle_hash
+        );
+
+        let inner_conditions = [(
+            CREATE_COIN,
+            (
+                target_referee_puzzle_hash.clone(),
+                (self.fixed().amount.clone(), ()),
+            ),
+        )]
+        .to_clvm(allocator)
+        .into_gen()?;
+
+        // Generalize this once the test is working.  Move out the assumption that
+        // referee private key is my_identity.synthetic_private_key.
+        debug!("referee spend with parent coin {coin_string:?}");
+        debug!(
+            "signing coin with synthetic public key {:?} for public key {:?}",
+            self.fixed().my_identity.synthetic_public_key,
+            self.fixed().my_identity.public_key
+        );
+        let referee_spend = standard_solution_partial(
+            allocator,
+            &self.fixed().my_identity.synthetic_private_key,
+            &coin_string.to_coin_id(),
+            inner_conditions,
+            &self.fixed().my_identity.synthetic_public_key,
+            &self.fixed().agg_sig_me_additional_data,
+            false,
+        )?;
+
+        let args_list = OnChainRefereeSolution::Move(OnChainRefereeMove {
+            details: target_args.game_move.clone(),
+            max_move_size: target_args.max_move_size,
+            mover_coin: IdentityCoinAndSolution {
+                mover_coin_puzzle: self.fixed().my_identity.puzzle.clone(),
+                mover_coin_spend_solution: referee_spend.solution.p(),
+                mover_coin_spend_signature: referee_spend.signature.clone(),
+            },
+        });
+
+        if let Some(transaction) = self.get_transaction(
+            allocator,
+            coin_string,
+            true,
+            spend_puzzle,
+            &target_args.neutralize(),
+            &args_list,
+        )? {
+            Ok(transaction)
+        } else {
+            // Return err
+            Err(Error::StrErr(
+                "no transaction returned when doing on chain move".to_string(),
+            ))
+        }
     }
 }
 

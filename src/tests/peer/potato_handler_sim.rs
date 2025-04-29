@@ -17,7 +17,9 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, Node, PrivateKey, Program,
     PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
-use crate::games::calpoker::{WinDirectionUser, decode_calpoker_readable, decode_readable_card_choices};
+use crate::games::calpoker::{
+    decode_calpoker_readable, decode_readable_card_choices, WinDirectionUser,
+};
 use crate::games::poker_collection;
 use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
@@ -1193,7 +1195,10 @@ fn check_calpoker_economic_result(
     debug!("game outcome {bob_outcome:?}");
     debug!("p1 balance {p1_balance:?} p2 {p2_balance:?}");
 
-    assert_eq!(alice_outcome.raw_win_direction, bob_outcome.raw_win_direction);
+    assert_eq!(
+        alice_outcome.raw_win_direction,
+        bob_outcome.raw_win_direction
+    );
     assert_eq!(alice_outcome.win_direction, bob_outcome.win_direction);
 
     match &alice_outcome.win_direction {
@@ -1350,7 +1355,8 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
             let outcome = run_calpoker_container_with_action_list(&mut allocator, &game.moves)
                 .expect("should finish");
 
-            let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+            let (p1_balance, p2_balance) =
+                get_balances_from_outcome(&outcome).expect("should work");
             if *go_on_chain == 0 {
                 assert_eq!(p1_balance + 200, p2_balance);
             } else {
@@ -1366,7 +1372,9 @@ fn sim_test_with_peer_container_piss_off_peer_slash() {
 
     let mut game = test_moves_1(&mut allocator);
     // p2 chooses 5 cards.
-    let move_3_node = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0xab])).expect("ok");
+    let move_3_node = allocator
+        .encode_atom(clvm_traits::Atom::Borrowed(&[0xab]))
+        .expect("ok");
     let changed_move = GameAction::FakeMove(1, move_3_node, vec![0xab]);
     game.moves.truncate(3);
     game.moves.push(changed_move.clone());
