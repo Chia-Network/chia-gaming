@@ -2,6 +2,7 @@ use log::debug;
 use rand::Rng;
 use std::rc::Rc;
 
+use crate::channel_handler::types::make_puzzle_name_map;
 use crate::channel_handler::{
     ChannelCoinSpendInfo, ChannelHandler, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, HandshakeResult,
@@ -164,6 +165,7 @@ pub fn channel_handler_env<'a, R: Rng>(
     )?;
     let unroll_metapuzzle = read_hex_puzzle(allocator, "clsp/unroll/unroll_meta_puzzle.hex")?;
     let standard_puzzle = get_standard_coin_puzzle(allocator)?;
+    let puzzle_name_map =  make_puzzle_name_map(allocator);
     Ok(ChannelHandlerEnv {
         allocator,
         rng,
@@ -173,5 +175,6 @@ pub fn channel_handler_env<'a, R: Rng>(
         unroll_puzzle,
         standard_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+        puzzle_name_map: puzzle_name_map,
     })
 }

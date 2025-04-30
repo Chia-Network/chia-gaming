@@ -23,7 +23,7 @@ pub use channel_coin::{
 };
 pub use channel_handler::{
     ChannelHandlerEnv, ChannelHandlerInitiationData, ChannelHandlerInitiationResult,
-    ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
+    ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo, make_puzzle_name_map,
 };
 pub use coin_data_for_reward::CoinDataForReward;
 pub use coin_identification_by_puzzle_hash::CoinIdentificationByPuzzleHash;
