@@ -416,24 +416,31 @@ impl RefereeByTurn {
             old_end = Some(end_hash.clone());
         }
 
+        #[derive(Debug)]
+        struct OldState {state_number: usize, puzzle_hash: PuzzleHash, my_turn: bool}
+        let mut ancestor_states = vec![];
         for old_referee in ancestors.iter() {
-            let have_puzzle_hash = curry_referee_puzzle_hash(
+            let on_chain_referee_puzzlehash = curry_referee_puzzle_hash(
                 allocator,
                 &old_referee.fixed().referee_coin_puzzle_hash,
                 &old_referee.args_for_this_coin(),
             )?;
             debug!(
-                "referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
+                "referee rewind: {} my turn {} try state {on_chain_referee_puzzlehash:?} want {puzzle_hash:?}",
                 old_referee.state_number(),
                 old_referee.is_my_turn(),
             );
-            if *puzzle_hash == have_puzzle_hash && old_referee.is_my_turn() {
+            ancestor_states.push(OldState{state_number:old_referee.state_number(), puzzle_hash:on_chain_referee_puzzlehash.clone(), my_turn:old_referee.is_my_turn() });
+            if *puzzle_hash == on_chain_referee_puzzlehash && old_referee.is_my_turn() {
                 let state_number = old_referee.state_number();
+                // TODO: Check current time here
                 return Ok(Some((old_referee.clone(), state_number)));
             }
         }
 
-        debug!("referee rewind: no matching state");
+        debug!("referee rewind: no matching previous state: my_turn? {:?}", self.is_my_turn() );
+        debug!("    puzzle_hash: {:?}\n", *puzzle_hash );
+        debug!("    ancestors: {:?}\n", ancestor_states);
         debug!("still in state {:?}", self.state_number());
         Ok(None)
     }
