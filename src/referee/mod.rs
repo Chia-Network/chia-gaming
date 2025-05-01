@@ -416,13 +416,14 @@ impl RefereeByTurn {
             old_end = Some(end_hash.clone());
         }
 
-        #[derive(Debug)]
-        struct OldState {
-            state_number: usize,
-            puzzle_hash: PuzzleHash,
-            my_turn: bool,
-        }
-        let mut ancestor_states = vec![];
+        // #[derive(Debug)]
+        // struct OldState {
+        //     state_number: usize,
+        //     puzzle_hash: PuzzleHash,
+        //     my_turn: bool,
+        // }
+
+        // let mut ancestor_states = vec![];
         for old_referee in ancestors.iter() {
             let on_chain_referee_puzzlehash = curry_referee_puzzle_hash(
                 allocator,
@@ -434,11 +435,11 @@ impl RefereeByTurn {
                 old_referee.state_number(),
                 old_referee.is_my_turn(),
             );
-            ancestor_states.push(OldState {
-                state_number: old_referee.state_number(),
-                puzzle_hash: on_chain_referee_puzzlehash.clone(),
-                my_turn: old_referee.is_my_turn(),
-            });
+            // ancestor_states.push(OldState {
+            //     state_number: old_referee.state_number(),
+            //     puzzle_hash: on_chain_referee_puzzlehash.clone(),
+            //     my_turn: old_referee.is_my_turn(),
+            // });
             if *puzzle_hash == on_chain_referee_puzzlehash && old_referee.is_my_turn() {
                 let state_number = old_referee.state_number();
                 // TODO: Check current time here
@@ -451,7 +452,7 @@ impl RefereeByTurn {
             self.is_my_turn()
         );
         debug!("    puzzle_hash: {:?}\n", *puzzle_hash);
-        debug!("    ancestors: {:?}\n", ancestor_states);
+        // debug!("    ancestors: {:?}\n", ancestor_states);
         debug!("still in state {:?}", self.state_number());
         Ok(None)
     }
