@@ -1,6 +1,10 @@
 # Thanks: clvm_rs' github actions.
 name: Build
 
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
@@ -12,12 +16,16 @@ on:
     branches:
       - '**'
 
+# env:
+#   RUST_VERSION: 1.86
+
 permissions:
   id-token: write
   contents: read
 
 jobs:
   build_and_test:
+    needs: [fmt, clippy, unit_tests]
     name: Build code on ${{ matrix.os }} py-${{ matrix.python }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -40,9 +48,10 @@ jobs:
       id: create-venv
 
     - name: Set up rust
-      uses: actions-rs/toolchain@v1
+      # See also rust-toolchain.toml
+      uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
       with:
-        toolchain: stable
+        components: "clippy, rustfmt"
 
   fmt:
     runs-on: ubuntu-22.04
@@ -52,23 +61,22 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
         with:
-            toolchain: stable
-            override: true
-            components: rustfmt, clippy
+          components: "clippy, rustfmt"
       - name: fmt
-        run: cargo fmt -- --files-with-diff --check
+        run: |
+          cargo clippy --version
+          cargo fmt --version
+          cargo fmt -- --files-with-diff --check
 
   clippy:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
         with:
-          toolchain: stable
-          components: clippy
-          override: true
+          components: "clippy, rustfmt"
       - name: clippy
         run: |
           cargo clippy --all --features=sim-tests,simulator -- -D warnings
@@ -81,16 +89,16 @@ jobs:
   unit_tests:
     runs-on: ubuntu-22.04
     name: Unit tests
+    needs: [fmt, clippy]
     steps:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 1
 
       - name: Install rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
         with:
-            toolchain: stable
-            components: rustfmt, clippy
+          components: "clippy, rustfmt"
 
       - uses: actions/setup-python@v5
         name: Install Python 3.9
@@ -139,12 +147,13 @@ jobs:
           python ./test_handlers.py
 
   coverage:
+    needs: unit_tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
         with:
-            toolchain: stable
+          components: "clippy, rustfmt"
       - name: Run for coverage
         run: |
           sudo apt-get update
@@ -167,3 +176,86 @@ jobs:
           COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
         with:
           path-to-lcov: './lcov.info'
+
+  # m1 mac
+  build_wheels:
+    name: Build wheel on Mac M1
+    needs: [unit_tests]
+    runs-on: [MacOS, ARM64]
+    strategy:
+      fail-fast: false
+
+    steps:
+    - uses: Chia-Network/actions/clean-workspace@main
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Install python
+      uses: Chia-Network/actions/setup-python@main
+      with:
+        python-version: "3.10"
+
+    - name: Set up rust
+      run: |
+        curl https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init.sha256 | awk '{print $1 " *rustup-init"}' > checksum.txt
+        curl -O https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
+        cat checksum.txt
+        shasum -a 256 -c checksum.txt
+
+    - name: Install rust
+      run: |
+        chmod +x rustup-init
+        ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
+        rm rustup-init checksum.txt
+
+    - name: Set up a venv for chia-blockchain
+      run: |
+        python3 -m venv test
+        source ./test/bin/activate
+        pip install chia-blockchain==2.3.0
+
+    - name: Run tests
+      run: |
+        echo "PWD=$(pwd)"
+        source ./test/bin/activate
+        cargo test --features=sim-tests
+
+  build_npm:
+    name: Npm
+    runs-on: ubuntu-latest
+    needs: [unit_tests]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set Env
+        uses: Chia-Network/actions/setjobenv@main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up rust
+        # See also rust-toolchain.toml
+        uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
+        with:
+          components: "clippy, rustfmt"
+
+      - name: Setup Node 18.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18.x'
+
+      - name: install wasm-pack
+        run: cargo install --version 0.11.1 wasm-pack
+
+      - name: wasm-pack build and pack
+        run: cd wasm && wasm-pack build --release --target=nodejs
+
+      - name: yarn install
+        run: cd wasm/tests && yarn install
+
+      - name: wasm tests
+        run: cd wasm/tests && yarn test
