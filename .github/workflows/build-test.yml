@@ -49,7 +49,7 @@ jobs:
 
     - name: Set up rust
       # See also rust-toolchain.toml
-      uses: dtolnay/rust-toolchain@1.85  # ${{ RUST_VERSION }}
+      uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
       with:
         components: "clippy, rustfmt"
 
@@ -61,7 +61,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install rust
-        uses: dtolnay/rust-toolchain@1.85  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
       - name: fmt
@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.85  # ${{ RUST_VERSION }}
+      - uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
       - name: clippy
@@ -104,7 +104,7 @@ jobs:
           fetch-depth: 1
 
       - name: Install rust
-        uses: dtolnay/rust-toolchain@1.85  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
 
@@ -159,7 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.85  # ${{ RUST_VERSION }}
+      - uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
       - name: Run for coverage
@@ -247,7 +247,7 @@ jobs:
 
       - name: Set up rust
         # See also rust-toolchain.toml
-        uses: dtolnay/rust-toolchain@1.85  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
 
