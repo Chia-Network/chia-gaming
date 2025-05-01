@@ -51,7 +51,8 @@ jobs:
       # See also rust-toolchain.toml
       # ${{ RUST_VERSION }}
       uses: dtolnay/rust-toolchain@1.86
-
+      with:
+        components: "clippy, rustfmt"
 
   fmt:
     runs-on: ubuntu-22.04
@@ -62,6 +63,8 @@ jobs:
           fetch-depth: 1
       - name: Install rust
         uses: dtolnay/rust-toolchain@1.86
+        with:
+          components: "clippy, rustfmt"
       - name: fmt
         run: |
           cargo clippy --version
@@ -74,6 +77,8 @@ jobs:
       - uses: actions/checkout@v3
       #- uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
       - uses: dtolnay/rust-toolchain@1.86
+        with:
+          components: "clippy, rustfmt"
       - name: clippy
         run: |
           cargo clippy --all --features=sim-tests,simulator -- -D warnings
@@ -93,9 +98,10 @@ jobs:
           fetch-depth: 1
 
       - name: Install rust
-        # ${{ RUST_VERSION }}
-        uses: dtolnay/rust-toolchain@1.86
         # uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@1.86
+        with:
+          components: "clippy, rustfmt"
 
       - uses: actions/setup-python@v5
         name: Install Python 3.9
@@ -120,6 +126,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@1.86
+        with:
+          components: "clippy, rustfmt"
       - name: Run for coverage
         run: |
           sudo apt-get update
@@ -189,7 +197,6 @@ jobs:
         source ./test/bin/activate
         cargo test --features=sim-tests
 
-
   build_npm:
     name: Npm
     runs-on: ubuntu-latest
@@ -208,6 +215,9 @@ jobs:
         # See also rust-toolchain.toml
         #uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
         uses: dtolnay/rust-toolchain@1.86
+        with:
+          components: "clippy, rustfmt"
+
       - name: Setup Node 18.x
         uses: actions/setup-node@v3
         with:
