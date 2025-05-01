@@ -1,8 +1,7 @@
 #![allow(
-  clippy::redundant_field_names,
-  clippy::uninlined_format_args,
-  clippy::too_many_arguments,
-  clippy::manual_contains,
+    clippy::redundant_field_names,
+    clippy::uninlined_format_args,
+    clippy::too_many_arguments
 )]
 
 pub mod channel_handler;

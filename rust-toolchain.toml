@@ -1,6 +1,6 @@
 [toolchain]
 # See also .github/worlflows/build-test.yml for toolchain version (dtolnay/rust-toolchain@)
-channel = "1.86.0-stable"
+channel = "1.86.0"
 components = [ "rustfmt", "rustc-dev" ]
 targets = [ "wasm32-unknown-unknown", "thumbv2-none-eabi" ]
 profile = "minimal"
