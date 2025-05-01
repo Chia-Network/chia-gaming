@@ -22,8 +22,8 @@ pub use channel_coin::{
     ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo, ChannelCoinSpentResult,
 };
 pub use channel_handler::{
-    ChannelHandlerEnv, ChannelHandlerInitiationData, ChannelHandlerInitiationResult,
-    ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo, make_puzzle_name_map,
+    make_puzzle_name_map, ChannelHandlerEnv, ChannelHandlerInitiationData,
+    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
 };
 pub use coin_data_for_reward::CoinDataForReward;
 pub use coin_identification_by_puzzle_hash::CoinIdentificationByPuzzleHash;
