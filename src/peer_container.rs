@@ -563,7 +563,7 @@ impl SynchronousGameCradle {
         )?;
 
         let bundle = SpendBundle {
-            name: Some("create channel".to_string()),
+            name: Some("create spend for channel coin:".to_string()),
             spends: vec![CoinSpend {
                 coin: parent.clone(),
                 bundle: Spend {
