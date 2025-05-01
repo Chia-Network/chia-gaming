@@ -6,7 +6,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUST_VERSION: "1.88"
+  RUST_VERSION: "1.86"
 
 on:
   push:
