@@ -97,7 +97,7 @@ jobs:
           fetch-depth: 1
 
       - name: Install rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@1.88.0-nightly
         with:
             toolchain: stable
             components: rustfmt, clippy
@@ -123,8 +123,7 @@ jobs:
     needs: unit_tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - uses: [actions/checkout@v3, dtolnay/rust-toolchain@1.88.0-nightly]
         with:
             toolchain: stable
       - name: Run for coverage
@@ -150,7 +149,7 @@ jobs:
         with:
           path-to-lcov: './lcov.info'
 
-  #m1
+  # m1 mac
   build_wheels:
     name: Build wheel on Mac M1
     needs: [unit_tests]
