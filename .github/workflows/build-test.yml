@@ -123,7 +123,8 @@ jobs:
     needs: unit_tests
     runs-on: ubuntu-latest
     steps:
-      - uses: [actions/checkout@v3, dtolnay/rust-toolchain@1.88.0-nightly]
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@1.88.0-nightly
         with:
             toolchain: stable
       - name: Run for coverage
