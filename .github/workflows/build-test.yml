@@ -1,6 +1,10 @@
 # Thanks: clvm_rs' github actions.
 name: Build
 
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
@@ -145,3 +149,88 @@ jobs:
           COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
         with:
           path-to-lcov: './lcov.info'
+
+  #m1
+  build_wheels:
+    name: Build wheel on Mac M1
+    needs: [unit_tests]
+    runs-on: [MacOS, ARM64]
+    strategy:
+      fail-fast: false
+
+    steps:
+    - uses: Chia-Network/actions/clean-workspace@main
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Install python
+      uses: Chia-Network/actions/setup-python@main
+      with:
+        python-version: "3.10"
+
+    - name: Set up rust
+      run: |
+        curl https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init.sha256 | awk '{print $1 " *rustup-init"}' > checksum.txt
+        curl -O https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
+        cat checksum.txt
+        shasum -a 256 -c checksum.txt
+
+    - name: Install rust
+      run: |
+        chmod +x rustup-init
+        ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
+        rm rustup-init checksum.txt
+
+    - name: Set up a venv for chia-blockchain
+      run: |
+        python3 -m venv test
+        source ./test/bin/activate
+        pip install chia-blockchain==2.3.0
+
+    - name: Run tests
+      run: |
+        echo "PWD=$(pwd)"
+        source ./test/bin/activate
+        cargo test --features=sim-tests
+
+
+  build_npm:
+    name: Npm
+    runs-on: ubuntu-latest
+    needs: [unit_tests]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set Env
+        uses: Chia-Network/actions/setjobenv@main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up rust
+        # See also rust-toolchain.toml
+        uses: dtolnay/rust-toolchain@1.88.0-nightly
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Setup Node 18.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18.x'
+
+      - name: install wasm-pack
+        run: cargo install --version 0.11.1 wasm-pack
+
+      - name: wasm-pack build and pack
+        run: cd wasm && wasm-pack build --release --target=nodejs
+
+      - name: yarn install
+        run: cd wasm/tests && yarn install
+
+      - name: wasm tests
+        run: cd wasm/tests && yarn test
