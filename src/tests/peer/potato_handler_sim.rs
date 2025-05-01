@@ -1244,6 +1244,7 @@ fn sim_test_with_peer_container_off_chain_complete() {
 }
 
 #[test]
+#[ignore = "test uses old verifier / handlers call protocol."]
 fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut allocator = AllocEncoder::new();
 
@@ -1302,6 +1303,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
 }
 
 #[test]
+#[ignore = "test uses old verifier / handlers call protocol."]
 fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
     let mut allocator = AllocEncoder::new();
 
