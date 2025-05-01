@@ -67,8 +67,13 @@ jobs:
       - name: fmt
         run: |
           set -x
-          cargo fmt --version
-          cargo fmt -- --files-with-diff --check
+          rustfmt --version
+          rustfmt -- --files-with-diff --check
+          rustfmt --files-with-diff
+          rustfmt --emit stdout src/tests/peer/potato_handler.rs | tail -n +3 > /tmp/a
+          echo Starting diff ...
+          diff -u src/tests/peer/potato_handler.rs /tmp/a
+          echo diff done
           [ $? -eq 0 ] || cargo fmt -- --files-with-diff && git diff && false
 
   clippy:
