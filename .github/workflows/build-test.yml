@@ -124,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.88.0-nightly
+      - uses: dtolnay/rust-toolchain@1.88
         with:
             toolchain: stable
       - name: Run for coverage
