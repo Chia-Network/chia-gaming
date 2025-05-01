@@ -1,0 +1,27 @@
+(defun validator (STATE_NUMBER mod_hash
+        (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+            MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+            state previous_validation_program mover_puzzle solution evidence)
+  ;; The move must start with the same 8 bytes as the mover puzzle.
+  (assign
+   MOVER_PUZZLE_HASH
+  )
+
+(defun myturn (@ args (local_move amount split entropy))
+  (x "implement my turn handler")
+  )
+
+(defun theirturn (amount state move validation_program_hash split)
+  (x "implement their turn handler")
+  )
+
+(export (MODE . args)
+  (if (= MODE "validator")
+      (validator &rest args)
+      (= MODE "myturn")
+      (myturn &rest args)
+      (= MODE "theirturn")
+      (theirturn &rest args)
+      (x "no such personality" MODE)
+      )
+  )
