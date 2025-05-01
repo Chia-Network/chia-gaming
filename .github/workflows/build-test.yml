@@ -5,6 +5,9 @@ concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
   cancel-in-progress: true
 
+env:
+  RUST_VERSION: "1.88"
+
 on:
   push:
     branches:
@@ -46,7 +49,7 @@ jobs:
 
     - name: Set up rust
       # See also rust-toolchain.toml
-      uses: dtolnay/rust-toolchain@1.88.0-nightly
+      uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
       with:
         toolchain: stable
 
@@ -73,11 +76,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          components: clippy
-          override: true
+      - uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
       - name: clippy
         run: |
           cargo clippy --all --features=sim-tests,simulator -- -D warnings
@@ -97,7 +96,7 @@ jobs:
           fetch-depth: 1
 
       - name: Install rust
-        uses: dtolnay/rust-toolchain@1.88.0-nightly
+        uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
         with:
             toolchain: stable
             components: rustfmt, clippy
@@ -124,7 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
         with:
             toolchain: stable
       - name: Run for coverage
@@ -213,7 +212,7 @@ jobs:
 
       - name: Set up rust
         # See also rust-toolchain.toml
-        uses: dtolnay/rust-toolchain@1.88.0-nightly
+        uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
         with:
           toolchain: stable
           components: rustfmt, clippy
