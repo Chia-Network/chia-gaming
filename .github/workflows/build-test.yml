@@ -18,6 +18,7 @@ permissions:
 
 jobs:
   build_and_test:
+    needs: [fmt, clippy]
     name: Build code on ${{ matrix.os }} py-${{ matrix.python }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -84,6 +85,7 @@ jobs:
   unit_tests:
     runs-on: ubuntu-22.04
     name: Unit tests
+    needs: [fmt, clippy]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -113,6 +115,7 @@ jobs:
           cargo test --features=sim-tests
 
   coverage:
+    needs: unit_tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
