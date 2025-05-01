@@ -49,10 +49,10 @@ jobs:
 
     - name: Set up rust
       # See also rust-toolchain.toml
-      uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
+      uses: dtolnay/rust-toolchain@master  # ${{ RUST_VERSION }}
       with:
         components: "clippy, rustfmt"
-
+        toolchain: 1.82
   fmt:
     runs-on: ubuntu-22.04
     name: cargo fmt
@@ -61,9 +61,10 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install rust
-        uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@master  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
+          toolchain: 1.82
       - name: fmt
         run: |
           set -x
@@ -80,9 +81,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
+      - uses: dtolnay/rust-toolchain@master  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
+          toolchain: 1.82
       - name: clippy
         run: |
           set -x
@@ -104,9 +106,10 @@ jobs:
           fetch-depth: 1
 
       - name: Install rust
-        uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@master  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
+          toolchain: 1.82
 
       - uses: actions/setup-python@v5
         name: Install Python 3.9
@@ -159,9 +162,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
+      - uses: dtolnay/rust-toolchain@master  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
+          toolchain: 1.82
       - name: Run for coverage
         run: |
           sudo apt-get update
@@ -247,7 +251,7 @@ jobs:
 
       - name: Set up rust
         # See also rust-toolchain.toml
-        uses: dtolnay/rust-toolchain@1.82  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@master  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
 
