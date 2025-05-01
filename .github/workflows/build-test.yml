@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build_and_test:
-    needs: [fmt, clippy]
+    needs: [fmt, clippy, unit_tests]
     name: Build code on ${{ matrix.os }} py-${{ matrix.python }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -41,7 +41,8 @@ jobs:
       id: create-venv
 
     - name: Set up rust
-      uses: actions-rs/toolchain@v1
+      # See also rust-toolchain.toml
+      uses: dtolnay/rust-toolchain@1.88.0-nightly
       with:
         toolchain: stable
 

@@ -30,8 +30,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up rusts
-        uses: actions-rs/toolchain@v1
+      - name: Set up rust
+        # See also rust-toolchain.toml
+        uses: dtolnay/rust-toolchain@1.88.0-nightly
         with:
           toolchain: stable
           components: rustfmt, clippy
