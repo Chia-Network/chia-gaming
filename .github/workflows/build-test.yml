@@ -69,6 +69,7 @@ jobs:
           set -x
           cargo fmt --version
           cargo fmt -- --files-with-diff --check
+          [ $? -eq 0 ] || cargo fmt -- --files-with-diff && git diff && false
 
   clippy:
     runs-on: ubuntu-22.04
