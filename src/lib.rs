@@ -1,3 +1,10 @@
+#![allow(
+  redundant_field_names,
+  uninlined_format_args,
+  too_many_arguments,
+  manual_contains,
+)]
+
 pub mod channel_handler;
 pub mod common;
 pub mod games;
