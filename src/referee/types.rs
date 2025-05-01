@@ -27,7 +27,7 @@ use crate::common::types::{
 use crate::referee::StateUpdateProgram;
 use crate::utils::proper_list;
 
-pub const REM_CONDITION_FIELDS: usize = 4;
+// pub const REM_CONDITION_FIELDS: usize = 4;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct GameMoveStateInfo {
