@@ -58,7 +58,10 @@ jobs:
             override: true
             components: rustfmt, clippy
       - name: fmt
-        run: cargo fmt -- --files-with-diff --check
+        run: |
+          cargo clippy --version
+          cargo fmt --version
+          cargo fmt -- --files-with-diff --check
 
   clippy:
     runs-on: ubuntu-22.04
