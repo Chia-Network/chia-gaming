@@ -16,8 +16,8 @@ on:
     branches:
       - '**'
 
-env:
-  RUST_VERSION: 1.86
+#env:
+#  RUST_VERSION: 1.86
 
 permissions:
   id-token: write
@@ -49,9 +49,9 @@ jobs:
 
     - name: Set up rust
       # See also rust-toolchain.toml
-      uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
-      with:
-        toolchain: stable
+      # ${{ RUST_VERSION }}
+      uses: dtolnay/rust-toolchain@1.86
+
 
   fmt:
     runs-on: ubuntu-22.04
@@ -61,11 +61,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            override: true
-            components: rustfmt, clippy
+        uses: dtolnay/rust-toolchain@1.86
       - name: fmt
         run: |
           cargo clippy --version
@@ -76,7 +72,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
+      #- uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
+      - uses: dtolnay/rust-toolchain@1.86
       - name: clippy
         run: |
           cargo clippy --all --features=sim-tests,simulator -- -D warnings
@@ -96,10 +93,9 @@ jobs:
           fetch-depth: 1
 
       - name: Install rust
-        uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
-        with:
-            toolchain: stable
-            components: rustfmt, clippy
+        # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@1.86
+        # uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
 
       - uses: actions/setup-python@v5
         name: Install Python 3.9
@@ -123,9 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
-        with:
-            toolchain: stable
+      - uses: dtolnay/rust-toolchain@1.86
       - name: Run for coverage
         run: |
           sudo apt-get update
@@ -212,11 +206,8 @@ jobs:
 
       - name: Set up rust
         # See also rust-toolchain.toml
-        uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
-
+        #uses: dtolnay/rust-toolchain@${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@1.86
       - name: Setup Node 18.x
         uses: actions/setup-node@v3
         with:
