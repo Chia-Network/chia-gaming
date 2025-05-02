@@ -142,7 +142,7 @@
             (validator-hash (curry-args-incr curry-args))
             256
             mover-share
-            (curry SELF_PROG "theirturn" (+ COUNT 1) SELF_HASH SELF_PROG)
+            (curry SELF_PROG "theirturn" (curry-args-incr curry-args))
             )
            )
        )
@@ -192,7 +192,7 @@
              MAKE_MOVE
              (list count smove mshare)
              (list slash-byte)
-             (curry SELF_PROG "myturn" COUNT SELF_HASH SELF_PROG)
+             (curry SELF_PROG "myturn" (curry-args-incr curry-args))
              )
             )
         )
