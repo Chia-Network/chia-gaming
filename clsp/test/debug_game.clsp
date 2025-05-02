@@ -86,7 +86,10 @@
       ;; check previous validation info hash
       (not (= PREVIOUS_VALIDATION_INFO_HASH (sha256 pv_hash (sha256tree state))))
       ;; the evidence is the slash
-      (= evidence (substr MOVE (- move-len 1) move-len))
+      (all
+       (= evidence (substr MOVE (- move-len 1) move-len))
+       ;; Can't slash if the slash-byte is zero.
+       (not (= (substr MOVE (- move-len 1) move-len) 0x00))
       )
      )
     (list SLASH () "debug game: slash")
