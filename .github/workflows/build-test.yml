@@ -241,7 +241,8 @@ jobs:
       run: |
         echo "PWD=$(pwd)"
         source ./test/bin/activate
-        cargo +stable test --features=sim-tests
+        # "+stable" flag is not supported here yet
+        cargo test --features=sim-tests
 
   build_npm:
     name: Npm
