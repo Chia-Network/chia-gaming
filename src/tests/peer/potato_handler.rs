@@ -389,7 +389,6 @@ where
     Ok(())
 }
 
-
 #[test]
 fn test_peer_smoke() {
     let seed: [u8; 32] = [0; 32];
