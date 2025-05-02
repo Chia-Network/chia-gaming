@@ -66,9 +66,9 @@ jobs:
       - name: fmt
         run: |
           set -x
-          rustfmt --version
-          rustfmt -- --files-with-diff --check
-          rustfmt --files-with-diff
+          cargo +stable fmt --version
+          cargo +stable fmt -- --files-with-diff --check
+          cargo +stable fmt --files-with-diff
           rustfmt --emit stdout src/tests/peer/potato_handler.rs | tail -n +3 > /tmp/a
           echo Starting diff ...
           diff -u src/tests/peer/potato_handler.rs /tmp/a
