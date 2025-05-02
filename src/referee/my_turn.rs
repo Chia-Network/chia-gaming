@@ -610,12 +610,6 @@ impl MyTurnReferee {
     ) -> Result<ValidatorResult, Error> {
         let previous_puzzle_args = self.args_for_this_coin();
         let puzzle_args = self.spend_this_coin();
-        let new_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &self.fixed.referee_coin_puzzle_hash,
-            &puzzle_args,
-        )?;
-
         let solution = self.fixed.my_identity.standard_solution(
             allocator,
             &[(
@@ -637,13 +631,13 @@ impl MyTurnReferee {
             amount: self.fixed.amount.clone(),
             timeout: self.fixed.timeout.clone(),
             max_move_size: puzzle_args.game_move.basic.max_move_size,
-            referee_hash: new_puzzle_hash.clone(),
             move_args: ValidatorMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
             },
+            nonce: self.fixed.nonce,
         };
 
         debug!("getting validation program");
