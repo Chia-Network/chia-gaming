@@ -19,13 +19,17 @@
      )
   )
 
-(defun validator-hash (COUNT SELF_HASH SELF_PROG)
+(defmac CURRY_PACK () (q @ curry-args (COUNT SELF_HASH SELF_PROG MOVER0 WAITER0)))
+
+(defun curry-args-incr ((CURRY_PACK))
+  (c (+ 1 COUNT) (r curry-args))
+  )
+
+(defun validator-hash ((CURRY_PACK))
   (curry_hashes_inline
    SELF_HASH
    (sha256tree "validator")
-   (sha256tree (+ COUNT 1))
-   (sha256tree SELF_HASH)
-   (sha256tree SELF_PROG)
+   (sha256tree curry-args)
    )
   )
 
@@ -39,9 +43,7 @@
 ;; - mover share
 ;;   the next mover share to return
 (defun validator
-    (COUNT
-     SELF_HASH
-     SELF_PROG
+    ((CURRY_PACK)
      mod_hash
      (STATE_PACK)
      state
@@ -85,6 +87,13 @@
       (not (= mover-puzzle-hash (sha256tree mover_puzzle)))
       ;; check previous validation info hash
       (not (= PREVIOUS_VALIDATION_INFO_HASH (sha256 pv_hash (sha256tree state))))
+      ;; the step we're on indicates mover0 or waiter0 as mover
+      (if (logand COUNT 1)
+          (not (= MOVER_PUZZLE_HASH MOVER0))
+          (not (= MOVER_PUZZLE_HASH WAITER0))
+          )
+      ;; if mover and waiter are the same then things are broken
+      (= MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH)
       ;; the evidence is the slash
       (all
        (= evidence (substr MOVE (- move-len 1) move-len))
@@ -100,7 +109,7 @@
      mover-share (+ 0 (substr MOVE move-counter-data-len (- move-len 1)))
      (list
       MAKE_MOVE
-      (validator-hash COUNT SELF_HASH SELF_PROG)
+      (validator-hash curry-args)
       (list COUNT slashable-move mover-share)
       256
       (list "debug game: move with count" (+ COUNT 1) "slash hint" slashable-move "mover share" mover-share)
@@ -113,7 +122,7 @@
 ;; Make a value be at least one byte.
 (defun byteify (n) (i n n 0x00))
 
-(defun myturn (COUNT SELF_HASH SELF_PROG local_move amount split entropy)
+(defun myturn ((CURRY_PACK) local_move amount split entropy)
   ;; local move is a list of slashable and mover share
   (if (not local_move)
       ;; () local move should make us emit a local slash so we can try that.
@@ -128,9 +137,9 @@
             ;; move bytes
             (concat prefix (byteify count) (byteify mover-share) slash)
             (curry SELF_PROG "validator" COUNT SELF_HASH SELF_PROG)
-            (validator-hash COUNT SELF_HASH SELF_PROG)
+            (validator-hash curry-args)
             (curry SELF_PROG "validator" (+ COUNT 1) SELF_HASH SELF_PROG)
-            (validator-hash (+ COUNT 1) SELF_HASH SELF_PROG)
+            (validator-hash (curry-args-incr curry-args))
             256
             mover-share
             (curry SELF_PROG "theirturn" (+ COUNT 1) SELF_HASH SELF_PROG)
@@ -152,9 +161,7 @@
   )
 
 (defun theirturn
-    (COUNT
-     SELF_HASH
-     SELF_PROG
+    ((CURRY_PACK)
      amount
      (@ state (count smove mshare))
      move
@@ -193,7 +200,7 @@
    )
   )
 
-(export (MODE COUNT SELF_HASH SELF_PROG . args)
+(export (MODE (CURRY_PACK) . args)
   (if (= MODE "validator")
       (validator COUNT SELF_HASH SELF_PROG &rest args)
       (= MODE "myturn")
