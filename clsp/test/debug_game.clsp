@@ -1,6 +1,9 @@
+(include *standard-cl-23*)
+
 (import std.or)
-(import std.sha256tree)
+(import std.shatree)
 (import std.curry)
+(import onchain.game_codes)
 
 (defmac STATE_PACK ()
   (q @ state-pack
@@ -28,8 +31,8 @@
 (defun validator-hash ((CURRY_PACK))
   (curry_hashes_inline
    SELF_HASH
-   (sha256tree "validator")
-   (sha256tree curry-args)
+   (shatree "validator")
+   (shatree curry-args)
    )
   )
 
@@ -37,7 +40,7 @@
 ;; to.
 ;;
 ;; MOVE is the concatenation of all curried parameters except move followed by
-;; - the sha256tree of previous validation program
+;; - the shatree of previous validation program
 ;; - slashable
 ;;   a byte that is nonzero if the move is slashable.  the user must match this byte to slash.
 ;; - mover share
@@ -53,7 +56,7 @@
      evidence
      )
   (assign
-   pv_hash (sha256tree previous_validation_program)
+   pv_hash (shatree previous_validation_program)
    move-counter-data
    (concat
     ;; Hashes first
@@ -74,6 +77,7 @@
 
    move-counter-data-len (strlen move-counter-data)
    mover-puzzle-hash (substr move-counter-data (* 5 32) (* 6 32))
+   move-len (strlen MOVE)
 
    (if
     (or
@@ -84,9 +88,9 @@
       ;; Move doesn't repeat the counter data
       (not (= move-counter-data (substr MOVE 0 move-counter-data-len)))
       ;; Mover puzzle isn't the puzzle of the mover we think we have.
-      (not (= mover-puzzle-hash (sha256tree mover_puzzle)))
+      (not (= mover-puzzle-hash (shatree mover_puzzle)))
       ;; check previous validation info hash
-      (not (= PREVIOUS_VALIDATION_INFO_HASH (sha256 pv_hash (sha256tree state))))
+      (not (= PREVIOUS_VALIDATION_INFO_HASH (sha256 pv_hash (shatree state))))
       ;; the step we're on indicates mover0 or waiter0 as mover
       (if (logand COUNT 1)
           (not (= MOVER_PUZZLE_HASH MOVER0))
@@ -104,7 +108,6 @@
      )
     (list SLASH () "debug game: slash")
     (assign
-     move-len (strlen MOVE)
      slashable-move (substr MOVE (- move-len 1) move-len)
      mover-share (+ 0 (substr MOVE move-counter-data-len (- move-len 1)))
      (list
