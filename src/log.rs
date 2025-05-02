@@ -1,11 +1,10 @@
 #[allow(unexpected_cfgs)]
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-//#[ctor::ctor]
-pub fn init() {
+#[ctor::ctor]
+fn init() {
     env_logger::init();
 }
 
-//#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-//pub fn wasm_init() {
-//    env_logger::init();
-//}
+pub fn log_init() {
+    env_logger::init();
+}
