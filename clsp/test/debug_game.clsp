@@ -72,6 +72,7 @@
 
    move-counter-data-len (strlen move-counter-data)
    mover-puzzle-hash (substr move-counter-data (* 5 32) (* 6 32))
+   slashable-move (substr MOVE (- move-len 1) move-len)
 
    (if
     (or
@@ -85,12 +86,13 @@
       (not (= mover-puzzle-hash (sha256tree mover_puzzle)))
       ;; check previous validation info hash
       (not (= PREVIOUS_VALIDATION_INFO_HASH (sha256 pv_hash (sha256tree state))))
+      ;; the evidence is the slash
+      (= evidence slashable-move)
       )
      )
     (list SLASH () "debug game: slash")
     (assign
      move-len (strlen MOVE)
-     slashable-move (substr MOVE (- move-len 1) move-len)
      mover-share (+ 0 (substr MOVE move-counter-data-len (- move-len 1)))
      (list
       MAKE_MOVE
