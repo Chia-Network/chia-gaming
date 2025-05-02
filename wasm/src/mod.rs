@@ -19,7 +19,7 @@ use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::types;
 use chia_gaming::common::types::{AllocEncoder, Amount, CoinSpend, CoinString, Hash, IntoErr, GameID, PrivateKey, Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout};
 use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
-use chia_gaming::log::wasm_init;
+use chia_gaming::log::init as chia_gaming_init;
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
@@ -114,7 +114,7 @@ thread_local! {
 
 #[wasm_bindgen]
 pub fn init() {
-    wasm_init();
+    chia_gaming_init();
 }
 
 #[wasm_bindgen]
@@ -229,6 +229,9 @@ pub fn config_scaffold() -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&JsGameCradleConfig::default()).into_js()
 }
 
+/// The meta-variable typescript_type is usused by rust, but is very much used by the FFI
+#[allow(unused_variables)]
+#[allow(clippy::unused_variables)]
 #[wasm_bindgen(typescript_type = "ICreateGameCradle")]
 pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     let new_id = get_next_id();
