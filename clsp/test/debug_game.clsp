@@ -180,7 +180,7 @@
         (move-count _) (read-over-integer move "" (- count-pos 1))
         (if (not (= move-count COUNT))
             (x "their turn: mismatched count" move-count COUNT)
-            (not (= (validator-hash COUNT SELF_HASH SELF_PROG) validation_program_hash))
+            (not (= (validator-hash curry-args) validation_program_hash))
             (x "their turn: mismatched validator program")
             (not (= split mover-share))
             (x "their turn: wrong mover share" mover-share split)
@@ -200,13 +200,89 @@
    )
   )
 
+(defun factory ((CURRY_PACK) i_am_initiator my_contribution their_contribution params)
+  (assign
+   amount (+ my_contribution their_contribution)
+
+   (if i_am_initiator
+       (list
+        ;; One game
+        (list
+         ;; amount
+         amount
+
+         ;; my turn
+         1
+
+         ;; handler
+         (curry SELF_PROG "myturn" curry-args)
+
+         my_contribution
+         their_contribution
+
+         ;; Initial validation program
+         (curry SELF_PROG "validator" curry-args)
+
+         (validator-hash curry-args)
+
+         ;; Initial state: count slash mover-share
+         (list () () ())
+
+         ;; Initial move
+         ()
+
+         ;; Initial max move size
+         256
+
+         ;; Initial mover share
+         0
+         )
+        )
+
+       (list
+        ;; One game
+        (list
+         ;; amount
+         amount
+
+         ;; their turn
+         0
+
+         ;; handler
+         (curry SELF_PROG "theirturn" curry-args)
+
+         my_contribution
+         their_contribution
+
+         ;; Initial validation program
+         (curry SELF_PROG "validator" curry-args)
+
+         ;; Initial state: count slash mover-share
+         (list () () ())
+
+         ;; Initial move
+         ()
+
+         ;; Initial max move size
+         256
+
+         ;; Initail mover share
+         0
+         )
+        )
+       )
+   )
+  )
+
 (export (MODE (CURRY_PACK) . args)
   (if (= MODE "validator")
-      (validator COUNT SELF_HASH SELF_PROG &rest args)
+      (validator curry-args &rest args)
       (= MODE "myturn")
-      (myturn COUNT SELF_HASH SELF_PROG &rest args)
+      (myturn curry-args &rest args)
       (= MODE "theirturn")
-      (theirturn COUNT SELF_HASH SELF_PROG &rest args)
+      (theirturn curry-args &rest args)
+      (= MODE "factory")
+      (factory curry-args &rest args)
       (x "no such personality" MODE)
       )
   )
