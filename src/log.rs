@@ -5,7 +5,6 @@ fn init() {
     env_logger::init();
 }
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub fn wasm_init() {
+pub fn log_init() {
     env_logger::init();
 }

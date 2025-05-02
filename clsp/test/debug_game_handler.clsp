@@ -86,13 +86,13 @@
    cheated (logand (get-validation-move validation-data) 1)
 
    (if cheated
-       (x "validation program cheating" validation-data)
-       ()
+       (list 2 () "validation program cheating" validation-data)
+       (list 0 validation-data 100 "V")
        )
    )
   )
 
-(defun do_my_turn ((CURRIED) readable_new_move amount split max_move entropy)
+(defun do_my_turn ((CURRIED) readable_new_move amount split entropy)
   (assign
 
    ;; Readable move is a clvm structure that describes the move
@@ -123,8 +123,10 @@
     (curry validation_program CURRIED)
     ;; Validation program hash
     new_validation_program_hash
-    ;; New state
-    new_state
+    ;; Validation program
+    (curry validation_program CURRIED)
+    ;; Validation program hash
+    new_validation_program_hash
     ;; Max move size
     100
     ;; Mover share

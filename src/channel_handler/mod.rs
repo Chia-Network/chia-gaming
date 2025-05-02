@@ -171,6 +171,12 @@ impl ChannelHandler {
         self.their_out_of_game_balance.clone()
     }
 
+    pub fn enable_cheating(&mut self, make_move: &[u8]) {
+        for l in self.live_games.iter_mut() {
+            l.enable_cheating(make_move);
+        }
+    }
+
     pub fn get_reward_puzzle_hash<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
@@ -218,7 +224,6 @@ impl ChannelHandler {
             my_balance,
             their_balance,
             puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
-            rem_condition_state: self.current_state_number,
         }
     }
 
@@ -330,7 +335,7 @@ impl ChannelHandler {
 
             cached_last_action: None,
 
-            current_state_number: 0,
+            current_state_number: 1,
             next_nonce_number: 0,
 
             state_channel: ChannelCoinInfo {
@@ -383,7 +388,6 @@ impl ChannelHandler {
             // XXX might need to mutate slightly.
             &inputs,
         )?;
-        myself.current_state_number += 1;
 
         let channel_coin_spend =
             myself.create_conditions_and_signature_of_channel_coin(env, &myself.unroll.coin)?;
@@ -497,6 +501,9 @@ impl ChannelHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
     ) -> Result<PotatoSignatures, Error> {
+        self.current_state_number += 1;
+        self.unroll.coin.state_number = self.current_state_number;
+
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
             self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
@@ -505,9 +512,6 @@ impl ChannelHandler {
             self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
             &new_game_coins_on_chain,
         );
-
-        self.current_state_number += 1;
-        self.unroll.coin.state_number = self.current_state_number;
 
         // Now update our unroll state.
         self.unroll.coin.update(
@@ -742,11 +746,13 @@ impl ChannelHandler {
         signatures: &PotatoSignatures,
         start_info_list: &[GameStartInfo],
     ) -> Result<ChannelCoinSpendInfo, Error> {
+        let game_ids: Vec<GameID> = start_info_list.iter().map(|g| g.game_id.clone()).collect();
         debug!(
-            "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",
+            "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {} game ID is {:?}",
             self.is_initial_potato(),
             self.current_state_number,
-            self.unroll.coin.state_number
+            self.unroll.coin.state_number,
+            game_ids
         );
         let mut new_games = self.add_games(env, start_info_list)?;
 
@@ -920,7 +926,7 @@ impl ChannelHandler {
                 message.clone(),
                 move_data.mover_share.clone(),
             ),
-            TheirTurnResult::Slash(_) => {
+            _ => {
                 return Err(Error::StrErr(
                     "slash when off chain: go on chain".to_string(),
                 ));
@@ -965,6 +971,12 @@ impl ChannelHandler {
         game_id: &GameID,
         message: &[u8],
     ) -> Result<ReadableMove, Error> {
+        debug!(
+            "{} RECEIVED_MESSAGE {} {message:?}",
+            self.is_initial_potato(),
+            self.current_state_number
+        );
+
         let game_idx = self.get_game_by_id(game_id)?;
 
         self.live_games[game_idx].receive_readable(env.allocator, message)
@@ -1700,8 +1712,14 @@ impl ChannelHandler {
         };
 
         if reward_puzzle_hash == ph {
-            debug!("was our turn, reward {ph:?} {amt:?}");
+            debug!("game_coin_spent: self.is_initiator={} reward_puzzle_hash={reward_puzzle_hash:?} was our turn, reward ({ph:?} {amt:?})",
+                self.is_initial_potato(),
+            );
             return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
+        } else {
+            debug!("game_coin_spent: self.is_initiator={} reward_puzzle_hash={reward_puzzle_hash:?} NOT OUR TURN, reward {ph:?} {amt:?}",
+                self.is_initial_potato(),
+            );
         }
 
         Ok(CoinSpentInformation::TheirSpend(
@@ -1794,7 +1812,7 @@ impl ChannelHandler {
                     // We should have odd parity between the rewind and the current state.
                     debug!("{} getting redo move: move_data.state_number {} rewind_state {rewind_state}", self.is_initial_potato(), move_data.state_number);
                     let rewind_ph = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
-                    if self.live_games[game_idx].is_my_turn() {
+                    if !self.live_games[game_idx].is_my_turn() {
                         debug!(
                             "{} not matched rewind state {new_ph:?} vs {rewind_ph:?}",
                             self.is_initial_potato()
