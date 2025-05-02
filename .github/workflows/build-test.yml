@@ -37,7 +37,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        fetch-depth: 0
+        fetch-depth: 1
 
     - uses: actions/setup-python@v5
       name: Install Python 3.9
@@ -81,6 +81,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
+      with:
+        fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
@@ -160,6 +162,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
@@ -200,7 +204,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
       with:
-        fetch-depth: 0
+        fetch-depth: 1
 
     - name: Install python
       uses: Chia-Network/actions/setup-python@main
@@ -239,7 +243,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Set Env
         uses: Chia-Network/actions/setjobenv@main
