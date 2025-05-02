@@ -71,10 +71,14 @@ jobs:
           cargo +stable fmt --version
 
           rustfmt --emit stdout src/tests/peer/potato_handler.rs | tail -n +3 > /tmp/a
+          git log -n 1
+          echo 'content'
+          cat src/tests/peer/potato_handler.rs
+          echo 'end content'
           echo Starting diff ...
           diff -u src/tests/peer/potato_handler.rs /tmp/a
           echo diff done
-          
+
           cargo +stable fmt -- --files-with-diff --check
           cargo +stable fmt --files-with-diff
           [ $? -eq 0 ] || cargo +stable fmt -- --files-with-diff && git diff && false
