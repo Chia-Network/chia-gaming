@@ -1,27 +1,199 @@
-(defun validator (STATE_NUMBER mod_hash
-        (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
-            MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-            state previous_validation_program mover_puzzle solution evidence)
-  ;; The move must start with the same 8 bytes as the mover puzzle.
+(import std.or)
+(import std.sha256tree)
+(import std.curry)
+
+(defmac STATE_PACK ()
+  (q @ state-pack
+     (MOVER_PUZZLE_HASH
+      WAITER_PUZZLE_HASH
+      TIMEOUT
+      AMOUNT
+      MOD_HASH
+      NONCE
+      MOVE
+      MAX_MOVE_SIZE
+      VALIDATION_INFO_HASH
+      MOVER_SHARE
+      PREVIOUS_VALIDATION_INFO_HASH
+      )
+     )
+  )
+
+(defun validator-hash (COUNT SELF_HASH SELF_PROG)
+  (curry_hashes_inline
+   SELF_HASH
+   (sha256tree "validator")
+   (sha256tree (+ COUNT 1))
+   (sha256tree SELF_HASH)
+   (sha256tree SELF_PROG)
+   )
+  )
+
+;; Every valid move encapsulates the entire set of data that the validator will be exposed
+;; to.
+;;
+;; MOVE is the concatenation of all curried parameters except move followed by
+;; - the sha256tree of previous validation program
+;; - slashable
+;;   a byte that is nonzero if the move is slashable.  the user must match this byte to slash.
+;; - mover share
+;;   the next mover share to return
+(defun validator
+    (COUNT
+     SELF_HASH
+     SELF_PROG
+     mod_hash
+     (STATE_PACK)
+     state
+     previous_validation_program
+     mover_puzzle
+     solution
+     evidence
+     )
   (assign
-   MOVER_PUZZLE_HASH
+   pv_hash (sha256tree previous_validation_program)
+   move-counter-data
+   (concat
+    ;; Hashes first
+    MOVER_PUZZLE_HASH
+    WAITER_PUZZLE_HASH
+    MOD_HASH
+    VALIDATION_INFO_HASH
+    PREVIOUS_VALIDATION_INFO_HASH
+    pv_hash
+    ;; Then variable length stuff
+    TIMEOUT
+    AMOUNT
+    NONCE
+    MAX_MOVE_SIZE
+    MOVER_SHARE
+    COUNT
+    )
+
+   move-counter-data-len (strlen move-counter-data)
+   mover-puzzle-hash (substr move-counter-data (* 5 32) (* 6 32))
+
+   (if
+    (or
+     ;; Too short move
+     (> move-counter-data-len (- (strlen MOVE) 2))
+     ;; These don't need ordering
+     (any
+      ;; Move doesn't repeat the counter data
+      (not (= move-counter-data (substr MOVE 0 move-counter-data-len)))
+      ;; Mover puzzle isn't the puzzle of the mover we think we have.
+      (not (= mover-puzzle-hash (sha256tree mover_puzzle)))
+      ;; check previous validation info hash
+      (not (= PREVIOUS_VALIDATION_INFO_HASH (sha256 pv_hash (sha256tree state))))
+      )
+     )
+    (list SLASH () "debug game: slash")
+    (assign
+     move-len (strlen MOVE)
+     slashable-move (substr MOVE (- move-len 1) move-len)
+     mover-share (+ 0 (substr MOVE move-counter-data-len (- move-len 1)))
+     (list
+      MAKE_MOVE
+      (validator-hash COUNT SELF_HASH SELF_PROG)
+      (list COUNT slashable-move mover-share)
+      256
+      (list "debug game: move with count" (+ COUNT 1) "slash hint" slashable-move "mover share" mover-share)
+      )
+     )
+    )
+   )
   )
 
-(defun myturn (@ args (local_move amount split entropy))
-  (x "implement my turn handler")
+;; Make a value be at least one byte.
+(defun byteify (n) (i n n 0x00))
+
+(defun myturn (COUNT SELF_HASH SELF_PROG local_move amount split entropy)
+  ;; local move is a list of slashable and mover share
+  (if (not local_move)
+      ;; () local move should make us emit a local slash so we can try that.
+      (x "my turn local slash")
+      ;; local move is a list of a prefix count slash byte and mover share
+      (assign
+       (prefix count slash mover-share) local_move
+       (if (not (= count COUNT))
+           (x "count not equal for this move" count COUNT)
+           (list
+            "debug game: move"
+            ;; move bytes
+            (concat prefix (byteify count) (byteify mover-share) slash)
+            (curry SELF_PROG "validator" COUNT SELF_HASH SELF_PROG)
+            (validator-hash COUNT SELF_HASH SELF_PROG)
+            (curry SELF_PROG "validator" (+ COUNT 1) SELF_HASH SELF_PROG)
+            (validator-hash (+ COUNT 1) SELF_HASH SELF_PROG)
+            256
+            mover-share
+            (curry SELF_PROG "theirturn" (+ COUNT 1) SELF_HASH SELF_PROG)
+            )
+           )
+       )
+      )
   )
 
-(defun theirturn (amount state move validation_program_hash split)
-  (x "implement their turn handler")
+(defun read-over-integer (s o p)
+  (assign
+   this-byte (substr s p (+ 1 p))
+   ;; We're only looking for positive numbers
+   (if (logand 0x80 this-byte)
+       (read-over-integer s (concat this-byte o) (- p 1))
+       (list (concat this-byte o) p)
+       )
+   )
   )
 
-(export (MODE . args)
+(defun theirturn
+    (COUNT
+     SELF_HASH
+     SELF_PROG
+     amount
+     (@ state (count smove mshare))
+     move
+     validation_program_hash
+     split
+     )
+  (assign
+   move-len (strlen move)
+   (if (< move-len 1)
+       (list SLASH ())
+       ;; Skipping the last byte and the mover share, there should be a count.
+       ;; It's fairly simple to read over a positive number.
+       (assign
+        slash-byte (substr move (- move-len 1) move-len)
+        (mover-share count-pos) (read-over-integer move "" (- move-len 1))
+        (move-count _) (read-over-integer move "" (- count-pos 1))
+        (if (not (= move-count COUNT))
+            (x "their turn: mismatched count" move-count COUNT)
+            (not (= (validator-hash COUNT SELF_HASH SELF_PROG) validation_program_hash))
+            (x "their turn: mismatched validator program")
+            (not (= split mover-share))
+            (x "their turn: wrong mover share" mover-share split)
+            (not (= split mshare))
+            (x "their turn: wrong mover share in state" mshare split)
+            (not (= smove slash-byte))
+            (x "their turn: wrong slash byte in state" smove slash-byte)
+            (list
+             MAKE_MOVE
+             (list count smove mshare)
+             (list slash-byte)
+             (curry SELF_PROG "myturn" COUNT SELF_HASH SELF_PROG)
+             )
+            )
+        )
+       )
+   )
+  )
+
+(export (MODE COUNT SELF_HASH SELF_PROG . args)
   (if (= MODE "validator")
-      (validator &rest args)
+      (validator COUNT SELF_HASH SELF_PROG &rest args)
       (= MODE "myturn")
-      (myturn &rest args)
+      (myturn COUNT SELF_HASH SELF_PROG &rest args)
       (= MODE "theirturn")
-      (theirturn &rest args)
+      (theirturn COUNT SELF_HASH SELF_PROG &rest args)
       (x "no such personality" MODE)
       )
   )
