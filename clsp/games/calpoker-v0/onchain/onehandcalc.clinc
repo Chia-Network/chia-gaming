@@ -1,6 +1,6 @@
 ; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
 ; suits are 1-4 with no particular labelling
-; takes a list of five cards (rank . suit) and returns the value of the best poker 
+; takes a list of five cards (rank . suit) and returns the value of the best poker
 ; hand which can be made with them
 ; Hands are represented:
 ; straight flush (5 high_card)
@@ -17,7 +17,7 @@
 (import std.relops)
 (import std.isthere)
 (import std.atomsort)
-(import onchain.calpoker.flatten_card)
+(import games.calpoker-v0.onchain.flatten_card)
 
 (defun check_flush (@ cards ((rank1 . suit1) (rank2 . suit2) (rank3 . suit3) (rank4 . suit4) (rank5 . suit5)))
     (logand (= suit1 suit2) (= suit1 suit3) (= suit1 suit4) (= suit1 suit5))
