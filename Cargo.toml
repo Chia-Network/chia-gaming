@@ -45,8 +45,9 @@ exec = "0.3.1"
 [build-dependencies]
 serde = "1.0.203"
 toml = "0.8.14"
-clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "f5f6ebd339b4782d9b3c65db8796af554d341bd8" }
+clvm_tools_rs = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "c3ecaa49cf16b56e3842f93b450ce8dce6bddb2d" }
 clvmr = { version = "=0.12.0", features = ["pre-eval"] }
+colored = "3.0.0"
 
 [lib]
 name = "chia_gaming"

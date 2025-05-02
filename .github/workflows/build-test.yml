@@ -17,7 +17,7 @@ on:
       - '**'
 
 # env:
-#   RUST_VERSION: 1.86
+#   RUST_VERSION: 1.88
 
 permissions:
   id-token: write
@@ -35,9 +35,10 @@ jobs:
         python: [3.9, '3.10', 3.11, 3.12]
 
     steps:
-    - uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v3
       with:
-        fetch-depth: 0
+        fetch-depth: 1
 
     - uses: actions/setup-python@v5
       name: Install Python 3.9
@@ -49,38 +50,42 @@ jobs:
 
     - name: Set up rust
       # See also rust-toolchain.toml
-      uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
+      uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
       with:
         components: "clippy, rustfmt"
-
   fmt:
     runs-on: ubuntu-22.04
-    name: cargo fmt
+    name: cargo +stable fmt
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
         with:
           fetch-depth: 1
       - name: Install rust
-        uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
       - name: fmt
         run: |
-          cargo clippy --version
-          cargo fmt --version
-          cargo fmt -- --files-with-diff --check
+          cargo +stable fmt --version
+          cargo +stable fmt -- --files-with-diff --check
 
   clippy:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
       - name: clippy
         run: |
-          cargo clippy --all --features=sim-tests,simulator -- -D warnings
-          cargo check --features=sim-tests,simulator --tests
+          set -x
+          cargo +stable clippy --version
+          cargo +stable clippy --all --features=sim-tests,simulator -- -D warnings
+          cargo +stable check --features=sim-tests,simulator --tests
       - uses: giraffate/clippy-action@v1
         with:
           reporter: 'github-pr-review'
@@ -96,7 +101,7 @@ jobs:
           fetch-depth: 1
 
       - name: Install rust
-        uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
 
@@ -108,21 +113,52 @@ jobs:
       - uses: chia-network/actions/create-venv@main
         id: create-venv
 
-      - name: cargo test
+      - name: cargo +stable test
         run: |
           python -m pip install setuptools==75.0.0
           python -m pip install chia-blockchain==2.3.0
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
-          cargo test
-          cargo test --features=sim-tests
+          cargo +stable test
+          cargo +stable test --features=sim-tests
+
+  calpoker_onchain_tests:
+    runs-on: ubuntu-22.04 # ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        name: Install Python 3.9
+        with:
+          python-version: 3.9
+      - uses: chia-network/actions/create-venv@main
+        id: create-venv
+      - name: install
+        run: |
+          python -m pip install setuptools==75.0.0
+          python -m pip install chia-blockchain==2.3.0
+      - name: calpoker_onchain_tests
+        run: |
+          cd pytests
+          # We need 'cargo +stable build' to have been run
+          python compute_hashes.py
+          python ./test_validation_pass.py
+
+      - name: calpoker_handlers
+        run: |
+          cd pytests
+          python compute_hashes.py
+          python ./test_handlers.py
 
   coverage:
     needs: unit_tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
+        with:
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
       - name: Run for coverage
@@ -130,14 +166,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install lcov -y
           rustup component add llvm-tools-preview
-          cargo install grcov
+          cargo +stable install grcov
           export RUSTFLAGS="-Cinstrument-coverage"
           export LLVM_PROFILE_FILE=$(pwd)/target/clvm_tools_rs-%p-%m.profraw
           export CARGO_TARGET_DIR=$(pwd)/target
           python -m venv venv
           source venv/bin/activate
           pip install chia-blockchain==2.3.0
-          cargo test --release --workspace --features=sim-tests
+          cargo +stable test --release --workspace --features=sim-tests
           grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
           python -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
       - name: Upload to Coveralls
@@ -162,7 +198,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
       with:
-        fetch-depth: 0
+        fetch-depth: 1
 
     - name: Install python
       uses: Chia-Network/actions/setup-python@main
@@ -192,6 +228,7 @@ jobs:
       run: |
         echo "PWD=$(pwd)"
         source ./test/bin/activate
+        # "+stable" flag is not supported here yet
         cargo test --features=sim-tests
 
   build_npm:
@@ -199,9 +236,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [unit_tests]
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Set Env
         uses: Chia-Network/actions/setjobenv@main
@@ -210,7 +248,7 @@ jobs:
 
       - name: Set up rust
         # See also rust-toolchain.toml
-        uses: dtolnay/rust-toolchain@1.86  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
 
@@ -220,7 +258,7 @@ jobs:
           node-version: '18.x'
 
       - name: install wasm-pack
-        run: cargo install --version 0.11.1 wasm-pack
+        run: cargo +stable install --version 0.11.1 wasm-pack
 
       - name: wasm-pack build and pack
         run: cd wasm && wasm-pack build --release --target=nodejs

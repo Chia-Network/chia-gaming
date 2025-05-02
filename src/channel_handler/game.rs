@@ -8,7 +8,7 @@ use crate::utils::proper_list;
 use log::debug;
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::ValidationProgram;
+use crate::channel_handler::types::StateUpdateProgram;
 use crate::channel_handler::GameStartInfo;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
@@ -23,7 +23,7 @@ pub struct Game {
     pub whether_paired: bool,
     pub required_size_factor: Amount,
     pub initial_max_move_size: usize,
-    pub initial_validation_program: ValidationProgram,
+    pub initial_validation_program: StateUpdateProgram,
     pub initial_validation_program_hash: Hash,
     pub initial_state: Rc<Program>,
     pub initial_mover_share_proportion: usize,
@@ -81,7 +81,8 @@ impl Game {
             .and_then(|a| usize_from_atom(&a))
             .expect("should be an atom");
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);
-        let initial_validation_program = ValidationProgram::new(allocator, validation_prog);
+        let initial_validation_program =
+            StateUpdateProgram::new(allocator, "initial", validation_prog);
         let initial_validation_program_hash =
             if let Some(a) = atom_from_clvm(allocator, template_list[6]) {
                 Hash::from_slice(&a)

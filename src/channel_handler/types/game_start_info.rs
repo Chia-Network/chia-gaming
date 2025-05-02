@@ -7,7 +7,7 @@ use clvmr::allocator::NodePtr;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::ValidationProgram;
+use crate::channel_handler::types::StateUpdateProgram;
 use crate::common::types::{
     atom_from_clvm, usize_from_atom, AllocEncoder, Amount, Error, GameID, Hash, Program,
     ProgramRef, Timeout,
@@ -21,7 +21,7 @@ pub struct GameStartInfo {
     pub my_contribution_this_game: Amount,
     pub their_contribution_this_game: Amount,
 
-    pub initial_validation_program: ValidationProgram,
+    pub initial_validation_program: StateUpdateProgram,
     pub initial_state: ProgramRef,
     pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
@@ -70,7 +70,7 @@ impl GameStartInfo {
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, lst[5])?);
         let validation_program_hash = Hash::from_nodeptr(allocator, lst[6])?;
         let validation_program =
-            ValidationProgram::new_hash(validation_prog, validation_program_hash);
+            StateUpdateProgram::new_hash(validation_prog, "initial", validation_program_hash);
         let initial_state = Program::from_nodeptr(allocator, lst[7])?.into();
         let initial_move = if let Some(a) = atom_from_clvm(allocator, lst[8]) {
             a.to_vec()
