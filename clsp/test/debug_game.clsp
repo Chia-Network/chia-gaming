@@ -89,7 +89,7 @@
       (all
        (= evidence (substr MOVE (- move-len 1) move-len))
        ;; Can't slash if the slash-byte is zero.
-       (not (= (substr MOVE (- move-len 1) move-len) 0x00))
+       (not (= evidence 0x00))
        )
       )
      )
