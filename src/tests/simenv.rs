@@ -570,7 +570,7 @@ fn test_referee_can_slash_on_chain() {
     let amount = Amount::new(100);
     let timeout = Timeout::new(10);
 
-    let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
+    let debug_game = make_debug_game_handler(&mut allocator, &amount, &timeout);
     let init_state_node = (0, 0).to_clvm(&mut allocator).expect("should assemble");
     let init_state =
         Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
@@ -685,7 +685,7 @@ fn test_referee_can_move_on_chain() {
     let timeout = Timeout::new(10);
     let max_move_size = 100;
 
-    let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
+    let debug_game = make_debug_game_handler(&mut allocator, &amount, &timeout);
     let init_state_node = (0, 0).to_clvm(&mut allocator).expect("should assemble");
     let init_state =
         Rc::new(Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert"));
