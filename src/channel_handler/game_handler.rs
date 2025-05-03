@@ -85,16 +85,9 @@ fn run_code(
     env: NodePtr,
     _debug: bool,
 ) -> Result<NodePtr, Error> {
-    let r = run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
+    run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
         .into_gen()
-        .map(|r| r.1);
-    if r.is_err() {
-        debug!("run program {:?}", Program::from_nodeptr(allocator, code)?);
-        debug!("with args {:?}", Program::from_nodeptr(allocator, env)?);
-        debug!("r {r:?}");
-        todo!();
-    }
-    r
+        .map(|r| r.1)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
