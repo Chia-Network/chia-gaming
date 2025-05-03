@@ -16,6 +16,7 @@
 (import std.map)
 (import std.shatree)
 (import std.condition_codes)
+(import std.print)
 
 ;; Entire list is one of two parameters.
 ;; First one is the mod hash of the game handler.
@@ -25,37 +26,42 @@
 ;; Other hash is the mod hash of the game handler.
 (defmac CURRIED ()
   (q . (@ CURRIED
-          (MOD_HASH
-           PUZZLE
+          (MOVER_PUZZLE_HASH
+           WAITER_PUZZLE_HASH
            TIMEOUT
            AMOUNT
-           MY_TURN
-           SLASH_INFO
-           MOVER_PUZZLE_HASH
-           )
+           MOD_HASH
+           NONCE
+           MOVE
+           MAX_MOVE_SIZE
+           VALIDATION_INFO_HASH
+           MOVER_SHARE
+           PREVIOUS_VALIDATION_INFO_HASH)
           )
      )
   )
 
 (defun-inline curried_mod_hash ((CURRIED)) MOD_HASH)
-(defun-inline curried_puzzle ((CURRIED)) PUZZLE)
 (defun-inline curried_timeout ((CURRIED)) TIMEOUT)
 (defun-inline curried_amount ((CURRIED)) AMOUNT)
-(defun-inline curried_my_turn ((CURRIED)) MY_TURN)
-(defun-inline curried_slash_info ((CURRIED)) SLASH_INFO)
 (defun-inline curried_mover_puzzle_hash ((CURRIED)) MOVER_PUZZLE_HASH)
 
 (defun-inline curried_other_turn ((CURRIED))
   (list
-   MOD_HASH
-   PUZZLE
+   MOVER_PUZZLE_HASH
+   WAITER_PUZZLE_HASH
    TIMEOUT
    AMOUNT
-   (not MY_TURN)
-   SLASH_INFO
-   MOVER_PUZZLE_HASH
+   MOD_HASH
+   NONCE
+   MOVE
+   MAX_MOVE_SIZE
+   VALIDATION_INFO_HASH
+   MOVER_SHARE
+   PREVIOUS_VALIDATION_INFO_HASH
    )
   )
+
 
 (defmac move-validation-info ()
   (q . (@ move-validation-info
@@ -80,7 +86,7 @@
   (ash new-move -1)
   )
 
-(defun validation_program ((CURRIED) . validation-data)
+(defun validation_program (mod_hash (CURRIED) . validation-data)
   (assign
 
    cheated (logand (get-validation-move validation-data) 1)
@@ -92,7 +98,7 @@
    )
   )
 
-(defun do_my_turn ((CURRIED) readable_new_move amount split max_move entropy)
+(defun do_my_turn (PUZZLE (CURRIED) readable_new_move amount split max_move_size entropy)
   (assign
 
    ;; Readable move is a clvm structure that describes the move
@@ -116,13 +122,19 @@
    new_validation_program_hash
      (sha256 program-hash (shatree new_state))
 
+   val_program
+   (curry PUZZLE 2 PUZZLE CURRIED)
+
+   vph (shatree val_program)
+
    (list
     ;; Formatted move data
     (logior (logand 1 set_cheated) (ash set_share 1))
+
     ;; Validation program
-    (curry validation_program CURRIED)
-    ;; Validation program hash
-    new_validation_program_hash
+    val_program
+    vph
+
     ;; New state
     new_state
     ;; Max move size
@@ -130,13 +142,13 @@
     ;; Mover share
     set_share
     ;; Their turn program
-    (curry (curried_puzzle CURRIED) other_turn)
+    (curry PUZZLE 0 PUZZLE other_turn)
     ()
     )
    )
   )
 
-(defun do_their_turn ((CURRIED) amount last_state new_move new_validation_info_hash new_max_move_size new_mover_share)
+(defun do_their_turn (PUZZLE (CURRIED) amount last_state new_move new_validation_info_hash new_max_move_size new_mover_share)
   (assign
    set_cheated (logand new_move 1)
    set_share (get-move-share new_move)
@@ -144,8 +156,8 @@
    other_turn (curried_other_turn CURRIED)
 
    (if set_cheated
-       (c 2 (curried_slash_info CURRIED))
-       
+       (list 2 ())
+
        (list
         ;; Move type ok move == 0
         0
@@ -154,7 +166,7 @@
         ;; evidence if desired
         ()
         ;; new validation program
-        (curry (curried_puzzle CURRIED) other_turn)
+        (curry PUZZLE 1 PUZZLE other_turn)
         ;; output message
         "message data"
         )
@@ -162,18 +174,17 @@
    )
   )
 
-(export
- ((CURRIED) . args)
+(export (MY_TURN PUZZLE (CURRIED) . args)
  (if
   ;; Validation personality
-  (if (not (l (f args))) (= 1337 (f args)) ())
-  (validation_program CURRIED &rest (r args))
+  (= MY_TURN 2)
+  (validation_program &rest (print "validation args" args))
 
   ;; My turn personality
-  (curried_my_turn CURRIED)
-  (do_my_turn CURRIED &rest args)
+  (not MY_TURN)
+  (do_their_turn PUZZLE CURRIED &rest (print "their turn args" args))
 
   ;; Their turn personality
-  (do_their_turn CURRIED &rest args)
+  (do_my_turn PUZZLE CURRIED &rest (print "my turn args" args))
   )
  )

@@ -13,8 +13,8 @@ use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, Valid
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, Error, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash,
-    Sha256tree, Timeout,
+    AllocEncoder, Amount, GameID, Hash, PrivateKey, Program, Puzzle, PuzzleHash, Sha256tree,
+    Timeout,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidatorResult};
 use crate::referee::RefereeMaker;
@@ -29,7 +29,6 @@ pub struct DebugGamePrograms {
 
 pub fn make_debug_game_handler(
     allocator: &mut AllocEncoder,
-    identity: &ChiaIdentity,
     amount: &Amount,
     timeout: &Timeout,
 ) -> DebugGamePrograms {
@@ -37,28 +36,28 @@ pub fn make_debug_game_handler(
         read_hex_puzzle(allocator, "clsp/test/debug_game_handler.hex").expect("should be readable");
     let game_handler_mod_hash = debug_game_handler.sha256tree(allocator);
     let make_curried_game_handler = |my_turn: bool| {
-        let aggsig = Aggsig::default();
         CurriedProgram {
             program: debug_game_handler.clone(),
-            args: clvm_curried_args!((
-                game_handler_mod_hash.clone(),
+            args: clvm_curried_args!(
+                my_turn,
+                debug_game_handler.clone(),
                 (
-                    debug_game_handler.clone(),
+                    (), // mover puzzle hash
                     (
-                        timeout.clone(),
+                        (), // waiter puzzle hash
                         (
-                            amount.clone(),
+                            timeout.clone(),
                             (
-                                my_turn,
+                                amount.clone(),
                                 (
-                                    ((), (aggsig, ())),
-                                    (identity.puzzle_hash.clone(), ()) // slash info
+                                    game_handler_mod_hash.clone(),
+                                    (0, (0, (100, ((), ((), ((), ()),)))))
                                 )
                             )
                         )
                     )
                 )
-            )),
+            ),
         }
     };
 
@@ -200,7 +199,7 @@ fn test_referee_smoke() {
     let amount = Amount::new(100);
     let timeout = Timeout::new(1000);
 
-    let debug_game = make_debug_game_handler(&mut allocator, &my_identity, &amount, &timeout);
+    let debug_game = make_debug_game_handler(&mut allocator, &amount, &timeout);
     let init_state_node = ((), ()).to_clvm(&mut allocator).expect("should assemble");
     let init_state =
         Program::from_nodeptr(&mut allocator, init_state_node).expect("should convert");
@@ -255,12 +254,6 @@ fn test_referee_smoke() {
         None,
     );
     debug!("their move result {their_move_result:?}");
-    if let Err(Error::StrErr(s)) = their_move_result {
-        assert!(s.contains("slash"));
-    } else {
-        unreachable!();
-    }
-
     let (new_ref, their_move_local_update) = reftest
         .their_referee
         .their_turn_move_off_chain(&mut allocator, &my_move_wire_data.details, 0, None)
@@ -273,6 +266,7 @@ fn test_referee_smoke() {
     let validator_result = reftest
         .their_referee
         .run_validator_for_their_move(&mut allocator, nil);
+    debug!("validator_result {validator_result:?}");
     assert!(matches!(validator_result, Ok(ValidatorResult::MoveOk)));
 
     assert!(reftest.my_referee.processing_my_turn());

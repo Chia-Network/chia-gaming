@@ -322,8 +322,8 @@ pub struct InternalValidatorArgs {
     pub amount: Amount,
     pub timeout: Timeout,
     pub max_move_size: usize,
-    pub referee_hash: PuzzleHash,
     pub move_args: ValidatorMoveArgs,
+    pub nonce: usize,
 }
 
 impl InternalValidatorArgs {
@@ -338,27 +338,34 @@ impl InternalValidatorArgs {
             .encode_atom(clvm_traits::Atom::Borrowed(&self.move_made))
             .into_gen()?;
         (
-            validator_mod_hash,
+            validator_mod_hash.clone(),
             (
                 (
-                    Node(move_node),
+                    self.mover_puzzle_hash.clone(),
                     (
-                        self.new_validation_info_hash.clone(),
+                        self.waiter_puzzle_hash.clone(),
                         (
-                            self.mover_share.clone(),
+                            self.timeout.clone(),
                             (
-                                self.previous_validation_info_hash.clone(),
+                                self.amount.clone(),
                                 (
-                                    self.mover_puzzle_hash.clone(),
+                                    validator_mod_hash,
                                     (
-                                        self.waiter_puzzle_hash.clone(),
+                                        self.nonce,
                                         (
-                                            self.amount.clone(),
+                                            Node(move_node),
                                             (
-                                                self.timeout.clone(),
+                                                self.max_move_size,
                                                 (
-                                                    self.max_move_size,
-                                                    (self.referee_hash.clone(), ()),
+                                                    self.new_validation_info_hash.clone(),
+                                                    (
+                                                        self.mover_share.clone(),
+                                                        (
+                                                            self.previous_validation_info_hash
+                                                                .clone(),
+                                                            (),
+                                                        ),
+                                                    ),
                                                 ),
                                             ),
                                         ),
