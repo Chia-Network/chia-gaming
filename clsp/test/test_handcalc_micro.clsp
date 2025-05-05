@@ -1,0 +1,28 @@
+(include *standard-cl-23*)
+(import util.prepend_count)
+(import games.calpoker-v0.handcalc)
+
+(export (kind . arguments)
+  (if
+     (= kind "prepend_count")
+     (prepend_count &rest arguments)
+
+     (= kind "pull_indices")
+     (pull_indices &rest arguments)
+
+     (= kind "pull_out_straight")
+     (pull_out_straight &rest arguments)
+
+     (= kind "find_straight_high")
+     (find_straight_high &rest arguments)
+
+     (= kind "straight_indices")
+     (straight_indices &rest arguments)
+
+     (= kind "pull_suit")
+     (pull_suit &rest arguments)
+
+     ;; Otherwise
+     (handcalc &rest arguments)
+     )
+  )
