@@ -160,5 +160,6 @@ fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDriver
 fn test_debug_game_factory() {
     let mut allocator = AllocEncoder::new();
     let debug_games = make_debug_games(&mut allocator).expect("good");
-    todo!();
+    assert_eq!(256, debug_games[0].game.initial_max_move_size);
+    assert_eq!(debug_games[0].game.initial_max_move_size, debug_games[1].game.initial_max_move_size);
 }
