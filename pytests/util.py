@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union, TypeVar, Generic
 
 from clvm_types.program import Program
 
-calpoker_clsp_dir = Path("../clsp/")
+calpoker_clsp_dir = Path("../clsp/games/calpoker-v1")
 calpoker_onchain_clsp_dir = Path("../clsp/games/calpoker-v1/onchain")
 
 # List of validator program names, sans "clsp" extension
