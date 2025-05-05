@@ -1,0 +1,25 @@
+(include *standard-cl-23*)
+
+(import onchain.calpoker.b exposing (program_hash as bhash))
+(import onchain.game_codes)
+(import std.assert)
+(import std.and)
+(import std.if_any_fail)
+
+; Bob runs this program to determine the next state, and to validate the previous state
+; state is empty
+; move is alice commit to a salted word
+; evidence is empty
+; previous_validation_program below is the object whose hash is mod_hash
+(export (mod_hash
+    (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        previous_state previous_validation_program mover_puzzle solution evidence)
+
+    ;; First their turn for the second player
+    (if_any_fail
+        (= (strlen MOVE) 32)
+        (list SLASH () "A slash" MOVE "max_move_size" MAX_MOVE_SIZE)
+        (list MAKE_MOVE bhash MOVE 16 "A move"); MAKE_MOVE case: b_hash state(==MOVE) max_move_size
+    )
+)

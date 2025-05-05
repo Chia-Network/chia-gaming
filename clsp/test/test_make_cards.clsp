@@ -1,5 +1,5 @@
 (include *standard-cl-23*)
-(import onchain.calpoker.make_cards exposing make_cards)
+(import games.calpoker-v0.onchain.make_cards exposing make_cards)
 
 (export (randomness)
   (make_cards randomness)

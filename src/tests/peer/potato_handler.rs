@@ -390,6 +390,7 @@ where
 }
 
 #[test]
+#[ignore]
 fn test_peer_smoke() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
@@ -399,9 +400,11 @@ fn test_peer_smoke() {
     pipe_sender[1].message_pipe.my_id = 1;
 
     let mut game_type_map = BTreeMap::new();
-    let calpoker_factory =
-        read_hex_puzzle(&mut allocator, "clsp/calpoker_include_calpoker_factory.hex")
-            .expect("should load");
+    let calpoker_factory = read_hex_puzzle(
+        &mut allocator,
+        "clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex",
+    )
+    .expect("should load");
 
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),

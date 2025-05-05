@@ -1,6 +1,6 @@
 use clvmr::allocator::NodePtr;
 
-use crate::channel_handler::types::StateUpdateProgram;
+use crate::channel_handler::types::ValidationProgram;
 use crate::common::types::{AllocEncoder, Hash, Node, Sha256Input, Sha256tree};
 
 /// The pair of state and validation program is the source of the validation hash
@@ -8,12 +8,12 @@ use crate::common::types::{AllocEncoder, Hash, Node, Sha256Input, Sha256tree};
 pub enum ValidationInfo {
     FromProgram {
         game_state: NodePtr,
-        state_update_program: StateUpdateProgram,
+        validation_program: ValidationProgram,
         hash: Hash,
     },
     FromProgramHash {
         game_state: NodePtr,
-        state_update_program_hash: Hash,
+        validation_program_hash: Hash,
         hash: Hash,
     },
     FromHash {
@@ -24,36 +24,36 @@ pub enum ValidationInfo {
 impl ValidationInfo {
     pub fn new(
         allocator: &mut AllocEncoder,
-        state_update_program: StateUpdateProgram,
+        validation_program: ValidationProgram,
         game_state: NodePtr,
     ) -> Self {
         let hash = Sha256Input::Array(vec![
-            Sha256Input::Hash(state_update_program.hash()),
+            Sha256Input::Hash(validation_program.hash()),
             Sha256Input::Hash(Node(game_state).sha256tree(allocator).hash()),
         ])
         .hash();
         ValidationInfo::FromProgram {
             game_state,
-            state_update_program,
+            validation_program,
             hash,
         }
     }
     pub fn new_hash(hash: Hash) -> Self {
         ValidationInfo::FromHash { hash }
     }
-    pub fn new_from_state_update_program_hash_and_state(
+    pub fn new_from_validation_program_hash_and_state(
         allocator: &mut AllocEncoder,
-        state_update_program_hash: Hash,
+        validation_program_hash: Hash,
         game_state: NodePtr,
     ) -> Self {
         let hash = Sha256Input::Array(vec![
-            Sha256Input::Hash(&state_update_program_hash),
+            Sha256Input::Hash(&validation_program_hash),
             Sha256Input::Hash(Node(game_state).sha256tree(allocator).hash()),
         ])
         .hash();
         ValidationInfo::FromProgramHash {
             game_state,
-            state_update_program_hash,
+            validation_program_hash,
             hash,
         }
     }

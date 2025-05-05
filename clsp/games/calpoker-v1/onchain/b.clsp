@@ -1,0 +1,22 @@
+(include *standard-cl-23*)
+
+(import onchain.calpoker.c exposing (program_hash as chash))
+(import onchain.game_codes)
+(import std.and)
+(import std.assert)
+(import std.if_any_fail)
+(import std.shatree)
+
+;; old_state is the initial state of ()
+; move is bob_seed
+;; We receive alice's commit, producing a state consisting only of alice' commit.
+; new state = sliace commit + bob_+seed
+(export (mod_hash
+    (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        alice_commit previous_validation_program mover_puzzle solution evidence)
+    (if (= (strlen MOVE) 16)
+        (list MAKE_MOVE chash (list alice_commit MOVE) 48 "B" MOVE)
+        (list SLASH () "B slash" MOVE)
+    )
+)

@@ -1,0 +1,34 @@
+(import games.calpoker-v0.onchain.make_card)
+(import std.assert)
+(import std.popcount)
+
+(defun split_cards (mask cards)
+    (split_cards_inner mask cards 0 0)
+)
+
+; Use mask to determine which cards are prepended to leftcards and which to rightcards
+(defun split_cards_inner (mask cards leftcards rightcards)
+    (if (not cards)
+        (list leftcards rightcards)
+        (if (logand mask 1)
+            (split_cards_inner (lsh mask -1) (r cards) leftcards (c (f cards) rightcards))
+            (split_cards_inner (lsh mask -1) (r cards) (c (f cards) leftcards) rightcards)
+        )
+    )
+)
+
+(defun pull_out_cards_inner (selections cards)
+    (if (not cards)
+        0
+        (if (logand selections 1)
+            (c (make_card (f cards)) (pull_out_cards (lsh -1 selections) (r cards)))
+            (pull_out_cards (lsh -1 selections) (r cards))
+        )
+    )
+)
+
+(defun pull_out_cards args
+    (assert (= (popcount (f args)) 5)
+        (pull_out_cards_inner &rest args)
+    )
+)

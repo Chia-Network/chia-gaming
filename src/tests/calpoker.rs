@@ -14,7 +14,7 @@ use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
-use crate::common::types::{Amount, Program};
+use crate::common::types::Amount;
 use crate::common::types::{AllocEncoder, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
@@ -26,24 +26,21 @@ use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choi
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
-use crate::referee::types::{StateUpdateResult};
 #[cfg(feature = "sim-tests")]
 use crate::shutdown::BasicShutdownConditions;
-use crate::tests::game::{GameAction};
+use crate::tests::game::GameAction;
 #[cfg(feature = "sim-tests")]
 use crate::tests::game::GameActionResult;
 
 #[cfg(feature = "sim-tests")]
 use crate::tests::simenv::SimulatorEnvironment;
 
-pub const CALPOKER_HEX_FILE: &'static str = "clsp/calpoker_include_calpoker_template.hex";
-
 #[cfg(feature = "sim-tests")]
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
     Game::new(
         allocator,
         game_id,
-        CALPOKER_HEX_FILE,
+        "clsp/games/calpoker-v0/calpoker_include_calpoker_template.hex",
     )
 }
 
@@ -270,35 +267,6 @@ fn test_play_calpoker_end_game_reward() {
 
     debug!("running moves {moves:?}");
     let _game_action_results = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
-}
-
-// Test calpoker only using the state update programs.
-// We can now drive the game just via the state update program and I've done more
-// to isolate it now that it can be separated.
-#[test]
-fn test_play_calpoker_using_state_update() {
-    // let mut allocator = AllocEncoder::new();
-    // let game_id = GameID::from_bytes(b"calpoker");
-    // let game = Game::new(
-    //     &mut allocator,
-    //     game_id,
-    //     CALPOKER_HEX_FILE
-    // ).unwrap();
-    // let moves: &[GameStateMove] = &[
-    //     GameStateMove {
-    //         entropy: vec![],
-    //         move_data: vec![],
-    //     }
-    // ];
-    // let contributions = &[Amount::new(100), Amount::new(100)];
-    // let result = play_game_via_state_update(
-    //     &mut allocator,
-    //     &game,
-    //     contributions,
-    //     moves.iter()
-    // ).expect("should play");
-    // assert_eq!(result[result.len()-1], StateUpdateResult::MoveOk(Rc::new(Program::from_hex("80").unwrap()), 0));
-    todo!();
 }
 
 // Bram: slashing tests

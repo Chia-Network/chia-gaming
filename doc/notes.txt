@@ -1,0 +1,220 @@
+Signal error when an assign overlaps an argument.
+
+---
+
+- peterson's algo potato handler.  each potato handler message should indicate whether
+  subsequent to processing that, we need the potato.  there is an "interested" message
+  which indicates or renews the idea that we need the potato.  We can spontaneously need
+  the potato when a ui message comes in that needs to make a move.
+
+  if we have the potato and we receive interested, it is never spuriuos.  we should either
+  send the next game message our we have or do send_potato_nil.  after processing a move
+  from the other side, we should look at the "subsequently need potato" flag and either
+  1) send our next action if we have one or 2) do send_potato_nil.  An action is never
+  withdrawn from the queue, only eventually sent so we can treat any time interested or
+  "subsequent interest" is received as a call to immediate action to cause the potato
+  to go to the other person.  "subsequently need potato" is set when there is another
+  action in the game action queue after this one.
+
+- shutdown state change re: bram.  shutdown after games all finished.  ok to shut down
+  when a game has just started.  same party always starts.
+
+- add short circuit for channel coin clean shutdown.
+
+----
+
+- compiler: don't use the stack for importing modules, change to a queue.
+
+- Tell the user they don't need to export from clinc if an export shows up there.
+
+after my turn handler is called, we get a new state and new max move size by calling the
+validation program with nil evidence.
+
+turn handler could do this if it needs.
+
+mover share is being made the second result in a my turn handler.
+
+
+
+## intention for state change with validation programs:
+
+- my turn handlers get pre-sates (should be given the same state as was passed to the their
+turn handler).
+
+- you have to be given the old state in a my turn handler.
+                                      
+always given in all cases both my turn and their turn handler take a state and a move.
+the state is always the state _before_ the move.
+
+we store a state result from the validation program and use it on the _following_ turn.
+
+on a their turn handler, we have an old state and a new state.  The one stored and the one
+returned from the validation program just now.
+
+- make an exception down the wire ...
+
+a thing we should do in the referee:
+
+ - when the validation info hash is nil, we should not check the equality of the state.
+
+ - we've also added "validation program hash" can be nil.  that too as below i think.
+
+ - state is purely advisory when validation_info_hash is nil.
+
+
+
+   values associated with the game    
+      state
+                                       
+ my turn                               
+  -----> move ----> +----------------+ 
+                    | goes into my   |
+                    | turn handler   |
+                    | with state     | 
+                    +----------------+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+validation info hash and program can be nil in move.  we shouldn't compute if so.
+will have to explore what that means.
+
+today:
+
+- change api to make state an _output_ from the validation program.  in this scenario, the
+  validation program is called with nil evidence first, that produces state if slash is not
+  allowed, otherwise conditions.  if slash was not allowed, we pass the state from here into
+  the their turn handler, then use its evidence list for further validation program calls.
+
+new items:
+
+- add an "error" move result from my move handler that can return diagnostic information about
+a move the handler refuses to make.
+
+- add a list of evidences to try for a their turn handler.
+
+items for now:
+
+- remove timeout and gameid object from serialized version of game start (move to end, make optional)
+
+- remove amount from params to game factory, use my contribution and their contribution instead
+
+- stop using gnu style :-(
+
+- figure out whether the mover share and max move size make sense passed into a my turn
+  handler.
+
+- amount / 2 new share in calpoker.
+
+- indicate whether returning a my turn or their turn handler in game start from factory
+
+- pass in whether i'm initiator to factory
+
+- change amount to my_contrib vs their_contrib in factory
+
+- add validation program hash in result to factory result
+
+---- Slashing
+
+calpoker_template contains pokera and pokera_hash
+
+game start contains pokera
+
+Driver a gives pokerb and pokerb_hash and curries driver b
+
+pokera needs to be called with pokerb_hash as the program part of new_validation_hash
+
+ergo: we need the outcome args when calling validation.
+
+when alice sends a move to bob, alice needs to predict the state change bob will undergo
+from bob's initial state to after alice's first move (possibly not necessarily the same state as alice has).
+
+
+----------------------
+
+
+false made move
+true made move but it was corrupted, false went on chain
+
+false _sent_ the move [235,4, ...]
+true _received_ the move [235, 4, ...]
+
+false observes the on chain and gets redo move
+
+moves in order:
+
+false [2024-12-06T02:50:42Z DEBUG chia_gaming::referee] 4 accept move GameMoveDetails { basic: GameMoveStateInfo { move_made: [228, 51, 106, 15, 1, 95, 57, 140, 102, 251, 43, 87, 191, 74, 24, 235, 81, 146, 39, 47, 74, 113, 222, 188, 200, 179, 23, 9, 91, 236, 102, 115], mover_share: Amount(0), max_move_size: 16 }, validation_info_hash: Hash([225, 248, 52, 37, 59, 141, 136, 47, 102, 156, 68, 126, 135, 206, 255, 105, 123, 120, 97, 237, 245, 169, 135, 3, 167, 99, 216, 234, 119, 82, 128, 113]) }
+true  [2024-12-06T02:51:01Z DEBUG chia_gaming::referee] 5 accept move GameMoveDetails { basic: GameMoveStateInfo { move_made: [206, 23, 61, 241, 209, 167, 242, 133, 79, 135, 212, 140, 238, 11, 23, 172], mover_share: Amount(0), max_move_size: 48 }, validation_info_hash: Hash([10, 219, 45, 202, 125, 6, 169, 126, 72, 201, 16, 167, 31, 199, 10, 109, 242, 217, 211, 90, 133, 145, 74, 153, 100, 223, 240, 96, 41, 18, 140, 27]) }
+false [2024-12-06T02:51:06Z DEBUG chia_gaming::referee] 6 accept move GameMoveDetails { basic: GameMoveStateInfo { move_made: [235, 4, 194, 30, 62, 229, 141, 27, 73, 78, 11, 91, 230, 142, 229, 229, 197, 161, 170, 76, 22, 251, 145, 80, 223, 204, 143, 178, 163, 243, 48, 205, 112, 212, 178, 161, 162, 147, 54, 153, 86, 29, 226, 98, 119, 208, 152, 90], mover_share: Amount(0), max_move_size: 1 }, validation_info_hash: Hash([58, 85, 189, 166, 34, 191, 133, 37, 51, 64, 212, 165, 139, 58, 34, 50, 240, 241, 72, 139, 194, 101, 122, 196, 110, 240, 155, 148, 53, 173, 128, 255]) }
+true  [2024-12-06T02:51:12Z DEBUG chia_gaming::referee] 7 accept move GameMoveDetails { basic: GameMoveStateInfo { move_made: [0, 170], mover_share: Amount(0), max_move_size: 17 }, validation_info_hash: Hash([188, 173, 169, 9, 236, 127, 33, 120, 17, 211, 148, 14, 79, 8, 48, 76, 225, 15, 10, 114, 71, 157, 55, 90, 235, 242, 246, 159, 180, 188, 163, 210]) } -- move never arrived.
+-- true went on chain to move 5 but retained state 7 that's the bug.
+
+at time of transition:
+false said "not my turn"
+true  said "my turn"
+
+false redid move 6 (which was it's own turn)
+false replayed move transaction: -> now it's true's turn
+Rem([[235, 4, 194, 30, 62, 229, 141, 27, 73, 78, 11, 91, 230, 142, 229, 229, 197, 161, 170, 76, 22, 251, 145, 80, 223, 204, 143, 178, 163, 243, 48, 205, 112, 212, 178, 161, 162, 147, 54, 153, 86, 29, 226, 98, 119, 208, 152, 90], [58, 85, 189, 166, 34, 191, 133, 37, 51, 64, 212, 165, 139, 58, 34, 50, 240, 241, 72, 139, 194, 101, 122, 196, 110, 240, 155, 148, 53, 173, 128, 255], [], [1]])
+
+true --
+[2024-12-09T10:23:55Z DEBUG chia_gaming::referee] stored state number 7
+[2024-12-09T10:23:55Z DEBUG chia_gaming::referee] spend is a repeat true
+[2024-12-09T10:23:55Z DEBUG chia_gaming::referee] do their turn GameMoveDetails { basic: GameM
+
+false sees the spend and should skip it
+
+true  [2024-12-06T02:51:18Z DEBUG chia_gaming::referee] 7 accept move GameMoveDetails { basic: GameMoveStateInfo { move_made: [43, 4, 51, 225, 61, 73, 50, 14, 241, 13, 228, 2, 91, 121, 59, 51, 0, 170], mover_share: Amount(0), max_move_size: 0 }, validation_info_hash: Hash([99, 41, 89, 243, 22, 65, 7, 90, 166, 132, 141, 145, 100, 145, 35, 237, 179, 36, 172, 164, 130, 6, 198, 5, 234, 11, 190, 67, 89, 13, 206, 236]) }
+
+true sees the spend, takes the redundant update to the state it knows.
+
+true does ON CHAIN OUR MOVE next.
+
+[238, 137 ...] appears first as the puzzle hash in the move_result of true SEND_POTATO_MOVE 5.
+and it is the target given in the unroll.  RedoMove creates this puzzle hash.
+
+
+wallet extra_spends parameter.
+
+- Chialisp separate compilation / compilation units / relations / linking
+
+- Alice vs Bob puzzle hash in accuse case of referee.clsp at (4401) see (4491) and (4492)
+
+- Need to know at startup what the bankroll sizes are (negotiated earlier in the
+channel setup).  Need to know who started it at game construction time.
+
+factor takes "recognized game types", my and the other's bankroll type, who started
+the connection.
+
+Krunk:
+
+begin round includes own mod hash into the state so that the mid round evaluator
+can grab it (ensures it's in there via prediction).
+
+assert like macros:
+
+assert_fail -> if clause fails then return nil, else throw
+if_fail -> clauses iftrue iffalse -> (if (and clauses) iffalse iftrue)
+
+the person challenging is the person who didn't make a move <-- add comment
