@@ -108,7 +108,7 @@ it('loads', async () => {
     let identity2 = chia_identity('test2');
     console.log(identity1, identity2);
 
-    let calpoker_hex = fs.readFileSync(rooted('clsp/calpoker_include_calpoker_factory.hex'),'utf8');
+    let calpoker_hex = fs.readFileSync(rooted('clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex'),'utf8');
     let env = {
         game_types: {
             "calpoker": calpoker_hex
