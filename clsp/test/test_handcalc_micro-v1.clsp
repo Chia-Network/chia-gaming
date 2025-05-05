@@ -1,14 +1,9 @@
 (include *standard-cl-23*)
-<<<<<<< HEAD:clsp/test/test_handcalc_micro-v1.clsp
 (import prepend_count)
 (import handcalc)
 (import onchain.calpoker.make_cards)
 (import onchain.calpoker.onehandcalc)
 (import onchain.calpoker.arrange_cards)
-=======
-(import util.prepend_count)
-(import games.calpoker-v0.handcalc)
->>>>>>> main:clsp/test/test_handcalc_micro.clsp
 
 (export (kind . arguments)
   (if
