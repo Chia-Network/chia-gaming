@@ -13,7 +13,7 @@ use crate::channel_handler::GameStartInfo;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    GameID, Hash, IntoErr, Program, Timeout,
+    GameID, Hash, IntoErr, Program, Puzzle, Timeout,
 };
 
 pub struct Game {
@@ -30,12 +30,11 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(
+    pub fn new_program(
         allocator: &mut AllocEncoder,
         game_id: GameID,
-        game_hex_file: &str,
+        poker_generator: Puzzle,
     ) -> Result<Game, Error> {
-        let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
         let nil = allocator
             .encode_atom(clvm_traits::Atom::Borrowed(&[]))
             .into_gen()?;
@@ -108,6 +107,15 @@ impl Game {
             initial_state,
             initial_mover_share_proportion,
         })
+    }
+
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        game_id: GameID,
+        game_hex_file: &str,
+    ) -> Result<Game, Error> {
+        let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
+        Game::new_program(allocator, game_id, poker_generator.clone())
     }
 
     /// Return a pair of GameStartInfo which can be used as the starts for two

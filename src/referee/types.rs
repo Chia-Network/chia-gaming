@@ -192,7 +192,7 @@ impl StateUpdateResult {
 ///  evidence
 ///  )
 #[derive(Eq, PartialEq, Debug, Clone)]
-pub struct RefereePuzzleArgs<StateP: HasStateUpdateProgram> {
+pub struct RefereePuzzleArgs {
     pub mover_puzzle_hash: PuzzleHash,
     pub waiter_puzzle_hash: PuzzleHash,
     pub timeout: Timeout,
@@ -200,7 +200,6 @@ pub struct RefereePuzzleArgs<StateP: HasStateUpdateProgram> {
     pub nonce: usize,
     pub game_move: GameMoveDetails,
     pub max_move_size: usize,
-    pub validation_program: StateP,
     pub previous_validation_info_hash: Option<Hash>,
     pub referee_coin_puzzle_hash: PuzzleHash,
 }
@@ -209,13 +208,12 @@ pub struct RefereePuzzleArgs<StateP: HasStateUpdateProgram> {
         their_puzzle_hash: &PuzzleHash,
 */
 
-impl<StateP: HasStateUpdateProgram + Clone> RefereePuzzleArgs<StateP> {
+impl RefereePuzzleArgs {
     pub fn new(
         fixed_info: &RMFixed,
         initial_move: &GameMoveDetails,
         max_move_size: usize,
         previous_validation_info_hash: Option<&Hash>,
-        validation_program: StateP,
         my_turn: bool,
     ) -> Self {
         debug!(
@@ -241,20 +239,19 @@ impl<StateP: HasStateUpdateProgram + Clone> RefereePuzzleArgs<StateP> {
             amount: fixed_info.amount.clone(),
             nonce: fixed_info.nonce,
             max_move_size,
-            validation_program,
             referee_coin_puzzle_hash: fixed_info.referee_coin_puzzle_hash.clone(),
             game_move: initial_move.clone(),
             previous_validation_info_hash: previous_validation_info_hash.cloned(),
         }
     }
 
-    fn off_chain(&self) -> RefereePuzzleArgs<StateP> {
-        let mut new_result: RefereePuzzleArgs<StateP> = self.clone();
+    fn off_chain(&self) -> RefereePuzzleArgs {
+        let mut new_result: RefereePuzzleArgs = self.clone();
         new_result.waiter_puzzle_hash = PuzzleHash::default();
         new_result
     }
 
-    pub fn neutralize(&self) -> RefereePuzzleArgs<StateUpdateProgram> {
+    pub fn neutralize(&self) -> RefereePuzzleArgs {
         RefereePuzzleArgs {
             mover_puzzle_hash: self.mover_puzzle_hash.clone(),
             waiter_puzzle_hash: self.waiter_puzzle_hash.clone(),
@@ -263,13 +260,12 @@ impl<StateP: HasStateUpdateProgram + Clone> RefereePuzzleArgs<StateP> {
             nonce: self.nonce,
             game_move: self.game_move.clone(),
             max_move_size: self.max_move_size,
-            validation_program: self.validation_program.p(),
             previous_validation_info_hash: self.previous_validation_info_hash.clone(),
             referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
         }
     }
 
-    pub fn fake_mine(&self) -> RefereePuzzleArgs<MyStateUpdateProgram> {
+    pub fn fake_mine(&self) -> RefereePuzzleArgs {
         RefereePuzzleArgs {
             mover_puzzle_hash: self.mover_puzzle_hash.clone(),
             waiter_puzzle_hash: self.waiter_puzzle_hash.clone(),
@@ -278,13 +274,12 @@ impl<StateP: HasStateUpdateProgram + Clone> RefereePuzzleArgs<StateP> {
             nonce: self.nonce,
             game_move: self.game_move.clone(),
             max_move_size: self.max_move_size,
-            validation_program: MyStateUpdateProgram(self.validation_program.p()),
             previous_validation_info_hash: self.previous_validation_info_hash.clone(),
             referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
         }
     }
 
-    pub fn fake_theirs(&self) -> RefereePuzzleArgs<TheirStateUpdateProgram> {
+    pub fn fake_theirs(&self) -> RefereePuzzleArgs {
         RefereePuzzleArgs {
             mover_puzzle_hash: self.mover_puzzle_hash.clone(),
             waiter_puzzle_hash: self.waiter_puzzle_hash.clone(),
@@ -293,14 +288,13 @@ impl<StateP: HasStateUpdateProgram + Clone> RefereePuzzleArgs<StateP> {
             nonce: self.nonce,
             game_move: self.game_move.clone(),
             max_move_size: self.max_move_size,
-            validation_program: TheirStateUpdateProgram(self.validation_program.p()),
             previous_validation_info_hash: self.previous_validation_info_hash.clone(),
             referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
         }
     }
 }
 
-impl<E: ClvmEncoder<Node = NodePtr>, S: HasStateUpdateProgram> ToClvm<E> for RefereePuzzleArgs<S>
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for RefereePuzzleArgs
 where
     NodePtr: ToClvm<E>,
 {
@@ -331,7 +325,7 @@ where
 pub fn curry_referee_puzzle_hash<StateP: HasStateUpdateProgram>(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle_hash: &PuzzleHash,
-    args: &RefereePuzzleArgs<StateP>,
+    args: &RefereePuzzleArgs,
 ) -> Result<PuzzleHash, Error> {
     let combined_args = args.to_clvm(allocator).into_gen()?;
     let arg_hash = Node(combined_args).sha256tree(allocator);
@@ -347,7 +341,7 @@ pub fn curry_referee_puzzle_hash<StateP: HasStateUpdateProgram>(
 pub fn curry_referee_puzzle<StateP: HasStateUpdateProgram>(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle: &Puzzle,
-    args: &RefereePuzzleArgs<StateP>,
+    args: &RefereePuzzleArgs,
 ) -> Result<Puzzle, Error> {
     let combined_args = args.to_clvm(allocator).into_gen()?;
     debug!(
@@ -407,26 +401,20 @@ impl StateUpdateMoveArgs {
     }
 }
 
-pub struct InternalStateUpdateArgs<StateP: HasStateUpdateProgram> {
+pub struct InternalStateUpdateArgs {
     pub validation_program: StateUpdateProgram,
-    pub referee_args: Rc<RefereePuzzleArgs<StateP>>,
+    pub referee_args: Rc<RefereePuzzleArgs>,
     pub state_update_args: StateUpdateMoveArgs,
 }
 
-impl<StateP: HasStateUpdateProgram + Clone> InternalStateUpdateArgs<StateP> {
+impl InternalStateUpdateArgs {
     pub fn to_nodeptr(
         &self,
         allocator: &mut AllocEncoder,
-        validator_mod_hash: PuzzleHash,
     ) -> Result<NodePtr, Error> {
-        let validation_program_node = self
-            .referee_args
-            .validation_program
-            .p()
+        let validator_mod_hash = self.validation_program.sha256tree(allocator);
+        let validation_program_node = self.validation_program
             .to_nodeptr(allocator)?;
-        let converted_vma = self
-            .state_update_args
-            .to_nodeptr(allocator, validation_program_node)?;
         (
             validator_mod_hash,
             (
@@ -434,7 +422,7 @@ impl<StateP: HasStateUpdateProgram + Clone> InternalStateUpdateArgs<StateP> {
                     .off_chain()
                     .to_clvm(allocator)
                     .into_gen()?,
-                Node(converted_vma),
+                self.validation_program.clone(),
             ),
         )
             .to_clvm(allocator)
@@ -442,13 +430,11 @@ impl<StateP: HasStateUpdateProgram + Clone> InternalStateUpdateArgs<StateP> {
     }
 
     pub fn run(&self, allocator: &mut AllocEncoder) -> Result<StateUpdateResult, Error> {
-        let neutral_validation = self.referee_args.validation_program.p();
-        let validation_program_mod_hash = neutral_validation.hash();
+        let validation_program_mod_hash = self.validation_program.hash();
         debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
         let validation_program_nodeptr = self.validation_program.p().to_nodeptr(allocator)?;
         let validator_full_args_node = self.to_nodeptr(
             allocator,
-            PuzzleHash::from_hash(validation_program_mod_hash.clone()),
         )?;
         let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
         let node_ptr = self.state_update_args.state.to_clvm(allocator).into_gen()?;

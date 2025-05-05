@@ -19,12 +19,12 @@ use crate::referee::types::{
 pub struct RefereeByTurn {
 }
 
-pub type StateUpdateProgramRef = Rc<RefereePuzzleArgs<StateUpdateProgram>>;
+pub type StateUpdateProgramRef = Rc<RefereePuzzleArgs>;
 
 pub trait RefereeInterface {
-    fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs<StateUpdateProgram>>;
+    fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs>;
 
-    fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs<StateUpdateProgram>>;
+    fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs>;
 
     fn is_my_turn(&self) -> bool;
 
@@ -115,7 +115,7 @@ pub trait RefereeInterface {
         _coin_string: &CoinString,
         _always_produce_transaction: bool,
         _puzzle: Puzzle,
-        _targs: &RefereePuzzleArgs<StateUpdateProgram>,
+        _targs: &RefereePuzzleArgs,
         _args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error>;
 
@@ -171,11 +171,11 @@ impl RefereeByTurn {
 }
 
 impl RefereeInterface for RefereeByTurn {
-    fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs<StateUpdateProgram>> {
+    fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         todo!();
     }
 
-    fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs<StateUpdateProgram>> {
+    fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         todo!();
     }
 
@@ -308,7 +308,7 @@ impl RefereeInterface for RefereeByTurn {
         _coin_string: &CoinString,
         _always_produce_transaction: bool,
         _puzzle: Puzzle,
-        _targs: &RefereePuzzleArgs<StateUpdateProgram>,
+        _targs: &RefereePuzzleArgs,
         _args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
         todo!();
