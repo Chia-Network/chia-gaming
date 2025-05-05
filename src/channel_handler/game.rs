@@ -20,6 +20,7 @@ use crate::common::types::{
 pub struct Game {
     pub id: GameID,
     pub initial_mover_handler: GameHandler,
+    pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
     pub initial_validation_program: StateUpdateProgram,
     pub initial_validation_program_hash: Hash,
@@ -120,10 +121,10 @@ impl Game {
         let initial_state_node = template_list[7];
         let initial_state = Rc::new(Program::from_nodeptr(allocator, initial_state_node)?);
         let initial_move = atom_from_clvm(allocator, template_list[8]).unwrap_or_default();
-        let initial_max_move_size = atom_from_clvm(allocator, template_list[8])
+        let initial_max_move_size = atom_from_clvm(allocator, template_list[9])
             .and_then(|a| usize_from_atom(&a))
             .expect("should be an atom");
-        let initial_mover_share = atom_from_clvm(allocator, template_list[9])
+        let initial_mover_share = atom_from_clvm(allocator, template_list[10])
             .and_then(|a| u64_from_atom(&a))
             .expect("should be an atom");
         Ok(Game {
@@ -132,6 +133,7 @@ impl Game {
             initial_validation_program,
             initial_validation_program_hash,
             initial_state,
+            initial_move,
             initial_mover_share,
             initial_mover_handler,
         })
@@ -158,6 +160,7 @@ impl Game {
     ) -> (GameStartInfo, GameStartInfo) {
         let amount = our_contribution.clone() + their_contribution.clone();
         let amount_as_u64: u64 = amount.clone().into();
+        debug!("symmetric game starts: {amount:?} initial_mover_share {:?}", self.initial_mover_share);
         let mover_share = Amount::new(self.initial_mover_share);
         let waiter_share = amount.clone() - mover_share.clone();
         (
