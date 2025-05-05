@@ -1,9 +1,9 @@
 
-(import onchain.calpoker.a exposing (program as pokera) (program_hash as pokera_hash))
-(import onchain.calpoker.b exposing (program as pokerb) (program_hash as pokerb_hash))
-(import onchain.calpoker.c exposing (program as pokerc) (program_hash as pokerc_hash))
-(import onchain.calpoker.d exposing (program as pokerd) (program_hash as pokerd_hash))
-(import onchain.calpoker.e exposing (program as pokere) (program_hash as pokere_hash))
+(import games.calpoker-v0.onchain.a exposing (program as pokera) (program_hash as pokera_hash))
+(import games.calpoker-v0.onchain.b exposing (program as pokerb) (program_hash as pokerb_hash))
+(import games.calpoker-v0.onchain.c exposing (program as pokerc) (program_hash as pokerc_hash))
+(import games.calpoker-v0.onchain.d exposing (program as pokerd) (program_hash as pokerd_hash))
+(import games.calpoker-v0.onchain.e exposing (program as pokere) (program_hash as pokere_hash))
 
 (import std.li)
 (import std.curry)
@@ -12,15 +12,15 @@
 (import std.append)
 (import std.relops)
 (import std.list_compare)
-(import handcalc exposing handcalc)
-(import onchain.calpoker.onehandcalc exposing onehandcalc)
-(import onchain.game_codes)
-(import onchain.calpoker.make_card exposing make_card)
-(import onchain.calpoker.make_cards exposing make_cards)
-(import onchain.calpoker.arrange_cards exposing split_cards)
+(import games.calpoker-v0.handcalc exposing handcalc)
+(import games.calpoker-v0.onchain.onehandcalc exposing onehandcalc)
+(import games.calpoker-v0.game_codes)
+(import games.calpoker-v0.onchain.make_card exposing make_card)
+(import games.calpoker-v0.onchain.make_cards exposing make_cards)
+(import games.calpoker-v0.onchain.arrange_cards exposing split_cards)
 
 ; initial_mover_handler initial_waiter_handler whether_paired required_size_factor
-; initial_max_move_size initial_validator initial_validator_hash 
+; initial_max_move_size initial_validator initial_validator_hash
 ; initial_state initial_mover_share_proportion
 (defun calpoker_template () (li calpoker_alice_driver_a calpoker_bob_driver_a 0 200 32 pokera pokera_hash 0 100))
 
@@ -63,7 +63,7 @@
 )
 
 (defun bitify (mylist)
-    (single-byte 
+    (single-byte
         (if (not mylist)
             0
             (logior (f mylist) (lsh (bitify (r mylist)) 1))

@@ -5,8 +5,8 @@
 (import std.relops)
 (import std.and)
 (import std.if_any_fail)
-(import onchain.calpoker.d exposing (program_hash as dhash))
-(import onchain.calpoker.make_cards)
+(import games.calpoker-v0.onchain.d exposing (program_hash as dhash))
+(import games.calpoker-v0.onchain.make_cards)
 
 ; Bob challenging
 ; state is alice's commit and bob's seed

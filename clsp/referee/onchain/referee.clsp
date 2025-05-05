@@ -8,7 +8,7 @@
 (import std.condition_codes)
 (import std.match)
 (import std.li)
-(import onchain.game_codes)
+(import games.calpoker-v0.game_codes)
 
 ;
 ; Adjudicates a two player turn based game
@@ -78,7 +78,7 @@
                                         AMOUNT
                                         TIMEOUT
                                         MAX_MOVE_SIZE
-                                        MOD_HASH ; referee_hash
+                                       MOD_HASH ; referee_hash
                                     )
                                     args
                                 )

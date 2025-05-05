@@ -40,7 +40,7 @@ pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Ga
     Game::new(
         allocator,
         game_id,
-        "clsp/calpoker_include_calpoker_template.hex",
+        "clsp/games/calpoker-v0/calpoker_include_calpoker_template.hex",
     )
 }
 
