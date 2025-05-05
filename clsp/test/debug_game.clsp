@@ -260,6 +260,8 @@
          ;; Initial validation program
          (curry SELF_PROG "validator" curry-args)
 
+         (validator-hash curry-args)
+
          ;; Initial state: count slash mover-share
          (list () () ())
 

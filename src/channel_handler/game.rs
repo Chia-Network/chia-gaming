@@ -20,14 +20,11 @@ use crate::common::types::{
 pub struct Game {
     pub id: GameID,
     pub initial_mover_handler: GameHandler,
-    pub initial_waiter_handler: GameHandler,
-    pub whether_paired: bool,
-    pub required_size_factor: Amount,
     pub initial_max_move_size: usize,
     pub initial_validation_program: StateUpdateProgram,
     pub initial_validation_program_hash: Hash,
     pub initial_state: Rc<Program>,
-    pub initial_mover_share_proportion: usize,
+    pub initial_mover_share: u64,
 }
 
 impl Game {
@@ -63,7 +60,7 @@ impl Game {
         .1;
         let template_list_prog = Program::from_nodeptr(allocator, template_clvm)?;
         debug!("game template_list {template_list_prog:?}");
-        let template_list =
+        let game_list =
             if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
                 lst
             } else {
@@ -72,27 +69,43 @@ impl Game {
                 ));
             };
 
-        if template_list.len() != 9 {
+        if game_list.len() < 1 {
             return Err(Error::StrErr(
-                "calpoker template returned incorrect property list".to_string(),
+                "not even one game returned".to_string(),
             ));
         }
 
-        let initial_mover_handler =
-            GameHandler::my_driver_from_nodeptr(allocator, template_list[0])?;
-        let initial_waiter_handler =
-            GameHandler::their_driver_from_nodeptr(allocator, template_list[1])?;
-        let whether_paired = atom_from_clvm(allocator, template_list[2])
-            .map(|a| !a.is_empty())
-            .expect("should be an atom");
-        let required_size_factor = Amount::new(
-            atom_from_clvm(allocator, template_list[3])
-                .and_then(|a| u64_from_atom(&a))
-                .expect("should be an atom"),
-        );
-        let initial_max_move_size = atom_from_clvm(allocator, template_list[4])
+        if game_list.len() > 1 {
+            todo!();
+        }
+
+        let template_list =
+            if let Some(lst) = proper_list(allocator.allocator(), game_list[0], true) {
+                lst
+            } else {
+                return Err(Error::StrErr(
+                    "bad template list".to_string()
+                ));
+            };
+
+        if template_list.len() != 11 {
+            return Err(Error::StrErr(
+                format!("calpoker template returned incorrect property list ({} : {:?})", template_list.len(), Program::from_nodeptr(allocator, game_list[0])?)
+            ));
+        }
+
+        let amount = atom_from_clvm(allocator, template_list[0])
             .and_then(|a| usize_from_atom(&a))
-            .expect("should be an atom");
+            .expect("should be an amount");
+        let my_turn = !atom_from_clvm(allocator, template_list[1]).unwrap_or_default().is_empty();
+        let initial_mover_handler =
+            GameHandler::my_driver_from_nodeptr(allocator, template_list[2])?;
+
+        let read_number = |allocator: &mut AllocEncoder, node| {
+            atom_from_clvm(allocator, node).and_then(|n| u64_from_atom(&n)).unwrap_or_default()
+        };
+        let my_contribution = read_number(allocator, template_list[3]);
+        let their_contribution = read_number(allocator, template_list[4]);
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);
         let initial_validation_program =
             StateUpdateProgram::new(allocator, "initial", validation_prog);
@@ -106,20 +119,21 @@ impl Game {
             };
         let initial_state_node = template_list[7];
         let initial_state = Rc::new(Program::from_nodeptr(allocator, initial_state_node)?);
-        let initial_mover_share_proportion = atom_from_clvm(allocator, template_list[8])
+        let initial_move = atom_from_clvm(allocator, template_list[8]).unwrap_or_default();
+        let initial_max_move_size = atom_from_clvm(allocator, template_list[8])
             .and_then(|a| usize_from_atom(&a))
+            .expect("should be an atom");
+        let initial_mover_share = atom_from_clvm(allocator, template_list[9])
+            .and_then(|a| u64_from_atom(&a))
             .expect("should be an atom");
         Ok(Game {
             id: game_id,
-            initial_mover_handler,
-            initial_waiter_handler,
-            whether_paired,
-            required_size_factor,
             initial_max_move_size,
             initial_validation_program,
             initial_validation_program_hash,
             initial_state,
-            initial_mover_share_proportion,
+            initial_mover_share,
+            initial_mover_handler,
         })
     }
 
@@ -144,8 +158,7 @@ impl Game {
     ) -> (GameStartInfo, GameStartInfo) {
         let amount = our_contribution.clone() + their_contribution.clone();
         let amount_as_u64: u64 = amount.clone().into();
-        let mover_share =
-            Amount::new((amount_as_u64 * self.initial_mover_share_proportion as u64) / 100);
+        let mover_share = Amount::new(self.initial_mover_share);
         let waiter_share = amount.clone() - mover_share.clone();
         (
             GameStartInfo {
@@ -164,7 +177,7 @@ impl Game {
             GameStartInfo {
                 game_id: game_id.clone(),
                 amount: amount.clone(),
-                game_handler: self.initial_waiter_handler.clone(),
+                game_handler: self.initial_mover_handler.clone(),
                 timeout: timeout.clone(),
                 my_contribution_this_game: their_contribution.clone(),
                 their_contribution_this_game: our_contribution.clone(),
