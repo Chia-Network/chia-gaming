@@ -1749,7 +1749,7 @@ impl ChannelHandler {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, g)| {
-                        if ids.iter().any(|i| g.game_id == *i) {
+                        if ids.contains(|i| g.game_id == *i) {
                             Some(i)
                         } else {
                             None
