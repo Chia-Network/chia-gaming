@@ -16,9 +16,6 @@ on:
     branches:
       - '**'
 
-# env:
-#   RUST_VERSION: 1.88
-
 permissions:
   id-token: write
   contents: read
