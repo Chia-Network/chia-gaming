@@ -9,8 +9,11 @@ use std::collections::BTreeMap;
 
 pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Rc<Program>> {
     let mut game_type_map = BTreeMap::new();
-    let calpoker_factory = read_hex_puzzle(allocator, "clsp/calpoker_include_calpoker_factory.hex")
-        .expect("should load");
+    let calpoker_factory = read_hex_puzzle(
+        allocator,
+        "clsp/calpoker_include_calpoker_factory.hex",
+    )
+    .expect("should load");
 
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),

@@ -14,12 +14,12 @@
 (import std.list_compare)
 (import std.deep_compare)
 (import std.print)
-(import handcalc exposing handcalc)
-(import onchain.calpoker.onehandcalc exposing onehandcalc)
-(import onchain.game_codes)
-(import onchain.calpoker.make_card exposing make_card)
-(import onchain.calpoker.make_cards exposing make_cards)
-(import onchain.calpoker.arrange_cards exposing split_cards get_final_cards_in_canonical_order)
+(import games.calpoker-v0.handcalc exposing handcalc)
+(import games.calpoker-v0.onchain.onehandcalc exposing onehandcalc)
+(import games.calpoker-v0.game_codes)
+(import games.calpoker-v0.onchain.make_card exposing make_card)
+(import games.calpoker-v0.onchain.make_cards exposing make_cards)
+(import games.calpoker-v0.onchain.arrange_cards exposing split_cards get_final_cards_in_canonical_order)
 
 ; initial_mover_handler initial_waiter_handler whether_paired required_size_factor
 ; initial_max_move_size initial_validator initial_validator_hash

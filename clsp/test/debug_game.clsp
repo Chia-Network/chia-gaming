@@ -3,7 +3,7 @@
 (import std.or)
 (import std.shatree)
 (import std.curry)
-(import onchain.game_codes)
+(import games.calpoker-v0.game_codes)
 
 (defmac STATE_PACK ()
   (q @ state-pack

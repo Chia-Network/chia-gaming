@@ -1,8 +1,8 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.e exposing (program_hash as ehash))
-(import onchain.calpoker.make_cards)
-(import onchain.game_codes)
+(import games.calpoker-v0.onchain.make_cards)
+(import games.calpoker-v0.game_codes)
 (import std.assert)
 (import std.shatree)
 (import std.popcount)

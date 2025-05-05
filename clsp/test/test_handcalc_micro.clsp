@@ -1,9 +1,9 @@
 (include *standard-cl-23*)
-(import prepend_count)
-(import handcalc)
-(import onchain.calpoker.make_cards)
-(import onchain.calpoker.onehandcalc)
-(import onchain.calpoker.arrange_cards)
+(import util.prepend_count)
+(import games.calpoker-v0.handcalc)
+(import games.calpoker-v0.onchain.make_cards)
+(import games.calpoker-v0.onchain.onehandcalc)
+(import games.calpoker-v0.onchain.arrange_cards)
 
 (export (kind . arguments)
   (if

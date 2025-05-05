@@ -9,7 +9,7 @@
 (import std.match)
 (import std.li)
 (import std.print)
-(import onchain.game_codes)
+(import games.calpoker-v0.game_codes)
 
 ;
 ; Adjudicates a two player turn based game

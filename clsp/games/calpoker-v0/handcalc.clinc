@@ -1,7 +1,7 @@
 
 ; ranks are 2-14 with 2 being two, 13 being king, and 14 being ace
 ; suits are 1-4 with no particular labelling
-; takes a list of cards (rank . suit) and returns 
+; takes a list of cards (rank . suit) and returns
 ; (hand_quality indices_of_best_cards) with indices_best_cards in low to high order
 ; doesn't work for ten or more cards if there are multiple flushes
 ; all sorting is done highest to lowest
@@ -16,9 +16,8 @@
 (import std.truncate)
 (import std.sort)
 (import std.deep_compare)
-(import std.print)
-(import onchain.calpoker.onehandcalc)
-(import prepend_count)
+(import games.calpoker-v0.onchain.onehandcalc)
+(import util.prepend_count)
 
 (defun pull_indices_inner (my_index indices cards)
     (if (not indices)
@@ -92,7 +91,7 @@
         )
 
         candidates (filtermap echo (li group_candidate straight_candidate flush_candidate straight_flush_candidate))
-        
+
         (quality indices_from_onehandcalc) (max deep< (map (lambda ((& cards) indices) (li (onehandcalc (pull_indices indices cards)) indices)) candidates))
         (list quality (sort deep< indices_from_onehandcalc))
     )
