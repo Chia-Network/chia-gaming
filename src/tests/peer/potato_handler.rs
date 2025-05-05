@@ -399,9 +399,11 @@ fn test_peer_smoke() {
     pipe_sender[1].message_pipe.my_id = 1;
 
     let mut game_type_map = BTreeMap::new();
-    let calpoker_factory =
-        read_hex_puzzle(&mut allocator, "clsp/games/calpoker-v0/calpoker_include_calpoker_factory_hash.hex")
-            .expect("should load");
+    let calpoker_factory = read_hex_puzzle(
+        &mut allocator,
+        "clsp/games/calpoker-v0/calpoker_include_calpoker_factory_hash.hex",
+    )
+    .expect("should load");
 
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),

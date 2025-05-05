@@ -129,8 +129,8 @@ impl RefereeTest {
         game_start: &GameStartInfo,
     ) -> RefereeTest {
         // Load up the real referee coin.
-        let referee_coin_puzzle =
-            read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex").expect("should be readable");
+        let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")
+            .expect("should be readable");
         let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
         let (my_referee, first_puzzle_hash) = RefereeMaker::new(
             allocator,
