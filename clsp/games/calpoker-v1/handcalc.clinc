@@ -16,14 +16,9 @@
 (import std.truncate)
 (import std.sort)
 (import std.deep_compare)
-<<<<<<<< HEAD:clsp/games/calpoker-v1/handcalc.clinc
 (import std.print)
 (import onchain.calpoker.onehandcalc)
 (import prepend_count)
-========
-(import games.calpoker-v0.onchain.onehandcalc)
-(import util.prepend_count)
->>>>>>>> main:clsp/games/calpoker-v0/handcalc.clinc
 
 (defun pull_indices_inner (my_index indices cards)
     (if (not indices)
