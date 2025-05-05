@@ -1,13 +1,16 @@
 use std::rc::Rc;
 use std::collections::VecDeque;
 
+use rand_chacha::ChaCha8Rng;
+use rand::prelude::*;
+
 use clvm_traits::{ToClvm, clvm_curried_args};
 use clvm_utils::CurriedProgram;
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{StateUpdateProgram, ValidationInfo};
-use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Program, Puzzle, PuzzleHash, Timeout};
+use crate::channel_handler::types::{GameStartInfo, StateUpdateProgram, ValidationInfo};
+use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, IntoErr, PrivateKey, Program, Puzzle, PuzzleHash, Sha256tree, Timeout};
 use crate::common::standard_coin::{ChiaIdentity, read_hex_puzzle};
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, RefereePuzzleArgs};
 
@@ -42,21 +45,10 @@ pub struct BareDebugGameDriver {
 
     move_count: usize,
 
-    timeout: Timeout,
-    amount: Amount,
-
-    mod_hash: PuzzleHash,
-    nonce: usize,
-
-    max_move_size: usize,
-    validation_info: ValidationInfo,
-
-    mover_share: usize,
-    previous_validation_info_hash: Option<ValidationInfo>,
-
     validation_program_queue: VecDeque<StateUpdateProgram>,
+
     handler: GameHandler,
-    state: Rc<Program>,
+    start: GameStartInfo,
 }
 
 impl BareDebugGameDriver {
@@ -64,10 +56,10 @@ impl BareDebugGameDriver {
         allocator: &mut AllocEncoder,
         game_id: GameID,
         amount: Amount,
-        identities: &[&ChiaIdentity],
+        identities: &[ChiaIdentity],
         referee_coin_puzzle_hash: &PuzzleHash,
         game_hex_file: &str,
-    ) -> Result<DebugGame, Error> {
+    ) -> Result<[BareDebugGameDriver; 2], Error> {
         let raw_program = read_hex_puzzle(allocator, game_hex_file)?;
         let referee_args = RefereePuzzleArgs {
             amount,
@@ -97,14 +89,66 @@ impl BareDebugGameDriver {
             ))
         }.to_clvm(allocator).into_gen()?;
         let curried_prog = Program::from_nodeptr(allocator, curried)?;
-        let game = Game::new_program(allocator, game_id, curried_prog.into())?;
-        Ok(DebugGame {
-            game
-        })
+        let alice_game = Game::new_program(allocator, true, game_id.clone(), curried_prog.clone().into())?;
+        let bob_game = Game::new_program(allocator, false, game_id.clone(), curried_prog.into())?;
+        let (start_a, start_b) = alice_game.symmetric_game_starts(
+            &game_id,
+            &Amount::new(100),
+            &Amount::new(100),
+            &Timeout::new(10)
+        );
+        let alice_driver = BareDebugGameDriver {
+            i_am_alice: true,
+            move_count: 0,
+            alice_identity: identities[0].clone(),
+            bob_identity: identities[1].clone(),
+            game_id: game_id.clone(),
+            handler: start_a.game_handler.clone(),
+            start: start_a,
+            validation_program_queue: VecDeque::default(),
+            game: alice_game.clone(),
+        };
+        let bob_driver = BareDebugGameDriver {
+            i_am_alice: false,
+            move_count: 0,
+            alice_identity: identities[0].clone(),
+            bob_identity: identities[1].clone(),
+            game_id: game_id.clone(),
+            handler: start_b.game_handler.clone(),
+            start: start_b,
+            validation_program_queue: VecDeque::default(),
+            game: bob_game,
+        };
+        Ok([alice_driver, bob_driver])
     }
+}
+
+fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDriver; 2], Error> {
+    let rng_seed: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(rng_seed);
+    let pk0: PrivateKey = rng.gen();
+    let pk1: PrivateKey = rng.gen();
+    let id0 = ChiaIdentity::new(allocator, pk0)?;
+    let id1 = ChiaIdentity::new(allocator, pk1)?;
+    let identities: [ChiaIdentity; 2] = [id0, id1];
+    let gid = GameID::default();
+    let referee_coin = read_hex_puzzle(
+        allocator, "clsp/onchain/referee.hex"
+    )?;
+    let ref_coin_hash = referee_coin.sha256tree(allocator);
+    BareDebugGameDriver::new(
+        allocator,
+        gid,
+        Amount::new(200),
+        &identities,
+        &ref_coin_hash,
+        "clsp/test/debug_game.hex",
+    )
 }
 
 #[test]
 fn test_debug_game_factory() {
+    let mut allocator = AllocEncoder::new();
+    let debug_games = make_debug_games(&mut allocator).expect("good");
     todo!();
 }

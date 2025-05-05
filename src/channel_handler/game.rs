@@ -16,6 +16,7 @@ use crate::common::types::{
     GameID, Hash, IntoErr, Program, Puzzle, Timeout,
 };
 
+#[derive(Clone)]
 pub struct Game {
     pub id: GameID,
     pub initial_mover_handler: GameHandler,
@@ -32,23 +33,36 @@ pub struct Game {
 impl Game {
     pub fn new_program(
         allocator: &mut AllocEncoder,
+        as_alice: bool,
         game_id: GameID,
         poker_generator: Puzzle,
     ) -> Result<Game, Error> {
-        let nil = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&[]))
-            .into_gen()?;
+        let args = (
+            as_alice,
+            (
+                100,
+                (
+                    100,
+                    ((), ())
+                )
+            )
+        ).to_clvm(allocator).into_gen()?;
+        let args_program = Program::from_nodeptr(allocator, args)?;
+
         let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
-        debug!("running start");
+        debug!("running start program {poker_generator:?}");
+        debug!("running start args {args_program:?}");
         let template_clvm = run_program(
             allocator.allocator(),
             &chia_dialect(),
             poker_generator_clvm,
-            nil,
+            args,
             0,
         )
         .into_gen()?
         .1;
+        let template_list_prog = Program::from_nodeptr(allocator, template_clvm)?;
+        debug!("game template_list {template_list_prog:?}");
         let template_list =
             if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
                 lst
@@ -111,11 +125,12 @@ impl Game {
 
     pub fn new(
         allocator: &mut AllocEncoder,
+        as_alice: bool,
         game_id: GameID,
         game_hex_file: &str,
     ) -> Result<Game, Error> {
         let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
-        Game::new_program(allocator, game_id, poker_generator.clone())
+        Game::new_program(allocator, as_alice, game_id, poker_generator.clone())
     }
 
     /// Return a pair of GameStartInfo which can be used as the starts for two
