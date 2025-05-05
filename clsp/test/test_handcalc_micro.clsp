@@ -1,6 +1,6 @@
 (include *standard-cl-23*)
-(import prepend_count)
-(import handcalc)
+(import util.prepend_count)
+(import games.calpoker-v0.handcalc)
 
 (export (kind . arguments)
   (if
