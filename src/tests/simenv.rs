@@ -15,8 +15,8 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
-    IntoErr, PrivateKey, PuzzleHash, Sha256tree, Spend,
+    chia_dialect, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash, IntoErr,
+    PrivateKey, PuzzleHash, Sha256tree, Spend,
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
