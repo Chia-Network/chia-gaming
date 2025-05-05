@@ -389,7 +389,6 @@ where
     Ok(())
 }
 
-
 #[test]
 #[ignore]
 fn test_peer_smoke() {
