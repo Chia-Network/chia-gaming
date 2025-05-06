@@ -52,13 +52,13 @@
      mod_hash
      (STATE_PACK)
      state
-     previous_validation_program
+     this_validation_program
      mover_puzzle
      solution
      evidence
      )
   (assign
-   pv_hash (shatree (print "doing validation" previous_validation_program))
+   pv_hash (shatree (print "doing validation" this_validation_program))
    move-counter-data
    (concat
     ;; Hashes first
@@ -86,7 +86,7 @@
      ;; Too short move
      (print (list "have 2 or more bytes than move-counter-data-len which is" move-counter-data-len "have" (strlen MOVE)) (> move-counter-data-len (- (strlen MOVE) 2)))
      ;; Move doesn't repeat the counter data
-     (print (list "did we reproduce the data" MOVE) (not (= move-counter-data (substr MOVE 0 move-counter-data-len))))
+     (print (list "did we reproduce the data" MOVE "versus" move-counter-data) (not (= move-counter-data (substr MOVE 0 move-counter-data-len))))
      ;; Mover puzzle isn't the puzzle of the mover we think we have.
      (print "did we have the right mover puzzle" (not (= mover-puzzle-hash (shatree mover_puzzle))))
      ;; check previous validation info hash

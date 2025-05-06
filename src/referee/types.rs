@@ -245,7 +245,7 @@ impl RefereePuzzleArgs {
         }
     }
 
-    fn off_chain(&self) -> RefereePuzzleArgs {
+    pub fn off_chain(&self) -> RefereePuzzleArgs {
         let mut new_result: RefereePuzzleArgs = self.clone();
         new_result.waiter_puzzle_hash = PuzzleHash::default();
         new_result
@@ -388,11 +388,10 @@ pub struct StateUpdateMoveArgs {
 
 impl StateUpdateMoveArgs {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
-        let me_program = Program::from_nodeptr(allocator, me)?;
         (
             &self.state,
             (
-                &me_program,
+                Node(me),
                 [&self.mover_puzzle, &self.solution, &self.evidence],
             ),
         )
@@ -413,16 +412,19 @@ impl InternalStateUpdateArgs {
         allocator: &mut AllocEncoder,
     ) -> Result<NodePtr, Error> {
         let validator_mod_hash = self.validation_program.sha256tree(allocator);
-        let validation_program_node = self.validation_program
-            .to_nodeptr(allocator)?;
+        let referee_args_nodeptr = self.referee_args
+            .off_chain()
+            .to_clvm(allocator)
+            .into_gen()?;
+        let referee_args_prog = Program::from_nodeptr(allocator, referee_args_nodeptr)?;
+        let referee_prog_node = self.validation_program.to_clvm(allocator).into_gen()?;
+        let state_update_args = self.state_update_args.to_nodeptr(allocator, referee_prog_node)?;
+        debug!("converted referee args {referee_args_prog:?}");
         (
             validator_mod_hash,
             (
-                self.referee_args
-                    .off_chain()
-                    .to_clvm(allocator)
-                    .into_gen()?,
-                self.validation_program.clone(),
+                Node(referee_args_nodeptr),
+                Node(state_update_args),
             ),
         )
             .to_clvm(allocator)

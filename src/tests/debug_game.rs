@@ -80,7 +80,7 @@ pub struct BareDebugGameDriver {
     mover_share: Amount,
     move_made: Vec<u8>,
     state: ProgramRef,
-    last_validation_info_hash: Option<Hash>,
+    last_validation_data: Option<(StateUpdateProgram, ProgramRef)>,
 
     validation_program_queue: VecDeque<StateUpdateProgram>,
 
@@ -89,6 +89,19 @@ pub struct BareDebugGameDriver {
 }
 
 impl BareDebugGameDriver {
+    fn get_previous_validation_info_hash(
+        &self,
+        allocator: &mut AllocEncoder,
+    ) -> Option<ValidationInfo<ProgramRef>> {
+        self.last_validation_data.as_ref().map(|(sp, st)| {
+            ValidationInfo::new(
+                allocator,
+                sp.clone(),
+                st.clone()
+            )
+        })
+    }
+
     fn new(
         allocator: &mut AllocEncoder,
         game_id: GameID,
@@ -134,7 +147,7 @@ impl BareDebugGameDriver {
             state: start_a.initial_state.clone(),
             validation_program_queue: [start_a.initial_validation_program.clone()].iter().cloned().collect(),
             start: start_a,
-            last_validation_info_hash: None,
+            last_validation_data: None,
             mod_hash: referee_coin_puzzle_hash.clone(),
             nonce,
             game: alice_game.clone(),
@@ -153,7 +166,7 @@ impl BareDebugGameDriver {
             state: start_b.initial_state.clone(),
             validation_program_queue: [start_b.initial_validation_program.clone()].iter().cloned().collect(),
             start: start_b,
-            last_validation_info_hash: None,
+            last_validation_data: None,
             mod_hash: referee_coin_puzzle_hash.clone(),
             nonce,
             game: bob_game,
@@ -184,10 +197,12 @@ impl BareDebugGameDriver {
             mover_share: self.mover_share.clone(),
             nonce: self.nonce,
             timeout: self.timeout.clone(),
+            validation_program: self.validation_program_queue[0].clone(),
             validation_info: validation_info,
-            incoming_state_validation_info_hash: self.last_validation_info_hash.clone(),
-            slash: 0,
-            opponent_mover_share: Amount::default(),
+            incoming_state_validation_info_hash: self.get_previous_validation_info_hash(allocator).map(|v| v.hash().clone()),
+            slash: 15,
+            opponent_mover_share: Amount::new(0xfff),
+            previous_validation_program: self.last_validation_data.as_ref().map(|(sp,_)| sp.clone())
         }
     }
 
@@ -225,7 +240,7 @@ impl BareDebugGameDriver {
         let update_args = InternalStateUpdateArgs {
             referee_args: Rc::new(RefereePuzzleArgs {
                 nonce: self.nonce,
-                previous_validation_info_hash: self.last_validation_info_hash.clone(),
+                previous_validation_info_hash: self.get_previous_validation_info_hash(allocator).map(|v| v.hash().clone()),
                 referee_coin_puzzle_hash: self.mod_hash.clone(),
                 timeout: self.timeout.clone(),
                 mover_puzzle_hash: mover_ph.clone(),
@@ -236,10 +251,14 @@ impl BareDebugGameDriver {
                         move_made: move_to_check.to_vec(),
                         mover_share: self.mover_share.clone(),
                     },
-                    validation_info_hash: vprog.hash().clone(),
+                    validation_info_hash: ValidationInfo::new(
+                        allocator,
+                        vprog.clone(),
+                        self.state.clone()
+                    ).hash().clone()
                 },
                 max_move_size: self.max_move_size,
-            }),
+            }.off_chain()),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 mover_puzzle: mover_puzzle.to_program(),
@@ -291,6 +310,7 @@ struct ExhaustiveMoveInputs {
     bob_puzzle_hash: PuzzleHash,
     mod_hash: PuzzleHash,
     validation_info: ValidationInfo<ProgramRef>,
+    validation_program: StateUpdateProgram,
     incoming_state_validation_info_hash: Option<Hash>,
     timeout: Timeout,
     amount: Amount,
@@ -301,6 +321,7 @@ struct ExhaustiveMoveInputs {
     move_made: Vec<u8>,
     slash: u8,
     opponent_mover_share: Amount,
+    previous_validation_program: Option<StateUpdateProgram>,
 }
 
 fn at_least_one_byte(allocator: &mut AllocEncoder, amt: &Amount) -> Result<NodePtr, Error> {
@@ -332,7 +353,7 @@ impl ExhaustiveMoveInputs {
             } else {
                 Some(&self.alice_puzzle_hash)
             };
-
+        let pv_hash = self.validation_program.sha256tree(allocator);
         let move_atom = allocator.encode_atom(clvm_traits::Atom::Borrowed(&self.move_made)).into_gen()?;
         let slash_atom = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[self.slash])).into_gen()?;
         let amount_atom = at_least_one_byte(allocator, &self.opponent_mover_share)?;
@@ -341,27 +362,30 @@ impl ExhaustiveMoveInputs {
             (
                 waiter_ph_ref.cloned(),
                 (
-                    self.timeout.clone(),
+                    self.mod_hash.clone(),
                     (
-                        self.amount.clone(),
+                        self.validation_info.hash(),
                         (
-                            self.mod_hash.clone(),
+                            self.incoming_state_validation_info_hash.clone(),
                             (
-                                self.nonce,
+                                pv_hash,
                                 (
-                                    Node(move_atom),
+                                    self.timeout.clone(),
                                     (
-                                        self.max_move_size,
+                                        self.amount.clone(),
                                         (
-                                            self.validation_info.hash(),
+                                            self.nonce,
                                             (
-                                                self.mover_share.clone(),
+                                                self.max_move_size,
                                                 (
-                                                    self.incoming_state_validation_info_hash.clone(),
+                                                    self.mover_share.clone(),
                                                     (
-                                                        Node(slash_atom),
+                                                        self.count,
                                                         (
-                                                            (Node(amount_atom), ())
+                                                            Node(amount_atom),
+                                                            (
+                                                                (Node(slash_atom), ())
+                                                            )
                                                         )
                                                     )
                                                 )
@@ -376,7 +400,7 @@ impl ExhaustiveMoveInputs {
             )
         ).to_clvm(allocator).into_gen()?;
 
-        let program_to_concat = Program::from_hex("ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ffff820bffff8217ffff822fff80")?;
+        let program_to_concat = Program::from_hex("ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ffff820bffff8217ffff822fffff825fff80")?;
         let pnode = program_to_concat.to_clvm(allocator).into_gen()?;
         let result_atom = run_program(
             allocator.allocator(),
@@ -386,6 +410,7 @@ impl ExhaustiveMoveInputs {
             0
         ).into_gen()?.1;
         if let Some(result_move_data) = atom_from_clvm(allocator, result_atom) {
+            debug!("generated move data {result_move_data:?}");
             Ok(result_move_data)
         } else {
             Err(Error::StrErr("move didn't concat".to_string()))
@@ -400,7 +425,7 @@ fn test_debug_game_validation_move() {
     assert_eq!(debug_games[0].game.initial_validation_program, debug_games[1].game.initial_validation_program);
     // Predict the first move bytes.
     let predicted_move = debug_games[0].get_move_inputs(&mut allocator);
-    let move_data = predicted_move.to_linear_move(&mut allocator, false).expect("good");
+    let move_data = predicted_move.to_linear_move(&mut allocator, true).expect("good");
     debug!("move_data {move_data:?}");
     let validation_result = debug_games[0].state_update_for_own_move(
         &mut allocator,
