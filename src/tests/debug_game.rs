@@ -219,6 +219,7 @@ impl BareDebugGameDriver {
             } else {
                 &self.alice_identity.puzzle_hash
             };
+        debug!("vprog {:?}", vprog.to_program());
         let update_args = InternalStateUpdateArgs {
             referee_args: Rc::new(RefereePuzzleArgs {
                 nonce: self.nonce,

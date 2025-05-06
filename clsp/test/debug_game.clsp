@@ -76,7 +76,7 @@
     )
 
    move-counter-data-len (strlen move-counter-data)
-   mover-puzzle-hash (substr move-counter-data (* 5 32) (* 6 32))
+   mover-puzzle-hash (substr move-counter-data 0 32)
    move-len (strlen MOVE)
 
    (if
