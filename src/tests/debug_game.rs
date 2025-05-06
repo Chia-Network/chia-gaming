@@ -388,5 +388,6 @@ fn test_debug_game_validation_move() {
         Evidence::nil().expect("good"),
     ).expect("good");
 
-    todo!();
+    debug!("validation_result {validation_result:?}");
+    assert!(matches!(validation_result, StateUpdateResult::MoveOk(_, _, 256)));
 }
