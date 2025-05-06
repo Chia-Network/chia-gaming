@@ -21,7 +21,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     atom_from_clvm, chia_dialect, i64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash,
     Sha256tree, Spend, Timeout,
 };
 use crate::referee::StateUpdateProgram;
@@ -94,14 +94,14 @@ pub enum TheirTurnCoinSpentResult {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateUpdateResult {
-    MoveOk(Rc<Program>, ValidationInfo, usize),
+    MoveOk(Rc<Program>, ValidationInfo<ProgramRef>, usize),
     Slash(Rc<Program>),
 }
 
 impl StateUpdateResult {
     pub fn from_nodeptr(
         allocator: &mut AllocEncoder,
-        validation_info: ValidationInfo,
+        validation_info: ValidationInfo<ProgramRef>,
         node: NodePtr,
     ) -> Result<StateUpdateResult, Error> {
         let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
@@ -437,11 +437,10 @@ impl InternalStateUpdateArgs {
             allocator,
         )?;
         let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
-        let node_ptr = self.state_update_args.state.to_clvm(allocator).into_gen()?;
         let validation_info = ValidationInfo::new_from_state_update_program_hash_and_state(
             allocator,
             validation_program_mod_hash.clone(),
-            node_ptr,
+            ProgramRef::new(self.state_update_args.state.clone()),
         );
 
         debug!("validator program {:?}", self.validation_program);
@@ -472,7 +471,7 @@ impl InternalStateUpdateArgs {
 
 #[allow(dead_code)]
 pub enum Validation {
-    ValidationByState(ValidationInfo),
+    ValidationByState(ValidationInfo<ProgramRef>),
     ValidationByStateHash(Hash),
 }
 
@@ -521,7 +520,7 @@ pub struct OnChainRefereeSlash {
     /// Since notionally we optimistically accept game updates at the referee
     /// layer, "previous" here is the current state at the time the move arrived,
     /// previous to the update that caused this slash.
-    pub previous_validation_info: ValidationInfo,
+    pub previous_validation_info: ValidationInfo<ProgramRef>,
 
     /// Coin puzzle and solution that are used to generate conditions for the
     /// next generation of the on chain refere coin.
