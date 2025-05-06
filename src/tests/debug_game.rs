@@ -13,10 +13,10 @@ use clvm_utils::CurriedProgram;
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{GameStartInfo, StateUpdateProgram, ValidationInfo};
+use crate::channel_handler::types::{GameStartInfo, StateUpdateProgram, ValidationInfo, Evidence};
 use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout, atom_from_clvm, chia_dialect};
 use crate::common::standard_coin::{ChiaIdentity, read_hex_puzzle};
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, RefereePuzzleArgs};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, RefereePuzzleArgs, StateUpdateResult, InternalStateUpdateArgs, StateUpdateMoveArgs};
 
 pub struct DebugGameCurry {
     count: usize,
@@ -161,6 +161,10 @@ impl BareDebugGameDriver {
         Ok([alice_driver, bob_driver])
     }
 
+    pub fn alice_turn(&self) -> bool {
+        self.i_am_alice ^ ((self.move_count & 1) == 0)
+    }
+
     pub fn get_move_inputs(&self, allocator: &mut AllocEncoder) -> ExhaustiveMoveInputs {
         assert!(self.validation_program_queue.len() > 0);
         let validation_info = ValidationInfo::new(
@@ -169,7 +173,7 @@ impl BareDebugGameDriver {
             self.state.clone(),
         );
         ExhaustiveMoveInputs {
-            alice: self.i_am_alice ^ ((self.move_count & 1) == 0),
+            alice: self.alice_turn(),
             alice_puzzle_hash: self.alice_identity.puzzle_hash.clone(),
             bob_puzzle_hash: self.bob_identity.puzzle_hash.clone(),
             amount: self.start.amount.clone(),
@@ -183,6 +187,66 @@ impl BareDebugGameDriver {
             validation_info: validation_info,
             incoming_state_validation_info_hash: self.last_validation_info_hash.clone()
         }
+    }
+
+    pub fn state_update_for_own_move(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        move_to_check: &[u8],
+        evidence: Evidence,
+    ) -> Result<StateUpdateResult, Error> {
+        let vprog =
+            if let Some(v) = self.validation_program_queue.pop_front() {
+                v
+            } else {
+                return Err(Error::StrErr("No waiting validation program for our turn".to_string()));
+            };
+        let mover_ph =
+            if self.alice_turn() {
+                &self.alice_identity.puzzle_hash
+            } else {
+                &self.bob_identity.puzzle_hash
+            };
+        let mover_puzzle =
+            if self.alice_turn() {
+                self.alice_identity.puzzle.clone()
+            } else {
+                self.bob_identity.puzzle.clone()
+            };
+        let waiter_ph =
+            if self.alice_turn() {
+                &self.bob_identity.puzzle_hash
+            } else {
+                &self.alice_identity.puzzle_hash
+            };
+        let update_args = InternalStateUpdateArgs {
+            referee_args: Rc::new(RefereePuzzleArgs {
+                nonce: self.nonce,
+                previous_validation_info_hash: self.last_validation_info_hash.clone(),
+                referee_coin_puzzle_hash: self.mod_hash.clone(),
+                timeout: self.timeout.clone(),
+                mover_puzzle_hash: mover_ph.clone(),
+                waiter_puzzle_hash: waiter_ph.clone(),
+                amount: self.start.amount.clone(),
+                game_move: GameMoveDetails {
+                    basic: GameMoveStateInfo {
+                        move_made: move_to_check.to_vec(),
+                        mover_share: self.mover_share.clone(),
+                    },
+                    validation_info_hash: vprog.hash().clone(),
+                },
+                max_move_size: self.max_move_size,
+            }),
+            state_update_args: StateUpdateMoveArgs {
+                evidence: evidence.to_program(),
+                mover_puzzle: mover_puzzle.to_program(),
+                solution: Rc::new(Program::from_hex("80")?),
+                state: self.state.p(),
+            },
+            validation_program: vprog,
+        };
+
+        update_args.run(allocator)
     }
 }
 
@@ -311,11 +375,17 @@ impl ExhaustiveMoveInputs {
 #[test]
 fn test_debug_game_validation_move() {
     let mut allocator = AllocEncoder::new();
-    let debug_games = make_debug_games(&mut allocator).expect("good");
+    let mut debug_games = make_debug_games(&mut allocator).expect("good");
     assert_eq!(debug_games[0].game.initial_validation_program, debug_games[1].game.initial_validation_program);
     // Predict the first move bytes.
     let predicted_move = debug_games[0].get_move_inputs(&mut allocator);
     let move_data = predicted_move.to_linear_move(&mut allocator, false).expect("good");
     debug!("move_data {move_data:?}");
+    let validation_result = debug_games[0].state_update_for_own_move(
+        &mut allocator,
+        &move_data,
+        Evidence::nil().expect("good"),
+    ).expect("good");
+
     todo!();
 }
