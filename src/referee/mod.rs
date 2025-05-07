@@ -167,6 +167,8 @@ impl RefereeByTurn {
     }
 }
 
+pub type RefereeAndStateNumber = (Rc<dyn RefereeInterface>, usize);
+
 impl RefereeInterface for RefereeByTurn {
     /// ph at the beginning of the turn that this move
     /// ph_we will turn into
@@ -260,7 +262,7 @@ impl RefereeInterface for RefereeByTurn {
         &self,
         _allocator: &mut AllocEncoder,
         _puzzle_hash: &PuzzleHash,
-    ) -> Result<Option<(Rc<dyn RefereeInterface>, usize)>, Error> {
+    ) -> Result<Option<RefereeAndStateNumber>, Error> {
         todo!();
     }
 

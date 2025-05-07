@@ -17,7 +17,7 @@ use crate::channel_handler::types::{Evidence, GameStartInfo, StateUpdateProgram,
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    PrivateKey, Program, ProgramRef, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
@@ -51,20 +51,9 @@ where
     }
 }
 
-pub struct DebugGame {
-    game: Game,
-}
-
-impl DebugGameCurry {
-    fn new() -> DebugGameCurry {
-        todo!();
-    }
-}
-
 /// A driver for the bare debug game, wrapped in a referee coin.
 pub struct BareDebugGameDriver {
     game: Game,
-    game_id: GameID,
 
     alice_identity: ChiaIdentity,
     bob_identity: ChiaIdentity,
@@ -79,12 +68,12 @@ pub struct BareDebugGameDriver {
     // Live
     max_move_size: usize,
     mover_share: Amount,
-    move_made: Vec<u8>,
     state: ProgramRef,
     last_validation_data: Option<(StateUpdateProgram, ProgramRef)>,
 
     validation_program_queue: VecDeque<StateUpdateProgram>,
 
+    #[allow(dead_code)]
     handler: GameHandler,
     start: GameStartInfo,
 }
@@ -142,11 +131,9 @@ impl BareDebugGameDriver {
             move_count: 0,
             alice_identity: identities[0].clone(),
             bob_identity: identities[1].clone(),
-            game_id: game_id.clone(),
             handler: start_a.game_handler.clone(),
             timeout: timeout.clone(),
             max_move_size: start_a.initial_max_move_size,
-            move_made: start_a.initial_move.clone(),
             mover_share: start_a.initial_mover_share.clone(),
             state: start_a.initial_state.clone(),
             validation_program_queue: [start_a.initial_validation_program.clone()]
@@ -164,11 +151,9 @@ impl BareDebugGameDriver {
             move_count: 0,
             alice_identity: identities[0].clone(),
             bob_identity: identities[1].clone(),
-            game_id: game_id.clone(),
             handler: start_b.game_handler.clone(),
             timeout,
             max_move_size: start_b.initial_max_move_size,
-            move_made: start_b.initial_move.clone(),
             mover_share: start_b.initial_mover_share.clone(),
             state: start_b.initial_state.clone(),
             validation_program_queue: [start_b.initial_validation_program.clone()]
@@ -203,7 +188,6 @@ impl BareDebugGameDriver {
             count: self.move_count,
             max_move_size: self.max_move_size,
             mod_hash: self.mod_hash.clone(),
-            move_made: self.move_made.clone(),
             mover_share: self.mover_share.clone(),
             nonce: self.nonce,
             timeout: self.timeout.clone(),
@@ -325,7 +309,7 @@ fn test_debug_game_factory() {
     );
 }
 
-struct ExhaustiveMoveInputs {
+pub struct ExhaustiveMoveInputs {
     alice: bool,
     alice_puzzle_hash: PuzzleHash,
     bob_puzzle_hash: PuzzleHash,
@@ -339,9 +323,9 @@ struct ExhaustiveMoveInputs {
     mover_share: Amount,
     count: usize,
     nonce: usize,
-    move_made: Vec<u8>,
     slash: u8,
     opponent_mover_share: Amount,
+    #[allow(dead_code)]
     previous_validation_program: Option<StateUpdateProgram>,
 }
 
@@ -361,7 +345,6 @@ impl ExhaustiveMoveInputs {
         allocator: &mut AllocEncoder,
         off_chain: bool,
     ) -> Result<Vec<u8>, Error> {
-        let mut result_vec: Vec<u8> = Vec::default();
         let mover_ph_ref = if self.alice {
             &self.alice_puzzle_hash
         } else {
@@ -375,9 +358,6 @@ impl ExhaustiveMoveInputs {
             Some(&self.alice_puzzle_hash)
         };
         let pv_hash = self.validation_program.sha256tree(allocator);
-        let move_atom = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&self.move_made))
-            .into_gen()?;
         let slash_atom = allocator
             .encode_atom(clvm_traits::Atom::Borrowed(&[self.slash]))
             .into_gen()?;
