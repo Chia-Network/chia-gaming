@@ -1,7 +1,7 @@
 (include *standard-cl-23*)
 
 (import onchain.calpoker.c exposing (program_hash as chash))
-(import games.calpoker-v0.game_codes)
+(import games.calpoker-v1.game_codes)
 (import std.and)
 (import std.assert)
 (import std.if_any_fail)

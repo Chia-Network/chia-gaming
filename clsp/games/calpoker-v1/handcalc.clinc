@@ -16,9 +16,9 @@
 (import std.truncate)
 (import std.sort)
 (import std.deep_compare)
-
-(import games.calpoker-v0.onchain.onehandcalc)
-(import util.prepend_count)
+(import std.print)
+(import onchain.calpoker.onehandcalc)
+(import prepend_count)
 
 (defun pull_indices_inner (my_index indices cards)
     (if (not indices)

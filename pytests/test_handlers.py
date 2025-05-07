@@ -623,3 +623,4 @@ handler_test_0 = [
 ]
 
 run_test(do_evil=True)
+run_test(do_evil=False)
