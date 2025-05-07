@@ -18,6 +18,7 @@ pub struct RefereeByTurn {}
 pub type StateUpdateProgramRef = Rc<RefereePuzzleArgs>;
 
 pub trait RefereeInterface {
+    /// args for this coin from when it was spent (in the past)
     fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs>;
 
     fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs>;
@@ -167,6 +168,9 @@ impl RefereeByTurn {
 }
 
 impl RefereeInterface for RefereeByTurn {
+    /// ph at the beginning of the turn that this move
+    /// ph_we will turn into
+    /// will be used for spend_this_coin
     fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         todo!();
     }
@@ -176,6 +180,7 @@ impl RefereeInterface for RefereeByTurn {
     }
 
     fn is_my_turn(&self) -> bool {
+        /// We are working on an "our" move
         todo!();
     }
 
@@ -195,6 +200,7 @@ impl RefereeInterface for RefereeByTurn {
         todo!();
     }
 
+    /// Access constant referee properties
     fn fixed(&self) -> Rc<RMFixed> {
         todo!();
     }
@@ -203,6 +209,7 @@ impl RefereeInterface for RefereeByTurn {
         todo!();
     }
 
+    /// List of referee objects from the past that can be rewound to
     fn stored_versions(&self) -> Vec<(StateUpdateProgramRef, StateUpdateProgramRef, usize)> {
         todo!();
     }
