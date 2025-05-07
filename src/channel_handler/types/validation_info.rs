@@ -1,7 +1,5 @@
-use clvmr::allocator::NodePtr;
-
 use crate::channel_handler::types::StateUpdateProgram;
-use crate::common::types::{AllocEncoder, Hash, Node, Sha256Input, Sha256tree};
+use crate::common::types::{AllocEncoder, Hash, Sha256Input, Sha256tree};
 
 /// The pair of state and validation program is the source of the validation hash
 #[derive(Clone, Debug, Eq)]

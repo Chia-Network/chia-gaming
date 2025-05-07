@@ -11,9 +11,7 @@ use log::debug;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::{
-    MyStateUpdateProgram, TheirStateUpdateProgram, TheirTurnResult,
-};
+use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::HasStateUpdateProgram;
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{
@@ -322,6 +320,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub fn curry_referee_puzzle_hash<StateP: HasStateUpdateProgram>(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle_hash: &PuzzleHash,
@@ -338,6 +337,7 @@ pub fn curry_referee_puzzle_hash<StateP: HasStateUpdateProgram>(
 // Agg sig me on the solution of the referee_coin_puzzle.
 // When it invokes the validation program, it passes through args as the full
 // argument set.
+#[allow(dead_code)]
 pub fn curry_referee_puzzle<StateP: HasStateUpdateProgram>(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle: &Puzzle,

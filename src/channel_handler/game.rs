@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use clvm_traits::{ClvmEncoder, ToClvm};
+use clvm_traits::ToClvm;
 use clvmr::run_program;
 
 use crate::utils::proper_list;
@@ -85,22 +85,9 @@ impl Game {
             )));
         }
 
-        let amount = atom_from_clvm(allocator, template_list[0])
-            .and_then(|a| usize_from_atom(&a))
-            .expect("should be an amount");
-        let my_turn = !atom_from_clvm(allocator, template_list[1])
-            .unwrap_or_default()
-            .is_empty();
         let initial_mover_handler =
             GameHandler::my_driver_from_nodeptr(allocator, template_list[2])?;
 
-        let read_number = |allocator: &mut AllocEncoder, node| {
-            atom_from_clvm(allocator, node)
-                .and_then(|n| u64_from_atom(&n))
-                .unwrap_or_default()
-        };
-        let my_contribution = read_number(allocator, template_list[3]);
-        let their_contribution = read_number(allocator, template_list[4]);
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);
         let initial_validation_program =
             StateUpdateProgram::new(allocator, "initial", validation_prog);
@@ -153,7 +140,6 @@ impl Game {
         timeout: &Timeout,
     ) -> (GameStartInfo, GameStartInfo) {
         let amount = our_contribution.clone() + their_contribution.clone();
-        let amount_as_u64: u64 = amount.clone().into();
         debug!(
             "symmetric game starts: {amount:?} initial_mover_share {:?}",
             self.initial_mover_share
