@@ -35,16 +35,9 @@ impl Game {
         game_id: GameID,
         poker_generator: Puzzle,
     ) -> Result<Game, Error> {
-        let args = (
-            as_alice,
-            (
-                100,
-                (
-                    100,
-                    ((), ())
-                )
-            )
-        ).to_clvm(allocator).into_gen()?;
+        let args = (as_alice, (100, (100, ((), ()))))
+            .to_clvm(allocator)
+            .into_gen()?;
         let args_program = Program::from_nodeptr(allocator, args)?;
 
         let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
@@ -61,19 +54,16 @@ impl Game {
         .1;
         let template_list_prog = Program::from_nodeptr(allocator, template_clvm)?;
         debug!("game template_list {template_list_prog:?}");
-        let game_list =
-            if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
-                lst
-            } else {
-                return Err(Error::StrErr(
-                    "poker program didn't return a list".to_string(),
-                ));
-            };
+        let game_list = if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
+            lst
+        } else {
+            return Err(Error::StrErr(
+                "poker program didn't return a list".to_string(),
+            ));
+        };
 
         if game_list.len() < 1 {
-            return Err(Error::StrErr(
-                "not even one game returned".to_string(),
-            ));
+            return Err(Error::StrErr("not even one game returned".to_string()));
         }
 
         if game_list.len() > 1 {
@@ -84,26 +74,30 @@ impl Game {
             if let Some(lst) = proper_list(allocator.allocator(), game_list[0], true) {
                 lst
             } else {
-                return Err(Error::StrErr(
-                    "bad template list".to_string()
-                ));
+                return Err(Error::StrErr("bad template list".to_string()));
             };
 
         if template_list.len() != 11 {
-            return Err(Error::StrErr(
-                format!("calpoker template returned incorrect property list ({} : {:?})", template_list.len(), Program::from_nodeptr(allocator, game_list[0])?)
-            ));
+            return Err(Error::StrErr(format!(
+                "calpoker template returned incorrect property list ({} : {:?})",
+                template_list.len(),
+                Program::from_nodeptr(allocator, game_list[0])?
+            )));
         }
 
         let amount = atom_from_clvm(allocator, template_list[0])
             .and_then(|a| usize_from_atom(&a))
             .expect("should be an amount");
-        let my_turn = !atom_from_clvm(allocator, template_list[1]).unwrap_or_default().is_empty();
+        let my_turn = !atom_from_clvm(allocator, template_list[1])
+            .unwrap_or_default()
+            .is_empty();
         let initial_mover_handler =
             GameHandler::my_driver_from_nodeptr(allocator, template_list[2])?;
 
         let read_number = |allocator: &mut AllocEncoder, node| {
-            atom_from_clvm(allocator, node).and_then(|n| u64_from_atom(&n)).unwrap_or_default()
+            atom_from_clvm(allocator, node)
+                .and_then(|n| u64_from_atom(&n))
+                .unwrap_or_default()
         };
         let my_contribution = read_number(allocator, template_list[3]);
         let their_contribution = read_number(allocator, template_list[4]);
@@ -160,7 +154,10 @@ impl Game {
     ) -> (GameStartInfo, GameStartInfo) {
         let amount = our_contribution.clone() + their_contribution.clone();
         let amount_as_u64: u64 = amount.clone().into();
-        debug!("symmetric game starts: {amount:?} initial_mover_share {:?}", self.initial_mover_share);
+        debug!(
+            "symmetric game starts: {amount:?} initial_mover_share {:?}",
+            self.initial_mover_share
+        );
         let mover_share = Amount::new(self.initial_mover_share);
         let waiter_share = amount.clone() - mover_share.clone();
         (

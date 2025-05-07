@@ -5,11 +5,11 @@ use crate::channel_handler::ReadableMove;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash,
 };
-use crate::referee::RefereeInterface;
 use crate::referee::types::{
     GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
 };
+use crate::referee::RefereeInterface;
 pub struct LiveGame {
     pub game_id: GameID,
     pub rewind_outcome: Option<usize>,

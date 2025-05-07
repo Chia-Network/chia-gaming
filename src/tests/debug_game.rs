@@ -1,22 +1,28 @@
-use std::rc::Rc;
 use std::collections::VecDeque;
+use std::rc::Rc;
 
-use rand_chacha::ChaCha8Rng;
 use rand::prelude::*;
+use rand_chacha::ChaCha8Rng;
 
 use log::debug;
 
-use clvmr::{NodePtr, run_program};
+use clvmr::{run_program, NodePtr};
 
-use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError, clvm_curried_args};
+use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{GameStartInfo, StateUpdateProgram, ValidationInfo, Evidence};
-use crate::common::types::{AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout, atom_from_clvm, chia_dialect};
-use crate::common::standard_coin::{ChiaIdentity, read_hex_puzzle};
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, RefereePuzzleArgs, StateUpdateResult, InternalStateUpdateArgs, StateUpdateMoveArgs};
+use crate::channel_handler::types::{Evidence, GameStartInfo, StateUpdateProgram, ValidationInfo};
+use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
+use crate::common::types::{
+    atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
+    PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
+};
+use crate::referee::types::{
+    GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
+    StateUpdateMoveArgs, StateUpdateResult,
+};
 
 pub struct DebugGameCurry {
     count: usize,
@@ -28,7 +34,7 @@ pub struct DebugGameCurry {
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for DebugGameCurry
 where
-    NodePtr: ToClvm<E>
+    NodePtr: ToClvm<E>,
 {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         (
@@ -37,15 +43,11 @@ where
                 self.self_hash.clone(),
                 (
                     self.self_prog.clone(),
-                    (
-                        self.mover0.clone(),
-                        (
-                            (self.waiter0.clone(), ())
-                        )
-                    )
-                )
-            )
-        ).to_clvm(encoder)
+                    (self.mover0.clone(), ((self.waiter0.clone(), ()))),
+                ),
+            ),
+        )
+            .to_clvm(encoder)
     }
 }
 
@@ -54,8 +56,7 @@ pub struct DebugGame {
 }
 
 impl DebugGameCurry {
-    fn new(
-    ) -> DebugGameCurry {
+    fn new() -> DebugGameCurry {
         todo!();
     }
 }
@@ -93,13 +94,9 @@ impl BareDebugGameDriver {
         &self,
         allocator: &mut AllocEncoder,
     ) -> Option<ValidationInfo<ProgramRef>> {
-        self.last_validation_data.as_ref().map(|(sp, st)| {
-            ValidationInfo::new(
-                allocator,
-                sp.clone(),
-                st.clone()
-            )
-        })
+        self.last_validation_data
+            .as_ref()
+            .map(|(sp, st)| ValidationInfo::new(allocator, sp.clone(), st.clone()))
     }
 
     fn new(
@@ -118,14 +115,21 @@ impl BareDebugGameDriver {
             self_prog: raw_program.to_program(),
             self_hash: prog_hash,
             mover0: identities[0].puzzle_hash.clone(),
-            waiter0: identities[1].puzzle_hash.clone()
+            waiter0: identities[1].puzzle_hash.clone(),
         };
         let curried = CurriedProgram {
             program: raw_program.to_clvm(allocator).into_gen()?,
-            args: clvm_curried_args!("factory", args)
-        }.to_clvm(allocator).into_gen()?;
+            args: clvm_curried_args!("factory", args),
+        }
+        .to_clvm(allocator)
+        .into_gen()?;
         let curried_prog = Program::from_nodeptr(allocator, curried)?;
-        let alice_game = Game::new_program(allocator, true, game_id.clone(), curried_prog.clone().into())?;
+        let alice_game = Game::new_program(
+            allocator,
+            true,
+            game_id.clone(),
+            curried_prog.clone().into(),
+        )?;
         let bob_game = Game::new_program(allocator, false, game_id.clone(), curried_prog.into())?;
         let (start_a, start_b) = alice_game.symmetric_game_starts(
             &game_id,
@@ -145,7 +149,10 @@ impl BareDebugGameDriver {
             move_made: start_a.initial_move.clone(),
             mover_share: start_a.initial_mover_share.clone(),
             state: start_a.initial_state.clone(),
-            validation_program_queue: [start_a.initial_validation_program.clone()].iter().cloned().collect(),
+            validation_program_queue: [start_a.initial_validation_program.clone()]
+                .iter()
+                .cloned()
+                .collect(),
             start: start_a,
             last_validation_data: None,
             mod_hash: referee_coin_puzzle_hash.clone(),
@@ -164,7 +171,10 @@ impl BareDebugGameDriver {
             move_made: start_b.initial_move.clone(),
             mover_share: start_b.initial_mover_share.clone(),
             state: start_b.initial_state.clone(),
-            validation_program_queue: [start_b.initial_validation_program.clone()].iter().cloned().collect(),
+            validation_program_queue: [start_b.initial_validation_program.clone()]
+                .iter()
+                .cloned()
+                .collect(),
             start: start_b,
             last_validation_data: None,
             mod_hash: referee_coin_puzzle_hash.clone(),
@@ -199,10 +209,15 @@ impl BareDebugGameDriver {
             timeout: self.timeout.clone(),
             validation_program: self.validation_program_queue[0].clone(),
             validation_info: validation_info,
-            incoming_state_validation_info_hash: self.get_previous_validation_info_hash(allocator).map(|v| v.hash().clone()),
+            incoming_state_validation_info_hash: self
+                .get_previous_validation_info_hash(allocator)
+                .map(|v| v.hash().clone()),
             slash: 15,
             opponent_mover_share: Amount::new(0xfff),
-            previous_validation_program: self.last_validation_data.as_ref().map(|(sp,_)| sp.clone())
+            previous_validation_program: self
+                .last_validation_data
+                .as_ref()
+                .map(|(sp, _)| sp.clone()),
         }
     }
 
@@ -212,53 +227,58 @@ impl BareDebugGameDriver {
         move_to_check: &[u8],
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
-        let vprog =
-            if let Some(v) = self.validation_program_queue.pop_front() {
-                v
-            } else {
-                return Err(Error::StrErr("No waiting validation program for our turn".to_string()));
-            };
-        let mover_ph =
-            if self.alice_turn() {
-                &self.alice_identity.puzzle_hash
-            } else {
-                &self.bob_identity.puzzle_hash
-            };
-        let mover_puzzle =
-            if self.alice_turn() {
-                self.alice_identity.puzzle.clone()
-            } else {
-                self.bob_identity.puzzle.clone()
-            };
-        let waiter_ph =
-            if self.alice_turn() {
-                &self.bob_identity.puzzle_hash
-            } else {
-                &self.alice_identity.puzzle_hash
-            };
+        let vprog = if let Some(v) = self.validation_program_queue.pop_front() {
+            v
+        } else {
+            return Err(Error::StrErr(
+                "No waiting validation program for our turn".to_string(),
+            ));
+        };
+        let mover_ph = if self.alice_turn() {
+            &self.alice_identity.puzzle_hash
+        } else {
+            &self.bob_identity.puzzle_hash
+        };
+        let mover_puzzle = if self.alice_turn() {
+            self.alice_identity.puzzle.clone()
+        } else {
+            self.bob_identity.puzzle.clone()
+        };
+        let waiter_ph = if self.alice_turn() {
+            &self.bob_identity.puzzle_hash
+        } else {
+            &self.alice_identity.puzzle_hash
+        };
         debug!("vprog {:?}", vprog.to_program());
         let update_args = InternalStateUpdateArgs {
-            referee_args: Rc::new(RefereePuzzleArgs {
-                nonce: self.nonce,
-                previous_validation_info_hash: self.get_previous_validation_info_hash(allocator).map(|v| v.hash().clone()),
-                referee_coin_puzzle_hash: self.mod_hash.clone(),
-                timeout: self.timeout.clone(),
-                mover_puzzle_hash: mover_ph.clone(),
-                waiter_puzzle_hash: waiter_ph.clone(),
-                amount: self.start.amount.clone(),
-                game_move: GameMoveDetails {
-                    basic: GameMoveStateInfo {
-                        move_made: move_to_check.to_vec(),
-                        mover_share: self.mover_share.clone(),
+            referee_args: Rc::new(
+                RefereePuzzleArgs {
+                    nonce: self.nonce,
+                    previous_validation_info_hash: self
+                        .get_previous_validation_info_hash(allocator)
+                        .map(|v| v.hash().clone()),
+                    referee_coin_puzzle_hash: self.mod_hash.clone(),
+                    timeout: self.timeout.clone(),
+                    mover_puzzle_hash: mover_ph.clone(),
+                    waiter_puzzle_hash: waiter_ph.clone(),
+                    amount: self.start.amount.clone(),
+                    game_move: GameMoveDetails {
+                        basic: GameMoveStateInfo {
+                            move_made: move_to_check.to_vec(),
+                            mover_share: self.mover_share.clone(),
+                        },
+                        validation_info_hash: ValidationInfo::new(
+                            allocator,
+                            vprog.clone(),
+                            self.state.clone(),
+                        )
+                        .hash()
+                        .clone(),
                     },
-                    validation_info_hash: ValidationInfo::new(
-                        allocator,
-                        vprog.clone(),
-                        self.state.clone()
-                    ).hash().clone()
-                },
-                max_move_size: self.max_move_size,
-            }.off_chain()),
+                    max_move_size: self.max_move_size,
+                }
+                .off_chain(),
+            ),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 mover_puzzle: mover_puzzle.to_program(),
@@ -281,9 +301,7 @@ fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDriver
     let id1 = ChiaIdentity::new(allocator, pk1)?;
     let identities: [ChiaIdentity; 2] = [id0, id1];
     let gid = GameID::default();
-    let referee_coin = read_hex_puzzle(
-        allocator, "clsp/onchain/referee.hex"
-    )?;
+    let referee_coin = read_hex_puzzle(allocator, "clsp/onchain/referee.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
     BareDebugGameDriver::new(
         allocator,
@@ -301,7 +319,10 @@ fn test_debug_game_factory() {
     let mut allocator = AllocEncoder::new();
     let debug_games = make_debug_games(&mut allocator).expect("good");
     assert_eq!(512, debug_games[0].game.initial_max_move_size);
-    assert_eq!(debug_games[0].game.initial_max_move_size, debug_games[1].game.initial_max_move_size);
+    assert_eq!(
+        debug_games[0].game.initial_max_move_size,
+        debug_games[1].game.initial_max_move_size
+    );
 }
 
 struct ExhaustiveMoveInputs {
@@ -326,7 +347,9 @@ struct ExhaustiveMoveInputs {
 
 fn at_least_one_byte(allocator: &mut AllocEncoder, amt: &Amount) -> Result<NodePtr, Error> {
     if amt == &Amount::default() {
-        allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0])).into_gen()
+        allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&[0]))
+            .into_gen()
     } else {
         amt.to_clvm(allocator).into_gen()
     }
@@ -339,23 +362,25 @@ impl ExhaustiveMoveInputs {
         off_chain: bool,
     ) -> Result<Vec<u8>, Error> {
         let mut result_vec: Vec<u8> = Vec::default();
-        let mover_ph_ref =
-            if self.alice {
-                &self.alice_puzzle_hash
-            } else {
-                &self.bob_puzzle_hash
-            };
-        let waiter_ph_ref =
-            if off_chain {
-                None
-            } else if self.alice {
-                Some(&self.bob_puzzle_hash)
-            } else {
-                Some(&self.alice_puzzle_hash)
-            };
+        let mover_ph_ref = if self.alice {
+            &self.alice_puzzle_hash
+        } else {
+            &self.bob_puzzle_hash
+        };
+        let waiter_ph_ref = if off_chain {
+            None
+        } else if self.alice {
+            Some(&self.bob_puzzle_hash)
+        } else {
+            Some(&self.alice_puzzle_hash)
+        };
         let pv_hash = self.validation_program.sha256tree(allocator);
-        let move_atom = allocator.encode_atom(clvm_traits::Atom::Borrowed(&self.move_made)).into_gen()?;
-        let slash_atom = allocator.encode_atom(clvm_traits::Atom::Borrowed(&[self.slash])).into_gen()?;
+        let move_atom = allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&self.move_made))
+            .into_gen()?;
+        let slash_atom = allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&[self.slash]))
+            .into_gen()?;
         let amount_atom = at_least_one_byte(allocator, &self.opponent_mover_share)?;
         let args = (
             mover_ph_ref.clone(),
@@ -383,32 +408,28 @@ impl ExhaustiveMoveInputs {
                                                         self.count,
                                                         (
                                                             Node(amount_atom),
-                                                            (
-                                                                (Node(slash_atom), ())
-                                                            )
-                                                        )
-                                                    )
-                                                )
-                                            )
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        ).to_clvm(allocator).into_gen()?;
+                                                            ((Node(slash_atom), ())),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+            .to_clvm(allocator)
+            .into_gen()?;
 
         let program_to_concat = Program::from_hex("ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ffff820bffff8217ffff822fffff825fff80")?;
         let pnode = program_to_concat.to_clvm(allocator).into_gen()?;
-        let result_atom = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
-            pnode,
-            args,
-            0
-        ).into_gen()?.1;
+        let result_atom = run_program(allocator.allocator(), &chia_dialect(), pnode, args, 0)
+            .into_gen()?
+            .1;
         if let Some(result_move_data) = atom_from_clvm(allocator, result_atom) {
             debug!("generated move data {result_move_data:?}");
             Ok(result_move_data)
@@ -422,17 +443,23 @@ impl ExhaustiveMoveInputs {
 fn test_debug_game_validation_move() {
     let mut allocator = AllocEncoder::new();
     let mut debug_games = make_debug_games(&mut allocator).expect("good");
-    assert_eq!(debug_games[0].game.initial_validation_program, debug_games[1].game.initial_validation_program);
+    assert_eq!(
+        debug_games[0].game.initial_validation_program,
+        debug_games[1].game.initial_validation_program
+    );
     // Predict the first move bytes.
     let predicted_move = debug_games[0].get_move_inputs(&mut allocator);
-    let move_data = predicted_move.to_linear_move(&mut allocator, true).expect("good");
+    let move_data = predicted_move
+        .to_linear_move(&mut allocator, true)
+        .expect("good");
     debug!("move_data {move_data:?}");
-    let validation_result = debug_games[0].state_update_for_own_move(
-        &mut allocator,
-        &move_data,
-        Evidence::nil().expect("good"),
-    ).expect("good");
+    let validation_result = debug_games[0]
+        .state_update_for_own_move(&mut allocator, &move_data, Evidence::nil().expect("good"))
+        .expect("good");
 
     debug!("validation_result {validation_result:?}");
-    assert!(matches!(validation_result, StateUpdateResult::MoveOk(_, _, 512)));
+    assert!(matches!(
+        validation_result,
+        StateUpdateResult::MoveOk(_, _, 512)
+    ));
 }

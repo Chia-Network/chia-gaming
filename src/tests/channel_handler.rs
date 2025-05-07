@@ -7,6 +7,7 @@ use clvm_traits::ToClvm;
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::runner::ChannelHandlerGame;
+use crate::channel_handler::types::make_puzzle_name_map;
 use crate::channel_handler::types::{
     read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, GameStartInfo,
     StateUpdateProgram, UnrollCoin, UnrollCoinConditionInputs,
@@ -19,7 +20,6 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinID, GameID, Hash, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::tests::game::DEFAULT_UNROLL_TIME_LOCK;
-use crate::channel_handler::types::make_puzzle_name_map;
 
 #[test]
 fn test_smoke_can_initiate_channel_handler() {

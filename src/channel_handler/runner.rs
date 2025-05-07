@@ -165,7 +165,7 @@ pub fn channel_handler_env<'a, R: Rng>(
     )?;
     let unroll_metapuzzle = read_hex_puzzle(allocator, "clsp/unroll/unroll_meta_puzzle.hex")?;
     let standard_puzzle = get_standard_coin_puzzle(allocator)?;
-    let puzzle_name_map =  make_puzzle_name_map(allocator);
+    let puzzle_name_map = make_puzzle_name_map(allocator);
     Ok(ChannelHandlerEnv {
         allocator,
         rng,

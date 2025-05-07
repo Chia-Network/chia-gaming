@@ -21,8 +21,7 @@ pub enum ValidationInfo<StateT: Sha256tree> {
     },
 }
 
-impl<StateT: Sha256tree> PartialEq<Self> for ValidationInfo<StateT>
-{
+impl<StateT: Sha256tree> PartialEq<Self> for ValidationInfo<StateT> {
     fn eq(&self, other: &Self) -> bool {
         self.hash() == other.hash()
     }

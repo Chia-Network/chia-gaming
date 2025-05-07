@@ -21,8 +21,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     atom_from_clvm, chia_dialect, i64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash,
-    Sha256tree, Spend, Timeout,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, Program, ProgramRef, Puzzle,
+    PuzzleHash, Sha256tree, Spend, Timeout,
 };
 use crate::referee::StateUpdateProgram;
 use crate::utils::proper_list;
@@ -407,25 +407,22 @@ pub struct InternalStateUpdateArgs {
 }
 
 impl InternalStateUpdateArgs {
-    pub fn to_nodeptr(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<NodePtr, Error> {
+    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         let validator_mod_hash = self.validation_program.sha256tree(allocator);
-        let referee_args_nodeptr = self.referee_args
+        let referee_args_nodeptr = self
+            .referee_args
             .off_chain()
             .to_clvm(allocator)
             .into_gen()?;
         let referee_args_prog = Program::from_nodeptr(allocator, referee_args_nodeptr)?;
         let referee_prog_node = self.validation_program.to_clvm(allocator).into_gen()?;
-        let state_update_args = self.state_update_args.to_nodeptr(allocator, referee_prog_node)?;
+        let state_update_args = self
+            .state_update_args
+            .to_nodeptr(allocator, referee_prog_node)?;
         debug!("converted referee args {referee_args_prog:?}");
         (
             validator_mod_hash,
-            (
-                Node(referee_args_nodeptr),
-                Node(state_update_args),
-            ),
+            (Node(referee_args_nodeptr), Node(state_update_args)),
         )
             .to_clvm(allocator)
             .into_gen()
@@ -435,9 +432,7 @@ impl InternalStateUpdateArgs {
         let validation_program_mod_hash = self.validation_program.hash();
         debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
         let validation_program_nodeptr = self.validation_program.p().to_nodeptr(allocator)?;
-        let validator_full_args_node = self.to_nodeptr(
-            allocator,
-        )?;
+        let validator_full_args_node = self.to_nodeptr(allocator)?;
         let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
         let validation_info = ValidationInfo::new_from_state_update_program_hash_and_state(
             allocator,

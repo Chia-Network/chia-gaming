@@ -5,19 +5,15 @@ use std::rc::Rc;
 use crate::channel_handler::types::{GameStartInfo, ReadableMove, StateUpdateProgram};
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash,
-    Puzzle, PuzzleHash,
+    AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Puzzle, PuzzleHash,
 };
 use crate::referee::types::{
-    GameMoveDetails,
-    GameMoveWireData, OnChainRefereeSolution, RMFixed,
-    RefereeOnChainTransaction, RefereePuzzleArgs, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult,
+    GameMoveDetails, GameMoveWireData, OnChainRefereeSolution, RMFixed, RefereeOnChainTransaction,
+    RefereePuzzleArgs, TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 
 #[derive(Clone, Debug)]
-pub struct RefereeByTurn {
-}
+pub struct RefereeByTurn {}
 
 pub type StateUpdateProgramRef = Rc<RefereePuzzleArgs>;
 

@@ -4,11 +4,11 @@ use rand::distributions::Standard;
 use std::collections::HashMap;
 
 use crate::channel_handler::types::{PotatoSignatures, UnrollCoin};
+use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, Hash, PrivateKey, PublicKey, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
-use crate::common::standard_coin::read_hex_puzzle;
 
 #[derive(Clone)]
 pub struct ChannelHandlerPrivateKeys {
@@ -70,9 +70,10 @@ pub struct ChannelHandlerEnv<'a, R: Rng> {
 // TODO: Also, name new puzzles as we create them (e.g. curried in arguments, singleton spends)
 pub fn make_puzzle_name_map(allocator: &mut AllocEncoder) -> HashMap<PuzzleHash, String> {
     let validation_program_names = ["a", "b", "c", "d", "e"];
-    let mut puzzle_name_pairs:HashMap<PuzzleHash, String> = HashMap::default();
+    let mut puzzle_name_pairs: HashMap<PuzzleHash, String> = HashMap::default();
     for name in validation_program_names {
-        let program = read_hex_puzzle(allocator, &format!("clsp/onchain/calpoker/{name}.hex")).expect("should read");
+        let program = read_hex_puzzle(allocator, &format!("clsp/onchain/calpoker/{name}.hex"))
+            .expect("should read");
         let hash = program.sha256tree(allocator);
         puzzle_name_pairs.insert(hash, name.to_string());
     }
