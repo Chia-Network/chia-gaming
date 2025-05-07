@@ -166,6 +166,8 @@ impl RefereeByTurn {
     }
 }
 
+pub type RefereeAndStateNumber = (Rc<dyn RefereeInterface>, usize);
+
 impl RefereeInterface for RefereeByTurn {
     fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         todo!();
@@ -253,7 +255,7 @@ impl RefereeInterface for RefereeByTurn {
         &self,
         _allocator: &mut AllocEncoder,
         _puzzle_hash: &PuzzleHash,
-    ) -> Result<Option<(Rc<dyn RefereeInterface>, usize)>, Error> {
+    ) -> Result<Option<RefereeAndStateNumber>, Error> {
         todo!();
     }
 
