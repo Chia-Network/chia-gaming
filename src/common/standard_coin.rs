@@ -5,7 +5,6 @@ use std::fs::read_to_string;
 use hex::FromHex;
 use log::debug;
 use num_bigint::{BigInt, Sign};
-
 use chia_bls;
 
 use clvm_traits::{clvm_curried_args, ToClvm};
@@ -48,7 +47,7 @@ pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzl
     let hex_data = if let Some(data) = PRESET_FILES.with(|p| p.borrow().get(name).cloned()) {
         data
     } else {
-        read_to_string(name).into_gen()?
+        read_to_string(name).map_err(|_| types::Error::StrErr(format!("Couldn't read filename {name}")))?
     };
     let hex_sexp = hex_to_sexp(allocator, &hex_data)?;
     Puzzle::from_nodeptr(allocator, hex_sexp)
