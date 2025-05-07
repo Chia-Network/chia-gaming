@@ -90,6 +90,8 @@ pub enum TheirTurnCoinSpentResult {
     },
     Slash(Box<SlashOutcome>),
 }
+
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateUpdateResult {
     MoveOk(Rc<Program>, ValidationInfo<ProgramRef>, usize),
@@ -97,6 +99,7 @@ pub enum StateUpdateResult {
 }
 
 impl StateUpdateResult {
+    #[allow(dead_code)]
     pub fn from_nodeptr(
         allocator: &mut AllocEncoder,
         validation_info: ValidationInfo<ProgramRef>,
@@ -321,7 +324,7 @@ where
 }
 
 #[allow(dead_code)]
-pub fn curry_referee_puzzle_hash<StateP: HasStateUpdateProgram>(
+pub fn curry_referee_puzzle_hash(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle_hash: &PuzzleHash,
     args: &RefereePuzzleArgs,
@@ -338,7 +341,7 @@ pub fn curry_referee_puzzle_hash<StateP: HasStateUpdateProgram>(
 // When it invokes the validation program, it passes through args as the full
 // argument set.
 #[allow(dead_code)]
-pub fn curry_referee_puzzle<StateP: HasStateUpdateProgram>(
+pub fn curry_referee_puzzle(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle: &Puzzle,
     args: &RefereePuzzleArgs,
@@ -400,6 +403,7 @@ impl StateUpdateMoveArgs {
     }
 }
 
+#[allow(dead_code)]
 pub struct InternalStateUpdateArgs {
     pub validation_program: StateUpdateProgram,
     pub referee_args: Rc<RefereePuzzleArgs>,
@@ -407,6 +411,7 @@ pub struct InternalStateUpdateArgs {
 }
 
 impl InternalStateUpdateArgs {
+    #[allow(dead_code)]
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         let validator_mod_hash = self.validation_program.sha256tree(allocator);
         let referee_args_nodeptr = self
@@ -428,6 +433,7 @@ impl InternalStateUpdateArgs {
             .into_gen()
     }
 
+    #[allow(dead_code)]
     pub fn run(&self, allocator: &mut AllocEncoder) -> Result<StateUpdateResult, Error> {
         let validation_program_mod_hash = self.validation_program.hash();
         debug!("validation_program_mod_hash {validation_program_mod_hash:?}");

@@ -62,12 +62,8 @@ impl Game {
             ));
         };
 
-        if game_list.len() < 1 {
+        if game_list.is_empty() {
             return Err(Error::StrErr("not even one game returned".to_string()));
-        }
-
-        if game_list.len() > 1 {
-            todo!();
         }
 
         let template_list =
