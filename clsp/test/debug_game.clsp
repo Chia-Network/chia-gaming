@@ -85,13 +85,19 @@
    (if
     (or
      ;; Too short move
-     (print (list "have 2 or more bytes than move-counter-data-len which is" move-counter-data-len "have" (strlen MOVE)) (> move-counter-data-len (- (strlen MOVE) 2)))
+     (print (list "have 2 or more bytes than move-counter-data-len which is" move-counter-data-len "have" (- (strlen MOVE) 3)) (> move-counter-data-len (- (strlen MOVE) 3)))
      ;; Move doesn't repeat the counter data
      (print (list "did we reproduce the data" (substr MOVE 0 move-counter-data-len) "versus" move-counter-data) (not (= move-counter-data (substr MOVE 0 move-counter-data-len))))
      ;; Mover puzzle isn't the puzzle of the mover we think we have.
      (print "did we have the right mover puzzle" (not (= mover-puzzle-hash (shatree mover_puzzle))))
+     ;;
+     (print (list "INFOHASH_A " INFOHASH_A) 0)
+     (print (list "INFOHASH_B " INFOHASH_B) 0)
+     (print (list "INFOHASH_C " "NONE YET") 0)
      ;; check previous validation info hash
-     (print "did we have the right previous validation info hash" (not (= INFOHASH_A (sha256 pv_hash (shatree state)))))
+     (print (list "Previous infohash calculation: " (sha256 pv_hash (shatree state))) 0)
+     (print "did we have the right previous validation info hash" (not (= INFOHASH_B (sha256 pv_hash (shatree state)))))
+     ;;
      ;; the step we're on indicates mover0 or waiter0 as mover
      (print "did we send mover and waiter puzzle hash in the right order" (if (logand COUNT 1)
           (not (= MOVER_PUZZLE_HASH MOVER0))
@@ -101,6 +107,9 @@
      (print "ensure we didn't just send the same puzzle hash for mover and waiter" (= MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH))
      ;; the evidence is the slash
      (and
+      (print (list "move-len" move-len) 1)
+      (print (list "MOVE " MOVE) 1)
+      (print (list "evidence" evidence) 1)
       (print "evidence was the same as the cheat in the move" (= evidence (substr MOVE (- move-len 1) move-len)))
       ;; Can't slash if the slash-byte is zero.
       (print "and it wasn't a zero byte which we can't slash" (not (= evidence 0x00)))
