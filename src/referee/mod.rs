@@ -18,7 +18,7 @@ pub struct RefereeByTurn {}
 pub type StateUpdateProgramRef = Rc<RefereePuzzleArgs>;
 
 pub trait RefereeInterface {
-    /// args for this coin from when it was spent (in the past)
+    // args for this coin from when it was spent (in the past)
     fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs>;
 
     fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs>;
@@ -182,7 +182,7 @@ impl RefereeInterface for RefereeByTurn {
     }
 
     fn is_my_turn(&self) -> bool {
-        /// We are working on an "our" move
+        // We are working on an "our" move
         todo!();
     }
 

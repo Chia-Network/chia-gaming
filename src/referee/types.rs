@@ -295,6 +295,7 @@ impl RefereePuzzleArgs {
     }
 }
 
+/// See debug_game.clsp STATE_PACK
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for RefereePuzzleArgs
 where
     NodePtr: ToClvm<E>,
