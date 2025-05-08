@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union, TypeVar, Generic
 
 from clvm_types.program import Program
 
+clsp_dir = Path("../clsp/")
 calpoker_clsp_dir = Path("../clsp/games/calpoker-v1")
 calpoker_onchain_clsp_dir = Path("../clsp/games/calpoker-v1/onchain")
 
