@@ -21,7 +21,7 @@ use crate::common::types::{
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
-    StateUpdateMoveArgs, StateUpdateResult,
+    StateUpdateMoveArgs, StateUpdateResult, tmpsave,
 };
 
 pub struct DebugGameCurry {
@@ -233,7 +233,9 @@ impl BareDebugGameDriver {
         } else {
             &self.alice_identity.puzzle_hash
         };
-        debug!("vprog {:?}", vprog.to_program());
+
+        tmpsave("v-prog.hex", &vprog.to_program().to_hex());
+
         let update_args = InternalStateUpdateArgs {
             referee_args: Rc::new(
                 RefereePuzzleArgs {

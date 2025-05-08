@@ -1,4 +1,6 @@
 use std::borrow::Borrow;
+#[cfg(test)]
+use std::fs;
 use std::rc::Rc;
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
@@ -411,6 +413,11 @@ pub struct InternalStateUpdateArgs {
     pub state_update_args: StateUpdateMoveArgs,
 }
 
+#[cfg(test)]
+pub fn tmpsave(name: &str, val: &str) {
+    fs::write(name, val).expect("tmpsave")
+}
+
 impl InternalStateUpdateArgs {
     #[allow(dead_code)]
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
@@ -449,6 +456,10 @@ impl InternalStateUpdateArgs {
 
         debug!("validator program {:?}", self.validation_program);
         debug!("validator args {:?}", validator_full_args);
+
+        #[cfg(test)]
+        tmpsave("v-args.hex", &validator_full_args.to_hex());
+
         let raw_result_p = run_program(
             allocator.allocator(),
             &chia_dialect(),
