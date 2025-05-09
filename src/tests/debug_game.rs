@@ -13,15 +13,18 @@ use clvm_utils::CurriedProgram;
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs};
-use crate::channel_handler::types::{Evidence, GameStartInfo, StateUpdateProgram, ValidationInfo, ReadableMove, HasStateUpdateProgram};
+use crate::channel_handler::types::{
+    Evidence, GameStartInfo, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
+    ValidationInfo,
+};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
-    StateUpdateMoveArgs, StateUpdateResult, tmpsave,
+    tmpsave, GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
+    StateUpdateMoveArgs, StateUpdateResult,
 };
 
 pub struct DebugGameCurry {
@@ -147,7 +150,11 @@ impl BareDebugGameDriver {
             mod_hash: referee_coin_puzzle_hash.clone(),
             nonce,
             game: alice_game.clone(),
-            rng: rng_sequence.iter().take(rng_sequence.len()/2).cloned().collect(),
+            rng: rng_sequence
+                .iter()
+                .take(rng_sequence.len() / 2)
+                .cloned()
+                .collect(),
         };
         let bob_driver = BareDebugGameDriver {
             i_am_alice: false,
@@ -168,7 +175,11 @@ impl BareDebugGameDriver {
             mod_hash: referee_coin_puzzle_hash.clone(),
             nonce,
             game: bob_game,
-            rng: rng_sequence.iter().skip(rng_sequence.len()/2).cloned().collect(),
+            rng: rng_sequence
+                .iter()
+                .skip(rng_sequence.len() / 2)
+                .cloned()
+                .collect(),
         };
         Ok([alice_driver, bob_driver])
     }
@@ -217,12 +228,14 @@ impl BareDebugGameDriver {
                 entropy: self.rng[self.move_count].clone(),
                 amount: self.start.amount.clone(),
                 last_mover_share: self.mover_share.pop_front().unwrap(),
-            }
+            },
         )?;
 
         self.validation_program_queue.clear();
-        self.validation_program_queue.push_back(my_handler_result.outgoing_move_state_update_program.p());
-        self.validation_program_queue.push_back(my_handler_result.incoming_move_state_update_program.p());
+        self.validation_program_queue
+            .push_back(my_handler_result.outgoing_move_state_update_program.p());
+        self.validation_program_queue
+            .push_back(my_handler_result.incoming_move_state_update_program.p());
 
         let vprog = if let Some(v) = self.validation_program_queue.pop_front() {
             v
@@ -245,18 +258,14 @@ impl BareDebugGameDriver {
 
         self.move_count += 1;
 
-        if let StateUpdateResult::MoveOk(
-            new_state,
-            _new_validation_info_hash,
-            new_max_move_size,
-        ) = state_update_result {
+        if let StateUpdateResult::MoveOk(new_state, _new_validation_info_hash, new_max_move_size) =
+            state_update_result
+        {
             self.max_move_size = new_max_move_size;
-            self.mover_share.push_back(my_handler_result.mover_share.clone());
+            self.mover_share
+                .push_back(my_handler_result.mover_share.clone());
             self.state = ProgramRef::new(new_state.clone());
-            self.last_validation_data = Some((
-                vprog.clone(),
-                ProgramRef::new(new_state.clone())
-            ));
+            self.last_validation_data = Some((vprog.clone(), ProgramRef::new(new_state.clone())));
         }
 
         Ok(())
@@ -268,7 +277,7 @@ impl BareDebugGameDriver {
         validation_program: StateUpdateProgram,
         previous_validation_info_hash: Option<Hash>,
         move_to_check: &[u8],
-        evidence: Evidence
+        evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
         let (mover_ph, waiter_ph, mover_puzzle) = self.get_mover_and_waiter_ph();
 
@@ -342,7 +351,7 @@ impl BareDebugGameDriver {
                 .last_validation_data
                 .as_ref()
                 .map(|(sp, _)| sp.clone()),
-            entropy: self.rng[self.move_count].clone()
+            entropy: self.rng[self.move_count].clone(),
         }
     }
 
@@ -376,7 +385,7 @@ impl BareDebugGameDriver {
     pub fn accept_move(
         &mut self,
         _allocator: &mut AllocEncoder,
-        _inputs: &ExhaustiveMoveInputs
+        _inputs: &ExhaustiveMoveInputs,
     ) -> Result<(), Error> {
         todo!();
     }
@@ -451,24 +460,26 @@ fn at_least_one_byte(allocator: &mut AllocEncoder, amt: &Amount) -> Result<NodeP
 
 impl ExhaustiveMoveInputs {
     pub fn slash_atom(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
-        allocator.encode_atom(clvm_traits::Atom::Borrowed(&[self.slash])).into_gen()
+        allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&[self.slash]))
+            .into_gen()
     }
 
     pub fn get_ui_move(&self, allocator: &mut AllocEncoder) -> Result<ReadableMove, Error> {
         let slash_node = self.slash_atom(allocator)?;
         let linear_move = self.to_linear_move(allocator, true)?;
-        let linear_move_node =
-            allocator.encode_atom(clvm_traits::Atom::Borrowed(&linear_move)).into_gen()?;
+        let linear_move_node = allocator
+            .encode_atom(clvm_traits::Atom::Borrowed(&linear_move))
+            .into_gen()?;
         let readable_move = (
             Node(linear_move_node),
             (
                 self.count,
-                (
-                    self.opponent_mover_share.clone(),
-                    (Node(slash_node), ())
-                )
-            )
-        ).to_clvm(allocator).into_gen()?;
+                (self.opponent_mover_share.clone(), (Node(slash_node), ())),
+            ),
+        )
+            .to_clvm(allocator)
+            .into_gen()?;
         ReadableMove::from_nodeptr(allocator, readable_move)
     }
 
@@ -549,7 +560,8 @@ impl ExhaustiveMoveInputs {
     }
 
     pub fn previous_validation_info_hash(
-        &self, _allocator: &mut AllocEncoder
+        &self,
+        _allocator: &mut AllocEncoder,
     ) -> Result<Option<Hash>, Error> {
         todo!();
     }
@@ -578,9 +590,13 @@ fn test_debug_game_validation_move() {
         StateUpdateResult::MoveOk(_, _, 512)
     ));
     debug!("end my turn");
-    debug_games[0].end_my_turn(&mut allocator, &predicted_move).expect("good");
+    debug_games[0]
+        .end_my_turn(&mut allocator, &predicted_move)
+        .expect("good");
     debug!("accept move");
-    debug_games[1].accept_move(&mut allocator, &predicted_move).expect("good");
+    debug_games[1]
+        .accept_move(&mut allocator, &predicted_move)
+        .expect("good");
     let predicted_bob_move = debug_games[1].get_move_inputs(&mut allocator);
     let _bob_move_data = predicted_bob_move
         .to_linear_move(&mut allocator, true)

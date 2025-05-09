@@ -207,7 +207,10 @@ impl GameHandler {
             .into_gen()?;
 
         let driver_node = self.get_my_turn_driver(allocator)?;
-        debug!("driver args {:?}", Program::from_nodeptr(allocator, driver_args)?);
+        debug!(
+            "driver args {:?}",
+            Program::from_nodeptr(allocator, driver_args)?
+        );
         let run_result = run_code(allocator, driver_node, driver_args, false);
 
         if let Err(Error::ClvmErr(EvalErr(x, ty))) = &run_result {
