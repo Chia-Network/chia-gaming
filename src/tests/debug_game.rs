@@ -202,13 +202,14 @@ impl BareDebugGameDriver {
         allocator: &mut AllocEncoder,
         exhaustive_inputs: &ExhaustiveMoveInputs,
     ) -> Result<(), Error> {
-        assert!(self.alice_turn() == self.i_am_alice);
+        assert!(self.i_am_alice == ((self.move_count & 1) == 0));
 
         let move_data = exhaustive_inputs
             .to_linear_move(allocator, true)
             .expect("good");
 
         let ui_move = exhaustive_inputs.get_ui_move(allocator)?;
+        debug!("my turn handler {:?}", self.handler);
         let my_handler_result = self.handler.call_my_turn_driver(
             allocator,
             &MyTurnInputs {
@@ -455,11 +456,20 @@ impl ExhaustiveMoveInputs {
 
     pub fn get_ui_move(&self, allocator: &mut AllocEncoder) -> Result<ReadableMove, Error> {
         let slash_node = self.slash_atom(allocator)?;
-        let _readable_move = (
-            self.opponent_mover_share.clone(),
-            (Node(slash_node), ())
+        let linear_move = self.to_linear_move(allocator, true)?;
+        let linear_move_node =
+            allocator.encode_atom(clvm_traits::Atom::Borrowed(&linear_move)).into_gen()?;
+        let readable_move = (
+            Node(linear_move_node),
+            (
+                self.count,
+                (
+                    self.opponent_mover_share.clone(),
+                    (Node(slash_node), ())
+                )
+            )
         ).to_clvm(allocator).into_gen()?;
-        todo!();
+        ReadableMove::from_nodeptr(allocator, readable_move)
     }
 
     pub fn to_linear_move(
@@ -567,7 +577,9 @@ fn test_debug_game_validation_move() {
         validation_result,
         StateUpdateResult::MoveOk(_, _, 512)
     ));
+    debug!("end my turn");
     debug_games[0].end_my_turn(&mut allocator, &predicted_move).expect("good");
+    debug!("accept move");
     debug_games[1].accept_move(&mut allocator, &predicted_move).expect("good");
     let predicted_bob_move = debug_games[1].get_move_inputs(&mut allocator);
     let _bob_move_data = predicted_bob_move

@@ -136,12 +136,12 @@
 
 (defun myturn ((CURRY_PACK) local_move amount split entropy)
   ;; local move is a list of slashable and mover share
-  (if (not local_move)
+  (if (not (print (list "Curry pack:" curry-args) local_move))
       ;; () local move should make us emit a local slash so we can try that.
       (x "my turn local slash")
       ;; local move is a list of a prefix count slash byte and mover share
       (assign
-       (prefix count slash mover-share) local_move
+       (prefix count mover-share slash) local_move
        (if (not (= count COUNT))
            (x "count not equal for this move" count COUNT)
            (list
