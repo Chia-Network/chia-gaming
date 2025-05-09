@@ -12,12 +12,12 @@ use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
 use crate::channel_handler::game::Game;
-use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::{Evidence, GameStartInfo, StateUpdateProgram, ValidationInfo};
+use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs};
+use crate::channel_handler::types::{Evidence, GameStartInfo, StateUpdateProgram, ValidationInfo, ReadableMove, HasStateUpdateProgram};
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, Program, ProgramRef, PuzzleHash, Sha256tree, Timeout,
+    PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
@@ -67,7 +67,7 @@ pub struct BareDebugGameDriver {
 
     // Live
     max_move_size: usize,
-    mover_share: Amount,
+    mover_share: VecDeque<Amount>,
     state: ProgramRef,
     last_validation_data: Option<(StateUpdateProgram, ProgramRef)>,
 
@@ -76,6 +76,7 @@ pub struct BareDebugGameDriver {
     #[allow(dead_code)]
     handler: GameHandler,
     start: GameStartInfo,
+    rng: Vec<Hash>,
 }
 
 impl BareDebugGameDriver {
@@ -95,6 +96,7 @@ impl BareDebugGameDriver {
         identities: &[ChiaIdentity],
         referee_coin_puzzle_hash: &PuzzleHash,
         timeout: Timeout,
+        rng_sequence: &[Hash],
         game_hex_file: &str,
     ) -> Result<[BareDebugGameDriver; 2], Error> {
         let raw_program = read_hex_puzzle(allocator, game_hex_file)?;
@@ -134,7 +136,7 @@ impl BareDebugGameDriver {
             handler: start_a.game_handler.clone(),
             timeout: timeout.clone(),
             max_move_size: start_a.initial_max_move_size,
-            mover_share: start_a.initial_mover_share.clone(),
+            mover_share: [start_a.initial_mover_share.clone()].into_iter().collect(),
             state: start_a.initial_state.clone(),
             validation_program_queue: [start_a.initial_validation_program.clone()]
                 .iter()
@@ -145,6 +147,7 @@ impl BareDebugGameDriver {
             mod_hash: referee_coin_puzzle_hash.clone(),
             nonce,
             game: alice_game.clone(),
+            rng: rng_sequence.iter().take(rng_sequence.len()/2).cloned().collect(),
         };
         let bob_driver = BareDebugGameDriver {
             i_am_alice: false,
@@ -154,7 +157,7 @@ impl BareDebugGameDriver {
             handler: start_b.game_handler.clone(),
             timeout,
             max_move_size: start_b.initial_max_move_size,
-            mover_share: start_b.initial_mover_share.clone(),
+            mover_share: [start_b.initial_mover_share.clone()].into_iter().collect(),
             state: start_b.initial_state.clone(),
             validation_program_queue: [start_b.initial_validation_program.clone()]
                 .iter()
@@ -165,12 +168,148 @@ impl BareDebugGameDriver {
             mod_hash: referee_coin_puzzle_hash.clone(),
             nonce,
             game: bob_game,
+            rng: rng_sequence.iter().skip(rng_sequence.len()/2).cloned().collect(),
         };
         Ok([alice_driver, bob_driver])
     }
 
     pub fn alice_turn(&self) -> bool {
         self.i_am_alice ^ ((self.move_count & 1) == 0)
+    }
+
+    pub fn get_mover_and_waiter_ph(&self) -> (PuzzleHash, PuzzleHash, Puzzle) {
+        let mover_ph = if self.alice_turn() {
+            &self.alice_identity.puzzle_hash
+        } else {
+            &self.bob_identity.puzzle_hash
+        };
+        let mover_puzzle = if self.alice_turn() {
+            self.alice_identity.puzzle.clone()
+        } else {
+            self.bob_identity.puzzle.clone()
+        };
+        let waiter_ph = if self.alice_turn() {
+            &self.bob_identity.puzzle_hash
+        } else {
+            &self.alice_identity.puzzle_hash
+        };
+
+        (mover_ph.clone(), waiter_ph.clone(), mover_puzzle)
+    }
+
+    pub fn end_my_turn(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        exhaustive_inputs: &ExhaustiveMoveInputs,
+    ) -> Result<(), Error> {
+        assert!(self.alice_turn() == self.i_am_alice);
+
+        let move_data = exhaustive_inputs
+            .to_linear_move(allocator, true)
+            .expect("good");
+
+        let ui_move = exhaustive_inputs.get_ui_move(allocator)?;
+        let my_handler_result = self.handler.call_my_turn_driver(
+            allocator,
+            &MyTurnInputs {
+                readable_new_move: ui_move,
+                entropy: self.rng[self.move_count].clone(),
+                amount: self.start.amount.clone(),
+                last_mover_share: self.mover_share.pop_front().unwrap(),
+            }
+        )?;
+
+        self.validation_program_queue.clear();
+        self.validation_program_queue.push_back(my_handler_result.outgoing_move_state_update_program.p());
+        self.validation_program_queue.push_back(my_handler_result.incoming_move_state_update_program.p());
+
+        let vprog = if let Some(v) = self.validation_program_queue.pop_front() {
+            v
+        } else {
+            return Err(Error::StrErr(
+                "No waiting validation program for our turn".to_string(),
+            ));
+        };
+
+        let p_validation_hash = exhaustive_inputs.previous_validation_info_hash(allocator)?;
+        let state_update_result = self.generic_run_state_update(
+            allocator,
+            vprog.clone(),
+            p_validation_hash,
+            &move_data,
+            Evidence::nil()?,
+        )?;
+
+        assert_eq!(my_handler_result.move_bytes, move_data);
+
+        self.move_count += 1;
+
+        if let StateUpdateResult::MoveOk(
+            new_state,
+            _new_validation_info_hash,
+            new_max_move_size,
+        ) = state_update_result {
+            self.max_move_size = new_max_move_size;
+            self.mover_share.push_back(my_handler_result.mover_share.clone());
+            self.state = ProgramRef::new(new_state.clone());
+            self.last_validation_data = Some((
+                vprog.clone(),
+                ProgramRef::new(new_state.clone())
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub fn generic_run_state_update(
+        &self,
+        allocator: &mut AllocEncoder,
+        validation_program: StateUpdateProgram,
+        previous_validation_info_hash: Option<Hash>,
+        move_to_check: &[u8],
+        evidence: Evidence
+    ) -> Result<StateUpdateResult, Error> {
+        let (mover_ph, waiter_ph, mover_puzzle) = self.get_mover_and_waiter_ph();
+
+        tmpsave("v-prog.hex", &validation_program.to_program().to_hex());
+
+        let update_args = InternalStateUpdateArgs {
+            referee_args: Rc::new(
+                RefereePuzzleArgs {
+                    nonce: self.nonce,
+                    previous_validation_info_hash,
+                    referee_coin_puzzle_hash: self.mod_hash.clone(),
+                    timeout: self.timeout.clone(),
+                    mover_puzzle_hash: mover_ph.clone(),
+                    waiter_puzzle_hash: waiter_ph.clone(),
+                    amount: self.start.amount.clone(),
+                    game_move: GameMoveDetails {
+                        basic: GameMoveStateInfo {
+                            move_made: move_to_check.to_vec(),
+                            mover_share: self.mover_share[0].clone(),
+                        },
+                        validation_info_hash: ValidationInfo::new(
+                            allocator,
+                            validation_program.clone(),
+                            self.state.clone(),
+                        )
+                        .hash()
+                        .clone(),
+                    },
+                    max_move_size: self.max_move_size,
+                }
+                .off_chain(),
+            ),
+            state_update_args: StateUpdateMoveArgs {
+                evidence: evidence.to_program(),
+                mover_puzzle: mover_puzzle.to_program(),
+                solution: Rc::new(Program::from_hex("80")?),
+                state: self.state.p(),
+            },
+            validation_program: validation_program,
+        };
+
+        update_args.run(allocator)
     }
 
     pub fn get_move_inputs(&self, allocator: &mut AllocEncoder) -> ExhaustiveMoveInputs {
@@ -188,7 +327,7 @@ impl BareDebugGameDriver {
             count: self.move_count,
             max_move_size: self.max_move_size,
             mod_hash: self.mod_hash.clone(),
-            mover_share: self.mover_share.clone(),
+            mover_share: self.mover_share[0].clone(),
             nonce: self.nonce,
             timeout: self.timeout.clone(),
             validation_program: self.validation_program_queue[0].clone(),
@@ -202,6 +341,7 @@ impl BareDebugGameDriver {
                 .last_validation_data
                 .as_ref()
                 .map(|(sp, _)| sp.clone()),
+            entropy: self.rng[self.move_count].clone()
         }
     }
 
@@ -218,63 +358,26 @@ impl BareDebugGameDriver {
                 "No waiting validation program for our turn".to_string(),
             ));
         };
-        let mover_ph = if self.alice_turn() {
-            &self.alice_identity.puzzle_hash
-        } else {
-            &self.bob_identity.puzzle_hash
-        };
-        let mover_puzzle = if self.alice_turn() {
-            self.alice_identity.puzzle.clone()
-        } else {
-            self.bob_identity.puzzle.clone()
-        };
-        let waiter_ph = if self.alice_turn() {
-            &self.bob_identity.puzzle_hash
-        } else {
-            &self.alice_identity.puzzle_hash
-        };
 
-        tmpsave("v-prog.hex", &vprog.to_program().to_hex());
+        let previous_validation_info_hash = self
+            .get_previous_validation_info_hash(allocator)
+            .map(|v| v.hash().clone());
 
-        let update_args = InternalStateUpdateArgs {
-            referee_args: Rc::new(
-                RefereePuzzleArgs {
-                    nonce: self.nonce,
-                    previous_validation_info_hash: self
-                        .get_previous_validation_info_hash(allocator)
-                        .map(|v| v.hash().clone()),
-                    referee_coin_puzzle_hash: self.mod_hash.clone(),
-                    timeout: self.timeout.clone(),
-                    mover_puzzle_hash: mover_ph.clone(),
-                    waiter_puzzle_hash: waiter_ph.clone(),
-                    amount: self.start.amount.clone(),
-                    game_move: GameMoveDetails {
-                        basic: GameMoveStateInfo {
-                            move_made: move_to_check.to_vec(),
-                            mover_share: self.mover_share.clone(),
-                        },
-                        validation_info_hash: ValidationInfo::new(
-                            allocator,
-                            vprog.clone(),
-                            self.state.clone(),
-                        )
-                        .hash()
-                        .clone(),
-                    },
-                    max_move_size: self.max_move_size,
-                }
-                .off_chain(),
-            ),
-            state_update_args: StateUpdateMoveArgs {
-                evidence: evidence.to_program(),
-                mover_puzzle: mover_puzzle.to_program(),
-                solution: Rc::new(Program::from_hex("80")?),
-                state: self.state.p(),
-            },
-            validation_program: vprog,
-        };
+        self.generic_run_state_update(
+            allocator,
+            vprog,
+            previous_validation_info_hash,
+            move_to_check,
+            evidence,
+        )
+    }
 
-        update_args.run(allocator)
+    pub fn accept_move(
+        &mut self,
+        _allocator: &mut AllocEncoder,
+        _inputs: &ExhaustiveMoveInputs
+    ) -> Result<(), Error> {
+        todo!();
     }
 }
 
@@ -283,11 +386,12 @@ fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDriver
     let mut rng = ChaCha8Rng::from_seed(rng_seed);
     let pk0: PrivateKey = rng.gen();
     let pk1: PrivateKey = rng.gen();
+    let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.gen()).collect();
     let id0 = ChiaIdentity::new(allocator, pk0)?;
     let id1 = ChiaIdentity::new(allocator, pk1)?;
     let identities: [ChiaIdentity; 2] = [id0, id1];
     let gid = GameID::default();
-    let referee_coin = read_hex_puzzle(allocator, "clsp/onchain/referee.hex")?;
+    let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
     BareDebugGameDriver::new(
         allocator,
@@ -296,6 +400,7 @@ fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDriver
         &identities,
         &ref_coin_hash,
         Timeout::new(10),
+        &rng_seq0,
         "clsp/test/debug_game.hex",
     )
 }
@@ -325,6 +430,8 @@ pub struct ExhaustiveMoveInputs {
     mover_share: Amount,
     count: usize,
     nonce: usize,
+    #[allow(dead_code)]
+    entropy: Hash,
     slash: u8,
     opponent_mover_share: Amount,
     #[allow(dead_code)]
@@ -342,7 +449,20 @@ fn at_least_one_byte(allocator: &mut AllocEncoder, amt: &Amount) -> Result<NodeP
 }
 
 impl ExhaustiveMoveInputs {
-    fn to_linear_move(
+    pub fn slash_atom(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
+        allocator.encode_atom(clvm_traits::Atom::Borrowed(&[self.slash])).into_gen()
+    }
+
+    pub fn get_ui_move(&self, allocator: &mut AllocEncoder) -> Result<ReadableMove, Error> {
+        let slash_node = self.slash_atom(allocator)?;
+        let _readable_move = (
+            self.opponent_mover_share.clone(),
+            (Node(slash_node), ())
+        ).to_clvm(allocator).into_gen()?;
+        todo!();
+    }
+
+    pub fn to_linear_move(
         &self,
         allocator: &mut AllocEncoder,
         off_chain: bool,
@@ -360,9 +480,7 @@ impl ExhaustiveMoveInputs {
             Some(&self.alice_puzzle_hash)
         };
         let pv_hash = self.validation_program.sha256tree(allocator);
-        let slash_atom = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&[self.slash]))
-            .into_gen()?;
+        let slash_atom = self.slash_atom(allocator)?;
         let amount_atom = at_least_one_byte(allocator, &self.opponent_mover_share)?;
         let args = (
             mover_ph_ref.clone(),
@@ -419,6 +537,12 @@ impl ExhaustiveMoveInputs {
             Err(Error::StrErr("move didn't concat".to_string()))
         }
     }
+
+    pub fn previous_validation_info_hash(
+        &self, _allocator: &mut AllocEncoder
+    ) -> Result<Option<Hash>, Error> {
+        todo!();
+    }
 }
 
 #[test]
@@ -438,10 +562,15 @@ fn test_debug_game_validation_move() {
     let validation_result = debug_games[0]
         .state_update_for_own_move(&mut allocator, &move_data, Evidence::nil().expect("good"))
         .expect("good");
-
     debug!("validation_result {validation_result:?}");
     assert!(matches!(
         validation_result,
         StateUpdateResult::MoveOk(_, _, 512)
     ));
+    debug_games[0].end_my_turn(&mut allocator, &predicted_move).expect("good");
+    debug_games[1].accept_move(&mut allocator, &predicted_move).expect("good");
+    let predicted_bob_move = debug_games[1].get_move_inputs(&mut allocator);
+    let _bob_move_data = predicted_bob_move
+        .to_linear_move(&mut allocator, true)
+        .expect("good");
 }

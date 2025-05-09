@@ -48,9 +48,10 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameHandler {
 
 pub struct MyTurnInputs {
     pub readable_new_move: ReadableMove,
+    pub entropy: Hash,
+
     pub amount: Amount,
     pub last_mover_share: Amount,
-    pub entropy: Hash,
 }
 
 #[derive(Clone, Debug)]
