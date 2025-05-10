@@ -148,9 +148,9 @@
             "debug game: move"
             ;; move bytes
             (concat prefix (byteify count) (byteify mover-share) slash)
-            (curry SELF_PROG "validator" COUNT SELF_HASH SELF_PROG)
+            (curry SELF_PROG "validator" curry-args)
             (validator-hash curry-args)
-            (curry SELF_PROG "validator" (+ COUNT 1) SELF_HASH SELF_PROG)
+            (curry SELF_PROG "validator" (curry-args-incr curry-args))
             (validator-hash (curry-args-incr curry-args))
             512
             mover-share

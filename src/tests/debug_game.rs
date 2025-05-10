@@ -236,6 +236,7 @@ impl BareDebugGameDriver {
             .push_back(my_handler_result.outgoing_move_state_update_program.p());
         self.validation_program_queue
             .push_back(my_handler_result.incoming_move_state_update_program.p());
+        self.mover_share.push_back(my_handler_result.mover_share.clone());
 
         let vprog = if let Some(v) = self.validation_program_queue.pop_front() {
             v
@@ -262,10 +263,8 @@ impl BareDebugGameDriver {
             state_update_result
         {
             self.max_move_size = new_max_move_size;
-            self.mover_share
-                .push_back(my_handler_result.mover_share.clone());
             self.state = ProgramRef::new(new_state.clone());
-            self.last_validation_data = Some((vprog.clone(), ProgramRef::new(new_state.clone())));
+            self.last_validation_data = Some((vprog.clone(), self.state.clone()));
         }
 
         Ok(())
@@ -347,10 +346,7 @@ impl BareDebugGameDriver {
                 .map(|v| v.hash().clone()),
             slash: 15,
             opponent_mover_share: Amount::new(0xfff),
-            previous_validation_program: self
-                .last_validation_data
-                .as_ref()
-                .map(|(sp, _)| sp.clone()),
+            previous_validation_info: self.last_validation_data.clone(),
             entropy: self.rng[self.move_count].clone(),
         }
     }
@@ -444,8 +440,7 @@ pub struct ExhaustiveMoveInputs {
     entropy: Hash,
     slash: u8,
     opponent_mover_share: Amount,
-    #[allow(dead_code)]
-    previous_validation_program: Option<StateUpdateProgram>,
+    previous_validation_info: Option<(StateUpdateProgram, ProgramRef)>
 }
 
 fn at_least_one_byte(allocator: &mut AllocEncoder, amt: &Amount) -> Result<NodePtr, Error> {
@@ -468,8 +463,9 @@ impl ExhaustiveMoveInputs {
     pub fn get_ui_move(&self, allocator: &mut AllocEncoder) -> Result<ReadableMove, Error> {
         let slash_node = self.slash_atom(allocator)?;
         let linear_move = self.to_linear_move(allocator, true)?;
+        let move_tail = self.move_tail(allocator)?;
         let linear_move_node = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&linear_move))
+            .encode_atom(clvm_traits::Atom::Borrowed(&linear_move[0..(linear_move.len() - move_tail.len())]))
             .into_gen()?;
         let readable_move = (
             Node(linear_move_node),
@@ -481,6 +477,29 @@ impl ExhaustiveMoveInputs {
             .to_clvm(allocator)
             .into_gen()?;
         ReadableMove::from_nodeptr(allocator, readable_move)
+    }
+
+    pub fn move_tail(&self, allocator: &mut AllocEncoder) -> Result<Vec<u8>, Error> {
+        let slash_atom = self.slash_atom(allocator)?;
+        let count_atom = at_least_one_byte(allocator, &Amount::new(self.count as u64))?;
+        let amount_atom = at_least_one_byte(allocator, &self.opponent_mover_share)?;
+        let args = (
+            Node(count_atom),
+            (
+                Node(amount_atom),
+                ((Node(slash_atom), ())),
+            ),
+        ).to_clvm(allocator).into_gen()?;
+        let program_to_concat = Program::from_hex("ff0eff02ff05ff0b80")?;
+        let pnode = program_to_concat.to_clvm(allocator).into_gen()?;
+        let result_atom = run_program(allocator.allocator(), &chia_dialect(), pnode, args, 0)
+            .into_gen()?
+            .1;
+        if let Some(result_move_data) = atom_from_clvm(allocator, result_atom) {
+            Ok(result_move_data)
+        } else {
+            Err(Error::StrErr("move didn't concat".to_string()))
+        }
     }
 
     pub fn to_linear_move(
@@ -501,6 +520,7 @@ impl ExhaustiveMoveInputs {
             Some(&self.alice_puzzle_hash)
         };
         let pv_hash = self.validation_program.sha256tree(allocator);
+        let count_atom = at_least_one_byte(allocator, &Amount::new(self.count as u64))?;
         let slash_atom = self.slash_atom(allocator)?;
         let amount_atom = at_least_one_byte(allocator, &self.opponent_mover_share)?;
         let args = (
@@ -526,7 +546,7 @@ impl ExhaustiveMoveInputs {
                                                 (
                                                     self.mover_share.clone(),
                                                     (
-                                                        self.count,
+                                                        Node(count_atom),
                                                         (
                                                             Node(amount_atom),
                                                             ((Node(slash_atom), ())),
@@ -561,9 +581,18 @@ impl ExhaustiveMoveInputs {
 
     pub fn previous_validation_info_hash(
         &self,
-        _allocator: &mut AllocEncoder,
+        allocator: &mut AllocEncoder,
     ) -> Result<Option<Hash>, Error> {
-        todo!();
+        if let Some((vprog, vstate)) = self.previous_validation_info.as_ref() {
+            let validation_info = ValidationInfo::new(
+                allocator,
+                vprog.clone(),
+                vstate.clone()
+            );
+            Ok(Some(validation_info.hash().clone()))
+        } else {
+            Ok(None)
+        }
     }
 }
 
