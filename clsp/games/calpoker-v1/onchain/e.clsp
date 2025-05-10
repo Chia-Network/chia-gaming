@@ -1,9 +1,9 @@
 (include *standard-cl-23*)
 
-(import onchain.calpoker.onehandcalc)
-(import onchain.calpoker.arrange_cards)
-(import onchain.calpoker.make_card)
-(import onchain.game_codes)
+(import games.calpoker-v1.onchain.onehandcalc)
+(import games.calpoker-v1.onchain.arrange_cards)
+(import games.calpoker-v1.onchain.make_card)
+(import games.calpoker-v1.game_codes)
 (import std.list_compare)
 (import std.assert)
 (import std.relops)

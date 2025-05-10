@@ -124,6 +124,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         // A game coin was spent and we have the puzzle and solution.
         let (env, system_interface) = penv.env();
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+
+        //let reward_puzzle_hash = self.player_ch.get_reward_puzzle_hash(env)?;
+        // Do we know if we slashed?
+
         let result =
             self.player_ch
                 .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
@@ -140,9 +144,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             "{initial_potato} game coin spent result from channel handler {their_turn_result:?}"
         );
         match their_turn_result {
-            CoinSpentInformation::Expected(ph, amt) => {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(ph, amt)) => {
                 debug!("{initial_potato} got an expected spend {ph:?} {amt:?}");
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
+
+                let my_turn_in_game = self.player_ch.game_is_my_turn(&old_definition.game_id);
+                debug!("{initial_potato} my turn in game with expected spend {my_turn_in_game:?}");
 
                 // An expected their spend arrived.  We can do our next action.
                 debug!("{initial_potato} changing game map");

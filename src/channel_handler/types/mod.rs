@@ -13,17 +13,17 @@ mod potato;
 mod read;
 mod readable_move;
 mod result;
+mod state_update_program;
 mod unroll_coin;
 mod validation_info;
-mod validation_program;
 
 pub use accept_transaction_state::AcceptTransactionState;
 pub use channel_coin::{
     ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo, ChannelCoinSpentResult,
 };
 pub use channel_handler::{
-    ChannelHandlerEnv, ChannelHandlerInitiationData, ChannelHandlerInitiationResult,
-    ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
+    make_puzzle_name_map, ChannelHandlerEnv, ChannelHandlerInitiationData,
+    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
 };
 pub use coin_data_for_reward::CoinDataForReward;
 pub use coin_identification_by_puzzle_hash::CoinIdentificationByPuzzleHash;
@@ -41,8 +41,8 @@ pub use potato::{
 pub use read::{read_unroll_metapuzzle, read_unroll_puzzle};
 pub use readable_move::ReadableMove;
 pub use result::{DispositionResult, HandshakeResult, MoveResult};
+pub use state_update_program::{HasStateUpdateProgram, StateUpdateProgram};
 pub use unroll_coin::{
     prepend_rem_conditions, UnrollCoin, UnrollCoinConditionInputs, UnrollCoinOutcome, UnrollTarget,
 };
 pub use validation_info::ValidationInfo;
-pub use validation_program::ValidationProgram;

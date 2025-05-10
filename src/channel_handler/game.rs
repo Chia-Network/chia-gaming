@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use clvm_traits::{ClvmEncoder, ToClvm};
+use clvm_traits::ToClvm;
 use clvmr::run_program;
 
 use crate::utils::proper_list;
@@ -8,80 +8,85 @@ use crate::utils::proper_list;
 use log::debug;
 
 use crate::channel_handler::game_handler::GameHandler;
-use crate::channel_handler::types::ValidationProgram;
+use crate::channel_handler::types::StateUpdateProgram;
 use crate::channel_handler::GameStartInfo;
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
-    GameID, Hash, IntoErr, Program, Timeout,
+    GameID, Hash, IntoErr, Program, Puzzle, Timeout,
 };
 
+#[derive(Clone)]
 pub struct Game {
     pub id: GameID,
     pub initial_mover_handler: GameHandler,
-    pub initial_waiter_handler: GameHandler,
-    pub whether_paired: bool,
-    pub required_size_factor: Amount,
+    pub initial_move: Vec<u8>,
     pub initial_max_move_size: usize,
-    pub initial_validation_program: ValidationProgram,
+    pub initial_validation_program: StateUpdateProgram,
     pub initial_validation_program_hash: Hash,
     pub initial_state: Rc<Program>,
-    pub initial_mover_share_proportion: usize,
+    pub initial_mover_share: u64,
 }
 
 impl Game {
-    pub fn new(
+    pub fn new_program(
         allocator: &mut AllocEncoder,
+        as_alice: bool,
         game_id: GameID,
-        game_hex_file: &str,
+        poker_generator: Puzzle,
     ) -> Result<Game, Error> {
-        let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
-        let nil = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+        let args = (as_alice, (100, (100, ((), ()))))
+            .to_clvm(allocator)
             .into_gen()?;
+        let args_program = Program::from_nodeptr(allocator, args)?;
+
         let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
-        debug!("running start");
+        debug!("running start program {poker_generator:?}");
+        debug!("running start args {args_program:?}");
         let template_clvm = run_program(
             allocator.allocator(),
             &chia_dialect(),
             poker_generator_clvm,
-            nil,
+            args,
             0,
         )
         .into_gen()?
         .1;
+        let template_list_prog = Program::from_nodeptr(allocator, template_clvm)?;
+        debug!("game template_list {template_list_prog:?}");
+        let game_list = if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
+            lst
+        } else {
+            return Err(Error::StrErr(
+                "poker program didn't return a list".to_string(),
+            ));
+        };
+
+        if game_list.is_empty() {
+            return Err(Error::StrErr("not even one game returned".to_string()));
+        }
+
         let template_list =
-            if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
+            if let Some(lst) = proper_list(allocator.allocator(), game_list[0], true) {
                 lst
             } else {
-                return Err(Error::StrErr(
-                    "poker program didn't return a list".to_string(),
-                ));
+                return Err(Error::StrErr("bad template list".to_string()));
             };
 
-        if template_list.len() != 9 {
-            return Err(Error::StrErr(
-                "calpoker template returned incorrect property list".to_string(),
-            ));
+        if template_list.len() != 11 {
+            return Err(Error::StrErr(format!(
+                "calpoker template returned incorrect property list ({} : {:?})",
+                template_list.len(),
+                Program::from_nodeptr(allocator, game_list[0])?
+            )));
         }
 
         let initial_mover_handler =
-            GameHandler::my_driver_from_nodeptr(allocator, template_list[0])?;
-        let initial_waiter_handler =
-            GameHandler::their_driver_from_nodeptr(allocator, template_list[1])?;
-        let whether_paired = atom_from_clvm(allocator, template_list[2])
-            .map(|a| !a.is_empty())
-            .expect("should be an atom");
-        let required_size_factor = Amount::new(
-            atom_from_clvm(allocator, template_list[3])
-                .and_then(|a| u64_from_atom(&a))
-                .expect("should be an atom"),
-        );
-        let initial_max_move_size = atom_from_clvm(allocator, template_list[4])
-            .and_then(|a| usize_from_atom(&a))
-            .expect("should be an atom");
+            GameHandler::my_driver_from_nodeptr(allocator, template_list[2])?;
+
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);
-        let initial_validation_program = ValidationProgram::new(allocator, validation_prog);
+        let initial_validation_program =
+            StateUpdateProgram::new(allocator, "initial", validation_prog);
         let initial_validation_program_hash =
             if let Some(a) = atom_from_clvm(allocator, template_list[6]) {
                 Hash::from_slice(&a)
@@ -92,21 +97,33 @@ impl Game {
             };
         let initial_state_node = template_list[7];
         let initial_state = Rc::new(Program::from_nodeptr(allocator, initial_state_node)?);
-        let initial_mover_share_proportion = atom_from_clvm(allocator, template_list[8])
+        let initial_move = atom_from_clvm(allocator, template_list[8]).unwrap_or_default();
+        let initial_max_move_size = atom_from_clvm(allocator, template_list[9])
             .and_then(|a| usize_from_atom(&a))
+            .expect("should be an atom");
+        let initial_mover_share = atom_from_clvm(allocator, template_list[10])
+            .and_then(|a| u64_from_atom(&a))
             .expect("should be an atom");
         Ok(Game {
             id: game_id,
-            initial_mover_handler,
-            initial_waiter_handler,
-            whether_paired,
-            required_size_factor,
             initial_max_move_size,
             initial_validation_program,
             initial_validation_program_hash,
             initial_state,
-            initial_mover_share_proportion,
+            initial_move,
+            initial_mover_share,
+            initial_mover_handler,
         })
+    }
+
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        as_alice: bool,
+        game_id: GameID,
+        game_hex_file: &str,
+    ) -> Result<Game, Error> {
+        let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
+        Game::new_program(allocator, as_alice, game_id, poker_generator.clone())
     }
 
     /// Return a pair of GameStartInfo which can be used as the starts for two
@@ -119,9 +136,11 @@ impl Game {
         timeout: &Timeout,
     ) -> (GameStartInfo, GameStartInfo) {
         let amount = our_contribution.clone() + their_contribution.clone();
-        let amount_as_u64: u64 = amount.clone().into();
-        let mover_share =
-            Amount::new((amount_as_u64 * self.initial_mover_share_proportion as u64) / 100);
+        debug!(
+            "symmetric game starts: {amount:?} initial_mover_share {:?}",
+            self.initial_mover_share
+        );
+        let mover_share = Amount::new(self.initial_mover_share);
         let waiter_share = amount.clone() - mover_share.clone();
         (
             GameStartInfo {
@@ -140,7 +159,7 @@ impl Game {
             GameStartInfo {
                 game_id: game_id.clone(),
                 amount: amount.clone(),
-                game_handler: self.initial_waiter_handler.clone(),
+                game_handler: self.initial_mover_handler.clone(),
                 timeout: timeout.clone(),
                 my_contribution_this_game: their_contribution.clone(),
                 their_contribution_this_game: our_contribution.clone(),

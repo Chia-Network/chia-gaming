@@ -32,7 +32,7 @@
         (assert
             (= my_contribution (/ amount 2))
 
-            (list
+            (if i_am_initiator
                 ;; My turn games
                 (list
                     ;; One game

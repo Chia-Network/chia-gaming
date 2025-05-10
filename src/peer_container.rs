@@ -563,7 +563,7 @@ impl SynchronousGameCradle {
         )?;
 
         let bundle = SpendBundle {
-            name: Some("create channel".to_string()),
+            name: Some("create spend for channel coin:".to_string()),
             spends: vec![CoinSpend {
                 coin: parent.clone(),
                 bundle: Spend {
@@ -643,6 +643,11 @@ impl SynchronousGameCradle {
 }
 
 impl SynchronousGameCradle {
+    #[cfg(test)]
+    pub fn set_up_cheat(&mut self, cheat: &[u8]) -> Result<(), Error> {
+        self.peer.enable_cheating(cheat)
+    }
+
     #[cfg(test)]
     pub fn replace_last_message<F>(&mut self, f: F) -> Result<(), Error>
     where

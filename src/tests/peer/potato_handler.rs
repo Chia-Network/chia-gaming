@@ -400,11 +400,9 @@ fn test_peer_smoke() {
     pipe_sender[1].message_pipe.my_id = 1;
 
     let mut game_type_map = BTreeMap::new();
-    let calpoker_factory = read_hex_puzzle(
-        &mut allocator,
-        "clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex",
-    )
-    .expect("should load");
+    let calpoker_factory =
+        read_hex_puzzle(&mut allocator, "clsp/calpoker_include_calpoker_factory.hex")
+            .expect("should load");
 
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),
@@ -524,9 +522,9 @@ fn test_peer_smoke() {
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
-    let moves = test_moves_1(&mut allocator);
+    let game = test_moves_1(&mut allocator);
 
-    for this_move in moves.iter() {
+    for this_move in game.moves.iter() {
         let (who, what) = if let GameAction::Move(who, what, _) = this_move {
             (who, what)
         } else {
