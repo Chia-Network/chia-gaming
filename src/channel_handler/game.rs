@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::{NodePtr, run_program};
+use clvmr::{run_program, NodePtr};
 
 use crate::utils::{non_nil, proper_list};
 
@@ -43,12 +43,11 @@ impl GameStart {
 
         let is_my_turn = non_nil(allocator.allocator(), template_list[1]);
         debug!("is_my_turn {is_my_turn}");
-        let initial_mover_handler =
-            if is_my_turn {
-                GameHandler::my_driver_from_nodeptr(allocator, template_list[2])?
-            } else {
-                GameHandler::their_driver_from_nodeptr(allocator, template_list[2])?
-            };
+        let initial_mover_handler = if is_my_turn {
+            GameHandler::my_driver_from_nodeptr(allocator, template_list[2])?
+        } else {
+            GameHandler::their_driver_from_nodeptr(allocator, template_list[2])?
+        };
 
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);
         let initial_validation_program =
@@ -135,8 +134,8 @@ impl Game {
             args,
             0,
         )
-            .into_gen()?
-            .1;
+        .into_gen()?
+        .1;
         let template_list_prog = Program::from_nodeptr(allocator, template_clvm)?;
         debug!("game template_list {template_list_prog:?}");
         let game_list = if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
@@ -152,18 +151,13 @@ impl Game {
         }
 
         for game in game_list.iter() {
-            let template_list =
-                if let Some(lst) = proper_list(allocator.allocator(), *game, true) {
-                    lst
-                } else {
-                    return Err(Error::StrErr("bad template list".to_string()));
-                };
+            let template_list = if let Some(lst) = proper_list(allocator.allocator(), *game, true) {
+                lst
+            } else {
+                return Err(Error::StrErr("bad template list".to_string()));
+            };
 
-            starts.push(GameStart::new(
-                allocator,
-                game_id,
-                &template_list,
-            )?);
+            starts.push(GameStart::new(allocator, game_id, &template_list)?);
         }
 
         Ok(Game { starts })

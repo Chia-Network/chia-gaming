@@ -41,7 +41,7 @@ pub const CALPOKER_HEX_FILE: &'static str = "clsp/calpoker_include_calpoker_temp
 pub fn load_calpoker(
     allocator: &mut AllocEncoder,
     game_id: GameID,
-    as_alice: bool
+    as_alice: bool,
 ) -> Result<Game, Error> {
     Game::new(allocator, as_alice, &game_id, CALPOKER_HEX_FILE)
 }
@@ -63,9 +63,9 @@ fn test_load_calpoker() {
         &mut rng,
         &alice_calpoker,
         &bob_calpoker,
-        &contributions
+        &contributions,
     )
-        .expect("should get a sim env");
+    .expect("should get a sim env");
 }
 
 #[cfg(feature = "sim-tests")]
@@ -86,9 +86,9 @@ fn run_calpoker_play_test(
         &mut rng,
         &alice_calpoker,
         &bob_calpoker,
-        &contributions
+        &contributions,
     )
-        .expect("should get a sim env");
+    .expect("should get a sim env");
 
     simenv.play_game(moves)
 }
