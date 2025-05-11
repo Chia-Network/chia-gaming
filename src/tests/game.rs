@@ -109,7 +109,8 @@ pub enum GameActionResult {
 pub fn new_channel_handler_game<R: Rng>(
     simulator: &Simulator,
     env: &mut ChannelHandlerEnv<R>,
-    game: &Game,
+    alice_game: &Game,
+    bob_game: &Game,
     identities: &[ChiaIdentity; 2],
     contributions: [Amount; 2],
 ) -> Result<(ChannelHandlerGame, CoinString), Error> {
@@ -156,7 +157,7 @@ pub fn new_channel_handler_game<R: Rng>(
 
     let mut party = ChannelHandlerGame::new(
         env,
-        game.starts[0].id.clone(),
+        alice_game.starts[0].id.clone(),
         &u2.to_coin_id(),
         &contributions.clone(),
         (*DEFAULT_UNROLL_TIME_LOCK).clone(),
@@ -191,8 +192,14 @@ pub fn new_channel_handler_game<R: Rng>(
 
     let timeout = Timeout::new(10);
 
-    let (our_game_start, their_game_start) = game.symmetric_game_starts(
-        &game.starts[0].id,
+    let our_game_start = alice_game.game_start(
+        &alice_game.starts[0].id,
+        &contributions[0].clone(),
+        &contributions[1].clone(),
+        &timeout,
+    );
+    let their_game_start = bob_game.game_start(
+        &bob_game.starts[0].id,
         &contributions[0].clone(),
         &contributions[1].clone(),
         &timeout,

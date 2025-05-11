@@ -3,7 +3,7 @@ use std::rc::Rc;
 use clvm_traits::ToClvm;
 use clvmr::{NodePtr, run_program};
 
-use crate::utils::proper_list;
+use crate::utils::{non_nil, proper_list};
 
 use log::debug;
 
@@ -29,7 +29,7 @@ pub struct GameStart {
 }
 
 impl GameStart {
-    pub fn new_program(
+    pub fn new(
         allocator: &mut AllocEncoder,
         game_id: &GameID,
         template_list: &[NodePtr],
@@ -41,8 +41,14 @@ impl GameStart {
             )));
         }
 
+        let is_my_turn = non_nil(allocator.allocator(), template_list[1]);
+        debug!("is_my_turn {is_my_turn}");
         let initial_mover_handler =
-            GameHandler::my_driver_from_nodeptr(allocator, template_list[2])?;
+            if is_my_turn {
+                GameHandler::my_driver_from_nodeptr(allocator, template_list[2])?
+            } else {
+                GameHandler::their_driver_from_nodeptr(allocator, template_list[2])?
+            };
 
         let validation_prog = Rc::new(Program::from_nodeptr(allocator, template_list[5])?);
         let initial_validation_program =
@@ -153,7 +159,7 @@ impl Game {
                     return Err(Error::StrErr("bad template list".to_string()));
                 };
 
-            starts.push(GameStart::new_program(
+            starts.push(GameStart::new(
                 allocator,
                 game_id,
                 &template_list,
@@ -175,13 +181,13 @@ impl Game {
 
     /// Return a pair of GameStartInfo which can be used as the starts for two
     /// players in a game.
-    pub fn symmetric_game_starts(
+    pub fn game_start(
         &self,
         game_id: &GameID,
         our_contribution: &Amount,
         their_contribution: &Amount,
         timeout: &Timeout,
-    ) -> (GameStartInfo, GameStartInfo) {
+    ) -> GameStartInfo {
         let amount = our_contribution.clone() + their_contribution.clone();
         let alice_start = self.starts[0].game_start(
             game_id,
@@ -190,14 +196,7 @@ impl Game {
             our_contribution,
             their_contribution,
         );
-        let bob_start = self.starts[0].game_start(
-            game_id,
-            &amount,
-            timeout,
-            their_contribution,
-            our_contribution,
-        );
 
-        (alice_start, bob_start)
+        alice_start
     }
 }

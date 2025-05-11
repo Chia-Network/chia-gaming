@@ -12,7 +12,7 @@ use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
 use crate::channel_handler::game::Game;
-use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs};
+use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
 use crate::channel_handler::types::{
     Evidence, GameStartInfo, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
     ValidationInfo,
@@ -130,7 +130,13 @@ impl BareDebugGameDriver {
             &game_id,
             curried_prog.into()
         )?;
-        let (start_a, start_b) = alice_game.symmetric_game_starts(
+        let start_a = alice_game.game_start(
+            &game_id,
+            &Amount::new(100),
+            &Amount::new(100),
+            &timeout,
+        );
+        let start_b = bob_game.game_start(
             &game_id,
             &Amount::new(100),
             &Amount::new(100),
@@ -401,13 +407,42 @@ impl BareDebugGameDriver {
         let validator_response =
             self.generic_run_state_update(
                 allocator,
-                vprog,
+                vprog.clone(),
                 previous_validation_info_hash,
                 &move_to_check,
                 evidence,
             )?;
         assert!(matches!(validator_response, StateUpdateResult::MoveOk(_, _, 512)));
-        todo!();
+
+        if let StateUpdateResult::MoveOk(state, _, 512) = validator_response {
+            let state_node = state.to_clvm(allocator).into_gen()?;
+            let validation_info_hash = ValidationInfo::new(
+                allocator,
+                vprog.clone(),
+                state.clone()
+            ).hash().clone();
+            let tt_result = self.handler.call_their_turn_driver(
+                allocator,
+                &TheirTurnInputs {
+                    amount: self.start.amount.clone(),
+                    state: state_node,
+                    last_move: &move_to_check,
+                    last_mover_share: self.mover_share[0].clone(),
+                    new_move: GameMoveDetails {
+                        basic: GameMoveStateInfo {
+                            move_made: move_to_check.clone(),
+                            mover_share: inputs.opponent_mover_share.clone(),
+                        },
+                        validation_info_hash,
+                    }
+                }
+            )?;
+            self.move_count += 1;
+            self.mover_share.pop_front();
+            todo!();
+        } else {
+            todo!();
+        }
     }
 }
 

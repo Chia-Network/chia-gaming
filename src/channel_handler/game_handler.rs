@@ -86,7 +86,7 @@ pub struct MyTurnResult {
 
 pub struct TheirTurnInputs<'a> {
     pub amount: Amount,
-    pub last_state: NodePtr,
+    pub state: NodePtr,
 
     /// Only needs a couple things from last move.
     pub last_move: &'a [u8],
@@ -183,7 +183,7 @@ impl GameHandler {
             res.to_nodeptr(allocator)
         } else {
             Err(Error::StrErr(
-                "my turn called on a their turn driver".to_string(),
+                "their turn called on a my turn driver".to_string(),
             ))
         }
     }
@@ -315,7 +315,7 @@ impl GameHandler {
         let driver_args = (
             inputs.amount.clone(),
             (
-                Node(inputs.last_state),
+                Node(inputs.state),
                 (
                     Node(
                         allocator

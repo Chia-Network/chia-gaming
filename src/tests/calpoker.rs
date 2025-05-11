@@ -38,8 +38,12 @@ use crate::tests::simenv::SimulatorEnvironment;
 pub const CALPOKER_HEX_FILE: &'static str = "clsp/calpoker_include_calpoker_template.hex";
 
 #[cfg(feature = "sim-tests")]
-pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
-    Game::new(allocator, true, &game_id, CALPOKER_HEX_FILE)
+pub fn load_calpoker(
+    allocator: &mut AllocEncoder,
+    game_id: GameID,
+    as_alice: bool
+) -> Result<Game, Error> {
+    Game::new(allocator, as_alice, &game_id, CALPOKER_HEX_FILE)
 }
 
 #[cfg(feature = "sim-tests")]
@@ -50,10 +54,17 @@ fn test_load_calpoker() {
     let mut rng = ChaCha8Rng::from_seed(seed);
     let game_id_data: Hash = rng.gen();
     let game_id = GameID::new(game_id_data.bytes().to_vec());
-    let calpoker = load_calpoker(&mut allocator, game_id).expect("should load");
+    let alice_calpoker = load_calpoker(&mut allocator, game_id.clone(), true).expect("should load");
+    let bob_calpoker = load_calpoker(&mut allocator, game_id, false).expect("should load");
     let contributions = [Amount::new(100), Amount::new(100)];
 
-    let _simenv = SimulatorEnvironment::new(&mut allocator, &mut rng, &calpoker, &contributions)
+    let _simenv = SimulatorEnvironment::new(
+        &mut allocator,
+        &mut rng,
+        &alice_calpoker,
+        &bob_calpoker,
+        &contributions
+    )
         .expect("should get a sim env");
 }
 
@@ -66,10 +77,17 @@ fn run_calpoker_play_test(
     let mut rng = ChaCha8Rng::from_seed(seed);
     let game_id_data: Hash = rng.gen();
     let game_id = GameID::new(game_id_data.bytes().to_vec());
-    let calpoker = load_calpoker(allocator, game_id).expect("should load");
+    let alice_calpoker = load_calpoker(allocator, game_id.clone(), true).expect("should load");
+    let bob_calpoker = load_calpoker(allocator, game_id, false).expect("should load");
     let contributions = [Amount::new(100), Amount::new(100)];
 
-    let mut simenv = SimulatorEnvironment::new(allocator, &mut rng, &calpoker, &contributions)
+    let mut simenv = SimulatorEnvironment::new(
+        allocator,
+        &mut rng,
+        &alice_calpoker,
+        &bob_calpoker,
+        &contributions
+    )
         .expect("should get a sim env");
 
     simenv.play_game(moves)
