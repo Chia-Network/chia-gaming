@@ -156,7 +156,7 @@ pub fn new_channel_handler_game<R: Rng>(
 
     let mut party = ChannelHandlerGame::new(
         env,
-        game.id.clone(),
+        game.starts[0].id.clone(),
         &u2.to_coin_id(),
         &contributions.clone(),
         (*DEFAULT_UNROLL_TIME_LOCK).clone(),
@@ -192,7 +192,7 @@ pub fn new_channel_handler_game<R: Rng>(
     let timeout = Timeout::new(10);
 
     let (our_game_start, their_game_start) = game.symmetric_game_starts(
-        &game.id,
+        &game.starts[0].id,
         &contributions[0].clone(),
         &contributions[1].clone(),
         &timeout,

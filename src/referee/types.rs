@@ -303,6 +303,7 @@ where
     NodePtr: ToClvm<E>,
 {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
+        assert_ne!(self.amount, Amount::default());
         [
             self.mover_puzzle_hash.to_clvm(encoder)?,
             if self.waiter_puzzle_hash == PuzzleHash::default() {

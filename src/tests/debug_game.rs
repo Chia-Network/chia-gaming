@@ -121,16 +121,23 @@ impl BareDebugGameDriver {
         let alice_game = Game::new_program(
             allocator,
             true,
-            game_id.clone(),
+            &game_id,
             curried_prog.clone().into(),
         )?;
-        let bob_game = Game::new_program(allocator, false, game_id.clone(), curried_prog.into())?;
+        let bob_game = Game::new_program(
+            allocator,
+            false,
+            &game_id,
+            curried_prog.into()
+        )?;
         let (start_a, start_b) = alice_game.symmetric_game_starts(
             &game_id,
             &Amount::new(100),
             &Amount::new(100),
             &timeout,
         );
+        assert_ne!(start_a.amount, Amount::default());
+        assert_ne!(start_b.amount, Amount::default());
         let alice_driver = BareDebugGameDriver {
             i_am_alice: true,
             move_count: 0,
@@ -181,11 +188,13 @@ impl BareDebugGameDriver {
                 .cloned()
                 .collect(),
         };
+        debug!("created a mover share {:?}", alice_driver.mover_share);
+        debug!("created b mover share {:?}", bob_driver.mover_share);
         Ok([alice_driver, bob_driver])
     }
 
     pub fn alice_turn(&self) -> bool {
-        self.i_am_alice ^ ((self.move_count & 1) == 0)
+        (self.move_count & 1) == 0
     }
 
     pub fn get_mover_and_waiter_ph(&self) -> (PuzzleHash, PuzzleHash, Puzzle) {
@@ -321,7 +330,7 @@ impl BareDebugGameDriver {
         update_args.run(allocator)
     }
 
-    pub fn get_move_inputs(&self, allocator: &mut AllocEncoder) -> ExhaustiveMoveInputs {
+    pub fn get_move_inputs(&self, allocator: &mut AllocEncoder, mover_share: Amount, slash: u8) -> ExhaustiveMoveInputs {
         assert!(self.validation_program_queue.len() > 0);
         let validation_info = ValidationInfo::new(
             allocator,
@@ -344,8 +353,8 @@ impl BareDebugGameDriver {
             incoming_state_validation_info_hash: self
                 .get_previous_validation_info_hash(allocator)
                 .map(|v| v.hash().clone()),
-            slash: 15,
-            opponent_mover_share: Amount::new(0xfff),
+            slash: slash,
+            opponent_mover_share: mover_share,
             previous_validation_info: self.last_validation_data.clone(),
             entropy: self.rng[self.move_count].clone(),
         }
@@ -380,9 +389,24 @@ impl BareDebugGameDriver {
 
     pub fn accept_move(
         &mut self,
-        _allocator: &mut AllocEncoder,
-        _inputs: &ExhaustiveMoveInputs,
+        allocator: &mut AllocEncoder,
+        inputs: &ExhaustiveMoveInputs,
     ) -> Result<(), Error> {
+        // Run validator for their turn.
+        let vprog = self.validation_program_queue.pop_front().unwrap();
+        let move_to_check = inputs.to_linear_move(allocator, true)?;
+        let previous_validation_info_hash = inputs.previous_validation_info_hash(allocator)?;
+        let evidence = Evidence::nil()?;
+        debug!("my mover share {:?}", self.mover_share);
+        let validator_response =
+            self.generic_run_state_update(
+                allocator,
+                vprog,
+                previous_validation_info_hash,
+                &move_to_check,
+                evidence,
+            )?;
+        assert!(matches!(validator_response, StateUpdateResult::MoveOk(_, _, 512)));
         todo!();
     }
 }
@@ -402,7 +426,7 @@ fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDriver
     BareDebugGameDriver::new(
         allocator,
         gid,
-        0,
+        1,
         &identities,
         &ref_coin_hash,
         Timeout::new(10),
@@ -415,10 +439,10 @@ fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDriver
 fn test_debug_game_factory() {
     let mut allocator = AllocEncoder::new();
     let debug_games = make_debug_games(&mut allocator).expect("good");
-    assert_eq!(512, debug_games[0].game.initial_max_move_size);
+    assert_eq!(512, debug_games[0].game.starts[0].initial_max_move_size);
     assert_eq!(
-        debug_games[0].game.initial_max_move_size,
-        debug_games[1].game.initial_max_move_size
+        debug_games[0].game.starts[0].initial_max_move_size,
+        debug_games[1].game.starts[0].initial_max_move_size
     );
 }
 
@@ -443,13 +467,13 @@ pub struct ExhaustiveMoveInputs {
     previous_validation_info: Option<(StateUpdateProgram, ProgramRef)>
 }
 
-fn at_least_one_byte(allocator: &mut AllocEncoder, amt: &Amount) -> Result<NodePtr, Error> {
-    if amt == &Amount::default() {
+fn at_least_one_byte(allocator: &mut AllocEncoder, value: u64) -> Result<NodePtr, Error> {
+    if value == 0 {
         allocator
             .encode_atom(clvm_traits::Atom::Borrowed(&[0]))
             .into_gen()
     } else {
-        amt.to_clvm(allocator).into_gen()
+        value.to_clvm(allocator).into_gen()
     }
 }
 
@@ -471,8 +495,8 @@ impl ExhaustiveMoveInputs {
             Node(linear_move_node),
             (
                 self.count,
-                (self.opponent_mover_share.clone(), (Node(slash_node), ())),
-            ),
+                (self.opponent_mover_share.clone(), (Node(slash_node), ()))
+            )
         )
             .to_clvm(allocator)
             .into_gen()?;
@@ -480,17 +504,10 @@ impl ExhaustiveMoveInputs {
     }
 
     pub fn move_tail(&self, allocator: &mut AllocEncoder) -> Result<Vec<u8>, Error> {
+        let amount_atom = at_least_one_byte(allocator, self.opponent_mover_share.to_u64())?;
         let slash_atom = self.slash_atom(allocator)?;
-        let count_atom = at_least_one_byte(allocator, &Amount::new(self.count as u64))?;
-        let amount_atom = at_least_one_byte(allocator, &self.opponent_mover_share)?;
-        let args = (
-            Node(count_atom),
-            (
-                Node(amount_atom),
-                ((Node(slash_atom), ())),
-            ),
-        ).to_clvm(allocator).into_gen()?;
-        let program_to_concat = Program::from_hex("ff0eff02ff05ff0b80")?;
+        let args = [Node(amount_atom), Node(slash_atom)].to_clvm(allocator).into_gen()?;
+        let program_to_concat = Program::from_hex("ff0eff02ff0580")?;
         let pnode = program_to_concat.to_clvm(allocator).into_gen()?;
         let result_atom = run_program(allocator.allocator(), &chia_dialect(), pnode, args, 0)
             .into_gen()?
@@ -507,22 +524,28 @@ impl ExhaustiveMoveInputs {
         allocator: &mut AllocEncoder,
         off_chain: bool,
     ) -> Result<Vec<u8>, Error> {
-        let mover_ph_ref = if self.alice {
+        let alice_mover = self.alice == ((self.count % 2) == 0);
+        let mover_ph_ref = if alice_mover {
             &self.alice_puzzle_hash
         } else {
             &self.bob_puzzle_hash
         };
         let waiter_ph_ref = if off_chain {
             None
-        } else if self.alice {
+        } else if alice_mover {
             Some(&self.bob_puzzle_hash)
         } else {
             Some(&self.alice_puzzle_hash)
         };
         let pv_hash = self.validation_program.sha256tree(allocator);
-        let count_atom = at_least_one_byte(allocator, &Amount::new(self.count as u64))?;
-        let slash_atom = self.slash_atom(allocator)?;
-        let amount_atom = at_least_one_byte(allocator, &self.opponent_mover_share)?;
+        let timeout_atom = at_least_one_byte(allocator, self.timeout.to_u64())?;
+        assert_ne!(self.amount, Amount::default());
+        let amount_atom = at_least_one_byte(allocator, self.amount.to_u64())?;
+        let nonce_atom = at_least_one_byte(allocator, self.nonce as u64)?;
+        let max_move_size_atom = at_least_one_byte(allocator, self.max_move_size as u64)?;
+        let mover_share_atom = at_least_one_byte(allocator, self.mover_share.to_u64())?;
+        let count_atom = at_least_one_byte(allocator, self.count as u64)?;
+        let mut tail_bytes = self.move_tail(allocator)?;
         let args = (
             mover_ph_ref.clone(),
             (
@@ -536,22 +559,16 @@ impl ExhaustiveMoveInputs {
                             (
                                 pv_hash,
                                 (
-                                    self.timeout.clone(),
+                                    Node(timeout_atom),
                                     (
-                                        self.amount.clone(),
+                                        Node(amount_atom),
                                         (
-                                            self.nonce,
+                                            Node(nonce_atom),
                                             (
-                                                self.max_move_size,
+                                                Node(max_move_size_atom),
                                                 (
-                                                    self.mover_share.clone(),
-                                                    (
-                                                        Node(count_atom),
-                                                        (
-                                                            Node(amount_atom),
-                                                            ((Node(slash_atom), ())),
-                                                        ),
-                                                    ),
+                                                    Node(mover_share_atom),
+                                                    (Node(count_atom), ()),
                                                 ),
                                             ),
                                         ),
@@ -566,13 +583,15 @@ impl ExhaustiveMoveInputs {
             .to_clvm(allocator)
             .into_gen()?;
 
-        let program_to_concat = Program::from_hex("ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ffff820bffff8217ffff822fffff825fff80")?;
+        let program_to_concat = Program::from_hex("ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ffff820bffff8217ff80")?;
         let pnode = program_to_concat.to_clvm(allocator).into_gen()?;
         let result_atom = run_program(allocator.allocator(), &chia_dialect(), pnode, args, 0)
             .into_gen()?
             .1;
-        if let Some(result_move_data) = atom_from_clvm(allocator, result_atom) {
-            debug!("generated move data {result_move_data:?}");
+        if let Some(mut result_move_data) = atom_from_clvm(allocator, result_atom) {
+            debug!("generated move data {} {result_move_data:?}", result_move_data.len());
+            debug!("tail_bytes {tail_bytes:?}");
+            result_move_data.append(&mut tail_bytes);
             Ok(result_move_data)
         } else {
             Err(Error::StrErr("move didn't concat".to_string()))
@@ -601,11 +620,11 @@ fn test_debug_game_validation_move() {
     let mut allocator = AllocEncoder::new();
     let mut debug_games = make_debug_games(&mut allocator).expect("good");
     assert_eq!(
-        debug_games[0].game.initial_validation_program,
-        debug_games[1].game.initial_validation_program
+        debug_games[0].game.starts[0].initial_validation_program,
+        debug_games[1].game.starts[0].initial_validation_program
     );
     // Predict the first move bytes.
-    let predicted_move = debug_games[0].get_move_inputs(&mut allocator);
+    let predicted_move = debug_games[0].get_move_inputs(&mut allocator, Amount::default(), 0);
     let move_data = predicted_move
         .to_linear_move(&mut allocator, true)
         .expect("good");
@@ -626,7 +645,7 @@ fn test_debug_game_validation_move() {
     debug_games[1]
         .accept_move(&mut allocator, &predicted_move)
         .expect("good");
-    let predicted_bob_move = debug_games[1].get_move_inputs(&mut allocator);
+    let predicted_bob_move = debug_games[1].get_move_inputs(&mut allocator, Amount::default(), 0);
     let _bob_move_data = predicted_bob_move
         .to_linear_move(&mut allocator, true)
         .expect("good");

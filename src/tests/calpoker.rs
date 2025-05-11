@@ -39,7 +39,7 @@ pub const CALPOKER_HEX_FILE: &'static str = "clsp/calpoker_include_calpoker_temp
 
 #[cfg(feature = "sim-tests")]
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
-    Game::new(allocator, true, game_id, CALPOKER_HEX_FILE)
+    Game::new(allocator, true, &game_id, CALPOKER_HEX_FILE)
 }
 
 #[cfg(feature = "sim-tests")]

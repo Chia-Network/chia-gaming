@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::run_program;
+use clvmr::{NodePtr, run_program};
 
 use crate::utils::proper_list;
 
@@ -17,7 +17,7 @@ use crate::common::types::{
 };
 
 #[derive(Clone)]
-pub struct Game {
+pub struct GameStart {
     pub id: GameID,
     pub initial_mover_handler: GameHandler,
     pub initial_move: Vec<u8>,
@@ -28,56 +28,16 @@ pub struct Game {
     pub initial_mover_share: u64,
 }
 
-impl Game {
+impl GameStart {
     pub fn new_program(
         allocator: &mut AllocEncoder,
-        as_alice: bool,
-        game_id: GameID,
-        poker_generator: Puzzle,
-    ) -> Result<Game, Error> {
-        let args = (as_alice, (100, (100, ((), ()))))
-            .to_clvm(allocator)
-            .into_gen()?;
-        let args_program = Program::from_nodeptr(allocator, args)?;
-
-        let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
-        debug!("running start program {poker_generator:?}");
-        debug!("running start args {args_program:?}");
-        let template_clvm = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
-            poker_generator_clvm,
-            args,
-            0,
-        )
-        .into_gen()?
-        .1;
-        let template_list_prog = Program::from_nodeptr(allocator, template_clvm)?;
-        debug!("game template_list {template_list_prog:?}");
-        let game_list = if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
-            lst
-        } else {
-            return Err(Error::StrErr(
-                "poker program didn't return a list".to_string(),
-            ));
-        };
-
-        if game_list.is_empty() {
-            return Err(Error::StrErr("not even one game returned".to_string()));
-        }
-
-        let template_list =
-            if let Some(lst) = proper_list(allocator.allocator(), game_list[0], true) {
-                lst
-            } else {
-                return Err(Error::StrErr("bad template list".to_string()));
-            };
-
+        game_id: &GameID,
+        template_list: &[NodePtr],
+    ) -> Result<GameStart, Error> {
         if template_list.len() != 11 {
             return Err(Error::StrErr(format!(
-                "calpoker template returned incorrect property list ({} : {:?})",
+                "calpoker template returned incorrect property list {}",
                 template_list.len(),
-                Program::from_nodeptr(allocator, game_list[0])?
             )));
         }
 
@@ -104,8 +64,8 @@ impl Game {
         let initial_mover_share = atom_from_clvm(allocator, template_list[10])
             .and_then(|a| u64_from_atom(&a))
             .expect("should be an atom");
-        Ok(Game {
-            id: game_id,
+        Ok(GameStart {
+            id: game_id.clone(),
             initial_max_move_size,
             initial_validation_program,
             initial_validation_program_hash,
@@ -116,10 +76,97 @@ impl Game {
         })
     }
 
+    pub fn game_start(
+        &self,
+        game_id: &GameID,
+        amount: &Amount,
+        timeout: &Timeout,
+        my_contribution: &Amount,
+        their_contribution: &Amount,
+    ) -> GameStartInfo {
+        GameStartInfo {
+            game_id: game_id.clone(),
+            amount: amount.clone(),
+            game_handler: self.initial_mover_handler.clone(),
+            timeout: timeout.clone(),
+            my_contribution_this_game: my_contribution.clone(),
+            their_contribution_this_game: their_contribution.clone(),
+            initial_validation_program: self.initial_validation_program.clone(),
+            initial_state: self.initial_state.clone().into(),
+            initial_move: self.initial_move.clone(),
+            initial_max_move_size: self.initial_max_move_size,
+            initial_mover_share: Amount::new(self.initial_mover_share),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Game {
+    pub starts: Vec<GameStart>,
+}
+
+impl Game {
+    pub fn new_program(
+        allocator: &mut AllocEncoder,
+        as_alice: bool,
+        game_id: &GameID,
+        poker_generator: Puzzle,
+    ) -> Result<Game, Error> {
+        let mut starts = Vec::new();
+
+        let args = (as_alice, (100, (100, ((), ()))))
+            .to_clvm(allocator)
+            .into_gen()?;
+        let args_program = Program::from_nodeptr(allocator, args)?;
+
+        let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
+        debug!("running start program {poker_generator:?}");
+        debug!("running start args {args_program:?}");
+        let template_clvm = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            poker_generator_clvm,
+            args,
+            0,
+        )
+            .into_gen()?
+            .1;
+        let template_list_prog = Program::from_nodeptr(allocator, template_clvm)?;
+        debug!("game template_list {template_list_prog:?}");
+        let game_list = if let Some(lst) = proper_list(allocator.allocator(), template_clvm, true) {
+            lst
+        } else {
+            return Err(Error::StrErr(
+                "poker program didn't return a list".to_string(),
+            ));
+        };
+
+        if game_list.is_empty() {
+            return Err(Error::StrErr("not even one game returned".to_string()));
+        }
+
+        for game in game_list.iter() {
+            let template_list =
+                if let Some(lst) = proper_list(allocator.allocator(), *game, true) {
+                    lst
+                } else {
+                    return Err(Error::StrErr("bad template list".to_string()));
+                };
+
+            starts.push(GameStart::new_program(
+                allocator,
+                game_id,
+                &template_list,
+            )?);
+        }
+
+        Ok(Game { starts })
+    }
+
     pub fn new(
         allocator: &mut AllocEncoder,
         as_alice: bool,
-        game_id: GameID,
+        game_id: &GameID,
         game_hex_file: &str,
     ) -> Result<Game, Error> {
         let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
@@ -136,39 +183,21 @@ impl Game {
         timeout: &Timeout,
     ) -> (GameStartInfo, GameStartInfo) {
         let amount = our_contribution.clone() + their_contribution.clone();
-        debug!(
-            "symmetric game starts: {amount:?} initial_mover_share {:?}",
-            self.initial_mover_share
+        let alice_start = self.starts[0].game_start(
+            game_id,
+            &amount,
+            timeout,
+            our_contribution,
+            their_contribution,
         );
-        let mover_share = Amount::new(self.initial_mover_share);
-        let waiter_share = amount.clone() - mover_share.clone();
-        (
-            GameStartInfo {
-                game_id: game_id.clone(),
-                amount: amount.clone(),
-                game_handler: self.initial_mover_handler.clone(),
-                timeout: timeout.clone(),
-                my_contribution_this_game: our_contribution.clone(),
-                their_contribution_this_game: their_contribution.clone(),
-                initial_validation_program: self.initial_validation_program.clone(),
-                initial_state: self.initial_state.clone().into(),
-                initial_move: vec![],
-                initial_max_move_size: self.initial_max_move_size,
-                initial_mover_share: mover_share,
-            },
-            GameStartInfo {
-                game_id: game_id.clone(),
-                amount: amount.clone(),
-                game_handler: self.initial_mover_handler.clone(),
-                timeout: timeout.clone(),
-                my_contribution_this_game: their_contribution.clone(),
-                their_contribution_this_game: our_contribution.clone(),
-                initial_validation_program: self.initial_validation_program.clone(),
-                initial_state: self.initial_state.clone().into(),
-                initial_move: vec![],
-                initial_max_move_size: self.initial_max_move_size,
-                initial_mover_share: waiter_share,
-            },
-        )
+        let bob_start = self.starts[0].game_start(
+            game_id,
+            &amount,
+            timeout,
+            their_contribution,
+            our_contribution,
+        );
+
+        (alice_start, bob_start)
     }
 }

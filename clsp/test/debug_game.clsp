@@ -70,22 +70,22 @@
     INFOHASH_A
     pv_hash
     ;; Then variable length stuff
-    TIMEOUT
-    AMOUNT
-    NONCE
-    MAX_MOVE_SIZE
-    MOVER_SHARE
-    COUNT
+    (byteify TIMEOUT)
+    (byteify AMOUNT)
+    (byteify NONCE)
+    (byteify MAX_MOVE_SIZE)
+    (byteify MOVER_SHARE)
+    (byteify COUNT)
     )
 
-   move-counter-data-len (strlen move-counter-data)
+   move-counter-data-len (strlen (print "move-counter-data?" move-counter-data))
    mover-puzzle-hash (substr move-counter-data 0 32)
-   move-len (strlen MOVE)
+   move-len (strlen (print "MOVE?" MOVE))
 
    (if
     (or
      ;; Too short move
-     (print (list "have 2 or more bytes than move-counter-data-len which is" move-counter-data-len "have" (- (strlen MOVE) 3)) (> move-counter-data-len (- (strlen MOVE) 3)))
+     (print (list "have 2 or more bytes than move-counter-data-len which is" move-counter-data-len "have" (strlen MOVE)) (> move-counter-data-len (- (strlen MOVE) 2)))
      ;; Move doesn't repeat the counter data
      (print (list "did we reproduce the data" (substr MOVE 0 move-counter-data-len) "versus" move-counter-data) (not (= move-counter-data (substr MOVE 0 move-counter-data-len))))
      ;; Mover puzzle isn't the puzzle of the mover we think we have.
@@ -100,8 +100,8 @@
      ;;
      ;; the step we're on indicates mover0 or waiter0 as mover
      (print "did we send mover and waiter puzzle hash in the right order" (if (logand COUNT 1)
-          (not (= MOVER_PUZZLE_HASH MOVER0))
           (not (= MOVER_PUZZLE_HASH WAITER0))
+          (not (= MOVER_PUZZLE_HASH MOVER0))
           ))
      ;; if mover and waiter are the same then things are broken
      (print "ensure we didn't just send the same puzzle hash for mover and waiter" (= MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH))
@@ -118,7 +118,7 @@
     (list SLASH () "debug game: slash")
     (assign
      slashable-move (substr MOVE (- move-len 1) move-len)
-     mover-share (+ 0 (substr MOVE move-counter-data-len (- move-len 1)))
+     mover-share (+ 0 (substr MOVE (print "getting mover share" move-counter-data-len) (print "mover share ends at" (- move-len 1))))
      (list
       MAKE_MOVE
       (validator-hash curry-args)
@@ -147,7 +147,7 @@
            (list
             "debug game: move"
             ;; move bytes
-            (concat prefix (byteify count) (byteify mover-share) slash)
+            (concat prefix (byteify mover-share) slash)
             (curry SELF_PROG "validator" curry-args)
             (validator-hash curry-args)
             (curry SELF_PROG "validator" (curry-args-incr curry-args))
