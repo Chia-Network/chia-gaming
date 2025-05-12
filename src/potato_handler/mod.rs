@@ -224,12 +224,6 @@ impl PotatoHandler {
         Err(Error::StrErr("no channel handler".to_string()))
     }
 
-    pub fn enable_cheating(&mut self, make_move: &[u8]) -> Result<(), Error> {
-        let ch = self.channel_handler_mut()?;
-        ch.enable_cheating(make_move);
-        Ok(())
-    }
-
     pub fn handshake_finished(&self) -> bool {
         matches!(
             self.handshake_state,
@@ -740,33 +734,12 @@ impl PotatoHandler {
         }
     }
 
-    fn set_game_ids(
-        &mut self,
-        games: &[GameStartInfo],
-        game_ids: &[GameID],
-        timeout: Timeout,
-    ) -> Vec<GameStartInfo> {
-        assert_eq!(games.len(), game_ids.len());
-
-        let mut result_start_info = Vec::new();
-        for (i, new_game) in games.iter().enumerate() {
-            //let new_game = GameStartInfo::from_clvm(allocator, *node)?;
-            // Timeout and game_id are supplied here.
-            result_start_info.push(GameStartInfo {
-                game_id: game_ids[i].clone(),
-                timeout: timeout.clone(),
-                ..new_game.clone()
-            });
-        }
-        result_start_info
-    }
-
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         i_initiated: bool,
         game_start: &GameStart,
-    ) -> Result<Vec<GameStartInfo>, Error>
+    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
@@ -816,38 +789,60 @@ impl PotatoHandler {
                 }
             };
 
-        // The result one list containing the game start info for the current player.
+        // The result is two parallel lists of opposite sides of game starts.
         // Well re-glue these together into a list of pairs.
-        // let pair_of_output_lists = to_list(
-        //     env.allocator.allocator(),
-        //     program_output,
-        //     "not a single list",
-        // )?;
+        let pair_of_output_lists = to_list(
+            env.allocator.allocator(),
+            program_output,
+            "not a pair of lists",
+        )?;
 
-        // if pair_of_output_lists.len() != 1 {
-        //     return Err(Error::StrErr("output wasn't a list of 1 item".to_string()));
-        // }
+        if pair_of_output_lists.len() != 2 {
+            return Err(Error::StrErr("output wasn't a list of 2 items".to_string()));
+        }
 
         let my_info_list = to_list(
             env.allocator.allocator(),
-            program_output,
+            pair_of_output_lists[0],
             "not a list (first)",
         )?;
+        let their_info_list = to_list(
+            env.allocator.allocator(),
+            pair_of_output_lists[1],
+            "not a list (second)",
+        )?;
+
+        if their_info_list.len() != my_info_list.len() {
+            return Err(Error::StrErr(
+                "mismatched my and their game starts".to_string(),
+            ));
+        }
+
+        let mut game_ids = Vec::new();
+        for _ in my_info_list.iter() {
+            game_ids.push(self.next_game_id()?);
+        }
 
         let convert_info_list = |allocator: &mut AllocEncoder,
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<GameStartInfo>, Error> {
             let mut result_start_info = Vec::new();
-            for node in my_info_list.iter() {
+            for (i, node) in my_info_list.iter().enumerate() {
                 let new_game = GameStartInfo::from_clvm(allocator, *node)?;
                 // Timeout and game_id are supplied here.
-                result_start_info.push(new_game);
+                result_start_info.push(GameStartInfo {
+                    game_id: game_ids[i].clone(),
+                    timeout: game_start.timeout.clone(),
+                    ..new_game
+                });
             }
             Ok(result_start_info)
         };
-        let my_result_start_info = convert_info_list(env.allocator, &my_info_list)?;
 
-        Ok(my_result_start_info)
+        let my_result_start_info = convert_info_list(env.allocator, &my_info_list)?;
+        let their_result_start_info = convert_info_list(env.allocator, &their_info_list)?;
+
+        Ok((my_result_start_info, their_result_start_info))
     }
 
     fn next_game_id(&mut self) -> Result<GameID, Error> {
@@ -1730,16 +1725,9 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        let mut my_games = self.get_games_by_start_type(penv, i_initiated, game)?;
-        let mut their_games = self.get_games_by_start_type(penv, !i_initiated, game)?;
+        let (my_games, their_games) = self.get_games_by_start_type(penv, i_initiated, game)?;
 
-        //let game_id_list = my_games.iter().map(|g| g.game_id.clone()).collect();
-        let mut game_ids = Vec::new();
-        for _ in my_games.iter() {
-            game_ids.push(self.next_game_id()?);
-        }
-        my_games = self.set_game_ids(&my_games, &game_ids, game.timeout.clone());
-        their_games = self.set_game_ids(&their_games, &game_ids, game.timeout.clone());
+        let game_id_list = my_games.iter().map(|g| g.game_id.clone()).collect();
 
         // This comes to both peers before any game start happens.
         // In the didn't initiate scenario, we hang onto the game start to ensure that
@@ -1753,7 +1741,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             self.game_action_queue.push_back(GameAction::LocalStartGame);
 
             if !self.send_potato_request_if_needed(penv)? {
-                return Ok(game_ids);
+                return Ok(game_id_list);
             }
 
             self.have_potato_move(penv)?;
@@ -1762,7 +1750,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             self.their_start_queue.push_back(GameStartQueueEntry);
         }
 
-        Ok(game_ids)
+        Ok(game_id_list)
     }
 
     fn make_move<'a>(

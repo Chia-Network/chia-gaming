@@ -16,14 +16,15 @@ mod result;
 mod state_update_program;
 mod unroll_coin;
 mod validation_info;
+mod validation_program;
 
 pub use accept_transaction_state::AcceptTransactionState;
 pub use channel_coin::{
     ChannelCoin, ChannelCoinInfo, ChannelCoinSpendInfo, ChannelCoinSpentResult,
 };
 pub use channel_handler::{
-    make_puzzle_name_map, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
+    ChannelHandlerEnv, ChannelHandlerInitiationData, ChannelHandlerInitiationResult,
+    ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
 };
 pub use coin_data_for_reward::CoinDataForReward;
 pub use coin_identification_by_puzzle_hash::CoinIdentificationByPuzzleHash;
@@ -46,3 +47,4 @@ pub use unroll_coin::{
     prepend_rem_conditions, UnrollCoin, UnrollCoinConditionInputs, UnrollCoinOutcome, UnrollTarget,
 };
 pub use validation_info::ValidationInfo;
+pub use validation_program::ValidationProgram;

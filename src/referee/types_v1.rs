@@ -1,31 +1,38 @@
 use std::borrow::Borrow;
+#[cfg(test)]
+use std::fs;
 use std::rc::Rc;
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
+use clvmr::reduction::EvalErr;
+use clvmr::run_program;
 
 use log::debug;
 
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::TheirTurnResult;
+use crate::channel_handler::types::HasStateUpdateProgram;
+use crate::channel_handler::types::StateUpdateProgram;
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node,
-    Program, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout,
+    atom_from_clvm, chia_dialect, i64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
+    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
+    Sha256tree, Spend, Timeout,
 };
+use crate::utils::proper_list;
 
-pub const REM_CONDITION_FIELDS: usize = 4;
+// pub const REM_CONDITION_FIELDS: usize = 4;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct GameMoveStateInfo {
     pub move_made: Vec<u8>,
     pub mover_share: Amount,
-    pub max_move_size: usize,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -50,6 +57,7 @@ pub struct TheirTurnMoveResult {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum SlashOutcome {
     NoReward,
     Reward {
@@ -59,6 +67,7 @@ pub enum SlashOutcome {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RefereeOnChainTransaction {
     pub bundle: Spend,
     pub amount: Amount,
@@ -72,10 +81,12 @@ pub struct LiveGameReplay {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,
     },
+    Expected(PuzzleHash, Amount),
     Moved {
         // New iteration of the game coin.
         new_coin_string: CoinString,
@@ -84,10 +95,66 @@ pub enum TheirTurnCoinSpentResult {
     },
     Slash(Box<SlashOutcome>),
 }
-#[derive(Debug)]
-pub enum ValidatorResult {
-    MoveOk,
-    Slash(NodePtr),
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StateUpdateResult {
+    MoveOk(Rc<Program>, ValidationInfo, usize),
+    Slash(Rc<Program>),
+}
+
+impl StateUpdateResult {
+    #[allow(dead_code)]
+    pub fn from_nodeptr(
+        allocator: &mut AllocEncoder,
+        validation_info: ValidationInfo,
+        node: NodePtr,
+    ) -> Result<StateUpdateResult, Error> {
+        let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
+            p
+        } else {
+            return Err(Error::StrErr("non-list in validator result".to_string()));
+        };
+
+        if lst.is_empty() {
+            return Err(Error::StrErr("empty list from validator".to_string()));
+        }
+
+        let selector =
+            if let Some(a) = atom_from_clvm(allocator, lst[0]).and_then(|a| i64_from_atom(&a)) {
+                a
+            } else {
+                return Err(Error::StrErr("not atom selector".to_string()));
+            };
+
+        if selector != 0 {
+            // Slash
+            let evidence_node = if lst.len() > 1 {
+                lst[1]
+            } else {
+                allocator
+                    .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+                    .into_gen()?
+            };
+            let evidence = Rc::new(Program::from_nodeptr(allocator, evidence_node)?);
+
+            return Ok(StateUpdateResult::Slash(evidence));
+        }
+
+        if lst.len() < 3 {
+            return Err(Error::StrErr("short list for make move".to_string()));
+        }
+
+        // Make move
+        let max_move_size = atom_from_clvm(allocator, lst[3])
+            .and_then(|a| usize_from_atom(&a))
+            .unwrap_or_default();
+        Ok(StateUpdateResult::MoveOk(
+            Rc::new(Program::from_nodeptr(allocator, lst[2])?),
+            validation_info,
+            max_move_size,
+        ))
+    }
 }
 
 /// Adjudicates a two player turn based game
@@ -130,7 +197,7 @@ pub enum ValidatorResult {
 ///  solution
 ///  evidence
 ///  )
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RefereePuzzleArgs {
     pub mover_puzzle_hash: PuzzleHash,
     pub waiter_puzzle_hash: PuzzleHash,
@@ -138,20 +205,22 @@ pub struct RefereePuzzleArgs {
     pub amount: Amount,
     pub nonce: usize,
     pub game_move: GameMoveDetails,
+    pub max_move_size: usize,
     pub previous_validation_info_hash: Option<Hash>,
+    pub referee_coin_puzzle_hash: PuzzleHash,
 }
 
 /*
         their_puzzle_hash: &PuzzleHash,
 */
 
+#[allow(dead_code)]
 impl RefereePuzzleArgs {
     pub fn new(
         fixed_info: &RMFixed,
-        initial_move: &GameMoveStateInfo,
+        initial_move: &GameMoveDetails,
+        max_move_size: usize,
         previous_validation_info_hash: Option<&Hash>,
-        validation_info_hash: &Hash,
-        mover_share: Option<&Amount>,
         my_turn: bool,
     ) -> Self {
         debug!(
@@ -160,7 +229,7 @@ impl RefereePuzzleArgs {
         );
         debug!(
             "VALIDATION_INFO_HASH {my_turn} {}",
-            hex::encode(validation_info_hash.bytes())
+            hex::encode(initial_move.validation_info_hash.bytes())
         );
         RefereePuzzleArgs {
             mover_puzzle_hash: if my_turn {
@@ -176,67 +245,99 @@ impl RefereePuzzleArgs {
             timeout: fixed_info.timeout.clone(),
             amount: fixed_info.amount.clone(),
             nonce: fixed_info.nonce,
-            game_move: GameMoveDetails {
-                basic: GameMoveStateInfo {
-                    mover_share: mover_share
-                        .cloned()
-                        .unwrap_or_else(|| initial_move.mover_share.clone()),
-                    ..initial_move.clone()
-                },
-                validation_info_hash: validation_info_hash.clone(),
-            },
+            max_move_size,
+            referee_coin_puzzle_hash: fixed_info.referee_coin_puzzle_hash.clone(),
+            game_move: initial_move.clone(),
             previous_validation_info_hash: previous_validation_info_hash.cloned(),
         }
     }
 
-    fn to_node_list(
-        &self,
-        allocator: &mut AllocEncoder,
-        referee_coin_puzzle_hash: &PuzzleHash,
-    ) -> Result<Vec<Node>, Error> {
-        Ok([
-            self.mover_puzzle_hash.to_clvm(allocator).into_gen()?,
-            self.waiter_puzzle_hash.to_clvm(allocator).into_gen()?,
-            self.timeout.to_clvm(allocator).into_gen()?,
-            self.amount.to_clvm(allocator).into_gen()?,
-            referee_coin_puzzle_hash.to_clvm(allocator).into_gen()?,
-            self.nonce.to_clvm(allocator).into_gen()?,
-            allocator
-                .encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))
-                .into_gen()?,
-            self.game_move
-                .basic
-                .max_move_size
-                .to_clvm(allocator)
-                .into_gen()?,
-            self.game_move
-                .validation_info_hash
-                .to_clvm(allocator)
-                .into_gen()?,
-            self.game_move
-                .basic
-                .mover_share
-                .to_clvm(allocator)
-                .into_gen()?,
-            if let Some(p) = self.previous_validation_info_hash.as_ref() {
-                p.to_clvm(allocator).into_gen()?
-            } else {
-                ().to_clvm(allocator).into_gen()?
-            },
-        ]
-        .into_iter()
-        .map(Node)
-        .collect())
+    pub fn off_chain(&self) -> RefereePuzzleArgs {
+        let mut new_result: RefereePuzzleArgs = self.clone();
+        new_result.waiter_puzzle_hash = PuzzleHash::default();
+        new_result
+    }
+
+    pub fn neutralize(&self) -> RefereePuzzleArgs {
+        RefereePuzzleArgs {
+            mover_puzzle_hash: self.mover_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.waiter_puzzle_hash.clone(),
+            timeout: self.timeout.clone(),
+            amount: self.amount.clone(),
+            nonce: self.nonce,
+            game_move: self.game_move.clone(),
+            max_move_size: self.max_move_size,
+            previous_validation_info_hash: self.previous_validation_info_hash.clone(),
+            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
+        }
+    }
+
+    pub fn fake_mine(&self) -> RefereePuzzleArgs {
+        RefereePuzzleArgs {
+            mover_puzzle_hash: self.mover_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.waiter_puzzle_hash.clone(),
+            timeout: self.timeout.clone(),
+            amount: self.amount.clone(),
+            nonce: self.nonce,
+            game_move: self.game_move.clone(),
+            max_move_size: self.max_move_size,
+            previous_validation_info_hash: self.previous_validation_info_hash.clone(),
+            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
+        }
+    }
+
+    pub fn fake_theirs(&self) -> RefereePuzzleArgs {
+        RefereePuzzleArgs {
+            mover_puzzle_hash: self.mover_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.waiter_puzzle_hash.clone(),
+            timeout: self.timeout.clone(),
+            amount: self.amount.clone(),
+            nonce: self.nonce,
+            game_move: self.game_move.clone(),
+            max_move_size: self.max_move_size,
+            previous_validation_info_hash: self.previous_validation_info_hash.clone(),
+            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
+        }
     }
 }
 
+/// See debug_game.clsp STATE_PACK
+impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for RefereePuzzleArgs
+where
+    NodePtr: ToClvm<E>,
+{
+    fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
+        assert_ne!(self.amount, Amount::default());
+        [
+            self.mover_puzzle_hash.to_clvm(encoder)?,
+            if self.waiter_puzzle_hash == PuzzleHash::default() {
+                encoder.encode_atom(clvm_traits::Atom::Borrowed(&[]))?
+            } else {
+                self.waiter_puzzle_hash.to_clvm(encoder)?
+            },
+            self.timeout.to_clvm(encoder)?,
+            self.amount.to_clvm(encoder)?,
+            self.referee_coin_puzzle_hash.to_clvm(encoder)?,
+            self.nonce.to_clvm(encoder)?,
+            encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
+            self.max_move_size.to_clvm(encoder)?,
+            self.game_move.validation_info_hash.to_clvm(encoder)?,
+            self.game_move.basic.mover_share.to_clvm(encoder)?,
+            self.previous_validation_info_hash
+                .as_ref()
+                .to_clvm(encoder)?,
+        ]
+        .to_clvm(encoder)
+    }
+}
+
+#[allow(dead_code)]
 pub fn curry_referee_puzzle_hash(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle_hash: &PuzzleHash,
     args: &RefereePuzzleArgs,
 ) -> Result<PuzzleHash, Error> {
-    let args_to_curry: Vec<Node> = args.to_node_list(allocator, referee_coin_puzzle_hash)?;
-    let combined_args = args_to_curry.to_clvm(allocator).into_gen()?;
+    let combined_args = args.to_clvm(allocator).into_gen()?;
     let arg_hash = Node(combined_args).sha256tree(allocator);
     Ok(curry_and_treehash(
         &PuzzleHash::from_hash(calculate_hash_of_quoted_mod_hash(referee_coin_puzzle_hash)),
@@ -247,14 +348,13 @@ pub fn curry_referee_puzzle_hash(
 // Agg sig me on the solution of the referee_coin_puzzle.
 // When it invokes the validation program, it passes through args as the full
 // argument set.
+#[allow(dead_code)]
 pub fn curry_referee_puzzle(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle: &Puzzle,
-    referee_coin_puzzle_hash: &PuzzleHash,
     args: &RefereePuzzleArgs,
 ) -> Result<Puzzle, Error> {
-    let args_to_curry: Vec<Node> = args.to_node_list(allocator, referee_coin_puzzle_hash)?;
-    let combined_args = args_to_curry.to_clvm(allocator).into_gen()?;
+    let combined_args = args.to_clvm(allocator).into_gen()?;
     debug!(
         "curry_referee_puzzle {}",
         Node(combined_args).to_hex(allocator)?
@@ -290,89 +390,102 @@ pub fn curry_referee_puzzle(
 /// Mover puzzle is a wallet puzzle for an ordinary value coin and the solution
 /// is next to it.
 ///
-pub struct ValidatorMoveArgs {
+pub struct StateUpdateMoveArgs {
     pub state: Rc<Program>,
     pub mover_puzzle: Rc<Program>,
     pub solution: Rc<Program>,
     pub evidence: Rc<Program>,
 }
 
-impl ValidatorMoveArgs {
+impl StateUpdateMoveArgs {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
-        let me_program = Program::from_nodeptr(allocator, me)?;
-        [
-            &self.state,
-            &me_program,
-            &self.mover_puzzle,
-            &self.solution,
-            &self.evidence,
-        ]
-        .to_clvm(allocator)
-        .into_gen()
-    }
-}
-
-pub struct InternalValidatorArgs {
-    pub move_made: Vec<u8>,
-    pub new_validation_info_hash: Hash,
-    pub mover_share: Amount,
-    pub previous_validation_info_hash: Hash,
-    pub mover_puzzle_hash: PuzzleHash,
-    pub waiter_puzzle_hash: PuzzleHash,
-    pub amount: Amount,
-    pub timeout: Timeout,
-    pub max_move_size: usize,
-    pub referee_hash: PuzzleHash,
-    pub move_args: ValidatorMoveArgs,
-}
-
-impl InternalValidatorArgs {
-    pub fn to_nodeptr(
-        &self,
-        allocator: &mut AllocEncoder,
-        me: NodePtr,
-        validator_mod_hash: PuzzleHash,
-    ) -> Result<NodePtr, Error> {
-        let converted_vma = self.move_args.to_nodeptr(allocator, me)?;
-        let move_node = allocator
-            .encode_atom(clvm_traits::Atom::Borrowed(&self.move_made))
-            .into_gen()?;
         (
-            validator_mod_hash,
+            &self.state,
             (
-                (
-                    Node(move_node),
-                    (
-                        self.new_validation_info_hash.clone(),
-                        (
-                            self.mover_share.clone(),
-                            (
-                                self.previous_validation_info_hash.clone(),
-                                (
-                                    self.mover_puzzle_hash.clone(),
-                                    (
-                                        self.waiter_puzzle_hash.clone(),
-                                        (
-                                            self.amount.clone(),
-                                            (
-                                                self.timeout.clone(),
-                                                (
-                                                    self.max_move_size,
-                                                    (self.referee_hash.clone(), ()),
-                                                ),
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-                Node(converted_vma),
+                Node(me),
+                [&self.mover_puzzle, &self.solution, &self.evidence],
             ),
         )
             .to_clvm(allocator)
             .into_gen()
+    }
+}
+
+#[allow(dead_code)]
+pub struct InternalStateUpdateArgs {
+    pub validation_program: StateUpdateProgram,
+    pub referee_args: Rc<RefereePuzzleArgs>,
+    pub state_update_args: StateUpdateMoveArgs,
+}
+
+#[cfg(test)]
+pub fn tmpsave(name: &str, val: &str) {
+    fs::write(name, val).expect("tmpsave")
+}
+
+impl InternalStateUpdateArgs {
+    #[allow(dead_code)]
+    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
+        let validator_mod_hash = self.validation_program.sha256tree(allocator);
+        let referee_args_nodeptr = self
+            .referee_args
+            .off_chain()
+            .to_clvm(allocator)
+            .into_gen()?;
+        let referee_args_prog = Program::from_nodeptr(allocator, referee_args_nodeptr)?;
+        let referee_prog_node = self.validation_program.to_clvm(allocator).into_gen()?;
+        let state_update_args = self
+            .state_update_args
+            .to_nodeptr(allocator, referee_prog_node)?;
+        debug!("converted referee args {referee_args_prog:?}");
+        (
+            validator_mod_hash,
+            (Node(referee_args_nodeptr), Node(state_update_args)),
+        )
+            .to_clvm(allocator)
+            .into_gen()
+    }
+
+    #[allow(dead_code)]
+    pub fn run(&self, allocator: &mut AllocEncoder) -> Result<StateUpdateResult, Error> {
+        let validation_program_mod_hash = self.validation_program.hash();
+        debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
+        let validation_program_nodeptr = self.validation_program.p().to_nodeptr(allocator)?;
+        let validator_full_args_node = self.to_nodeptr(allocator)?;
+        let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
+        let validation_info = ValidationInfo::new_from_validation_program_hash_and_state(
+            allocator,
+            validation_program_mod_hash.clone(),
+            self.state_update_args.state.clone(),
+        );
+
+        debug!("validator program {:?}", self.validation_program);
+        debug!("validator args {:?}", validator_full_args);
+
+        #[cfg(test)]
+        tmpsave("v-args.hex", &validator_full_args.to_hex());
+
+        let raw_result_p = run_program(
+            allocator.allocator(),
+            &chia_dialect(),
+            validation_program_nodeptr,
+            validator_full_args_node,
+            0,
+        )
+        .into_gen();
+        if let Err(Error::ClvmErr(EvalErr(n, e))) = &raw_result_p {
+            debug!(
+                "validator error {e} {:?}",
+                Program::from_nodeptr(allocator, *n)
+            );
+        }
+        let raw_result = raw_result_p?;
+        let pres = Program::from_nodeptr(allocator, raw_result.1)?;
+        debug!("validator result {pres:?}");
+
+        let update_result =
+            StateUpdateResult::from_nodeptr(allocator, validation_info, raw_result.1)?;
+        Ok(update_result)
     }
 }
 
@@ -403,6 +516,7 @@ pub struct IdentityCoinAndSolution {
     pub mover_coin_spend_solution: Rc<Program>,
     /// The signature, which may be over part of the solution or something
     /// derived from it.
+    #[allow(dead_code)]
     pub mover_coin_spend_signature: Aggsig,
 }
 
@@ -411,6 +525,8 @@ pub struct IdentityCoinAndSolution {
 pub struct OnChainRefereeMove {
     /// From the wire protocol.
     pub details: GameMoveDetails,
+    /// Max move size specified in on chain move REM.
+    pub max_move_size: usize,
     /// Coin puzzle and solution that are used to generate conditions for the
     /// next generation of the on chain refere coin.
     pub mover_coin: IdentityCoinAndSolution,
@@ -443,6 +559,7 @@ pub struct OnChainRefereeSlash {
 /// puzzle for a coin that represents the user's identity ... most likely a
 /// standard puzzle.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum OnChainRefereeSolution {
     Timeout,
     Move(OnChainRefereeMove),
@@ -453,6 +570,7 @@ pub enum OnChainRefereeSolution {
 impl OnChainRefereeSolution {
     // Get the standard solution for these referee arguments.
     // We will sign it with the synthetic private key if it exists.
+    #[allow(dead_code)]
     pub fn get_signature(&self) -> Option<Aggsig> {
         match self {
             OnChainRefereeSolution::Timeout => None,
@@ -489,7 +607,7 @@ where
                         (
                             refmove.details.basic.mover_share.clone(),
                             (
-                                refmove.details.basic.max_move_size,
+                                refmove.max_move_size,
                                 (
                                     refmove.mover_coin.mover_coin_puzzle.clone(),
                                     (refmove_coin_solution_ref, ()),
@@ -521,12 +639,14 @@ where
 
 #[derive(Debug)]
 pub struct RMFixed {
+    #[allow(dead_code)]
     pub referee_coin_puzzle: Puzzle,
     pub referee_coin_puzzle_hash: PuzzleHash,
 
     pub my_identity: ChiaIdentity,
 
     pub their_referee_puzzle_hash: PuzzleHash,
+    #[allow(dead_code)]
     pub agg_sig_me_additional_data: Hash,
 
     pub timeout: Timeout,

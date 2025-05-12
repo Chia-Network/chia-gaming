@@ -7,10 +7,9 @@ use clvm_traits::ToClvm;
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::runner::ChannelHandlerGame;
-use crate::channel_handler::types::make_puzzle_name_map;
 use crate::channel_handler::types::{
-    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, GameStartInfo,
-    StateUpdateProgram, UnrollCoin, UnrollCoinConditionInputs,
+    read_unroll_metapuzzle, read_unroll_puzzle, ChannelHandlerEnv, GameStartInfo, UnrollCoin,
+    UnrollCoinConditionInputs, ValidationProgram,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::standard_coin::{
@@ -31,7 +30,6 @@ fn test_smoke_can_initiate_channel_handler() {
     let nil = allocator.allocator().nil();
     let ref_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
     let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
-    let puzzle_name_map = make_puzzle_name_map(&mut allocator);
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
@@ -42,7 +40,6 @@ fn test_smoke_can_initiate_channel_handler() {
         unroll_puzzle,
         standard_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
-        puzzle_name_map,
     };
     let game_id_data: Hash = env.rng.gen();
     let game_id = GameID::new(game_id_data.bytes().to_vec());
@@ -96,7 +93,6 @@ fn test_smoke_can_start_game() {
     let nil = allocator.allocator().nil();
     let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
     let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
-    let puzzle_name_map = make_puzzle_name_map(&mut allocator);
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
@@ -107,7 +103,6 @@ fn test_smoke_can_start_game() {
         unroll_puzzle,
         standard_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
-        puzzle_name_map,
     };
     let game_id_data: Hash = env.rng.gen();
     let game_id = GameID::new(game_id_data.bytes().to_vec());
@@ -138,7 +133,7 @@ fn test_smoke_can_start_game() {
     let initial_validation_puzzle = game_handler.clone();
     let initial_state = Program::from_bytes(&[0x80]).into();
     let initial_validation_program =
-        StateUpdateProgram::new(env.allocator, "initial", initial_validation_puzzle);
+        ValidationProgram::new(env.allocator, initial_validation_puzzle);
 
     let timeout = Timeout::new(1337);
     let game_handler = GameHandler::TheirTurnHandler(game_handler.into());
@@ -188,7 +183,6 @@ fn test_unroll_can_verify_own_signature() {
     let ref_coin_puz = Puzzle::from_nodeptr(&mut allocator, nil).expect("should work");
     let ref_coin_ph = ref_coin_puz.sha256tree(&mut allocator);
     let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("should load");
-    let puzzle_name_map = make_puzzle_name_map(&mut allocator);
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
@@ -198,7 +192,6 @@ fn test_unroll_can_verify_own_signature() {
         unroll_puzzle,
         standard_puzzle,
         agg_sig_me_additional_data: Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
-        puzzle_name_map,
     };
 
     let inputs_1 = UnrollCoinConditionInputs {
@@ -207,6 +200,7 @@ fn test_unroll_can_verify_own_signature() {
         my_balance: Amount::new(0),
         their_balance: Amount::new(100),
         puzzle_hashes_and_amounts: vec![],
+        rem_condition_state: 0,
     };
 
     let _sig1 = unroll_coin_1

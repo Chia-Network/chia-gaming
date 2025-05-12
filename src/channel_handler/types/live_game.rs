@@ -1,6 +1,6 @@
 use log::debug;
-use std::rc::Rc;
 
+use crate::channel_handler::types::Evidence;
 use crate::channel_handler::ReadableMove;
 use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, GameID, Hash, PuzzleHash,
@@ -9,12 +9,13 @@ use crate::referee::types::{
     GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
 };
-use crate::referee::RefereeInterface;
+use crate::referee::RefereeMaker;
+
 pub struct LiveGame {
     pub game_id: GameID,
     pub rewind_outcome: Option<usize>,
     pub last_referee_puzzle_hash: PuzzleHash,
-    referee_maker: Rc<dyn RefereeInterface>,
+    referee_maker: RefereeMaker,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
 }
@@ -23,7 +24,7 @@ impl LiveGame {
     pub fn new(
         game_id: GameID,
         last_referee_puzzle_hash: PuzzleHash,
-        referee_maker: Rc<dyn RefereeInterface>,
+        referee_maker: RefereeMaker,
         my_contribution: Amount,
         their_contribution: Amount,
     ) -> LiveGame {
@@ -55,12 +56,6 @@ impl LiveGame {
 
     pub fn outcome_puzzle_hash(&self, allocator: &mut AllocEncoder) -> Result<PuzzleHash, Error> {
         self.referee_maker.outcome_referee_puzzle_hash(allocator)
-    }
-
-    pub fn enable_cheating(&mut self, make_move: &[u8]) {
-        if let Some(new_ref) = self.referee_maker.enable_cheating(make_move) {
-            self.referee_maker = new_ref;
-        }
     }
 
     pub fn internal_make_move(
@@ -103,6 +98,16 @@ impl LiveGame {
             self.last_referee_puzzle_hash = ph.clone();
         }
         Ok(their_move_result)
+    }
+
+    pub fn check_their_turn_for_slash(
+        &self,
+        allocator: &mut AllocEncoder,
+        evidence: Evidence,
+        coin_string: &CoinString,
+    ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
+        self.referee_maker
+            .check_their_turn_for_slash(allocator, evidence, coin_string)
     }
 
     pub fn get_rewind_outcome(&self) -> Option<usize> {

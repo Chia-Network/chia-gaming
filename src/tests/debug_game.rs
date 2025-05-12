@@ -11,20 +11,20 @@ use clvmr::{run_program, NodePtr};
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
-use crate::channel_handler::game::Game;
-use crate::channel_handler::game_handler::{
+use crate::channel_handler::types::{
+    Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
+};
+use crate::channel_handler::v1::game::Game;
+use crate::channel_handler::v1::game_handler::{
     GameHandler, MyTurnInputs, TheirTurnInputs, TheirTurnResult,
 };
-use crate::channel_handler::types::{
-    Evidence, GameStartInfo, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
-    ValidationInfo,
-};
+use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::referee::types::{
+use crate::referee::types_v1::{
     tmpsave, GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
     StateUpdateMoveArgs, StateUpdateResult,
 };
@@ -90,10 +90,10 @@ impl BareDebugGameDriver {
     fn get_previous_validation_info_hash(
         &self,
         allocator: &mut AllocEncoder,
-    ) -> Option<ValidationInfo<ProgramRef>> {
+    ) -> Option<ValidationInfo> {
         self.last_validation_data
             .as_ref()
-            .map(|(sp, st)| ValidationInfo::new(allocator, sp.clone(), st.clone()))
+            .map(|(sp, st)| ValidationInfo::new_state_update(allocator, sp.clone(), st.p()))
     }
 
     fn new(
@@ -313,10 +313,10 @@ impl BareDebugGameDriver {
                             move_made: move_to_check.to_vec(),
                             mover_share: self.mover_share[0].clone(),
                         },
-                        validation_info_hash: ValidationInfo::new(
+                        validation_info_hash: ValidationInfo::new_state_update(
                             allocator,
                             validation_program.clone(),
-                            self.state.clone(),
+                            self.state.p(),
                         )
                         .hash()
                         .clone(),
@@ -352,10 +352,10 @@ impl BareDebugGameDriver {
             (false, self.validation_program_queue[0].clone())
         };
 
-        let validation_info = ValidationInfo::new(
+        let validation_info = ValidationInfo::new_state_update(
             allocator,
             validation_program.clone().into(),
-            self.state.clone(),
+            self.state.p(),
         );
 
         let emove = ExhaustiveMoveInputs {
@@ -531,7 +531,7 @@ pub struct ExhaustiveMoveInputs {
     alice_puzzle_hash: PuzzleHash,
     bob_puzzle_hash: PuzzleHash,
     mod_hash: PuzzleHash,
-    validation_info: ValidationInfo<ProgramRef>,
+    validation_info: ValidationInfo,
     validation_program: StateUpdateProgram,
     incoming_state_validation_info_hash: Option<Hash>,
     timeout: Timeout,
@@ -689,7 +689,8 @@ impl ExhaustiveMoveInputs {
         allocator: &mut AllocEncoder,
     ) -> Result<Option<Hash>, Error> {
         if let Some((vprog, vstate)) = self.previous_validation_info.as_ref() {
-            let validation_info = ValidationInfo::new(allocator, vprog.clone(), vstate.clone());
+            let validation_info =
+                ValidationInfo::new_state_update(allocator, vprog.clone(), vstate.p());
             Ok(Some(validation_info.hash().clone()))
         } else {
             Ok(None)

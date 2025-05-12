@@ -40,8 +40,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     pub fn new(
         allocator: &'a mut AllocEncoder,
         rng: &'a mut R,
-        alice_game: &Game,
-        bob_game: &Game,
+        game: &Game,
         contributions: &[Amount; 2],
     ) -> Result<Self, Error> {
         // Generate keys and puzzle hashes.
@@ -58,8 +57,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         let (parties, coin) = new_channel_handler_game(
             &simulator,
             &mut env,
-            alice_game,
-            bob_game,
+            game,
             &identities,
             contributions.clone(),
         )?;

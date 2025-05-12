@@ -1,10 +1,8 @@
 use rand::prelude::*;
 
 use rand::distributions::Standard;
-use std::collections::HashMap;
 
 use crate::channel_handler::types::{PotatoSignatures, UnrollCoin};
-use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, Hash, PrivateKey, PublicKey, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
@@ -65,19 +63,6 @@ pub struct ChannelHandlerEnv<'a, R: Rng> {
     pub standard_puzzle: Puzzle,
 
     pub agg_sig_me_additional_data: Hash,
-    pub puzzle_name_map: HashMap<PuzzleHash, String>,
-}
-// TODO: Also, name new puzzles as we create them (e.g. curried in arguments, singleton spends)
-pub fn make_puzzle_name_map(allocator: &mut AllocEncoder) -> HashMap<PuzzleHash, String> {
-    let validation_program_names = ["a", "b", "c", "d", "e"];
-    let mut puzzle_name_pairs: HashMap<PuzzleHash, String> = HashMap::default();
-    for name in validation_program_names {
-        let program = read_hex_puzzle(allocator, &format!("clsp/onchain/calpoker/{name}.hex"))
-            .expect("should read");
-        let hash = program.sha256tree(allocator);
-        puzzle_name_pairs.insert(hash, name.to_string());
-    }
-    puzzle_name_pairs
 }
 
 impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
@@ -89,7 +74,6 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
         referee_coin_puzzle: Puzzle,
         standard_puzzle: Puzzle,
         agg_sig_me_additional_data: Hash,
-        puzzle_name_map: HashMap<PuzzleHash, String>,
     ) -> ChannelHandlerEnv<'a, R> {
         let referee_coin_puzzle_hash = referee_coin_puzzle.sha256tree(allocator);
         ChannelHandlerEnv {
@@ -101,7 +85,6 @@ impl<'a, R: Rng> ChannelHandlerEnv<'a, R> {
             unroll_puzzle,
             standard_puzzle,
             agg_sig_me_additional_data,
-            puzzle_name_map: puzzle_name_map,
         }
     }
 }

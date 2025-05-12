@@ -4,21 +4,19 @@ use log::debug;
 
 use crate::channel_handler::types::ReadableMove;
 #[cfg(test)]
-use clvm_traits::ClvmEncoder;
 use clvm_traits::ToClvm;
-use clvmr::{run_program, NodePtr};
+use clvmr::NodePtr;
 
-#[cfg(test)]
-use crate::common::types::Node;
-use crate::common::types::{chia_dialect, IntoErr};
+use crate::utils::proper_list;
 
-use crate::common::standard_coin::read_hex_puzzle;
-use crate::utils::{map_m, proper_list};
+use num_bigint::{BigInt, ToBigInt};
+use num_traits::ToPrimitive;
 
 use serde::{Deserialize, Serialize};
 
 use crate::common::types::{
-    atom_from_clvm, i64_from_atom, usize_from_atom, AllocEncoder, Error, Program,
+    atom_from_clvm, divmod, i64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
+    Sha256Input,
 };
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -151,35 +149,114 @@ impl PartialOrd for RawCalpokerHandValue {
 
 /// A decoded version of the calpoker result.
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize, Default)]
-//
-// Things we need as input
-//
-// Available by message, alice driver b and bob driver c.
-//
-// pub my_initial_cards: Vec<u8>,
-// pub opponent_initial_cards: Vec<u8>,
 pub struct CalpokerResult {
-    //
-    // Things we must preserve
-    //
-    pub my_discards: u8,
-
-    //
-    // Things in the report
-    //
-    pub opponent_discards: u8,
-    pub raw_alice_selects: u8,
-    pub raw_bob_selects: u8,
-    pub alice_hand_value: RawCalpokerHandValue,
+    pub raw_alice_selects: usize,
+    pub raw_bob_picks: usize,
+    pub raw_alice_picks: usize,
     pub bob_hand_value: RawCalpokerHandValue,
+    pub bob_hand_result: CalpokerHandValue,
+    pub alice_hand_value: RawCalpokerHandValue,
+    pub alice_hand_result: CalpokerHandValue,
     pub raw_win_direction: i64,
-
-    //
-    // Synthesized
-    //
     pub win_direction: Option<WinDirectionUser>,
-    pub alice_final_hand: Vec<Card>,
-    pub bob_final_hand: Vec<Card>,
+    pub game_amount: u64,
+    pub your_share: u64,
+}
+
+fn mergein(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
+    if inner.is_empty() {
+        outer.to_vec()
+    } else {
+        let first = inner[0] + offset;
+        let mut res = Vec::new();
+        if outer.is_empty() {
+            res.push(first);
+            res.append(&mut mergein(&[], &inner[1..], offset));
+        } else if outer[0] <= first {
+            res.push(outer[0]);
+            res.append(&mut mergein(&outer[1..], inner, offset + 1));
+        } else {
+            res.push(first);
+            res.append(&mut mergein(outer, &inner[1..], offset));
+        }
+        res
+    }
+}
+
+fn mergeover(outer: &[usize], inner: &[usize], offset: usize) -> Vec<usize> {
+    if inner.is_empty() {
+        vec![]
+    } else {
+        let first = inner[0] + offset;
+        let mut res = Vec::new();
+        if outer.is_empty() {
+            res.push(first);
+            res.append(&mut mergeover(&[], &inner[1..], offset));
+        } else if outer[0] <= first {
+            return mergeover(&outer[1..], inner, offset + 1);
+        } else {
+            res.push(first);
+            res.append(&mut mergeover(outer, &inner[1..], offset));
+        }
+        res
+    }
+}
+
+// Pick numchoose things out of numcards options with randomness extracted from vals
+// returns (cards newvals).
+fn choose(numcards: usize, numchoose: usize, randomness: BigInt) -> (Vec<usize>, BigInt) {
+    if numchoose == 1 {
+        let (newrandomness, card) = divmod(randomness, numcards.to_bigint().unwrap());
+        (vec![card.to_usize().unwrap()], newrandomness)
+    } else {
+        let half = numchoose >> 1;
+        let (cards1, newrandomness2) = choose(numcards, half, randomness);
+        let (cards2, newrandomness3) = choose(numcards - half, numchoose - half, newrandomness2);
+        (mergein(&cards1, &cards2, 0), newrandomness3)
+    }
+}
+
+fn cards_to_hand(cards: &[usize]) -> Vec<Card> {
+    cards
+        .iter()
+        .map(|val| {
+            let rank = val / 4;
+            let suit = val % 4;
+            if rank == 12 {
+                (1, suit + 1)
+            } else {
+                (rank + 2, suit + 1)
+            }
+        })
+        .collect()
+}
+
+// Does the same thing as make_cards so bob can see the card display that alice can see once
+// the message of alice' preimage (alice_hash) goes through.
+pub fn make_cards(alice_hash: &[u8], bob_hash: &[u8], amount: Amount) -> (Vec<Card>, Vec<Card>) {
+    let amount_bigint = amount.to_u64().to_bigint().unwrap();
+    let (_, mut amount_bytes) = amount_bigint.to_bytes_be();
+    if amount_bytes == [0] {
+        amount_bytes = vec![];
+    }
+    if amount_bytes[0] & 0x80 != 0 {
+        amount_bytes.insert(0, 0);
+    }
+    let rand_input = Sha256Input::Array(vec![
+        Sha256Input::Bytes(&alice_hash[..16]),
+        Sha256Input::Bytes(&bob_hash[..16]),
+        Sha256Input::Bytes(&amount_bytes),
+    ])
+    .hash()
+    .bytes()
+    .to_vec();
+    let randomness = BigInt::from_signed_bytes_be(&rand_input);
+    let (handa, newrandomness) = choose(52, 8, randomness);
+    let (handb, _) = choose(52 - 8, 8, newrandomness);
+    (
+        cards_to_hand(&handa),
+        cards_to_hand(&mergeover(&handa, &handb, 0)),
+    )
 }
 
 pub fn convert_cards(allocator: &mut AllocEncoder, card_list: NodePtr) -> Vec<(usize, usize)> {
@@ -263,7 +340,7 @@ pub fn decode_hand_result(
 
 type IndexAndCard = (usize, (usize, usize));
 
-pub fn select_cards_using_bits(cardlist: &[Card], selections: usize) -> (CardList, CardList) {
+fn select_cards_using_bits(cardlist: &CardList, selections: usize) -> (CardList, CardList) {
     let (p1, p2): (Vec<IndexAndCard>, Vec<IndexAndCard>) = cardlist
         .iter()
         .cloned()
@@ -275,107 +352,50 @@ pub fn select_cards_using_bits(cardlist: &[Card], selections: usize) -> (CardLis
     )
 }
 
-pub fn card_to_clvm(allocator: &mut AllocEncoder, card: &Card) -> Result<NodePtr, Error> {
-    [card.0, card.1].to_clvm(allocator).into_gen()
+/// Show the cards given a win result.
+pub fn get_final_used_cards(
+    cardlists: &(CardList, CardList),
+    alice_result: &CalpokerResult,
+    bob_result: &CalpokerResult,
+) -> (CardList, CardList) {
+    let (mut alice_giveaway_cards, alice_kept_cards) =
+        select_cards_using_bits(&cardlists.0, bob_result.raw_alice_selects);
+    let (mut bob_giveaway_cards, bob_kept_cards) =
+        select_cards_using_bits(&cardlists.1, alice_result.raw_alice_selects);
+    let mut alice_total_cards = alice_kept_cards;
+    alice_total_cards.append(&mut bob_giveaway_cards);
+    debug!("alice_total_cards {alice_total_cards:?}");
+    let mut bob_total_cards = bob_kept_cards;
+    bob_total_cards.append(&mut alice_giveaway_cards);
+    debug!("bob_total_cards   {bob_total_cards:?}");
+    assert_eq!(alice_total_cards.len(), 8);
+    assert_eq!(bob_total_cards.len(), 8);
+    let alice_used_cards: CardList = alice_total_cards
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter(|(i, _c)| alice_result.raw_alice_picks & (1 << i) != 0)
+        .map(|(_i, c)| c)
+        .collect();
+    let bob_used_cards: CardList = bob_total_cards
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter(|(i, _c)| alice_result.raw_bob_picks & (1 << i) != 0)
+        .map(|(_i, c)| c)
+        .collect();
+    assert_eq!(alice_used_cards.len(), 5);
+    assert_eq!(bob_used_cards.len(), 5);
+    (alice_used_cards, bob_used_cards)
 }
 
-pub fn card_list_to_clvm(
-    allocator: &mut AllocEncoder,
-    cards: &[Card],
-) -> Result<Vec<NodePtr>, Error> {
-    map_m(&mut |card: &Card| card_to_clvm(allocator, card), cards)
-}
-
-pub fn card_list_from_clvm(
-    allocator: &mut AllocEncoder,
-    nodeptr: NodePtr,
-) -> Result<Vec<Card>, Error> {
-    let main_list = if let Some(p) = proper_list(allocator.allocator(), nodeptr, true) {
-        p
-    } else {
-        return Err(Error::StrErr("improper card list".to_string()));
-    };
-    map_m(
-        &mut |card_node: &NodePtr| {
-            let card_list = if let Some(c) = proper_list(allocator.allocator(), *card_node, true) {
-                c
-            } else {
-                return Err(Error::StrErr("improper card in list".to_string()));
-            };
-            Ok((
-                atom_from_clvm(allocator, card_list[0])
-                    .and_then(|a| usize_from_atom(&a))
-                    .unwrap_or_default(),
-                atom_from_clvm(allocator, card_list[1])
-                    .and_then(|a| usize_from_atom(&a))
-                    .unwrap_or_default(),
-            ))
-        },
-        &main_list,
-    )
-}
-
-pub fn get_final_cards_in_canonical_order(
-    allocator: &mut AllocEncoder,
-    alice_initial_cards: &[Card],
-    alice_discards: u8,
-    bob_initial_cards: &[Card],
-    bob_discards: u8,
-) -> Result<(Vec<Card>, Vec<Card>), Error> {
-    let split_cards_prog = read_hex_puzzle(allocator, "clsp/test/test_handcalc_micro.hex")?;
-    // Generate the final split cards from the discards.
-    let alice_cards_node = card_list_to_clvm(allocator, alice_initial_cards)?;
-    let bob_cards_node = card_list_to_clvm(allocator, bob_initial_cards)?;
-    let split_cards_args = (
-        "get_final_cards_in_canonical_order",
-        (
-            alice_cards_node,
-            (alice_discards, (bob_cards_node, (bob_discards, ()))),
-        ),
-    )
-        .to_clvm(allocator)
-        .into_gen()?;
-    let split_cards_node = split_cards_prog.to_clvm(allocator).into_gen()?;
-    let split_result = run_program(
-        allocator.allocator(),
-        &chia_dialect(),
-        split_cards_node,
-        split_cards_args,
-        0,
-    )
-    .into_gen()?
-    .1;
-    if let Some(l) = proper_list(allocator.allocator(), split_result, true) {
-        let alice_final_cards = card_list_from_clvm(allocator, l[0])?;
-        let bob_final_cards = card_list_from_clvm(allocator, l[1])?;
-        Ok((alice_final_cards, bob_final_cards))
-    } else {
-        Err(Error::StrErr(
-            "bad list result from get_final_cards_in_canonical_order".to_string(),
-        ))
-    }
-}
-
-// Given a readable move, decode it as a calpoker outcome.
-// This is the last reply that each side receives
-// > opd ff81aaff81e3ff818fffff02ff01ff01ff01ff03ff0eff0dff0b80ffff02ff02ff01ff04ff02ff0c80ff81ff80
-// (-86 -29 -113 (a 1 1 1 3 14 13 11) (a 2 1 4 2 12) -1)
-// > opd ff55ff81e3ff818fffff02ff01ff01ff01ff03ff0eff0dff0b80ffff02ff02ff01ff04ff02ff0c80ff0180
-// (85 -29 -113 (a 1 1 1 3 14 13 11) (a 2 1 4 2 12) 1)
-
+/// Given a readable move, decode it as a calpoker outcome.
 pub fn decode_calpoker_readable(
     allocator: &mut AllocEncoder,
     readable: NodePtr,
-    i_am_alice: bool,
-    my_discards: u8,
-    alice_initial_cards: &[Card],
-    bob_initial_cards: &[Card],
+    amount: Amount,
+    am_bob: bool,
 ) -> Result<CalpokerResult, Error> {
-    debug!(
-        "decode_calpoker_readable {:?}",
-        Program::from_nodeptr(allocator, readable)
-    );
-
     let as_list = if let Some(as_list) = proper_list(allocator.allocator(), readable, true) {
         as_list
     } else {
@@ -384,7 +404,7 @@ pub fn decode_calpoker_readable(
         ));
     };
 
-    if as_list.len() < 6 {
+    if as_list.len() != 6 {
         return Err(Error::StrErr(
             "decode calpoker readable: wrong result size".to_string(),
         ));
@@ -399,240 +419,87 @@ pub fn decode_calpoker_readable(
         return Err(Error::StrErr("not all bitmasks converted".to_string()));
     }
 
-    let alice_hand_value = decode_hand_result(allocator, as_list[3])?;
-    let bob_hand_value = decode_hand_result(allocator, as_list[4])?;
+    let start_index = 1;
+    let offset_for_player = am_bob as usize;
 
-    let mut raw_win_direction = atom_from_clvm(allocator, as_list[5])
-        .and_then(|a| i64_from_atom(&a))
-        .unwrap_or_default();
+    let alice_hand_value =
+        decode_hand_result(allocator, as_list[start_index + (2 ^ offset_for_player)])?;
+    let bob_hand_value =
+        decode_hand_result(allocator, as_list[start_index + (3 ^ offset_for_player)])?;
 
-    raw_win_direction = if i_am_alice {
-        -raw_win_direction
-    } else {
-        raw_win_direction
-    };
+    let (your_share, win_direction) =
+        if let Some(o) = atom_from_clvm(allocator, as_list[5]).and_then(|a| i64_from_atom(&a)) {
+            if !am_bob {
+                match o.cmp(&0) {
+                    Ordering::Less => (amount.clone(), o),
+                    Ordering::Equal => (amount.half(), o),
+                    _ => (Amount::default(), o),
+                }
+            } else {
+                match (o as u64).cmp(&(amount.to_u64() / 2)) {
+                    Ordering::Greater => (Amount::default(), -1),
+                    Ordering::Less => (amount.clone(), 1),
+                    _ => (Amount::new((o as u64) / 2), 0),
+                }
+            }
+        } else {
+            return Err(Error::StrErr("could not convert final outcome".to_string()));
+        };
 
-    let win_direction = match raw_win_direction.cmp(&0) {
-        Ordering::Greater => Some(WinDirectionUser::Bob),
-        Ordering::Less => Some(WinDirectionUser::Alice),
-        _ => None,
-    };
-
-    let opponent_discards = bitmasks[0] as u8;
-    let (alice_discards, bob_discards) = if i_am_alice {
-        (my_discards, opponent_discards)
-    } else {
-        (opponent_discards, my_discards)
-    };
-
-    let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
-        allocator,
-        alice_initial_cards,
-        alice_discards,
-        bob_initial_cards,
-        bob_discards,
-    )?;
-
-    let raw_alice_selects = bitmasks[1] as u8;
-    let raw_bob_selects = bitmasks[2] as u8;
-    let (alice_final_hand, _) =
-        select_cards_using_bits(&alice_final_cards, raw_alice_selects as usize);
-    let (bob_final_hand, _) = select_cards_using_bits(&bob_final_cards, raw_bob_selects as usize);
+    let hva = alice_hand_value.hand_value();
+    let hvb = bob_hand_value.hand_value();
 
     Ok(CalpokerResult {
-        my_discards,
-
-        opponent_discards,
-        raw_alice_selects,
-        raw_bob_selects,
-        alice_hand_value,
+        raw_alice_selects: bitmasks[0],
+        raw_bob_picks: bitmasks[start_index + offset_for_player],
+        raw_alice_picks: bitmasks[start_index + (1 ^ offset_for_player)],
+        game_amount: amount.to_u64(),
+        your_share: your_share.to_u64(),
+        bob_hand_result: hvb?,
+        alice_hand_result: hva?,
         bob_hand_value,
-        raw_win_direction,
-
-        win_direction,
-        alice_final_hand,
-        bob_final_hand,
+        alice_hand_value,
+        raw_win_direction: win_direction,
+        win_direction: match win_direction {
+            1 => Some(WinDirectionUser::Alice),
+            -1 => Some(WinDirectionUser::Bob),
+            _ => None,
+        },
     })
 }
 
 #[test]
 fn test_decode_calpoker_readable() {
     let mut allocator = AllocEncoder::new();
-    let alice_selects_node = allocator
-        .encode_atom(clvm_traits::Atom::Borrowed(&[0xf8]))
-        .expect("ok");
-    let bob_selects_node = allocator
-        .encode_atom(clvm_traits::Atom::Borrowed(&[0xce]))
-        .expect("ok");
     let assembled = (
-        0x55, // Opponent discards
+        60,
         (
-            Node(alice_selects_node), // Alice selects
-            (
-                Node(bob_selects_node), // Bob selects
-                (
-                    [2, 2, 1, 14, 8, 12], // Alice hand value
-                    (
-                        [2, 2, 1, 14, 8, 12], // Bob hand value
-                        (0, ()),
-                    ),
-                ),
-            ),
+            59,
+            (91, ([2, 2, 1, 12, 11, 8], ([2, 2, 1, 14, 5, 2], (-1, ())))),
         ),
     )
         .to_clvm(&mut allocator)
         .expect("should work");
-
-    let alice_initial_cards = &[
-        (2, 2),
-        (5, 3),
-        (8, 2),
-        (11, 3),
-        (14, 1),
-        (14, 2),
-        (14, 3),
-        (14, 4),
-    ];
-    let bob_initial_cards = &[
-        (3, 3),
-        (4, 1),
-        (5, 4),
-        (8, 1),
-        (8, 3),
-        (8, 4),
-        (12, 2),
-        (12, 3),
-    ];
-
-    let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
-        &mut allocator,
-        alice_initial_cards,
-        0xaa,
-        bob_initial_cards,
-        0x55,
-    )
-    .expect("should pick");
-
-    let (alice_final_hand, _) = select_cards_using_bits(&alice_final_cards, 0xf8);
-    let (bob_final_hand, _) = select_cards_using_bits(&bob_final_cards, 0xce);
-
-    let decoded = decode_calpoker_readable(
-        &mut allocator,
-        assembled,
-        true,
-        0xaa as u8,
-        alice_initial_cards,
-        bob_initial_cards,
-    )
-    .expect("should work");
-
-    let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Alice hand value
-
-    let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Bob hand value same
-    assert_eq!(
-        decoded,
-        CalpokerResult {
-            my_discards: 0xaa as u8,
-            opponent_discards: 0x55 as u8,
-            raw_alice_selects: 0xf8 as u8,
-            raw_bob_selects: 0xce as u8,
-            alice_hand_value: alicev,
-            bob_hand_value: bobv,
-            raw_win_direction: 0 as i64,
-            alice_final_hand,
-            bob_final_hand,
-            win_direction: None,
-        }
-    );
-}
-
-#[test]
-fn test_decode_calpoker_readable_outcome_matches() {
-    let mut allocator = AllocEncoder::new();
-    let alice_selects_node = allocator
-        .encode_atom(clvm_traits::Atom::Borrowed(&[0xf8]))
-        .expect("ok");
-    let bob_selects_node = allocator
-        .encode_atom(clvm_traits::Atom::Borrowed(&[0xce]))
-        .expect("ok");
-    let assembled = (
-        0x55, // Opponent discards
-        (
-            Node(alice_selects_node), // Alice selects
-            (
-                Node(bob_selects_node), // Bob selects
-                (
-                    [2, 2, 1, 14, 8, 12], // Alice hand value
-                    (
-                        [2, 2, 1, 14, 8, 12], // Bob hand value
-                        (0, ()),
-                    ),
-                ),
-            ),
-        ),
-    )
-        .to_clvm(&mut allocator)
+    let decoded = decode_calpoker_readable(&mut allocator, assembled, Amount::new(200), false)
         .expect("should work");
-
-    let alice_initial_cards = &[
-        (2, 2),
-        (5, 3),
-        (8, 2),
-        (11, 3),
-        (14, 1),
-        (14, 2),
-        (14, 3),
-        (14, 4),
-    ];
-    let bob_initial_cards = &[
-        (3, 3),
-        (4, 1),
-        (5, 4),
-        (8, 1),
-        (8, 3),
-        (8, 4),
-        (12, 2),
-        (12, 3),
-    ];
-
-    let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
-        &mut allocator,
-        alice_initial_cards,
-        0xaa,
-        bob_initial_cards,
-        0x55,
-    )
-    .expect("should pick");
-
-    let (alice_final_hand, _) = select_cards_using_bits(&alice_final_cards, 0xf8);
-    let (bob_final_hand, _) = select_cards_using_bits(&bob_final_cards, 0xce);
-
-    let decoded = decode_calpoker_readable(
-        &mut allocator,
-        assembled,
-        true,
-        0xaa as u8,
-        alice_initial_cards,
-        bob_initial_cards,
-    )
-    .expect("should work");
-
-    let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Alice hand value
-
-    let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 8, 12]); // Bob hand value same
+    let alicev = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 12, 11, 8]);
+    let bobv = RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 14, 5, 2]);
+    let alicer = alicev.hand_value().unwrap();
+    let bobr = bobv.hand_value().unwrap();
     assert_eq!(
         decoded,
         CalpokerResult {
-            my_discards: 0xaa as u8,
-            opponent_discards: 0x55 as u8,
-            raw_alice_selects: 0xf8 as u8,
-            raw_bob_selects: 0xce as u8,
+            raw_alice_selects: 60,
+            raw_bob_picks: 59,
+            raw_alice_picks: 91,
+            alice_hand_result: alicer,
+            bob_hand_result: bobr,
             alice_hand_value: alicev,
             bob_hand_value: bobv,
-            raw_win_direction: 0 as i64,
-            alice_final_hand,
-            bob_final_hand,
-            win_direction: None,
+            your_share: 200,
+            game_amount: 200,
+            raw_win_direction: -1,
+            win_direction: Some(WinDirectionUser::Bob),
         }
     );
 }
