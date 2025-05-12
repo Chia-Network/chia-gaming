@@ -379,6 +379,7 @@ impl TheirTurnReferee {
             state_number,
             message_handler: self.message_handler.clone(),
             parent: Some(Rc::new(new_parent)),
+            cheat: None,
         })
     }
 

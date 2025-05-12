@@ -100,6 +100,7 @@ pub struct MyTurnReferee {
     pub fixed: Rc<RMFixed>,
 
     pub finished: bool,
+    pub cheat: Option<Vec<u8>>,
 
     pub message_handler: Option<MessageHandler>,
 
@@ -198,6 +199,7 @@ impl MyTurnReferee {
                 state_number,
                 message_handler: None,
                 parent: None,
+                cheat: None,
             },
             puzzle_hash,
         ))
@@ -740,6 +742,13 @@ impl MyTurnReferee {
             &self.fixed.agg_sig_me_additional_data,
             false,
         )
+    }
+
+    pub fn enable_cheating(&self, make_move: &[u8]) -> Rc<MyTurnReferee> {
+        Rc::new(MyTurnReferee {
+            cheat: Some(make_move.to_vec()),
+            ..self.clone()
+        })
     }
 
     pub fn check_their_turn_for_slash(
