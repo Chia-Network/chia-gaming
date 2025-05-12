@@ -83,6 +83,7 @@ pub enum TheirTurnCoinSpentResult {
         mover_share: Amount,
     },
     Slash(Box<SlashOutcome>),
+    Expected(PuzzleHash, Amount),
 }
 #[derive(Debug)]
 pub enum ValidatorResult {
