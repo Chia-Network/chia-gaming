@@ -58,6 +58,12 @@ impl LiveGame {
         self.referee_maker.outcome_referee_puzzle_hash(allocator)
     }
 
+    pub fn enable_cheating(&mut self, make_move: &[u8]) {
+        if let Some(new_ref) = self.referee_maker.enable_cheating(make_move) {
+            self.referee_maker = new_ref;
+        }
+    }
+
     pub fn internal_make_move(
         &mut self,
         allocator: &mut AllocEncoder,

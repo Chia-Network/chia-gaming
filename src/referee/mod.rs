@@ -399,6 +399,14 @@ impl RefereeByTurn {
         Ok(None)
     }
 
+    pub fn enable_cheating(&self, make_move: &[u8]) -> Option<RefereeByTurn> {
+        if let RefereeByTurn::MyTurn(r) = self {
+            return Some(RefereeByTurn::MyTurn(r.enable_cheating(make_move)));
+        }
+
+        None
+    }
+
     pub fn check_their_turn_for_slash(
         &self,
         allocator: &mut AllocEncoder,

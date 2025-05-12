@@ -643,6 +643,12 @@ impl SynchronousGameCradle {
 }
 
 impl SynchronousGameCradle {
+    #[allow(dead_code)]
+    #[cfg(test)]
+    pub fn set_up_cheat(&mut self, cheat: &[u8]) -> Result<(), Error> {
+        self.peer.enable_cheating(cheat)
+    }
+
     #[cfg(test)]
     pub fn replace_last_message<F>(&mut self, f: F) -> Result<(), Error>
     where
