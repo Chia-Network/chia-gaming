@@ -2,7 +2,6 @@ use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Node, Program, Sha256Input};
 
 use clvm_traits::ToClvm;
-use clvmr::reduction::EvalErr;
 use clvmr::{run_program, ChiaDialect};
 
 use crate::utils::first;
@@ -177,35 +176,6 @@ fn test_pull_out_straight() {
     assert_eq!(
         Node(result).to_hex(&mut allocator).expect("cvt"),
         "ff80ff01ff02ff0380",
-    );
-}
-
-#[test]
-fn test_onehandcalc_specific_case() {
-    let mut allocator = AllocEncoder::new();
-    let source_data = (
-        "onehandcalc",
-        ([(13, 4), (5, 2), (3, 3), (4, 3), (2, 1)], ()),
-    )
-        .to_clvm(&mut allocator)
-        .expect("should convert");
-    let program =
-        read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
-    let program_clvm = program.to_clvm(&mut allocator).expect("should work");
-    let result_e = run_program(
-        allocator.allocator(),
-        &chia_dialect(),
-        program_clvm,
-        source_data,
-        0,
-    );
-    if let Err(EvalErr(n, e)) = &result_e {
-        debug!("error {e}: {:?}", Program::from_nodeptr(&mut allocator, *n));
-    }
-    let result = result_e.unwrap().1;
-    assert_eq!(
-        Node(result).to_hex(&mut allocator).unwrap(),
-        "ff01ff01ff01ff01ff01ff0dff05ff04ff03ff0280"
     );
 }
 

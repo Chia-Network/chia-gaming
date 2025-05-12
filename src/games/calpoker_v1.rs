@@ -322,7 +322,7 @@ pub fn get_final_cards_in_canonical_order(
     bob_initial_cards: &[Card],
     bob_discards: u8,
 ) -> Result<(Vec<Card>, Vec<Card>), Error> {
-    let split_cards_prog = read_hex_puzzle(allocator, "clsp/test/test_handcalc_micro.hex")?;
+    let split_cards_prog = read_hex_puzzle(allocator, "clsp/test/test_handcalc_micro-v1.hex")?;
     // Generate the final split cards from the discards.
     let alice_cards_node = card_list_to_clvm(allocator, alice_initial_cards)?;
     let bob_cards_node = card_list_to_clvm(allocator, bob_initial_cards)?;
