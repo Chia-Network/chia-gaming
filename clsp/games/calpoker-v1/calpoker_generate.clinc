@@ -1,9 +1,9 @@
 
-(import games.calpoker-v0.onchain.a exposing (program as pokera) (program_hash as pokera_hash))
-(import games.calpoker-v0.onchain.b exposing (program as pokerb) (program_hash as pokerb_hash))
-(import games.calpoker-v0.onchain.c exposing (program as pokerc) (program_hash as pokerc_hash))
-(import games.calpoker-v0.onchain.d exposing (program as pokerd) (program_hash as pokerd_hash))
-(import games.calpoker-v0.onchain.e exposing (program as pokere) (program_hash as pokere_hash))
+(import games.calpoker-v1.onchain.a exposing (program as pokera) (program_hash as pokera_hash))
+(import games.calpoker-v1.onchain.b exposing (program as pokerb) (program_hash as pokerb_hash))
+(import games.calpoker-v1.onchain.c exposing (program as pokerc) (program_hash as pokerc_hash))
+(import games.calpoker-v1.onchain.d exposing (program as pokerd) (program_hash as pokerd_hash))
+(import games.calpoker-v1.onchain.e exposing (program as pokere) (program_hash as pokere_hash))
 
 (import std.li)
 (import std.curry)
@@ -14,12 +14,12 @@
 (import std.list_compare)
 (import std.deep_compare)
 (import std.print)
-(import handcalc exposing handcalc)
-(import onchain.calpoker.onehandcalc exposing onehandcalc)
-(import onchain.game_codes)
-(import onchain.calpoker.make_card exposing make_card)
-(import onchain.calpoker.make_cards exposing make_cards)
-(import onchain.calpoker.arrange_cards exposing split_cards get_final_cards_in_canonical_order)
+(import games.calpoker-v1.handcalc exposing handcalc)
+(import games.calpoker-v1.onchain.onehandcalc exposing onehandcalc)
+(import games.calpoker-v1.game_codes)
+(import games.calpoker-v1.onchain.make_card exposing make_card)
+(import games.calpoker-v1.onchain.make_cards exposing make_cards)
+(import games.calpoker-v1.onchain.arrange_cards exposing split_cards get_final_cards_in_canonical_order)
 
 ; initial_mover_handler initial_waiter_handler whether_paired required_size_factor
 ; initial_max_move_size initial_validator initial_validator_hash
@@ -34,7 +34,8 @@
         preimage (substr entropy 0 16)
         image (sha256 preimage)
         (list
-            image
+            "calpoker_alice_driver_a"
+            image ; ??? come back for arg shape xxx
             pokera ; will be used to evaluate this move.
             pokera_hash
             pokerb ; will be used to evaluate bob's move.
@@ -82,6 +83,7 @@
         salt (substr entropy 0 16)
         new_commit (sha256 (concat salt my_discards))
         (list
+            "calpoker_alice_driver_c"
             (concat PREIMAGE new_commit)
             pokerc
             pokerc_hash
@@ -153,6 +155,7 @@
 ; alice makes a nil move to message bob who won
 (defun calpoker_alice_driver_e (next_move split)
     (list
+        "calpoker_alice_driver_e"
         next_move
         pokere
         pokere_hash
@@ -176,6 +179,7 @@
     (assign
         seed (substr entropy 0 16)
         (list
+            "calpoker_bob_driver_b"
             seed
             pokerb
             pokerb_hash
@@ -233,6 +237,7 @@
     (assign
         my_move local_move
         (list
+            "calpoker_bob_driver_d"
             my_move
             pokerd
             pokerd_hash
