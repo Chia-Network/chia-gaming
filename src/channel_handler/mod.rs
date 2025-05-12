@@ -2,6 +2,7 @@ pub mod game;
 pub mod game_handler;
 pub mod runner;
 pub mod types;
+pub mod v1;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;

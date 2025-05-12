@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 pub mod calpoker;
+pub mod calpoker_v1;
 
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{AllocEncoder, Program};
@@ -9,11 +10,8 @@ use std::collections::BTreeMap;
 
 pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Rc<Program>> {
     let mut game_type_map = BTreeMap::new();
-    let calpoker_factory = read_hex_puzzle(
-        allocator,
-        "clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex",
-    )
-    .expect("should load");
+    let calpoker_factory = read_hex_puzzle(allocator, "clsp/calpoker_include_calpoker_factory.hex")
+        .expect("should load");
 
     game_type_map.insert(
         GameType(b"calpoker".to_vec()),

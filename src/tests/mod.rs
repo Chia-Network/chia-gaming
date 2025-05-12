@@ -5,8 +5,8 @@ pub mod calpoker;
 pub mod channel_handler;
 pub mod chialisp;
 pub mod constants;
+pub mod debug_game;
 pub mod game;
-pub mod game_handler;
 pub mod peer;
 #[cfg(feature = "sim-tests")]
 pub mod simenv;

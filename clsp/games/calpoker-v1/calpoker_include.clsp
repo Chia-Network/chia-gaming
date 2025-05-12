@@ -2,7 +2,7 @@
 
 (import std.and)
 (import std.assert)
-(import games.calpoker-v0.calpoker_generate exposing calpoker_template)
+(import games.calpoker-v1.calpoker_generate exposing calpoker_template)
 
 (export calpoker_template)
 
@@ -32,7 +32,7 @@
         (assert
             (= my_contribution (/ amount 2))
 
-            (list
+            (if i_am_initiator
                 ;; My turn games
                 (list
                     ;; One game
