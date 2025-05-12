@@ -16,6 +16,7 @@ use crate::referee::types::{
 pub struct RefereeByTurn {}
 
 pub type StateUpdateProgramRef = Rc<RefereePuzzleArgs>;
+pub type RewindResult = (Rc<dyn RefereeInterface>, usize);
 
 pub trait RefereeInterface {
     // args for this coin from when it was spent (in the past)
@@ -75,7 +76,7 @@ pub trait RefereeInterface {
         &self,
         _allocator: &mut AllocEncoder,
         _puzzle_hash: &PuzzleHash,
-    ) -> Result<Option<(Rc<dyn RefereeInterface>, usize)>, Error>;
+    ) -> Result<Option<RewindResult>, Error>;
 
     fn get_our_current_share(&self) -> Amount;
 

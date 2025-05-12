@@ -183,14 +183,12 @@ impl Game {
         timeout: &Timeout,
     ) -> GameStartInfo {
         let amount = our_contribution.clone() + their_contribution.clone();
-        let alice_start = self.starts[0].game_start(
+        self.starts[0].game_start(
             game_id,
             &amount,
             timeout,
             our_contribution,
             their_contribution,
-        );
-
-        alice_start
+        )
     }
 }
