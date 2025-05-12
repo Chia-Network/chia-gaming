@@ -24,8 +24,8 @@ use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::referee::types_v1::{
-    tmpsave, GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
+use crate::referee::v1::types::{
+    GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
     StateUpdateMoveArgs, StateUpdateResult,
 };
 
@@ -296,12 +296,13 @@ impl BareDebugGameDriver {
     ) -> Result<StateUpdateResult, Error> {
         let (mover_ph, waiter_ph, mover_puzzle) = self.get_mover_and_waiter_ph();
 
-        tmpsave("v-prog.hex", &validation_program.to_program().to_hex());
+        // tmpsave("v-prog.hex", &validation_program.to_program().to_hex());
 
         let update_args = InternalStateUpdateArgs {
             referee_args: Rc::new(
                 RefereePuzzleArgs {
                     nonce: self.nonce,
+                    validation_program: validation_program.clone(),
                     previous_validation_info_hash,
                     referee_coin_puzzle_hash: self.mod_hash.clone(),
                     timeout: self.timeout.clone(),

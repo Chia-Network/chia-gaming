@@ -1,6 +1,4 @@
 use std::borrow::Borrow;
-#[cfg(test)]
-use std::fs;
 use std::rc::Rc;
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
@@ -13,10 +11,8 @@ use log::debug;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::game_handler::TheirTurnResult;
-use crate::channel_handler::types::HasStateUpdateProgram;
-use crate::channel_handler::types::StateUpdateProgram;
-use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
+use crate::channel_handler::v1::game_handler::{TheirTurnResult};
+use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, ValidationInfo};
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
@@ -27,7 +23,7 @@ use crate::common::types::{
 };
 use crate::utils::proper_list;
 
-// pub const REM_CONDITION_FIELDS: usize = 4;
+pub const REM_CONDITION_FIELDS: usize = 4;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct GameMoveStateInfo {
@@ -57,7 +53,6 @@ pub struct TheirTurnMoveResult {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum SlashOutcome {
     NoReward,
     Reward {
@@ -67,7 +62,6 @@ pub enum SlashOutcome {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct RefereeOnChainTransaction {
     pub bundle: Spend,
     pub amount: Amount,
@@ -81,7 +75,6 @@ pub struct LiveGameReplay {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,
@@ -95,8 +88,6 @@ pub enum TheirTurnCoinSpentResult {
     },
     Slash(Box<SlashOutcome>),
 }
-
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateUpdateResult {
     MoveOk(Rc<Program>, ValidationInfo, usize),
@@ -104,7 +95,6 @@ pub enum StateUpdateResult {
 }
 
 impl StateUpdateResult {
-    #[allow(dead_code)]
     pub fn from_nodeptr(
         allocator: &mut AllocEncoder,
         validation_info: ValidationInfo,
@@ -206,21 +196,18 @@ pub struct RefereePuzzleArgs {
     pub nonce: usize,
     pub game_move: GameMoveDetails,
     pub max_move_size: usize,
+    pub validation_program: StateUpdateProgram,
     pub previous_validation_info_hash: Option<Hash>,
     pub referee_coin_puzzle_hash: PuzzleHash,
 }
 
-/*
-        their_puzzle_hash: &PuzzleHash,
-*/
-
-#[allow(dead_code)]
 impl RefereePuzzleArgs {
     pub fn new(
         fixed_info: &RMFixed,
         initial_move: &GameMoveDetails,
         max_move_size: usize,
         previous_validation_info_hash: Option<&Hash>,
+        validation_program: StateUpdateProgram,
         my_turn: bool,
     ) -> Self {
         debug!(
@@ -246,6 +233,7 @@ impl RefereePuzzleArgs {
             amount: fixed_info.amount.clone(),
             nonce: fixed_info.nonce,
             max_move_size,
+            validation_program,
             referee_coin_puzzle_hash: fixed_info.referee_coin_puzzle_hash.clone(),
             game_move: initial_move.clone(),
             previous_validation_info_hash: previous_validation_info_hash.cloned(),
@@ -257,57 +245,13 @@ impl RefereePuzzleArgs {
         new_result.waiter_puzzle_hash = PuzzleHash::default();
         new_result
     }
-
-    pub fn neutralize(&self) -> RefereePuzzleArgs {
-        RefereePuzzleArgs {
-            mover_puzzle_hash: self.mover_puzzle_hash.clone(),
-            waiter_puzzle_hash: self.waiter_puzzle_hash.clone(),
-            timeout: self.timeout.clone(),
-            amount: self.amount.clone(),
-            nonce: self.nonce,
-            game_move: self.game_move.clone(),
-            max_move_size: self.max_move_size,
-            previous_validation_info_hash: self.previous_validation_info_hash.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
-        }
-    }
-
-    pub fn fake_mine(&self) -> RefereePuzzleArgs {
-        RefereePuzzleArgs {
-            mover_puzzle_hash: self.mover_puzzle_hash.clone(),
-            waiter_puzzle_hash: self.waiter_puzzle_hash.clone(),
-            timeout: self.timeout.clone(),
-            amount: self.amount.clone(),
-            nonce: self.nonce,
-            game_move: self.game_move.clone(),
-            max_move_size: self.max_move_size,
-            previous_validation_info_hash: self.previous_validation_info_hash.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
-        }
-    }
-
-    pub fn fake_theirs(&self) -> RefereePuzzleArgs {
-        RefereePuzzleArgs {
-            mover_puzzle_hash: self.mover_puzzle_hash.clone(),
-            waiter_puzzle_hash: self.waiter_puzzle_hash.clone(),
-            timeout: self.timeout.clone(),
-            amount: self.amount.clone(),
-            nonce: self.nonce,
-            game_move: self.game_move.clone(),
-            max_move_size: self.max_move_size,
-            previous_validation_info_hash: self.previous_validation_info_hash.clone(),
-            referee_coin_puzzle_hash: self.referee_coin_puzzle_hash.clone(),
-        }
-    }
 }
 
-/// See debug_game.clsp STATE_PACK
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for RefereePuzzleArgs
 where
     NodePtr: ToClvm<E>,
 {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
-        assert_ne!(self.amount, Amount::default());
         [
             self.mover_puzzle_hash.to_clvm(encoder)?,
             if self.waiter_puzzle_hash == PuzzleHash::default() {
@@ -331,7 +275,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 pub fn curry_referee_puzzle_hash(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle_hash: &PuzzleHash,
@@ -348,7 +291,6 @@ pub fn curry_referee_puzzle_hash(
 // Agg sig me on the solution of the referee_coin_puzzle.
 // When it invokes the validation program, it passes through args as the full
 // argument set.
-#[allow(dead_code)]
 pub fn curry_referee_puzzle(
     allocator: &mut AllocEncoder,
     referee_coin_puzzle: &Puzzle,
@@ -399,10 +341,11 @@ pub struct StateUpdateMoveArgs {
 
 impl StateUpdateMoveArgs {
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
+        let me_program = Program::from_nodeptr(allocator, me)?;
         (
             &self.state,
             (
-                Node(me),
+                &me_program,
                 [&self.mover_puzzle, &self.solution, &self.evidence],
             ),
         )
@@ -411,47 +354,48 @@ impl StateUpdateMoveArgs {
     }
 }
 
-#[allow(dead_code)]
 pub struct InternalStateUpdateArgs {
     pub validation_program: StateUpdateProgram,
     pub referee_args: Rc<RefereePuzzleArgs>,
     pub state_update_args: StateUpdateMoveArgs,
 }
 
-#[cfg(test)]
-pub fn tmpsave(name: &str, val: &str) {
-    fs::write(name, val).expect("tmpsave")
-}
-
 impl InternalStateUpdateArgs {
-    #[allow(dead_code)]
-    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
-        let validator_mod_hash = self.validation_program.sha256tree(allocator);
-        let referee_args_nodeptr = self
+    pub fn to_nodeptr(
+        &self,
+        allocator: &mut AllocEncoder,
+        validator_mod_hash: PuzzleHash,
+    ) -> Result<NodePtr, Error> {
+        let validation_program_node = self
             .referee_args
-            .off_chain()
-            .to_clvm(allocator)
-            .into_gen()?;
-        let referee_args_prog = Program::from_nodeptr(allocator, referee_args_nodeptr)?;
-        let referee_prog_node = self.validation_program.to_clvm(allocator).into_gen()?;
-        let state_update_args = self
+            .validation_program
+            .to_nodeptr(allocator)?;
+        let converted_vma = self
             .state_update_args
-            .to_nodeptr(allocator, referee_prog_node)?;
-        debug!("converted referee args {referee_args_prog:?}");
+            .to_nodeptr(allocator, validation_program_node)?;
         (
             validator_mod_hash,
-            (Node(referee_args_nodeptr), Node(state_update_args)),
+            (
+                self.referee_args
+                    .off_chain()
+                    .to_clvm(allocator)
+                    .into_gen()?,
+                Node(converted_vma),
+            ),
         )
             .to_clvm(allocator)
             .into_gen()
     }
 
-    #[allow(dead_code)]
     pub fn run(&self, allocator: &mut AllocEncoder) -> Result<StateUpdateResult, Error> {
-        let validation_program_mod_hash = self.validation_program.hash();
+        let neutral_validation = self.referee_args.validation_program.clone();
+        let validation_program_mod_hash = neutral_validation.hash();
         debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
-        let validation_program_nodeptr = self.validation_program.p().to_nodeptr(allocator)?;
-        let validator_full_args_node = self.to_nodeptr(allocator)?;
+        let validation_program_nodeptr = self.validation_program.to_nodeptr(allocator)?;
+        let validator_full_args_node = self.to_nodeptr(
+            allocator,
+            PuzzleHash::from_hash(validation_program_mod_hash.clone()),
+        )?;
         let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
         let validation_info = ValidationInfo::new_from_validation_program_hash_and_state(
             allocator,
@@ -461,10 +405,6 @@ impl InternalStateUpdateArgs {
 
         debug!("validator program {:?}", self.validation_program);
         debug!("validator args {:?}", validator_full_args);
-
-        #[cfg(test)]
-        tmpsave("v-args.hex", &validator_full_args.to_hex());
-
         let raw_result_p = run_program(
             allocator.allocator(),
             &chia_dialect(),
@@ -516,7 +456,6 @@ pub struct IdentityCoinAndSolution {
     pub mover_coin_spend_solution: Rc<Program>,
     /// The signature, which may be over part of the solution or something
     /// derived from it.
-    #[allow(dead_code)]
     pub mover_coin_spend_signature: Aggsig,
 }
 
@@ -559,7 +498,6 @@ pub struct OnChainRefereeSlash {
 /// puzzle for a coin that represents the user's identity ... most likely a
 /// standard puzzle.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum OnChainRefereeSolution {
     Timeout,
     Move(OnChainRefereeMove),
@@ -570,7 +508,6 @@ pub enum OnChainRefereeSolution {
 impl OnChainRefereeSolution {
     // Get the standard solution for these referee arguments.
     // We will sign it with the synthetic private key if it exists.
-    #[allow(dead_code)]
     pub fn get_signature(&self) -> Option<Aggsig> {
         match self {
             OnChainRefereeSolution::Timeout => None,
@@ -639,14 +576,12 @@ where
 
 #[derive(Debug)]
 pub struct RMFixed {
-    #[allow(dead_code)]
     pub referee_coin_puzzle: Puzzle,
     pub referee_coin_puzzle_hash: PuzzleHash,
 
     pub my_identity: ChiaIdentity,
 
     pub their_referee_puzzle_hash: PuzzleHash,
-    #[allow(dead_code)]
     pub agg_sig_me_additional_data: Hash,
 
     pub timeout: Timeout,

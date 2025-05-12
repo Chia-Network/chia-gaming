@@ -17,7 +17,7 @@ use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,
 };
-use crate::referee::types_v1::GameMoveDetails;
+use crate::referee::v1::types::GameMoveDetails;
 
 // How to call the clvm program in this object:
 //
@@ -55,28 +55,13 @@ pub struct MyTurnInputs {
 }
 
 #[derive(Clone, Debug)]
-pub struct MyStateUpdateProgram(pub StateUpdateProgram);
-impl HasStateUpdateProgram for MyStateUpdateProgram {
-    fn p(&self) -> StateUpdateProgram {
-        self.0.clone()
-    }
-}
-#[derive(Clone, Debug)]
-pub struct TheirStateUpdateProgram(pub StateUpdateProgram);
-impl HasStateUpdateProgram for TheirStateUpdateProgram {
-    fn p(&self) -> StateUpdateProgram {
-        self.0.clone()
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub name: String,
     pub move_bytes: Vec<u8>,
-    pub outgoing_move_state_update_program: MyStateUpdateProgram,
+    pub outgoing_move_state_update_program: StateUpdateProgram,
     pub outgoing_move_state_update_program_hash: Hash,
-    pub incoming_move_state_update_program: TheirStateUpdateProgram,
+    pub incoming_move_state_update_program: StateUpdateProgram,
     pub incoming_move_state_update_program_hash: Hash,
     pub max_move_size: usize,
     pub mover_share: Amount,
@@ -292,13 +277,9 @@ impl GameHandler {
         Ok(MyTurnResult {
             name: name.to_string(),
             waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[8])?,
-            outgoing_move_state_update_program: MyStateUpdateProgram(
-                outgoing_move_state_update_program,
-            ),
+            outgoing_move_state_update_program: outgoing_move_state_update_program,
             outgoing_move_state_update_program_hash,
-            incoming_move_state_update_program: TheirStateUpdateProgram(
-                incoming_move_state_update_program,
-            ),
+            incoming_move_state_update_program: incoming_move_state_update_program,
             incoming_move_state_update_program_hash,
             move_bytes: move_data,
             mover_share,
