@@ -8,6 +8,9 @@ use crate::common::types::{AllocEncoder, Error, Program};
 pub struct Evidence(Rc<Program>);
 
 impl Evidence {
+    pub fn new(p: Rc<Program>) -> Self {
+        Evidence(p)
+    }
     pub fn from_nodeptr(allocator: &mut AllocEncoder, n: NodePtr) -> Result<Evidence, Error> {
         Ok(Evidence(Rc::new(Program::from_nodeptr(allocator, n)?)))
     }

@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 pub mod calpoker;
+pub mod calpoker_v1;
 
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{AllocEncoder, Program};
