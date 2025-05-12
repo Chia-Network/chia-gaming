@@ -101,7 +101,6 @@ class HandlerMove:
 
 @dataclass
 class MyTurnHandlerResult:
-    name: str
     move_bytes: bytes
     validator_for_my_move: Program  # validator to run for this move: the move that our handler will produce
     validator_for_my_move_hash: bytes32
@@ -114,7 +113,6 @@ class MyTurnHandlerResult:
 
     def __init__(
             self,
-            name,
             move_bytes,
             validator_for_my_move,
             validator_for_my_move_hash,
@@ -125,7 +123,6 @@ class MyTurnHandlerResult:
             their_turn_handler = None,
             message_parser = None
     ):
-        self.name = name
         self.move_bytes = move_bytes
         self.validator_for_my_move = validator_for_my_move
         self.validator_for_my_move_hash = validator_for_my_move_hash
@@ -379,6 +376,7 @@ class Player:
         # My Turn
         #local_move, entropy, wire_move, mover_share, their_readable = move
 
+        print(f"MY TURN HANDLER {Program.to(self.my_turn_handler)}")
         my_turn_result = call_my_turn_handler(
             Program.to(self.my_turn_handler),
             move.input_move_to_our_turn,
