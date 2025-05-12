@@ -5,6 +5,7 @@
 (import std.shatree)
 (import std.curry)
 (import std.print)
+(import std.relops)
 (import games.calpoker-v0.game_codes)
 
 ; See RefereePuzzleArgs::to_clvm
@@ -112,7 +113,7 @@
       (print (list "evidence" evidence) 1)
       (print "evidence was the same as the cheat in the move" (= evidence (substr MOVE (- move-len 1) move-len)))
       ;; Can't slash if the slash-byte is zero.
-      (print "and it wasn't a zero byte which we can't slash" (not (= evidence 0x00)))
+      (print "and it wasn't a zero byte which we can't slash" (+ 0 evidence))
       )
      )
     (list SLASH () "debug game: slash")
@@ -121,7 +122,7 @@
      mover-share (+ 0 (substr MOVE (print "getting mover share" move-counter-data-len) (print "mover share ends at" (- move-len 1))))
      (list
       MAKE_MOVE
-      (validator-hash curry-args)
+      (validator-hash (curry-args-incr curry-args))
       (list COUNT slashable-move mover-share)
       512
       (list "debug game: move with count" (+ COUNT 1) "slash hint" slashable-move "mover share" mover-share)
@@ -182,7 +183,8 @@
      )
   (assign
    move-len (strlen move)
-   (if (< move-len 1)
+   
+   (if (> 1 move-len)
        (list SLASH ())
        ;; Skipping the last byte and the mover share, there should be a count.
        ;; It's fairly simple to read over a positive number.
@@ -190,12 +192,12 @@
         slash-byte (substr move (- move-len 1) move-len)
         (mover-share count-pos) (read-over-integer move "" (- move-len 1))
         (move-count _) (read-over-integer move "" (- count-pos 1))
-        (if (not (= move-count COUNT))
+        (if (not (= (+ 0 move-count) COUNT))
             (x "their turn: mismatched count" move-count COUNT)
             (not (= (validator-hash curry-args) validation_program_hash))
             (x "their turn: mismatched validator program")
-            (not (= split mover-share))
-            (x "their turn: wrong mover share" mover-share split)
+            (not (= split (+ 0 mover-share)))
+            (x "their turn: wrong mover share" (+ 0 mover-share) split)
             (not (= split mshare))
             (x "their turn: wrong mover share in state" mshare split)
             (not (= smove slash-byte))
@@ -289,12 +291,12 @@
   )
 
 (export (MODE (CURRY_PACK) . args)
-  (if (= MODE "validator")
+  (if (= (print "executing debug game with mode" MODE) "validator")
       (validator curry-args &rest args)
       (= MODE "myturn")
       (myturn curry-args &rest args)
       (= MODE "theirturn")
-      (theirturn curry-args &rest args)
+      (theirturn (print "their turn curry args" curry-args) &rest (print "passing on args to their turn" args))
       (= MODE "factory")
       (factory curry-args &rest args)
       (x "no such personality" MODE)
