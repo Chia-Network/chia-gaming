@@ -1,6 +1,7 @@
 pub mod my_turn;
 pub mod their_turn;
 pub mod types;
+pub mod types_v1;
 
 use std::rc::Rc;
 

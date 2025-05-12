@@ -113,6 +113,7 @@ class MyTurnHandlerResult:
 
     def __init__(
             self,
+            handler_name,
             move_bytes,
             validator_for_my_move,
             validator_for_my_move_hash,
@@ -123,6 +124,7 @@ class MyTurnHandlerResult:
             their_turn_handler = None,
             message_parser = None
     ):
+        self.handler_name = handler_name
         self.move_bytes = move_bytes
         self.validator_for_my_move = validator_for_my_move
         self.validator_for_my_move_hash = validator_for_my_move_hash
