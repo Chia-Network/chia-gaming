@@ -1,4 +1,5 @@
 #!/bin/sh
+echo "Running $0 ..."
 #
 # An example hook script to verify what is about to be committed.
 # Called by "git commit" with no arguments.  The hook should
@@ -46,10 +47,13 @@ EOF
 fi
 
 # If there are whitespace errors, print the offending file names and fail.
-exec git diff-index --check --cached $against --
+# exec git diff-index --check --cached $against --
 
-# Run the tests
-if (cd "$test_dir" && ./run-python-tests.py); then
+# Run the fast tests before commit
+python_test_dir="./python/tests/"
+pwd
+set -x
+if (cd "$python_test_dir" && ./run-python-tests.sh); then
     echo "Python tests passed."
 else
     echo "Python tests FAILED!"
