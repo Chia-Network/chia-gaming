@@ -12,7 +12,9 @@ use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
 use crate::channel_handler::game::Game;
-use crate::channel_handler::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs, TheirTurnResult};
+use crate::channel_handler::game_handler::{
+    GameHandler, MyTurnInputs, TheirTurnInputs, TheirTurnResult,
+};
 use crate::channel_handler::types::{
     Evidence, GameStartInfo, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
     ValidationInfo,
@@ -341,12 +343,14 @@ impl BareDebugGameDriver {
         mover_share: Amount,
         slash: u8,
     ) -> Result<ExhaustiveMoveInputs, Error> {
-        let (redo, validation_program) =
-            if self.validation_program_queue.is_empty() {
-                (true, StateUpdateProgram::new(allocator, "dummy", Rc::new(Program::from_hex("80")?)))
-            } else {
-                (false, self.validation_program_queue[0].clone())
-            };
+        let (redo, validation_program) = if self.validation_program_queue.is_empty() {
+            (
+                true,
+                StateUpdateProgram::new(allocator, "dummy", Rc::new(Program::from_hex("80")?)),
+            )
+        } else {
+            (false, self.validation_program_queue[0].clone())
+        };
 
         let validation_info = ValidationInfo::new(
             allocator,
@@ -435,32 +439,31 @@ impl BareDebugGameDriver {
             StateUpdateResult::MoveOk(_, _, 512)
         ));
 
-        let tt_result =
-            match validator_response {
-                StateUpdateResult::MoveOk(state, _, 512) => {
-                    let state_node = state.to_clvm(allocator).into_gen()?;
-                    self.handler.call_their_turn_driver(
-                        allocator,
-                        &TheirTurnInputs {
-                            amount: self.start.amount.clone(),
-                            state: state_node,
-                            last_move: &move_to_check,
-                            last_mover_share: self.mover_share[0].clone(),
-                            new_move: GameMoveDetails {
-                                basic: GameMoveStateInfo {
-                                    move_made: move_to_check.clone(),
-                                    mover_share: inputs.opponent_mover_share.clone(),
-                                },
-                                validation_info_hash: vprog.hash().clone(),
+        let tt_result = match validator_response {
+            StateUpdateResult::MoveOk(state, _, 512) => {
+                let state_node = state.to_clvm(allocator).into_gen()?;
+                self.handler.call_their_turn_driver(
+                    allocator,
+                    &TheirTurnInputs {
+                        amount: self.start.amount.clone(),
+                        state: state_node,
+                        last_move: &move_to_check,
+                        last_mover_share: self.mover_share[0].clone(),
+                        new_move: GameMoveDetails {
+                            basic: GameMoveStateInfo {
+                                move_made: move_to_check.clone(),
+                                mover_share: inputs.opponent_mover_share.clone(),
                             },
+                            validation_info_hash: vprog.hash().clone(),
                         },
-                    )?
-                }
-                StateUpdateResult::Slash(_) => {
-                    return Ok(false);
-                }
-                _ => todo!()
-            };
+                    },
+                )?
+            }
+            StateUpdateResult::Slash(_) => {
+                return Ok(false);
+            }
+            _ => todo!(),
+        };
 
         match tt_result {
             TheirTurnResult::MakeMove(new_handler, _message, tt_data) => {
@@ -476,13 +479,13 @@ impl BareDebugGameDriver {
                     if let StateUpdateResult::Slash(evidence1) = validator_response {
                         debug!("SLASH DETECTED: EVIDENCE {evidence:?} {evidence1:?}");
                         self.slash_detected = Some(Evidence::new(evidence1.clone()));
-                        return Ok(false)
+                        return Ok(false);
                     }
                 }
                 self.move_count += 1;
                 debug!("Accepted their turn");
             }
-            _ => todo!()
+            _ => todo!(),
         }
         Ok(true)
     }
@@ -703,7 +706,9 @@ fn test_debug_game_validation_move() {
         debug_games[1].game.starts[0].initial_validation_program
     );
     // Predict the first move bytes.
-    let predicted_move = debug_games[0].get_move_inputs(&mut allocator, Amount::default(), 0).expect("good");
+    let predicted_move = debug_games[0]
+        .get_move_inputs(&mut allocator, Amount::default(), 0)
+        .expect("good");
     let move_data = predicted_move
         .to_linear_move(&mut allocator, true)
         .expect("good");
@@ -725,7 +730,9 @@ fn test_debug_game_validation_move() {
         .accept_move(&mut allocator, &predicted_move)
         .expect("good");
     assert!(move_success_0);
-    let predicted_bob_move = debug_games[1].get_move_inputs(&mut allocator, Amount::default(), 0).expect("good");
+    let predicted_bob_move = debug_games[1]
+        .get_move_inputs(&mut allocator, Amount::default(), 0)
+        .expect("good");
     let _bob_move_data = predicted_bob_move
         .to_linear_move(&mut allocator, true)
         .expect("good");
