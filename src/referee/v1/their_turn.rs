@@ -6,10 +6,12 @@ use clvmr::NodePtr;
 
 use log::debug;
 
+use crate::channel_handler::types::{
+    Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
+};
 use crate::channel_handler::v1::game_handler::{
     GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnMoveData, TheirTurnResult,
 };
-use crate::channel_handler::types::{Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};

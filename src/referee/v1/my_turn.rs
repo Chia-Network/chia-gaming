@@ -5,12 +5,9 @@ use clvm_traits::ToClvm;
 
 use log::debug;
 
+use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, ValidationInfo};
 use crate::channel_handler::v1::game_handler::{
     GameHandler, MessageHandler, MyTurnInputs, MyTurnResult,
-};
-use crate::channel_handler::types::{
-    Evidence, ReadableMove, StateUpdateProgram,
-    ValidationInfo,
 };
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::ChiaIdentity;
@@ -672,7 +669,11 @@ impl MyTurnReferee {
         debug!("run validator with move: {serialized_move:?}");
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
-        let v = ValidationInfo::new_state_update(allocator, outgoing_state_update_program.clone(), state.clone());
+        let v = ValidationInfo::new_state_update(
+            allocator,
+            outgoing_state_update_program.clone(),
+            state.clone(),
+        );
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: outgoing_state_update_program.clone(),
             referee_args: Rc::new(RefereePuzzleArgs {

@@ -11,8 +11,8 @@ use log::debug;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_handler::v1::game_handler::{TheirTurnResult};
 use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, ValidationInfo};
+use crate::channel_handler::v1::game_handler::TheirTurnResult;
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
@@ -366,10 +366,7 @@ impl InternalStateUpdateArgs {
         allocator: &mut AllocEncoder,
         validator_mod_hash: PuzzleHash,
     ) -> Result<NodePtr, Error> {
-        let validation_program_node = self
-            .referee_args
-            .validation_program
-            .to_nodeptr(allocator)?;
+        let validation_program_node = self.referee_args.validation_program.to_nodeptr(allocator)?;
         let converted_vma = self
             .state_update_args
             .to_nodeptr(allocator, validation_program_node)?;
