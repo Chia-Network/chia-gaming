@@ -8,7 +8,7 @@ use clvm_traits::ToClvm;
 
 use log::debug;
 
-use crate::channel_handler::types::{ReadableMove, StateUpdateProgram};
+use crate::channel_handler::types::ReadableMove;
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
@@ -26,13 +26,16 @@ use crate::referee::v1::types::{
 };
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum RefereeByTurn {
     MyTurn(Rc<MyTurnReferee>),
     TheirTurn(Rc<TheirTurnReferee>),
 }
 
-pub type StateUpdateProgramRef = Rc<RefereePuzzleArgs>;
+#[allow(dead_code)]
+pub type RefereePuzzleArgsRef = Rc<RefereePuzzleArgs>;
 
+#[allow(dead_code)]
 impl RefereeByTurn {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -192,7 +195,7 @@ impl RefereeByTurn {
         None
     }
 
-    pub fn stored_versions(&self) -> Vec<(StateUpdateProgramRef, StateUpdateProgramRef, usize)> {
+    pub fn stored_versions(&self) -> Vec<(RefereePuzzleArgsRef, RefereePuzzleArgsRef, usize)> {
         let mut alist = vec![];
         self.generate_ancestor_list(&mut alist);
         alist
@@ -704,4 +707,5 @@ impl RefereeByTurn {
     }
 }
 
+#[allow(dead_code)]
 pub type RefereeMaker = RefereeByTurn;

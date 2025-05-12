@@ -43,6 +43,7 @@ pub enum MyTurnRefereeMakerGameState {
     },
 }
 
+#[allow(dead_code)]
 impl MyTurnRefereeMakerGameState {
     pub fn is_my_turn(&self) -> bool {
         match self {
@@ -189,6 +190,7 @@ pub struct MyTurnReferee {
     pub finished: bool,
     pub enable_cheating: Option<Vec<u8>>,
 
+    #[allow(dead_code)]
     pub message_handler: Option<MessageHandler>,
 
     pub state: Rc<MyTurnRefereeMakerGameState>,
@@ -292,34 +294,42 @@ impl MyTurnReferee {
         ))
     }
 
+    #[allow(dead_code)]
     pub fn parent(&self) -> Option<Rc<TheirTurnReferee>> {
         self.parent.clone()
     }
 
+    #[allow(dead_code)]
     pub fn state(&self) -> Rc<MyTurnRefereeMakerGameState> {
         self.state.clone()
     }
 
+    #[allow(dead_code)]
     pub fn state_number(&self) -> usize {
         self.state_number
     }
 
+    #[allow(dead_code)]
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.state.args_for_this_coin()
     }
 
+    #[allow(dead_code)]
     pub fn spend_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         self.state.spend_this_coin()
     }
 
+    #[allow(dead_code)]
     pub fn is_my_turn(&self) -> bool {
         true
     }
 
+    #[allow(dead_code)]
     pub fn processing_my_turn(&self) -> bool {
         false
     }
 
+    #[allow(dead_code)]
     pub fn enable_cheating(&self, make_move: &[u8]) -> MyTurnReferee {
         MyTurnReferee {
             enable_cheating: Some(make_move.to_vec()),
@@ -327,6 +337,7 @@ impl MyTurnReferee {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_game_handler(&self) -> Option<GameHandler> {
         match self.state.borrow() {
             MyTurnRefereeMakerGameState::Initial { game_handler, .. } => Some(game_handler.clone()),
@@ -336,6 +347,7 @@ impl MyTurnReferee {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_game_state(&self) -> Rc<Program> {
         match self.state.borrow() {
             MyTurnRefereeMakerGameState::Initial { initial_state, .. } => initial_state.clone(),
@@ -346,10 +358,12 @@ impl MyTurnReferee {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_amount(&self) -> Amount {
         self.fixed.amount.clone()
     }
 
+    #[allow(dead_code)]
     pub fn get_our_current_share(&self) -> Amount {
         let args = self.spend_this_coin();
         if self.processing_my_turn() {
@@ -359,11 +373,13 @@ impl MyTurnReferee {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_their_current_share(&self) -> Amount {
         self.fixed.amount.clone() - self.get_our_current_share()
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
     pub fn accept_this_move(
         &self,
         game_handler: GameHandler,
@@ -419,6 +435,7 @@ impl MyTurnReferee {
 
     // Since we may need to know new_entropy at a higher layer, we'll need to ensure it
     // gets passed in rather than originating it here.
+    #[allow(dead_code)]
     pub fn my_turn_make_move(
         &self,
         allocator: &mut AllocEncoder,
@@ -542,16 +559,19 @@ impl MyTurnReferee {
         ))
     }
 
+    #[allow(dead_code)]
     pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.args_for_this_coin();
         curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)
     }
 
+    #[allow(dead_code)]
     pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
         let args = self.spend_this_coin();
         curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)
     }
 
+    #[allow(dead_code)]
     pub fn on_chain_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
@@ -560,6 +580,7 @@ impl MyTurnReferee {
         curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
     }
 
+    #[allow(dead_code)]
     pub fn outcome_referee_puzzle_hash(
         &self,
         allocator: &mut AllocEncoder,
@@ -569,6 +590,7 @@ impl MyTurnReferee {
     }
 
     // Ensure this returns
+    #[allow(dead_code)]
     fn get_transaction(
         &self,
         allocator: &mut AllocEncoder,
@@ -622,6 +644,7 @@ impl MyTurnReferee {
     ///
     /// Timeout unlike other actions applies to the current ph, not the one at the
     /// start of a turn proper.
+    #[allow(dead_code)]
     pub fn get_transaction_for_timeout(
         &self,
         allocator: &mut AllocEncoder,
@@ -650,6 +673,7 @@ impl MyTurnReferee {
         )
     }
 
+    #[allow(dead_code)]
     pub fn run_validator_for_my_move(
         &self,
         allocator: &mut AllocEncoder,

@@ -32,6 +32,7 @@ pub struct GameMoveStateInfo {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct GameMoveDetails {
     pub basic: GameMoveStateInfo,
     /// sha256 of the concatenation of two hashes:
@@ -53,6 +54,7 @@ pub struct TheirTurnMoveResult {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum SlashOutcome {
     NoReward,
     Reward {
@@ -62,6 +64,7 @@ pub enum SlashOutcome {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RefereeOnChainTransaction {
     pub bundle: Spend,
     pub amount: Amount,
@@ -75,6 +78,7 @@ pub struct LiveGameReplay {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,

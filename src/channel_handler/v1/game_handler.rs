@@ -10,9 +10,7 @@ use clvmr::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::types::{
-    Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
-};
+use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,

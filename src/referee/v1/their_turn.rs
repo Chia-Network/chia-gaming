@@ -48,6 +48,7 @@ pub enum TheirTurnRefereeMakerGameState {
     },
 }
 
+#[allow(dead_code)]
 impl TheirTurnRefereeMakerGameState {
     pub fn is_my_turn(&self) -> bool {
         match self {
@@ -106,6 +107,7 @@ pub struct TheirTurnReferee {
     pub parent: Option<Rc<MyTurnReferee>>,
 }
 
+#[allow(dead_code)]
 impl TheirTurnReferee {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
