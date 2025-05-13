@@ -6,11 +6,13 @@ use clvmr::NodePtr;
 
 use log::debug;
 
+use crate::channel_handler::game_handler;
+use crate::channel_handler::game_handler::{TheirTurnMoveData, TheirTurnResult};
 use crate::channel_handler::types::{
     Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
 };
 use crate::channel_handler::v1::game_handler::{
-    GameHandler, MessageHandler, MessageInputs, TheirTurnInputs, TheirTurnMoveData, TheirTurnResult,
+    GameHandler, MessageHandler, MessageInputs, TheirTurnInputs,
 };
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::constants::CREATE_COIN;
@@ -19,13 +21,15 @@ use crate::common::types::{
     u64_from_atom, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
     IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash, RcNode, Sha256Input, Sha256tree, Spend,
 };
+use crate::referee::types::{
+    GameMoveDetails, GameMoveStateInfo, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult,
+};
 use crate::referee::v1::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
-    InternalStateUpdateArgs, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
-    TheirTurnCoinSpentResult, TheirTurnMoveResult, REM_CONDITION_FIELDS,
+    curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs, RMFixed,
+    RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult, REM_CONDITION_FIELDS,
 };
-use crate::referee::v1::{BrokenOutCoinSpendInfo, RefereeByTurn, SlashOutcome};
+use crate::referee::v1::{BrokenOutCoinSpendInfo, RefereeByTurn};
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
@@ -125,6 +129,7 @@ impl TheirTurnReferee {
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share.clone(),
             move_made: game_start_info.initial_move.clone(),
+            max_move_size: game_start_info.initial_max_move_size,
         };
         let my_turn = game_start_info.game_handler.is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
@@ -503,7 +508,7 @@ impl TheirTurnReferee {
         let (handler, move_data) = match &result {
             TheirTurnResult::FinalMove(move_data) => (None, move_data.clone()),
             TheirTurnResult::MakeMove(handler, _, move_data) => {
-                (Some(handler.clone()), move_data.clone())
+                (Some(handler.v1().clone()), move_data.clone())
             }
 
             // Slash can't be used when we're off chain.
@@ -604,6 +609,7 @@ impl TheirTurnReferee {
             basic: GameMoveStateInfo {
                 move_made: new_move.clone(),
                 mover_share: new_mover_share.clone(),
+                max_move_size: 0, // unused in v1
             },
             validation_info_hash,
         };

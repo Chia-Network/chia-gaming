@@ -11,22 +11,21 @@ use clvmr::{run_program, NodePtr};
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 
+use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
 use crate::channel_handler::v1::game::Game;
-use crate::channel_handler::v1::game_handler::{
-    GameHandler, MyTurnInputs, TheirTurnInputs, TheirTurnResult,
-};
+use crate::channel_handler::v1::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
     PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 use crate::referee::v1::types::{
-    GameMoveDetails, GameMoveStateInfo, InternalStateUpdateArgs, RefereePuzzleArgs,
-    StateUpdateMoveArgs, StateUpdateResult,
+    InternalStateUpdateArgs, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
 
 pub struct DebugGameCurry {
@@ -313,6 +312,7 @@ impl BareDebugGameDriver {
                         basic: GameMoveStateInfo {
                             move_made: move_to_check.to_vec(),
                             mover_share: self.mover_share[0].clone(),
+                            max_move_size: 0, // unused in v1
                         },
                         validation_info_hash: ValidationInfo::new_state_update(
                             allocator,
@@ -454,6 +454,7 @@ impl BareDebugGameDriver {
                             basic: GameMoveStateInfo {
                                 move_made: move_to_check.clone(),
                                 mover_share: inputs.opponent_mover_share.clone(),
+                                max_move_size: 0, // unused in v1
                             },
                             validation_info_hash: vprog.hash().clone(),
                         },
@@ -468,7 +469,7 @@ impl BareDebugGameDriver {
 
         match tt_result {
             TheirTurnResult::MakeMove(new_handler, _message, tt_data) => {
-                self.handler = new_handler;
+                self.handler = new_handler.v1();
                 for evidence in tt_data.slash_evidence.iter() {
                     let validator_response = self.generic_run_state_update(
                         allocator,

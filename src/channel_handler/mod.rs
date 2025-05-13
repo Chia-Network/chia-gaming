@@ -680,7 +680,7 @@ impl ChannelHandler {
             res.push(LiveGame::new(
                 g.game_id.clone(),
                 puzzle_hash,
-                referee_maker,
+                Rc::new(referee_maker),
                 g.my_contribution_this_game.clone(),
                 g.their_contribution_this_game.clone(),
             ));

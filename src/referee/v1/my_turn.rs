@@ -15,11 +15,13 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinString, Error, Hash, IntoErr, Program, Puzzle, PuzzleHash,
     Sha256Input, Sha256tree, Spend,
 };
+use crate::referee::types::{
+    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
+};
 use crate::referee::v1::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
-    GameMoveWireData, InternalStateUpdateArgs, OnChainRefereeSolution, RMFixed,
-    RefereeOnChainTransaction, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
+    OnChainRefereeSolution, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
 use crate::referee::v1::RefereeByTurn;
 
@@ -215,6 +217,7 @@ impl MyTurnReferee {
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share.clone(),
             move_made: game_start_info.initial_move.clone(),
+            max_move_size: 0, // unused in v1
         };
         let my_turn = game_start_info.game_handler.is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
@@ -506,6 +509,7 @@ impl MyTurnReferee {
             basic: GameMoveStateInfo {
                 move_made: result.move_bytes.clone(),
                 mover_share: result.mover_share.clone(),
+                max_move_size: 0, // unused in v1
             },
             validation_info_hash: validation_info_hash.hash().clone(),
         };
@@ -552,6 +556,7 @@ impl MyTurnReferee {
                     basic: GameMoveStateInfo {
                         move_made: result.move_bytes.clone(),
                         mover_share: result.mover_share.clone(),
+                        max_move_size: 0, // unused in v1
                     },
                     validation_info_hash: validation_info_hash.hash().clone(),
                 },
@@ -707,6 +712,7 @@ impl MyTurnReferee {
                     basic: GameMoveStateInfo {
                         move_made: serialized_move.to_vec(),
                         mover_share: puzzle_args.game_move.basic.mover_share.clone(),
+                        max_move_size: 0, // unused in v1
                     },
                     validation_info_hash: v.hash().clone(),
                     // validation_info_hash: outgoing_state_update_program

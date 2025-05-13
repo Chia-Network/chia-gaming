@@ -10,12 +10,14 @@ use clvmr::NodePtr;
 
 use log::debug;
 
+use crate::channel_handler::game_handler;
+use crate::channel_handler::game_handler::{TheirTurnMoveData, TheirTurnResult};
 use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,
 };
-use crate::referee::v1::types::GameMoveDetails;
+use crate::referee::types::GameMoveDetails;
 
 // How to call the clvm program in this object:
 //
@@ -92,20 +94,6 @@ fn run_code(
     run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
         .into_gen()
         .map(|r| r.1)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TheirTurnMoveData {
-    pub readable_move: ProgramRef,
-    pub slash_evidence: Vec<Evidence>,
-    pub mover_share: Amount,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TheirTurnResult {
-    FinalMove(TheirTurnMoveData),
-    MakeMove(GameHandler, Vec<u8>, TheirTurnMoveData),
-    Slash(Evidence),
 }
 
 fn get_state_update_program(
@@ -421,7 +409,9 @@ impl GameHandler {
             Ok(TheirTurnResult::FinalMove(their_turn_move_data))
         } else {
             Ok(TheirTurnResult::MakeMove(
-                GameHandler::my_driver_from_nodeptr(allocator, pl[3])?,
+                game_handler::GameHandler::HandlerV1(GameHandler::my_driver_from_nodeptr(
+                    allocator, pl[3],
+                )?),
                 message_data,
                 their_turn_move_data,
             ))

@@ -11,8 +11,8 @@ use log::debug;
 
 use serde::{Deserialize, Serialize};
 
+use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, ValidationInfo};
-use crate::channel_handler::v1::game_handler::TheirTurnResult;
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
@@ -21,55 +21,10 @@ use crate::common::types::{
     CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
     Sha256tree, Spend, Timeout,
 };
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 use crate::utils::proper_list;
 
 pub const REM_CONDITION_FIELDS: usize = 4;
-
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct GameMoveStateInfo {
-    pub move_made: Vec<u8>,
-    pub mover_share: Amount,
-}
-
-#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
-pub struct GameMoveDetails {
-    pub basic: GameMoveStateInfo,
-    /// sha256 of the concatenation of two hashes:
-    /// 1 - The next game handler program
-    /// 2 - The game state.
-    pub validation_info_hash: Hash,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GameMoveWireData {
-    pub puzzle_hash_for_unroll: PuzzleHash,
-    pub details: GameMoveDetails,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TheirTurnMoveResult {
-    pub puzzle_hash_for_unroll: Option<PuzzleHash>,
-    pub original: TheirTurnResult,
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-pub enum SlashOutcome {
-    NoReward,
-    Reward {
-        transaction: Box<CoinSpend>,
-        my_reward_coin_string: CoinString,
-    },
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct RefereeOnChainTransaction {
-    pub bundle: Spend,
-    pub amount: Amount,
-    pub coin: CoinString,
-}
 
 #[allow(dead_code)]
 pub struct LiveGameReplay {
@@ -77,21 +32,6 @@ pub struct LiveGameReplay {
     game_id: GameID,
 }
 
-#[derive(Debug)]
-#[allow(dead_code)]
-pub enum TheirTurnCoinSpentResult {
-    Timedout {
-        my_reward_coin_string: Option<CoinString>,
-    },
-    Expected(PuzzleHash, Amount),
-    Moved {
-        // New iteration of the game coin.
-        new_coin_string: CoinString,
-        readable: ReadableMove,
-        mover_share: Amount,
-    },
-    Slash(Box<SlashOutcome>),
-}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateUpdateResult {
     MoveOk(Rc<Program>, ValidationInfo, usize),
