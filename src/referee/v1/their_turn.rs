@@ -6,7 +6,6 @@ use clvmr::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::game_handler;
 use crate::channel_handler::game_handler::{TheirTurnMoveData, TheirTurnResult};
 use crate::channel_handler::types::{
     Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,

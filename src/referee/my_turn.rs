@@ -22,9 +22,8 @@ use crate::common::types::{
 use crate::referee::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 use crate::referee::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
-    GameMoveWireData, InternalValidatorArgs, OnChainRefereeSolution, RMFixed,
-    RefereeOnChainTransaction, RefereePuzzleArgs, SlashOutcome, TheirTurnCoinSpentResult,
-    TheirTurnMoveResult, ValidatorMoveArgs, ValidatorResult,
+    GameMoveWireData, InternalValidatorArgs, RMFixed, RefereePuzzleArgs, SlashOutcome,
+    TheirTurnCoinSpentResult, TheirTurnMoveResult, ValidatorMoveArgs, ValidatorResult,
 };
 use crate::referee::RefereeByTurn;
 
@@ -50,22 +49,6 @@ pub enum MyTurnRefereeMakerGameState {
 }
 
 impl MyTurnRefereeMakerGameState {
-    pub fn is_my_turn(&self) -> bool {
-        match self {
-            MyTurnRefereeMakerGameState::Initial { game_handler, .. } => {
-                matches!(game_handler, GameHandler::MyTurnHandler(_))
-            }
-            MyTurnRefereeMakerGameState::AfterTheirTurn { .. } => true,
-        }
-    }
-
-    pub fn processing_my_turn(&self) -> bool {
-        match self {
-            MyTurnRefereeMakerGameState::Initial { .. } => false,
-            MyTurnRefereeMakerGameState::AfterTheirTurn { .. } => false,
-        }
-    }
-
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         match self {
             MyTurnRefereeMakerGameState::Initial {
@@ -203,10 +186,6 @@ impl MyTurnReferee {
         ))
     }
 
-    pub fn state(&self) -> Rc<MyTurnRefereeMakerGameState> {
-        self.state.clone()
-    }
-
     pub fn state_number(&self) -> usize {
         self.state_number
     }
@@ -272,22 +251,6 @@ impl MyTurnReferee {
         }
     }
 
-    pub fn get_validation_program(&self) -> Result<Rc<Program>, Error> {
-        match self.state.borrow() {
-            MyTurnRefereeMakerGameState::Initial {
-                initial_validation_program,
-                ..
-            } => Ok(initial_validation_program.to_program().clone()),
-            MyTurnRefereeMakerGameState::AfterTheirTurn { .. } => Err(Error::StrErr(
-                "we already accepted their turn so it can't be validated".to_string(),
-            )),
-        }
-    }
-
-    pub fn get_amount(&self) -> Amount {
-        self.fixed.amount.clone()
-    }
-
     pub fn get_our_current_share(&self) -> Amount {
         let args = self.spend_this_coin();
         if self.processing_my_turn() {
@@ -295,10 +258,6 @@ impl MyTurnReferee {
         } else {
             args.game_move.basic.mover_share.clone()
         }
-    }
-
-    pub fn get_their_current_share(&self) -> Amount {
-        self.fixed.amount.clone() - self.get_our_current_share()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -477,129 +436,6 @@ impl MyTurnReferee {
         // self.message_handler = None;
 
         Ok(result)
-    }
-
-    pub fn on_chain_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
-        let args = self.args_for_this_coin();
-        curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &args,
-        )
-    }
-
-    pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
-        let args = self.spend_this_coin();
-        curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &args,
-        )
-    }
-
-    pub fn on_chain_referee_puzzle_hash(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<PuzzleHash, Error> {
-        let args = self.args_for_this_coin();
-        curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
-    }
-
-    pub fn outcome_referee_puzzle_hash(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<PuzzleHash, Error> {
-        let args = self.spend_this_coin();
-        curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
-    }
-
-    // Ensure this returns
-    fn get_transaction(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-        always_produce_transaction: bool,
-        puzzle: Puzzle,
-        targs: &RefereePuzzleArgs,
-        args: &OnChainRefereeSolution,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let our_move = self.is_my_turn();
-
-        let my_mover_share = if our_move {
-            targs.game_move.basic.mover_share.clone()
-        } else {
-            self.fixed.amount.clone() - targs.game_move.basic.mover_share.clone()
-        };
-
-        if always_produce_transaction || my_mover_share != Amount::default() {
-            let signature = args.get_signature().unwrap_or_default();
-
-            // The transaction solution is not the same as the solution for the
-            // inner puzzle as we take additional move or slash data.
-            //
-            // OnChainRefereeSolution encodes this properly.
-            let transaction_solution = args.to_clvm(allocator).into_gen()?;
-            debug!("transaction solution inputs {args:?}");
-            let transaction_bundle = Spend {
-                puzzle: puzzle.clone(),
-                solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
-                signature,
-            };
-            let output_coin_string = CoinString::from_parts(
-                &coin_string.to_coin_id(),
-                &puzzle.sha256tree(allocator),
-                &my_mover_share,
-            );
-            return Ok(Some(RefereeOnChainTransaction {
-                bundle: transaction_bundle,
-                amount: self.fixed.amount.clone(),
-                coin: output_coin_string,
-            }));
-        }
-
-        // Zero mover share case.
-        Ok(None)
-    }
-
-    /// Output coin_string:
-    /// Parent is hash of current_coin
-    /// Puzzle hash is my_referee_puzzle_hash.
-    ///
-    /// Timeout unlike other actions applies to the current ph, not the one at the
-    /// start of a turn proper.
-    pub fn get_transaction_for_timeout(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
-        debug!(
-            "mover share at start of action   {:?}",
-            self.args_for_this_coin().game_move.basic.mover_share
-        );
-        debug!(
-            "mover share at end   of action   {:?}",
-            self.spend_this_coin().game_move.basic.mover_share
-        );
-
-        let targs = self.spend_this_coin();
-        let puzzle = curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &targs,
-        )?;
-
-        self.get_transaction(
-            allocator,
-            coin_string,
-            false,
-            puzzle,
-            &targs,
-            &OnChainRefereeSolution::Timeout,
-        )
     }
 
     pub fn run_validator_for_their_move(

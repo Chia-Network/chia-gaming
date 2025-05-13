@@ -9,19 +9,15 @@ use clvmr::run_program;
 
 use log::debug;
 
-use serde::{Deserialize, Serialize};
-
-use crate::channel_handler::game_handler::TheirTurnResult;
-use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram, ValidationInfo};
+use crate::channel_handler::types::{Evidence, StateUpdateProgram, ValidationInfo};
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
 use crate::common::types::{
     atom_from_clvm, chia_dialect, i64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
-    Sha256tree, Spend, Timeout,
+    Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
+use crate::referee::types::GameMoveDetails;
 use crate::utils::proper_list;
 
 pub const REM_CONDITION_FIELDS: usize = 4;

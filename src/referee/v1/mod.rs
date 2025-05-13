@@ -17,7 +17,7 @@ use crate::common::types::{
     Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction, SlashOutcome,
+    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
     TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 use crate::referee::v1::my_turn::MyTurnReferee;
@@ -714,9 +714,9 @@ impl RefereeInterface for RefereeByTurn {
 
     fn check_their_turn_for_slash(
         &self,
-        allocator: &mut AllocEncoder,
-        evidence: Evidence,
-        coin_string: &CoinString,
+        _allocator: &mut AllocEncoder,
+        _evidence: Evidence,
+        _coin_string: &CoinString,
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
         // Will need to route this.
         todo!();

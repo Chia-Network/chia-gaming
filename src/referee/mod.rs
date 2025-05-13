@@ -428,13 +428,6 @@ impl RefereeByTurn {
         }
     }
 
-    fn get_validation_program(&self) -> Result<Rc<Program>, Error> {
-        match self {
-            RefereeByTurn::MyTurn(t) => t.get_validation_program(),
-            RefereeByTurn::TheirTurn(t) => t.get_validation_program(),
-        }
-    }
-
     fn run_validator_for_their_move(
         &self,
         allocator: &mut AllocEncoder,
@@ -494,7 +487,7 @@ impl RefereeInterface for RefereeByTurn {
         self.fixed().amount.clone() - self.get_our_current_share()
     }
 
-    fn enable_cheating(&self, make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {
+    fn enable_cheating(&self, _make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {
         // We don't need this to cheat in v0.
         None
     }

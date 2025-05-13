@@ -46,22 +46,6 @@ pub enum TheirTurnRefereeMakerGameState {
 }
 
 impl TheirTurnRefereeMakerGameState {
-    pub fn is_my_turn(&self) -> bool {
-        match self {
-            TheirTurnRefereeMakerGameState::Initial { game_handler, .. } => {
-                matches!(game_handler, GameHandler::MyTurnHandler(_))
-            }
-            TheirTurnRefereeMakerGameState::AfterOurTurn { .. } => false,
-        }
-    }
-
-    pub fn processing_my_turn(&self) -> bool {
-        match self {
-            TheirTurnRefereeMakerGameState::Initial { .. } => false,
-            TheirTurnRefereeMakerGameState::AfterOurTurn { .. } => true,
-        }
-    }
-
     pub fn args_for_this_coin(&self) -> Rc<RefereePuzzleArgs> {
         match self {
             TheirTurnRefereeMakerGameState::Initial {
@@ -236,40 +220,6 @@ impl TheirTurnReferee {
         }
     }
 
-    pub fn get_validation_program_for_their_move(
-        &self,
-    ) -> Result<(Rc<Program>, ValidationProgram), Error> {
-        match self.state.borrow() {
-            TheirTurnRefereeMakerGameState::Initial {
-                game_handler,
-                initial_state,
-                initial_validation_program,
-                ..
-            } => {
-                if game_handler.is_my_turn() {
-                    return Err(Error::StrErr("no moves have been made yet".to_string()));
-                }
-                Ok((initial_state.clone(), initial_validation_program.clone()))
-            }
-            TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => Ok((
-                my_turn_result.state.clone(),
-                my_turn_result.validation_program.clone(),
-            )),
-        }
-    }
-
-    pub fn get_validation_program(&self) -> Result<Rc<Program>, Error> {
-        match self.state.borrow() {
-            TheirTurnRefereeMakerGameState::Initial {
-                initial_validation_program,
-                ..
-            } => Ok(initial_validation_program.to_program().clone()),
-            TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_result, .. } => {
-                Ok(my_turn_result.validation_program.to_program())
-            }
-        }
-    }
-
     pub fn get_amount(&self) -> Amount {
         self.fixed.amount.clone()
     }
@@ -281,10 +231,6 @@ impl TheirTurnReferee {
         } else {
             args.game_move.basic.mover_share.clone()
         }
-    }
-
-    pub fn get_their_current_share(&self) -> Amount {
-        self.fixed.amount.clone() - self.get_our_current_share()
     }
 
     pub fn accept_their_move(
@@ -448,32 +394,6 @@ impl TheirTurnReferee {
         )
     }
 
-    pub fn outcome_referee_puzzle(&self, allocator: &mut AllocEncoder) -> Result<Puzzle, Error> {
-        let args = self.spend_this_coin();
-        curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &args,
-        )
-    }
-
-    pub fn on_chain_referee_puzzle_hash(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<PuzzleHash, Error> {
-        let args = self.args_for_this_coin();
-        curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
-    }
-
-    pub fn outcome_referee_puzzle_hash(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<PuzzleHash, Error> {
-        let args = self.spend_this_coin();
-        curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
-    }
-
     // Ensure this returns
     fn get_transaction(
         &self,
@@ -520,45 +440,6 @@ impl TheirTurnReferee {
 
         // Zero mover share case.
         Ok(None)
-    }
-
-    /// Output coin_string:
-    /// Parent is hash of current_coin
-    /// Puzzle hash is my_referee_puzzle_hash.
-    ///
-    /// Timeout unlike other actions applies to the current ph, not the one at the
-    /// start of a turn proper.
-    pub fn get_transaction_for_timeout(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
-        debug!(
-            "mover share at start of action   {:?}",
-            self.args_for_this_coin().game_move.basic.mover_share
-        );
-        debug!(
-            "mover share at end   of action   {:?}",
-            self.spend_this_coin().game_move.basic.mover_share
-        );
-
-        let targs = self.spend_this_coin();
-        let puzzle = curry_referee_puzzle(
-            allocator,
-            &self.fixed.referee_coin_puzzle,
-            &self.fixed.referee_coin_puzzle_hash,
-            &targs,
-        )?;
-
-        self.get_transaction(
-            allocator,
-            coin_string,
-            false,
-            puzzle,
-            &targs,
-            &OnChainRefereeSolution::Timeout,
-        )
     }
 
     /// The move transaction works like this:
