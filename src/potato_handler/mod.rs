@@ -734,6 +734,122 @@ impl PotatoHandler {
         }
     }
 
+    fn start_version_0<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        i_initiated: bool,
+        game_start: &GameStart,
+        starter_clvm: NodePtr,
+        params_clvm: NodePtr,
+    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let (env, _) = penv.env();
+        let program_run_args = (
+            i_initiated,
+            (
+                game_start.my_contribution.clone(),
+                (
+                    game_start.amount.clone() - game_start.my_contribution.clone(),
+                    (Node(params_clvm), ()),
+                ),
+            ),
+        )
+            .to_clvm(env.allocator)
+            .into_gen()?;
+
+        debug!("running program to get game start");
+        let program_output = run_program(
+            env.allocator.allocator(),
+            &chia_dialect(),
+            starter_clvm,
+            program_run_args,
+            0,
+        )
+            .into_gen()?
+            .1;
+
+        let to_list =
+            |allocator: &mut Allocator, node: NodePtr, err: &str| -> Result<Vec<NodePtr>, Error> {
+                if let Some(p) = proper_list(allocator, node, true) {
+                    Ok(p)
+                } else {
+                    Err(Error::StrErr(format!("bad factory output: {err}")))
+                }
+            };
+
+        // The result is two parallel lists of opposite sides of game starts.
+        // Well re-glue these together into a list of pairs.
+        let pair_of_output_lists = to_list(
+            env.allocator.allocator(),
+            program_output,
+            "not a pair of lists",
+        )?;
+        
+        if pair_of_output_lists.len() != 2 {
+            return Err(Error::StrErr("output wasn't a list of 2 items".to_string()));
+        }
+        
+        let my_info_list = to_list(
+            env.allocator.allocator(),
+            pair_of_output_lists[0],
+            "not a list (first)",
+        )?;
+        let their_info_list = to_list(
+            env.allocator.allocator(),
+            pair_of_output_lists[1],
+            "not a list (second)",
+        )?;
+        
+        if their_info_list.len() != my_info_list.len() {
+            return Err(Error::StrErr(
+                "mismatched my and their game starts".to_string(),
+            ));
+        }
+        
+        let mut game_ids = Vec::new();
+        for _ in my_info_list.iter() {
+            game_ids.push(self.next_game_id()?);
+        }
+        
+        let convert_info_list = |allocator: &mut AllocEncoder,
+        my_info_list: &[NodePtr]|
+                        -> Result<Vec<GameStartInfo>, Error> {
+            let mut result_start_info = Vec::new();
+            for (i, node) in my_info_list.iter().enumerate() {
+                let new_game = GameStartInfo::from_clvm(allocator, *node)?;
+                // Timeout and game_id are supplied here.
+                result_start_info.push(GameStartInfo {
+                    game_id: game_ids[i].clone(),
+                    timeout: game_start.timeout.clone(),
+                    ..new_game
+                });
+            }
+            Ok(result_start_info)
+        };
+        
+        let my_result_start_info = convert_info_list(env.allocator, &my_info_list)?;
+        let their_result_start_info = convert_info_list(env.allocator, &their_info_list)?;
+
+        Ok((my_result_start_info, their_result_start_info))
+    }
+
+    fn start_version_1<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        i_initiated: bool,
+        game_start: &GameStart,
+        starter_clvm: NodePtr,
+        params_clvm: NodePtr,
+    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let (env, _) = penv.env();
+        todo!();
+    }
+    
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
@@ -752,98 +868,17 @@ impl PotatoHandler {
             )));
         };
 
-        let (env, _) = penv.env();
-        let starter_clvm = starter.program.to_clvm(env.allocator).into_gen()?;
-        let params_clvm =
-            node_from_bytes(env.allocator.allocator(), &game_start.parameters).into_gen()?;
+        let (starter_clvm, params_clvm) = {
+            let (env, _) = penv.env();
+            let starter_clvm = starter.program.to_clvm(env.allocator).into_gen()?;
+            let params_clvm =
+                node_from_bytes(env.allocator.allocator(), &game_start.parameters).into_gen()?;
+            (starter_clvm, params_clvm)
+        };
         if starter.version == 0 {
-            let program_run_args = (
-                i_initiated,
-                (
-                    game_start.my_contribution.clone(),
-                    (
-                        game_start.amount.clone() - game_start.my_contribution.clone(),
-                        (Node(params_clvm), ()),
-                    ),
-                ),
-            )
-                .to_clvm(env.allocator)
-                .into_gen()?;
-
-            debug!("running program to get game start");
-            let program_output = run_program(
-                env.allocator.allocator(),
-                &chia_dialect(),
-                starter_clvm,
-                program_run_args,
-                0,
-            )
-                .into_gen()?
-                .1;
-
-            let to_list =
-                |allocator: &mut Allocator, node: NodePtr, err: &str| -> Result<Vec<NodePtr>, Error> {
-                    if let Some(p) = proper_list(allocator, node, true) {
-                        Ok(p)
-                    } else {
-                        Err(Error::StrErr(format!("bad factory output: {err}")))
-                    }
-                };
-
-            // The result is two parallel lists of opposite sides of game starts.
-            // Well re-glue these together into a list of pairs.
-            let pair_of_output_lists = to_list(
-                env.allocator.allocator(),
-                program_output,
-                "not a pair of lists",
-            )?;
-
-            if pair_of_output_lists.len() != 2 {
-                return Err(Error::StrErr("output wasn't a list of 2 items".to_string()));
-            }
-
-            let my_info_list = to_list(
-                env.allocator.allocator(),
-                pair_of_output_lists[0],
-                "not a list (first)",
-            )?;
-            let their_info_list = to_list(
-                env.allocator.allocator(),
-                pair_of_output_lists[1],
-                "not a list (second)",
-            )?;
-
-            if their_info_list.len() != my_info_list.len() {
-                return Err(Error::StrErr(
-                    "mismatched my and their game starts".to_string(),
-                ));
-            }
-
-            let mut game_ids = Vec::new();
-            for _ in my_info_list.iter() {
-                game_ids.push(self.next_game_id()?);
-            }
-
-            let convert_info_list = |allocator: &mut AllocEncoder,
-            my_info_list: &[NodePtr]|
-                            -> Result<Vec<GameStartInfo>, Error> {
-                let mut result_start_info = Vec::new();
-                for (i, node) in my_info_list.iter().enumerate() {
-                    let new_game = GameStartInfo::from_clvm(allocator, *node)?;
-                    // Timeout and game_id are supplied here.
-                    result_start_info.push(GameStartInfo {
-                        game_id: game_ids[i].clone(),
-                        timeout: game_start.timeout.clone(),
-                        ..new_game
-                    });
-                }
-                Ok(result_start_info)
-            };
-
-            let my_result_start_info = convert_info_list(env.allocator, &my_info_list)?;
-            let their_result_start_info = convert_info_list(env.allocator, &their_info_list)?;
-
-            Ok((my_result_start_info, their_result_start_info))
+            self.start_version_0(penv, i_initiated, game_start, starter_clvm, params_clvm)
+        } else {
+            self.start_version_1(penv, i_initiated, game_start, starter_clvm, params_clvm)
         }
     }
 
