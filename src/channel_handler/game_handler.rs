@@ -10,6 +10,7 @@ use clvmr::NodePtr;
 use log::debug;
 
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, ValidationProgram};
+use crate::channel_handler::v1;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,
@@ -32,6 +33,7 @@ use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 pub enum GameHandler {
     MyTurnHandler(ProgramRef),
     TheirTurnHandler(ProgramRef),
+    HandlerV1(v1::game_handler::GameHandler),
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameHandler {
@@ -39,6 +41,7 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for GameHandler {
         match self {
             GameHandler::MyTurnHandler(p) => p.to_clvm(encoder),
             GameHandler::TheirTurnHandler(p) => p.to_clvm(encoder),
+            GameHandler::HandlerV1(g) => g.to_clvm(encoder),
         }
     }
 }
@@ -105,6 +108,13 @@ pub enum TheirTurnResult {
 }
 
 impl GameHandler {
+    pub fn v1(&self) -> v1::game_handler::GameHandler {
+        if let GameHandler::HandlerV1(g) = self {
+            return g.clone();
+        }
+        todo!();
+    }
+
     pub fn their_driver_from_nodeptr(
         allocator: &mut AllocEncoder,
         n: NodePtr,
@@ -122,12 +132,12 @@ impl GameHandler {
         ))
     }
     pub fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
-        match self {
-            GameHandler::MyTurnHandler(n) => n.to_nodeptr(allocator),
-            GameHandler::TheirTurnHandler(n) => n.to_nodeptr(allocator),
-        }
+        self.to_clvm(allocator).into_gen()
     }
     pub fn is_my_turn(&self) -> bool {
+        if let GameHandler::HandlerV1(g) = self {
+            return g.is_my_turn();
+        }
         matches!(self, GameHandler::MyTurnHandler(_))
     }
 

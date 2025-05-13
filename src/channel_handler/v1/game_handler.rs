@@ -10,14 +10,14 @@ use clvmr::NodePtr;
 
 use log::debug;
 
-use crate::channel_handler::types::{
-    Evidence, HasStateUpdateProgram, ReadableMove, StateUpdateProgram,
-};
+use crate::channel_handler::game_handler;
+use crate::channel_handler::game_handler::{TheirTurnMoveData, TheirTurnResult};
+use crate::channel_handler::types::{Evidence, ReadableMove, StateUpdateProgram};
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
     Hash, IntoErr, Node, Program, ProgramRef,
 };
-use crate::referee::types_v1::GameMoveDetails;
+use crate::referee::types::GameMoveDetails;
 
 // How to call the clvm program in this object:
 //
@@ -55,28 +55,13 @@ pub struct MyTurnInputs {
 }
 
 #[derive(Clone, Debug)]
-pub struct MyStateUpdateProgram(pub StateUpdateProgram);
-impl HasStateUpdateProgram for MyStateUpdateProgram {
-    fn p(&self) -> StateUpdateProgram {
-        self.0.clone()
-    }
-}
-#[derive(Clone, Debug)]
-pub struct TheirStateUpdateProgram(pub StateUpdateProgram);
-impl HasStateUpdateProgram for TheirStateUpdateProgram {
-    fn p(&self) -> StateUpdateProgram {
-        self.0.clone()
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub name: String,
     pub move_bytes: Vec<u8>,
-    pub outgoing_move_state_update_program: MyStateUpdateProgram,
+    pub outgoing_move_state_update_program: StateUpdateProgram,
     pub outgoing_move_state_update_program_hash: Hash,
-    pub incoming_move_state_update_program: TheirStateUpdateProgram,
+    pub incoming_move_state_update_program: StateUpdateProgram,
     pub incoming_move_state_update_program_hash: Hash,
     pub max_move_size: usize,
     pub mover_share: Amount,
@@ -109,20 +94,6 @@ fn run_code(
     run_program(allocator.allocator(), &chia_dialect(), code, env, 0)
         .into_gen()
         .map(|r| r.1)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TheirTurnMoveData {
-    pub readable_move: ProgramRef,
-    pub slash_evidence: Vec<Evidence>,
-    pub mover_share: Amount,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TheirTurnResult {
-    FinalMove(TheirTurnMoveData),
-    MakeMove(GameHandler, Vec<u8>, TheirTurnMoveData),
-    Slash(Evidence),
 }
 
 fn get_state_update_program(
@@ -292,13 +263,9 @@ impl GameHandler {
         Ok(MyTurnResult {
             name: name.to_string(),
             waiting_driver: GameHandler::their_driver_from_nodeptr(allocator, pl[8])?,
-            outgoing_move_state_update_program: MyStateUpdateProgram(
-                outgoing_move_state_update_program,
-            ),
+            outgoing_move_state_update_program: outgoing_move_state_update_program,
             outgoing_move_state_update_program_hash,
-            incoming_move_state_update_program: TheirStateUpdateProgram(
-                incoming_move_state_update_program,
-            ),
+            incoming_move_state_update_program: incoming_move_state_update_program,
             incoming_move_state_update_program_hash,
             move_bytes: move_data,
             mover_share,
@@ -442,7 +409,9 @@ impl GameHandler {
             Ok(TheirTurnResult::FinalMove(their_turn_move_data))
         } else {
             Ok(TheirTurnResult::MakeMove(
-                GameHandler::my_driver_from_nodeptr(allocator, pl[3])?,
+                game_handler::GameHandler::HandlerV1(GameHandler::my_driver_from_nodeptr(
+                    allocator, pl[3],
+                )?),
                 message_data,
                 their_turn_move_data,
             ))
