@@ -32,6 +32,8 @@ pub enum RefereeByTurn {
     TheirTurn(Rc<TheirTurnReferee>),
 }
 
+pub type RewindResult = (Rc<dyn RefereeInterface>, usize);
+
 pub trait RefereeInterface {
     fn is_my_turn(&self) -> bool;
 
@@ -86,7 +88,7 @@ pub trait RefereeInterface {
         &self,
         allocator: &mut AllocEncoder,
         puzzle_hash: &PuzzleHash,
-    ) -> Result<Option<(Rc<dyn RefereeInterface>, usize)>, Error>;
+    ) -> Result<Option<RewindResult>, Error>;
 
     fn check_their_turn_for_slash(
         &self,
