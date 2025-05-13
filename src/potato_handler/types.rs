@@ -458,10 +458,16 @@ impl std::fmt::Debug for GameAction {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct GameFactory {
+    pub version: usize,
+    pub program: Rc<Program>,
+}
+
 pub struct PotatoHandlerInit {
     pub have_potato: bool,
     pub private_keys: ChannelHandlerPrivateKeys,
-    pub game_types: BTreeMap<GameType, Rc<Program>>,
+    pub game_types: BTreeMap<GameType, GameFactory>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
     pub channel_timeout: Timeout,
