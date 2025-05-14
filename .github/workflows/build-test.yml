@@ -137,14 +137,14 @@ jobs:
           python -m pip install chia-blockchain==2.3.0
       - name: calpoker_onchain_tests
         run: |
-          cd pytests
+          cd python/tests
           # We need 'cargo build' to have been run
           python compute_hashes.py
           python ./test_validation_pass.py
 
       - name: calpoker_handlers
         run: |
-          cd pytests
+          cd python/tests
           python compute_hashes.py
           python ./test_handlers.py
 
