@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use clvm_traits::ToClvm;
 
@@ -9,7 +9,7 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
     Spend, SpendBundle, Timeout,
@@ -17,9 +17,8 @@ use crate::common::types::{
 use crate::games::poker_collection;
 use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, GameStart, GameType,
-    PacketSender, PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
-    WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
+    PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
 
@@ -392,7 +391,6 @@ where
 }
 
 #[test]
-#[ignore]
 fn test_peer_smoke() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
@@ -401,7 +399,7 @@ fn test_peer_smoke() {
     let mut pipe_sender: [Pipe; 2] = Default::default();
     pipe_sender[1].message_pipe.my_id = 1;
 
-    let mut game_type_map = poker_collection(&mut allocator);
+    let game_type_map = poker_collection(&mut allocator);
 
     let new_peer = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, have_potato: bool| {
         let private_keys1: ChannelHandlerPrivateKeys = rng.gen();

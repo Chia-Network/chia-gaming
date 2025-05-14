@@ -861,12 +861,13 @@ impl PotatoHandler {
             .to_clvm(env.allocator)
             .into_gen()?;
         let game_id = self.next_game_id()?;
-        let game = v1::game::Game::new_program(
+        let params_prog = Rc::new(Program::from_nodeptr(env.allocator, program_run_args)?);
+        let _game = v1::game::Game::new_program(
             env.allocator,
             i_initiated,
             &game_id,
             program.into(),
-            params,
+            params_prog,
         )?;
         todo!();
     }

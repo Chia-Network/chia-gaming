@@ -1344,10 +1344,12 @@ fn test_referee_play_debug_game() {
     let mut allocator = AllocEncoder::new();
     let mut debug_games = make_debug_games(&mut allocator).expect("ok");
     let (alice, bob) = pair_of_array_mut(&mut debug_games);
-    alice
+    let a1 = alice
         .do_move(&mut allocator, bob, Amount::default(), 0)
         .expect("ok");
-    bob.do_move(&mut allocator, alice, Amount::default(), 0)
+    assert!(a1.success);
+    let b1 = bob
+        .do_move(&mut allocator, alice, Amount::default(), 0)
         .expect("ok");
-    todo!();
+    assert!(b1.success);
 }
