@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use log::debug;
 
 use crate::channel_handler::types::Evidence;
@@ -9,13 +11,13 @@ use crate::referee::types::{
     GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
 };
-use crate::referee::RefereeMaker;
+use crate::referee::RefereeInterface;
 
 pub struct LiveGame {
     pub game_id: GameID,
     pub rewind_outcome: Option<usize>,
     pub last_referee_puzzle_hash: PuzzleHash,
-    referee_maker: RefereeMaker,
+    referee_maker: Rc<dyn RefereeInterface>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
 }
@@ -24,7 +26,7 @@ impl LiveGame {
     pub fn new(
         game_id: GameID,
         last_referee_puzzle_hash: PuzzleHash,
-        referee_maker: RefereeMaker,
+        referee_maker: Rc<dyn RefereeInterface>,
         my_contribution: Amount,
         their_contribution: Amount,
     ) -> LiveGame {

@@ -34,8 +34,10 @@ use crate::potato_handler::PotatoHandler;
 use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
+use crate::tests::debug_game::make_debug_games;
 use crate::tests::game::GameAction;
 use crate::tests::peer::potato_handler::{quiesce, run_move};
+use crate::utils::pair_of_array_mut;
 
 // potato handler tests with simulator.
 #[derive(Default)]
@@ -1335,4 +1337,17 @@ fn sim_test_with_peer_container_piss_off_peer_slash() {
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // p1 (index 0) won the money because p2 (index 1) cheated by choosing 5 cards.
     assert_eq!(p1_balance, p2_balance + 200);
+}
+
+#[test]
+fn test_referee_play_debug_game() {
+    let mut allocator = AllocEncoder::new();
+    let mut debug_games = make_debug_games(&mut allocator).expect("ok");
+    let (alice, bob) = pair_of_array_mut(&mut debug_games);
+    alice
+        .do_move(&mut allocator, bob, Amount::default(), 0)
+        .expect("ok");
+    bob.do_move(&mut allocator, alice, Amount::default(), 0)
+        .expect("ok");
+    todo!();
 }

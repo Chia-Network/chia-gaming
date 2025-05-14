@@ -14,10 +14,12 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
     Spend, SpendBundle, Timeout,
 };
+use crate::games::poker_collection;
 use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, GameStart, GameType,
+    PacketSender, PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
+    WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
 
@@ -399,17 +401,7 @@ fn test_peer_smoke() {
     let mut pipe_sender: [Pipe; 2] = Default::default();
     pipe_sender[1].message_pipe.my_id = 1;
 
-    let mut game_type_map = BTreeMap::new();
-    let calpoker_factory = read_hex_puzzle(
-        &mut allocator,
-        "clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex",
-    )
-    .expect("should load");
-
-    game_type_map.insert(
-        GameType(b"calpoker".to_vec()),
-        calpoker_factory.to_program(),
-    );
+    let mut game_type_map = poker_collection(&mut allocator);
 
     let new_peer = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, have_potato: bool| {
         let private_keys1: ChannelHandlerPrivateKeys = rng.gen();

@@ -14,6 +14,7 @@ use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
     PotatoSignatures, ReadableMove,
 };
+use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_for_synthetic_public_key, puzzle_hash_for_pk,
@@ -30,7 +31,7 @@ use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, ConditionWaitKind, FromLocalUI, GameAction,
-    GameStart, GameStartQueueEntry, GameType, HandshakeA, HandshakeB, HandshakeState,
+    GameFactory, GameStart, GameStartQueueEntry, GameType, HandshakeA, HandshakeB, HandshakeState,
     HandshakeStepInfo, HandshakeStepWithSpend, MyGameStartQueueEntry, PacketSender, PeerEnv,
     PeerMessage, PotatoHandlerImpl, PotatoHandlerInit, PotatoState, SpendWalletReceiver, ToLocalUI,
     WalletSpendInterface,
@@ -85,7 +86,7 @@ pub struct PotatoHandler {
     channel_initiation_transaction: Option<SpendBundle>,
     channel_finished_transaction: Option<SpendBundle>,
 
-    game_types: BTreeMap<GameType, Rc<Program>>,
+    game_types: BTreeMap<GameType, GameFactory>,
 
     private_keys: ChannelHandlerPrivateKeys,
 
@@ -734,28 +735,18 @@ impl PotatoHandler {
         }
     }
 
-    fn get_games_by_start_type<'a, G, R: Rng + 'a>(
+    fn start_version_0<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         i_initiated: bool,
         game_start: &GameStart,
+        starter_clvm: NodePtr,
+        params_clvm: NodePtr,
     ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
-            starter
-        } else {
-            return Err(Error::StrErr(format!(
-                "no such game {:?}",
-                game_start.game_type
-            )));
-        };
-
         let (env, _) = penv.env();
-        let starter_clvm = starter.to_clvm(env.allocator).into_gen()?;
-        let params_clvm =
-            node_from_bytes(env.allocator.allocator(), &game_start.parameters).into_gen()?;
         let program_run_args = (
             i_initiated,
             (
@@ -843,6 +834,82 @@ impl PotatoHandler {
         let their_result_start_info = convert_info_list(env.allocator, &their_info_list)?;
 
         Ok((my_result_start_info, their_result_start_info))
+    }
+
+    fn start_version_1<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        i_initiated: bool,
+        game_start: &GameStart,
+        program: Rc<Program>,
+        params: Rc<Program>,
+    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let (env, _) = penv.env();
+        let program_run_args = (
+            i_initiated,
+            (
+                game_start.my_contribution.clone(),
+                (
+                    game_start.amount.clone() - game_start.my_contribution.clone(),
+                    (params.clone(), ()),
+                ),
+            ),
+        )
+            .to_clvm(env.allocator)
+            .into_gen()?;
+        let game_id = self.next_game_id()?;
+        let game = v1::game::Game::new_program(
+            env.allocator,
+            i_initiated,
+            &game_id,
+            program.into(),
+            params,
+        )?;
+        todo!();
+    }
+
+    fn get_games_by_start_type<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        i_initiated: bool,
+        game_start: &GameStart,
+    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
+            starter
+        } else {
+            return Err(Error::StrErr(format!(
+                "no such game {:?}",
+                game_start.game_type
+            )));
+        };
+
+        if starter.version == 0 {
+            let (starter_clvm, params_clvm) = {
+                let (env, _) = penv.env();
+                let starter_clvm = starter.program.to_clvm(env.allocator).into_gen()?;
+                let params_clvm =
+                    node_from_bytes(env.allocator.allocator(), &game_start.parameters)
+                        .into_gen()?;
+                (starter_clvm, params_clvm)
+            };
+
+            self.start_version_0(penv, i_initiated, game_start, starter_clvm, params_clvm)
+        } else {
+            let params = Rc::new(Program::from_bytes(&game_start.parameters));
+            self.start_version_1(
+                penv,
+                i_initiated,
+                game_start,
+                starter.program.clone(),
+                params,
+            )
+        }
     }
 
     fn next_game_id(&mut self) -> Result<GameID, Error> {

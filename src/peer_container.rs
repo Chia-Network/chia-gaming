@@ -17,8 +17,9 @@ use crate::common::types::{
     Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, GameStart, GameType,
+    PacketSender, PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
+    WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
 use crate::shutdown::ShutdownConditions;
@@ -340,7 +341,7 @@ pub struct SynchronousGameCradle {
 }
 
 pub struct SynchronousGameCradleConfig<'a> {
-    pub game_types: BTreeMap<GameType, Rc<Program>>,
+    pub game_types: BTreeMap<GameType, GameFactory>,
     pub have_potato: bool,
     pub identity: &'a ChiaIdentity,
     pub my_contribution: Amount,

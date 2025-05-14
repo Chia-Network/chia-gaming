@@ -17,7 +17,7 @@
 (import std.relops)
 (import std.isthere)
 (import std.atomsort)
-(import games.calpoker-v0.onchain.flatten_card)
+(import games.calpoker-v1.onchain.flatten_card)
 
 (defun check_flush (@ cards ((rank1 . suit1) (rank2 . suit2) (rank3 . suit3) (rank4 . suit4) (rank5 . suit5)))
     (logand (= suit1 suit2) (= suit1 suit3) (= suit1 suit4) (= suit1 suit5))

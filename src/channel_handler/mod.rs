@@ -2,6 +2,7 @@ pub mod game;
 pub mod game_handler;
 pub mod runner;
 pub mod types;
+pub mod v1;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -679,7 +680,7 @@ impl ChannelHandler {
             res.push(LiveGame::new(
                 g.game_id.clone(),
                 puzzle_hash,
-                referee_maker,
+                Rc::new(referee_maker),
                 g.my_contribution_this_game.clone(),
                 g.their_contribution_this_game.clone(),
             ));
