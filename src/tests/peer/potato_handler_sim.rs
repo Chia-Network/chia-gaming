@@ -963,7 +963,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 &GameStart {
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
-                    game_type: GameType(b"calpoker".to_vec()),
+                    game_type: GameType(game_type.to_vec()),
                     timeout: Timeout::new(10),
                     my_turn: true,
                     parameters: vec![0x80],
@@ -977,7 +977,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 &GameStart {
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
-                    game_type: GameType(b"calpoker".to_vec()),
+                    game_type: GameType(game_type.to_vec()),
                     timeout: Timeout::new(10),
                     my_turn: false,
                     parameters: vec![0x80],
@@ -1373,7 +1373,7 @@ fn test_referee_play_debug_game() {
         Some(Rc::new(Program::from_hex("03").expect("ok")))
     );
 
-    let mut moves: Vec<GameAction> = [
+    let moves: Vec<GameAction> = [
         GameAction::Move(0, a1.ui_move.clone(), true),
         GameAction::Move(1, b1.ui_move.clone(), true),
         GameAction::Move(0, a2.ui_move.clone(), true),

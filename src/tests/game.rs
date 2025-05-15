@@ -1,6 +1,4 @@
 #[cfg(feature = "sim-tests")]
-use crate::channel_handler::types::ReadableMove;
-#[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
 use crate::common::types::Timeout;
 #[cfg(feature = "sim-tests")]
@@ -15,6 +13,9 @@ use rand::prelude::*;
 
 #[cfg(feature = "sim-tests")]
 use log::debug;
+
+#[cfg(feature = "sim-tests")]
+use clvmr::NodePtr;
 
 lazy_static! {
     pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);

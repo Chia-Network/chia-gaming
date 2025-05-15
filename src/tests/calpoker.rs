@@ -6,15 +6,11 @@ use log::debug;
 use rand::prelude::*;
 #[cfg(feature = "sim-tests")]
 use rand_chacha::ChaCha8Rng;
-#[cfg(feature = "sim-tests")]
-use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
-#[cfg(feature = "sim-tests")]
-use crate::channel_handler::types::ReadableMove;
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Amount;
