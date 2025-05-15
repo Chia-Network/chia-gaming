@@ -708,7 +708,7 @@ impl ToLocalUI for LocalTestUIReceiver {
 
 type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(&[SynchronousGameCradle]) -> bool>;
 
-struct CalpokerRunOutcome {
+struct GameRunOutcome {
     identities: [ChiaIdentity; 2],
     #[allow(dead_code)]
     cradles: [SynchronousGameCradle; 2],
@@ -728,7 +728,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
     moves_input: &[GameAction],
     pred: GameRunEarlySuccessPredicate,
-) -> Result<CalpokerRunOutcome, Error> {
+) -> Result<GameRunOutcome, Error> {
     let mut moves = VecDeque::new();
     for m in moves_input.iter() {
         moves.push_back(m);
@@ -851,7 +851,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
         if let Some(p) = &pred {
             if p(&cradles) {
                 // Success.
-                return Ok(CalpokerRunOutcome {
+                return Ok(GameRunOutcome {
                     identities,
                     cradles,
                     local_uis,
@@ -1081,7 +1081,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
         }
     }
 
-    Ok(CalpokerRunOutcome {
+    Ok(GameRunOutcome {
         identities,
         cradles,
         local_uis,
@@ -1092,7 +1092,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
 fn run_calpoker_container_with_action_list(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
-) -> Result<CalpokerRunOutcome, Error> {
+) -> Result<GameRunOutcome, Error> {
     run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None)
 }
 
@@ -1114,7 +1114,7 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     .expect("should finish");
 }
 
-fn get_balances_from_outcome(outcome: &CalpokerRunOutcome) -> Result<(u64, u64), Error> {
+fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Error> {
     let p1_ph = outcome.identities[0].puzzle_hash.clone();
     let p2_ph = outcome.identities[1].puzzle_hash.clone();
     let p1_coins = outcome.simulator.get_my_coins(&p1_ph).into_gen()?;
@@ -1137,7 +1137,7 @@ fn check_calpoker_economic_result(
     p1_view_of_cards: &(GameID, ReadableMove, Amount),
     alice_outcome_move: &(GameID, ReadableMove, Amount),
     bob_outcome_move: &(GameID, ReadableMove, Amount),
-    outcome: &CalpokerRunOutcome,
+    outcome: &GameRunOutcome,
 ) {
     let (p1_balance, p2_balance) = get_balances_from_outcome(outcome).expect("should work");
 
@@ -1344,6 +1344,7 @@ fn test_referee_play_debug_game() {
     let mut allocator = AllocEncoder::new();
     let mut debug_games = make_debug_games(&mut allocator).expect("ok");
     let (alice, bob) = pair_of_array_mut(&mut debug_games);
+    // Get some moves.
     let a1 = alice
         .do_move(&mut allocator, bob, Amount::default(), 0)
         .expect("ok");
@@ -1352,4 +1353,12 @@ fn test_referee_play_debug_game() {
         .do_move(&mut allocator, alice, Amount::default(), 0)
         .expect("ok");
     assert!(b1.success);
+    let a2 = alice
+        .do_move(&mut allocator, bob, Amount::new(50), 0)
+        .expect("ok");
+    assert!(a2.success);
+    let b2 = bob
+        .do_move(&mut allocator, alice, Amount::new(150), 3)
+        .expect("ok");
+    assert!(!b2.success);
 }

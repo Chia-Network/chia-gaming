@@ -78,7 +78,8 @@ pub struct BareDebugGameDriver {
 
     // Live
     max_move_size: usize,
-    mover_share: VecDeque<Amount>,
+    mover_share: Amount,
+    next_mover_share: Amount,
     state: ProgramRef,
     last_validation_data: Option<(StateUpdateProgram, ProgramRef)>,
 
@@ -154,7 +155,8 @@ impl BareDebugGameDriver {
             next_handler: start_a.game_handler.clone(),
             timeout: timeout.clone(),
             max_move_size: start_a.initial_max_move_size,
-            mover_share: [start_a.initial_mover_share.clone()].into_iter().collect(),
+            next_mover_share: start_a.initial_mover_share.clone(),
+            mover_share: start_a.initial_mover_share.clone(),
             state: start_a.initial_state.clone(),
             validation_program_queue: [start_a.initial_validation_program.clone()]
                 .iter()
@@ -181,7 +183,8 @@ impl BareDebugGameDriver {
             next_handler: start_b.game_handler.clone(),
             timeout,
             max_move_size: start_b.initial_max_move_size,
-            mover_share: [start_b.initial_mover_share.clone()].into_iter().collect(),
+            next_mover_share: start_b.initial_mover_share.clone(),
+            mover_share: start_b.initial_mover_share.clone(),
             state: start_b.initial_state.clone(),
             validation_program_queue: [start_b.initial_validation_program.clone()]
                 .iter()
@@ -241,7 +244,7 @@ impl BareDebugGameDriver {
                 readable_new_move: ui_move,
                 entropy: self.rng[self.move_count].clone(),
                 amount: self.start.amount.clone(),
-                last_mover_share: self.mover_share[0].clone(),
+                last_mover_share: self.mover_share.clone(),
             },
         )?;
 
@@ -257,8 +260,7 @@ impl BareDebugGameDriver {
             .push_back(my_handler_result.outgoing_move_state_update_program.p());
         self.validation_program_queue
             .push_back(my_handler_result.incoming_move_state_update_program.p());
-        self.mover_share
-            .push_back(my_handler_result.mover_share.clone());
+        self.next_mover_share = my_handler_result.mover_share.clone();
 
         Ok(())
     }
@@ -296,8 +298,8 @@ impl BareDebugGameDriver {
         {
             self.handler = self.next_handler.clone();
             self.move_count += 1;
+            self.mover_share = self.next_mover_share.clone();
             self.max_move_size = new_max_move_size;
-            self.mover_share.pop_front();
             self.state = ProgramRef::new(new_state.clone());
             self.last_validation_data = Some((vprog.clone(), self.state.clone()));
         }
@@ -331,7 +333,7 @@ impl BareDebugGameDriver {
                     game_move: GameMoveDetails {
                         basic: GameMoveStateInfo {
                             move_made: move_to_check.to_vec(),
-                            mover_share: self.mover_share[0].clone(),
+                            mover_share: self.mover_share.clone(),
                             max_move_size: 0, // unused in v1
                         },
                         validation_info_hash: ValidationInfo::new_state_update(
@@ -387,7 +389,7 @@ impl BareDebugGameDriver {
             count: self.move_count,
             max_move_size: self.max_move_size,
             mod_hash: self.mod_hash.clone(),
-            mover_share: self.mover_share[0].clone(),
+            mover_share: self.mover_share.clone(),
             nonce: self.nonce,
             timeout: self.timeout.clone(),
             validation_program: validation_program,
@@ -449,10 +451,6 @@ impl BareDebugGameDriver {
             &move_to_check,
             evidence,
         )?;
-        assert!(matches!(
-            validator_response,
-            StateUpdateResult::MoveOk(_, _, 512)
-        ));
 
         let (state, tt_result) = match validator_response {
             StateUpdateResult::MoveOk(state, _, 512) => {
@@ -465,7 +463,7 @@ impl BareDebugGameDriver {
                             amount: self.start.amount.clone(),
                             state: state_node,
                             last_move: &move_to_check,
-                            last_mover_share: self.mover_share[0].clone(),
+                            last_mover_share: self.mover_share.clone(),
                             new_move: GameMoveDetails {
                                 basic: GameMoveStateInfo {
                                     move_made: move_to_check.clone(),
@@ -504,6 +502,8 @@ impl BareDebugGameDriver {
                 self.move_count += 1;
                 self.handler = new_handler.v1();
                 self.state = state.clone().into();
+                self.next_mover_share = tt_data.mover_share.clone();
+                self.mover_share = tt_data.mover_share.clone();
                 self.last_validation_data = Some((vprog.clone(), state.into()));
                 debug!("Accepted their turn");
             }
