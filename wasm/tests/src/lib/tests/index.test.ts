@@ -111,7 +111,10 @@ it('loads', async () => {
     let calpoker_hex = fs.readFileSync(rooted('clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex'),'utf8');
     let env = {
         game_types: {
-            "calpoker": calpoker_hex
+            "calpoker": {
+                version: 0,
+                hex: calpoker_hex
+            }
         },
         timeout: 99,
         unroll_timeout: 5
