@@ -11,8 +11,8 @@ use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
-    Spend, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, Program,
+    PuzzleHash, Spend, SpendBundle, Timeout,
 };
 use crate::games::poker_collection;
 use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
@@ -469,6 +469,7 @@ fn test_peer_smoke() {
             system_interface: &mut pipe_sender[1],
         };
 
+        let nil = Program::from_hex("80").unwrap();
         let game_ids = peers[1]
             .start_games(
                 &mut penv,
@@ -479,7 +480,7 @@ fn test_peer_smoke() {
                     game_type: GameType(b"calpoker".to_vec()),
                     timeout: Timeout::new(10),
                     my_turn: true,
-                    parameters: vec![0x80],
+                    parameters: nil.clone(),
                 },
             )
             .expect("should run");
@@ -494,7 +495,7 @@ fn test_peer_smoke() {
                     game_type: GameType(b"calpoker".to_vec()),
                     timeout: Timeout::new(10),
                     my_turn: false,
-                    parameters: vec![0x80],
+                    parameters: nil,
                 },
             )
             .expect("should run");

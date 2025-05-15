@@ -139,7 +139,7 @@ fn test_smoke_can_start_game() {
     let game_handler = GameHandler::TheirTurnHandler(game_handler.into());
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
         &mut env,
-        &[GameStartInfo {
+        &[Rc::new(GameStartInfo {
             game_id: GameID::new(vec![0]),
             game_handler,
             timeout: timeout.clone(),
@@ -151,7 +151,7 @@ fn test_smoke_can_start_game() {
             initial_max_move_size: 1,
             initial_mover_share: our_share.clone(),
             amount: our_share + their_share,
-        }],
+        })],
     );
 }
 

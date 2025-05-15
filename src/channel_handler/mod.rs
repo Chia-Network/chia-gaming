@@ -22,9 +22,10 @@ use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
     CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation,
-    CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo, HandshakeResult, LiveGame,
-    MoveResult, OnChainGameCoin, OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData,
-    PotatoSignatures, ReadableMove, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
+    CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo, GameStartInfoInterface,
+    HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, OnChainGameState,
+    PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
+    UnrollCoinConditionInputs, UnrollTarget,
 };
 
 use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
@@ -34,13 +35,13 @@ use crate::common::standard_coin::{
     standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    usize_from_atom, Aggsig, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
-    CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey, Program,
-    PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
+    usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID,
+    CoinSpend, CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey,
+    Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
 };
 use crate::potato_handler::types::GameAction;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction};
-use crate::referee::RefereeMaker;
+use crate::referee::{RefereeInterface, RefereeMaker};
 
 /// A channel handler runs the game by facilitating the phases of game startup
 /// and passing on move information as well as termination to other layers.
@@ -121,6 +122,74 @@ pub struct ChannelHandler {
 
     // Live games
     live_games: Vec<LiveGame>,
+}
+
+pub trait MakeRefereeFromGameStart {
+    fn make_referee(
+        &self,
+        allocator: &mut AllocEncoder,
+        referee_coin_puzzle: Puzzle,
+        referee_coin_puzzle_hash: PuzzleHash,
+        my_identity: ChiaIdentity,
+        their_puzzle_hash: &PuzzleHash,
+        nonce: usize,
+        agg_sig_me_additional_data: &Hash,
+        state_number: usize,
+    ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error>;
+}
+
+impl MakeRefereeFromGameStart for GameStartInfo {
+    fn make_referee(
+        &self,
+        allocator: &mut AllocEncoder,
+        referee_coin_puzzle: Puzzle,
+        referee_coin_puzzle_hash: PuzzleHash,
+        my_identity: ChiaIdentity,
+        their_puzzle_hash: &PuzzleHash,
+        nonce: usize,
+        agg_sig_me_additional_data: &Hash,
+        state_number: usize,
+    ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error> {
+        let (r, ph) = RefereeMaker::new(
+            allocator,
+            referee_coin_puzzle,
+            referee_coin_puzzle_hash,
+            self,
+            my_identity,
+            &their_puzzle_hash,
+            nonce,
+            agg_sig_me_additional_data,
+            state_number,
+        )?;
+        Ok((Rc::new(r), ph))
+    }
+}
+
+impl MakeRefereeFromGameStart for v1::game_start_info::GameStartInfo {
+    fn make_referee(
+        &self,
+        allocator: &mut AllocEncoder,
+        referee_coin_puzzle: Puzzle,
+        referee_coin_puzzle_hash: PuzzleHash,
+        my_identity: ChiaIdentity,
+        their_puzzle_hash: &PuzzleHash,
+        nonce: usize,
+        agg_sig_me_additional_data: &Hash,
+        state_number: usize,
+    ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error> {
+        let (r, ph) = crate::referee::v1::RefereeMaker::new(
+            allocator,
+            referee_coin_puzzle,
+            referee_coin_puzzle_hash,
+            self,
+            my_identity,
+            their_puzzle_hash,
+            nonce,
+            agg_sig_me_additional_data,
+            state_number,
+        )?;
+        Ok((Rc::new(r), ph))
+    }
 }
 
 impl ChannelHandler {
@@ -654,7 +723,7 @@ impl ChannelHandler {
     pub fn add_games<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        start_info_list: &[GameStartInfo],
+        start_info_list: &[Rc<dyn GameStartInfoInterface>],
     ) -> Result<Vec<LiveGame>, Error> {
         let mut res = Vec::new();
         for g in start_info_list.iter() {
@@ -666,11 +735,10 @@ impl ChannelHandler {
                 self.private_keys.my_referee_private_key.clone(),
             )?;
 
-            let (referee_maker, puzzle_hash) = RefereeMaker::new(
+            let (referee_maker, puzzle_hash) = g.make_referee(
                 env.allocator,
                 env.referee_coin_puzzle.clone(),
                 env.referee_coin_puzzle_hash.clone(),
-                g,
                 referee_identity,
                 &self.their_referee_puzzle_hash,
                 new_game_nonce,
@@ -678,24 +746,27 @@ impl ChannelHandler {
                 self.current_state_number,
             )?;
             res.push(LiveGame::new(
-                g.game_id.clone(),
+                g.game_id().clone(),
                 puzzle_hash,
-                Rc::new(referee_maker),
-                g.my_contribution_this_game.clone(),
-                g.their_contribution_this_game.clone(),
+                referee_maker,
+                g.my_contribution_this_game().clone(),
+                g.their_contribution_this_game().clone(),
             ));
         }
 
         Ok(res)
     }
 
-    fn start_game_contributions(&mut self, start_info_list: &[GameStartInfo]) -> (Amount, Amount) {
+    fn start_game_contributions(
+        &mut self,
+        start_info_list: &[Rc<dyn GameStartInfoInterface>],
+    ) -> (Amount, Amount) {
         let mut my_full_contribution = Amount::default();
         let mut their_full_contribution = Amount::default();
 
         for start in start_info_list.iter() {
-            my_full_contribution += start.my_contribution_this_game.clone();
-            their_full_contribution += start.their_contribution_this_game.clone();
+            my_full_contribution += start.my_contribution_this_game().clone();
+            their_full_contribution += start.their_contribution_this_game().clone();
         }
 
         (my_full_contribution, their_full_contribution)
@@ -704,7 +775,7 @@ impl ChannelHandler {
     pub fn send_potato_start_game<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
-        start_info_list: &[GameStartInfo],
+        start_info_list: &[Rc<dyn GameStartInfoInterface>],
     ) -> Result<PotatoSignatures, Error> {
         debug!("{} SEND POTATO START GAME", self.is_initial_potato());
         let (my_full_contribution, their_full_contribution) =
@@ -716,7 +787,10 @@ impl ChannelHandler {
 
         // We let them spend a state number 1 higher but nothing else changes.
         self.update_cache_for_potato_send(Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
-            start_info_list.iter().map(|g| g.game_id.clone()).collect(),
+            start_info_list
+                .iter()
+                .map(|g| g.game_id().clone())
+                .collect(),
             my_full_contribution.clone(),
             their_full_contribution.clone(),
         )));
@@ -741,7 +815,7 @@ impl ChannelHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         signatures: &PotatoSignatures,
-        start_info_list: &[GameStartInfo],
+        start_info_list: &[Rc<dyn GameStartInfoInterface>],
     ) -> Result<ChannelCoinSpendInfo, Error> {
         debug!(
             "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",

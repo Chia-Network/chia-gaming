@@ -215,7 +215,7 @@
    )
   )
 
-(defun factory ((CURRY_PACK) i_am_initiator my_contribution their_contribution params)
+(defun factory (i_am_initiator my_contribution their_contribution (CURRY_PACK))
   (assign
    amount (+ my_contribution their_contribution)
 
@@ -299,7 +299,7 @@
       (= MODE "theirturn")
       (theirturn (print "their turn curry args" curry-args) &rest (print "passing on args to their turn" args))
       (= MODE "factory")
-      (factory curry-args &rest args)
+      (factory &rest args)
       (x "no such personality" MODE)
       )
   )

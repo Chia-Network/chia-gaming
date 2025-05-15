@@ -4,7 +4,6 @@ use std::mem::swap;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::serde::node_from_bytes;
 use clvmr::{run_program, Allocator, NodePtr};
 
 use log::debug;
@@ -12,7 +11,7 @@ use rand::Rng;
 
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
-    PotatoSignatures, ReadableMove,
+    GameStartInfoInterface, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
@@ -34,7 +33,7 @@ use crate::potato_handler::types::{
     GameFactory, GameStart, GameStartQueueEntry, GameType, HandshakeA, HandshakeB, HandshakeState,
     HandshakeStepInfo, HandshakeStepWithSpend, MyGameStartQueueEntry, PacketSender, PeerEnv,
     PeerMessage, PotatoHandlerImpl, PotatoHandlerInit, PotatoState, SpendWalletReceiver, ToLocalUI,
-    WalletSpendInterface,
+    WalletSpendInterface, GSI,
 };
 
 pub mod on_chain;
@@ -577,7 +576,7 @@ impl PotatoHandler {
                 let ch = self.channel_handler_mut()?;
                 let (env, _) = penv.env();
                 for game in desc.their_games.iter() {
-                    dehydrated_games.push(game.clone());
+                    dehydrated_games.push(GSI(game.clone()));
                 }
                 for game in desc.my_games.iter() {
                     debug!("using game {:?}", game);
@@ -742,7 +741,13 @@ impl PotatoHandler {
         game_start: &GameStart,
         starter_clvm: NodePtr,
         params_clvm: NodePtr,
-    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
+    ) -> Result<
+        (
+            Vec<Rc<dyn GameStartInfoInterface>>,
+            Vec<Rc<dyn GameStartInfoInterface>>,
+        ),
+        Error,
+    >
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
@@ -816,16 +821,16 @@ impl PotatoHandler {
 
         let convert_info_list = |allocator: &mut AllocEncoder,
                                  my_info_list: &[NodePtr]|
-         -> Result<Vec<GameStartInfo>, Error> {
-            let mut result_start_info = Vec::new();
+         -> Result<Vec<Rc<dyn GameStartInfoInterface>>, Error> {
+            let mut result_start_info: Vec<Rc<dyn GameStartInfoInterface>> = Vec::new();
             for (i, node) in my_info_list.iter().enumerate() {
                 let new_game = GameStartInfo::from_clvm(allocator, *node)?;
                 // Timeout and game_id are supplied here.
-                result_start_info.push(GameStartInfo {
+                result_start_info.push(Rc::new(GameStartInfo {
                     game_id: game_ids[i].clone(),
                     timeout: game_start.timeout.clone(),
                     ..new_game
-                });
+                }));
             }
             Ok(result_start_info)
         };
@@ -843,33 +848,69 @@ impl PotatoHandler {
         game_start: &GameStart,
         program: Rc<Program>,
         params: Rc<Program>,
-    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
+    ) -> Result<
+        (
+            Vec<Rc<dyn GameStartInfoInterface>>,
+            Vec<Rc<dyn GameStartInfoInterface>>,
+        ),
+        Error,
+    >
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         let (env, _) = penv.env();
+        let their_contribution = game_start.amount.clone() - game_start.my_contribution.clone();
         let program_run_args = (
-            i_initiated,
-            (
-                game_start.my_contribution.clone(),
-                (
-                    game_start.amount.clone() - game_start.my_contribution.clone(),
-                    (params.clone(), ()),
-                ),
-            ),
+            game_start.my_contribution.clone(),
+            (their_contribution.clone(), (params.clone(), ())),
         )
             .to_clvm(env.allocator)
             .into_gen()?;
         let game_id = self.next_game_id()?;
         let params_prog = Rc::new(Program::from_nodeptr(env.allocator, program_run_args)?);
-        let _game = v1::game::Game::new_program(
+        let alice_game = v1::game::Game::new_program(
             env.allocator,
             i_initiated,
+            &game_id,
+            program.clone().into(),
+            params_prog.clone(),
+        )?;
+        let alice_result: Vec<Rc<dyn GameStartInfoInterface>> = alice_game
+            .starts
+            .iter()
+            .map(|g| {
+                let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
+                    &game_id,
+                    &game_start.amount,
+                    &game_start.timeout,
+                    &game_start.my_contribution,
+                    &their_contribution,
+                ));
+                rc
+            })
+            .collect();
+        let bob_game = v1::game::Game::new_program(
+            env.allocator,
+            !i_initiated,
             &game_id,
             program.into(),
             params_prog,
         )?;
-        todo!();
+        let bob_result: Vec<Rc<dyn GameStartInfoInterface>> = bob_game
+            .starts
+            .iter()
+            .map(|g| {
+                let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
+                    &game_id,
+                    &game_start.amount,
+                    &game_start.timeout,
+                    &their_contribution,
+                    &game_start.my_contribution,
+                ));
+                rc
+            })
+            .collect();
+        Ok((alice_result, bob_result))
     }
 
     fn get_games_by_start_type<'a, G, R: Rng + 'a>(
@@ -877,7 +918,13 @@ impl PotatoHandler {
         penv: &mut dyn PeerEnv<'a, G, R>,
         i_initiated: bool,
         game_start: &GameStart,
-    ) -> Result<(Vec<GameStartInfo>, Vec<GameStartInfo>), Error>
+    ) -> Result<
+        (
+            Vec<Rc<dyn GameStartInfoInterface>>,
+            Vec<Rc<dyn GameStartInfoInterface>>,
+        ),
+        Error,
+    >
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
@@ -894,15 +941,13 @@ impl PotatoHandler {
             let (starter_clvm, params_clvm) = {
                 let (env, _) = penv.env();
                 let starter_clvm = starter.program.to_clvm(env.allocator).into_gen()?;
-                let params_clvm =
-                    node_from_bytes(env.allocator.allocator(), &game_start.parameters)
-                        .into_gen()?;
+                let params_clvm = game_start.parameters.to_clvm(env.allocator).into_gen()?;
                 (starter_clvm, params_clvm)
             };
 
             self.start_version_0(penv, i_initiated, game_start, starter_clvm, params_clvm)
         } else {
-            let params = Rc::new(Program::from_bytes(&game_start.parameters));
+            let params = Rc::new(game_start.parameters.clone());
             self.start_version_1(
                 penv,
                 i_initiated,
@@ -934,7 +979,7 @@ impl PotatoHandler {
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         sigs: &PotatoSignatures,
-        games: &[GameStartInfo],
+        games: &[GSI],
     ) -> Result<(), Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
@@ -951,7 +996,7 @@ impl PotatoHandler {
             let mut rehydrated_games = Vec::new();
             for game in games.iter() {
                 debug!("their game {:?}", game);
-                rehydrated_games.push(game.clone());
+                rehydrated_games.push(game.0.clone());
             }
             ch.received_potato_start_game(env, sigs, &rehydrated_games)?
         };
@@ -1795,7 +1840,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
         let (my_games, their_games) = self.get_games_by_start_type(penv, i_initiated, game)?;
 
-        let game_id_list = my_games.iter().map(|g| g.game_id.clone()).collect();
+        let game_id_list = my_games.iter().map(|g| g.game_id().clone()).collect();
 
         // This comes to both peers before any game start happens.
         // In the didn't initiate scenario, we hang onto the game start to ensure that

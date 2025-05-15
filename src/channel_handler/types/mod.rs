@@ -32,7 +32,9 @@ pub use coin_spent::{
     CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult,
 };
 pub use evidence::Evidence;
-pub use game_start_info::GameStartInfo;
+pub use game_start_info::{
+    GameStartInfo, GameStartInfoInterface, GameStartInfoInterfaceND, ValidationOrUpdateProgram,
+};
 pub use live_game::LiveGame;
 pub use on_chain_game_coin::OnChainGameCoin;
 pub use on_chain_game_state::OnChainGameState;

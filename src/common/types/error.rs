@@ -19,6 +19,18 @@ pub enum Error {
     GameMoveRejected(Vec<u8>),
 }
 
+impl std::error::Error for Error {
+    fn description(&self) -> &str {
+        "error derived from common::Error"
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(fmt, "{:?}", self)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct SerializedError {
     error: String,

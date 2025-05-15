@@ -30,11 +30,29 @@ use crate::referee::v1::types::{
 use crate::utils::pair_of_array_mut;
 
 pub struct DebugGameCurry {
-    count: usize,
-    self_hash: PuzzleHash,
-    self_prog: Rc<Program>,
-    mover0: PuzzleHash,
-    waiter0: PuzzleHash,
+    pub count: usize,
+    pub self_hash: PuzzleHash,
+    pub self_prog: Rc<Program>,
+    pub mover0: PuzzleHash,
+    pub waiter0: PuzzleHash,
+}
+
+impl DebugGameCurry {
+    pub fn new(
+        allocator: &mut AllocEncoder,
+        mover_ph: &PuzzleHash,
+        waiter_ph: &PuzzleHash,
+    ) -> Result<DebugGameCurry, Error> {
+        let raw_program = read_hex_puzzle(allocator, "clsp/test/debug_game.hex")?;
+        let prog_hash = raw_program.sha256tree(allocator);
+        Ok(DebugGameCurry {
+            count: 0,
+            self_prog: raw_program.to_program(),
+            self_hash: prog_hash,
+            mover0: mover_ph.clone(),
+            waiter0: waiter_ph.clone(),
+        })
+    }
 }
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for DebugGameCurry
@@ -69,8 +87,8 @@ pub struct DebugGameMoveInfo {
 pub struct BareDebugGameDriver {
     game: Game,
 
-    alice_identity: ChiaIdentity,
-    bob_identity: ChiaIdentity,
+    pub alice_identity: ChiaIdentity,
+    pub bob_identity: ChiaIdentity,
 
     i_am_alice: bool,
 
@@ -115,26 +133,22 @@ impl BareDebugGameDriver {
         referee_coin_puzzle_hash: &PuzzleHash,
         timeout: Timeout,
         rng_sequence: &[Hash],
-        game_hex_file: &str,
     ) -> Result<[BareDebugGameDriver; 2], Error> {
-        let raw_program = read_hex_puzzle(allocator, game_hex_file)?;
-        let prog_hash = raw_program.sha256tree(allocator);
-        let args = DebugGameCurry {
-            count: 0,
-            self_prog: raw_program.to_program(),
-            self_hash: prog_hash,
-            mover0: identities[0].puzzle_hash.clone(),
-            waiter0: identities[1].puzzle_hash.clone(),
-        };
+        let args = DebugGameCurry::new(
+            allocator,
+            &identities[0].puzzle_hash,
+            &identities[1].puzzle_hash,
+        )?;
+
         let curried = CurriedProgram {
-            program: raw_program.to_clvm(allocator).into_gen()?,
-            args: clvm_curried_args!("factory", args),
+            program: args.self_prog.to_clvm(allocator).into_gen()?,
+            args: clvm_curried_args!("factory", ()),
         }
         .to_clvm(allocator)
         .into_gen()?;
         let curried_prog = Program::from_nodeptr(allocator, curried)?;
-        let args = (100, (100, ((), ()))).to_clvm(allocator).into_gen()?;
-        let args_clvm = Rc::new(Program::from_nodeptr(allocator, args)?);
+        let args_node = (100, (100, (args, ()))).to_clvm(allocator).into_gen()?;
+        let args_clvm = Rc::new(Program::from_nodeptr(allocator, args_node)?);
         let alice_game = Game::new_program(
             allocator,
             true,
@@ -571,7 +585,6 @@ pub fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDr
         &ref_coin_hash,
         Timeout::new(10),
         &rng_seq0,
-        "clsp/test/debug_game.hex",
     )
 }
 
