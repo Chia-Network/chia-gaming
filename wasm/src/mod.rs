@@ -16,14 +16,17 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use chia_gaming::channel_handler::types::ReadableMove;
-use chia_gaming::common::types;
-use chia_gaming::common::types::{AllocEncoder, Amount, CoinSpend, CoinString, Hash, IntoErr, GameID, PrivateKey, Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout};
 use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
+use chia_gaming::common::types;
+use chia_gaming::common::types::{
+    AllocEncoder, Amount, CoinSpend, CoinString, GameID, Hash, IntoErr, PrivateKey, Program,
+    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+};
 use chia_gaming::log::init as wasm_init;
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
-use chia_gaming::potato_handler::types::{GameStart, GameFactory, GameType, ToLocalUI};
+use chia_gaming::potato_handler::types::{GameFactory, GameStart, GameType, ToLocalUI};
 use chia_gaming::shutdown::BasicShutdownConditions;
 
 use crate::map_m::map_m;
@@ -164,14 +167,17 @@ struct JsGameCradleConfig {
 
 fn convert_game_factory(
     name: &str,
-    js_factory: &JsGameFactory
+    js_factory: &JsGameFactory,
 ) -> Result<(GameType, GameFactory), JsValue> {
     let name_data = GameType(name.bytes().collect());
     let byte_data = hex::decode(&js_factory.hex).into_js()?;
-    Ok((name_data, GameFactory {
-        version: js_factory.version as usize,
-        program: Program::from_bytes(&byte_data).into()
-    }))
+    Ok((
+        name_data,
+        GameFactory {
+            version: js_factory.version as usize,
+            program: Program::from_bytes(&byte_data).into(),
+        },
+    ))
 }
 
 fn convert_game_types(
