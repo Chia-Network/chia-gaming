@@ -579,7 +579,7 @@ pub fn make_debug_games(
     BareDebugGameDriver::new(
         allocator,
         gid,
-        1,
+        0,
         identities,
         &ref_coin_hash,
         Timeout::new(10),
