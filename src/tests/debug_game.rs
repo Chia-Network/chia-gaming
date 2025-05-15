@@ -58,8 +58,10 @@ where
 
 pub struct DebugGameMoveInfo {
     #[allow(dead_code)]
+    pub ui_move: ReadableMove,
+    #[allow(dead_code)]
     pub move_data: Vec<u8>,
-    pub success: bool,
+    pub slash: Option<Rc<Program>>,
 }
 
 /// A driver for the bare debug game, wrapped in a referee coin.
@@ -436,7 +438,7 @@ impl BareDebugGameDriver {
         &mut self,
         allocator: &mut AllocEncoder,
         inputs: &ExhaustiveMoveInputs,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<Rc<Program>>, Error> {
         // Run validator for their turn.
         let vprog = self.validation_program_queue.pop_front().unwrap();
         let move_to_check = inputs.to_linear_move(allocator, true)?;
@@ -476,8 +478,8 @@ impl BareDebugGameDriver {
                     )?,
                 )
             }
-            StateUpdateResult::Slash(_) => {
-                return Ok(false);
+            StateUpdateResult::Slash(evidence) => {
+                return Ok(Some(evidence));
             }
             _ => todo!(),
         };
@@ -495,8 +497,8 @@ impl BareDebugGameDriver {
                     )?;
                     if let StateUpdateResult::Slash(evidence1) = validator_response {
                         debug!("SLASH DETECTED: EVIDENCE {evidence:?} {evidence1:?}");
-                        self.slash_detected = Some(Evidence::new(evidence1.clone()));
-                        return Ok(false);
+                        self.slash_detected = Some(evidence.clone());
+                        return Ok(Some(evidence.to_program()));
                     }
                 }
                 self.move_count += 1;
@@ -509,7 +511,7 @@ impl BareDebugGameDriver {
             }
             _ => todo!(),
         }
-        Ok(true)
+        Ok(None)
     }
 
     /// Do a full 'my turn' and 'their turn' cycle for a single move.
@@ -541,7 +543,8 @@ impl BareDebugGameDriver {
         debug!("accept move");
         let move_success_0 = peer.accept_move(allocator, &predicted_move).expect("good");
         Ok(DebugGameMoveInfo {
-            success: move_success_0,
+            ui_move: predicted_move.get_ui_move(allocator)?,
+            slash: move_success_0,
             move_data,
         })
     }

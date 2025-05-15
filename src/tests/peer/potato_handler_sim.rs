@@ -1348,17 +1348,17 @@ fn test_referee_play_debug_game() {
     let a1 = alice
         .do_move(&mut allocator, bob, Amount::default(), 0)
         .expect("ok");
-    assert!(a1.success);
+    assert!(a1.slash.is_none());
     let b1 = bob
         .do_move(&mut allocator, alice, Amount::default(), 0)
         .expect("ok");
-    assert!(b1.success);
+    assert!(b1.slash.is_none());
     let a2 = alice
         .do_move(&mut allocator, bob, Amount::new(50), 0)
         .expect("ok");
-    assert!(a2.success);
+    assert!(a2.slash.is_none());
     let b2 = bob
         .do_move(&mut allocator, alice, Amount::new(150), 3)
         .expect("ok");
-    assert!(!b2.success);
+    assert_eq!(b2.slash, Some(Rc::new(Program::from_hex("03").expect("ok"))));
 }
