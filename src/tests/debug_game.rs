@@ -61,6 +61,7 @@ pub struct DebugGameMoveInfo {
     pub ui_move: ReadableMove,
     #[allow(dead_code)]
     pub move_data: Vec<u8>,
+    #[allow(dead_code)]
     pub slash: Option<Rc<Program>>,
 }
 

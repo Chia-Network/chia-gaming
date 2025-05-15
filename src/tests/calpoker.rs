@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 #[cfg(feature = "sim-tests")]
 use log::debug;
 #[cfg(feature = "sim-tests")]
@@ -18,6 +20,7 @@ use crate::common::types::Amount;
 use crate::common::types::{AllocEncoder, Program, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
+use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::make_cards;
 #[cfg(feature = "sim-tests")]
@@ -95,8 +98,18 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
     let win_move_200 = 200.to_clvm(allocator).expect("should work");
 
     let mut readable_moves = Vec::new();
-    for move_node in [&alice_word_hash, &bob_word, &alice_picks, &bob_picks, &win_move_200].into_iter() {
-        readable_moves.push(ReadableMove::from_program(Rc::new(Program::from_nodeptr(allocator, *move_node).expect("good"))));
+    for move_node in [
+        &alice_word_hash,
+        &bob_word,
+        &alice_picks,
+        &bob_picks,
+        &win_move_200,
+    ]
+    .into_iter()
+    {
+        readable_moves.push(ReadableMove::from_program(Rc::new(
+            Program::from_nodeptr(allocator, *move_node).expect("good"),
+        )));
     }
 
     [

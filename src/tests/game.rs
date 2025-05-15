@@ -8,8 +8,6 @@ use crate::shutdown::ShutdownConditions;
 #[cfg(feature = "sim-tests")]
 use std::rc::Rc;
 
-#[cfg(test)]
-use clvmr::NodePtr;
 use lazy_static::lazy_static;
 
 #[cfg(feature = "sim-tests")]
@@ -28,6 +26,7 @@ use crate::channel_handler::game::Game;
 use crate::channel_handler::runner::ChannelHandlerGame;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
