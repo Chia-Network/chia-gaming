@@ -526,8 +526,7 @@ fn test_peer_smoke() {
         {
             let entropy = rng.gen();
             let mut env = channel_handler_env(&mut allocator, &mut rng).expect("should work");
-            let move_readable =
-                ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
+            let move_readable = what.clone();
             let mut penv = TestPeerEnv {
                 env: &mut env,
                 system_interface: &mut pipe_sender[who ^ 1],

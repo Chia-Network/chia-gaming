@@ -624,8 +624,7 @@ fn run_calpoker_test_with_action_list(allocator: &mut AllocEncoder, moves: &[Gam
         {
             let entropy = rng.gen();
             let mut env = channel_handler_env(allocator, &mut rng).expect("should work");
-            let move_readable =
-                ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
+            let move_readable = what.clone();
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
             handlers[who ^ 1]
                 .make_move(&mut penv, &game_ids[0], &move_readable, entropy)
@@ -724,8 +723,9 @@ fn reports_blocked(i: usize, blocked: &Option<(usize, usize)>) -> bool {
     false
 }
 
-fn run_calpoker_container_with_action_list_with_success_predicate(
+fn run_game_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
+    game_type: &[u8],
     moves_input: &[GameAction],
     pred: GameRunEarlySuccessPredicate,
 ) -> Result<GameRunOutcome, Error> {
@@ -1011,7 +1011,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                         debug!("{who} make move: is my move? {is_my_move:?}");
                         if matches!(is_my_move, Some(true)) {
                             debug!("make move");
-                            let readable_program = Program::from_nodeptr(allocator, *readable)?;
+                            let readable_program = readable.to_program();
                             let encoded_readable_move = readable_program.bytes();
                             let entropy = rng.gen();
                             cradles[*who].make_move(
@@ -1035,7 +1035,7 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
                         // This is a fake move.  We give that move to the given target channel
                         // handler as a their move.
                         debug!("make move");
-                        let readable_program = Program::from_nodeptr(allocator, *readable)?;
+                        let readable_program = readable.to_program();
                         let encoded_readable_move = readable_program.bytes();
                         let entropy = rng.gen();
                         // Do like we're sending a real message.
@@ -1089,11 +1089,17 @@ fn run_calpoker_container_with_action_list_with_success_predicate(
     })
 }
 
-fn run_calpoker_container_with_action_list(
+fn run_game_container_with_action_list(
     allocator: &mut AllocEncoder,
+    game_type: &[u8],
     moves: &[GameAction],
 ) -> Result<GameRunOutcome, Error> {
-    run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, None)
+    run_game_container_with_action_list_with_success_predicate(
+        allocator,
+        game_type,
+        moves,
+        None
+    )
 }
 
 #[test]
@@ -1106,8 +1112,9 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     } else {
         panic!("no move 1 to replace");
     }
-    run_calpoker_container_with_action_list_with_success_predicate(
+    run_game_container_with_action_list_with_success_predicate(
         &mut allocator,
+        b"calpoker",
         &moves,
         Some(&|cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
     )
@@ -1196,7 +1203,11 @@ fn sim_test_with_peer_container_off_chain_complete() {
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
     let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        run_game_container_with_action_list(
+            &mut allocator,
+            b"calpoker",
+            &moves
+        ).expect("should finish");
 
     let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
     let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -1228,7 +1239,11 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
         panic!("no move 1 to replace");
     }
     let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        run_game_container_with_action_list(
+            &mut allocator,
+            b"calpoker",
+            &moves
+        ).expect("should finish");
 
     debug!("outcome 0 {:?}", outcome.local_uis[0].opponent_moves);
     debug!("outcome 1 {:?}", outcome.local_uis[1].opponent_moves);
@@ -1260,7 +1275,11 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
     ];
 
     let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        run_game_container_with_action_list(
+            &mut allocator,
+            b"calpoker",
+            &moves
+        ).expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     assert_eq!(p2_balance, p1_balance + 200);
@@ -1277,7 +1296,11 @@ fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
     let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        run_game_container_with_action_list(
+            &mut allocator,
+            b"calpoker",
+            &moves
+        ).expect("should finish");
 
     let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
     let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -1308,7 +1331,11 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
     let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        run_game_container_with_action_list(
+            &mut allocator,
+            b"calpoker",
+            &moves
+        ).expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     assert_eq!(p1_balance, p2_balance + 200);
@@ -1323,7 +1350,7 @@ fn sim_test_with_peer_container_piss_off_peer_slash() {
     let move_3_node = [1, 0, 1, 0, 1, 0, 1, 1]
         .to_clvm(&mut allocator)
         .expect("should work");
-    let changed_move = GameAction::Move(1, move_3_node, true);
+    let changed_move = GameAction::Move(1, ReadableMove::from_program(Rc::new(Program::from_nodeptr(&mut allocator, move_3_node).expect("good"))), true);
     moves.truncate(3);
     moves.push(changed_move.clone());
     moves.push(changed_move);
@@ -1332,7 +1359,11 @@ fn sim_test_with_peer_container_piss_off_peer_slash() {
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
     let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+        run_game_container_with_action_list(
+            &mut allocator,
+            b"calpoker",
+            &moves
+        ).expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // p1 (index 0) won the money because p2 (index 1) cheated by choosing 5 cards.
@@ -1361,4 +1392,21 @@ fn test_referee_play_debug_game() {
         .do_move(&mut allocator, alice, Amount::new(150), 3)
         .expect("ok");
     assert_eq!(b2.slash, Some(Rc::new(Program::from_hex("03").expect("ok"))));
+
+    let mut moves: Vec<GameAction> = [
+        GameAction::Move(0, a1.ui_move.clone(), true),
+        GameAction::Move(1, b1.ui_move.clone(), true),
+        GameAction::Move(0, a2.ui_move.clone(), true),
+        GameAction::Move(1, b2.ui_move.clone(), true),
+        GameAction::WaitBlocks(20, 1),
+        GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)),
+        GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
+    ].into_iter().collect();
+
+    let _outcome =
+        run_game_container_with_action_list(
+            &mut allocator,
+            b"debug",
+            &moves
+        ).expect("should finish");
 }

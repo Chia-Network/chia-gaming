@@ -46,10 +46,10 @@ pub enum GameAction {
     Timeout(usize),
     /// Move (player, clvm readable move, was received)
     #[allow(dead_code)]
-    Move(usize, NodePtr, bool),
+    Move(usize, ReadableMove, bool),
     /// Fake move, just calls receive on the indicated side.
     #[cfg(feature = "sim-tests")]
-    FakeMove(usize, NodePtr, Vec<u8>),
+    FakeMove(usize, ReadableMove, Vec<u8>),
     /// Go on chain
     #[cfg(feature = "sim-tests")]
     GoOnChain(usize),
@@ -87,7 +87,7 @@ impl GameAction {
     #[cfg(feature = "sim-tests")]
     pub fn lose(&self) -> GameAction {
         if let GameAction::Move(p, m, _r) = self {
-            return GameAction::Move(*p, *m, false);
+            return GameAction::Move(*p, m.clone(), false);
         }
 
         self.clone()
