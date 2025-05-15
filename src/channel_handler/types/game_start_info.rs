@@ -22,7 +22,7 @@ pub enum ValidationOrUpdateProgram {
 
 pub trait GameStartInfoInterfaceND {
     fn version(&self) -> usize;
-    fn serialize(&self) -> Result<Vec<u8>, bson::ser::Error>;
+    fn serialize(&self) -> Result<bson::Bson, bson::ser::Error>;
 
     fn amount(&self) -> &Amount;
     fn game_handler(&self) -> GameHandler;
@@ -72,9 +72,8 @@ impl GameStartInfoInterfaceND for GameStartInfo {
     fn version(&self) -> usize {
         0
     }
-    fn serialize(&self) -> Result<Vec<u8>, bson::ser::Error> {
-        let b = bson::to_bson(self)?;
-        bson::to_vec(&b)
+    fn serialize(&self) -> Result<bson::Bson, bson::ser::Error> {
+        bson::to_bson(self)
     }
 
     fn amount(&self) -> &Amount {

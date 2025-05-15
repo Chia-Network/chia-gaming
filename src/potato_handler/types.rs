@@ -335,8 +335,8 @@ impl Serialize for GSI {
     where
         S: serde::Serializer,
     {
-        let bytes = self.0.serialize().unwrap(); // deal with returning error
-        serializer.serialize_bytes(&bytes)
+        let doc = self.0.serialize().unwrap(); // deal with returning error
+        doc.serialize(serializer)
     }
 }
 
@@ -345,13 +345,11 @@ impl<'de> Deserialize<'de> for GSI {
     where
         D: Deserializer<'de>,
     {
-        let bson_data: Vec<u8> = Vec::<u8>::deserialize(deserializer)?;
-        let doc = bson::Document::from_reader(&mut bson_data.as_slice()).unwrap(); // deal with error
-        let bsondoc = bson::Bson::Document(doc);
-        if let Ok(gsi) = bson::from_bson::<GameStartInfo>(bsondoc.clone()) {
+        let bson_data: bson::Bson = bson::Bson::deserialize(deserializer)?;
+        if let Ok(gsi) = bson::from_bson::<GameStartInfo>(bson_data.clone()) {
             return Ok(GSI(Rc::new(gsi)));
         }
-        let gsi: v1::game_start_info::GameStartInfo = bson::from_bson(bsondoc).unwrap(); // deal with error
+        let gsi: v1::game_start_info::GameStartInfo = bson::from_bson(bson_data).unwrap(); // deal with error
         Ok(GSI(Rc::new(gsi)))
     }
 }
