@@ -19,11 +19,11 @@ use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::types;
 use chia_gaming::common::types::{AllocEncoder, Amount, CoinSpend, CoinString, Hash, IntoErr, GameID, PrivateKey, Program, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout};
 use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
-use chia_gaming::log::wasm_init;
+use chia_gaming::log::init as wasm_init;
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
-use chia_gaming::potato_handler::types::{GameStart, GameType, ToLocalUI};
+use chia_gaming::potato_handler::types::{GameStart, GameFactory, GameType, ToLocalUI};
 use chia_gaming::shutdown::BasicShutdownConditions;
 
 use crate::map_m::map_m;
@@ -140,9 +140,15 @@ struct JsRndConfig {
 }
 
 #[derive(Serialize, Deserialize, Default)]
+struct JsGameFactory {
+    version: i32,
+    hex: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
 struct JsGameCradleConfig {
     // name vs hex string for program
-    game_types: BTreeMap<String, String>,
+    game_types: BTreeMap<String, JsGameFactory>,
     // hex string for private key
     identity: Option<String>,
     have_potato: bool,
@@ -156,14 +162,25 @@ struct JsGameCradleConfig {
     reward_puzzle_hash: String,
 }
 
+fn convert_game_factory(
+    name: &str,
+    js_factory: &JsGameFactory
+) -> Result<(GameType, GameFactory), JsValue> {
+    let name_data = GameType(name.bytes().collect());
+    let byte_data = hex::decode(&js_factory.hex).into_js()?;
+    Ok((name_data, GameFactory {
+        version: js_factory.version as usize,
+        program: Program::from_bytes(&byte_data).into()
+    }))
+}
+
 fn convert_game_types(
-    collection: &BTreeMap<String, String>,
-) -> Result<BTreeMap<GameType, Rc<Program>>, JsValue> {
+    collection: &BTreeMap<String, JsGameFactory>,
+) -> Result<BTreeMap<GameType, GameFactory>, JsValue> {
     let mut result = BTreeMap::new();
-    for (name, hex) in collection.iter() {
-        let name_data = GameType(name.bytes().collect());
-        let byte_data = hex::decode(&hex).into_js()?;
-        result.insert(name_data, Rc::new(Program::from_bytes(&byte_data)));
+    for (name, gf) in collection.iter() {
+        let (name_data, game_factory) = convert_game_factory(name, gf)?;
+        result.insert(name_data, game_factory);
     }
     Ok(result)
 }
