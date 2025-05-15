@@ -11,18 +11,18 @@
 ; See RefereePuzzleArgs::to_clvm
 (defmac STATE_PACK ()
   (q @ state-pack
-     (MOVER_PUZZLE_HASH
-      WAITER_PUZZLE_HASH
-      TIMEOUT
-      AMOUNT
-      MOD_HASH
-      NONCE
-      MOVE
-      MAX_MOVE_SIZE
-      INFOHASH_B
-      MOVER_SHARE
-      INFOHASH_A
-      )
+       (MOVER_PUZZLE_HASH
+        WAITER_PUZZLE_HASH
+        TIMEOUT
+        AMOUNT
+        MOD_HASH
+        NONCE
+        MOVE
+        MAX_MOVE_SIZE
+        INFOHASH_B
+        MOVER_SHARE
+        INFOHASH_A
+        )
      )
   )
 
@@ -143,6 +143,7 @@
       ;; local move is a list of a prefix count slash byte and mover share
       (assign
        (prefix count mover-share slash) local_move
+       incr-curry-args (curry-args-incr curry-args)
        (if (not (= count COUNT))
            (x "count not equal for this move" count COUNT)
            (list
@@ -151,11 +152,11 @@
             (concat prefix (byteify mover-share) slash)
             (curry SELF_PROG "validator" curry-args)
             (validator-hash curry-args)
-            (curry SELF_PROG "validator" (curry-args-incr curry-args))
-            (validator-hash (curry-args-incr curry-args))
+            (curry SELF_PROG "validator" incr-curry-args)
+            (validator-hash incr-curry-args)
             512
             mover-share
-            (curry SELF_PROG "theirturn" (curry-args-incr curry-args))
+            (curry SELF_PROG "theirturn" incr-curry-args)
             )
            )
        )
@@ -183,17 +184,17 @@
      )
   (assign
    move-len (strlen move)
-   
+
    (if (> 1 move-len)
        (list SLASH ())
        ;; Skipping the last byte and the mover share, there should be a count.
        ;; It's fairly simple to read over a positive number.
        (assign
         slash-byte (substr move (- move-len 1) move-len)
-        (mover-share count-pos) (read-over-integer move "" (- move-len 1))
-        (move-count _) (read-over-integer move "" (- count-pos 1))
+        (mover-share count-pos) (print "mover share backup" (read-over-integer move "" (- move-len 2)))
+        (move-count _) (print "move-count backup" (read-over-integer move "" (- count-pos 1)))
         (if (not (= (+ 0 move-count) COUNT))
-            (x "their turn: mismatched count" move-count COUNT)
+            (x "their turn: mismatched count" (+ 0 move-count) COUNT)
             (not (= (validator-hash curry-args) validation_program_hash))
             (x "their turn: mismatched validator program")
             (not (= split (+ 0 mover-share)))
