@@ -15,12 +15,12 @@ use clvm_traits::{ClvmEncoder, ToClvm};
 use crate::channel_handler::game::Game;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
+use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Amount;
 use crate::common::types::{AllocEncoder, Program, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
-use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::games::calpoker::make_cards;
 #[cfg(feature = "sim-tests")]
