@@ -696,6 +696,10 @@ impl MyTurnReferee {
             )],
         )?;
         debug!("run validator with move: {serialized_move:?}");
+        debug!(
+            "outgoing state update program {:?}",
+            outgoing_state_update_program.to_program()
+        );
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let v = ValidationInfo::new_state_update(

@@ -29,6 +29,7 @@ use crate::referee::v1::types::{
 };
 use crate::utils::pair_of_array_mut;
 
+#[derive(Debug)]
 pub struct DebugGameCurry {
     pub count: usize,
     pub self_hash: PuzzleHash,
@@ -139,6 +140,7 @@ impl BareDebugGameDriver {
             &identities[0].puzzle_hash,
             &identities[1].puzzle_hash,
         )?;
+        debug!("curried args into game {args:?}");
 
         let curried = CurriedProgram {
             program: args.self_prog.to_clvm(allocator).into_gen()?,
@@ -565,15 +567,12 @@ impl BareDebugGameDriver {
     }
 }
 
-pub fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDriver; 2], Error> {
-    let rng_seed: [u8; 32] = [0; 32];
-    let mut rng = ChaCha8Rng::from_seed(rng_seed);
-    let pk0: PrivateKey = rng.gen();
-    let pk1: PrivateKey = rng.gen();
+pub fn make_debug_games(
+    allocator: &mut AllocEncoder,
+    rng: &mut ChaCha8Rng,
+    identities: &[ChiaIdentity],
+) -> Result<[BareDebugGameDriver; 2], Error> {
     let rng_seq0: Vec<Hash> = (0..50).map(|_| rng.gen()).collect();
-    let id0 = ChiaIdentity::new(allocator, pk0)?;
-    let id1 = ChiaIdentity::new(allocator, pk1)?;
-    let identities: [ChiaIdentity; 2] = [id0, id1];
     let gid = GameID::default();
     let referee_coin = read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
     let ref_coin_hash = referee_coin.sha256tree(allocator);
@@ -581,7 +580,7 @@ pub fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDr
         allocator,
         gid,
         1,
-        &identities,
+        identities,
         &ref_coin_hash,
         Timeout::new(10),
         &rng_seq0,
@@ -591,7 +590,14 @@ pub fn make_debug_games(allocator: &mut AllocEncoder) -> Result<[BareDebugGameDr
 #[test]
 fn test_debug_game_factory() {
     let mut allocator = AllocEncoder::new();
-    let debug_games = make_debug_games(&mut allocator).expect("good");
+    let rng_seed: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(rng_seed);
+    let pk0: PrivateKey = rng.gen();
+    let pk1: PrivateKey = rng.gen();
+    let id0 = ChiaIdentity::new(&mut allocator, pk0).expect("ok");
+    let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
+    let identities: [ChiaIdentity; 2] = [id0, id1];
+    let debug_games = make_debug_games(&mut allocator, &mut rng, &identities).expect("good");
     assert_eq!(512, debug_games[0].game.starts[0].initial_max_move_size);
     assert_eq!(
         debug_games[0].game.starts[0].initial_max_move_size,
@@ -773,7 +779,14 @@ impl ExhaustiveMoveInputs {
 #[test]
 fn test_debug_game_validation_move() {
     let mut allocator = AllocEncoder::new();
-    let mut debug_games = make_debug_games(&mut allocator).expect("good");
+    let rng_seed: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(rng_seed);
+    let pk0: PrivateKey = rng.gen();
+    let pk1: PrivateKey = rng.gen();
+    let id0 = ChiaIdentity::new(&mut allocator, pk0).expect("ok");
+    let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
+    let identities: [ChiaIdentity; 2] = [id0, id1];
+    let mut debug_games = make_debug_games(&mut allocator, &mut rng, &identities).expect("good");
     let debug_games = pair_of_array_mut(&mut debug_games);
 
     assert_eq!(
