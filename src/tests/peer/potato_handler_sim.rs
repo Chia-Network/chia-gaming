@@ -1440,14 +1440,16 @@ fn test_referee_play_debug_game() {
     .into_iter()
     .collect();
 
-    let args = DebugGameCurry::new(
+    let args_curry = DebugGameCurry::new(
         &mut allocator,
         &debug_games[0].alice_identity.puzzle_hash,
         &debug_games[0].bob_identity.puzzle_hash,
-    )
-    .expect("good")
-    .to_clvm(&mut allocator)
-    .expect("ok");
+    );
+    debug!("debug game curried data {args_curry:?}");
+    let args = args_curry
+        .expect("good")
+        .to_clvm(&mut allocator)
+        .expect("ok");
     let args_program = Program::from_nodeptr(&mut allocator, args).expect("ok");
     let _outcome = run_game_container_with_action_list(
         &mut allocator,

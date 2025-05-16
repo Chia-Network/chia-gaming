@@ -273,6 +273,13 @@ impl BareDebugGameDriver {
 
         assert_eq!(my_handler_result.move_bytes, move_data);
 
+        if self.move_count == 0 {
+            assert_eq!(
+                my_handler_result.outgoing_move_state_update_program.to_program(),
+                self.validation_program_queue[0].to_program()
+            );
+        }
+
         self.next_handler = my_handler_result.waiting_driver.clone();
         self.validation_program_queue.clear();
         self.validation_program_queue
@@ -338,6 +345,9 @@ impl BareDebugGameDriver {
 
         // tmpsave("v-prog.hex", &validation_program.to_program().to_hex());
 
+        debug!("debug test v program hash: {:?}", validation_program.sha256tree(allocator));
+        debug!("debug test v state hash {:?}", self.state.sha256tree(allocator));
+        
         let update_args = InternalStateUpdateArgs {
             referee_args: Rc::new(
                 RefereePuzzleArgs {
