@@ -248,7 +248,7 @@ impl MyTurnReferee {
             Sha256Input::Hash(&ip_hash),
             Sha256Input::Hash(&is_hash),
         ])
-            .hash();
+        .hash();
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &GameMoveDetails {
@@ -707,8 +707,14 @@ impl MyTurnReferee {
             outgoing_state_update_program.clone(),
             state.clone(),
         );
-        debug!("doing state update, outgoing hash {:?}", outgoing_state_update_program.sha256tree(allocator));
-        debug!("doing state update, state hash {:?}", state.sha256tree(allocator));
+        debug!(
+            "doing state update, outgoing hash {:?}",
+            outgoing_state_update_program.sha256tree(allocator)
+        );
+        debug!(
+            "doing state update, state hash {:?}",
+            state.sha256tree(allocator)
+        );
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: outgoing_state_update_program.clone(),
             referee_args: Rc::new(RefereePuzzleArgs {
