@@ -413,7 +413,10 @@ impl TheirTurnReferee {
     ) -> Result<StateUpdateResult, Error> {
         let puzzle_args = self.spend_this_coin();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
-        debug!("their turn validation program {:?}", validation_program.to_program());
+        debug!(
+            "their turn validation program {:?}",
+            validation_program.to_program()
+        );
         debug!(
             "their turn running state update {} with state {:?}",
             validation_program.name(),
@@ -475,11 +478,7 @@ impl TheirTurnReferee {
         // Run the initial our turn validation to get the new state.
         let evidence = Evidence::nil()?;
         let (_, validation_program) = self.get_validation_program_for_their_move()?;
-        let state_update = self.run_state_update(
-            allocator,
-            details,
-            evidence
-        )?;
+        let state_update = self.run_state_update(allocator, details, evidence)?;
         debug!("XXX their_turn state_update: {state_update:?}");
 
         // Retrieve evidence from their turn handler.
@@ -511,8 +510,8 @@ impl TheirTurnReferee {
 
                 new_move: GameMoveDetails {
                     validation_info_hash: validation_program_hash,
-                    .. details.clone()
-                }
+                    ..details.clone()
+                },
             },
         )?;
 
