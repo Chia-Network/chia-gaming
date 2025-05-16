@@ -92,10 +92,10 @@ impl MyTurnRefereeMakerGameState {
             MyTurnRefereeMakerGameState::Initial {
                 initial_puzzle_args,
                 ..
-            } => initial_puzzle_args.max_move_size,
+            } => initial_puzzle_args.game_move.basic.max_move_size,
             MyTurnRefereeMakerGameState::AfterTheirTurn {
                 spend_this_coin, ..
-            } => spend_this_coin.max_move_size,
+            } => spend_this_coin.game_move.basic.max_move_size,
         }
     }
 }
@@ -217,7 +217,7 @@ impl MyTurnReferee {
         let initial_move = GameMoveStateInfo {
             mover_share: game_start_info.initial_mover_share.clone(),
             move_made: game_start_info.initial_move.clone(),
-            max_move_size: 0, // unused in v1
+            max_move_size: game_start_info.initial_max_move_size,
         };
         let my_turn = game_start_info.game_handler.is_my_turn();
         debug!("referee maker: my_turn {my_turn}");
@@ -248,7 +248,6 @@ impl MyTurnReferee {
                 },
                 validation_info_hash: validation_info_hash.hash().clone(),
             },
-            game_start_info.initial_max_move_size,
             None,
             game_start_info.initial_validation_program.clone(),
             my_turn,
@@ -483,14 +482,13 @@ impl MyTurnReferee {
             "about to call my validator for my move with move bytes {:?}",
             result.move_bytes
         );
-        let (new_state_following_my_move, max_move_size, validation_info_hash) = self
-            .run_validator_for_my_move(
-                allocator,
-                &result.move_bytes,
-                result.outgoing_move_state_update_program.clone(),
-                state_to_update,
-                Evidence::nil()?,
-            )?;
+        let (new_state_following_my_move, validation_info_hash) = self.run_validator_for_my_move(
+            allocator,
+            &result.move_bytes,
+            result.outgoing_move_state_update_program.clone(),
+            state_to_update,
+            Evidence::nil()?,
+        )?;
         // validation_info_hash is a hash of the hashes of both sides' (current?) (next?) validation program
         // note: look up state that comes from / out of it
         debug!("XXX my_turn validation_info_hash: {validation_info_hash:?}");
@@ -499,16 +497,14 @@ impl MyTurnReferee {
             basic: GameMoveStateInfo {
                 move_made: result.move_bytes.clone(),
                 mover_share: result.mover_share.clone(),
-                max_move_size: 0, // unused in v1
+                max_move_size: result.max_move_size,
             },
             validation_info_hash: validation_info_hash.hash().clone(),
         };
-        let spend_args = self.spend_this_coin();
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &self.fixed,
             &game_move_details,
-            max_move_size,
-            Some(&spend_args.game_move.validation_info_hash),
+            Some(&args.game_move.validation_info_hash),
             result.incoming_move_state_update_program.clone(),
             true,
         ));
@@ -516,7 +512,7 @@ impl MyTurnReferee {
         let new_self = self.accept_this_move(
             result.waiting_driver.clone(),
             new_state_following_my_move,
-            spend_args.clone(),
+            args.clone(),
             ref_puzzle_args.clone(),
             result.clone(),
             &game_move_details,
@@ -538,18 +534,13 @@ impl MyTurnReferee {
 
         debug!("new_curried_referee_puzzle_hash (our turn) {new_curried_referee_puzzle_hash:?}");
 
+        let new_self = RefereeByTurn::TheirTurn(Rc::new(new_self));
+        debug!("final inputs {:?}", new_self.spend_this_coin());
         Ok((
-            RefereeByTurn::TheirTurn(Rc::new(new_self)),
+            new_self,
             GameMoveWireData {
                 puzzle_hash_for_unroll: new_curried_referee_puzzle_hash,
-                details: GameMoveDetails {
-                    basic: GameMoveStateInfo {
-                        move_made: result.move_bytes.clone(),
-                        mover_share: result.mover_share.clone(),
-                        max_move_size: 0, // unused in v1
-                    },
-                    validation_info_hash: validation_info_hash.hash().clone(),
-                },
+                details: game_move_details,
             },
         ))
     }
@@ -676,7 +667,7 @@ impl MyTurnReferee {
         outgoing_state_update_program: StateUpdateProgram,
         state: Rc<Program>,
         evidence: Evidence,
-    ) -> Result<(Rc<Program>, usize, ValidationInfo), Error> {
+    ) -> Result<(Rc<Program>, ValidationInfo), Error> {
         let puzzle_args = self.spend_this_coin();
         let solution = self.fixed.my_identity.standard_solution(
             allocator,
@@ -714,7 +705,7 @@ impl MyTurnReferee {
                     basic: GameMoveStateInfo {
                         move_made: serialized_move.to_vec(),
                         mover_share: puzzle_args.game_move.basic.mover_share.clone(),
-                        max_move_size: 0, // unused in v1
+                        max_move_size: self.state.max_move_size(),
                     },
                     validation_info_hash: v.hash().clone(),
                     // validation_info_hash: outgoing_state_update_program
@@ -722,7 +713,6 @@ impl MyTurnReferee {
                     //     .hash()
                     //     .clone(),
                 },
-                max_move_size: self.state.max_move_size(),
                 ..ref_puzzle_args.clone()
             }),
             state_update_args: StateUpdateMoveArgs {
@@ -743,7 +733,6 @@ impl MyTurnReferee {
                 if self.enable_cheating.is_some() {
                     Ok((
                         state.clone(),
-                        10000,
                         ValidationInfo::new_state_update(
                             allocator,
                             outgoing_state_update_program.clone(),
@@ -754,14 +743,13 @@ impl MyTurnReferee {
                     Err(Error::StrErr("our own move was slashed by us".to_string()))
                 }
             }
-            StateUpdateResult::MoveOk(new_state, _validation_info, max_move_size) => {
+            StateUpdateResult::MoveOk(new_state) => {
                 debug!(
                     "<V> new state for my move {:?} {state:?}",
                     outgoing_state_update_program.sha256tree(allocator)
                 );
                 Ok((
                     new_state.clone(),
-                    max_move_size,
                     ValidationInfo::new_state_update(
                         allocator,
                         outgoing_state_update_program.clone(),

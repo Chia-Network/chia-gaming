@@ -14,8 +14,8 @@ use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
 use crate::common::types::{
-    atom_from_clvm, chia_dialect, i64_from_atom, usize_from_atom, Aggsig, AllocEncoder, Amount,
-    Error, GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, Error, GameID, Hash,
+    IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::GameMoveDetails;
 use crate::utils::proper_list;
@@ -30,14 +30,13 @@ pub struct LiveGameReplay {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateUpdateResult {
-    MoveOk(Rc<Program>, ValidationInfo, usize),
+    MoveOk(Rc<Program>),
     Slash(Rc<Program>),
 }
 
 impl StateUpdateResult {
     pub fn from_nodeptr(
         allocator: &mut AllocEncoder,
-        validation_info: ValidationInfo,
         node: NodePtr,
     ) -> Result<StateUpdateResult, Error> {
         let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
@@ -75,15 +74,9 @@ impl StateUpdateResult {
             return Err(Error::StrErr("short list for make move".to_string()));
         }
 
-        // Make move
-        let max_move_size = atom_from_clvm(allocator, lst[3])
-            .and_then(|a| usize_from_atom(&a))
-            .unwrap_or_default();
-        Ok(StateUpdateResult::MoveOk(
-            Rc::new(Program::from_nodeptr(allocator, lst[2])?),
-            validation_info,
-            max_move_size,
-        ))
+        Ok(StateUpdateResult::MoveOk(Rc::new(Program::from_nodeptr(
+            allocator, lst[2],
+        )?)))
     }
 }
 
@@ -135,7 +128,6 @@ pub struct RefereePuzzleArgs {
     pub amount: Amount,
     pub nonce: usize,
     pub game_move: GameMoveDetails,
-    pub max_move_size: usize,
     pub validation_program: StateUpdateProgram,
     pub previous_validation_info_hash: Option<Hash>,
     pub referee_coin_puzzle_hash: PuzzleHash,
@@ -145,7 +137,6 @@ impl RefereePuzzleArgs {
     pub fn new(
         fixed_info: &RMFixed,
         initial_move: &GameMoveDetails,
-        max_move_size: usize,
         previous_validation_info_hash: Option<&Hash>,
         validation_program: StateUpdateProgram,
         my_turn: bool,
@@ -172,7 +163,6 @@ impl RefereePuzzleArgs {
             timeout: fixed_info.timeout.clone(),
             amount: fixed_info.amount.clone(),
             nonce: fixed_info.nonce,
-            max_move_size,
             validation_program,
             referee_coin_puzzle_hash: fixed_info.referee_coin_puzzle_hash.clone(),
             game_move: initial_move.clone(),
@@ -204,7 +194,7 @@ where
             self.referee_coin_puzzle_hash.to_clvm(encoder)?,
             self.nonce.to_clvm(encoder)?,
             encoder.encode_atom(clvm_traits::Atom::Borrowed(&self.game_move.basic.move_made))?,
-            self.max_move_size.to_clvm(encoder)?,
+            self.game_move.basic.max_move_size.to_clvm(encoder)?,
             self.game_move.validation_info_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash
@@ -334,11 +324,6 @@ impl InternalStateUpdateArgs {
             PuzzleHash::from_hash(validation_program_mod_hash.clone()),
         )?;
         let validator_full_args = Program::from_nodeptr(allocator, validator_full_args_node)?;
-        let validation_info = ValidationInfo::new_from_validation_program_hash_and_state(
-            allocator,
-            validation_program_mod_hash.clone(),
-            self.state_update_args.state.clone(),
-        );
 
         debug!("validator program {:?}", self.validation_program);
         debug!("validator args {:?}", validator_full_args);
@@ -360,9 +345,7 @@ impl InternalStateUpdateArgs {
         let pres = Program::from_nodeptr(allocator, raw_result.1)?;
         debug!("validator result {pres:?}");
 
-        let update_result =
-            StateUpdateResult::from_nodeptr(allocator, validation_info, raw_result.1)?;
-        Ok(update_result)
+        StateUpdateResult::from_nodeptr(allocator, raw_result.1)
     }
 }
 
@@ -401,8 +384,6 @@ pub struct IdentityCoinAndSolution {
 pub struct OnChainRefereeMove {
     /// From the wire protocol.
     pub details: GameMoveDetails,
-    /// Max move size specified in on chain move REM.
-    pub max_move_size: usize,
     /// Coin puzzle and solution that are used to generate conditions for the
     /// next generation of the on chain refere coin.
     pub mover_coin: IdentityCoinAndSolution,
@@ -481,7 +462,7 @@ where
                         (
                             refmove.details.basic.mover_share.clone(),
                             (
-                                refmove.max_move_size,
+                                refmove.details.basic.max_move_size,
                                 (
                                     refmove.mover_coin.mover_coin_puzzle.clone(),
                                     (refmove_coin_solution_ref, ()),

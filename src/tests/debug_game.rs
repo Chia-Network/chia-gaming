@@ -100,6 +100,7 @@ pub struct BareDebugGameDriver {
 
     // Live
     max_move_size: usize,
+    next_max_move_size: usize,
     mover_share: Amount,
     next_mover_share: Amount,
     state: ProgramRef,
@@ -174,6 +175,7 @@ impl BareDebugGameDriver {
             next_handler: start_a.game_handler.clone(),
             timeout: timeout.clone(),
             max_move_size: start_a.initial_max_move_size,
+            next_max_move_size: start_a.initial_max_move_size,
             next_mover_share: start_a.initial_mover_share.clone(),
             mover_share: start_a.initial_mover_share.clone(),
             state: start_a.initial_state.clone(),
@@ -202,6 +204,7 @@ impl BareDebugGameDriver {
             next_handler: start_b.game_handler.clone(),
             timeout,
             max_move_size: start_b.initial_max_move_size,
+            next_max_move_size: start_b.initial_max_move_size,
             next_mover_share: start_b.initial_mover_share.clone(),
             mover_share: start_b.initial_mover_share.clone(),
             state: start_b.initial_state.clone(),
@@ -281,6 +284,7 @@ impl BareDebugGameDriver {
         }
 
         self.next_handler = my_handler_result.waiting_driver.clone();
+        self.next_max_move_size = my_handler_result.max_move_size;
         self.validation_program_queue.clear();
         self.validation_program_queue
             .push_back(my_handler_result.outgoing_move_state_update_program.p());
@@ -316,14 +320,11 @@ impl BareDebugGameDriver {
             &move_data,
             Evidence::nil()?,
         )?;
-
-        if let StateUpdateResult::MoveOk(new_state, _new_validation_info_hash, new_max_move_size) =
-            state_update_result
-        {
+        if let StateUpdateResult::MoveOk(new_state) = state_update_result {
             self.handler = self.next_handler.clone();
             self.move_count += 1;
             self.mover_share = self.next_mover_share.clone();
-            self.max_move_size = new_max_move_size;
+            self.max_move_size = self.next_max_move_size;
             self.state = ProgramRef::new(new_state.clone());
             self.last_validation_data = Some((vprog.clone(), self.state.clone()));
         }
@@ -367,7 +368,7 @@ impl BareDebugGameDriver {
                         basic: GameMoveStateInfo {
                             move_made: move_to_check.to_vec(),
                             mover_share: self.mover_share.clone(),
-                            max_move_size: 0, // unused in v1
+                            max_move_size: self.max_move_size, // unused in v1
                         },
                         validation_info_hash: ValidationInfo::new_state_update(
                             allocator,
@@ -377,7 +378,6 @@ impl BareDebugGameDriver {
                         .hash()
                         .clone(),
                     },
-                    max_move_size: self.max_move_size,
                 }
                 .off_chain(),
             ),
@@ -487,7 +487,7 @@ impl BareDebugGameDriver {
         )?;
 
         let (state, tt_result) = match validator_response {
-            StateUpdateResult::MoveOk(state, _, 512) => {
+            StateUpdateResult::MoveOk(state) => {
                 let state_node = state.to_clvm(allocator).into_gen()?;
                 (
                     state.clone(),
@@ -513,7 +513,6 @@ impl BareDebugGameDriver {
             StateUpdateResult::Slash(evidence) => {
                 return Ok(Some(evidence));
             }
-            _ => todo!(),
         };
 
         match tt_result {
@@ -564,10 +563,7 @@ impl BareDebugGameDriver {
             .state_update_for_own_move(allocator, &move_data, Evidence::nil().expect("good"))
             .expect("good");
         debug!("validation_result {validation_result:?}");
-        assert!(matches!(
-            validation_result,
-            StateUpdateResult::MoveOk(_, _, 512)
-        ));
+        assert!(matches!(validation_result, StateUpdateResult::MoveOk(_)));
         debug!("end my turn");
         self.end_my_turn(allocator, &predicted_move).expect("good");
         debug!("accept move");
