@@ -13,7 +13,7 @@ use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     AllocEncoder, Amount, CoinString, Error, Hash, IntoErr, Program, Puzzle, PuzzleHash,
-    Sha256Input, Sha256tree, Spend,
+    Sha256tree, Spend,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
@@ -234,21 +234,11 @@ impl MyTurnReferee {
         });
 
         // TODO: Revisit how we create initial_move
-        let is_hash = game_start_info
-            .initial_state
-            .sha256tree(allocator)
-            .hash()
-            .clone();
-        let ip_hash = game_start_info
-            .initial_validation_program
-            .sha256tree(allocator)
-            .hash()
-            .clone();
-        let vi_hash = Sha256Input::Array(vec![
-            Sha256Input::Hash(&ip_hash),
-            Sha256Input::Hash(&is_hash),
-        ])
-        .hash();
+        let validation_info_hash = ValidationInfo::new_state_update(
+            allocator,
+            game_start_info.initial_validation_program.clone(),
+            game_start_info.initial_state.p(),
+        );
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &GameMoveDetails {
@@ -256,7 +246,7 @@ impl MyTurnReferee {
                     mover_share: Amount::default(),
                     ..initial_move.clone()
                 },
-                validation_info_hash: vi_hash.clone(),
+                validation_info_hash: validation_info_hash.hash().clone(),
             },
             game_start_info.initial_max_move_size,
             None,

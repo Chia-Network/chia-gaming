@@ -33,9 +33,10 @@ fn test_smoke_can_initiate_channel_handler() {
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
-        referee_coin_puzzle: ref_puz,
-        // XXX
+        referee_coin_puzzle: ref_puz.clone(),
         referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
+        referee_coin_puzzle_v1: ref_puz,
+        referee_coin_puzzle_hash_v1: PuzzleHash::from_hash(Hash::default()),
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,
@@ -96,9 +97,10 @@ fn test_smoke_can_start_game() {
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
-        referee_coin_puzzle: ref_coin_puz,
-        // XXX
+        referee_coin_puzzle: ref_coin_puz.clone(),
         referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
+        referee_coin_puzzle_v1: ref_coin_puz,
+        referee_coin_puzzle_hash_v1: PuzzleHash::from_hash(Hash::default()),
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,
@@ -186,8 +188,10 @@ fn test_unroll_can_verify_own_signature() {
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
-        referee_coin_puzzle: ref_coin_puz,
+        referee_coin_puzzle: ref_coin_puz.clone(),
         referee_coin_puzzle_hash: ref_coin_ph.clone(),
+        referee_coin_puzzle_v1: ref_coin_puz,
+        referee_coin_puzzle_hash_v1: ref_coin_ph.clone(),
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,

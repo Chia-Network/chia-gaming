@@ -158,6 +158,8 @@ pub fn channel_handler_env<'a, R: Rng>(
 ) -> Result<ChannelHandlerEnv<'a, R>, Error> {
     let referee_coin_puzzle = read_hex_puzzle(allocator, "clsp/referee/onchain/referee.hex")?;
     let referee_coin_puzzle_hash: PuzzleHash = referee_coin_puzzle.sha256tree(allocator);
+    let referee_coin_puzzle_v1 = read_hex_puzzle(allocator, "clsp/referee/onchain/referee-v1.hex")?;
+    let referee_coin_puzzle_hash_v1: PuzzleHash = referee_coin_puzzle_v1.sha256tree(allocator);
     let unroll_puzzle = read_hex_puzzle(
         allocator,
         "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
@@ -169,6 +171,8 @@ pub fn channel_handler_env<'a, R: Rng>(
         rng,
         referee_coin_puzzle,
         referee_coin_puzzle_hash,
+        referee_coin_puzzle_v1,
+        referee_coin_puzzle_hash_v1,
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,

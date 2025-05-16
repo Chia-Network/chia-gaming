@@ -40,6 +40,10 @@
    )
   )
 
+(defun current-waiter-puzzle-hash ((CURRY_PACK))
+  (if (logand COUNT 1) MOVER0 WAITER0)
+  )
+
 ;; Every valid move encapsulates the entire set of data that the validator will be exposed
 ;; to.
 ;;
@@ -65,7 +69,7 @@
    (concat
     ;; Hashes first
     MOVER_PUZZLE_HASH
-    WAITER_PUZZLE_HASH
+    (if WAITER_PUZZLE_HASH WAITER_PUZZLE_HASH (current-waiter-puzzle-hash curry-args))
     MOD_HASH
     INFOHASH_B
     INFOHASH_A

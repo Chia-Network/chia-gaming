@@ -124,16 +124,43 @@ pub struct ChannelHandler {
     live_games: Vec<LiveGame>,
 }
 
+pub trait EnvDataForReferee {
+    fn allocator(&mut self) -> &mut AllocEncoder;
+    fn referee_puzzle_v0(&self) -> Puzzle;
+    fn referee_puzzle_hash_v0(&self) -> PuzzleHash;
+    fn referee_puzzle_v1(&self) -> Puzzle;
+    fn referee_puzzle_hash_v1(&self) -> PuzzleHash;
+    fn agg_sig_me_additional_data(&self) -> Hash;
+}
+
+impl<'a, R: Rng> EnvDataForReferee for ChannelHandlerEnv<'a, R> {
+    fn allocator(&mut self) -> &mut AllocEncoder {
+        self.allocator
+    }
+    fn referee_puzzle_v0(&self) -> Puzzle {
+        self.referee_coin_puzzle.clone()
+    }
+    fn referee_puzzle_hash_v0(&self) -> PuzzleHash {
+        self.referee_coin_puzzle_hash.clone()
+    }
+    fn referee_puzzle_v1(&self) -> Puzzle {
+        self.referee_coin_puzzle_v1.clone()
+    }
+    fn referee_puzzle_hash_v1(&self) -> PuzzleHash {
+        self.referee_coin_puzzle_hash_v1.clone()
+    }
+    fn agg_sig_me_additional_data(&self) -> Hash {
+        self.agg_sig_me_additional_data.clone()
+    }
+}
+
 pub trait MakeRefereeFromGameStart {
     fn make_referee(
         &self,
-        allocator: &mut AllocEncoder,
-        referee_coin_puzzle: Puzzle,
-        referee_coin_puzzle_hash: PuzzleHash,
+        env: &mut dyn EnvDataForReferee,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
         nonce: usize,
-        agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error>;
 }
@@ -141,24 +168,24 @@ pub trait MakeRefereeFromGameStart {
 impl MakeRefereeFromGameStart for GameStartInfo {
     fn make_referee(
         &self,
-        allocator: &mut AllocEncoder,
-        referee_coin_puzzle: Puzzle,
-        referee_coin_puzzle_hash: PuzzleHash,
+        env: &mut dyn EnvDataForReferee,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
         nonce: usize,
-        agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error> {
+        let ref_v0 = env.referee_puzzle_v0();
+        let ref_ph_v0 = env.referee_puzzle_hash_v0();
+        let agg_sig_me = env.agg_sig_me_additional_data();
         let (r, ph) = RefereeMaker::new(
-            allocator,
-            referee_coin_puzzle,
-            referee_coin_puzzle_hash,
+            env.allocator(),
+            ref_v0,
+            ref_ph_v0,
             self,
             my_identity,
             &their_puzzle_hash,
             nonce,
-            agg_sig_me_additional_data,
+            &agg_sig_me,
             state_number,
         )?;
         Ok((Rc::new(r), ph))
@@ -168,24 +195,24 @@ impl MakeRefereeFromGameStart for GameStartInfo {
 impl MakeRefereeFromGameStart for v1::game_start_info::GameStartInfo {
     fn make_referee(
         &self,
-        allocator: &mut AllocEncoder,
-        referee_coin_puzzle: Puzzle,
-        referee_coin_puzzle_hash: PuzzleHash,
+        env: &mut dyn EnvDataForReferee,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
         nonce: usize,
-        agg_sig_me_additional_data: &Hash,
         state_number: usize,
     ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error> {
+        let ref_v1 = env.referee_puzzle_v1();
+        let ref_ph_v1 = env.referee_puzzle_hash_v1();
+        let agg_sig_me = env.agg_sig_me_additional_data();
         let (r, ph) = crate::referee::v1::RefereeMaker::new(
-            allocator,
-            referee_coin_puzzle,
-            referee_coin_puzzle_hash,
+            env.allocator(),
+            ref_v1,
+            ref_ph_v1,
             self,
             my_identity,
             their_puzzle_hash,
             nonce,
-            agg_sig_me_additional_data,
+            &agg_sig_me,
             state_number,
         )?;
         Ok((Rc::new(r), ph))
@@ -736,13 +763,10 @@ impl ChannelHandler {
             )?;
 
             let (referee_maker, puzzle_hash) = g.make_referee(
-                env.allocator,
-                env.referee_coin_puzzle.clone(),
-                env.referee_coin_puzzle_hash.clone(),
+                env,
                 referee_identity,
                 &self.their_referee_puzzle_hash,
                 new_game_nonce,
-                &env.agg_sig_me_additional_data,
                 self.current_state_number,
             )?;
             res.push(LiveGame::new(

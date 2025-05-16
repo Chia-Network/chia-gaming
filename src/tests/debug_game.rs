@@ -267,9 +267,7 @@ impl BareDebugGameDriver {
             },
         )?;
 
-        let move_data = exhaustive_inputs
-            .to_linear_move(allocator, true)
-            .expect("good");
+        let move_data = exhaustive_inputs.to_linear_move(allocator).expect("good");
 
         assert_eq!(my_handler_result.move_bytes, move_data);
 
@@ -300,9 +298,7 @@ impl BareDebugGameDriver {
     ) -> Result<(), Error> {
         assert!(self.i_am_alice == ((self.move_count & 1) == 0));
 
-        let move_data = exhaustive_inputs
-            .to_linear_move(allocator, true)
-            .expect("good");
+        let move_data = exhaustive_inputs.to_linear_move(allocator).expect("good");
 
         let vprog = if let Some(v) = self.validation_program_queue.pop_front() {
             v
@@ -460,6 +456,7 @@ impl BareDebugGameDriver {
             .get_previous_validation_info_hash(allocator)
             .map(|v| v.hash().clone());
 
+        debug!("validation_program {:?}", vprog.to_program());
         self.generic_run_state_update(
             allocator,
             vprog,
@@ -476,7 +473,7 @@ impl BareDebugGameDriver {
     ) -> Result<Option<Rc<Program>>, Error> {
         // Run validator for their turn.
         let vprog = self.validation_program_queue.pop_front().unwrap();
-        let move_to_check = inputs.to_linear_move(allocator, true)?;
+        let move_to_check = inputs.to_linear_move(allocator)?;
         let previous_validation_info_hash = inputs.previous_validation_info_hash(allocator)?;
         let evidence = Evidence::nil()?;
         debug!("my mover share {:?}", self.mover_share);
@@ -561,9 +558,7 @@ impl BareDebugGameDriver {
         let predicted_move = self
             .get_move_inputs(allocator, mover_share, slash)
             .expect("good");
-        let move_data = predicted_move
-            .to_linear_move(allocator, true)
-            .expect("good");
+        let move_data = predicted_move.to_linear_move(allocator).expect("good");
         debug!("move_data {move_data:?}");
         let validation_result = self
             .state_update_for_own_move(allocator, &move_data, Evidence::nil().expect("good"))
@@ -662,7 +657,7 @@ impl ExhaustiveMoveInputs {
 
     pub fn get_ui_move(&self, allocator: &mut AllocEncoder) -> Result<ReadableMove, Error> {
         let slash_node = self.slash_atom(allocator)?;
-        let linear_move = self.to_linear_move(allocator, true)?;
+        let linear_move = self.to_linear_move(allocator)?;
         let move_tail = self.move_tail(allocator)?;
         let linear_move_node = allocator
             .encode_atom(clvm_traits::Atom::Borrowed(
@@ -699,20 +694,14 @@ impl ExhaustiveMoveInputs {
         }
     }
 
-    pub fn to_linear_move(
-        &self,
-        allocator: &mut AllocEncoder,
-        off_chain: bool,
-    ) -> Result<Vec<u8>, Error> {
+    pub fn to_linear_move(&self, allocator: &mut AllocEncoder) -> Result<Vec<u8>, Error> {
         let alice_mover = (self.count % 2) == 0;
         let mover_ph_ref = if alice_mover {
             &self.alice_puzzle_hash
         } else {
             &self.bob_puzzle_hash
         };
-        let waiter_ph_ref = if off_chain {
-            None
-        } else if alice_mover {
+        let waiter_ph_ref = if alice_mover {
             Some(&self.bob_puzzle_hash)
         } else {
             Some(&self.alice_puzzle_hash)
