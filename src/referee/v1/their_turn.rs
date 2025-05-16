@@ -413,6 +413,7 @@ impl TheirTurnReferee {
     ) -> Result<StateUpdateResult, Error> {
         let puzzle_args = self.spend_this_coin();
         let (state, validation_program) = self.get_validation_program_for_their_move()?;
+        debug!("their turn validation program {:?}", validation_program.to_program());
         debug!(
             "their turn running state update {} with state {:?}",
             validation_program.name(),
@@ -430,6 +431,8 @@ impl TheirTurnReferee {
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: validation_program.p(),
             referee_args: Rc::new(RefereePuzzleArgs {
+                mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+                waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
                 game_move: details.clone(),
                 ..ref_puzzle_args.clone()
             }),
@@ -471,7 +474,12 @@ impl TheirTurnReferee {
 
         // Run the initial our turn validation to get the new state.
         let evidence = Evidence::nil()?;
-        let state_update = self.run_state_update(allocator, details, evidence)?;
+        let (_, validation_program) = self.get_validation_program_for_their_move()?;
+        let state_update = self.run_state_update(
+            allocator,
+            details,
+            evidence
+        )?;
         debug!("XXX their_turn state_update: {state_update:?}");
 
         // Retrieve evidence from their turn handler.
@@ -491,6 +499,7 @@ impl TheirTurnReferee {
         };
 
         let state_nodeptr = new_state.to_nodeptr(allocator)?;
+        let validation_program_hash = validation_program.sha256tree(allocator).hash().clone();
         let result = handler.call_their_turn_driver(
             allocator,
             &TheirTurnInputs {
@@ -500,7 +509,10 @@ impl TheirTurnReferee {
                 last_move: &args.game_move.basic.move_made,
                 last_mover_share: args.game_move.basic.mover_share.clone(),
 
-                new_move: details.clone(),
+                new_move: GameMoveDetails {
+                    validation_info_hash: validation_program_hash,
+                    .. details.clone()
+                }
             },
         )?;
 

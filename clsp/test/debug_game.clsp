@@ -94,7 +94,9 @@
      ;; Move doesn't repeat the counter data
      (print (list "did we reproduce the data" (substr MOVE 0 move-counter-data-len) "versus" move-counter-data) (not (= move-counter-data (substr MOVE 0 move-counter-data-len))))
      ;; Mover puzzle isn't the puzzle of the mover we think we have.
-     (print "did we have the right mover puzzle" (not (= mover-puzzle-hash (shatree mover_puzzle))))
+     ;; We can't actually check this because it relates to 'which user' is taking the action
+     ;; not whose move it relates to.
+     ;; (print "did we have the right mover puzzle" (not (= mover-puzzle-hash (shatree mover_puzzle))))
      ;;
      (print (list "INFOHASH_A " INFOHASH_A) 0)
      (print (list "INFOHASH_B " INFOHASH_B) 0)

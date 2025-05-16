@@ -875,6 +875,9 @@ impl ChannelHandler {
             new_games.len(),
             unroll_data_for_all_games.len()
         );
+        for n in new_games.iter() {
+            debug!("received game id {:?}", n.game_id);
+        }
 
         // Update an unroll coin to see if we can verify the message.
         debug!(
