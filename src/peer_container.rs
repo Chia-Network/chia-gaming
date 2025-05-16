@@ -17,8 +17,9 @@ use crate::common::types::{
     Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, GameStart, GameType,
+    PacketSender, PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
+    WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
 use crate::shutdown::ShutdownConditions;
@@ -340,7 +341,7 @@ pub struct SynchronousGameCradle {
 }
 
 pub struct SynchronousGameCradleConfig<'a> {
-    pub game_types: BTreeMap<GameType, Rc<Program>>,
+    pub game_types: BTreeMap<GameType, GameFactory>,
     pub have_potato: bool,
     pub identity: &'a ChiaIdentity,
     pub my_contribution: Amount,
@@ -351,8 +352,10 @@ pub struct SynchronousGameCradleConfig<'a> {
 }
 
 impl SynchronousGameCradle {
-    pub fn new<R: Rng>(rng: &mut R, config: SynchronousGameCradleConfig) -> Self {
-        let private_keys: ChannelHandlerPrivateKeys = rng.gen();
+    pub fn new_with_keys(
+        config: SynchronousGameCradleConfig,
+        private_keys: ChannelHandlerPrivateKeys,
+    ) -> Self {
         SynchronousGameCradle {
             state: SynchronousGameCradleState {
                 is_initiator: config.have_potato,
@@ -385,6 +388,10 @@ impl SynchronousGameCradle {
                 reward_puzzle_hash: config.reward_puzzle_hash,
             }),
         }
+    }
+    pub fn new<R: Rng>(rng: &mut R, config: SynchronousGameCradleConfig) -> Self {
+        let private_keys: ChannelHandlerPrivateKeys = rng.gen();
+        SynchronousGameCradle::new_with_keys(config, private_keys)
     }
 }
 

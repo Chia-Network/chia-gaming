@@ -9,7 +9,7 @@ use log::debug;
 
 use crate::channel_handler::game_handler::GameHandler;
 use crate::channel_handler::types::ValidationProgram;
-use crate::channel_handler::GameStartInfo;
+use crate::channel_handler::{GameStartInfo, GameStartInfoInterface};
 use crate::common::standard_coin::read_hex_puzzle;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, u64_from_atom, usize_from_atom, AllocEncoder, Amount, Error,
@@ -117,39 +117,41 @@ impl Game {
         our_contribution: &Amount,
         their_contribution: &Amount,
         timeout: &Timeout,
-    ) -> (GameStartInfo, GameStartInfo) {
+    ) -> (
+        Rc<dyn GameStartInfoInterface>,
+        Rc<dyn GameStartInfoInterface>,
+    ) {
         let amount = our_contribution.clone() + their_contribution.clone();
         let amount_as_u64: u64 = amount.clone().into();
         let mover_share =
             Amount::new((amount_as_u64 * self.initial_mover_share_proportion as u64) / 100);
         let waiter_share = amount.clone() - mover_share.clone();
-        (
-            GameStartInfo {
-                game_id: game_id.clone(),
-                amount: amount.clone(),
-                game_handler: self.initial_mover_handler.clone(),
-                timeout: timeout.clone(),
-                my_contribution_this_game: our_contribution.clone(),
-                their_contribution_this_game: their_contribution.clone(),
-                initial_validation_program: self.initial_validation_program.clone(),
-                initial_state: self.initial_state.clone().into(),
-                initial_move: vec![],
-                initial_max_move_size: self.initial_max_move_size,
-                initial_mover_share: mover_share,
-            },
-            GameStartInfo {
-                game_id: game_id.clone(),
-                amount: amount.clone(),
-                game_handler: self.initial_waiter_handler.clone(),
-                timeout: timeout.clone(),
-                my_contribution_this_game: their_contribution.clone(),
-                their_contribution_this_game: our_contribution.clone(),
-                initial_validation_program: self.initial_validation_program.clone(),
-                initial_state: self.initial_state.clone().into(),
-                initial_move: vec![],
-                initial_max_move_size: self.initial_max_move_size,
-                initial_mover_share: waiter_share,
-            },
-        )
+        let gs1: Rc<dyn GameStartInfoInterface> = Rc::new(GameStartInfo {
+            game_id: game_id.clone(),
+            amount: amount.clone(),
+            game_handler: self.initial_mover_handler.clone(),
+            timeout: timeout.clone(),
+            my_contribution_this_game: our_contribution.clone(),
+            their_contribution_this_game: their_contribution.clone(),
+            initial_validation_program: self.initial_validation_program.clone(),
+            initial_state: self.initial_state.clone().into(),
+            initial_move: vec![],
+            initial_max_move_size: self.initial_max_move_size,
+            initial_mover_share: mover_share,
+        });
+        let gs2: Rc<dyn GameStartInfoInterface> = Rc::new(GameStartInfo {
+            game_id: game_id.clone(),
+            amount: amount.clone(),
+            game_handler: self.initial_waiter_handler.clone(),
+            timeout: timeout.clone(),
+            my_contribution_this_game: their_contribution.clone(),
+            their_contribution_this_game: our_contribution.clone(),
+            initial_validation_program: self.initial_validation_program.clone(),
+            initial_state: self.initial_state.clone().into(),
+            initial_move: vec![],
+            initial_max_move_size: self.initial_max_move_size,
+            initial_mover_share: waiter_share,
+        });
+        (gs1, gs2)
     }
 }

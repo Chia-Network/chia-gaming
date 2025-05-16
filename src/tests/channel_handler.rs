@@ -33,9 +33,10 @@ fn test_smoke_can_initiate_channel_handler() {
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
-        referee_coin_puzzle: ref_puz,
-        // XXX
+        referee_coin_puzzle: ref_puz.clone(),
         referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
+        referee_coin_puzzle_v1: ref_puz,
+        referee_coin_puzzle_hash_v1: PuzzleHash::from_hash(Hash::default()),
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,
@@ -96,9 +97,10 @@ fn test_smoke_can_start_game() {
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
-        referee_coin_puzzle: ref_coin_puz,
-        // XXX
+        referee_coin_puzzle: ref_coin_puz.clone(),
         referee_coin_puzzle_hash: PuzzleHash::from_hash(Hash::default()),
+        referee_coin_puzzle_v1: ref_coin_puz,
+        referee_coin_puzzle_hash_v1: PuzzleHash::from_hash(Hash::default()),
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,
@@ -139,7 +141,7 @@ fn test_smoke_can_start_game() {
     let game_handler = GameHandler::TheirTurnHandler(game_handler.into());
     let _game_start_potato_sigs = game.player(1).ch.send_potato_start_game(
         &mut env,
-        &[GameStartInfo {
+        &[Rc::new(GameStartInfo {
             game_id: GameID::new(vec![0]),
             game_handler,
             timeout: timeout.clone(),
@@ -151,7 +153,7 @@ fn test_smoke_can_start_game() {
             initial_max_move_size: 1,
             initial_mover_share: our_share.clone(),
             amount: our_share + their_share,
-        }],
+        })],
     );
 }
 
@@ -186,8 +188,10 @@ fn test_unroll_can_verify_own_signature() {
     let mut env = ChannelHandlerEnv {
         allocator: &mut allocator,
         rng: &mut rng,
-        referee_coin_puzzle: ref_coin_puz,
+        referee_coin_puzzle: ref_coin_puz.clone(),
         referee_coin_puzzle_hash: ref_coin_ph.clone(),
+        referee_coin_puzzle_v1: ref_coin_puz,
+        referee_coin_puzzle_hash_v1: ref_coin_ph.clone(),
         unroll_metapuzzle,
         unroll_puzzle,
         standard_puzzle,

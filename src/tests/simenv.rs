@@ -302,13 +302,14 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         debug!("play move {action:?}");
         match action {
             GameAction::Move(player, readable, received) => {
+                let readable_node = readable.to_clvm(self.env.allocator).into_gen()?;
                 match &self.on_chain {
                     OnChainState::OffChain(_coins) => {
-                        self.do_off_chain_move(*player, *readable, *received)
+                        self.do_off_chain_move(*player, readable_node, *received)
                     }
                     OnChainState::OnChain(games) => {
                         // Multiple borrow.
-                        self.do_on_chain_move(*player, *readable, &games.clone())
+                        self.do_on_chain_move(*player, readable_node, &games.clone())
                     }
                 }
             }

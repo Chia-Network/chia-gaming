@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use clvm_traits::ToClvm;
 
@@ -9,11 +9,12 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, read_hex_puzzle};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, PuzzleHash,
-    Spend, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, Program,
+    PuzzleHash, Spend, SpendBundle, Timeout,
 };
+use crate::games::poker_collection;
 use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
@@ -390,7 +391,6 @@ where
 }
 
 #[test]
-#[ignore]
 fn test_peer_smoke() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
@@ -399,17 +399,7 @@ fn test_peer_smoke() {
     let mut pipe_sender: [Pipe; 2] = Default::default();
     pipe_sender[1].message_pipe.my_id = 1;
 
-    let mut game_type_map = BTreeMap::new();
-    let calpoker_factory = read_hex_puzzle(
-        &mut allocator,
-        "clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex",
-    )
-    .expect("should load");
-
-    game_type_map.insert(
-        GameType(b"calpoker".to_vec()),
-        calpoker_factory.to_program(),
-    );
+    let game_type_map = poker_collection(&mut allocator);
 
     let new_peer = |allocator: &mut AllocEncoder, rng: &mut ChaCha8Rng, have_potato: bool| {
         let private_keys1: ChannelHandlerPrivateKeys = rng.gen();
@@ -479,6 +469,7 @@ fn test_peer_smoke() {
             system_interface: &mut pipe_sender[1],
         };
 
+        let nil = Program::from_hex("80").unwrap();
         let game_ids = peers[1]
             .start_games(
                 &mut penv,
@@ -489,7 +480,7 @@ fn test_peer_smoke() {
                     game_type: GameType(b"calpoker".to_vec()),
                     timeout: Timeout::new(10),
                     my_turn: true,
-                    parameters: vec![0x80],
+                    parameters: nil.clone(),
                 },
             )
             .expect("should run");
@@ -504,7 +495,7 @@ fn test_peer_smoke() {
                     game_type: GameType(b"calpoker".to_vec()),
                     timeout: Timeout::new(10),
                     my_turn: false,
-                    parameters: vec![0x80],
+                    parameters: nil,
                 },
             )
             .expect("should run");
@@ -536,8 +527,7 @@ fn test_peer_smoke() {
         {
             let entropy = rng.gen();
             let mut env = channel_handler_env(&mut allocator, &mut rng).expect("should work");
-            let move_readable =
-                ReadableMove::from_nodeptr(env.allocator, *what).expect("should work");
+            let move_readable = what.clone();
             let mut penv = TestPeerEnv {
                 env: &mut env,
                 system_interface: &mut pipe_sender[who ^ 1],

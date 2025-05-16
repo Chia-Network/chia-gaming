@@ -93,12 +93,12 @@ impl RefereeByTurn {
             &fixed_info,
             &GameMoveDetails {
                 basic: GameMoveStateInfo {
-                    mover_share: Amount::default(),
+                    mover_share: game_start_info.initial_mover_share.clone(),
+                    max_move_size: game_start_info.initial_max_move_size,
                     ..initial_move.clone()
                 },
                 validation_info_hash: vi_hash.clone(),
             },
-            game_start_info.initial_max_move_size,
             None,
             game_start_info.initial_validation_program.clone(),
             my_turn,
@@ -687,7 +687,6 @@ impl RefereeInterface for RefereeByTurn {
 
         let args_list = OnChainRefereeSolution::Move(OnChainRefereeMove {
             details: target_args.game_move.clone(),
-            max_move_size: target_args.max_move_size,
             mover_coin: IdentityCoinAndSolution {
                 mover_coin_puzzle: self.fixed().my_identity.puzzle.clone(),
                 mover_coin_spend_solution: referee_spend.solution.p(),

@@ -1,21 +1,20 @@
+use std::rc::Rc;
+
 #[cfg(feature = "sim-tests")]
 use log::debug;
 #[cfg(feature = "sim-tests")]
 use rand::prelude::*;
 #[cfg(feature = "sim-tests")]
 use rand_chacha::ChaCha8Rng;
-#[cfg(feature = "sim-tests")]
-use std::rc::Rc;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
-#[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::types::Amount;
-use crate::common::types::{AllocEncoder, Sha256Input};
+use crate::common::types::{AllocEncoder, Program, Sha256Input};
 #[cfg(feature = "sim-tests")]
 use crate::common::types::{Error, GameID, Hash};
 #[cfg(feature = "sim-tests")]
@@ -94,15 +93,30 @@ pub fn test_moves_1(allocator: &mut AllocEncoder) -> [GameAction; 5] {
         .expect("should work");
     let win_move_200 = 200.to_clvm(allocator).expect("should work");
 
+    let mut readable_moves = Vec::new();
+    for move_node in [
+        &alice_word_hash,
+        &bob_word,
+        &alice_picks,
+        &bob_picks,
+        &win_move_200,
+    ]
+    .into_iter()
+    {
+        readable_moves.push(ReadableMove::from_program(Rc::new(
+            Program::from_nodeptr(allocator, *move_node).expect("good"),
+        )));
+    }
+
     [
-        GameAction::Move(0, alice_word_hash, true),
-        GameAction::Move(1, bob_word, true),
+        GameAction::Move(0, readable_moves[0].clone(), true),
+        GameAction::Move(1, readable_moves[1].clone(), true),
         // Alice's reveal of her card generating seed and her commit to which
         // cards she's picking.
-        GameAction::Move(0, alice_picks, true),
-        GameAction::Move(1, bob_picks, true),
+        GameAction::Move(0, readable_moves[2].clone(), true),
+        GameAction::Move(1, readable_moves[3].clone(), true),
         // Move is a declared split.
-        GameAction::Move(0, win_move_200, true),
+        GameAction::Move(0, readable_moves[4].clone(), true),
     ]
 }
 

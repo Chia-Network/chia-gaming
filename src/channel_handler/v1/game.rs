@@ -116,13 +116,14 @@ impl Game {
         as_alice: bool,
         game_id: &GameID,
         poker_generator: Puzzle,
+        args_program: Rc<Program>,
     ) -> Result<Game, Error> {
         let mut starts = Vec::new();
 
-        let args = (as_alice, (100, (100, ((), ()))))
+        let args = (as_alice, args_program.clone())
             .to_clvm(allocator)
             .into_gen()?;
-        let args_program = Program::from_nodeptr(allocator, args)?;
+        // let args_program = Program::from_nodeptr(allocator, args)?;
 
         let poker_generator_clvm = poker_generator.to_clvm(allocator).into_gen()?;
         debug!("running start program {poker_generator:?}");
@@ -168,9 +169,10 @@ impl Game {
         as_alice: bool,
         game_id: &GameID,
         game_hex_file: &str,
+        args: Rc<Program>,
     ) -> Result<Game, Error> {
         let poker_generator = read_hex_puzzle(allocator, game_hex_file)?;
-        Game::new_program(allocator, as_alice, game_id, poker_generator.clone())
+        Game::new_program(allocator, as_alice, game_id, poker_generator.clone(), args)
     }
 
     /// Return a pair of GameStartInfo which can be used as the starts for two
