@@ -573,7 +573,12 @@ impl BareDebugGameDriver {
         let move_data = predicted_move.to_linear_move(allocator).expect("good");
         debug!("move_data {move_data:?}");
         let validation_result = self
-            .state_update_for_own_move(allocator, &move_data, &mover_share, Evidence::nil().expect("good"))
+            .state_update_for_own_move(
+                allocator,
+                &move_data,
+                &mover_share,
+                Evidence::nil().expect("good"),
+            )
             .expect("good");
         debug!("validation_result {validation_result:?}");
         assert!(matches!(validation_result, StateUpdateResult::MoveOk(_)));
