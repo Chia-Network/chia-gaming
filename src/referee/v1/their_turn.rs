@@ -427,6 +427,10 @@ impl TheirTurnReferee {
                 waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
                 game_move: details.clone(),
                 validation_program: validation_program.clone(),
+                previous_validation_info_hash: ref_puzzle_args
+                    .previous_validation_info_hash
+                    .clone()
+                    .map(|_| ref_puzzle_args.game_move.validation_info_hash.clone()),
                 ..ref_puzzle_args.clone()
             }),
             state_update_args: StateUpdateMoveArgs {
