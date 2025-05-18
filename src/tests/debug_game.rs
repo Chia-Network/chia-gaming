@@ -318,6 +318,7 @@ impl BareDebugGameDriver {
             exhaustive_inputs.validation_program.clone(),
             p_validation_hash,
             &move_data,
+            &exhaustive_inputs.opponent_mover_share.clone(),
             Evidence::nil()?,
         )?;
         if let StateUpdateResult::MoveOk(new_state) = state_update_result {
@@ -338,6 +339,7 @@ impl BareDebugGameDriver {
         validation_program: StateUpdateProgram,
         previous_validation_info_hash: Option<Hash>,
         move_to_check: &[u8],
+        mover_share: &Amount,
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
         let (mover_ph, waiter_ph, mover_puzzle) = self.get_mover_and_waiter_ph();
@@ -369,7 +371,7 @@ impl BareDebugGameDriver {
                     game_move: GameMoveDetails {
                         basic: GameMoveStateInfo {
                             move_made: move_to_check.to_vec(),
-                            mover_share: self.mover_share.clone(),
+                            mover_share: mover_share.clone(),
                             max_move_size: self.max_move_size, // unused in v1
                         },
                         validation_info_hash: ValidationInfo::new_state_update(
@@ -455,6 +457,7 @@ impl BareDebugGameDriver {
         &mut self,
         allocator: &mut AllocEncoder,
         move_to_check: &[u8],
+        mover_share: &Amount,
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
         let vprog = self.validation_program_queue[0].clone();
@@ -468,6 +471,7 @@ impl BareDebugGameDriver {
             vprog,
             previous_validation_info_hash,
             move_to_check,
+            mover_share,
             evidence,
         )
     }
@@ -490,6 +494,7 @@ impl BareDebugGameDriver {
             vprog.clone(),
             previous_validation_info_hash.clone(),
             &move_to_check,
+            &inputs.opponent_mover_share,
             evidence,
         )?;
 
@@ -505,12 +510,12 @@ impl BareDebugGameDriver {
                             amount: self.start.amount.clone(),
                             state: state_node,
                             last_move: &move_to_check,
-                            last_mover_share: self.mover_share.clone(),
+                            last_mover_share: inputs.mover_share.clone(),
                             new_move: GameMoveDetails {
                                 basic: GameMoveStateInfo {
                                     move_made: move_to_check.clone(),
                                     mover_share: inputs.opponent_mover_share.clone(),
-                                    max_move_size: self.max_move_size,
+                                    max_move_size: inputs.max_move_size,
                                 },
                                 validation_info_hash: vprog.hash().clone(),
                             },
@@ -532,6 +537,7 @@ impl BareDebugGameDriver {
                         vprog.clone(),
                         previous_validation_info_hash.clone(),
                         &move_to_check,
+                        &inputs.opponent_mover_share,
                         evidence.clone(),
                     )?;
                     if let StateUpdateResult::Slash(evidence1) = validator_response {
@@ -542,7 +548,6 @@ impl BareDebugGameDriver {
                 }
                 self.move_count += 1;
                 self.handler = new_handler.v1();
-                self.next_mover_share = tt_data.mover_share.clone();
                 self.mover_share = tt_data.mover_share.clone();
                 self.last_validation_data = Some((vprog.clone(), self.state.clone().into()));
                 self.state = state.clone().into();
@@ -563,12 +568,12 @@ impl BareDebugGameDriver {
     ) -> Result<DebugGameMoveInfo, Error> {
         assert!(self.i_am_alice == ((self.move_count & 1) == 0));
         let predicted_move = self
-            .get_move_inputs(allocator, mover_share, slash)
+            .get_move_inputs(allocator, mover_share.clone(), slash)
             .expect("good");
         let move_data = predicted_move.to_linear_move(allocator).expect("good");
         debug!("move_data {move_data:?}");
         let validation_result = self
-            .state_update_for_own_move(allocator, &move_data, Evidence::nil().expect("good"))
+            .state_update_for_own_move(allocator, &move_data, &mover_share, Evidence::nil().expect("good"))
             .expect("good");
         debug!("validation_result {validation_result:?}");
         assert!(matches!(validation_result, StateUpdateResult::MoveOk(_)));
@@ -716,7 +721,7 @@ impl ExhaustiveMoveInputs {
         let amount_atom = at_least_one_byte(allocator, self.amount.to_u64())?;
         let nonce_atom = at_least_one_byte(allocator, self.nonce as u64)?;
         let max_move_size_atom = at_least_one_byte(allocator, self.max_move_size as u64)?;
-        let mover_share_atom = at_least_one_byte(allocator, self.mover_share.to_u64())?;
+        let mover_share_atom = at_least_one_byte(allocator, self.opponent_mover_share.to_u64())?;
         let count_atom = at_least_one_byte(allocator, self.count as u64)?;
         let mut tail_bytes = self.move_tail(allocator)?;
         let args = (

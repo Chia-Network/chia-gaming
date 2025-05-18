@@ -483,6 +483,7 @@ impl MyTurnReferee {
         let (new_state_following_my_move, validation_info_hash) = self.run_validator_for_my_move(
             allocator,
             &result.move_bytes,
+            &result.mover_share,
             result.outgoing_move_state_update_program.clone(),
             state_to_update,
             Evidence::nil()?,
@@ -670,6 +671,7 @@ impl MyTurnReferee {
         &self,
         allocator: &mut AllocEncoder,
         serialized_move: &[u8],
+        mover_share: &Amount,
         outgoing_state_update_program: StateUpdateProgram,
         state: Rc<Program>,
         evidence: Evidence,
@@ -716,7 +718,7 @@ impl MyTurnReferee {
                 game_move: GameMoveDetails {
                     basic: GameMoveStateInfo {
                         move_made: serialized_move.to_vec(),
-                        mover_share: puzzle_args.game_move.basic.mover_share.clone(),
+                        mover_share: mover_share.clone(),
                         max_move_size: self.state.max_move_size(),
                     },
                     validation_info_hash: v.hash().clone(),
