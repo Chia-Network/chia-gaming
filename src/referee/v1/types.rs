@@ -170,6 +170,17 @@ impl RefereePuzzleArgs {
         }
     }
 
+    pub fn my_turn(&self, fixed_info: &RMFixed) -> RefereePuzzleArgs {
+        let new_args = RefereePuzzleArgs {
+            mover_puzzle_hash: fixed_info.my_identity.puzzle_hash.clone(),
+            waiter_puzzle_hash: fixed_info.their_referee_puzzle_hash.clone(),
+            ..self.clone()
+        };
+        assert_eq!(new_args.mover_puzzle_hash, self.waiter_puzzle_hash);
+        assert_eq!(new_args.waiter_puzzle_hash, self.mover_puzzle_hash);
+        new_args
+    }
+
     pub fn off_chain(&self) -> RefereePuzzleArgs {
         let mut new_result: RefereePuzzleArgs = self.clone();
         new_result.waiter_puzzle_hash = PuzzleHash::default();
@@ -270,14 +281,14 @@ pub struct StateUpdateMoveArgs {
 }
 
 impl StateUpdateMoveArgs {
-    pub fn to_nodeptr(&self, allocator: &mut AllocEncoder, me: NodePtr) -> Result<NodePtr, Error> {
-        let me_program = Program::from_nodeptr(allocator, me)?;
+    pub fn to_nodeptr(
+        &self,
+        allocator: &mut AllocEncoder,
+        me: StateUpdateProgram,
+    ) -> Result<NodePtr, Error> {
         (
             &self.state,
-            (
-                &me_program,
-                [&self.mover_puzzle, &self.solution, &self.evidence],
-            ),
+            (me, [&self.mover_puzzle, &self.solution, &self.evidence]),
         )
             .to_clvm(allocator)
             .into_gen()
@@ -296,10 +307,9 @@ impl InternalStateUpdateArgs {
         allocator: &mut AllocEncoder,
         validator_mod_hash: PuzzleHash,
     ) -> Result<NodePtr, Error> {
-        let validation_program_node = self.referee_args.validation_program.to_nodeptr(allocator)?;
         let converted_vma = self
             .state_update_args
-            .to_nodeptr(allocator, validation_program_node)?;
+            .to_nodeptr(allocator, self.validation_program.clone())?;
         (
             validator_mod_hash,
             (
@@ -315,8 +325,11 @@ impl InternalStateUpdateArgs {
     }
 
     pub fn run(&self, allocator: &mut AllocEncoder) -> Result<StateUpdateResult, Error> {
-        let neutral_validation = self.referee_args.validation_program.clone();
-        let validation_program_mod_hash = neutral_validation.hash();
+        assert_eq!(
+            self.referee_args.validation_program.hash(),
+            self.validation_program.hash()
+        );
+        let validation_program_mod_hash = self.validation_program.hash();
         debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
         let validation_program_nodeptr = self.validation_program.to_nodeptr(allocator)?;
         let validator_full_args_node = self.to_nodeptr(

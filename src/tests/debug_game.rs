@@ -315,7 +315,7 @@ impl BareDebugGameDriver {
         let p_validation_hash = exhaustive_inputs.previous_validation_info_hash(allocator)?;
         let state_update_result = self.generic_run_state_update(
             allocator,
-            vprog.clone(),
+            exhaustive_inputs.validation_program.clone(),
             p_validation_hash,
             &move_data,
             Evidence::nil()?,
@@ -325,8 +325,8 @@ impl BareDebugGameDriver {
             self.move_count += 1;
             self.mover_share = self.next_mover_share.clone();
             self.max_move_size = self.next_max_move_size;
-            self.state = ProgramRef::new(new_state.clone());
             self.last_validation_data = Some((vprog.clone(), self.state.clone()));
+            self.state = ProgramRef::new(new_state.clone());
         }
 
         Ok(())
@@ -345,11 +345,13 @@ impl BareDebugGameDriver {
         // tmpsave("v-prog.hex", &validation_program.to_program().to_hex());
 
         debug!(
-            "debug test v program hash: {:?}",
+            "{} debug test v program hash: {:?}",
+            self.move_count,
             validation_program.sha256tree(allocator)
         );
         debug!(
-            "debug test v state hash {:?}",
+            "{} debug test v state hash {:?}",
+            self.move_count,
             self.state.sha256tree(allocator)
         );
 
@@ -400,6 +402,10 @@ impl BareDebugGameDriver {
         slash: u8,
     ) -> Result<ExhaustiveMoveInputs, Error> {
         debug!("generating move inputs with count {}", self.move_count);
+        debug!(
+            "validation program queue {}",
+            self.validation_program_queue.len()
+        );
         let (redo, validation_program) = if self.validation_program_queue.is_empty() {
             (
                 true,
@@ -472,6 +478,7 @@ impl BareDebugGameDriver {
         inputs: &ExhaustiveMoveInputs,
     ) -> Result<Option<Rc<Program>>, Error> {
         // Run validator for their turn.
+        assert_eq!(self.validation_program_queue.len(), 1);
         let vprog = self.validation_program_queue.pop_front().unwrap();
         let move_to_check = inputs.to_linear_move(allocator)?;
         let previous_validation_info_hash = inputs.previous_validation_info_hash(allocator)?;
@@ -488,6 +495,7 @@ impl BareDebugGameDriver {
 
         let (state, tt_result) = match validator_response {
             StateUpdateResult::MoveOk(state) => {
+                debug!("debug their move: new state {state:?}");
                 let state_node = state.to_clvm(allocator).into_gen()?;
                 (
                     state.clone(),
@@ -502,7 +510,7 @@ impl BareDebugGameDriver {
                                 basic: GameMoveStateInfo {
                                     move_made: move_to_check.clone(),
                                     mover_share: inputs.opponent_mover_share.clone(),
-                                    max_move_size: 0, // unused in v1
+                                    max_move_size: self.max_move_size,
                                 },
                                 validation_info_hash: vprog.hash().clone(),
                             },
@@ -534,10 +542,10 @@ impl BareDebugGameDriver {
                 }
                 self.move_count += 1;
                 self.handler = new_handler.v1();
-                self.state = state.clone().into();
                 self.next_mover_share = tt_data.mover_share.clone();
                 self.mover_share = tt_data.mover_share.clone();
-                self.last_validation_data = Some((vprog.clone(), state.into()));
+                self.last_validation_data = Some((vprog.clone(), self.state.clone().into()));
+                self.state = state.clone().into();
                 debug!("Accepted their turn");
             }
             _ => todo!(),

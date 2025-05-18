@@ -152,7 +152,7 @@ impl TheirTurnReferee {
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &GameMoveDetails {
-                basic: GameMoveStateInfo { ..initial_move },
+                basic: initial_move.clone(),
                 validation_info_hash: validation_info_hash.hash().clone(),
             },
             None,
@@ -298,6 +298,7 @@ impl TheirTurnReferee {
         details: &GameMoveDetails,
         state_number: usize,
     ) -> Result<MyTurnReferee, Error> {
+        debug!("their turn: new_state {new_state:?}");
         // assert_ne!(old_args.mover_puzzle_hash, referee_args.mover_puzzle_hash);
         // assert_eq!(old_args.mover_puzzle_hash, referee_args.waiter_puzzle_hash);
         assert_ne!(
@@ -425,6 +426,7 @@ impl TheirTurnReferee {
                 mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
                 waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
                 game_move: details.clone(),
+                validation_program: validation_program.clone(),
                 ..ref_puzzle_args.clone()
             }),
             state_update_args: StateUpdateMoveArgs {
@@ -433,18 +435,6 @@ impl TheirTurnReferee {
                 mover_puzzle: self.fixed.my_identity.puzzle.to_program(),
                 solution: solution_program,
             },
-            // old_state: self.get_game_state(),
-            // move_made: details.basic.move_made.clone(),
-            // // Unused by validator, present for the referee.
-            // new_validation_info_hash: Default::default(),
-            // mover_share: puzzle_args.game_move.basic.mover_share.clone(),
-            // previous_validation_info_hash: Default::default(),
-            // mover_puzzle_hash: puzzle_args.mover_puzzle_hash.clone(),
-            // waiter_puzzle_hash: puzzle_args.waiter_puzzle_hash.clone(),
-            // amount: self.fixed.amount.clone(),
-            // timeout: self.fixed.timeout.clone(),
-            // max_move_size: self.spend_this_coin().max_move_size,
-            // referee_hash: new_puzzle_hash.clone(),
         };
         validator_move_args.run(allocator)
     }

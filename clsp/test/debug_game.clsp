@@ -89,6 +89,8 @@
 
    (if
     (or
+     ;; Self hash doesn't match self prog
+     (not (= (shatree SELF_PROG) SELF_HASH))
      ;; Too short move
      (print (list "have 2 or more bytes than move-counter-data-len which is" move-counter-data-len "have" (strlen MOVE)) (> move-counter-data-len (- (strlen MOVE) 2)))
      ;; Move doesn't repeat the counter data
@@ -122,14 +124,14 @@
       (print "and it wasn't a zero byte which we can't slash" (+ 0 evidence))
       )
      )
-    (list SLASH () "debug game: slash")
+    (list SLASH () "debug game: slash my count" COUNT)
     (assign
      slashable-move (substr MOVE (- move-len 1) move-len)
      mover-share (+ 0 (substr MOVE (print "getting mover share" move-counter-data-len) (print "mover share ends at" (- move-len 1))))
      (list
       MAKE_MOVE
       (validator-hash (curry-args-incr curry-args))
-      (list COUNT slashable-move mover-share)
+      (list (+ COUNT 1) slashable-move mover-share)
       512
       (list "debug game: move with count" (+ COUNT 1) "slash hint" slashable-move "mover share" mover-share)
       )

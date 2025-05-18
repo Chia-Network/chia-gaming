@@ -242,10 +242,7 @@ impl MyTurnReferee {
         let ref_puzzle_args = Rc::new(RefereePuzzleArgs::new(
             &fixed_info,
             &GameMoveDetails {
-                basic: GameMoveStateInfo {
-                    mover_share: Amount::default(),
-                    ..initial_move.clone()
-                },
+                basic: initial_move.clone(),
                 validation_info_hash: validation_info_hash.hash().clone(),
             },
             None,
@@ -478,6 +475,7 @@ impl MyTurnReferee {
             } => state_after_their_turn.clone(),
         };
 
+        debug!("my turn start with state {state_to_update:?}");
         debug!(
             "about to call my validator for my move with move bytes {:?}",
             result.move_bytes
@@ -505,9 +503,17 @@ impl MyTurnReferee {
             &self.fixed,
             &game_move_details,
             Some(&args.game_move.validation_info_hash),
-            result.incoming_move_state_update_program.clone(),
+            result.outgoing_move_state_update_program.clone(),
             true,
         ));
+
+        debug!("state following my turn {new_state_following_my_move:?}");
+        debug!(
+            "corresponding new validation program {:?}",
+            result
+                .incoming_move_state_update_program
+                .sha256tree(allocator)
+        );
 
         let new_self = self.accept_this_move(
             result.waiting_driver.clone(),
@@ -668,7 +674,12 @@ impl MyTurnReferee {
         state: Rc<Program>,
         evidence: Evidence,
     ) -> Result<(Rc<Program>, ValidationInfo), Error> {
-        let puzzle_args = self.spend_this_coin();
+        let puzzle_args = if matches!(*self.state, MyTurnRefereeMakerGameState::Initial { .. }) {
+            self.spend_this_coin()
+        } else {
+            Rc::new(self.spend_this_coin().my_turn(&self.fixed))
+        };
+
         let solution = self.fixed.my_identity.standard_solution(
             allocator,
             &[(
@@ -683,6 +694,7 @@ impl MyTurnReferee {
         );
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
+        debug!("my turn update using state {state:?}");
         let v = ValidationInfo::new_state_update(
             allocator,
             outgoing_state_update_program.clone(),
@@ -708,11 +720,12 @@ impl MyTurnReferee {
                         max_move_size: self.state.max_move_size(),
                     },
                     validation_info_hash: v.hash().clone(),
-                    // validation_info_hash: outgoing_state_update_program
-                    //     .sha256tree(allocator)
-                    //     .hash()
-                    //     .clone(),
                 },
+                validation_program: outgoing_state_update_program.clone(),
+                previous_validation_info_hash: ref_puzzle_args
+                    .previous_validation_info_hash
+                    .clone()
+                    .map(|_| ref_puzzle_args.game_move.validation_info_hash.clone()),
                 ..ref_puzzle_args.clone()
             }),
             state_update_args: StateUpdateMoveArgs {
@@ -745,7 +758,7 @@ impl MyTurnReferee {
             }
             StateUpdateResult::MoveOk(new_state) => {
                 debug!(
-                    "<V> new state for my move {:?} {state:?}",
+                    "<V> new state for my move {:?} {new_state:?}",
                     outgoing_state_update_program.sha256tree(allocator)
                 );
                 Ok((
