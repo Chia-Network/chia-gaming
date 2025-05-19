@@ -104,6 +104,7 @@ it('loads', async () => {
     preset_file("clsp/unroll/unroll_meta_puzzle.hex");
     preset_file("clsp/unroll/unroll_puzzle_state_channel_unrolling.hex");
     preset_file("clsp/referee/onchain/referee.hex");
+    preset_file("clsp/referee/onchain/referee-v1.hex");
     let identity1 = chia_identity('test1');
     let identity2 = chia_identity('test2');
     console.log(identity1, identity2);
