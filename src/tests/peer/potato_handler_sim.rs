@@ -1451,7 +1451,7 @@ fn test_referee_play_debug_game() {
         .to_clvm(&mut allocator)
         .expect("ok");
     let args_program = Program::from_nodeptr(&mut allocator, args).expect("ok");
-    let _outcome = run_game_container_with_action_list(
+    let outcome = run_game_container_with_action_list(
         &mut allocator,
         &mut rng,
         private_keys,
@@ -1461,4 +1461,8 @@ fn test_referee_play_debug_game() {
         &moves,
     )
     .expect("should finish");
+
+    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    // Bob was slashable so alice gets the money.
+    assert_eq!(p1_balance, p2_balance + 200);
 }

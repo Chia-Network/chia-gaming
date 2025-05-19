@@ -126,6 +126,10 @@ impl LiveGame {
         self.referee_maker.get_our_current_share()
     }
 
+    pub fn suitable_redo(&self) -> bool {
+        self.referee_maker.suitable_redo()
+    }
+
     pub fn get_transaction_for_move(
         &self,
         allocator: &mut AllocEncoder,

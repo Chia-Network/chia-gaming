@@ -176,17 +176,9 @@ impl RefereeByTurn {
         coin_string: &CoinString,
         always_produce_transaction: bool,
         puzzle: Puzzle,
-        targs: &RefereePuzzleArgs,
         args: &OnChainRefereeSolution,
     ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let our_move = self.is_my_turn();
-
-        let my_mover_share = if our_move {
-            targs.game_move.basic.mover_share.clone()
-        } else {
-            self.fixed().amount.clone() - targs.game_move.basic.mover_share.clone()
-        };
-
+        let my_mover_share = self.get_our_current_share();
         if always_produce_transaction || my_mover_share != Amount::default() {
             let signature = args.get_signature().unwrap_or_default();
 
@@ -259,6 +251,10 @@ impl RefereeInterface for RefereeByTurn {
 
     fn get_their_current_share(&self) -> Amount {
         self.fixed().amount.clone() - self.get_our_current_share()
+    }
+
+    fn suitable_redo(&self) -> bool {
+        true
     }
 
     fn enable_cheating(&self, make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {
@@ -499,9 +495,9 @@ impl RefereeInterface for RefereeByTurn {
     fn get_our_current_share(&self) -> Amount {
         let args = self.spend_this_coin();
         if self.processing_my_turn() {
-            self.fixed().amount.clone() - args.game_move.basic.mover_share.clone()
-        } else {
             args.game_move.basic.mover_share.clone()
+        } else {
+            self.fixed().amount.clone() - args.game_move.basic.mover_share.clone()
         }
     }
 
@@ -534,7 +530,6 @@ impl RefereeInterface for RefereeByTurn {
             coin_string,
             false,
             puzzle,
-            &targs,
             &OnChainRefereeSolution::Timeout,
         )
     }
@@ -686,14 +681,9 @@ impl RefereeInterface for RefereeByTurn {
             },
         });
 
-        if let Some(transaction) = self.get_transaction(
-            allocator,
-            coin_string,
-            true,
-            spend_puzzle,
-            &target_args,
-            &args_list,
-        )? {
+        if let Some(transaction) =
+            self.get_transaction(allocator, coin_string, true, spend_puzzle, &args_list)?
+        {
             Ok(transaction)
         } else {
             // Return err

@@ -45,6 +45,8 @@ pub trait RefereeInterface {
 
     fn get_their_current_share(&self) -> Amount;
 
+    fn suitable_redo(&self) -> bool;
+
     fn enable_cheating(&self, make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>>;
 
     fn my_turn_make_move(
@@ -487,6 +489,10 @@ impl RefereeInterface for RefereeByTurn {
 
     fn get_their_current_share(&self) -> Amount {
         self.fixed().amount.clone() - self.get_our_current_share()
+    }
+
+    fn suitable_redo(&self) -> bool {
+        self.is_my_turn()
     }
 
     fn enable_cheating(&self, _make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {
