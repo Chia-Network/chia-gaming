@@ -104,6 +104,7 @@ it('loads', async () => {
     preset_file("clsp/unroll/unroll_meta_puzzle.hex");
     preset_file("clsp/unroll/unroll_puzzle_state_channel_unrolling.hex");
     preset_file("clsp/referee/onchain/referee.hex");
+    preset_file("clsp/referee/onchain/referee-v1.hex");
     let identity1 = chia_identity('test1');
     let identity2 = chia_identity('test2');
     console.log(identity1, identity2);
@@ -111,7 +112,10 @@ it('loads', async () => {
     let calpoker_hex = fs.readFileSync(rooted('clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex'),'utf8');
     let env = {
         game_types: {
-            "calpoker": calpoker_hex
+            "calpoker": {
+                version: 0,
+                hex: calpoker_hex
+            }
         },
         timeout: 99,
         unroll_timeout: 5

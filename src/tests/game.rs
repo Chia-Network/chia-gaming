@@ -1,6 +1,4 @@
 #[cfg(feature = "sim-tests")]
-use crate::channel_handler::types::ReadableMove;
-#[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
 use crate::common::types::Timeout;
 #[cfg(feature = "sim-tests")]
@@ -8,8 +6,6 @@ use crate::shutdown::ShutdownConditions;
 #[cfg(feature = "sim-tests")]
 use std::rc::Rc;
 
-#[cfg(test)]
-use clvmr::NodePtr;
 use lazy_static::lazy_static;
 
 #[cfg(feature = "sim-tests")]
@@ -17,6 +13,9 @@ use rand::prelude::*;
 
 #[cfg(feature = "sim-tests")]
 use log::debug;
+
+#[cfg(feature = "sim-tests")]
+use clvmr::NodePtr;
 
 lazy_static! {
     pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
@@ -28,6 +27,7 @@ use crate::channel_handler::game::Game;
 use crate::channel_handler::runner::ChannelHandlerGame;
 #[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::channel_handler::types::ReadableMove;
 #[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
@@ -46,10 +46,10 @@ pub enum GameAction {
     Timeout(usize),
     /// Move (player, clvm readable move, was received)
     #[allow(dead_code)]
-    Move(usize, NodePtr, bool),
+    Move(usize, ReadableMove, bool),
     /// Fake move, just calls receive on the indicated side.
     #[cfg(feature = "sim-tests")]
-    FakeMove(usize, NodePtr, Vec<u8>),
+    FakeMove(usize, ReadableMove, Vec<u8>),
     /// Go on chain
     #[cfg(feature = "sim-tests")]
     GoOnChain(usize),
@@ -87,7 +87,7 @@ impl GameAction {
     #[cfg(feature = "sim-tests")]
     pub fn lose(&self) -> GameAction {
         if let GameAction::Move(p, m, _r) = self {
-            return GameAction::Move(*p, *m, false);
+            return GameAction::Move(*p, m.clone(), false);
         }
 
         self.clone()

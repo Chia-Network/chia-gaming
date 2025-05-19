@@ -76,6 +76,7 @@ impl LiveGame {
         )?;
         self.referee_maker = new_ref;
         self.last_referee_puzzle_hash = referee_result.puzzle_hash_for_unroll.clone();
+        debug!("MY MOVE: {:?}", self.last_referee_puzzle_hash);
         Ok(referee_result)
     }
 
@@ -97,6 +98,7 @@ impl LiveGame {
             self.referee_maker = r;
         }
         if let Some(ph) = &their_move_result.puzzle_hash_for_unroll {
+            debug!("ACCEPT MOVE: {ph:?}");
             self.last_referee_puzzle_hash = ph.clone();
         }
         Ok(their_move_result)

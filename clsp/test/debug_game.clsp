@@ -11,18 +11,18 @@
 ; See RefereePuzzleArgs::to_clvm
 (defmac STATE_PACK ()
   (q @ state-pack
-     (MOVER_PUZZLE_HASH
-      WAITER_PUZZLE_HASH
-      TIMEOUT
-      AMOUNT
-      MOD_HASH
-      NONCE
-      MOVE
-      MAX_MOVE_SIZE
-      INFOHASH_B
-      MOVER_SHARE
-      INFOHASH_A
-      )
+       (MOVER_PUZZLE_HASH
+        WAITER_PUZZLE_HASH
+        TIMEOUT
+        AMOUNT
+        MOD_HASH
+        NONCE
+        MOVE
+        MAX_MOVE_SIZE
+        INFOHASH_B
+        MOVER_SHARE
+        INFOHASH_A
+        )
      )
   )
 
@@ -38,6 +38,10 @@
    (shatree "validator")
    (shatree curry-args)
    )
+  )
+
+(defun current-waiter-puzzle-hash ((CURRY_PACK))
+  (if (logand COUNT 1) MOVER0 WAITER0)
   )
 
 ;; Every valid move encapsulates the entire set of data that the validator will be exposed
@@ -65,7 +69,7 @@
    (concat
     ;; Hashes first
     MOVER_PUZZLE_HASH
-    WAITER_PUZZLE_HASH
+    (if WAITER_PUZZLE_HASH WAITER_PUZZLE_HASH (current-waiter-puzzle-hash curry-args))
     MOD_HASH
     INFOHASH_B
     INFOHASH_A
@@ -85,12 +89,16 @@
 
    (if
     (or
+     ;; Self hash doesn't match self prog
+     (not (= (shatree SELF_PROG) SELF_HASH))
      ;; Too short move
      (print (list "have 2 or more bytes than move-counter-data-len which is" move-counter-data-len "have" (strlen MOVE)) (> move-counter-data-len (- (strlen MOVE) 2)))
      ;; Move doesn't repeat the counter data
      (print (list "did we reproduce the data" (substr MOVE 0 move-counter-data-len) "versus" move-counter-data) (not (= move-counter-data (substr MOVE 0 move-counter-data-len))))
      ;; Mover puzzle isn't the puzzle of the mover we think we have.
-     (print "did we have the right mover puzzle" (not (= mover-puzzle-hash (shatree mover_puzzle))))
+     ;; We can't actually check this because it relates to 'which user' is taking the action
+     ;; not whose move it relates to.
+     ;; (print "did we have the right mover puzzle" (not (= mover-puzzle-hash (shatree mover_puzzle))))
      ;;
      (print (list "INFOHASH_A " INFOHASH_A) 0)
      (print (list "INFOHASH_B " INFOHASH_B) 0)
@@ -116,14 +124,14 @@
       (print "and it wasn't a zero byte which we can't slash" (+ 0 evidence))
       )
      )
-    (list SLASH () "debug game: slash")
+    (list SLASH () "debug game: slash my count" COUNT)
     (assign
      slashable-move (substr MOVE (- move-len 1) move-len)
      mover-share (+ 0 (substr MOVE (print "getting mover share" move-counter-data-len) (print "mover share ends at" (- move-len 1))))
      (list
       MAKE_MOVE
       (validator-hash (curry-args-incr curry-args))
-      (list COUNT slashable-move mover-share)
+      (list (+ COUNT 1) slashable-move mover-share)
       512
       (list "debug game: move with count" (+ COUNT 1) "slash hint" slashable-move "mover share" mover-share)
       )
@@ -143,6 +151,7 @@
       ;; local move is a list of a prefix count slash byte and mover share
       (assign
        (prefix count mover-share slash) local_move
+       incr-curry-args (curry-args-incr curry-args)
        (if (not (= count COUNT))
            (x "count not equal for this move" count COUNT)
            (list
@@ -151,11 +160,11 @@
             (concat prefix (byteify mover-share) slash)
             (curry SELF_PROG "validator" curry-args)
             (validator-hash curry-args)
-            (curry SELF_PROG "validator" (curry-args-incr curry-args))
-            (validator-hash (curry-args-incr curry-args))
+            (curry SELF_PROG "validator" incr-curry-args)
+            (validator-hash incr-curry-args)
             512
             mover-share
-            (curry SELF_PROG "theirturn" (curry-args-incr curry-args))
+            (curry SELF_PROG "theirturn" incr-curry-args)
             )
            )
        )
@@ -183,17 +192,17 @@
      )
   (assign
    move-len (strlen move)
-   
+
    (if (> 1 move-len)
        (list SLASH ())
        ;; Skipping the last byte and the mover share, there should be a count.
        ;; It's fairly simple to read over a positive number.
        (assign
         slash-byte (substr move (- move-len 1) move-len)
-        (mover-share count-pos) (read-over-integer move "" (- move-len 1))
-        (move-count _) (read-over-integer move "" (- count-pos 1))
+        (mover-share count-pos) (print "mover share backup" (read-over-integer move "" (- move-len 2)))
+        (move-count _) (print "move-count backup" (read-over-integer move "" (- count-pos 1)))
         (if (not (= (+ 0 move-count) COUNT))
-            (x "their turn: mismatched count" move-count COUNT)
+            (x "their turn: mismatched count" (+ 0 move-count) COUNT)
             (not (= (validator-hash curry-args) validation_program_hash))
             (x "their turn: mismatched validator program")
             (not (= split (+ 0 mover-share)))
@@ -214,7 +223,7 @@
    )
   )
 
-(defun factory ((CURRY_PACK) i_am_initiator my_contribution their_contribution params)
+(defun factory (i_am_initiator my_contribution their_contribution (CURRY_PACK))
   (assign
    amount (+ my_contribution their_contribution)
 
@@ -298,7 +307,7 @@
       (= MODE "theirturn")
       (theirturn (print "their turn curry args" curry-args) &rest (print "passing on args to their turn" args))
       (= MODE "factory")
-      (factory curry-args &rest args)
+      (factory &rest args)
       (x "no such personality" MODE)
       )
   )

@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, MoveResult, PotatoSignatures,
-    ReadableMove,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, GameStartInfoInterface,
+    MoveResult, PotatoSignatures, ReadableMove,
 };
+use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, ProgramRef, PublicKey,
@@ -24,7 +25,7 @@ pub struct GameStart {
     pub amount: Amount,
     pub my_contribution: Amount,
     pub my_turn: bool,
-    pub parameters: Vec<u8>,
+    pub parameters: Program,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,8 +39,8 @@ pub struct GameStartQueueEntry;
 
 #[derive(Debug, Clone)]
 pub struct MyGameStartQueueEntry {
-    pub my_games: Vec<GameStartInfo>,
-    pub their_games: Vec<GameStartInfo>,
+    pub my_games: Vec<Rc<dyn GameStartInfoInterface>>,
+    pub their_games: Vec<Rc<dyn GameStartInfoInterface>>,
 }
 
 // Internal: decide what kind of condition wait we're in.
@@ -327,6 +328,32 @@ pub struct HandshakeA {
     pub simple: HandshakeB,
 }
 
+#[derive(Debug, Clone)]
+pub struct GSI(pub Rc<dyn GameStartInfoInterface>);
+impl Serialize for GSI {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let doc = self.0.serialize().unwrap(); // deal with returning error
+        doc.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GSI {
+    fn deserialize<D>(deserializer: D) -> Result<GSI, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bson_data: bson::Bson = bson::Bson::deserialize(deserializer)?;
+        if let Ok(gsi) = bson::from_bson::<GameStartInfo>(bson_data.clone()) {
+            return Ok(GSI(Rc::new(gsi)));
+        }
+        let gsi: v1::game_start_info::GameStartInfo = bson::from_bson(bson_data).unwrap(); // deal with error
+        Ok(GSI(Rc::new(gsi)))
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum PeerMessage {
     // Fixed in order sequence
@@ -347,7 +374,7 @@ pub enum PeerMessage {
     Accept(GameID, Amount, PotatoSignatures),
     Shutdown(Aggsig, ProgramRef),
     RequestPotato(()),
-    StartGames(PotatoSignatures, Vec<GameStartInfo>),
+    StartGames(PotatoSignatures, Vec<GSI>),
 }
 
 impl PeerMessage {
@@ -458,10 +485,16 @@ impl std::fmt::Debug for GameAction {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct GameFactory {
+    pub version: usize,
+    pub program: Rc<Program>,
+}
+
 pub struct PotatoHandlerInit {
     pub have_potato: bool,
     pub private_keys: ChannelHandlerPrivateKeys,
-    pub game_types: BTreeMap<GameType, Rc<Program>>,
+    pub game_types: BTreeMap<GameType, GameFactory>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
     pub channel_timeout: Timeout,

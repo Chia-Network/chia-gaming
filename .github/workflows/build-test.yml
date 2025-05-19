@@ -163,7 +163,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install lcov -y
           rustup component add llvm-tools-preview
-          cargo +stable install grcov
+          cargo install --version 0.8.1 grcov
           export RUSTFLAGS="-Cinstrument-coverage"
           export LLVM_PROFILE_FILE=$(pwd)/target/clvm_tools_rs-%p-%m.profraw
           export CARGO_TARGET_DIR=$(pwd)/target
