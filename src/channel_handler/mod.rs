@@ -183,7 +183,7 @@ impl MakeRefereeFromGameStart for GameStartInfo {
             ref_ph_v0,
             self,
             my_identity,
-            &their_puzzle_hash,
+            their_puzzle_hash,
             nonce,
             &agg_sig_me,
             state_number,
@@ -1851,7 +1851,7 @@ impl ChannelHandler {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, g)| {
-                        if ids.iter().any(|i| g.game_id == *i) {
+                        if ids.contains(&g.game_id) {
                             Some(i)
                         } else {
                             None

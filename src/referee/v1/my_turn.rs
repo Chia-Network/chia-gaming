@@ -546,7 +546,7 @@ impl MyTurnReferee {
         let new_curried_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.fixed.referee_coin_puzzle_hash,
-            &ref_puzzle_args,
+            ref_puzzle_args,
         )?;
 
         debug!("new_curried_referee_puzzle_hash (our turn) {new_curried_referee_puzzle_hash:?}");

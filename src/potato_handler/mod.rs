@@ -39,6 +39,11 @@ use crate::potato_handler::types::{
 pub mod on_chain;
 pub mod types;
 
+pub type GameStartInfoPair = (
+    Vec<Rc<dyn GameStartInfoInterface>>,
+    Vec<Rc<dyn GameStartInfoInterface>>,
+);
+
 /// Handle potato in flight when I request potato:
 ///
 /// Every time i send the potato, if i have stuff i want to do, then i also send
@@ -741,13 +746,7 @@ impl PotatoHandler {
         game_start: &GameStart,
         starter_clvm: NodePtr,
         params_clvm: NodePtr,
-    ) -> Result<
-        (
-            Vec<Rc<dyn GameStartInfoInterface>>,
-            Vec<Rc<dyn GameStartInfoInterface>>,
-        ),
-        Error,
-    >
+    ) -> Result<GameStartInfoPair, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
