@@ -389,7 +389,7 @@ pub fn start_games(cid: i32, initiator: bool, game: JsValue) -> Result<Vec<Strin
             amount: Amount::new(js_game_start.amount),
             my_contribution: Amount::new(js_game_start.my_contribution),
             my_turn: js_game_start.my_turn,
-            parameters: hex::decode(&js_game_start.parameters).into_gen()?,
+            parameters: Program::from_bytes(&hex::decode(&js_game_start.parameters).into_gen()?),
         };
         cradle.cradle.start_games(
             &mut cradle.allocator,
