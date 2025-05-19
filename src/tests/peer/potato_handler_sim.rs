@@ -34,7 +34,9 @@ use crate::potato_handler::PotatoHandler;
 use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
-use crate::tests::debug_game::{make_debug_games, DebugGameCurry};
+use crate::tests::debug_game::{
+    make_debug_games, BareDebugGameDriver, DebugGameCurry, DebugGameMoveInfo,
+};
 use crate::tests::game::GameAction;
 use crate::tests::peer::potato_handler::{quiesce, run_move};
 use crate::utils::pair_of_array_mut;
@@ -1378,87 +1380,116 @@ fn sim_test_with_peer_container_piss_off_peer_slash() {
     assert_eq!(p1_balance, p2_balance + 200);
 }
 
+pub struct DebugGameSimSetup {
+    pub private_keys: [ChannelHandlerPrivateKeys; 2],
+    pub identities: [ChiaIdentity; 2],
+    #[allow(dead_code)]
+    pub debug_games: [BareDebugGameDriver; 2],
+    #[allow(dead_code)]
+    pub game_moves: Vec<DebugGameMoveInfo>,
+    pub game_actions: Vec<GameAction>,
+    pub args_program: Rc<Program>,
+}
+
+pub struct DebugGameTestMove {
+    pub amt: u64,
+    pub slash: u8,
+}
+
+impl DebugGameTestMove {
+    pub fn new(amt: u64, slash: u8) -> DebugGameTestMove {
+        DebugGameTestMove { amt, slash }
+    }
+}
+
+pub fn setup_debug_test(
+    allocator: &mut AllocEncoder,
+    rng: &mut ChaCha8Rng,
+    moves: &[DebugGameTestMove],
+) -> Result<DebugGameSimSetup, Error> {
+    let pk1: PrivateKey = rng.gen();
+    let id1 = ChiaIdentity::new(allocator, pk1)?;
+    let pk2: PrivateKey = rng.gen();
+    let id2 = ChiaIdentity::new(allocator, pk2)?;
+
+    let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
+    let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
+
+    let pid1 = ChiaIdentity::new(allocator, private_keys[0].my_referee_private_key.clone())?;
+    let pid2 = ChiaIdentity::new(allocator, private_keys[1].my_referee_private_key.clone())?;
+    let private_identities: [ChiaIdentity; 2] = [pid1, pid2];
+
+    let mut debug_games = make_debug_games(allocator, rng, &private_identities)?;
+
+    let mut game_actions = Vec::new();
+    let mut game_moves = Vec::new();
+
+    for (i, do_move) in moves.iter().enumerate() {
+        let alice_turn = i % 2 == 0;
+
+        let (alice, bob) = pair_of_array_mut(&mut debug_games);
+
+        // Get some moves.
+        let the_move = if alice_turn {
+            alice.do_move(allocator, bob, Amount::new(do_move.amt), do_move.slash)?
+        } else {
+            bob.do_move(allocator, alice, Amount::new(do_move.amt), do_move.slash)?
+        };
+
+        if do_move.slash == 0 {
+            assert!(the_move.slash.is_none());
+        } else {
+            assert_eq!(
+                the_move.slash,
+                Some(Rc::new(Program::from_bytes(&[do_move.slash])))
+            );
+        }
+
+        game_actions.push(GameAction::Move(i % 2, the_move.ui_move.clone(), true));
+        game_moves.push(the_move);
+    }
+
+    let args_curry = DebugGameCurry::new(
+        allocator,
+        &debug_games[0].alice_identity.puzzle_hash,
+        &debug_games[0].bob_identity.puzzle_hash,
+    );
+    debug!("debug game curried data {args_curry:?}");
+    let args = args_curry.expect("good").to_clvm(allocator).into_gen()?;
+    let args_program = Rc::new(Program::from_nodeptr(allocator, args).expect("ok"));
+
+    Ok(DebugGameSimSetup {
+        private_keys,
+        identities,
+        debug_games,
+        game_moves,
+        game_actions,
+        args_program,
+    })
+}
+
 #[test]
 #[cfg(feature = "sim-tests")]
 fn test_referee_play_debug_game() {
     let mut allocator = AllocEncoder::new();
     let seed_data: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed_data);
-    let pk1: PrivateKey = rng.gen();
-    let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
-    let pk2: PrivateKey = rng.gen();
-    let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
+    let moves = [
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(50, 0),
+        DebugGameTestMove::new(150, 3),
+    ];
 
-    let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
-    let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
-
-    let pid1 = ChiaIdentity::new(
-        &mut allocator,
-        private_keys[0].my_referee_private_key.clone(),
-    )
-    .expect("ok");
-    let pid2 = ChiaIdentity::new(
-        &mut allocator,
-        private_keys[1].my_referee_private_key.clone(),
-    )
-    .expect("ok");
-    let private_identities: [ChiaIdentity; 2] = [pid1, pid2];
-
-    let mut debug_games =
-        make_debug_games(&mut allocator, &mut rng, &private_identities).expect("ok");
-    let (alice, bob) = pair_of_array_mut(&mut debug_games);
-    // Get some moves.
-    let a1 = alice
-        .do_move(&mut allocator, bob, Amount::default(), 0)
-        .expect("ok");
-    assert!(a1.slash.is_none());
-    let b1 = bob
-        .do_move(&mut allocator, alice, Amount::default(), 0)
-        .expect("ok");
-    assert!(b1.slash.is_none());
-    let a2 = alice
-        .do_move(&mut allocator, bob, Amount::new(50), 0)
-        .expect("ok");
-    assert!(a2.slash.is_none());
-    let b2 = bob
-        .do_move(&mut allocator, alice, Amount::new(150), 3)
-        .expect("ok");
-    assert_eq!(
-        b2.slash,
-        Some(Rc::new(Program::from_hex("03").expect("ok")))
-    );
-
-    let moves: Vec<GameAction> = [
-        GameAction::Move(0, a1.ui_move.clone(), true),
-        GameAction::Move(1, b1.ui_move.clone(), true),
-        GameAction::Move(0, a2.ui_move.clone(), true),
-        GameAction::Move(1, b2.ui_move.clone(), true),
-        GameAction::WaitBlocks(20, 1),
-        GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)),
-        GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
-    ]
-    .into_iter()
-    .collect();
-
-    let args_curry = DebugGameCurry::new(
-        &mut allocator,
-        &debug_games[0].alice_identity.puzzle_hash,
-        &debug_games[0].bob_identity.puzzle_hash,
-    );
-    debug!("debug game curried data {args_curry:?}");
-    let args = args_curry
-        .expect("good")
-        .to_clvm(&mut allocator)
-        .expect("ok");
-    let args_program = Program::from_nodeptr(&mut allocator, args).expect("ok");
+    let sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
     let outcome = run_game_container_with_action_list(
         &mut allocator,
         &mut rng,
-        private_keys,
-        &identities,
+        sim_setup.private_keys.clone(),
+        &sim_setup.identities,
         b"debug",
-        Rc::new(args_program),
-        &moves,
+        sim_setup.args_program.clone(),
+        &sim_setup.game_actions,
     )
     .expect("should finish");
 

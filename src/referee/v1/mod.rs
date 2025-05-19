@@ -474,7 +474,7 @@ impl RefereeInterface for RefereeByTurn {
             let have_puzzle_hash = curry_referee_puzzle_hash(
                 allocator,
                 &old_referee.fixed().referee_coin_puzzle_hash,
-                &old_referee.args_for_this_coin(),
+                &old_referee.spend_this_coin(),
             )?;
             debug!(
                 "referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
