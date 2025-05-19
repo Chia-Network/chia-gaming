@@ -637,14 +637,6 @@ impl RefereeInterface for RefereeByTurn {
             }
         }
 
-        assert_eq!(
-            Some(&args.game_move.validation_info_hash),
-            target_args.previous_validation_info_hash.as_ref()
-        );
-        // debug!(
-        //     "transaction for move: from {:?} to {target_args:?}",
-        //     self.args_for_this_coin()
-        // );
         let target_referee_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &self.fixed().referee_coin_puzzle_hash,

@@ -104,7 +104,7 @@ pub struct BareDebugGameDriver {
     mover_share: Amount,
     next_mover_share: Amount,
     state: ProgramRef,
-    last_validation_data: Option<(StateUpdateProgram, ProgramRef)>,
+    last_validation_data: VecDeque<(StateUpdateProgram, ProgramRef)>,
 
     validation_program_queue: VecDeque<StateUpdateProgram>,
 
@@ -118,13 +118,21 @@ pub struct BareDebugGameDriver {
 }
 
 impl BareDebugGameDriver {
-    fn get_previous_validation_info_hash(
+    fn get_validation_info(
         &self,
         allocator: &mut AllocEncoder,
+        index: usize,
     ) -> Option<ValidationInfo> {
-        self.last_validation_data
-            .as_ref()
-            .map(|(sp, st)| ValidationInfo::new_state_update(allocator, sp.clone(), st.p()))
+        if self.last_validation_data.len() > index {
+            let infohash_a = &self.last_validation_data[self.last_validation_data.len() - index];
+            Some(ValidationInfo::new_state_update(
+                allocator,
+                infohash_a.0.clone(),
+                infohash_a.1.p(),
+            ))
+        } else {
+            None
+        }
     }
 
     fn new(
@@ -166,64 +174,44 @@ impl BareDebugGameDriver {
         let start_b = bob_game.game_start(&game_id, &Amount::new(100), &Amount::new(100), &timeout);
         assert_ne!(start_a.amount, Amount::default());
         assert_ne!(start_b.amount, Amount::default());
-        let alice_driver = BareDebugGameDriver {
-            i_am_alice: true,
-            move_count: 0,
-            alice_identity: identities[0].clone(),
-            bob_identity: identities[1].clone(),
-            handler: start_a.game_handler.clone(),
-            next_handler: start_a.game_handler.clone(),
-            timeout: timeout.clone(),
-            max_move_size: start_a.initial_max_move_size,
-            next_max_move_size: start_a.initial_max_move_size,
-            next_mover_share: start_a.initial_mover_share.clone(),
-            mover_share: start_a.initial_mover_share.clone(),
-            state: start_a.initial_state.clone(),
-            validation_program_queue: [start_a.initial_validation_program.clone()]
-                .iter()
-                .cloned()
-                .collect(),
-            start: start_a,
-            last_validation_data: None,
-            mod_hash: referee_coin_puzzle_hash.clone(),
-            nonce,
-            game: alice_game.clone(),
-            slash_detected: None,
-            rng: rng_sequence
-                .iter()
-                .take(rng_sequence.len() / 2)
-                .cloned()
-                .collect(),
+        let make_bare_driver = |game_start: &GameStartInfo| -> BareDebugGameDriver {
+            let mut driver = BareDebugGameDriver {
+                i_am_alice: game_start.is_my_turn(),
+                move_count: 0,
+                alice_identity: identities[0].clone(),
+                bob_identity: identities[1].clone(),
+                handler: game_start.game_handler.clone(),
+                next_handler: game_start.game_handler.clone(),
+                timeout: timeout.clone(),
+                max_move_size: game_start.initial_max_move_size,
+                next_max_move_size: game_start.initial_max_move_size,
+                next_mover_share: game_start.initial_mover_share.clone(),
+                mover_share: game_start.initial_mover_share.clone(),
+                state: game_start.initial_state.clone(),
+                validation_program_queue: [game_start.initial_validation_program.clone()]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                start: game_start.clone(),
+                last_validation_data: VecDeque::new(),
+                mod_hash: referee_coin_puzzle_hash.clone(),
+                nonce,
+                game: alice_game.clone(),
+                slash_detected: None,
+                rng: rng_sequence
+                    .iter()
+                    .take(rng_sequence.len() / 2)
+                    .cloned()
+                    .collect(),
+            };
+            driver.last_validation_data.push_back((
+                game_start.initial_validation_program.clone(),
+                game_start.initial_state.clone(),
+            ));
+            driver
         };
-        let bob_driver = BareDebugGameDriver {
-            i_am_alice: false,
-            move_count: 0,
-            alice_identity: identities[0].clone(),
-            bob_identity: identities[1].clone(),
-            handler: start_b.game_handler.clone(),
-            next_handler: start_b.game_handler.clone(),
-            timeout,
-            max_move_size: start_b.initial_max_move_size,
-            next_max_move_size: start_b.initial_max_move_size,
-            next_mover_share: start_b.initial_mover_share.clone(),
-            mover_share: start_b.initial_mover_share.clone(),
-            state: start_b.initial_state.clone(),
-            validation_program_queue: [start_b.initial_validation_program.clone()]
-                .iter()
-                .cloned()
-                .collect(),
-            start: start_b,
-            last_validation_data: None,
-            mod_hash: referee_coin_puzzle_hash.clone(),
-            nonce,
-            game: bob_game,
-            slash_detected: None,
-            rng: rng_sequence
-                .iter()
-                .skip(rng_sequence.len() / 2)
-                .cloned()
-                .collect(),
-        };
+        let alice_driver = make_bare_driver(&start_a);
+        let bob_driver = make_bare_driver(&start_b);
         debug!("created a mover share {:?}", alice_driver.mover_share);
         debug!("created b mover share {:?}", bob_driver.mover_share);
         Ok([alice_driver, bob_driver])
@@ -312,7 +300,10 @@ impl BareDebugGameDriver {
             ));
         };
 
-        let p_validation_hash = exhaustive_inputs.previous_validation_info_hash(allocator)?;
+        let p_validation_hash = exhaustive_inputs
+            .previous_validation_info
+            .as_ref()
+            .map(|v| v.hash().clone());
         let state_update_result = self.generic_run_state_update(
             allocator,
             exhaustive_inputs.validation_program.clone(),
@@ -326,7 +317,8 @@ impl BareDebugGameDriver {
             self.move_count += 1;
             self.mover_share = self.next_mover_share.clone();
             self.max_move_size = self.next_max_move_size;
-            self.last_validation_data = Some((vprog.clone(), self.state.clone()));
+            self.last_validation_data
+                .push_back((vprog.clone(), self.state.clone()));
             self.state = ProgramRef::new(new_state.clone());
         }
 
@@ -436,11 +428,11 @@ impl BareDebugGameDriver {
             validation_program: validation_program,
             validation_info: validation_info,
             incoming_state_validation_info_hash: self
-                .get_previous_validation_info_hash(allocator)
+                .get_validation_info(allocator, 1)
                 .map(|v| v.hash().clone()),
             slash: slash,
             opponent_mover_share: mover_share.clone(),
-            previous_validation_info: self.last_validation_data.clone(),
+            previous_validation_info: self.get_validation_info(allocator, 2),
             entropy: self.rng[self.move_count].clone(),
         };
 
@@ -462,9 +454,8 @@ impl BareDebugGameDriver {
     ) -> Result<StateUpdateResult, Error> {
         let vprog = self.validation_program_queue[0].clone();
         let previous_validation_info_hash = self
-            .get_previous_validation_info_hash(allocator)
+            .get_validation_info(allocator, 1)
             .map(|v| v.hash().clone());
-
         debug!("validation_program {:?}", vprog.to_program());
         self.generic_run_state_update(
             allocator,
@@ -485,10 +476,16 @@ impl BareDebugGameDriver {
         assert_eq!(self.validation_program_queue.len(), 1);
         let vprog = self.validation_program_queue.pop_front().unwrap();
         let move_to_check = inputs.to_linear_move(allocator)?;
-        let previous_validation_info_hash = inputs.previous_validation_info_hash(allocator)?;
+        let previous_validation_info_hash = inputs
+            .previous_validation_info
+            .as_ref()
+            .map(|v| v.hash().clone());
         let evidence = Evidence::nil()?;
         debug!("my mover share {:?}", self.mover_share);
         debug!("validation program {:?}", vprog.to_program());
+
+        self.last_validation_data
+            .push_back((vprog.clone(), self.state.clone()));
         let validator_response = self.generic_run_state_update(
             allocator,
             vprog.clone(),
@@ -549,7 +546,8 @@ impl BareDebugGameDriver {
                 self.move_count += 1;
                 self.handler = new_handler.v1();
                 self.mover_share = tt_data.mover_share.clone();
-                self.last_validation_data = Some((vprog.clone(), self.state.clone().into()));
+                self.last_validation_data
+                    .push_back((vprog.clone(), self.state.clone().into()));
                 self.state = state.clone().into();
                 debug!("Accepted their turn");
             }
@@ -649,7 +647,7 @@ pub struct ExhaustiveMoveInputs {
     entropy: Hash,
     slash: u8,
     opponent_mover_share: Amount,
-    previous_validation_info: Option<(StateUpdateProgram, ProgramRef)>,
+    previous_validation_info: Option<ValidationInfo>,
 }
 
 fn at_least_one_byte(allocator: &mut AllocEncoder, value: u64) -> Result<NodePtr, Error> {
@@ -780,19 +778,6 @@ impl ExhaustiveMoveInputs {
             Ok(result_move_data)
         } else {
             Err(Error::StrErr("move didn't concat".to_string()))
-        }
-    }
-
-    pub fn previous_validation_info_hash(
-        &self,
-        allocator: &mut AllocEncoder,
-    ) -> Result<Option<Hash>, Error> {
-        if let Some((vprog, vstate)) = self.previous_validation_info.as_ref() {
-            let validation_info =
-                ValidationInfo::new_state_update(allocator, vprog.clone(), vstate.p());
-            Ok(Some(validation_info.hash().clone()))
-        } else {
-            Ok(None)
         }
     }
 }

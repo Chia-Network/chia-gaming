@@ -394,23 +394,10 @@ impl TheirTurnReferee {
     pub fn run_state_update(
         &self,
         allocator: &mut AllocEncoder,
-        details: &GameMoveDetails,
+        puzzle_args: Rc<RefereePuzzleArgs>,
+        state: Rc<Program>,
         evidence: Evidence,
     ) -> Result<StateUpdateResult, Error> {
-        let puzzle_args = self.spend_this_coin();
-        let (state, validation_program) = self.get_validation_program_for_their_move()?;
-        debug!(
-            "their turn validation program {:?}",
-            validation_program.to_program()
-        );
-        debug!(
-            "their turn running state update {} with state {:?}",
-            validation_program.name(),
-            state
-        );
-        let validation_info =
-            ValidationInfo::new_state_update(allocator, validation_program.clone(), state.clone());
-        assert_eq!(*validation_info.hash(), details.validation_info_hash);
         let solution = self.fixed.my_identity.standard_solution(
             allocator,
             &[(
@@ -419,20 +406,9 @@ impl TheirTurnReferee {
             )],
         )?;
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
-        let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
         let validator_move_args = InternalStateUpdateArgs {
-            validation_program: validation_program.p(),
-            referee_args: Rc::new(RefereePuzzleArgs {
-                mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
-                waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
-                game_move: details.clone(),
-                validation_program: validation_program.clone(),
-                previous_validation_info_hash: ref_puzzle_args
-                    .previous_validation_info_hash
-                    .clone()
-                    .map(|_| ref_puzzle_args.game_move.validation_info_hash.clone()),
-                ..ref_puzzle_args.clone()
-            }),
+            validation_program: puzzle_args.validation_program.clone(),
+            referee_args: puzzle_args.clone(),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
@@ -455,11 +431,33 @@ impl TheirTurnReferee {
         debug!("do their turn {details:?}");
 
         let handler = self.get_game_handler();
-        let args = self.spend_this_coin();
 
         // Run the initial our turn validation to get the new state.
         let evidence = Evidence::nil()?;
-        let state_update = self.run_state_update(allocator, details, evidence)?;
+        let puzzle_args = self.spend_this_coin();
+        let ref_puzzle_args: &RefereePuzzleArgs = puzzle_args.borrow();
+        let (state, validation_program) = self.get_validation_program_for_their_move()?;
+        debug!(
+            "running state update program {:?}",
+            validation_program.to_program()
+        );
+        let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
+            mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            game_move: details.clone(),
+            validation_program: validation_program.clone(),
+            previous_validation_info_hash: if matches!(
+                *self.state,
+                TheirTurnRefereeMakerGameState::Initial { .. }
+            ) {
+                None
+            } else {
+                Some(puzzle_args.game_move.validation_info_hash.clone())
+            },
+            ..ref_puzzle_args.clone()
+        });
+        let state_update =
+            self.run_state_update(allocator, rc_puzzle_args.clone(), state.clone(), evidence)?;
         debug!("XXX their_turn state_update: {state_update:?}");
 
         // Retrieve evidence from their turn handler.
@@ -485,8 +483,8 @@ impl TheirTurnReferee {
                 amount: self.fixed.amount.clone(),
                 state: state_nodeptr,
 
-                last_move: &args.game_move.basic.move_made,
-                last_mover_share: args.game_move.basic.mover_share.clone(),
+                last_move: &details.basic.move_made,
+                last_mover_share: details.basic.mover_share.clone(),
 
                 new_move: GameMoveDetails {
                     validation_info_hash: validation_program_hash,
@@ -513,22 +511,13 @@ impl TheirTurnReferee {
             }
         };
 
-        let (_, validation_program) = self.get_validation_program_for_their_move()?;
-        let puzzle_args = Rc::new(RefereePuzzleArgs::new(
-            &self.fixed,
-            details,
-            Some(&args.game_move.validation_info_hash),
-            validation_program.clone(),
-            false,
-        ));
-
         debug!("<W> {puzzle_args:?}");
 
         let new_self = self.accept_their_move(
             handler,
             new_state.clone(),
-            args.clone(),
             puzzle_args.clone(),
+            rc_puzzle_args.clone(),
             details,
             state_number,
         )?;
@@ -537,9 +526,12 @@ impl TheirTurnReferee {
         if coin.is_some() {
             for evidence in move_data.slash_evidence.iter() {
                 debug!("calling slash for given evidence");
-                if let StateUpdateResult::Slash(result_evidence) =
-                    self.run_state_update(allocator, details, evidence.clone())?
-                {
+                if let StateUpdateResult::Slash(result_evidence) = self.run_state_update(
+                    allocator,
+                    rc_puzzle_args.clone(),
+                    state.clone(),
+                    evidence.clone(),
+                )? {
                     return Ok((
                         None,
                         TheirTurnMoveResult {

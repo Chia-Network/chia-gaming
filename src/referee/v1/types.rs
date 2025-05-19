@@ -170,17 +170,6 @@ impl RefereePuzzleArgs {
         }
     }
 
-    pub fn my_turn(&self, fixed_info: &RMFixed) -> RefereePuzzleArgs {
-        let new_args = RefereePuzzleArgs {
-            mover_puzzle_hash: fixed_info.my_identity.puzzle_hash.clone(),
-            waiter_puzzle_hash: fixed_info.their_referee_puzzle_hash.clone(),
-            ..self.clone()
-        };
-        assert_eq!(new_args.mover_puzzle_hash, self.waiter_puzzle_hash);
-        assert_eq!(new_args.waiter_puzzle_hash, self.mover_puzzle_hash);
-        new_args
-    }
-
     pub fn off_chain(&self) -> RefereePuzzleArgs {
         let mut new_result: RefereePuzzleArgs = self.clone();
         new_result.waiter_puzzle_hash = PuzzleHash::default();
