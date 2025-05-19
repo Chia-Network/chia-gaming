@@ -847,13 +847,7 @@ impl PotatoHandler {
         game_start: &GameStart,
         program: Rc<Program>,
         params: Rc<Program>,
-    ) -> Result<
-        (
-            Vec<Rc<dyn GameStartInfoInterface>>,
-            Vec<Rc<dyn GameStartInfoInterface>>,
-        ),
-        Error,
-    >
+    ) -> Result<GameStartInfoPair, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
@@ -917,13 +911,7 @@ impl PotatoHandler {
         penv: &mut dyn PeerEnv<'a, G, R>,
         i_initiated: bool,
         game_start: &GameStart,
-    ) -> Result<
-        (
-            Vec<Rc<dyn GameStartInfoInterface>>,
-            Vec<Rc<dyn GameStartInfoInterface>>,
-        ),
-        Error,
-    >
+    ) -> Result<GameStartInfoPair, Error>
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
