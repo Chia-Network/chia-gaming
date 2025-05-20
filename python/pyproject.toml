@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=42", "wheel", "setuptools_scm[toml]>=4.1.2"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+fallback_version = "unknown-no-.git-directory"
+local_scheme = "no-local-version"
+
+[tool.black]
+line-length = 120
+target-version =  ['py38', 'py39', 'py310', 'py311', 'py312']
+include = '''
+^/(
+    [^/]*.py
+    | (calpoker|krunk|tests|tools)/.*\.pyi?
+)$
+'''
+exclude = ''
