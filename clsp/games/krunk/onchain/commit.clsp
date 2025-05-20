@@ -8,19 +8,15 @@
 ; state is nil
 ; move is an Alice commit to a salted word
 ; evidence is empty
-(defun commit_validate (mod_hash (move new_validation_hash mover_share previous_validation_hash
-    mover_puzzle_hash waiter_puzzle_hash amount timeout max_move_size referee_hash)
-    state me previous_calidation_program mover_puzzle solution evidence)
+(defun commit_validate (mod_hash
+    (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+        previous_state previous_validation_program mover_puzzle solution evidence)
 
-    ; check move length is 32
-    ; check state is (0 0 dictionary_public_key alice_commit)
-    ; check max_move_size, mover_share
     (if_any_fail
-        (= (strlen move) 32)
-        (= next_validation_hash (sha256 guess_validate_hash (shatree (li 0 0 dictionary_key move))))
-        (= max_move_size 5)
-        0
-        (x)
+        (= (strlen MOVE) 32)
+        (list SLASH 0 "A slash" MOVE "max_move_size" MAX_MOVE_SIZE)
+        (list MAKE_MOVE guess_validate_hash (li 0 0 dictionary_key MOVE) 5 "A move")
     )
 )
 
