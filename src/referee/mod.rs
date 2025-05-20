@@ -492,7 +492,7 @@ impl RefereeInterface for RefereeByTurn {
     }
 
     fn suitable_redo(&self) -> bool {
-        self.is_my_turn()
+        !self.is_my_turn()
     }
 
     fn enable_cheating(&self, _make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {

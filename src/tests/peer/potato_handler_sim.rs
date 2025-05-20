@@ -1458,6 +1458,9 @@ pub fn setup_debug_test(
     let args = args_curry.expect("good").to_clvm(allocator).into_gen()?;
     let args_program = Rc::new(Program::from_nodeptr(allocator, args).expect("ok"));
 
+    debug!("alice mover puzzle hash is {:?}", identities[0].puzzle_hash);
+    debug!("bob   mover puzzle hash is {:?}", identities[0].puzzle_hash);
+
     Ok(DebugGameSimSetup {
         private_keys,
         identities,
@@ -1470,7 +1473,7 @@ pub fn setup_debug_test(
 
 #[test]
 #[cfg(feature = "sim-tests")]
-fn test_referee_play_debug_game() {
+fn test_referee_play_debug_game_alice_slash() {
     let mut allocator = AllocEncoder::new();
     let seed_data: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed_data);
@@ -1496,4 +1499,35 @@ fn test_referee_play_debug_game() {
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // Bob was slashable so alice gets the money.
     assert_eq!(p1_balance, p2_balance + 200);
+}
+
+#[test]
+#[cfg(feature = "sim-tests")]
+fn test_referee_play_debug_game_bob_slash() {
+    let mut allocator = AllocEncoder::new();
+    let seed_data: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed_data);
+    let moves = [
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(50, 0),
+        DebugGameTestMove::new(150, 0),
+        DebugGameTestMove::new(49, 7),
+    ];
+
+    let sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+    let outcome = run_game_container_with_action_list(
+        &mut allocator,
+        &mut rng,
+        sim_setup.private_keys.clone(),
+        &sim_setup.identities,
+        b"debug",
+        sim_setup.args_program.clone(),
+        &sim_setup.game_actions,
+    )
+        .expect("should finish");
+
+    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    // Alice was slashable so bob gets the money.
+    assert_eq!(p1_balance + 200, p2_balance);
 }

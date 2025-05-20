@@ -16,12 +16,13 @@ use crate::common::types::{
     Sha256tree, Spend,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
+    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction, IdentityCoinAndSolution,
 };
 use crate::referee::v1::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
     OnChainRefereeSolution, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    OnChainRefereeMoveData, OnChainRefereeSlashData,
 };
 use crate::referee::v1::RefereeByTurn;
 
@@ -42,6 +43,9 @@ pub enum MyTurnRefereeMakerGameState {
         // Stored info for referee args
         create_this_coin: Rc<RefereePuzzleArgs>,
         spend_this_coin: Rc<RefereePuzzleArgs>,
+
+        // How to spend
+        slash_spend: Rc<OnChainRefereeSlashData>,
     },
 }
 
@@ -392,6 +396,12 @@ impl MyTurnReferee {
             new_puzzle_args.mover_puzzle_hash
         );
 
+        let move_spend = Rc::new(OnChainRefereeMoveData {
+            state: new_state.clone(),
+            puzzle_args: new_puzzle_args.clone(),
+            validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
+        });
+
         debug!(
             "MY TURN FINISHED WITH STATE {new_state:?} REPLACING {:?}",
             self.get_game_state()
@@ -404,6 +414,7 @@ impl MyTurnReferee {
             state_after_our_turn: new_state.clone(),
             create_this_coin: current_puzzle_args,
             spend_this_coin: new_puzzle_args,
+            move_spend,
         };
 
         let new_parent = MyTurnReferee {
@@ -618,7 +629,7 @@ impl MyTurnReferee {
             // inner puzzle as we take additional move or slash data.
             //
             // OnChainRefereeSolution encodes this properly.
-            let transaction_solution = args.to_clvm(allocator).into_gen()?;
+            let transaction_solution = args.to_nodeptr(allocator)?;
             debug!("transaction solution inputs {args:?}");
             let transaction_bundle = Spend {
                 puzzle: puzzle.clone(),

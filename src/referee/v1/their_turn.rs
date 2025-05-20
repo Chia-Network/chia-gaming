@@ -27,6 +27,7 @@ use crate::referee::v1::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs, RMFixed,
     RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult, REM_CONDITION_FIELDS,
+    OnChainRefereeMove, OnChainRefereeSlash, OnChainRefereeMoveData, OnChainRefereeSlashData,
 };
 use crate::referee::v1::{BrokenOutCoinSpendInfo, RefereeByTurn};
 
@@ -48,6 +49,7 @@ pub enum TheirTurnRefereeMakerGameState {
         state_after_our_turn: Rc<Program>,
         create_this_coin: Rc<RefereePuzzleArgs>,
         spend_this_coin: Rc<RefereePuzzleArgs>,
+        move_spend: Rc<OnChainRefereeMoveData>,
     },
 }
 
@@ -213,6 +215,14 @@ impl TheirTurnReferee {
         true
     }
 
+    pub fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
+        if let TheirTurnRefereeMakerGameState::AfterOurTurn { move_spend, .. } = self.state.borrow() {
+            return Some(move_spend.clone());
+        }
+
+        None
+    }
+
     pub fn get_game_handler(&self) -> GameHandler {
         match self.state.borrow() {
             TheirTurnRefereeMakerGameState::Initial { game_handler, .. } => game_handler.clone(),
@@ -307,11 +317,17 @@ impl TheirTurnReferee {
         );
         debug!("accept their move {details:?}");
 
+        let slash_spend = Rc::new(OnChainRefereeSlashData {
+            state: new_state.clone(),
+            puzzle_args: referee_args.clone(),
+        });
+
         let new_state = MyTurnRefereeMakerGameState::AfterTheirTurn {
             game_handler: game_handler.clone(),
             state_after_their_turn: new_state.clone(),
             create_this_coin: old_args,
             spend_this_coin: referee_args,
+            slash_spend,
         };
 
         let new_parent = TheirTurnReferee {

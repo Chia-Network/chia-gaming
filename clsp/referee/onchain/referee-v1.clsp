@@ -8,6 +8,7 @@
 (import std.condition_codes)
 (import std.match)
 (import std.li)
+(import std.print)
 (import games.calpoker-v0.game_codes)
 
 ;
@@ -38,7 +39,7 @@
 ;
 (export (@ all_args ((MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A) . args))
-    (if (not args)
+    (if (not (print (list "referee-v1 args" (f all_args)) args))
         ; timeout
         (list
             (list ASSERT_HEIGHT_RELATIVE TIMEOUT)
