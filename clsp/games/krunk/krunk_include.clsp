@@ -1,3 +1,13 @@
 (include *standard-cl-23*)
 (import krunk_generate)
 (export krunk_factory)
+
+(export (kind . arguments)
+  (if
+     (= kind "commit_validate")
+     (commit_validate &rest arguments)
+
+     ;; Otherwise
+     (x "Couldn't find entrypoint: " kind)
+     )
+  )
