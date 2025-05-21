@@ -383,22 +383,10 @@ impl MyTurnReferee {
         message_handler: Option<MessageHandler>,
         state_number: usize,
     ) -> Result<TheirTurnReferee, Error> {
-        // assert_ne!(
-        //     current_puzzle_args.mover_puzzle_hash,
-        //     new_puzzle_args.mover_puzzle_hash
-        // );
-        // assert_eq!(
-        //     current_puzzle_args.mover_puzzle_hash,
-        //     new_puzzle_args.waiter_puzzle_hash
-        // );
-        assert_eq!(
-            self.fixed.my_identity.puzzle_hash,
-            new_puzzle_args.mover_puzzle_hash
-        );
-
         let move_spend = Rc::new(OnChainRefereeMoveData {
             state: new_state.clone(),
-            puzzle_args: new_puzzle_args.clone(),
+            new_move: new_puzzle_args.game_move.clone(),
+            puzzle_args: Rc::new(current_puzzle_args.swap()),
             validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
         });
 
@@ -601,90 +589,6 @@ impl MyTurnReferee {
     ) -> Result<PuzzleHash, Error> {
         let args = self.spend_this_coin();
         curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
-    }
-
-    // Ensure this returns
-    #[allow(dead_code)]
-    fn get_transaction(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-        always_produce_transaction: bool,
-        puzzle: Puzzle,
-        targs: &RefereePuzzleArgs,
-        args: &OnChainRefereeSolution,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let our_move = self.is_my_turn();
-
-        let my_mover_share = if our_move {
-            targs.game_move.basic.mover_share.clone()
-        } else {
-            self.fixed.amount.clone() - targs.game_move.basic.mover_share.clone()
-        };
-
-        if always_produce_transaction || my_mover_share != Amount::default() {
-            let signature = args.get_signature().unwrap_or_default();
-
-            // The transaction solution is not the same as the solution for the
-            // inner puzzle as we take additional move or slash data.
-            //
-            // OnChainRefereeSolution encodes this properly.
-            let transaction_solution = args.to_nodeptr(allocator)?;
-            debug!("transaction solution inputs {args:?}");
-            let transaction_bundle = Spend {
-                puzzle: puzzle.clone(),
-                solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
-                signature,
-            };
-            let output_coin_string = CoinString::from_parts(
-                &coin_string.to_coin_id(),
-                &puzzle.sha256tree(allocator),
-                &my_mover_share,
-            );
-            return Ok(Some(RefereeOnChainTransaction {
-                bundle: transaction_bundle,
-                amount: self.fixed.amount.clone(),
-                coin: output_coin_string,
-            }));
-        }
-
-        // Zero mover share case.
-        Ok(None)
-    }
-
-    /// Output coin_string:
-    /// Parent is hash of current_coin
-    /// Puzzle hash is my_referee_puzzle_hash.
-    ///
-    /// Timeout unlike other actions applies to the current ph, not the one at the
-    /// start of a turn proper.
-    #[allow(dead_code)]
-    pub fn get_transaction_for_timeout(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
-        debug!(
-            "mover share at start of action   {:?}",
-            self.args_for_this_coin().game_move.basic.mover_share
-        );
-        debug!(
-            "mover share at end   of action   {:?}",
-            self.spend_this_coin().game_move.basic.mover_share
-        );
-
-        let targs = self.spend_this_coin();
-        let puzzle = curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &targs)?;
-
-        self.get_transaction(
-            allocator,
-            coin_string,
-            false,
-            puzzle,
-            &targs,
-            &OnChainRefereeSolution::Timeout,
-        )
     }
 
     #[allow(dead_code)]

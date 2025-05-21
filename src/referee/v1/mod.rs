@@ -200,7 +200,7 @@ impl RefereeByTurn {
         // inner puzzle as we take additional move or slash data.
         //
         // OnChainRefereeSolution encodes this properly.
-        let transaction_solution = args.to_nodeptr(allocator)?;
+        let transaction_solution = args.to_nodeptr(allocator, &self.fixed())?;
         debug!("transaction solution inputs {args:?}");
         let transaction_bundle = Spend {
             puzzle: puzzle.clone(),
@@ -623,7 +623,7 @@ impl RefereeInterface for RefereeByTurn {
     ) -> Result<RefereeOnChainTransaction, Error> {
         // We can only do a move to replicate our turn.
         let target_args = self.spend_this_coin();
-        let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
+        let spend_puzzle = self.outcome_referee_puzzle(allocator)?;
         let my_turn_spend = self.get_my_turn_move_spend()?;
 
         // Get the puzzle hash for the next referee state.
@@ -669,10 +669,6 @@ impl RefereeInterface for RefereeByTurn {
         )?;
         let target_referee_puzzle =
             curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)?;
-        assert_eq!(
-            target_referee_puzzle.sha256tree(allocator),
-            target_referee_puzzle_hash
-        );
 
         let args_list = OnChainRefereeSolution::Move(Rc::new(my_turn_spend.to_move(
             allocator,

@@ -709,14 +709,14 @@ impl ExhaustiveMoveInputs {
     pub fn to_linear_move(&self, allocator: &mut AllocEncoder) -> Result<Vec<u8>, Error> {
         let alice_mover = (self.count % 2) == 0;
         let mover_ph_ref = if alice_mover {
-            &self.alice_puzzle_hash
-        } else {
             &self.bob_puzzle_hash
+        } else {
+            &self.alice_puzzle_hash
         };
         let waiter_ph_ref = if alice_mover {
-            Some(&self.bob_puzzle_hash)
-        } else {
             Some(&self.alice_puzzle_hash)
+        } else {
+            Some(&self.bob_puzzle_hash)
         };
         let pv_hash = self.validation_program.sha256tree(allocator);
         let timeout_atom = at_least_one_byte(allocator, self.timeout.to_u64())?;

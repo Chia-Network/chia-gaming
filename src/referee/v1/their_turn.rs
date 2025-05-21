@@ -309,12 +309,6 @@ impl TheirTurnReferee {
         state_number: usize,
     ) -> Result<MyTurnReferee, Error> {
         debug!("their turn: new_state {new_state:?}");
-        // assert_ne!(old_args.mover_puzzle_hash, referee_args.mover_puzzle_hash);
-        // assert_eq!(old_args.mover_puzzle_hash, referee_args.waiter_puzzle_hash);
-        assert_ne!(
-            self.fixed.my_identity.puzzle_hash,
-            referee_args.mover_puzzle_hash
-        );
         debug!("accept their move {details:?}");
 
         let slash_spend = Rc::new(OnChainRefereeSlashData {
