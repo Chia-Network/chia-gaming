@@ -384,10 +384,10 @@ impl MyTurnReferee {
         state_number: usize,
     ) -> Result<TheirTurnReferee, Error> {
         let move_spend = Rc::new(OnChainRefereeMoveData {
+            validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
             state: new_state.clone(),
             new_move: new_puzzle_args.game_move.clone(),
             puzzle_args: Rc::new(current_puzzle_args.swap()),
-            validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
         });
 
         debug!(

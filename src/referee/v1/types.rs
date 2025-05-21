@@ -381,17 +381,26 @@ impl OnChainRefereeMoveData {
         fixed: &RMFixed,
         coin_string: &CoinString
     ) -> Result<OnChainRefereeMove, Error> {
+        let infohash_c = ValidationInfo::new_state_update(
+            allocator,
+            self.validation_program.clone(),
+            self.state.clone(),
+        );
         let args_for_new_puzzle_hash = RefereePuzzleArgs {
             mover_puzzle_hash: fixed.their_referee_puzzle_hash.clone(),
             waiter_puzzle_hash: fixed.my_identity.puzzle_hash.clone(),
             amount: fixed.amount.clone(),
             timeout: fixed.timeout.clone(),
             nonce: fixed.nonce,
-            game_move: self.new_move.clone(),
+            game_move: GameMoveDetails {
+                basic: self.new_move.basic.clone(),
+                validation_info_hash: infohash_c.hash().clone(),
+            },
             referee_coin_puzzle_hash: fixed.referee_coin_puzzle_hash.clone(),
             validation_program: self.validation_program.clone(),
-            previous_validation_info_hash: Some(self.puzzle_args.game_move.validation_info_hash.clone()),
+            previous_validation_info_hash: Some(self.new_move.validation_info_hash.clone()),
         };
+        debug!("args for new puzzle hash {args_for_new_puzzle_hash:?}");
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &fixed.referee_coin_puzzle_hash,
@@ -426,6 +435,7 @@ impl OnChainRefereeMoveData {
         )?;
 
         Ok(OnChainRefereeMove {
+            game_move: self.new_move.clone(),
             puzzle_args: Rc::new(self.puzzle_args.swap()),
             state: self.state.clone(),
             validation_program: self.validation_program.clone(),
@@ -482,6 +492,8 @@ pub struct IdentityCoinAndSolution {
 /// Dynamic arguments passed to the on chain refere to apply a move
 #[derive(Debug, Clone)]
 pub struct OnChainRefereeMove {
+    /// The new move to make
+    pub game_move: GameMoveDetails,
     /// Coin puzzle and solution that are used to generate conditions for the
     /// next generation of the on chain refere coin.
     pub mover_coin: IdentityCoinAndSolution,
@@ -544,16 +556,21 @@ impl OnChainRefereeSolution {
                     refmove.mover_coin.mover_coin_puzzle.sha256tree(encoder),
                     fixed.my_identity.puzzle_hash
                 );
-                let move_atom = encoder.encode_atom(clvm_traits::Atom::Borrowed(&refmove.puzzle_args.game_move.basic.move_made)).into_gen()?;
+                let move_atom = encoder.encode_atom(clvm_traits::Atom::Borrowed(&refmove.game_move.basic.move_made)).into_gen()?;
+                let infohash_c = ValidationInfo::new_state_update(
+                    encoder,
+                    refmove.validation_program.clone(),
+                    refmove.state.clone(),
+                );
 
                 (
                     move_atom,
                     (
-                        refmove.puzzle_args.game_move.validation_info_hash.clone(),
+                        infohash_c.hash(),
                         (
-                            refmove.puzzle_args.game_move.basic.mover_share.clone(),
+                            refmove.game_move.basic.mover_share.clone(),
                             (
-                                refmove.puzzle_args.game_move.basic.max_move_size,
+                                refmove.game_move.basic.max_move_size,
                                 (
                                     refmove.mover_coin.mover_coin_puzzle.clone(),
                                     (
