@@ -418,7 +418,7 @@ impl TheirTurnReferee {
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: puzzle_args.validation_program.clone(),
-            referee_args: puzzle_args.clone(),
+            referee_args: Rc::new(puzzle_args.swap()),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
@@ -452,8 +452,8 @@ impl TheirTurnReferee {
             validation_program.to_program()
         );
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
-            waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
             game_move: details.clone(),
             validation_program: validation_program.clone(),
             previous_validation_info_hash: if matches!(

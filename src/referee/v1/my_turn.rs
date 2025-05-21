@@ -493,8 +493,8 @@ impl MyTurnReferee {
             validation_info_hash: v.hash().clone(),
         };
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
-            waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
             previous_validation_info_hash: if matches!(
@@ -610,7 +610,7 @@ impl MyTurnReferee {
         debug!("my turn update using state {state:?}");
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: referee_args.validation_program.clone(),
-            referee_args: referee_args.clone(),
+            referee_args: Rc::new(referee_args.swap()),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),

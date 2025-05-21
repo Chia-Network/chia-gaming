@@ -379,6 +379,7 @@ impl OnChainRefereeMoveData {
         &self,
         allocator: &mut AllocEncoder,
         fixed: &RMFixed,
+        args: Rc<RefereePuzzleArgs>,
         coin_string: &CoinString
     ) -> Result<OnChainRefereeMove, Error> {
         let infohash_c = ValidationInfo::new_state_update(
@@ -398,9 +399,11 @@ impl OnChainRefereeMoveData {
             },
             referee_coin_puzzle_hash: fixed.referee_coin_puzzle_hash.clone(),
             validation_program: self.validation_program.clone(),
-            previous_validation_info_hash: Some(self.new_move.validation_info_hash.clone()),
+            previous_validation_info_hash: Some(self.puzzle_args.game_move.validation_info_hash.clone()),
         };
-        debug!("args for new puzzle hash {args_for_new_puzzle_hash:?}");
+        let args_for_ph_node = args_for_new_puzzle_hash.to_clvm(allocator).into_gen()?;
+        let args_for_ph_prog = Program::from_nodeptr(allocator, args_for_ph_node)?;
+        debug!("args for new puzzle hash {args_for_ph_prog:?}");
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &fixed.referee_coin_puzzle_hash,

@@ -86,7 +86,7 @@
                 (print "move: len less than" (<= (strlen new_move) MAX_MOVE_SIZE))
                 (print "move: mover share less" (<= new_mover_share AMOUNT))
                 (print "move: mover share positive" (>= new_mover_share 0))
-                (print "move: infohash_c len 32" (= 32 (strlen infohash_c)))
+                (print "move: infohash_c len 32" (= 32 (strlen (print "move: infohash_c" infohash_c))))
                 (print "move: mover puzzle match" (= (print "move: curried mover puzzle" MOVER_PUZZLE_HASH) (print "move: puzzle hash" (shatree mover_puzzle))))
                 ; Check that the child output is made
                 (print "move: creates new referee" (match

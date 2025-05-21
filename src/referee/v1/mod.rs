@@ -623,7 +623,7 @@ impl RefereeInterface for RefereeByTurn {
     ) -> Result<RefereeOnChainTransaction, Error> {
         // We can only do a move to replicate our turn.
         let target_args = self.spend_this_coin();
-        let spend_puzzle = self.outcome_referee_puzzle(allocator)?;
+        let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
         let my_turn_spend = self.get_my_turn_move_spend()?;
 
         // Get the puzzle hash for the next referee state.
@@ -667,12 +667,17 @@ impl RefereeInterface for RefereeByTurn {
             &self.fixed().referee_coin_puzzle_hash,
             &args,
         )?;
+
+        assert_eq!(args.mover_puzzle_hash, self.fixed().my_identity.puzzle_hash);
+        assert_eq!(target_args.mover_puzzle_hash, self.fixed().their_referee_puzzle_hash);
+
         let target_referee_puzzle =
             curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)?;
 
         let args_list = OnChainRefereeSolution::Move(Rc::new(my_turn_spend.to_move(
             allocator,
             &self.fixed(),
+            args,
             coin_string,
         )?));
 
