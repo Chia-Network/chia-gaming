@@ -436,7 +436,7 @@ impl OnChainRefereeMoveData {
 
         Ok(OnChainRefereeMove {
             game_move: self.new_move.clone(),
-            puzzle_args: Rc::new(self.puzzle_args.swap()),
+            puzzle_args: self.puzzle_args.clone(),
             state: self.state.clone(),
             validation_program: self.validation_program.clone(),
             mover_coin: IdentityCoinAndSolution {
