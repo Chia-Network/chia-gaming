@@ -15,8 +15,8 @@ use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash,
-    IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, CoinString, Error,
+    GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::GameMoveDetails;
 use crate::utils::proper_list;
@@ -175,7 +175,7 @@ impl RefereePuzzleArgs {
         RefereePuzzleArgs {
             mover_puzzle_hash: self.waiter_puzzle_hash.clone(),
             waiter_puzzle_hash: self.mover_puzzle_hash.clone(),
-            .. self.clone()
+            ..self.clone()
         }
     }
 
@@ -380,7 +380,7 @@ impl OnChainRefereeMoveData {
         &self,
         allocator: &mut AllocEncoder,
         fixed: &RMFixed,
-        coin_string: &CoinString
+        coin_string: &CoinString,
     ) -> Result<OnChainRefereeMove, Error> {
         let args_for_ph_node = self.after_args.to_clvm(allocator).into_gen()?;
         let args_for_ph_prog = Program::from_nodeptr(allocator, args_for_ph_node)?;
@@ -392,10 +392,7 @@ impl OnChainRefereeMoveData {
         )?;
         let inner_conditions = [(
             CREATE_COIN,
-            (
-                new_puzzle_hash.clone(),
-                (fixed.amount.clone(), ()),
-            ),
+            (new_puzzle_hash.clone(), (fixed.amount.clone(), ())),
         )]
         .to_clvm(allocator)
         .into_gen()?;
@@ -405,8 +402,7 @@ impl OnChainRefereeMoveData {
         debug!("referee spend with parent coin {coin_string:?}");
         debug!(
             "signing coin with synthetic public key {:?} for public key {:?}",
-            fixed.my_identity.synthetic_public_key,
-            fixed.my_identity.public_key
+            fixed.my_identity.synthetic_public_key, fixed.my_identity.public_key
         );
         let referee_spend = standard_solution_partial(
             allocator,
@@ -444,7 +440,7 @@ impl OnChainRefereeSlashData {
         &self,
         allocator: &mut AllocEncoder,
         fixed: &RMFixed,
-        coin_string: &CoinString
+        coin_string: &CoinString,
     ) -> Result<OnChainRefereeSlash, Error> {
         todo!();
     }
@@ -541,11 +537,15 @@ impl OnChainRefereeSolution {
         }
     }
 
-    pub fn to_nodeptr(&self, encoder: &mut AllocEncoder, fixed: &RMFixed) -> Result<NodePtr, Error> {
+    pub fn to_nodeptr(
+        &self,
+        encoder: &mut AllocEncoder,
+        fixed: &RMFixed,
+    ) -> Result<NodePtr, Error> {
         match self {
-            OnChainRefereeSolution::Timeout => {
-                encoder.encode_atom(clvm_traits::Atom::Borrowed(&[])).into_gen()
-            }
+            OnChainRefereeSolution::Timeout => encoder
+                .encode_atom(clvm_traits::Atom::Borrowed(&[]))
+                .into_gen(),
             OnChainRefereeSolution::Move(refmove) => {
                 let refmove_coin_solution_ref: &Program =
                     refmove.mover_coin.mover_coin_spend_solution.borrow();
@@ -553,7 +553,11 @@ impl OnChainRefereeSolution {
                     refmove.mover_coin.mover_coin_puzzle.sha256tree(encoder),
                     fixed.my_identity.puzzle_hash
                 );
-                let move_atom = encoder.encode_atom(clvm_traits::Atom::Borrowed(&refmove.game_move.basic.move_made)).into_gen()?;
+                let move_atom = encoder
+                    .encode_atom(clvm_traits::Atom::Borrowed(
+                        &refmove.game_move.basic.move_made,
+                    ))
+                    .into_gen()?;
                 let infohash_c = ValidationInfo::new_state_update(
                     encoder,
                     refmove.validation_program.clone(),
@@ -570,15 +574,14 @@ impl OnChainRefereeSolution {
                                 refmove.game_move.basic.max_move_size,
                                 (
                                     refmove.mover_coin.mover_coin_puzzle.clone(),
-                                    (
-                                        (refmove_coin_solution_ref, ())
-                                    )
-                                )
-                            )
-                        )
-                    )
+                                    ((refmove_coin_solution_ref, ())),
+                                ),
+                            ),
+                        ),
+                    ),
                 )
-                    .to_clvm(encoder).into_gen()
+                    .to_clvm(encoder)
+                    .into_gen()
             }
             OnChainRefereeSolution::Slash(refslash) => {
                 let refslash_solution_ref: &Program =
@@ -589,16 +592,12 @@ impl OnChainRefereeSolution {
                         refslash.validation_program.clone(),
                         (
                             refslash.mover_coin.mover_coin_puzzle.clone(),
-                            (
-                                refslash_solution_ref,
-                                (
-                                    (refslash.evidence.clone(), ())
-                                )
-                            )
-                        )
-                    )
+                            (refslash_solution_ref, ((refslash.evidence.clone(), ()))),
+                        ),
+                    ),
                 )
-                    .to_clvm(encoder).into_gen()
+                    .to_clvm(encoder)
+                    .into_gen()
             }
         }
     }

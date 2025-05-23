@@ -16,13 +16,14 @@ use crate::common::types::{
     Sha256tree, Spend,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction, IdentityCoinAndSolution,
+    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, IdentityCoinAndSolution,
+    RefereeOnChainTransaction,
 };
 use crate::referee::v1::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
-    OnChainRefereeSolution, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
-    OnChainRefereeMoveData, OnChainRefereeSlashData,
+    OnChainRefereeMoveData, OnChainRefereeSlashData, OnChainRefereeSolution, RMFixed,
+    RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
 use crate::referee::v1::RefereeByTurn;
 
@@ -355,9 +356,7 @@ impl MyTurnReferee {
     pub fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
         match self.state.borrow() {
             MyTurnRefereeMakerGameState::Initial { .. } => None,
-            MyTurnRefereeMakerGameState::AfterTheirTurn { move_spend, .. } => {
-                move_spend.clone()
-            }
+            MyTurnRefereeMakerGameState::AfterTheirTurn { move_spend, .. } => move_spend.clone(),
         }
     }
 

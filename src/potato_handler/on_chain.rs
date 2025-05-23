@@ -161,7 +161,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 if matches!(self.player_ch.game_is_my_turn(&game_id), Some(true)) {
                     system_interface.self_move(&game_id, &[])?;
                 } else {
-                    system_interface.opponent_moved(env.allocator, &game_id, ReadableMove::from_program(Rc::new(Program::from_hex("80")?)), Amount::default())?;
+                    system_interface.opponent_moved(
+                        env.allocator,
+                        &game_id,
+                        ReadableMove::from_program(Rc::new(Program::from_hex("80")?)),
+                        Amount::default(),
+                    )?;
                 }
 
                 system_interface.register_coin(

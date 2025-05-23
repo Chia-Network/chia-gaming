@@ -25,10 +25,10 @@ use crate::referee::types::{
 };
 use crate::referee::v1::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs, RMFixed,
-    RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult, REM_CONDITION_FIELDS,
-    OnChainRefereeMove, OnChainRefereeSlash, OnChainRefereeMoveData, OnChainRefereeSlashData,
-    OnChainRefereeSolution, IdentityCoinAndSolution,
+    curry_referee_puzzle, curry_referee_puzzle_hash, IdentityCoinAndSolution,
+    InternalStateUpdateArgs, OnChainRefereeMove, OnChainRefereeMoveData, OnChainRefereeSlash,
+    OnChainRefereeSlashData, OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
+    StateUpdateMoveArgs, StateUpdateResult, REM_CONDITION_FIELDS,
 };
 use crate::referee::v1::{BrokenOutCoinSpendInfo, RefereeByTurn};
 
@@ -217,7 +217,8 @@ impl TheirTurnReferee {
     }
 
     pub fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
-        if let TheirTurnRefereeMakerGameState::AfterOurTurn { move_spend, .. } = self.state.borrow() {
+        if let TheirTurnRefereeMakerGameState::AfterOurTurn { move_spend, .. } = self.state.borrow()
+        {
             return Some(move_spend.clone());
         }
 

@@ -23,8 +23,8 @@ use crate::referee::types::{
 use crate::referee::v1::my_turn::MyTurnReferee;
 use crate::referee::v1::their_turn::TheirTurnReferee;
 use crate::referee::v1::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, IdentityCoinAndSolution, OnChainRefereeMoveData,
-    OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
+    curry_referee_puzzle, curry_referee_puzzle_hash, IdentityCoinAndSolution,
+    OnChainRefereeMoveData, OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
 };
 
 #[derive(Clone, Debug)]
@@ -240,22 +240,23 @@ impl RefereeByTurn {
     }
 
     fn get_my_turn_move_spend(&self) -> Result<Rc<OnChainRefereeMoveData>, Error> {
-        let move_spend =
-            match self {
-                RefereeByTurn::TheirTurn(t) => {
-                    debug!("get_my_turn_move_spend: right phase");
-                    t.get_move_info()
-                }
-                RefereeByTurn::MyTurn(t) => {
-                    debug!("get_my_turn_move_spend: wrong phase");
-                    t.get_move_info()
-                }
-            };
+        let move_spend = match self {
+            RefereeByTurn::TheirTurn(t) => {
+                debug!("get_my_turn_move_spend: right phase");
+                t.get_move_info()
+            }
+            RefereeByTurn::MyTurn(t) => {
+                debug!("get_my_turn_move_spend: wrong phase");
+                t.get_move_info()
+            }
+        };
 
         if let Some(s) = move_spend {
             Ok(s.clone())
         } else {
-            Err(Error::StrErr("we need to be after a my turn to get a move transaction".to_string()))
+            Err(Error::StrErr(
+                "we need to be after a my turn to get a move transaction".to_string(),
+            ))
         }
     }
 }
@@ -648,11 +649,8 @@ impl RefereeInterface for RefereeByTurn {
         // We can only do a move to replicate our turn.
         let my_turn_spend = self.get_my_turn_move_spend()?;
         let args = my_turn_spend.before_args.clone();
-        let spend_puzzle = curry_referee_puzzle(
-            allocator,
-            &self.fixed().referee_coin_puzzle,
-            &args
-        )?;
+        let spend_puzzle =
+            curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)?;
 
         // Get the puzzle hash for the next referee state.
         // This reflects a "their turn" state with the updated state from the
@@ -682,16 +680,14 @@ impl RefereeInterface for RefereeByTurn {
             coin_string,
         )?));
 
-        if let Some(transaction) =
-            self.get_transaction(
-                allocator,
-                coin_string,
-                true,
-                spend_puzzle,
-                &args_list,
-                self.get_our_current_share(),
-            )?
-        {
+        if let Some(transaction) = self.get_transaction(
+            allocator,
+            coin_string,
+            true,
+            spend_puzzle,
+            &args_list,
+            self.get_our_current_share(),
+        )? {
             Ok(transaction)
         } else {
             // Return err

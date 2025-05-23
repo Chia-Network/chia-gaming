@@ -1525,7 +1525,7 @@ fn test_referee_play_debug_game_bob_slash() {
         sim_setup.args_program.clone(),
         &sim_setup.game_actions,
     )
-        .expect("should finish");
+    .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // Alice was slashable so bob gets the money.
