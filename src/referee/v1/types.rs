@@ -431,16 +431,19 @@ impl OnChainRefereeMoveData {
 
 #[derive(Debug)]
 pub struct OnChainRefereeSlashData {
+    #[allow(dead_code)]
     pub state: Rc<Program>,
+    #[allow(dead_code)]
     pub puzzle_args: Rc<RefereePuzzleArgs>,
 }
 
 impl OnChainRefereeSlashData {
+    #[allow(dead_code)]
     pub fn to_slash(
         &self,
-        allocator: &mut AllocEncoder,
-        fixed: &RMFixed,
-        coin_string: &CoinString,
+        _allocator: &mut AllocEncoder,
+        _fixed: &RMFixed,
+        _coin_string: &CoinString,
     ) -> Result<OnChainRefereeSlash, Error> {
         todo!();
     }
@@ -480,7 +483,9 @@ pub struct OnChainRefereeMove {
     /// State before this validation program ran.
     pub state: Rc<Program>,
     /// Referee puzzle args
+    #[allow(dead_code)]
     pub before_puzzle_args: Rc<RefereePuzzleArgs>,
+    #[allow(dead_code)]
     pub after_puzzle_args: Rc<RefereePuzzleArgs>,
     /// Coin puzzle and solution that are used to generate conditions for the
     /// next generation of the on chain refere coin.
@@ -504,6 +509,7 @@ pub struct OnChainRefereeSlash {
     pub evidence: Evidence,
 
     /// Solution for mover puzzler
+    #[allow(dead_code)]
     pub mover_solution: Rc<Program>,
 }
 

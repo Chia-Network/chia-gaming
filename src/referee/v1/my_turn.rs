@@ -1,8 +1,6 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
-
 use log::debug;
 
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
@@ -12,18 +10,14 @@ use crate::channel_handler::v1::game_handler::{
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, CoinString, Error, Hash, IntoErr, Program, Puzzle, PuzzleHash,
-    Sha256tree, Spend,
+    AllocEncoder, Amount, Error, Hash, Program, Puzzle, PuzzleHash, Sha256tree,
 };
-use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, IdentityCoinAndSolution,
-    RefereeOnChainTransaction,
-};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData};
 use crate::referee::v1::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
-    OnChainRefereeMoveData, OnChainRefereeSlashData, OnChainRefereeSolution, RMFixed,
-    RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    OnChainRefereeMoveData, OnChainRefereeSlashData, RMFixed, RefereePuzzleArgs,
+    StateUpdateMoveArgs, StateUpdateResult,
 };
 use crate::referee::v1::RefereeByTurn;
 
@@ -47,6 +41,7 @@ pub enum MyTurnRefereeMakerGameState {
 
         // How to spend
         move_spend: Option<Rc<OnChainRefereeMoveData>>,
+        #[allow(dead_code)]
         slash_spend: Rc<OnChainRefereeSlashData>,
     },
 }

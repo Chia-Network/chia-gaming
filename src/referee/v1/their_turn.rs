@@ -18,7 +18,7 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
     u64_from_atom, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
-    IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash, RcNode, Sha256tree, Spend,
+    IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult,
@@ -26,9 +26,9 @@ use crate::referee::types::{
 use crate::referee::v1::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, IdentityCoinAndSolution,
-    InternalStateUpdateArgs, OnChainRefereeMove, OnChainRefereeMoveData, OnChainRefereeSlash,
-    OnChainRefereeSlashData, OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
-    StateUpdateMoveArgs, StateUpdateResult, REM_CONDITION_FIELDS,
+    InternalStateUpdateArgs, OnChainRefereeMoveData, OnChainRefereeSlash, OnChainRefereeSlashData,
+    OnChainRefereeSolution, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    REM_CONDITION_FIELDS,
 };
 use crate::referee::v1::{BrokenOutCoinSpendInfo, RefereeByTurn};
 

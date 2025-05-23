@@ -4,17 +4,14 @@ pub mod types;
 
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
-
 use log::debug;
 
 use crate::channel_handler::types::{Evidence, ReadableMove};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
-use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
+use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinString, Error, Hash, IntoErr,
-    Program, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
+    AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinString, Error, Hash, Program,
+    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
@@ -23,8 +20,8 @@ use crate::referee::types::{
 use crate::referee::v1::my_turn::MyTurnReferee;
 use crate::referee::v1::their_turn::TheirTurnReferee;
 use crate::referee::v1::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, IdentityCoinAndSolution,
-    OnChainRefereeMoveData, OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
+    curry_referee_puzzle, curry_referee_puzzle_hash, OnChainRefereeMoveData,
+    OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
 };
 
 #[derive(Clone, Debug)]
