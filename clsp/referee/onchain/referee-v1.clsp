@@ -49,13 +49,13 @@
         (l (f (r (r args))))
         ; slash
         (assign
-            (previous_state me previous_validation_program mover_puzzle solution evidence) args
+            (previous_state me previous_validation_program mover_puzzle solution evidence) (print "referee slash:" args)
             previous_validation_program_hash (shatree previous_validation_program)
 
             (assert
-                (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
-                (= INFOHASH_A (sha256 previous_validation_program_hash (shatree
-                        previous_state)))
+                (print "slash: matching mover puzzle" (= MOVER_PUZZLE_HASH (shatree mover_puzzle)))
+                (print "slash: infohash a match" (= INFOHASH_A (sha256 previous_validation_program_hash (shatree
+                        previous_state))))
 
                 ; Intention here:
                 ; An empty remark indicating slash
@@ -63,11 +63,11 @@
                 ; The conditions returned by mover_puzzle
                 (c (list REMARK)
                     (concat
-                        (a previous_validation_program
+                        (print "slash data:" (a previous_validation_program
                             (c previous_validation_program_hash
                                 all_args
                             )
-                        )
+                        ))
                         (a mover_puzzle solution)
                     )
                 )

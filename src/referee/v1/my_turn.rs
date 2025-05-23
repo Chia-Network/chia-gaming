@@ -45,6 +45,7 @@ pub enum MyTurnRefereeMakerGameState {
         spend_this_coin: Rc<RefereePuzzleArgs>,
 
         // How to spend
+        move_spend: Option<Rc<OnChainRefereeMoveData>>,
         slash_spend: Rc<OnChainRefereeSlashData>,
     },
 }
@@ -351,6 +352,15 @@ impl MyTurnReferee {
         }
     }
 
+    pub fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
+        match self.state.borrow() {
+            MyTurnRefereeMakerGameState::Initial { .. } => None,
+            MyTurnRefereeMakerGameState::AfterTheirTurn { move_spend, .. } => {
+                move_spend.clone()
+            }
+        }
+    }
+
     #[allow(dead_code)]
     pub fn get_amount(&self) -> Amount {
         self.fixed.amount.clone()
@@ -377,6 +387,7 @@ impl MyTurnReferee {
         &self,
         game_handler: GameHandler,
         new_state: Rc<Program>,
+        current_state: Rc<Program>,
         current_puzzle_args: Rc<RefereePuzzleArgs>,
         new_puzzle_args: Rc<RefereePuzzleArgs>,
         my_turn_result: Rc<MyTurnResult>,
@@ -385,13 +396,14 @@ impl MyTurnReferee {
     ) -> Result<TheirTurnReferee, Error> {
         let move_spend = Rc::new(OnChainRefereeMoveData {
             validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
-            state: new_state.clone(),
+            state: current_state.clone(),
             new_move: new_puzzle_args.game_move.clone(),
-            puzzle_args: current_puzzle_args.clone(),
+            before_args: current_puzzle_args.clone(),
+            after_args: new_puzzle_args.clone(),
         });
 
         debug!(
-            "MY TURN FINISHED WITH STATE {new_state:?} REPLACING {:?}",
+            "MY TURN FINISHED WITH STATE {current_state:?} REPLACING {:?}",
             self.get_game_state()
         );
         let new_state = TheirTurnRefereeMakerGameState::AfterOurTurn {
@@ -514,7 +526,7 @@ impl MyTurnReferee {
         let new_state_following_my_move = self.run_validator_for_my_move(
             allocator,
             rc_puzzle_args.clone(),
-            state_to_update,
+            state_to_update.clone(),
             Evidence::nil()?,
         )?;
 
@@ -529,6 +541,7 @@ impl MyTurnReferee {
         let new_self = self.accept_this_move(
             result.waiting_driver.clone(),
             new_state_following_my_move,
+            state_to_update,
             args.clone(),
             rc_puzzle_args.clone(),
             result.clone(),

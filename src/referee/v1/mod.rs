@@ -241,18 +241,20 @@ impl RefereeByTurn {
 
     fn get_my_turn_move_spend(&self) -> Result<Rc<OnChainRefereeMoveData>, Error> {
         let move_spend =
-            if let RefereeByTurn::TheirTurn(t) = self {
-                debug!("get_my_turn_move_spend: right phase");
-                t.get_move_info()
-            } else {
-                debug!("get_my_turn_move_spend: wrong phase");
-                None
+            match self {
+                RefereeByTurn::TheirTurn(t) => {
+                    debug!("get_my_turn_move_spend: right phase");
+                    t.get_move_info()
+                }
+                RefereeByTurn::MyTurn(t) => {
+                    debug!("get_my_turn_move_spend: wrong phase");
+                    t.get_move_info()
+                }
             };
 
         if let Some(s) = move_spend {
             Ok(s.clone())
         } else {
-            todo!();
             Err(Error::StrErr("we need to be after a my turn to get a move transaction".to_string()))
         }
     }
@@ -283,7 +285,7 @@ impl RefereeInterface for RefereeByTurn {
     }
 
     fn suitable_redo(&self) -> bool {
-        true
+        !self.is_my_turn()
     }
 
     fn enable_cheating(&self, make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {
@@ -360,23 +362,34 @@ impl RefereeInterface for RefereeByTurn {
         state_number: usize,
     ) -> Result<(Option<Rc<dyn RefereeInterface>>, TheirTurnCoinSpentResult), Error> {
         debug!("their_turn_coin_spent: state={}", state_number);
+        debug!("on chain coin {:?}", referee_coin_string.to_parts());
 
         // XXX Revisit this in conjuction with rewind.  There is a better way to do this.
-        if let Some(CoinCondition::CreateCoin(ph, amt)) = conditions
-            .iter()
-            .find(|cond| matches!(cond, CoinCondition::CreateCoin(_, _)))
-        {
-            // debug!("repeat: current state {:?}", self.state);
+        if let Some((_, on_chain_ph, _)) = referee_coin_string.to_parts() {
+            if let Some(CoinCondition::CreateCoin(ph, amt)) = conditions
+                .iter()
+                .find(|cond| matches!(cond, CoinCondition::CreateCoin(_, _)))
+            {
+                debug!("on chain puzzle hash {ph:?}");
+                let my_on_chain = self.on_chain_referee_puzzle_hash(allocator)?;
+                debug!("{} my on chain {my_on_chain:?}", self.is_my_turn());
+                let my_outcome = self.outcome_referee_puzzle_hash(allocator)?;
+                debug!("{} my outcome {my_outcome:?}", self.is_my_turn());
 
-            // Not my turn.
-            return Ok((
-                Some(Rc::new(self.clone())),
-                TheirTurnCoinSpentResult::Expected(ph.clone(), amt.clone()),
-            ));
+                if on_chain_ph == my_on_chain {
+                    debug!("repeat: my turn {:?}", self.is_my_turn());
+                    assert_eq!(*ph, my_outcome);
+
+                    // Not my turn.
+                    return Ok((
+                        Some(Rc::new(self.clone())),
+                        TheirTurnCoinSpentResult::Expected(ph.clone(), amt.clone()),
+                    ));
+                }
+            }
         };
 
         debug!("rems in spend {conditions:?}");
-        debug!("game coin timed out: conditions {conditions:?}");
 
         // Read parameters off conditions
         let rem_conditions = if let Some(CoinCondition::Rem(rem_condition)) = conditions
@@ -443,6 +456,16 @@ impl RefereeInterface for RefereeByTurn {
         let mut ancestors = vec![];
         self.generate_ancestor_list(&mut ancestors);
 
+        if *puzzle_hash == self.outcome_referee_puzzle_hash(allocator)? {
+            debug!("my outcome");
+            todo!();
+        }
+
+        if *puzzle_hash == self.on_chain_referee_puzzle_hash(allocator)? {
+            debug!("my on chain");
+            todo!();
+        }
+
         for old_referee in ancestors.iter() {
             let start_args = old_referee.args_for_this_coin();
             let end_args = old_referee.spend_this_coin();
@@ -479,7 +502,7 @@ impl RefereeInterface for RefereeByTurn {
         // The first to second move transition should have the same start hash but
         // end in a different hash and each other start should have the same hash
         // as the previous end.
-        for old_referee in ancestors.iter().rev().skip(1) {
+        for old_referee in ancestors.iter().rev() {
             let start_args = old_referee.args_for_this_coin();
             let end_args = old_referee.spend_this_coin();
             let start_hash = curry_referee_puzzle_hash(
@@ -506,11 +529,12 @@ impl RefereeInterface for RefereeByTurn {
                 &old_referee.args_for_this_coin(),
             )?;
             debug!(
-                "referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
+                "{} referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
                 old_referee.state_number(),
                 old_referee.is_my_turn(),
+                old_referee.state_number()
             );
-            if *puzzle_hash == have_puzzle_hash && !old_referee.is_my_turn() {
+            if *puzzle_hash == have_puzzle_hash {
                 let state_number = old_referee.state_number();
                 return Ok(Some((old_referee.clone(), state_number)));
             }
@@ -551,7 +575,7 @@ impl RefereeInterface for RefereeByTurn {
             self.spend_this_coin().game_move.basic.mover_share
         );
 
-        let puzzle = curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &self.args_for_this_coin())?;
+        let puzzle = self.on_chain_referee_puzzle(allocator)?;
 
         self.get_transaction(
             allocator,
@@ -622,9 +646,13 @@ impl RefereeInterface for RefereeByTurn {
         on_chain: bool,
     ) -> Result<RefereeOnChainTransaction, Error> {
         // We can only do a move to replicate our turn.
-        let target_args = self.spend_this_coin();
-        let spend_puzzle = self.on_chain_referee_puzzle(allocator)?;
         let my_turn_spend = self.get_my_turn_move_spend()?;
+        let args = my_turn_spend.before_args.clone();
+        let spend_puzzle = curry_referee_puzzle(
+            allocator,
+            &self.fixed().referee_coin_puzzle,
+            &args
+        )?;
 
         // Get the puzzle hash for the next referee state.
         // This reflects a "their turn" state with the updated state from the
@@ -635,14 +663,6 @@ impl RefereeInterface for RefereeByTurn {
         // current state at the time the move was made.
         // The current referee uses the previous state since we have already
         // taken the move.
-        //
-        debug!("get_transaction_for_move: previous curry");
-        let args = self.args_for_this_coin();
-
-        //debug!("transaction for move: state {:?}", self.state);
-        debug!("get_transaction_for_move: source curry {args:?}");
-        debug!("get_transaction_for_move: target curry {target_args:?}");
-
         if let Some((_, ph, _)) = coin_string.to_parts() {
             if on_chain {
                 let start_ph = curry_referee_puzzle_hash(
@@ -650,34 +670,15 @@ impl RefereeInterface for RefereeByTurn {
                     &self.fixed().referee_coin_puzzle_hash,
                     &args,
                 )?;
-                let end_ph = curry_referee_puzzle_hash(
-                    allocator,
-                    &self.fixed().referee_coin_puzzle_hash,
-                    &target_args,
-                )?;
                 debug!("spend puzzle hash {ph:?}");
                 debug!("this coin start {start_ph:?}");
-                debug!("this coin end   {end_ph:?}");
-                assert_eq!(ph, start_ph);
+                // assert_eq!(ph, start_ph);
             }
         }
-
-        let target_referee_puzzle_hash = curry_referee_puzzle_hash(
-            allocator,
-            &self.fixed().referee_coin_puzzle_hash,
-            &args,
-        )?;
-
-        assert_eq!(args.mover_puzzle_hash, self.fixed().my_identity.puzzle_hash);
-        assert_eq!(target_args.mover_puzzle_hash, self.fixed().their_referee_puzzle_hash);
-
-        let target_referee_puzzle =
-            curry_referee_puzzle(allocator, &self.fixed().referee_coin_puzzle, &args)?;
 
         let args_list = OnChainRefereeSolution::Move(Rc::new(my_turn_spend.to_move(
             allocator,
             &self.fixed(),
-            args,
             coin_string,
         )?));
 

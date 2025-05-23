@@ -28,6 +28,7 @@ use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs, RMFixed,
     RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult, REM_CONDITION_FIELDS,
     OnChainRefereeMove, OnChainRefereeSlash, OnChainRefereeMoveData, OnChainRefereeSlashData,
+    OnChainRefereeSolution, IdentityCoinAndSolution,
 };
 use crate::referee::v1::{BrokenOutCoinSpendInfo, RefereeByTurn};
 
@@ -321,6 +322,7 @@ impl TheirTurnReferee {
             state_after_their_turn: new_state.clone(),
             create_this_coin: old_args,
             spend_this_coin: referee_args,
+            move_spend: self.get_move_info(),
             slash_spend,
         };
 
@@ -676,27 +678,20 @@ impl TheirTurnReferee {
     fn slashing_coin_solution(
         &self,
         allocator: &mut AllocEncoder,
-        state: NodePtr,
-        my_validation_info_hash: PuzzleHash,
-        validation_program_clvm: NodePtr,
-        slash_solution: NodePtr,
+        validation_program: StateUpdateProgram,
+        state: Rc<Program>,
+        mover_solution: Rc<Program>,
+        mover_coin: IdentityCoinAndSolution,
         evidence: Evidence,
     ) -> Result<NodePtr, Error> {
-        (
-            Node(state),
-            (
-                my_validation_info_hash,
-                (
-                    Node(validation_program_clvm),
-                    (
-                        RcNode::new(self.fixed.my_identity.puzzle.to_program()),
-                        (Node(slash_solution), (evidence, ())),
-                    ),
-                ),
-            ),
-        )
-            .to_clvm(allocator)
-            .into_gen()
+        let solution = OnChainRefereeSolution::Slash(Rc::new(OnChainRefereeSlash {
+            validation_program,
+            state,
+            evidence,
+            mover_solution,
+            mover_coin,
+        }));
+        solution.to_nodeptr(allocator, &self.fixed)
     }
 
     fn make_slash_conditions(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
@@ -754,16 +749,18 @@ impl TheirTurnReferee {
             )));
         }
 
-        let state_nodeptr = state.to_nodeptr(allocator)?;
-        let validation_program_node = validation_program.p().to_nodeptr(allocator)?;
-        let validation_program_hash = validation_program.p().sha256tree(allocator);
-        let solution_nodeptr = slash_spend.solution.to_nodeptr(allocator)?;
+        let mover_coin = IdentityCoinAndSolution {
+            mover_coin_puzzle: self.fixed.my_identity.puzzle.clone(),
+            mover_coin_spend_solution: slash_spend.solution.p(),
+            mover_coin_spend_signature: slash_spend.signature.clone(),
+        };
+
         let slashing_coin_solution = self.slashing_coin_solution(
             allocator,
-            state_nodeptr,
-            validation_program_hash,
-            validation_program_node,
-            solution_nodeptr,
+            validation_program,
+            state,
+            slash_spend.solution.p(),
+            mover_coin,
             evidence,
         )?;
 

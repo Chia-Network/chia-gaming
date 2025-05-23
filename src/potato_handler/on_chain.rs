@@ -146,16 +146,24 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
                 // An expected their spend arrived.  We can do our next action.
                 debug!("{initial_potato} changing game map");
+                let game_id = old_definition.game_id.clone();
                 self.game_map.insert(
                     new_coin_id.clone(),
                     OnChainGameState {
-                        puzzle_hash: ph,
+                        puzzle_hash: ph.clone(),
                         our_turn: false,
                         ..old_definition
                     },
                 );
 
-                let (_, system_interface) = penv.env();
+                let (env, system_interface) = penv.env();
+                debug!("{initial_potato} expected spend {ph:?}");
+                if matches!(self.player_ch.game_is_my_turn(&game_id), Some(true)) {
+                    system_interface.self_move(&game_id, &[])?;
+                } else {
+                    system_interface.opponent_moved(env.allocator, &game_id, ReadableMove::from_program(Rc::new(Program::from_hex("80")?)), Amount::default())?;
+                }
+
                 system_interface.register_coin(
                     &new_coin_id,
                     &self.channel_timeout,

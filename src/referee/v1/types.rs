@@ -371,7 +371,8 @@ pub struct OnChainRefereeMoveData {
     pub state: Rc<Program>,
     pub validation_program: StateUpdateProgram,
     pub new_move: GameMoveDetails,
-    pub puzzle_args: Rc<RefereePuzzleArgs>,
+    pub before_args: Rc<RefereePuzzleArgs>,
+    pub after_args: Rc<RefereePuzzleArgs>,
 }
 
 impl OnChainRefereeMoveData {
@@ -379,35 +380,15 @@ impl OnChainRefereeMoveData {
         &self,
         allocator: &mut AllocEncoder,
         fixed: &RMFixed,
-        args: Rc<RefereePuzzleArgs>,
         coin_string: &CoinString
     ) -> Result<OnChainRefereeMove, Error> {
-        let infohash_c = ValidationInfo::new_state_update(
-            allocator,
-            self.validation_program.clone(),
-            self.state.clone(),
-        );
-        let args_for_new_puzzle_hash = RefereePuzzleArgs {
-            mover_puzzle_hash: fixed.their_referee_puzzle_hash.clone(),
-            waiter_puzzle_hash: fixed.my_identity.puzzle_hash.clone(),
-            amount: fixed.amount.clone(),
-            timeout: fixed.timeout.clone(),
-            nonce: fixed.nonce,
-            game_move: GameMoveDetails {
-                basic: self.new_move.basic.clone(),
-                validation_info_hash: infohash_c.hash().clone(),
-            },
-            referee_coin_puzzle_hash: fixed.referee_coin_puzzle_hash.clone(),
-            validation_program: self.validation_program.clone(),
-            previous_validation_info_hash: Some(self.puzzle_args.game_move.validation_info_hash.clone()),
-        };
-        let args_for_ph_node = args_for_new_puzzle_hash.to_clvm(allocator).into_gen()?;
+        let args_for_ph_node = self.after_args.to_clvm(allocator).into_gen()?;
         let args_for_ph_prog = Program::from_nodeptr(allocator, args_for_ph_node)?;
         debug!("args for new puzzle hash {args_for_ph_prog:?}");
         let new_puzzle_hash = curry_referee_puzzle_hash(
             allocator,
             &fixed.referee_coin_puzzle_hash,
-            &args_for_new_puzzle_hash
+            &self.after_args,
         )?;
         let inner_conditions = [(
             CREATE_COIN,
@@ -439,7 +420,8 @@ impl OnChainRefereeMoveData {
 
         Ok(OnChainRefereeMove {
             game_move: self.new_move.clone(),
-            puzzle_args: self.puzzle_args.clone(),
+            before_puzzle_args: self.before_args.clone(),
+            after_puzzle_args: self.after_args.clone(),
             state: self.state.clone(),
             validation_program: self.validation_program.clone(),
             mover_coin: IdentityCoinAndSolution {
@@ -497,24 +479,36 @@ pub struct IdentityCoinAndSolution {
 pub struct OnChainRefereeMove {
     /// The new move to make
     pub game_move: GameMoveDetails,
-    /// Coin puzzle and solution that are used to generate conditions for the
-    /// next generation of the on chain refere coin.
-    pub mover_coin: IdentityCoinAndSolution,
     /// Validation program that relates to this move.
     pub validation_program: StateUpdateProgram,
     /// State before this validation program ran.
     pub state: Rc<Program>,
     /// Referee puzzle args
-    pub puzzle_args: Rc<RefereePuzzleArgs>,
+    pub before_puzzle_args: Rc<RefereePuzzleArgs>,
+    pub after_puzzle_args: Rc<RefereePuzzleArgs>,
+    /// Coin puzzle and solution that are used to generate conditions for the
+    /// next generation of the on chain refere coin.
+    pub mover_coin: IdentityCoinAndSolution,
 }
 
 /// Dynamic arguments passed to the on chain refere to apply a slash
 #[derive(Debug, Clone)]
 pub struct OnChainRefereeSlash {
-    pub refmove: OnChainRefereeMove,
+    /// Validation program that relates to this move.
+    pub validation_program: StateUpdateProgram,
+
+    /// State before this validation program ran.
+    pub state: Rc<Program>,
+
+    /// Coin puzzle and solution that are used to generate conditions for the
+    /// next generation of the on chain refere coin.
+    pub mover_coin: IdentityCoinAndSolution,
 
     /// clvm data about the slash.
     pub evidence: Evidence,
+
+    /// Solution for mover puzzler
+    pub mover_solution: Rc<Program>,
 }
 
 /// onchain referee solution
@@ -542,7 +536,7 @@ impl OnChainRefereeSolution {
                 Some(refmove.mover_coin.mover_coin_spend_signature.clone())
             }
             OnChainRefereeSolution::Slash(refslash) => {
-                Some(refslash.refmove.mover_coin.mover_coin_spend_signature.clone())
+                Some(refslash.mover_coin.mover_coin_spend_signature.clone())
             }
         }
     }
@@ -588,13 +582,13 @@ impl OnChainRefereeSolution {
             }
             OnChainRefereeSolution::Slash(refslash) => {
                 let refslash_solution_ref: &Program =
-                    refslash.refmove.mover_coin.mover_coin_spend_solution.borrow();
+                    refslash.mover_coin.mover_coin_spend_solution.borrow();
                 (
-                    refslash.refmove.state.clone(),
+                    refslash.state.clone(),
                     (
-                        refslash.refmove.validation_program.clone(),
+                        refslash.validation_program.clone(),
                         (
-                            refslash.refmove.mover_coin.mover_coin_puzzle.clone(),
+                            refslash.mover_coin.mover_coin_puzzle.clone(),
                             (
                                 refslash_solution_ref,
                                 (
