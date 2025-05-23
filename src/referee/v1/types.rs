@@ -580,7 +580,7 @@ impl OnChainRefereeSolution {
                                 refmove.game_move.basic.max_move_size,
                                 (
                                     refmove.mover_coin.mover_coin_puzzle.clone(),
-                                    ((refmove_coin_solution_ref, ())),
+                                    (refmove_coin_solution_ref, ()),
                                 ),
                             ),
                         ),
@@ -598,7 +598,7 @@ impl OnChainRefereeSolution {
                         refslash.validation_program.clone(),
                         (
                             refslash.mover_coin.mover_coin_puzzle.clone(),
-                            (refslash_solution_ref, ((refslash.evidence.clone(), ()))),
+                            (refslash_solution_ref, (refslash.evidence.clone(), ())),
                         ),
                     ),
                 )
