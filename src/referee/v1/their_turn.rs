@@ -18,15 +18,17 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
 use crate::common::types::{
     u64_from_atom, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
-    IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash, RcNode, Sha256tree, Spend,
+    IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 use crate::referee::v1::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
-    curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs, RMFixed,
-    RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult, REM_CONDITION_FIELDS,
+    curry_referee_puzzle, curry_referee_puzzle_hash, IdentityCoinAndSolution,
+    InternalStateUpdateArgs, OnChainRefereeMoveData, OnChainRefereeSlash, OnChainRefereeSlashData,
+    OnChainRefereeSolution, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    REM_CONDITION_FIELDS,
 };
 use crate::referee::v1::{BrokenOutCoinSpendInfo, RefereeByTurn};
 
@@ -48,6 +50,7 @@ pub enum TheirTurnRefereeMakerGameState {
         state_after_our_turn: Rc<Program>,
         create_this_coin: Rc<RefereePuzzleArgs>,
         spend_this_coin: Rc<RefereePuzzleArgs>,
+        move_spend: Rc<OnChainRefereeMoveData>,
     },
 }
 
@@ -213,6 +216,15 @@ impl TheirTurnReferee {
         true
     }
 
+    pub fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
+        if let TheirTurnRefereeMakerGameState::AfterOurTurn { move_spend, .. } = self.state.borrow()
+        {
+            return Some(move_spend.clone());
+        }
+
+        None
+    }
+
     pub fn get_game_handler(&self) -> GameHandler {
         match self.state.borrow() {
             TheirTurnRefereeMakerGameState::Initial { game_handler, .. } => game_handler.clone(),
@@ -299,19 +311,20 @@ impl TheirTurnReferee {
         state_number: usize,
     ) -> Result<MyTurnReferee, Error> {
         debug!("their turn: new_state {new_state:?}");
-        // assert_ne!(old_args.mover_puzzle_hash, referee_args.mover_puzzle_hash);
-        // assert_eq!(old_args.mover_puzzle_hash, referee_args.waiter_puzzle_hash);
-        assert_ne!(
-            self.fixed.my_identity.puzzle_hash,
-            referee_args.mover_puzzle_hash
-        );
         debug!("accept their move {details:?}");
+
+        let slash_spend = Rc::new(OnChainRefereeSlashData {
+            state: new_state.clone(),
+            puzzle_args: referee_args.clone(),
+        });
 
         let new_state = MyTurnRefereeMakerGameState::AfterTheirTurn {
             game_handler: game_handler.clone(),
             state_after_their_turn: new_state.clone(),
             create_this_coin: old_args,
             spend_this_coin: referee_args,
+            move_spend: self.get_move_info(),
+            slash_spend,
         };
 
         let new_parent = TheirTurnReferee {
@@ -408,7 +421,7 @@ impl TheirTurnReferee {
         let solution_program = Rc::new(Program::from_nodeptr(allocator, solution)?);
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: puzzle_args.validation_program.clone(),
-            referee_args: puzzle_args.clone(),
+            referee_args: Rc::new(puzzle_args.swap()),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),
@@ -442,8 +455,8 @@ impl TheirTurnReferee {
             validation_program.to_program()
         );
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
-            waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+            waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
             game_move: details.clone(),
             validation_program: validation_program.clone(),
             previous_validation_info_hash: if matches!(
@@ -666,27 +679,20 @@ impl TheirTurnReferee {
     fn slashing_coin_solution(
         &self,
         allocator: &mut AllocEncoder,
-        state: NodePtr,
-        my_validation_info_hash: PuzzleHash,
-        validation_program_clvm: NodePtr,
-        slash_solution: NodePtr,
+        validation_program: StateUpdateProgram,
+        state: Rc<Program>,
+        mover_solution: Rc<Program>,
+        mover_coin: IdentityCoinAndSolution,
         evidence: Evidence,
     ) -> Result<NodePtr, Error> {
-        (
-            Node(state),
-            (
-                my_validation_info_hash,
-                (
-                    Node(validation_program_clvm),
-                    (
-                        RcNode::new(self.fixed.my_identity.puzzle.to_program()),
-                        (Node(slash_solution), (evidence, ())),
-                    ),
-                ),
-            ),
-        )
-            .to_clvm(allocator)
-            .into_gen()
+        let solution = OnChainRefereeSolution::Slash(Rc::new(OnChainRefereeSlash {
+            validation_program,
+            state,
+            evidence,
+            mover_solution,
+            mover_coin,
+        }));
+        solution.to_nodeptr(allocator, &self.fixed)
     }
 
     fn make_slash_conditions(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
@@ -744,16 +750,18 @@ impl TheirTurnReferee {
             )));
         }
 
-        let state_nodeptr = state.to_nodeptr(allocator)?;
-        let validation_program_node = validation_program.p().to_nodeptr(allocator)?;
-        let validation_program_hash = validation_program.p().sha256tree(allocator);
-        let solution_nodeptr = slash_spend.solution.to_nodeptr(allocator)?;
+        let mover_coin = IdentityCoinAndSolution {
+            mover_coin_puzzle: self.fixed.my_identity.puzzle.clone(),
+            mover_coin_spend_solution: slash_spend.solution.p(),
+            mover_coin_spend_signature: slash_spend.signature.clone(),
+        };
+
         let slashing_coin_solution = self.slashing_coin_solution(
             allocator,
-            state_nodeptr,
-            validation_program_hash,
-            validation_program_node,
-            solution_nodeptr,
+            validation_program,
+            state,
+            slash_spend.solution.p(),
+            mover_coin,
             evidence,
         )?;
 
