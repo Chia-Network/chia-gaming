@@ -371,7 +371,7 @@ impl PotatoHandler {
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             PeerMessage::Move(game_id, m) => {
-                let (spend_info, readable_move, message, mover_share) = {
+                let (spend_info, state_number, readable_move, message, mover_share) = {
                     let (env, _) = penv.env();
                     ch.received_potato_move(env, game_id, m)?
                 };
@@ -381,6 +381,7 @@ impl PotatoHandler {
                     system_interface.opponent_moved(
                         env.allocator,
                         game_id,
+                        state_number,
                         opponent_readable,
                         mover_share,
                     )?;
@@ -649,7 +650,7 @@ impl PotatoHandler {
                 };
 
                 let (_, system_interface) = penv.env();
-                system_interface.self_move(&game_id, &move_result.game_move.basic.move_made)?;
+                system_interface.self_move(&game_id, move_result.state_number, &move_result.game_move.basic.move_made)?;
 
                 system_interface.send_message(&PeerMessage::Move(game_id, move_result))?;
                 self.have_potato = PotatoState::Absent;

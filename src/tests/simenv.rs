@@ -175,7 +175,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
         // XXX allow verification of ui result and message.
         if received {
-            let (spend, ui_result, message, _mover_share) = self
+            let (spend, _state_number, ui_result, message, _mover_share) = self
                 .parties
                 .player(player ^ 1)
                 .ch

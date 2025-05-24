@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
@@ -192,6 +192,7 @@ impl ToLocalUI for SimulatedPeer {
         &mut self,
         _allocator: &mut AllocEncoder,
         _id: &GameID,
+        _state_number: usize,
         _readable: ReadableMove,
         _my_share: Amount,
     ) -> Result<(), Error> {
@@ -644,7 +645,7 @@ struct LocalTestUIReceiver {
     opponent_moved: bool,
     go_on_chain: bool,
     got_error: bool,
-    opponent_moves: Vec<(GameID, ReadableMove, Amount)>,
+    opponent_moves: Vec<(GameID, usize, ReadableMove, Amount)>,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -652,11 +653,12 @@ impl ToLocalUI for LocalTestUIReceiver {
         &mut self,
         _allocator: &mut AllocEncoder,
         id: &GameID,
+        state_number: usize,
         readable: ReadableMove,
         my_share: Amount,
     ) -> Result<(), Error> {
         self.opponent_moved = true;
-        self.opponent_moves.push((id.clone(), readable, my_share));
+        self.opponent_moves.push((id.clone(), state_number, readable, my_share));
         Ok(())
     }
 
@@ -719,10 +721,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     moves_input: &[GameAction],
     pred: GameRunEarlySuccessPredicate,
 ) -> Result<GameRunOutcome, Error> {
-    let mut moves = VecDeque::new();
-    for m in moves_input.iter() {
-        moves.push_back(m);
-    }
+    let mut move_number = 0;
 
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
@@ -806,16 +805,17 @@ fn run_game_container_with_action_list_with_success_predicate(
     cradles[0].opening_coin(allocator, rng, parent_coin_0)?;
     cradles[1].opening_coin(allocator, rng, parent_coin_1)?;
 
-    let global_move = |moves: &VecDeque<&GameAction>| {
+    let global_move = |moves: &[GameAction], move_number: usize| {
+        move_number < moves.len() &&
         matches!(
-            moves.front(),
-            Some(GameAction::Shutdown(_, _)) | Some(GameAction::WaitBlocks(_, _))
+            &moves[move_number],
+            GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _)
         )
     };
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
-        debug!("{num_steps} can move {can_move} {moves:?}");
+        debug!("{num_steps} can move {can_move} {:?}", &moves_input[move_number..]);
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
         debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
 
@@ -900,6 +900,14 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                 }
 
+                if let Some(resync) = result.resync.as_ref() {
+                    if matches!(cradles[i].my_move_in_game(&game_ids[0]), Some(true)) {
+                        debug!("resync {resync} requested");
+                        move_number -= 2;
+                        can_move = true;
+                    }
+                }
+
                 for tx in result.outbound_transactions.iter() {
                     debug!("PROCESS TX {tx:?}");
                     let included_result = simulator.push_tx(allocator, &tx.spends).into_gen()?;
@@ -977,7 +985,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             if *wb > 0 {
                 *wb -= 1;
             };
-        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) || global_move(&moves) {
+        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) || global_move(&moves_input, move_number) {
             can_move = false;
             assert!(!game_ids.is_empty());
 
@@ -986,7 +994,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                 l.opponent_moved = false;
             }
 
-            if let Some(ga) = moves.pop_front() {
+            if move_number < moves_input.len() {
+                let ga = &moves_input[move_number];
+                move_number += 1;
+
                 match ga {
                     GameAction::Move(who, readable, _share) => {
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
@@ -1005,7 +1016,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             )?;
                         } else {
                             debug!("put move back: not my turn");
-                            moves.push_front(ga);
+                            move_number -= 1;
                             continue;
                         }
                     }
@@ -1168,17 +1179,17 @@ fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Err
 
 fn check_calpoker_economic_result(
     allocator: &mut AllocEncoder,
-    p0_view_of_cards: &(GameID, ReadableMove, Amount),
-    p1_view_of_cards: &(GameID, ReadableMove, Amount),
-    alice_outcome_move: &(GameID, ReadableMove, Amount),
-    bob_outcome_move: &(GameID, ReadableMove, Amount),
+    p0_view_of_cards: &(GameID, usize, ReadableMove, Amount),
+    p1_view_of_cards: &(GameID, usize, ReadableMove, Amount),
+    alice_outcome_move: &(GameID, usize, ReadableMove, Amount),
+    bob_outcome_move: &(GameID, usize, ReadableMove, Amount),
     outcome: &GameRunOutcome,
 ) {
     let (p1_balance, p2_balance) = get_balances_from_outcome(outcome).expect("should work");
 
     for (pn, lui) in outcome.local_uis.iter().enumerate() {
         for (mn, the_move) in lui.opponent_moves.iter().enumerate() {
-            let the_move_to_node = the_move.1.to_nodeptr(allocator).expect("should work");
+            let the_move_to_node = the_move.2.to_nodeptr(allocator).expect("should work");
             debug!(
                 "player {pn} opponent move {mn} {the_move:?} {:?}",
                 Node(the_move_to_node).to_hex(allocator)
@@ -1186,19 +1197,19 @@ fn check_calpoker_economic_result(
         }
     }
 
-    let alice_cards = decode_readable_card_choices(allocator, p0_view_of_cards.1.clone())
+    let alice_cards = decode_readable_card_choices(allocator, p0_view_of_cards.2.clone())
         .expect("should get cards");
     let alice_outcome_node = alice_outcome_move
-        .1
+        .2
         .to_nodeptr(allocator)
         .expect("should work");
     let alice_outcome =
         decode_calpoker_readable(allocator, alice_outcome_node, Amount::new(200), false)
             .expect("should work");
     let bob_cards =
-        decode_readable_card_choices(allocator, p1_view_of_cards.1.clone()).expect("should work");
+        decode_readable_card_choices(allocator, p1_view_of_cards.2.clone()).expect("should work");
     let bob_outcome_node = bob_outcome_move
-        .1
+        .2
         .to_nodeptr(allocator)
         .expect("should work");
     let bob_outcome = decode_calpoker_readable(allocator, bob_outcome_node, Amount::new(200), true)

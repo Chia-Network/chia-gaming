@@ -539,7 +539,7 @@ impl TheirTurnReferee {
         if coin.is_some() {
             for evidence in move_data.slash_evidence.iter() {
                 debug!("calling slash for given evidence");
-                if let StateUpdateResult::Slash(result_evidence) = self.run_state_update(
+                if let StateUpdateResult::Slash(_result_evidence) = self.run_state_update(
                     allocator,
                     rc_puzzle_args.clone(),
                     state.clone(),
@@ -549,7 +549,7 @@ impl TheirTurnReferee {
                         None,
                         TheirTurnMoveResult {
                             puzzle_hash_for_unroll: None,
-                            original: TheirTurnResult::Slash(Evidence::new(result_evidence)),
+                            original: TheirTurnResult::Slash(evidence.clone()),
                         },
                     ));
                 }
@@ -637,6 +637,7 @@ impl TheirTurnReferee {
                     &new_puzzle_hash,
                     &self.fixed.amount,
                 ),
+                state_number,
                 readable: ReadableMove::from_program(move_data.readable_move.p()),
                 mover_share: args.game_move.basic.mover_share.clone(),
             };
@@ -647,10 +648,25 @@ impl TheirTurnReferee {
         match &result.original {
             TheirTurnResult::Slash(evidence) => {
                 // Slash specified.
-                let args = self.spend_this_coin();
+                let current_args = self.spend_this_coin();
+                let (_state, validation_program) = self.get_validation_program_for_their_move()?;
+                let args = Rc::new(RefereePuzzleArgs {
+                    mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
+                    waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+                    game_move: details.clone(),
+                    timeout: self.fixed.timeout.clone(),
+                    amount: self.fixed.amount.clone(),
+                    nonce: self.fixed.nonce,
+                    referee_coin_puzzle_hash: self.fixed.referee_coin_puzzle_hash.clone(),
+                    validation_program,
+                    previous_validation_info_hash: Some(current_args.game_move.validation_info_hash.clone()),
+                });
                 let slash_spend = self.make_slash_spend(allocator, referee_coin_string)?;
-                let new_puzzle =
-                    curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
+                let puzzle = curry_referee_puzzle(
+                    allocator,
+                    &self.fixed.referee_coin_puzzle,
+                    &current_args
+                )?;
                 let new_puzzle_hash = curry_referee_puzzle_hash(
                     allocator,
                     &self.fixed.referee_coin_puzzle_hash,
@@ -659,7 +675,7 @@ impl TheirTurnReferee {
                 let slash = self.make_slash_for_their_turn(
                     allocator,
                     referee_coin_string,
-                    new_puzzle,
+                    &puzzle,
                     &new_puzzle_hash,
                     &slash_spend,
                     evidence.clone(),
@@ -730,7 +746,7 @@ impl TheirTurnReferee {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        new_puzzle: Puzzle,
+        puzzle: &Puzzle,
         new_puzzle_hash: &PuzzleHash,
         slash_spend: &BrokenOutCoinSpendInfo,
         evidence: Evidence,
@@ -774,7 +790,7 @@ impl TheirTurnReferee {
                     // Ultimate parent of these coins.
                     coin: coin_string.clone(),
                     bundle: Spend {
-                        puzzle: new_puzzle.clone(),
+                        puzzle: puzzle.clone(),
                         solution: Program::from_nodeptr(allocator, slashing_coin_solution)?.into(),
                         signature: slash_spend.signature.clone(),
                     },

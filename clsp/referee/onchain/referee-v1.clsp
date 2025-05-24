@@ -49,7 +49,7 @@
         (l (f (r (r args))))
         ; slash
         (assign
-            (previous_state me previous_validation_program mover_puzzle solution evidence) (print "referee slash:" args)
+            (previous_state previous_validation_program mover_puzzle solution evidence) (print "referee slash:" args)
             previous_validation_program_hash (shatree previous_validation_program)
 
             (assert

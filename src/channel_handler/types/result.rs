@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct MoveResult {
     pub signatures: PotatoSignatures,
     pub game_move: GameMoveDetails,
+    pub state_number: usize,
 }
 
 pub struct DispositionResult {

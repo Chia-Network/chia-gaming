@@ -13,6 +13,7 @@ use crate::common::types::{
     AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinString, Error, Hash, Program,
     Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
 };
+use crate::referee::RewindResult;
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
     TheirTurnCoinSpentResult, TheirTurnMoveResult,
@@ -378,10 +379,9 @@ impl RefereeInterface for RefereeByTurn {
                     debug!("repeat: my turn {:?}", self.is_my_turn());
                     assert_eq!(*ph, my_outcome);
 
-                    // Not my turn.
                     return Ok((
                         Some(Rc::new(self.clone())),
-                        TheirTurnCoinSpentResult::Expected(ph.clone(), amt.clone()),
+                        TheirTurnCoinSpentResult::Expected(self.state_number(), ph.clone(), amt.clone()),
                     ));
                 }
             }
@@ -450,7 +450,7 @@ impl RefereeInterface for RefereeByTurn {
         &self,
         allocator: &mut AllocEncoder,
         puzzle_hash: &PuzzleHash,
-    ) -> Result<Option<(Rc<dyn RefereeInterface>, usize)>, Error> {
+    ) -> Result<Option<RewindResult>, Error> {
         let mut ancestors = vec![];
         self.generate_ancestor_list(&mut ancestors);
 

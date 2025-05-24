@@ -2,7 +2,6 @@ use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-use clvm_traits::ClvmEncoder;
 use rand::Rng;
 
 use log::debug;
@@ -12,7 +11,7 @@ use crate::channel_handler::types::{
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
+    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program,
     SpendBundle, Timeout,
 };
 use crate::potato_handler::types::{
@@ -140,7 +139,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             "{initial_potato} game coin spent result from channel handler {their_turn_result:?}"
         );
         match their_turn_result {
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(ph, amt)) => {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(state_number, ph, amt)) => {
                 debug!("{initial_potato} got an expected spend {ph:?} {amt:?}");
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
 
@@ -156,18 +155,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     },
                 );
 
-                let (env, system_interface) = penv.env();
+                let (_, system_interface) = penv.env();
                 debug!("{initial_potato} expected spend {ph:?}");
-                if matches!(self.player_ch.game_is_my_turn(&game_id), Some(true)) {
-                    system_interface.self_move(&game_id, &[])?;
-                } else {
-                    system_interface.opponent_moved(
-                        env.allocator,
-                        &game_id,
-                        ReadableMove::from_program(Rc::new(Program::from_hex("80")?)),
-                        Amount::default(),
-                    )?;
-                }
+                system_interface.resync_move(&game_id, state_number)?;
 
                 system_interface.register_coin(
                     &new_coin_id,
@@ -185,6 +175,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved {
                 new_coin_string,
+                state_number,
                 readable,
                 mover_share,
                 ..
@@ -213,7 +204,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     },
                 );
 
-                system_interface.opponent_moved(env.allocator, &game_id, readable, mover_share)?;
+                system_interface.opponent_moved(env.allocator, &game_id, state_number, readable, mover_share)?;
                 system_interface.register_coin(
                     &new_coin_string,
                     &self.channel_timeout,
@@ -346,14 +337,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             }
 
             // XXX Have a notification for this.
-            let nil = env
-                .allocator
-                .encode_atom(clvm_traits::Atom::Borrowed(&[]))
-                .into_gen()?;
-            let readable = ReadableMove::from_nodeptr(env.allocator, nil)?;
-            let mover_share = Amount::default();
-
-            system_interface.opponent_moved(env.allocator, &game_id, readable, mover_share)?;
+            system_interface.resync_move(&game_id, 0)?;
             self.next_action(penv)?;
         }
 
@@ -383,7 +367,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let (initial_potato, (old_ph, new_ph, move_result, transaction)) = {
+        let (initial_potato, (old_ph, new_ph, state_number, move_result, transaction)) = {
             let initial_potato = self.player_ch.is_initial_potato();
             let my_turn = self.player_ch.game_is_my_turn(&game_id);
             if my_turn != Some(true) {
@@ -454,7 +438,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 bundle: transaction.bundle.clone(),
             }],
         })?;
-        system_interface.self_move(&game_id, &move_result.basic.move_made)?;
+        system_interface.self_move(&game_id, state_number, &move_result.basic.move_made)?;
 
         Ok(())
     }

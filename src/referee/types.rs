@@ -76,8 +76,9 @@ pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,
     },
-    Expected(PuzzleHash, Amount),
+    Expected(usize, PuzzleHash, Amount),
     Moved {
+        state_number: usize,
         // New iteration of the game coin.
         new_coin_string: CoinString,
         readable: ReadableMove,

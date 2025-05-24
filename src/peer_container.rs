@@ -152,9 +152,10 @@ pub struct IdleResult {
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
-    pub opponent_move: Option<(GameID, ReadableMove)>,
+    pub opponent_move: Option<(GameID, usize, ReadableMove)>,
     pub game_finished: Option<(GameID, Amount)>,
     pub receive_error: Option<Error>,
+    pub resync: Option<usize>,
 }
 
 pub trait GameCradle {
@@ -280,8 +281,9 @@ struct SynchronousGameCradleState {
     outbound_messages: VecDeque<Vec<u8>>,
     outbound_transactions: VecDeque<SpendBundle>,
     coin_solution_requests: VecDeque<CoinString>,
-    our_moves: VecDeque<(GameID, Vec<u8>)>,
-    opponent_moves: VecDeque<(GameID, ReadableMove, Amount)>,
+    resync: Option<usize>,
+    our_moves: VecDeque<(GameID, usize, Vec<u8>)>,
+    opponent_moves: VecDeque<(GameID, usize, ReadableMove, Amount)>,
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_messages: VecDeque<(GameID, ReadableMove)>,
     game_finished: VecDeque<(GameID, Amount)>,
@@ -375,6 +377,7 @@ impl SynchronousGameCradle {
                 funding_coin: None,
                 unfunded_offer: None,
                 shutdown: None,
+                resync: None,
                 finished: false,
             },
             peer: PotatoHandler::new(PotatoHandlerInit {
@@ -416,8 +419,13 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
-    fn self_move(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.our_moves.push_back((id.clone(), readable.to_vec()));
+    fn resync_move(&mut self, _id: &GameID, state_number: usize) -> Result<(), Error> {
+        self.resync = Some(state_number);
+        Ok(())
+    }
+
+    fn self_move(&mut self, id: &GameID, state_number: usize, readable: &[u8]) -> Result<(), Error> {
+        self.our_moves.push_back((id.clone(), state_number, readable.to_vec()));
         Ok(())
     }
 
@@ -425,11 +433,12 @@ impl ToLocalUI for SynchronousGameCradleState {
         &mut self,
         _allocator: &mut AllocEncoder,
         id: &GameID,
+        state_number: usize,
         readable: ReadableMove,
         my_share: Amount,
     ) -> Result<(), Error> {
         self.opponent_moves
-            .push_back((id.clone(), readable, my_share));
+            .push_back((id.clone(), state_number, readable, my_share));
         Ok(())
     }
     fn raw_game_message(&mut self, id: &GameID, readable: &[u8]) -> Result<(), Error> {
@@ -899,10 +908,16 @@ impl GameCradle for SynchronousGameCradle {
             &mut result.coin_solution_requests,
             &mut self.state.coin_solution_requests,
         );
+
+        swap(
+            &mut result.resync,
+            &mut self.state.resync
+        );
+
         self.state.coin_solution_requests.clear();
 
-        if let Some((id, msg)) = self.state.our_moves.pop_front() {
-            local_ui.self_move(&id, &msg)?;
+        if let Some((id, state_number, msg)) = self.state.our_moves.pop_front() {
+            local_ui.self_move(&id, state_number, &msg)?;
             return Ok(Some(result));
         }
 
@@ -911,8 +926,8 @@ impl GameCradle for SynchronousGameCradle {
             return Ok(Some(result));
         }
 
-        if let Some((id, readable, my_share)) = self.state.opponent_moves.pop_front() {
-            local_ui.opponent_moved(allocator, &id, readable, my_share)?;
+        if let Some((id, state_number, readable, my_share)) = self.state.opponent_moves.pop_front() {
+            local_ui.opponent_moved(allocator, &id, state_number, readable, my_share)?;
             result.continue_on = true;
             return Ok(Some(result));
         }
