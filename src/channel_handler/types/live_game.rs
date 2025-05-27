@@ -40,6 +40,8 @@ impl LiveGame {
         }
     }
 
+    pub fn version(&self) -> usize { self.referee_maker.version() }
+
     pub fn is_my_turn(&self) -> bool {
         self.referee_maker.is_my_turn()
     }
@@ -126,8 +128,8 @@ impl LiveGame {
         self.referee_maker.get_our_current_share()
     }
 
-    pub fn suitable_redo(&self) -> bool {
-        self.referee_maker.suitable_redo()
+    pub fn suitable_redo(&self, allocator: &mut AllocEncoder, ph: &PuzzleHash) -> Result<bool, Error> {
+        self.referee_maker.suitable_redo(allocator, ph)
     }
 
     pub fn get_transaction_for_move(
