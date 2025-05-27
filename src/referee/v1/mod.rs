@@ -260,7 +260,6 @@ impl RefereeByTurn {
 }
 
 impl RefereeInterface for RefereeByTurn {
-    fn version(&self) -> usize { 1 }
     fn is_my_turn(&self) -> bool {
         matches!(self, RefereeByTurn::MyTurn(_))
     }
@@ -284,8 +283,8 @@ impl RefereeInterface for RefereeByTurn {
         self.fixed().amount.clone() - self.get_our_current_share()
     }
 
-    fn suitable_redo(&self, allocator: &mut AllocEncoder, ph: &PuzzleHash) -> Result<bool, Error> {
-        Ok(self.is_my_turn())
+    fn suitable_redo(&self) -> bool {
+        !self.is_my_turn()
     }
 
     fn enable_cheating(&self, make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {
@@ -521,23 +520,20 @@ impl RefereeInterface for RefereeByTurn {
             old_end = Some(end_hash.clone());
         }
 
-        for (i, old_referee) in ancestors.iter().enumerate() {
-            let origin_puzzle_hash = old_referee.on_chain_referee_puzzle_hash(allocator)?;
-            let destination_puzzle_hash = old_referee.outcome_referee_puzzle_hash(allocator)?;
-
+        for old_referee in ancestors.iter() {
+            let have_puzzle_hash = curry_referee_puzzle_hash(
+                allocator,
+                &old_referee.fixed().referee_coin_puzzle_hash,
+                &old_referee.args_for_this_coin(),
+            )?;
             debug!(
-                "referee rewind: {} my turn {} try state {origin_puzzle_hash:?} => {destination_puzzle_hash:?} want {puzzle_hash:?}",
+                "{} referee rewind: {} my turn {} try state {have_puzzle_hash:?} want {puzzle_hash:?}",
                 old_referee.state_number(),
                 old_referee.is_my_turn(),
+                old_referee.state_number()
             );
-            if *puzzle_hash == origin_puzzle_hash && old_referee.is_my_turn() {
-                // One farther down so we're in a their turn after the turn we took.
+            if *puzzle_hash == have_puzzle_hash {
                 let state_number = old_referee.state_number();
-                debug!("will redo: {state_number}");
-                return Ok(Some((old_referee.clone(), state_number)));
-            } else if *puzzle_hash == origin_puzzle_hash && !old_referee.is_my_turn() {
-                let state_number = old_referee.state_number();
-                debug!("will receive redo: {state_number}");
                 return Ok(Some((old_referee.clone(), state_number)));
             }
         }
