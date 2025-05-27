@@ -35,6 +35,8 @@ pub enum RefereeByTurn {
 pub type RewindResult = (Rc<dyn RefereeInterface>, usize);
 
 pub trait RefereeInterface {
+    fn version(&self) -> usize;
+
     fn is_my_turn(&self) -> bool;
 
     fn processing_my_turn(&self) -> bool;
@@ -45,7 +47,7 @@ pub trait RefereeInterface {
 
     fn get_their_current_share(&self) -> Amount;
 
-    fn suitable_redo(&self) -> bool;
+    fn suitable_redo(&self, allocator: &mut AllocEncoder, ph: &PuzzleHash) -> Result<bool, Error>;
 
     fn enable_cheating(&self, make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>>;
 
@@ -468,6 +470,8 @@ impl RefereeByTurn {
 }
 
 impl RefereeInterface for RefereeByTurn {
+    fn version(&self) -> usize { 0 }
+
     fn is_my_turn(&self) -> bool {
         matches!(self, RefereeByTurn::MyTurn(_))
     }
@@ -491,8 +495,8 @@ impl RefereeInterface for RefereeByTurn {
         self.fixed().amount.clone() - self.get_our_current_share()
     }
 
-    fn suitable_redo(&self) -> bool {
-        !self.is_my_turn()
+    fn suitable_redo(&self, allocator: &mut AllocEncoder, ph: &PuzzleHash) -> Result<bool, Error> {
+        Ok(!self.is_my_turn())
     }
 
     fn enable_cheating(&self, _make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {

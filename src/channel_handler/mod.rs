@@ -1900,7 +1900,7 @@ impl ChannelHandler {
                     // We should have odd parity between the rewind and the current state.
                     debug!("{} getting redo move: move_data.state_number {} rewind_state {rewind_state}", self.is_initial_potato(), move_data.state_number);
                     let rewind_ph = self.live_games[game_idx].current_puzzle_hash(env.allocator)?;
-                    if !self.live_games[game_idx].suitable_redo() {
+                    if !self.live_games[game_idx].suitable_redo(env.allocator, &new_ph)? {
                         debug!(
                             "{} not matched rewind state {new_ph:?} vs {rewind_ph:?}",
                             self.is_initial_potato()
@@ -1912,6 +1912,23 @@ impl ChannelHandler {
                         "{} matched rewind state {new_ph:?} vs {rewind_ph:?}",
                         self.is_initial_potato()
                     );
+
+                    // if self.live_games[game_idx].version() > 0 {
+                    //     let referee_result = self.on_chain_our_move(
+                    //         env,
+                    //         &move_data.game_id,
+                    //         &move_data.move_data,
+                    //         move_data.move_entropy.clone(),
+                    //         coin,
+                    //     )?;
+                    //     return Ok(Some(GameAction::RedoMove(
+                    //         move_data.game_id.clone(),
+                    //         coin.clone(),
+                    //         self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?,
+                    //         Box::new(referee_result.4.clone())
+                    //     )));
+                    // }
+
                     let transaction = self.live_games[game_idx].get_transaction_for_move(
                         env.allocator,
                         coin,

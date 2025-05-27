@@ -903,7 +903,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 if let Some(resync) = result.resync.as_ref() {
                     if matches!(cradles[i].my_move_in_game(&game_ids[0]), Some(true)) {
                         debug!("resync {resync} requested");
-                        move_number -= 2;
+                        move_number -= 1;
                         can_move = true;
                     }
                 }
