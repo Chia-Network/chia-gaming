@@ -1644,11 +1644,12 @@ impl ChannelHandler {
 
                 let rewind_target = live_game.set_state_for_coin(
                     env.allocator,
+                    &coin_id,
                     game_coin,
                     self.current_state_number,
                 )?;
 
-                if let Some((_my_turn, rewind_state)) = rewind_target {
+                if let Some(rewind_state) = rewind_target.state_number {
                     debug!("{} rewind target state was {rewind_state}", initial_potato);
                     debug!("mover puzzle hash is {:?}", mover_puzzle_hash);
                     debug!(

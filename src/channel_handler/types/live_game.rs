@@ -11,7 +11,7 @@ use crate::referee::types::{
     GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
 };
-use crate::referee::RefereeInterface;
+use crate::referee::{RefereeInterface, RewindResult};
 
 pub struct LiveGame {
     pub game_id: GameID,
@@ -177,27 +177,28 @@ impl LiveGame {
     pub fn set_state_for_coin(
         &mut self,
         allocator: &mut AllocEncoder,
+        coin: &CoinString,
         want_ph: &PuzzleHash,
         current_state: usize,
-    ) -> Result<Option<(bool, usize)>, Error> {
+    ) -> Result<RewindResult, Error> {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
-        let result = self.referee_maker.rewind(allocator, want_ph)?;
-        if let Some((new_ref, current_state)) = result {
-            self.referee_maker = new_ref;
+        let result = self.referee_maker.rewind(allocator, coin, want_ph)?;
+        if let Some(new_ref) = result.new_referee.as_ref() {
+            self.referee_maker = new_ref.clone();
             self.rewind_outcome = Some(current_state);
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
-            return Ok(Some((self.is_my_turn(), current_state)));
+            return Ok(result);
         }
 
         if referee_puzzle_hash == *want_ph {
             self.rewind_outcome = Some(current_state);
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
-            return Ok(Some((self.is_my_turn(), current_state)));
+            return Ok(result);
         }
 
-        Ok(None)
+        Ok(result)
     }
 
     pub fn get_transaction_for_timeout(
