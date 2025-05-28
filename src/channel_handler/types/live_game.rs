@@ -128,8 +128,8 @@ impl LiveGame {
         self.referee_maker.get_our_current_share()
     }
 
-    pub fn suitable_redo(&self, allocator: &mut AllocEncoder, ph: &PuzzleHash) -> Result<bool, Error> {
-        self.referee_maker.suitable_redo(allocator, ph)
+    pub fn suitable_redo(&self, allocator: &mut AllocEncoder, coin: &CoinString, ph: &PuzzleHash) -> Result<bool, Error> {
+        self.referee_maker.suitable_redo(allocator, coin, ph)
     }
 
     pub fn get_transaction_for_move(
