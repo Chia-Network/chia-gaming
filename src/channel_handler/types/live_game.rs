@@ -15,7 +15,7 @@ use crate::referee::{RefereeInterface, RewindResult};
 
 pub struct LiveGame {
     pub game_id: GameID,
-    pub rewind_outcome: Option<usize>,
+    pub rewind_outcome: Option<RewindResult>,
     pub last_referee_puzzle_hash: PuzzleHash,
     referee_maker: Rc<dyn RefereeInterface>,
     pub my_contribution: Amount,
@@ -116,8 +116,8 @@ impl LiveGame {
             .check_their_turn_for_slash(allocator, evidence, coin_string)
     }
 
-    pub fn get_rewind_outcome(&self) -> Option<usize> {
-        self.rewind_outcome
+    pub fn get_rewind_outcome(&self) -> Option<&RewindResult> {
+        self.rewind_outcome.as_ref()
     }
 
     pub fn get_amount(&self) -> Amount {
@@ -187,13 +187,13 @@ impl LiveGame {
         let result = self.referee_maker.rewind(allocator, coin, want_ph)?;
         if let Some(new_ref) = result.new_referee.as_ref() {
             self.referee_maker = new_ref.clone();
-            self.rewind_outcome = Some(current_state);
+            self.rewind_outcome = Some(result.clone());
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
             return Ok(result);
         }
 
         if referee_puzzle_hash == *want_ph {
-            self.rewind_outcome = Some(current_state);
+            self.rewind_outcome = Some(result.clone());
             self.last_referee_puzzle_hash = self.outcome_puzzle_hash(allocator)?;
             return Ok(result);
         }

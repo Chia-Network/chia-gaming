@@ -58,7 +58,7 @@ pub enum SlashOutcome {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RefereeOnChainTransaction {
     pub bundle: Spend,
     pub amount: Amount,

@@ -679,11 +679,24 @@ impl RefereeInterface for RefereeByTurn {
 
         debug!("referee rewind: no matching state");
         debug!("still in state {:?}", self.state_number());
+
+        let transaction =
+            if self.suitable_redo(allocator, puzzle_hash)? {
+                let transaction = self.get_transaction_for_move(
+                    allocator,
+                    coin,
+                    true
+                )?;
+                Some(transaction)
+            } else {
+                None
+            };
+
         Ok(RewindResult {
             new_referee: None,
             version: 0,
             state_number: Some(self.state_number()),
-            transaction: None,
+            transaction: transaction,
         })
     }
 
