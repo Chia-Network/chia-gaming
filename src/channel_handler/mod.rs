@@ -1636,6 +1636,12 @@ impl ChannelHandler {
                     "live game id {:?} try to use coin {game_coin:?}",
                     live_game.game_id
                 );
+                let coin_id = CoinString::from_parts(
+                    &unroll_coin.to_coin_id(),
+                    &game_coin.clone(),
+                    &live_game.get_amount(),
+                );
+
                 let rewind_target = live_game.set_state_for_coin(
                     env.allocator,
                     game_coin,
@@ -1645,12 +1651,6 @@ impl ChannelHandler {
                 if let Some((_my_turn, rewind_state)) = rewind_target {
                     debug!("{} rewind target state was {rewind_state}", initial_potato);
                     debug!("mover puzzle hash is {:?}", mover_puzzle_hash);
-                    let coin_id = CoinString::from_parts(
-                        &unroll_coin.to_coin_id(),
-                        &game_coin.clone(),
-                        &live_game.get_amount(),
-                    );
-
                     debug!(
                         "{initial_potato} new game coin {coin_id:?} for game_id {:?}",
                         live_game.game_id
