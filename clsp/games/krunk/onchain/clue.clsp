@@ -23,15 +23,15 @@
             (li MAKE_MOVE guess_validate_hash (li bob_guesses (c MOVE alice_clues) &rest tail) 5)
         )
         ; alice did a reveal
-        (if (= (strlen evidence) 2)
-            ; index of previous correct guess
-            (assert (> evidence 0) (= (index bob_guesses evidence) (substr MOVE 0 5))
-                (li SLASH 0))
-            (= (strlen evidence) 1)
+        (if (= (strlen evidence) 1)
             ; index of wrong clue
             (assert
-                (!= (make_clue (index bob_guesses (+ evidence 1))) (index alice_clues evidence))
-                (li SLASH 0))
+                (or
+                    (and (> evidence 0) (= (index bob_guesses evidence) (substr MOVE 0 5)))
+                    (!= (make_clue (index bob_guesses (+ evidence 1))) (index alice_clues evidence))
+                )
+                (li SLASH 0)
+            )
             evidence
             ; alice's selected word was not in the dictionary
             (assert
