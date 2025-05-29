@@ -38,6 +38,7 @@ pub struct RewindResult {
     pub state_number: Option<usize>,
     pub new_referee: Option<Rc<dyn RefereeInterface>>,
     pub transaction: Option<RefereeOnChainTransaction>,
+    pub outcome_puzzle_hash: PuzzleHash,
 }
 
 pub trait RefereeInterface {
@@ -676,6 +677,7 @@ impl RefereeInterface for RefereeByTurn {
                     version: 0,
                     state_number: Some(state_number),
                     transaction,
+                    outcome_puzzle_hash: old_referee.outcome_referee_puzzle_hash(allocator)?,
                 });
             }
         }
@@ -700,6 +702,7 @@ impl RefereeInterface for RefereeByTurn {
             version: 0,
             state_number: Some(self.state_number()),
             transaction: transaction,
+            outcome_puzzle_hash: self.outcome_referee_puzzle_hash(allocator)?,
         })
     }
 

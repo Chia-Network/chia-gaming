@@ -1904,13 +1904,13 @@ impl ChannelHandler {
                             return Ok(Some(GameAction::RedoMoveV0(
                                 move_data.game_id.clone(),
                                 coin.clone(),
-                                self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?,
+                                rwo.outcome_puzzle_hash.clone(),
                                 Box::new(transaction.clone()),
                             )));
                         } else {
                             return Ok(Some(GameAction::RedoMoveV1(
                                 coin.clone(),
-                                self.live_games[game_idx].current_puzzle_hash(env.allocator)?,
+                                rwo.outcome_puzzle_hash.clone(),
                                 Box::new(transaction.clone()),
                                 move_data.clone(),
                             )));

@@ -501,6 +501,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             GameAction::RedoMoveV1(coin, new_ph, tx, move_data) => {
                 let (env, system_interface) = penv.env();
                 self.have_potato = PotatoState::Absent;
+
                 system_interface.spend_transaction_and_add_fee(&SpendBundle {
                     name: Some("redo move".to_string()),
                     spends: vec![CoinSpend {
@@ -517,6 +518,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 let new_coin = CoinString::from_parts(&coin.to_coin_id(), &new_ph, &amt);
                 debug!("the v1 redo move was for puzzle hash {new_ph:?}");
                 debug!("the v1 redo move turned into {new_coin:?}");
+                debug!("the v1 redo move turned into id {:?}", new_coin.to_coin_id());
 
                 let (ph_before_redo_move, ph_after_redo_move, new_state, new_move, new_tx) =
                     self.player_ch.on_chain_our_move(

@@ -536,10 +536,11 @@ impl RefereeInterface for RefereeByTurn {
             if *puzzle_hash == origin_puzzle_hash {
                 // One farther down so we're in a their turn after the turn we took.
                 let state_number = old_referee.state_number();
+                let to_use = old_referee.clone();
                 let transaction =
                     if !old_referee.is_my_turn() {
-                        debug!("will redo: {}", old_referee.state_number());
-                        Some(old_referee.get_transaction_for_move(
+                        debug!("will redo: {}", to_use.state_number());
+                        Some(to_use.get_transaction_for_move(
                             allocator,
                             coin,
                             true,
@@ -554,6 +555,7 @@ impl RefereeInterface for RefereeByTurn {
                         ancestors[i - 1].clone()
                     };
                 return Ok(RewindResult {
+                    outcome_puzzle_hash: to_return.outcome_referee_puzzle_hash(allocator)?,
                     state_number: Some(to_return.state_number()),
                     new_referee: Some(to_return),
                     version: 1,
@@ -570,6 +572,7 @@ impl RefereeInterface for RefereeByTurn {
             version: 1,
             state_number: Some(self.state_number()),
             transaction: None,
+            outcome_puzzle_hash: self.outcome_referee_puzzle_hash(allocator)?,
         })
     }
 
