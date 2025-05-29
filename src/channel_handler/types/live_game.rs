@@ -128,10 +128,6 @@ impl LiveGame {
         self.referee_maker.get_our_current_share()
     }
 
-    pub fn suitable_redo(&self, allocator: &mut AllocEncoder, coin: &CoinString, ph: &PuzzleHash) -> Result<bool, Error> {
-        self.referee_maker.suitable_redo(allocator, coin, ph)
-    }
-
     pub fn get_transaction_for_move(
         &self,
         allocator: &mut AllocEncoder,
@@ -184,7 +180,7 @@ impl LiveGame {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
-        let result = self.referee_maker.rewind(allocator, coin, want_ph)?;
+        let result = self.referee_maker.rewind(allocator, self.referee_maker.clone(), coin, want_ph)?;
         if let Some(new_ref) = result.new_referee.as_ref() {
             self.referee_maker = new_ref.clone();
             self.rewind_outcome = Some(result.clone());

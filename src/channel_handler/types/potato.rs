@@ -31,7 +31,7 @@ impl std::fmt::Debug for PotatoAcceptCachedData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PotatoMoveCachedData {
     pub state_number: usize,
     pub game_id: GameID,

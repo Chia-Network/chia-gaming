@@ -97,6 +97,7 @@ pub trait RefereeInterface {
     fn rewind(
         &self,
         allocator: &mut AllocEncoder,
+        myself: Rc<dyn RefereeInterface>,
         coin: &CoinString,
         puzzle_hash: &PuzzleHash,
     ) -> Result<RewindResult, Error>;
@@ -611,6 +612,7 @@ impl RefereeInterface for RefereeByTurn {
     fn rewind(
         &self,
         allocator: &mut AllocEncoder,
+        myself: Rc<dyn RefereeInterface>,
         coin: &CoinString,
         puzzle_hash: &PuzzleHash,
     ) -> Result<RewindResult, Error> {

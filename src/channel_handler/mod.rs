@@ -1897,21 +1897,25 @@ impl ChannelHandler {
                 );
                 debug!("redo for coin {coin:?}");
 
-                if let Some(transaction) = self.live_games[game_idx].get_rewind_outcome().and_then(|r| r.transaction.as_ref()) {
-                    let tfm = self.live_games[game_idx].get_transaction_for_move(
-                        env.allocator,
-                        coin,
-                        true,
-                    )?;
-                    assert_eq!(*transaction, tfm);
-
-                    debug!("{} redo move data {move_data:?}", self.is_initial_potato());
-                    return Ok(Some(GameAction::RedoMove(
-                        move_data.game_id.clone(),
-                        coin.clone(),
-                        self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?,
-                        Box::new(transaction.clone()),
-                    )));
+                if let Some(rwo) = self.live_games[game_idx].get_rewind_outcome() {
+                    if let Some(transaction) = rwo.transaction.as_ref() {
+                        if rwo.version == 0 {
+                            debug!("{} redo move data {move_data:?}", self.is_initial_potato());
+                            return Ok(Some(GameAction::RedoMoveV0(
+                                move_data.game_id.clone(),
+                                coin.clone(),
+                                self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?,
+                                Box::new(transaction.clone()),
+                            )));
+                        } else {
+                            return Ok(Some(GameAction::RedoMoveV1(
+                                coin.clone(),
+                                self.live_games[game_idx].current_puzzle_hash(env.allocator)?,
+                                Box::new(transaction.clone()),
+                                move_data.clone(),
+                            )));
+                        }
+                    }
                 }
 
                 Ok(None)

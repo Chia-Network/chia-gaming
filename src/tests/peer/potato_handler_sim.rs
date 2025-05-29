@@ -900,14 +900,6 @@ fn run_game_container_with_action_list_with_success_predicate(
                     }
                 }
 
-                if let Some(resync) = result.resync.as_ref() {
-                    if matches!(cradles[i].my_move_in_game(&game_ids[0]), Some(true)) {
-                        debug!("resync {resync} requested");
-                        move_number -= 1;
-                        can_move = true;
-                    }
-                }
-
                 for tx in result.outbound_transactions.iter() {
                     debug!("PROCESS TX {tx:?}");
                     let included_result = simulator.push_tx(allocator, &tx.spends).into_gen()?;

@@ -13,6 +13,7 @@ use crate::common::types::{
     AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinString, Error, Hash, Program,
     Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
 };
+use crate::referee;
 use crate::referee::RewindResult;
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
@@ -450,6 +451,7 @@ impl RefereeInterface for RefereeByTurn {
     fn rewind(
         &self,
         allocator: &mut AllocEncoder,
+        myself: Rc<dyn RefereeInterface>,
         coin: &CoinString,
         puzzle_hash: &PuzzleHash,
     ) -> Result<RewindResult, Error> {
@@ -531,26 +533,30 @@ impl RefereeInterface for RefereeByTurn {
                 old_referee.state_number(),
                 old_referee.is_my_turn(),
             );
-            if *puzzle_hash == origin_puzzle_hash && old_referee.is_my_turn() {
+            if *puzzle_hash == origin_puzzle_hash {
                 // One farther down so we're in a their turn after the turn we took.
                 let state_number = old_referee.state_number();
                 let transaction =
-                    if old_referee.suitable_redo(allocator, coin, puzzle_hash)? {
-                        let transaction = old_referee.get_transaction_for_move(
+                    if !old_referee.is_my_turn() {
+                        debug!("will redo: {}", old_referee.state_number());
+                        Some(old_referee.get_transaction_for_move(
                             allocator,
                             coin,
                             true,
-                        )?;
-                        Some(transaction)
+                        )?)
                     } else {
                         None
                     };
-
-                debug!("will redo: {state_number}");
+                let to_return =
+                    if i == 0 {
+                        myself.clone()
+                    } else {
+                        ancestors[i - 1].clone()
+                    };
                 return Ok(RewindResult {
-                    new_referee: Some(old_referee.clone()),
+                    state_number: Some(to_return.state_number()),
+                    new_referee: Some(to_return),
                     version: 1,
-                    state_number: Some(state_number),
                     transaction: transaction,
                 });
             }
@@ -558,23 +564,12 @@ impl RefereeInterface for RefereeByTurn {
 
         debug!("referee rewind: no matching state");
         debug!("still in state {:?}", self.state_number());
-        let transaction =
-            if self.suitable_redo(allocator, coin, puzzle_hash)? {
-                let transaction = self.get_transaction_for_move(
-                    allocator,
-                    coin,
-                    true
-                )?;
-                Some(transaction)
-            } else {
-                None
-            };
 
         Ok(RewindResult {
             new_referee: None,
             version: 1,
             state_number: Some(self.state_number()),
-            transaction: transaction,
+            transaction: None,
         })
     }
 
