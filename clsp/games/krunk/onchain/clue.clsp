@@ -18,7 +18,7 @@
     (if (= (strlen MOVE)) 1
         ; alice gave a clue
         (if_any_fail
-            (!= (len clues) 4)
+            (!= (len alice_clues) 4)
             (li SLASH 0)
             (li MAKE_MOVE guess_validate_hash (li bob_guesses (c MOVE alice_clues) &rest tail) 5)
         )
@@ -41,7 +41,7 @@
             )
             (if_any_fail
                 (= (strlen MOVE) 21)
-                (= alice_commit (sha256 MOVE))
+                (= alice_commit (sha256 MOVE AMOUNT))
                 (= mover_share (* (/ AMOUNT 100) (index (len bob_guesses) (li 100 100 20 5 (= (substr MOVE 0 5) (f bob_guesses))))))
                 (li SLASH 0)
                 (li MAKE_MOVE 0 0 0)

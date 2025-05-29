@@ -22,14 +22,14 @@
 (import games.calpoker-v1.onchain.arrange_cards exposing split_cards get_final_cards_in_canonical_order)
 
 ; game factory takes (alice_contribution bob_contribution) and returns
-; (initial_mover_handler initial_waiter_handler whether_paired
+; (initial_mover_handler initial_waiter_handler
 ; initial_max_move_size initial_state initial_mover_share
 ; (validator_hash validator validator_hash validator ...) first one is initial)
-(defun calpoker_template (alice_contribution bob_contribution)
+(defun calpoker_factory (alice_contribution bob_contribution)
     (assert
         (= alice_contribution 1)
         (= bob_contribution 1)
-        (li calpoker_alice_driver_a calpoker_bob_driver_a 0 32 0 0
+        (li calpoker_alice_driver_a calpoker_bob_driver_a 32 0 0
             (pokera_hash pokera pokerb_hash pokerb pokerc_hash pokerc pokerd_hash pokerd pokere_hash pokere))
     )
 )
@@ -48,7 +48,7 @@
         preimage (substr entropy 0 16)
         (list
             (sha256 preimage)
-            (curry calpoker_alice_driver_b preimage local_move)
+            (curry calpoker_alice_driver_b preimage)
         )
     )
 )
@@ -58,7 +58,7 @@
 ; immediately sends a message giving Alice's seed
 (defun calpoker_alice_driver_b (PREIMAGE move pre_state post_state mover_share amount raw_amount)
     (list (make_cards (sha256 PREIMAGE move raw_amount))
-          (curry calpoker_alice_driver_c PREIMAGE) 0 PREIMAGE)
+        (curry calpoker_alice_driver_c PREIMAGE) 0 PREIMAGE)
 )
 
 (defun single-byte (raw-indices)
@@ -84,10 +84,9 @@
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 (defun calpoker_alice_driver_c (PREIMAGE my_discards (alice_commit bob_seed) amount entropy)
     (assign
-        cards (make_cards (sha256 PREIMAGE bob_seed amount))
         salt (substr entropy 0 16)
         (list
-            (concat PREIMAGE (sha256 (concat salt my_discards)))
+            (concat PREIMAGE (sha256 salt my_discards))
             (curry calpoker_alice_driver_d salt my_discards)
         )
     )
@@ -113,7 +112,7 @@
 ; move is Bob's discards
 ; should immediately respond with a move revealing discards and selecting best cards and final split
 (defun calpoker_alice_driver_d (MY_SALT MY_PICKS move pre_state
-            (bob_discards alice_cards bob_cards my_commit))
+        (bob_discards alice_cards bob_cards my_commit))
     (assign
         (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
             alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
@@ -140,8 +139,7 @@
                 bob_hand_value
                 win_result
             )
-            0
-            (curry calpoker_alice_driver_e (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_selects))))
+            (curry calpoker_alice_driver_e (concat MY_SALT MY_PICKS) split)
         )
     )
 )
@@ -205,9 +203,8 @@
 ; state is (Bob's discards (alice_cards bob_cards) alice_commit)
 ; move is alice_salted_discards
 ; either fraud proves or accepts split
-(defun calpoker_bob_driver_e
-    (move (bob_discards alice_cards bob_cards) (alice_final_cards bob_final_cards alice_hand_value)
-    split)
+(defun calpoker_bob_driver_e (move (bob_discards alice_cards bob_cards)
+        (alice_final_cards bob_final_cards alice_hand_value) split)
     (assign
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 18)
