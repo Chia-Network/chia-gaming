@@ -105,6 +105,7 @@ pub struct ChannelHandler {
     unroll_advance_timeout: Timeout,
 
     cached_last_action: Option<CachedPotatoRegenerateLastHop>,
+    did_rewind: Option<CachedPotatoRegenerateLastHop>,
 
     // Has a parity between the two players of whether have_potato means odd
     // or even, but odd-ness = have-potato is arbitrary.
@@ -426,6 +427,7 @@ impl ChannelHandler {
             on_chain_for_error: false,
 
             cached_last_action: None,
+            did_rewind: None,
 
             current_state_number: 0,
             next_nonce_number: 0,
@@ -1595,6 +1597,8 @@ impl ChannelHandler {
         let mut res = HashMap::new();
         let initial_potato = self.is_initial_potato();
 
+        swap(&mut self.did_rewind, &mut self.cached_last_action);
+
         debug!(
             "{initial_potato} ALIGN GAME STATES: initiated {} my state {} coin state {}",
             self.initiated_on_chain, self.current_state_number, self.unroll.coin.state_number,
@@ -1602,14 +1606,14 @@ impl ChannelHandler {
 
         debug!(
             "{initial_potato} cached state {:?}",
-            self.cached_last_action
+            self.did_rewind
         );
         debug!("{initial_potato} #game coins {}", coins.len());
 
         let mover_puzzle_hash = private_to_public_key(&self.referee_private_key());
         for game_coin in coins.iter() {
             if let Some(CachedPotatoRegenerateLastHop::PotatoAccept(cached)) =
-                &self.cached_last_action
+                &self.did_rewind
             {
                 if *game_coin == cached.puzzle_hash {
                     let coin_id = CoinString::from_parts(
@@ -1821,27 +1825,12 @@ impl ChannelHandler {
         ))
     }
 
-    pub fn get_redo_action<R: Rng>(
+    fn get_redo_result<R: Rng>(
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
+        cla: &mut Option<CachedPotatoRegenerateLastHop>,
         coin: &CoinString,
     ) -> Result<Option<GameAction>, Error> {
-        debug!(
-            "{} GET REDO ACTION {} vs {}",
-            self.is_initial_potato(),
-            self.current_state_number,
-            self.unroll.coin.state_number
-        );
-
-        let new_ph = if let Some((_, ph, _)) = coin.to_parts() {
-            ph
-        } else {
-            return Err(Error::StrErr("malformed coin".to_string()));
-        };
-
-        // We're on chain due to error.
-        let mut cla = None;
-        swap(&mut cla, &mut self.cached_last_action);
         match cla {
             Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
                 ids,
@@ -1849,8 +1838,8 @@ impl ChannelHandler {
                 their_contrib,
             )) => {
                 // Can't restart games on chain so rewind.
-                self.my_allocated_balance -= my_contrib;
-                self.their_allocated_balance -= their_contrib;
+                self.my_allocated_balance -= my_contrib.clone();
+                self.their_allocated_balance -= their_contrib.clone();
                 let remove_ids: Vec<usize> = self
                     .live_games
                     .iter()
@@ -1868,7 +1857,7 @@ impl ChannelHandler {
                 }
                 Ok(None)
             }
-            Some(CachedPotatoRegenerateLastHop::PotatoAccept(mut accept)) => {
+            Some(CachedPotatoRegenerateLastHop::PotatoAccept(ref mut accept)) => {
                 debug!("{} redo move is an accept", self.is_initial_potato());
                 let transaction = accept
                     .live_game
@@ -1922,6 +1911,35 @@ impl ChannelHandler {
             }
             _ => Ok(None),
         }
+    }
+
+    pub fn get_redo_action<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        coin: &CoinString,
+    ) -> Result<Option<GameAction>, Error> {
+        debug!(
+            "{} GET REDO ACTION {} vs {}",
+            self.is_initial_potato(),
+            self.current_state_number,
+            self.unroll.coin.state_number
+        );
+
+        let new_ph = if let Some((_, ph, _)) = coin.to_parts() {
+            ph
+        } else {
+            return Err(Error::StrErr("malformed coin".to_string()));
+        };
+
+        // We're on chain due to error.
+        let mut cla = None;
+        swap(&mut cla, &mut self.did_rewind);
+
+        let result = self.get_redo_result(env, &mut cla, coin);
+
+        swap(&mut cla, &mut self.did_rewind);
+
+        result
     }
 
     // what our vanilla coin string is
