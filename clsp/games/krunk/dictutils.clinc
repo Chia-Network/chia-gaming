@@ -1,7 +1,9 @@
 
 ; 0x80000000
 ; 0x7fffffff
+(import std.li)
 (import std.len)
+;(import std.sig)
 (import std.slice)
 (import std.truncate)
 (import games.krunk.words)
@@ -29,7 +31,7 @@
         (li (truncate items mid_index) (slice items mid_index))
     )
 )
-
+; TODO: implement `sig`
 ; TODO: verify list is sorted
 ; "upper" means "higher in value" when regarded as a byte-string here (using <str).
 (defun create_dictionary_inner (lower upper words_len words private_key)
@@ -71,7 +73,7 @@
             minboundary thing1
             maxboundary thing2
             signature thing3
-            (if (and (<=s mindboundary word) (>=s maxboundary word) node nil))
+            (if (and (<=s mindboundary word) (>=s maxboundary word)) node nil)
         )
     )
 )
