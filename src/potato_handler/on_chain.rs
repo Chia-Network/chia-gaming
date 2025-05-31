@@ -139,7 +139,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             "{initial_potato} game coin spent result from channel handler {their_turn_result:?}"
         );
         match their_turn_result {
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(state_number, ph, amt)) => {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(state_number, ph, amt, redo)) => {
                 debug!("{initial_potato} got an expected spend {ph:?} {amt:?}");
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
 
@@ -155,15 +155,48 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     },
                 );
 
-                let (_, system_interface) = penv.env();
-                debug!("{initial_potato} expected spend {ph:?}");
-                system_interface.resync_move(&game_id, state_number)?;
+                let (env, system_interface) = penv.env();
 
                 system_interface.register_coin(
                     &new_coin_id,
                     &self.channel_timeout,
                     Some("coin gives their turn"),
                 )?;
+
+                let mut is_my_turn = false;
+                if let Some(redo_data) = &redo {
+                    is_my_turn = matches!(self.player_ch.game_is_my_turn(&redo_data.game_id), Some(true));
+                    if is_my_turn {
+                        debug!("{} redo back at potato handler", self.player_ch.is_initial_potato());
+                        let (old_ph, new_ph, state_number, move_result, transaction) =
+                            self.player_ch.on_chain_our_move(
+                                env,
+                                &redo_data.game_id,
+                                &redo_data.move_data,
+                                redo_data.move_entropy.clone(),
+                                &new_coin_id
+                            )?;
+
+                        let final_coin = CoinString::from_parts(&new_coin_id.to_coin_id(), &new_ph, &amt);
+
+                        system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                            name: Some("redo move from data".to_string()),
+                            spends: vec![CoinSpend {
+                                coin: new_coin_id.clone(),
+                                bundle: transaction.bundle.clone(),
+                            }],
+                        })?;
+
+                        system_interface.register_coin(
+                            &new_coin_id,
+                            &self.channel_timeout,
+                            Some("post redo move game coin"),
+                        )?;
+                    }
+
+                    debug!("{initial_potato} expected spend {ph:?}");
+                    system_interface.resync_move(&game_id, state_number, is_my_turn)?;
+                }
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout {
                 my_reward_coin_string,
@@ -337,7 +370,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             }
 
             // XXX Have a notification for this.
-            system_interface.resync_move(&game_id, 0)?;
             self.next_action(penv)?;
         }
 
@@ -520,29 +552,29 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 debug!("the v1 redo move turned into {new_coin:?}");
                 debug!("the v1 redo move turned into id {:?}", new_coin.to_coin_id());
 
-                let (ph_before_redo_move, ph_after_redo_move, new_state, new_move, new_tx) =
-                    self.player_ch.on_chain_our_move(
-                        env,
-                        &move_data.game_id,
-                        &move_data.move_data,
-                        move_data.move_entropy.clone(),
-                        &new_coin
-                    )?;
+                // let (ph_before_redo_move, ph_after_redo_move, new_state, new_move, new_tx) =
+                //     self.player_ch.on_chain_our_move(
+                //         env,
+                //         &move_data.game_id,
+                //         &move_data.move_data,
+                //         move_data.move_entropy.clone(),
+                //         &new_coin
+                //     )?;
 
-                assert_eq!(ph_before_redo_move, new_ph);
-                debug!("the v1 redo new_tx {new_tx:?}");
-                let final_coin = CoinString::from_parts(&new_coin.to_coin_id(), &ph_after_redo_move, &amt);
+                // assert_eq!(ph_before_redo_move, new_ph);
+                // debug!("the v1 redo new_tx {new_tx:?}");
+                // let final_coin = CoinString::from_parts(&new_coin.to_coin_id(), &ph_after_redo_move, &amt);
 
-                system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                    name: Some("redo move from data".to_string()),
-                    spends: vec![CoinSpend {
-                        coin: new_coin,
-                        bundle: new_tx.bundle.clone(),
-                    }],
-                })?;
+                // system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                //     name: Some("redo move from data".to_string()),
+                //     spends: vec![CoinSpend {
+                //         coin: new_coin,
+                //         bundle: new_tx.bundle.clone(),
+                //     }],
+                // })?;
 
                 system_interface.register_coin(
-                    &final_coin,
+                    &new_coin,
                     &self.channel_timeout,
                     Some("post redo game coin"),
                 )?;

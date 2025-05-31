@@ -383,7 +383,7 @@ impl RefereeInterface for RefereeByTurn {
 
                     return Ok((
                         Some(Rc::new(self.clone())),
-                        TheirTurnCoinSpentResult::Expected(self.state_number(), ph.clone(), amt.clone()),
+                        TheirTurnCoinSpentResult::Expected(self.state_number(), ph.clone(), amt.clone(), None),
                     ));
                 }
             }
@@ -548,12 +548,7 @@ impl RefereeInterface for RefereeByTurn {
                     } else {
                         None
                     };
-                let to_return =
-                    if i == 0 {
-                        myself.clone()
-                    } else {
-                        ancestors[i - 1].clone()
-                    };
+                let to_return = old_referee.clone();
                 return Ok(RewindResult {
                     outcome_puzzle_hash: to_return.outcome_referee_puzzle_hash(allocator)?,
                     state_number: Some(to_return.state_number()),

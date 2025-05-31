@@ -155,7 +155,7 @@ pub struct IdleResult {
     pub opponent_move: Option<(GameID, usize, ReadableMove)>,
     pub game_finished: Option<(GameID, Amount)>,
     pub receive_error: Option<Error>,
-    pub resync: Option<usize>,
+    pub resync: Option<(usize, bool)>,
 }
 
 pub trait GameCradle {
@@ -281,7 +281,7 @@ struct SynchronousGameCradleState {
     outbound_messages: VecDeque<Vec<u8>>,
     outbound_transactions: VecDeque<SpendBundle>,
     coin_solution_requests: VecDeque<CoinString>,
-    resync: Option<usize>,
+    resync: Option<(usize, bool)>,
     our_moves: VecDeque<(GameID, usize, Vec<u8>)>,
     opponent_moves: VecDeque<(GameID, usize, ReadableMove, Amount)>,
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
@@ -419,8 +419,8 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
-    fn resync_move(&mut self, _id: &GameID, state_number: usize) -> Result<(), Error> {
-        self.resync = Some(state_number);
+    fn resync_move(&mut self, _id: &GameID, state_number: usize, is_my_turn: bool) -> Result<(), Error> {
+        self.resync = Some((state_number, is_my_turn));
         Ok(())
     }
 

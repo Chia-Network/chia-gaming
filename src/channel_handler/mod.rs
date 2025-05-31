@@ -40,7 +40,7 @@ use crate::common::types::{
     Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
 };
 use crate::potato_handler::types::GameAction;
-use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction};
+use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
 use crate::referee::{RefereeInterface, RefereeMaker};
 
 /// A channel handler runs the game by facilitating the phases of game startup
@@ -1815,14 +1815,24 @@ impl ChannelHandler {
             return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
         }
 
-        Ok(CoinSpentInformation::TheirSpend(
-            self.live_games[live_game_idx].their_turn_coin_spent(
-                env.allocator,
-                coin_string,
-                conditions,
-                self.current_state_number,
-            )?,
-        ))
+        let spent_result = self.live_games[live_game_idx].their_turn_coin_spent(
+            env.allocator,
+            coin_string,
+            conditions,
+            self.current_state_number,
+        )?;
+        if let Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) = &self.did_rewind {
+            if let TheirTurnCoinSpentResult::Expected(state_number, ph, amt, _) = &spent_result {
+                return Ok(CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(
+                    *state_number,
+                    ph.clone(),
+                    amt.clone(),
+                    Some(move_data.clone())
+                )));
+            }
+        }
+
+        Ok(CoinSpentInformation::TheirSpend(spent_result))
     }
 
     fn get_redo_result<R: Rng>(
@@ -1901,7 +1911,7 @@ impl ChannelHandler {
                                 coin.clone(),
                                 rwo.outcome_puzzle_hash.clone(),
                                 Box::new(transaction.clone()),
-                                move_data.clone(),
+                                None,
                             )));
                         }
                     }

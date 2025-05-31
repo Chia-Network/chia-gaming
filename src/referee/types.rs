@@ -10,7 +10,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::TheirTurnResult;
-use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
+use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, PotatoMoveCachedData};
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
@@ -76,7 +76,7 @@ pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,
     },
-    Expected(usize, PuzzleHash, Amount),
+    Expected(usize, PuzzleHash, Amount, Option<PotatoMoveCachedData>),
     Moved {
         state_number: usize,
         // New iteration of the game coin.

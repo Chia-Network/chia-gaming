@@ -886,6 +886,12 @@ fn run_game_container_with_action_list_with_success_predicate(
                         break;
                     };
 
+                if matches!(result.resync, Some((_, true))) {
+                    can_move = true;
+                    debug!("resync requested at id {:?}", result.resync);
+                    move_number -= 2;
+                }
+
                 for coin in result.coin_solution_requests.iter() {
                     let ps_res = simulator
                         .get_puzzle_and_solution(coin)
