@@ -135,6 +135,9 @@ jobs:
         with:
           # Install a specific version of uv.
           version: "0.7.9"
+      - name: install chia_gaming into .venv
+        run: |
+          uv pip install -e .
       - name: calpoker_onchain_tests
         run: |
           cd python
