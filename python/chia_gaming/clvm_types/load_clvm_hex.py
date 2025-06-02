@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from clvm_types.program import Program
+from chia_gaming.clvm_types.program import Program
 
 
 def load_clvm_hex(path: Path) -> Program:
