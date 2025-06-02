@@ -17,7 +17,6 @@
 
 # Krunk
 # krunk_generate.clinc	krunk_include.clsp
-krunk-dictutils = "clsp/games/krunk/dictutils.clinc"
 #krunk-words = "clsp/games/krunk/krunk-words.clsp"
 test-dictutils = "clsp/games/krunk/test-dictutils.clsp"
 

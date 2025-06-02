@@ -69,6 +69,3 @@
     )
 )
 
-(export create_dictionary)
-(export find_exclusion_proof)
-(export create_dictionary_inner)
