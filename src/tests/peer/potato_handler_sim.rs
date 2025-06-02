@@ -889,7 +889,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
                     debug!("resync requested at id {:?}", result.resync);
-                    move_number -= 2;
+                    move_number -= 1;
                 }
 
                 for coin in result.coin_solution_requests.iter() {

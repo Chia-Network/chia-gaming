@@ -327,8 +327,15 @@ impl InternalStateUpdateArgs {
             self.referee_args.validation_program.hash(),
             self.validation_program.hash()
         );
+        debug!("<X> state hash {:?}", self.state_update_args.state.sha256tree(allocator));
         let validation_program_mod_hash = self.validation_program.hash();
-        debug!("validation_program_mod_hash {validation_program_mod_hash:?}");
+        debug!("<X> validation_program_mod_hash {validation_program_mod_hash:?}");
+        let predicted_info_hash = ValidationInfo::new_state_update(
+            allocator,
+            self.validation_program.clone(),
+            self.state_update_args.state.clone(),
+        );
+        debug!("<X> validation info hash {:?}", predicted_info_hash.hash());
         let validation_program_nodeptr = self.validation_program.to_nodeptr(allocator)?;
         let validator_full_args_node = self.to_nodeptr(
             allocator,
@@ -437,18 +444,6 @@ pub struct OnChainRefereeSlashData {
     pub puzzle_args: Rc<RefereePuzzleArgs>,
 }
 
-impl OnChainRefereeSlashData {
-    #[allow(dead_code)]
-    pub fn to_slash(
-        &self,
-        _allocator: &mut AllocEncoder,
-        _fixed: &RMFixed,
-        _coin_string: &CoinString,
-    ) -> Result<OnChainRefereeSlash, Error> {
-        todo!();
-    }
-}
-
 /// A puzzle for a coin that will be run inside the referee to generate
 /// conditions that are acted on to spend the referee coin.
 /// The referee knows the mover puzzle hash, so we've already decided what
@@ -507,10 +502,6 @@ pub struct OnChainRefereeSlash {
 
     /// clvm data about the slash.
     pub evidence: Evidence,
-
-    /// Solution for mover puzzler
-    #[allow(dead_code)]
-    pub mover_solution: Rc<Program>,
 }
 
 /// onchain referee solution

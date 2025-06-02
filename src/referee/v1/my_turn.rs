@@ -405,7 +405,9 @@ impl MyTurnReferee {
             their_turn_validation_program: my_turn_result
                 .incoming_move_state_update_program
                 .clone(),
+            my_turn_validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
             state_after_our_turn: new_state.clone(),
+            state_preceding_our_turn: current_state.clone(),
             create_this_coin: current_puzzle_args,
             spend_this_coin: new_puzzle_args,
             move_spend,
