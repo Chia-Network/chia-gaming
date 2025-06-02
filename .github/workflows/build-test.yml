@@ -137,11 +137,12 @@ jobs:
           version: "0.7.9"
       - name: install chia_gaming into .venv
         run: |
+          cd python
+          uv venv
           uv pip install -e .
       - name: calpoker_onchain_tests
         run: |
           cd python
-          uv venv
           source .venv/bin/activate
           cd tests
           # Note: 'cargo build' must have been run
@@ -151,7 +152,6 @@ jobs:
       - name: calpoker_handler tests
         run: |
           cd python
-          uv venv
           source .venv/bin/activate
           cd tests
           # Note: 'cargo build' must have been run
