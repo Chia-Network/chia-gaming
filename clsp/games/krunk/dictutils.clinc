@@ -1,4 +1,3 @@
-
 ; 0x80000000
 ; 0x7fffffff
 (import std.li)
@@ -6,31 +5,32 @@
 ;(import std.sig)
 (import std.slice)
 (import std.truncate)
-(import games.krunk.words)
+;(import std.is_there)
 
 ; Words is a list of 5 letter words in sorted order all low caps
 ; creates a BLS private key which it then destroys
 ; returns a balanced tree of nodes which are either (leftnode word rightnode) or (minboundary maxboundary signature)
 ; also return the generated public key
 ; we are using entropy as the private key
-(defun create_dictionary (words entropy)
+(defun create_dictionary (words private_key)
     ; (len words) -
     (assign
-        public_key (pubkey_for_exp entropy)
+        public_key (pubkey_for_exp private_key)
         ; TODO: find midpoint word
 
-        dictionary (create_dictionary_inner (0x80000000 0x7fffffff (len words) words entropy))
+        dictionary (create_dictionary_inner (0x80000000 0x7fffffff (len words) words private_key))
         (li dictionary public_key)
     )
 )
 
-; TODO: make a recursive split_list for std lib
-(defun split_list (items len)
-    (assign
-        mid_index (/ len 2)
-        (li (truncate items mid_index) (slice items mid_index))
-    )
+(defun sig (data)
+    (concat "signature" data)
 )
+
+(defun check_sig (data data_sig)
+    (assert (= data_sig (sig data)))
+)
+
 ; TODO: implement `sig`
 ; TODO: verify list is sorted
 ; "upper" means "higher in value" when regarded as a byte-string here (using <str).
@@ -38,16 +38,15 @@
     (if (not words)
         (if (< upper lower)
             0
-            (li lower upper (sig (concat lower upper) private_key))
+            (li (concat lower upper) (sig (concat lower upper) private_key))
         )
         (assign
-            middle_pos (/ words_len 2)
-            ; mid_word (index words middle_pos)
-            (lower_words (mid_word (@ upper_words))) (split_list words middle_pos)
+            middle_pos (/ len 2)
+            (mid_word . upper_words) (slice words middle_pos)
             (li
-                (create_dictionary_inner lower (- mid_word 1) middle_pos (lower_words) private_key)
+                (create_dictionary_inner lower (- mid_word 1) middle_pos words private_key)
                 mid_word
-                (create_dictionary_inner (+ mid_word 1) upper (- words_len (+ middle_pos 1)) uppwer_words private_key)
+                (create_dictionary_inner (+ mid_word 1) upper (- words_len (+ middle_pos 1)) upper_words private_key)
             )
         )
     )
@@ -58,27 +57,17 @@
 ;    (sign (concat min_boundary max_boundary) private_key)
 ;)
 
-; returns nil if word is in dictionary otherwise (mindboundary maxboundary signature)
-(defun find_exclusion_proof (word (@ node (thing1 thing2 thing3)))
-    (if (l thing1)
-        (assign
-            leftnode thing1
-            oldword thing2
-            rightnode thing3
-            (if (= word oldword) nil
-                (find_exclusion_proof word (<s word oldword) leftnode rightnode)
-            )
-        )
-        (assign
-            minboundary thing1
-            maxboundary thing2
-            signature thing3
-            (if (and (<=s mindboundary word) (>=s maxboundary word)) node nil)
-        )
+; returns nil if word is in dictionary otherwise (minboundary maxboundary signature)
+(defun find_exclusion_proof (word (@ node (left_node old_word right_node)))
+    ;(if (not (is_there right_node))
+    (if (not (= (len node) 3))
+        node
+        (= word old_word)
+        0
+        (find_exclusion_proof word (if (< word old_word) left_node right_node))
     )
 )
 
 (export create_dictionary)
 (export find_exclusion_proof)
 (export create_dictionary_inner)
-(export split_list)
