@@ -119,7 +119,15 @@ jobs:
           cargo +stable test
           cargo +stable test --features=sim-tests
 
+  install_uv:
+    runs-on: ubuntu-22.04 # ${{ matrix.os }}
+    steps:
+      - run: |
+          wget https://github.com/astral-sh/uv/releases/download/0.7.9/uv-x86_64-unknown-linux-gnu.tar.gz
+          tar xvfz uv-x86_64-unknown-linux-gnu.tar.gz
+
   calpoker_onchain_tests:
+    needs: install_uv
     runs-on: ubuntu-22.04 # ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
@@ -137,6 +145,7 @@ jobs:
           python -m pip install chia-blockchain==2.3.0
       - name: calpoker_onchain_tests
         run: |
+          export PATH="$PATH:$(pwd)/uv-x86_64-unknown-linux-gnu"
           cd python/tests
           # We need 'cargo build' to have been run
           python compute_hashes.py
@@ -144,6 +153,7 @@ jobs:
 
       - name: calpoker_handlers
         run: |
+          export PATH="$PATH:$(pwd)/uv-x86_64-unknown-linux-gnu"
           cd python/tests
           python compute_hashes.py
           python ./test_calpoker_handlers.py
