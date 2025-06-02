@@ -7,6 +7,15 @@
 (import std.truncate)
 ;(import std.is_there)
 
+; TODO: implement `sig`
+(defun sig (data)
+    (concat "signature" data)
+)
+
+(defun check_sig (data data_sig)
+    (assert (= data_sig (sig data)))
+)
+
 ; Words is a list of 5 letter words in sorted order all low caps
 ; creates a BLS private key which it then destroys
 ; returns a balanced tree of nodes which are either (leftnode word rightnode) or (minboundary maxboundary signature)
@@ -23,15 +32,6 @@
     )
 )
 
-(defun sig (data)
-    (concat "signature" data)
-)
-
-(defun check_sig (data data_sig)
-    (assert (= data_sig (sig data)))
-)
-
-; TODO: implement `sig`
 ; TODO: verify list is sorted
 ; "upper" means "higher in value" when regarded as a byte-string here (using <str).
 (defun create_dictionary_inner (lower upper words_len words private_key)
@@ -57,9 +57,10 @@
 ;    (sign (concat min_boundary max_boundary) private_key)
 ;)
 
-; returns nil if word is in dictionary otherwise (minboundary maxboundary signature)
+; returns nil if word is in dictionary otherwise.
+; arguments are (minboundary maxboundary signature)
 (defun find_exclusion_proof (word (@ node (left_node old_word right_node)))
-    ;(if (not (is_there right_node))
+    ;; (if (not (is_there right_node))
     (if (not (= (len node) 3))
         node
         (= word old_word)
