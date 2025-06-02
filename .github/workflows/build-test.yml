@@ -112,19 +112,13 @@ jobs:
 
       - name: cargo +stable test
         run: |
+          # We need chia-blockchain so we can run the blockchain simulator
           python -m pip install setuptools==75.0.0
           python -m pip install chia-blockchain==2.3.0
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
           cargo +stable test
           cargo +stable test --features=sim-tests
-
-  install_uv:
-    runs-on: ubuntu-22.04 # ${{ matrix.os }}
-    steps:
-      - run: |
-          wget https://github.com/astral-sh/uv/releases/download/0.7.9/uv-x86_64-unknown-linux-gnu.tar.gz
-          tar xvfz uv-x86_64-unknown-linux-gnu.tar.gz
 
   calpoker_onchain_tests:
     needs: install_uv
@@ -143,6 +137,12 @@ jobs:
         run: |
           python -m pip install setuptools==75.0.0
           python -m pip install chia-blockchain==2.3.0
+      - name: install uv
+        run: |
+          wget https://github.com/astral-sh/uv/releases/download/0.7.9/uv-x86_64-unknown-linux-gnu.tar.gz
+          tar xvfz uv-x86_64-unknown-linux-gnu.tar.gz
+          echo "PWD: $(pwd)"
+          ls -la uv-x86_64-unknown-linux-gnu
       - name: calpoker_onchain_tests
         run: |
           export PATH="$PATH:$(pwd)/uv-x86_64-unknown-linux-gnu"
@@ -154,7 +154,7 @@ jobs:
           uv run compute_hashes.py
           uv run ./test_calpoker_validation.py
 
-      - name: calpoker_handlers
+      - name: calpoker_handler tests
         run: |
           export PATH="$PATH:$(pwd)/uv-x86_64-unknown-linux-gnu"
           cd python
