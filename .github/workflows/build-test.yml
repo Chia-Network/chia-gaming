@@ -146,17 +146,24 @@ jobs:
       - name: calpoker_onchain_tests
         run: |
           export PATH="$PATH:$(pwd)/uv-x86_64-unknown-linux-gnu"
-          cd python/tests
-          # We need 'cargo build' to have been run
-          python compute_hashes.py
-          python ./test_calpoker_validation.py
+          cd python
+          uv venv
+          source .venv/bin/activate
+          cd tests
+          # Note: 'cargo build' must have been run
+          uv run compute_hashes.py
+          uv run ./test_calpoker_validation.py
 
       - name: calpoker_handlers
         run: |
           export PATH="$PATH:$(pwd)/uv-x86_64-unknown-linux-gnu"
-          cd python/tests
-          python compute_hashes.py
-          python ./test_calpoker_handlers.py
+          cd python
+          uv venv
+          source .venv/bin/activate
+          cd tests
+          # Note: 'cargo build' must have been run
+          uv run compute_hashes.py
+          uv run ./test_calpoker_handlers.py
 
   coverage:
     needs: unit_tests
