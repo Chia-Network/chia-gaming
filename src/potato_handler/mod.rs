@@ -371,26 +371,29 @@ impl PotatoHandler {
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             PeerMessage::Move(game_id, m) => {
-                let (spend_info, state_number, readable_move, message, mover_share) = {
+                let their_turn_result = {
                     let (env, _) = penv.env();
                     ch.received_potato_move(env, game_id, m)?
                 };
                 {
                     let (env, system_interface) = penv.env();
-                    let opponent_readable = ReadableMove::from_program(readable_move);
+                    let opponent_readable =
+                        ReadableMove::from_program(their_turn_result.readable_their_move);
                     system_interface.opponent_moved(
                         env.allocator,
                         game_id,
-                        state_number,
+                        their_turn_result.state_number,
                         opponent_readable,
-                        mover_share,
+                        their_turn_result.mover_share,
                     )?;
-                    if !message.is_empty() {
-                        system_interface
-                            .send_message(&PeerMessage::Message(game_id.clone(), message))?;
+                    if !their_turn_result.message.is_empty() {
+                        system_interface.send_message(&PeerMessage::Message(
+                            game_id.clone(),
+                            their_turn_result.message,
+                        ))?;
                     }
                 }
-                self.update_channel_coin_after_receive(penv, &spend_info)?;
+                self.update_channel_coin_after_receive(penv, &their_turn_result.spend_info)?;
             }
             PeerMessage::Message(game_id, message) => {
                 let decoded_message = {

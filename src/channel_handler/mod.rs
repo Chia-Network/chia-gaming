@@ -20,12 +20,12 @@ use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo,
     ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
-    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation,
-    CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo, GameStartInfoInterface,
-    HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, OnChainGameState,
-    PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
-    UnrollCoinConditionInputs, UnrollTarget,
+    ChannelHandlerInitiationResult, ChannelHandlerMoveResult, ChannelHandlerPrivateKeys,
+    ChannelHandlerUnrollSpendInfo, CoinDataForReward, CoinSpentAccept, CoinSpentDisposition,
+    CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
+    GameStartInfoInterface, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
+    OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
+    UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
 
 use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
@@ -987,7 +987,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         move_result: &MoveResult,
-    ) -> Result<(ChannelCoinSpendInfo, usize, Rc<Program>, Vec<u8>, Amount), Error> {
+    ) -> Result<ChannelHandlerMoveResult, Error> {
         debug!(
             "{} RECEIVED_POTATO_MOVE {}",
             self.is_initial_potato(),
@@ -1052,17 +1052,17 @@ impl ChannelHandler {
         // the unroll puzzle hash that was given to us.
         self.cached_last_action = None;
 
-        Ok((
-            ChannelCoinSpendInfo {
+        Ok(ChannelHandlerMoveResult {
+            spend_info: ChannelCoinSpendInfo {
                 aggsig: spend.signature,
                 solution: spend.solution.p(),
                 conditions: spend.conditions.p(),
             },
-            self.current_state_number,
-            readable_move.p(),
+            state_number: self.current_state_number,
+            readable_their_move: readable_move.p(),
             message,
             mover_share,
-        ))
+        })
     }
 
     pub fn received_message<R: Rng>(

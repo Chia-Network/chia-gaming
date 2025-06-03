@@ -1,5 +1,6 @@
 use crate::channel_handler::types::{LiveGame, ReadableMove};
-use crate::common::types::{Aggsig, Amount, GameID, Hash, PuzzleHash};
+use crate::channel_handler::ChannelCoinSpendInfo;
+use crate::common::types::{Aggsig, Amount, GameID, Hash, Program, PuzzleHash};
 use crate::referee::types::GameMoveDetails;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -48,4 +49,12 @@ pub enum CachedPotatoRegenerateLastHop {
     PotatoCreatedGame(Vec<GameID>, Amount, Amount),
     PotatoAccept(Box<PotatoAcceptCachedData>),
     PotatoMoveHappening(Rc<PotatoMoveCachedData>),
+}
+
+pub struct ChannelHandlerMoveResult {
+    pub spend_info: ChannelCoinSpendInfo,
+    pub state_number: usize,
+    pub readable_their_move: Rc<Program>,
+    pub message: Vec<u8>,
+    pub mover_share: Amount,
 }
