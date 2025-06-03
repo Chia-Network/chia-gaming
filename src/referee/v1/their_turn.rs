@@ -655,6 +655,7 @@ impl TheirTurnReferee {
                 ),
                 state_number,
                 readable: ReadableMove::from_program(move_data.readable_move.p()),
+                state_number,
                 mover_share: args.game_move.basic.mover_share.clone(),
             };
 

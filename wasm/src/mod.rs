@@ -494,15 +494,11 @@ where
 }
 
 impl ToLocalUI for JsLocalUI {
-    fn self_move(
-        &mut self,
-        game_id: &GameID,
-        _state_number: usize,
-        readable: &[u8],
-    ) -> Result<(), types::Error> {
+    fn self_move(&mut self, game_id: &GameID, state_number: usize, readable: &[u8]) -> Result<(), types::Error> {
         call_javascript_from_collection(&self.callbacks, "self_move", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
             args_array.set(1, JsValue::from_str(&hex::encode(readable)));
+            args_array.set(2, state_number.into());
             Ok(())
         })
     }
@@ -511,13 +507,14 @@ impl ToLocalUI for JsLocalUI {
         &mut self,
         _allocator: &mut AllocEncoder,
         game_id: &GameID,
-        _state_number: usize,
+        state_number: usize,
         readable_move: ReadableMove,
         _amount: Amount,
     ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "opponent_moved", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
             args_array.set(1, JsValue::from_str(&readable_move.to_program().to_hex()));
+            args_array.set(2, state_number.into());
             Ok(())
         })
     }

@@ -81,6 +81,7 @@ pub enum TheirTurnCoinSpentResult {
         state_number: usize,
         // New iteration of the game coin.
         new_coin_string: CoinString,
+        state_number: usize,
         readable: ReadableMove,
         mover_share: Amount,
     },

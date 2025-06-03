@@ -1,3 +1,17 @@
+#Chialisp / CLVM output
 *.hex
+
+# TLA
 tla_plus/states
 tla_plus/*_TTrace*
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv

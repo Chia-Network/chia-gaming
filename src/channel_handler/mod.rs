@@ -1058,8 +1058,8 @@ impl ChannelHandler {
                 solution: spend.solution.p(),
                 conditions: spend.conditions.p(),
             },
-            state_number: self.current_state_number,
             readable_their_move: readable_move.p(),
+            state_number: self.current_state_number,
             message,
             mover_share,
         })
@@ -1623,6 +1623,7 @@ impl ChannelHandler {
                             game_id: cached.live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
                             our_turn: cached.live_game.is_my_turn(),
+                            state_number: self.current_state_number,
                             accept: AcceptTransactionState::Waiting,
                         },
                     );
@@ -1661,6 +1662,7 @@ impl ChannelHandler {
                             game_id: live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
                             our_turn: live_game.is_my_turn(),
+                            state_number: self.current_state_number,
                             accept: AcceptTransactionState::Waiting,
                         },
                     );

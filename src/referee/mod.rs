@@ -606,7 +606,7 @@ impl RefereeInterface for RefereeByTurn {
             // we ourselves took.  check_their_turn_coin_spent will return an
             // error if it was asked to do a non-fast-forward their turn spend.
             RefereeByTurn::MyTurn(t) => t
-                .check_their_turn_coin_spent(allocator, coin_string, conditions, state_number)
+                .check_their_turn_coin_spent(allocator, coin_string, state_number, conditions)
                 .map(|spend| (None, spend)),
             RefereeByTurn::TheirTurn(t) => {
                 let (new_self, result) = t.their_turn_coin_spent(

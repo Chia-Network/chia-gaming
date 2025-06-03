@@ -4,7 +4,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, TypeVar, Generic
 
-from clvm_types.program import Program
+from chia_gaming.clvm_types.program import Program
 
 calpoker_clsp_dir = Path("../../clsp/games/calpoker-v1")
 calpoker_onchain_clsp_dir = Path("../../clsp/games/calpoker-v1/onchain")

@@ -175,27 +175,27 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
 
         // XXX allow verification of ui result and message.
         if received {
-            let their_turn_result = self.parties.player(player ^ 1).ch.received_potato_move(
+            let move_result = self.parties.player(player ^ 1).ch.received_potato_move(
                 &mut self.env,
                 &game_id,
                 &move_result,
             )?;
             self.parties
-                .update_channel_coin_after_receive(player ^ 1, &their_turn_result.spend_info)?;
-            let decoded_message = if their_turn_result.message.is_empty() {
+                .update_channel_coin_after_receive(player ^ 1, &move_result.spend_info)?;
+            let decoded_message = if move_result.message.is_empty() {
                 None
             } else {
                 self.parties
                     .player(player)
                     .ch
-                    .received_message(&mut self.env, &game_id, &their_turn_result.message)?
+                    .received_message(&mut self.env, &game_id, &move_result.message)?
                     .into()
             };
             Ok(GameActionResult::MoveResult(
-                their_turn_result
+                move_result
                     .readable_their_move
                     .to_nodeptr(self.env.allocator)?,
-                their_turn_result.message,
+                move_result.message,
                 decoded_message,
                 entropy,
             ))
