@@ -672,7 +672,7 @@ impl RefereeInterface for RefereeByTurn {
             );
             if *puzzle_hash == have_puzzle_hash && old_referee.is_my_turn() {
                 let state_number = old_referee.state_number();
-                let transaction = if old_referee.suitable_redo(allocator, &coin, puzzle_hash)? {
+                let transaction = if old_referee.suitable_redo(allocator, coin, puzzle_hash)? {
                     let transaction =
                         old_referee.get_transaction_for_move(allocator, coin, true)?;
                     Some(transaction)
