@@ -76,7 +76,7 @@ pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,
     },
-    Expected(usize, PuzzleHash, Amount, Option<PotatoMoveCachedData>),
+    Expected(usize, PuzzleHash, Amount, Option<Rc<PotatoMoveCachedData>>),
     Moved {
         state_number: usize,
         // New iteration of the game coin.

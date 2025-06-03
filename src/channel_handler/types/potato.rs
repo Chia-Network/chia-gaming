@@ -2,6 +2,7 @@ use crate::channel_handler::types::{LiveGame, ReadableMove};
 use crate::common::types::{Aggsig, Amount, GameID, Hash, PuzzleHash};
 use crate::referee::types::GameMoveDetails;
 use serde::{Deserialize, Serialize};
+use std::rc::Rc;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PotatoSignatures {
@@ -45,6 +46,6 @@ pub struct PotatoMoveCachedData {
 #[derive(Debug)]
 pub enum CachedPotatoRegenerateLastHop {
     PotatoCreatedGame(Vec<GameID>, Amount, Amount),
-    PotatoAccept(PotatoAcceptCachedData),
-    PotatoMoveHappening(PotatoMoveCachedData),
+    PotatoAccept(Box<PotatoAcceptCachedData>),
+    PotatoMoveHappening(Rc<PotatoMoveCachedData>),
 }

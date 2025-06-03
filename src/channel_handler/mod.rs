@@ -961,7 +961,7 @@ impl ChannelHandler {
 
         // We let them spend a state number 1 higher but nothing else changes.
         self.update_cache_for_potato_send(Some(
-            CachedPotatoRegenerateLastHop::PotatoMoveHappening(PotatoMoveCachedData {
+            CachedPotatoRegenerateLastHop::PotatoMoveHappening(Rc::new(PotatoMoveCachedData {
                 state_number: self.current_state_number,
                 game_id: game_id.clone(),
                 match_puzzle_hash,
@@ -969,7 +969,7 @@ impl ChannelHandler {
                 move_data: readable_move.clone(),
                 move_entropy: new_entropy,
                 amount,
-            }),
+            })),
         ));
 
         //self.live_games[game_idx]
@@ -1110,7 +1110,7 @@ impl ChannelHandler {
         self.update_cache_for_potato_send(if amount == Amount::default() {
             None
         } else {
-            Some(CachedPotatoRegenerateLastHop::PotatoAccept(
+            Some(CachedPotatoRegenerateLastHop::PotatoAccept(Box::new(
                 PotatoAcceptCachedData {
                     game_id: game_id.clone(),
                     puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
@@ -1118,7 +1118,7 @@ impl ChannelHandler {
                     at_stake_amount: at_stake,
                     our_share_amount: amount.clone(),
                 },
-            ))
+            )))
         });
 
         let signatures = self.update_cached_unroll_state(env)?;
