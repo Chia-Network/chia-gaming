@@ -1,8 +1,8 @@
+use clvm_traits::ClvmEncoder;
 use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-use clvm_traits::ClvmEncoder;
 use rand::Rng;
 
 use log::debug;
@@ -140,27 +140,72 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             "{initial_potato} game coin spent result from channel handler {their_turn_result:?}"
         );
         match their_turn_result {
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(ph, amt)) => {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(
+                state_number,
+                ph,
+                amt,
+                redo,
+            )) => {
                 debug!("{initial_potato} got an expected spend {ph:?} {amt:?}");
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
 
                 // An expected their spend arrived.  We can do our next action.
                 debug!("{initial_potato} changing game map");
+                let game_id = old_definition.game_id.clone();
                 self.game_map.insert(
                     new_coin_id.clone(),
                     OnChainGameState {
-                        puzzle_hash: ph,
+                        puzzle_hash: ph.clone(),
                         our_turn: false,
                         ..old_definition
                     },
                 );
 
-                let (_, system_interface) = penv.env();
+                let (env, system_interface) = penv.env();
+
                 system_interface.register_coin(
                     &new_coin_id,
                     &self.channel_timeout,
                     Some("coin gives their turn"),
                 )?;
+
+                if let Some(redo_data) = &redo {
+                    let is_my_turn = matches!(
+                        self.player_ch.game_is_my_turn(&redo_data.game_id),
+                        Some(true)
+                    );
+                    if is_my_turn {
+                        debug!(
+                            "{} redo back at potato handler",
+                            self.player_ch.is_initial_potato()
+                        );
+                        let (_old_ph, _new_ph, _state_number, _move_result, transaction) =
+                            self.player_ch.on_chain_our_move(
+                                env,
+                                &redo_data.game_id,
+                                &redo_data.move_data,
+                                redo_data.move_entropy.clone(),
+                                &new_coin_id,
+                            )?;
+
+                        system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                            name: Some("redo move from data".to_string()),
+                            spends: vec![CoinSpend {
+                                coin: new_coin_id.clone(),
+                                bundle: transaction.bundle.clone(),
+                            }],
+                        })?;
+
+                        system_interface.register_coin(
+                            &new_coin_id,
+                            &self.channel_timeout,
+                            Some("post redo move game coin"),
+                        )?;
+                    }
+
+                    debug!("{initial_potato} expected spend {ph:?}");
+                    system_interface.resync_move(&game_id, state_number, is_my_turn)?;
+                }
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Timedout {
                 my_reward_coin_string,
@@ -492,7 +537,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 let current_coin = get_current_coin(&game_id)?;
                 self.do_on_chain_move(penv, &current_coin, game_id, readable_move, hash)
             }
-            GameAction::RedoMove(_game_id, coin, new_ph, tx) => {
+            GameAction::RedoMoveV0(_game_id, coin, new_ph, tx) => {
                 let (_env, system_interface) = penv.env();
                 self.have_potato = PotatoState::Absent;
                 system_interface.spend_transaction_and_add_fee(&SpendBundle {
@@ -514,6 +559,33 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     &self.channel_timeout,
                     Some("post redo game coin"),
                 )?;
+                Ok(())
+            }
+            GameAction::RedoMoveV1(coin, new_ph, tx, _move_data, amt) => {
+                let (_, system_interface) = penv.env();
+                self.have_potato = PotatoState::Absent;
+
+                system_interface.spend_transaction_and_add_fee(&SpendBundle {
+                    name: Some("redo move".to_string()),
+                    spends: vec![CoinSpend {
+                        coin: coin.clone(),
+                        bundle: tx.bundle.clone(),
+                    }],
+                })?;
+                let new_coin = CoinString::from_parts(&coin.to_coin_id(), &new_ph, &amt);
+                debug!("the v1 redo move was for puzzle hash {new_ph:?}");
+                debug!("the v1 redo move turned into {new_coin:?}");
+                debug!(
+                    "the v1 redo move turned into id {:?}",
+                    new_coin.to_coin_id()
+                );
+
+                system_interface.register_coin(
+                    &new_coin,
+                    &self.channel_timeout,
+                    Some("post redo game coin"),
+                )?;
+
                 Ok(())
             }
             GameAction::RedoAccept(_game_id, coin, _new_ph, tx) => {

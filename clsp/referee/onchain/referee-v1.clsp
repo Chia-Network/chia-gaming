@@ -8,6 +8,7 @@
 (import std.condition_codes)
 (import std.match)
 (import std.li)
+(import std.print)
 (import games.calpoker-v0.game_codes)
 
 ;
@@ -36,9 +37,9 @@
 ;     state me mover_puzzle solution evidence
 ; )
 ;
-(export (@ all_args ((MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A) . args))
-    (if (not args)
+(export (@ all_args ((@ curried-args (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
+        MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)) . args))
+    (if (not (print (list "referee-v1 args" (f all_args)) args))
         ; timeout
         (list
             (list ASSERT_HEIGHT_RELATIVE TIMEOUT)
@@ -48,13 +49,13 @@
         (l (f (r (r args))))
         ; slash
         (assign
-            (previous_state me previous_validation_program mover_puzzle solution evidence) args
-            previous_validation_program_hash (shatree previous_validation_program)
+            (previous_state previous_validation_program mover_puzzle solution evidence) (print "referee slash:" args)
+            previous_validation_program_hash (print "slash: previous validation program hash" (shatree previous_validation_program))
 
             (assert
-                (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
-                (= INFOHASH_A (sha256 previous_validation_program_hash (shatree
-                        previous_state)))
+                (print "slash: matching mover puzzle" (= MOVER_PUZZLE_HASH (shatree mover_puzzle)))
+                (print "slash: infohash a match" (= (print "slash: infohash A" INFOHASH_A) (sha256 previous_validation_program_hash (print "slash: infohash a state hash" (shatree
+                        previous_state)))))
 
                 ; Intention here:
                 ; An empty remark indicating slash
@@ -62,11 +63,11 @@
                 ; The conditions returned by mover_puzzle
                 (c (list REMARK)
                     (concat
-                        (a previous_validation_program
+                        (print "slash data:" (f (r (a previous_validation_program
                             (c previous_validation_program_hash
                                 all_args
                             )
-                        )
+                        ))))
                         (a mover_puzzle solution)
                     )
                 )
@@ -74,25 +75,26 @@
         )
         ; move
         (assign
-            (new_move infohash_c new_mover_share new_max_move_size mover_puzzle solution) args
-            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT
+            (new_move infohash_c new_mover_share new_max_move_size mover_puzzle solution) (print "want to move" args)
+            new_puzzle_hash (curry_hashes MOD_HASH (shatree (print "move: new referee puzzle args" (list WAITER_PUZZLE_HASH MOVER_PUZZLE_HASH TIMEOUT
                     AMOUNT MOD_HASH NONCE new_move new_max_move_size infohash_c new_mover_share
-                    INFOHASH_B)))
+                    INFOHASH_B))))
             conditions (a mover_puzzle solution)
             (assert
-                INFOHASH_B
-                (<= (strlen new_move) MAX_MOVE_SIZE)
-                (<= new_mover_share AMOUNT)
-                (>= new_mover_share 0)
-                (= 32 (strlen infohash_c))
-                (= MOVER_PUZZLE_HASH (shatree mover_puzzle))
+                (print "move: curried-args" curried-args)
+                (print "move: infohash_b" INFOHASH_B)
+                (print "move: len less than" (<= (strlen new_move) MAX_MOVE_SIZE))
+                (print "move: mover share less" (<= new_mover_share AMOUNT))
+                (print "move: mover share positive" (>= new_mover_share 0))
+                (print "move: infohash_c len 32" (= 32 (strlen (print "move: infohash_c" infohash_c))))
+                (print "move: mover puzzle match" (= (print "move: curried mover puzzle" MOVER_PUZZLE_HASH) (print "move: puzzle hash" (shatree mover_puzzle))))
                 ; Check that the child output is made
-                (match
+                (print "move: creates new referee" (match
                     (lambda ((& new_puzzle_hash AMOUNT) (condname arg1 arg2))
                         (logand (= condname CREATE_COIN) (= arg1 new_puzzle_hash) (= arg2 AMOUNT))
                     )
-                    conditions
-                )
+                    (print "move: conditions" conditions)
+                ))
                 (li (list REMARK new_move infohash_c new_mover_share new_max_move_size)
                         (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT) &rest conditions)
             )

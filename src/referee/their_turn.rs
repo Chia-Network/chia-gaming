@@ -824,8 +824,8 @@ impl TheirTurnReferee {
                         &after_puzzle_hash,
                         &self.fixed.amount,
                     ),
-                    readable: nil_readable,
                     state_number,
+                    readable: nil_readable,
                     mover_share: self.spend_this_coin().game_move.basic.mover_share.clone(),
                 },
             ));
@@ -863,8 +863,8 @@ impl TheirTurnReferee {
                         &new_puzzle_hash,
                         &self.fixed.amount,
                     ),
-                    readable: ReadableMove::from_program(move_data.readable_move.p()),
                     state_number,
+                    readable: ReadableMove::from_program(move_data.readable_move.p()),
                     mover_share: args.game_move.basic.mover_share.clone(),
                 })
             };

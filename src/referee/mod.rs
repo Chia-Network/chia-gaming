@@ -32,9 +32,18 @@ pub enum RefereeByTurn {
     TheirTurn(Rc<TheirTurnReferee>),
 }
 
-pub type RewindResult = (Rc<dyn RefereeInterface>, usize);
+#[derive(Clone)]
+pub struct RewindResult {
+    pub version: usize,
+    pub state_number: Option<usize>,
+    pub new_referee: Option<Rc<dyn RefereeInterface>>,
+    pub transaction: Option<RefereeOnChainTransaction>,
+    pub outcome_puzzle_hash: PuzzleHash,
+}
 
 pub trait RefereeInterface {
+    fn version(&self) -> usize;
+
     fn is_my_turn(&self) -> bool;
 
     fn processing_my_turn(&self) -> bool;
@@ -44,6 +53,13 @@ pub trait RefereeInterface {
     fn get_amount(&self) -> Amount;
 
     fn get_their_current_share(&self) -> Amount;
+
+    fn suitable_redo(
+        &self,
+        allocator: &mut AllocEncoder,
+        coin: &CoinString,
+        ph: &PuzzleHash,
+    ) -> Result<bool, Error>;
 
     fn enable_cheating(&self, make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>>;
 
@@ -87,8 +103,10 @@ pub trait RefereeInterface {
     fn rewind(
         &self,
         allocator: &mut AllocEncoder,
+        myself: Rc<dyn RefereeInterface>,
+        coin: &CoinString,
         puzzle_hash: &PuzzleHash,
-    ) -> Result<Option<RewindResult>, Error>;
+    ) -> Result<RewindResult, Error>;
 
     fn check_their_turn_for_slash(
         &self,
@@ -466,6 +484,10 @@ impl RefereeByTurn {
 }
 
 impl RefereeInterface for RefereeByTurn {
+    fn version(&self) -> usize {
+        0
+    }
+
     fn is_my_turn(&self) -> bool {
         matches!(self, RefereeByTurn::MyTurn(_))
     }
@@ -487,6 +509,16 @@ impl RefereeInterface for RefereeByTurn {
 
     fn get_their_current_share(&self) -> Amount {
         self.fixed().amount.clone() - self.get_our_current_share()
+    }
+
+    fn suitable_redo(
+        &self,
+        allocator: &mut AllocEncoder,
+        _coin: &CoinString,
+        ph: &PuzzleHash,
+    ) -> Result<bool, Error> {
+        let outcome = self.outcome_referee_puzzle_hash(allocator)?;
+        Ok(outcome != *ph && !self.is_my_turn())
     }
 
     fn enable_cheating(&self, _make_move: &[u8]) -> Option<Rc<dyn RefereeInterface>> {
@@ -574,7 +606,7 @@ impl RefereeInterface for RefereeByTurn {
             // we ourselves took.  check_their_turn_coin_spent will return an
             // error if it was asked to do a non-fast-forward their turn spend.
             RefereeByTurn::MyTurn(t) => t
-                .check_their_turn_coin_spent(allocator, coin_string, state_number, conditions)
+                .check_their_turn_coin_spent(allocator, coin_string, conditions, state_number)
                 .map(|spend| (None, spend)),
             RefereeByTurn::TheirTurn(t) => {
                 let (new_self, result) = t.their_turn_coin_spent(
@@ -593,8 +625,10 @@ impl RefereeInterface for RefereeByTurn {
     fn rewind(
         &self,
         allocator: &mut AllocEncoder,
+        _myself: Rc<dyn RefereeInterface>,
+        coin: &CoinString,
         puzzle_hash: &PuzzleHash,
-    ) -> Result<Option<(Rc<dyn RefereeInterface>, usize)>, Error> {
+    ) -> Result<RewindResult, Error> {
         let mut ancestors = vec![];
         self.generate_ancestor_list(&mut ancestors);
 
@@ -638,13 +672,41 @@ impl RefereeInterface for RefereeByTurn {
             );
             if *puzzle_hash == have_puzzle_hash && old_referee.is_my_turn() {
                 let state_number = old_referee.state_number();
-                return Ok(Some((old_referee.clone(), state_number)));
+                let transaction = if old_referee.suitable_redo(allocator, coin, puzzle_hash)? {
+                    let transaction =
+                        old_referee.get_transaction_for_move(allocator, coin, true)?;
+                    Some(transaction)
+                } else {
+                    None
+                };
+
+                return Ok(RewindResult {
+                    new_referee: Some(old_referee.clone()),
+                    version: 0,
+                    state_number: Some(state_number),
+                    transaction,
+                    outcome_puzzle_hash: old_referee.outcome_referee_puzzle_hash(allocator)?,
+                });
             }
         }
 
         debug!("referee rewind: no matching state");
         debug!("still in state {:?}", self.state_number());
-        Ok(None)
+
+        let transaction = if self.suitable_redo(allocator, coin, puzzle_hash)? {
+            let transaction = self.get_transaction_for_move(allocator, coin, true)?;
+            Some(transaction)
+        } else {
+            None
+        };
+
+        Ok(RewindResult {
+            new_referee: None,
+            version: 0,
+            state_number: Some(self.state_number()),
+            transaction: transaction,
+            outcome_puzzle_hash: self.outcome_referee_puzzle_hash(allocator)?,
+        })
     }
 
     fn check_their_turn_for_slash(

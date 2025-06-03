@@ -685,8 +685,8 @@ impl MyTurnReferee {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        state_number: usize,
         conditions: &[CoinCondition],
+        state_number: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         let after_puzzle_hash = curry_referee_puzzle_hash(
             allocator,

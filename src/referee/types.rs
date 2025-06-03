@@ -10,7 +10,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::TheirTurnResult;
-use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
+use crate::channel_handler::types::{Evidence, PotatoMoveCachedData, ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };
@@ -58,7 +58,7 @@ pub enum SlashOutcome {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RefereeOnChainTransaction {
     pub bundle: Spend,
     pub amount: Amount,
@@ -76,7 +76,7 @@ pub enum TheirTurnCoinSpentResult {
     Timedout {
         my_reward_coin_string: Option<CoinString>,
     },
-    Expected(PuzzleHash, Amount),
+    Expected(usize, PuzzleHash, Amount, Option<Rc<PotatoMoveCachedData>>),
     Moved {
         // New iteration of the game coin.
         new_coin_string: CoinString,

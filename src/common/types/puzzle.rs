@@ -10,7 +10,7 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 
 use crate::common::types::{AllocEncoder, Error, IntoErr, Program, ProgramRef};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Puzzle(ProgramRef);
 
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for Puzzle {

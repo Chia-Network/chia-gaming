@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, GameStartInfoInterface,
-    MoveResult, PotatoSignatures, ReadableMove,
+    MoveResult, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
@@ -237,6 +237,15 @@ pub trait WalletSpendInterface {
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
+    fn resync_move(
+        &mut self,
+        _id: &GameID,
+        _state_number: usize,
+        _is_my_turn: bool,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn self_move(
         &mut self,
         _id: &GameID,
@@ -455,11 +464,18 @@ pub enum PotatoState {
 
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
-    RedoMove(
+    RedoMoveV0(
         GameID,
         CoinString,
         PuzzleHash,
         Box<RefereeOnChainTransaction>,
+    ),
+    RedoMoveV1(
+        CoinString,
+        PuzzleHash,
+        Box<RefereeOnChainTransaction>,
+        Option<PotatoMoveCachedData>,
+        Amount,
     ),
     RedoAccept(
         GameID,
@@ -477,8 +493,11 @@ impl std::fmt::Debug for GameAction {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             GameAction::Move(gi, rm, h) => write!(formatter, "Move({gi:?},{rm:?},{h:?})"),
-            GameAction::RedoMove(gi, cs, ph, rt) => {
-                write!(formatter, "RedoMove({gi:?},{cs:?},{ph:?},{rt:?})")
+            GameAction::RedoMoveV0(gi, cs, ph, rt) => {
+                write!(formatter, "RedoMoveV0({gi:?},{cs:?},{ph:?},{rt:?})")
+            }
+            GameAction::RedoMoveV1(cs, ph, rt, md, amt) => {
+                write!(formatter, "RedoMoveV1({cs:?},{ph:?},{rt:?},{md:?},{amt:?})")
             }
             GameAction::RedoAccept(gi, cs, ph, rt) => {
                 write!(formatter, "RedoAccept({gi:?},{cs:?},{ph:?},{rt:?})")

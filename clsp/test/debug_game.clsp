@@ -68,8 +68,8 @@
    move-counter-data
    (concat
     ;; Hashes first
-    MOVER_PUZZLE_HASH
     (if WAITER_PUZZLE_HASH WAITER_PUZZLE_HASH (current-waiter-puzzle-hash curry-args))
+    MOVER_PUZZLE_HASH
     MOD_HASH
     INFOHASH_B
     INFOHASH_A

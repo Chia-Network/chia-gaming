@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
@@ -34,7 +34,9 @@ use crate::potato_handler::PotatoHandler;
 use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
 use crate::tests::calpoker::test_moves_1;
-use crate::tests::debug_game::{make_debug_games, DebugGameCurry};
+use crate::tests::debug_game::{
+    make_debug_games, BareDebugGameDriver, DebugGameCurry, DebugGameMoveInfo,
+};
 use crate::tests::game::GameAction;
 use crate::tests::peer::potato_handler::{quiesce, run_move};
 use crate::utils::pair_of_array_mut;
@@ -643,7 +645,7 @@ struct LocalTestUIReceiver {
     opponent_moved: bool,
     go_on_chain: bool,
     got_error: bool,
-    opponent_moves: Vec<(GameID, ReadableMove, Amount)>,
+    opponent_moves: Vec<(GameID, usize, ReadableMove, Amount)>,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -651,12 +653,13 @@ impl ToLocalUI for LocalTestUIReceiver {
         &mut self,
         _allocator: &mut AllocEncoder,
         id: &GameID,
-        _state_number: usize,
+        state_number: usize,
         readable: ReadableMove,
         my_share: Amount,
     ) -> Result<(), Error> {
         self.opponent_moved = true;
-        self.opponent_moves.push((id.clone(), readable, my_share));
+        self.opponent_moves
+            .push((id.clone(), state_number, readable, my_share));
         Ok(())
     }
 
@@ -719,10 +722,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     moves_input: &[GameAction],
     pred: GameRunEarlySuccessPredicate,
 ) -> Result<GameRunOutcome, Error> {
-    let mut moves = VecDeque::new();
-    for m in moves_input.iter() {
-        moves.push_back(m);
-    }
+    let mut move_number = 0;
 
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
@@ -806,16 +806,20 @@ fn run_game_container_with_action_list_with_success_predicate(
     cradles[0].opening_coin(allocator, rng, parent_coin_0)?;
     cradles[1].opening_coin(allocator, rng, parent_coin_1)?;
 
-    let global_move = |moves: &VecDeque<&GameAction>| {
-        matches!(
-            moves.front(),
-            Some(GameAction::Shutdown(_, _)) | Some(GameAction::WaitBlocks(_, _))
-        )
+    let global_move = |moves: &[GameAction], move_number: usize| {
+        move_number < moves.len()
+            && matches!(
+                &moves[move_number],
+                GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _)
+            )
     };
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
-        debug!("{num_steps} can move {can_move} {moves:?}");
+        debug!(
+            "{num_steps} can move {can_move} {move_number} {:?}",
+            &moves_input[move_number..]
+        );
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
         debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
 
@@ -885,6 +889,21 @@ fn run_game_container_with_action_list_with_success_predicate(
                     } else {
                         break;
                     };
+
+                if matches!(result.resync, Some((_, true))) {
+                    can_move = true;
+                    debug!("resync requested at id {:?}", result.resync);
+                    while move_number > 0
+                        && (move_number >= moves_input.len()
+                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _)))
+                    {
+                        move_number -= 1;
+                    }
+                    debug!(
+                        "{num_steps} can move {can_move} {move_number} {:?}",
+                        &moves_input[move_number..]
+                    );
+                }
 
                 for coin in result.coin_solution_requests.iter() {
                     let ps_res = simulator
@@ -977,7 +996,10 @@ fn run_game_container_with_action_list_with_success_predicate(
             if *wb > 0 {
                 *wb -= 1;
             };
-        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) || global_move(&moves) {
+        } else if can_move
+            || local_uis.iter().any(|l| l.opponent_moved)
+            || global_move(&moves_input, move_number)
+        {
             can_move = false;
             assert!(!game_ids.is_empty());
 
@@ -986,7 +1008,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                 l.opponent_moved = false;
             }
 
-            if let Some(ga) = moves.pop_front() {
+            if move_number < moves_input.len() {
+                let ga = &moves_input[move_number];
+                move_number += 1;
+
                 match ga {
                     GameAction::Move(who, readable, _share) => {
                         let is_my_move = cradles[*who].my_move_in_game(&game_ids[0]);
@@ -1005,7 +1030,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                             )?;
                         } else {
                             debug!("put move back: not my turn");
-                            moves.push_front(ga);
+                            move_number -= 1;
                             continue;
                         }
                     }
@@ -1168,17 +1193,17 @@ fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Err
 
 fn check_calpoker_economic_result(
     allocator: &mut AllocEncoder,
-    p0_view_of_cards: &(GameID, ReadableMove, Amount),
-    p1_view_of_cards: &(GameID, ReadableMove, Amount),
-    alice_outcome_move: &(GameID, ReadableMove, Amount),
-    bob_outcome_move: &(GameID, ReadableMove, Amount),
+    p0_view_of_cards: &(GameID, usize, ReadableMove, Amount),
+    p1_view_of_cards: &(GameID, usize, ReadableMove, Amount),
+    alice_outcome_move: &(GameID, usize, ReadableMove, Amount),
+    bob_outcome_move: &(GameID, usize, ReadableMove, Amount),
     outcome: &GameRunOutcome,
 ) {
     let (p1_balance, p2_balance) = get_balances_from_outcome(outcome).expect("should work");
 
     for (pn, lui) in outcome.local_uis.iter().enumerate() {
         for (mn, the_move) in lui.opponent_moves.iter().enumerate() {
-            let the_move_to_node = the_move.1.to_nodeptr(allocator).expect("should work");
+            let the_move_to_node = the_move.2.to_nodeptr(allocator).expect("should work");
             debug!(
                 "player {pn} opponent move {mn} {the_move:?} {:?}",
                 Node(the_move_to_node).to_hex(allocator)
@@ -1186,19 +1211,19 @@ fn check_calpoker_economic_result(
         }
     }
 
-    let alice_cards = decode_readable_card_choices(allocator, p0_view_of_cards.1.clone())
+    let alice_cards = decode_readable_card_choices(allocator, p0_view_of_cards.2.clone())
         .expect("should get cards");
     let alice_outcome_node = alice_outcome_move
-        .1
+        .2
         .to_nodeptr(allocator)
         .expect("should work");
     let alice_outcome =
         decode_calpoker_readable(allocator, alice_outcome_node, Amount::new(200), false)
             .expect("should work");
     let bob_cards =
-        decode_readable_card_choices(allocator, p1_view_of_cards.1.clone()).expect("should work");
+        decode_readable_card_choices(allocator, p1_view_of_cards.2.clone()).expect("should work");
     let bob_outcome_node = bob_outcome_move
-        .1
+        .2
         .to_nodeptr(allocator)
         .expect("should work");
     let bob_outcome = decode_calpoker_readable(allocator, bob_outcome_node, Amount::new(200), true)
@@ -1380,87 +1405,159 @@ fn sim_test_with_peer_container_piss_off_peer_slash() {
     assert_eq!(p1_balance, p2_balance + 200);
 }
 
-#[test]
-#[cfg(feature = "sim-tests")]
-fn test_referee_play_debug_game() {
-    let mut allocator = AllocEncoder::new();
-    let seed_data: [u8; 32] = [0; 32];
-    let mut rng = ChaCha8Rng::from_seed(seed_data);
+pub struct DebugGameSimSetup {
+    pub private_keys: [ChannelHandlerPrivateKeys; 2],
+    pub identities: [ChiaIdentity; 2],
+    #[allow(dead_code)]
+    pub debug_games: [BareDebugGameDriver; 2],
+    #[allow(dead_code)]
+    pub game_moves: Vec<DebugGameMoveInfo>,
+    pub game_actions: Vec<GameAction>,
+    pub args_program: Rc<Program>,
+}
+
+pub struct DebugGameTestMove {
+    pub amt: u64,
+    pub slash: u8,
+}
+
+impl DebugGameTestMove {
+    pub fn new(amt: u64, slash: u8) -> DebugGameTestMove {
+        DebugGameTestMove { amt, slash }
+    }
+}
+
+pub fn setup_debug_test(
+    allocator: &mut AllocEncoder,
+    rng: &mut ChaCha8Rng,
+    moves: &[DebugGameTestMove],
+) -> Result<DebugGameSimSetup, Error> {
     let pk1: PrivateKey = rng.gen();
-    let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("ok");
+    let id1 = ChiaIdentity::new(allocator, pk1)?;
     let pk2: PrivateKey = rng.gen();
-    let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("ok");
+    let id2 = ChiaIdentity::new(allocator, pk2)?;
 
     let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
-    let pid1 = ChiaIdentity::new(
-        &mut allocator,
-        private_keys[0].my_referee_private_key.clone(),
-    )
-    .expect("ok");
-    let pid2 = ChiaIdentity::new(
-        &mut allocator,
-        private_keys[1].my_referee_private_key.clone(),
-    )
-    .expect("ok");
+    let pid1 = ChiaIdentity::new(allocator, private_keys[0].my_referee_private_key.clone())?;
+    let pid2 = ChiaIdentity::new(allocator, private_keys[1].my_referee_private_key.clone())?;
     let private_identities: [ChiaIdentity; 2] = [pid1, pid2];
 
-    let mut debug_games =
-        make_debug_games(&mut allocator, &mut rng, &private_identities).expect("ok");
-    let (alice, bob) = pair_of_array_mut(&mut debug_games);
-    // Get some moves.
-    let a1 = alice
-        .do_move(&mut allocator, bob, Amount::default(), 0)
-        .expect("ok");
-    assert!(a1.slash.is_none());
-    let b1 = bob
-        .do_move(&mut allocator, alice, Amount::default(), 0)
-        .expect("ok");
-    assert!(b1.slash.is_none());
-    let a2 = alice
-        .do_move(&mut allocator, bob, Amount::new(50), 0)
-        .expect("ok");
-    assert!(a2.slash.is_none());
-    let b2 = bob
-        .do_move(&mut allocator, alice, Amount::new(150), 3)
-        .expect("ok");
-    assert_eq!(
-        b2.slash,
-        Some(Rc::new(Program::from_hex("03").expect("ok")))
-    );
+    let mut debug_games = make_debug_games(allocator, rng, &private_identities)?;
 
-    let moves: Vec<GameAction> = [
-        GameAction::Move(0, a1.ui_move.clone(), true),
-        GameAction::Move(1, b1.ui_move.clone(), true),
-        GameAction::Move(0, a2.ui_move.clone(), true),
-        GameAction::Move(1, b2.ui_move.clone(), true),
-        GameAction::WaitBlocks(20, 1),
-        GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)),
-        GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
-    ]
-    .into_iter()
-    .collect();
+    let mut game_actions = Vec::new();
+    let mut game_moves = Vec::new();
+
+    for (i, do_move) in moves.iter().enumerate() {
+        let alice_turn = i % 2 == 0;
+
+        let (alice, bob) = pair_of_array_mut(&mut debug_games);
+
+        // Get some moves.
+        let the_move = if alice_turn {
+            alice.do_move(allocator, bob, Amount::new(do_move.amt), do_move.slash)?
+        } else {
+            bob.do_move(allocator, alice, Amount::new(do_move.amt), do_move.slash)?
+        };
+
+        if do_move.slash == 0 {
+            assert!(the_move.slash.is_none());
+        } else {
+            assert_eq!(
+                the_move.slash,
+                Some(Rc::new(Program::from_bytes(&[do_move.slash])))
+            );
+        }
+
+        game_actions.push(GameAction::Move(i % 2, the_move.ui_move.clone(), true));
+        game_moves.push(the_move);
+    }
 
     let args_curry = DebugGameCurry::new(
-        &mut allocator,
+        allocator,
         &debug_games[0].alice_identity.puzzle_hash,
         &debug_games[0].bob_identity.puzzle_hash,
     );
     debug!("debug game curried data {args_curry:?}");
-    let args = args_curry
-        .expect("good")
-        .to_clvm(&mut allocator)
-        .expect("ok");
-    let args_program = Program::from_nodeptr(&mut allocator, args).expect("ok");
-    let _outcome = run_game_container_with_action_list(
+    let args = args_curry.expect("good").to_clvm(allocator).into_gen()?;
+    let args_program = Rc::new(Program::from_nodeptr(allocator, args).expect("ok"));
+
+    debug!("alice mover puzzle hash is {:?}", identities[0].puzzle_hash);
+    debug!("bob   mover puzzle hash is {:?}", identities[0].puzzle_hash);
+
+    game_actions.push(GameAction::WaitBlocks(5, 0));
+    game_actions.push(GameAction::WaitBlocks(5, 1));
+    game_actions.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+    game_actions.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+    Ok(DebugGameSimSetup {
+        private_keys,
+        identities,
+        debug_games,
+        game_moves,
+        game_actions,
+        args_program,
+    })
+}
+
+#[test]
+#[cfg(feature = "sim-tests")]
+fn test_referee_play_debug_game_alice_slash() {
+    let mut allocator = AllocEncoder::new();
+    let seed_data: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed_data);
+    let moves = [
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(50, 0),
+        DebugGameTestMove::new(150, 3),
+    ];
+
+    let sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+    let outcome = run_game_container_with_action_list(
         &mut allocator,
         &mut rng,
-        private_keys,
-        &identities,
+        sim_setup.private_keys.clone(),
+        &sim_setup.identities,
         b"debug",
-        Rc::new(args_program),
-        &moves,
+        sim_setup.args_program.clone(),
+        &sim_setup.game_actions,
     )
     .expect("should finish");
+
+    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    // Bob was slashable so alice gets the money.
+    assert_eq!(p1_balance, p2_balance + 200);
+}
+
+#[test]
+#[cfg(feature = "sim-tests")]
+fn test_referee_play_debug_game_bob_slash() {
+    let mut allocator = AllocEncoder::new();
+    let seed_data: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed_data);
+    let moves = [
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(50, 0),
+        DebugGameTestMove::new(150, 0),
+        DebugGameTestMove::new(49, 7),
+    ];
+
+    let sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+    let outcome = run_game_container_with_action_list(
+        &mut allocator,
+        &mut rng,
+        sim_setup.private_keys.clone(),
+        &sim_setup.identities,
+        b"debug",
+        sim_setup.args_program.clone(),
+        &sim_setup.game_actions,
+    )
+    .expect("should finish");
+
+    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    // Alice was slashable so bob gets the money.
+    assert_eq!(p1_balance + 200, p2_balance);
 }

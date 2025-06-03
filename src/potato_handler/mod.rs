@@ -664,7 +664,10 @@ impl PotatoHandler {
 
                 Ok(true)
             }
-            Some(GameAction::RedoMove(_game_id, _coin, _new_ph, _transaction)) => {
+            Some(GameAction::RedoMoveV0(_game_id, _coin, _new_ph, _transaction)) => {
+                Err(Error::StrErr("redo move when not on chain".to_string()))
+            }
+            Some(GameAction::RedoMoveV1(_game_id, _coin, _new_ph, _transaction, _)) => {
                 Err(Error::StrErr("redo move when not on chain".to_string()))
             }
             Some(GameAction::RedoAccept(_, _, _, _)) => {

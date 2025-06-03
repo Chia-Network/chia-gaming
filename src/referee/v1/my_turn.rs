@@ -1,8 +1,6 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
-use clvm_traits::ToClvm;
-
 use log::debug;
 
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
@@ -12,16 +10,14 @@ use crate::channel_handler::v1::game_handler::{
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, CoinString, Error, Hash, IntoErr, Program, Puzzle, PuzzleHash,
-    Sha256tree, Spend,
+    AllocEncoder, Amount, Error, Hash, Program, Puzzle, PuzzleHash, Sha256tree,
 };
-use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
-};
+use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData};
 use crate::referee::v1::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
-    OnChainRefereeSolution, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    OnChainRefereeMoveData, OnChainRefereeSlashData, RMFixed, RefereePuzzleArgs,
+    StateUpdateMoveArgs, StateUpdateResult,
 };
 use crate::referee::v1::RefereeByTurn;
 
@@ -42,6 +38,11 @@ pub enum MyTurnRefereeMakerGameState {
         // Stored info for referee args
         create_this_coin: Rc<RefereePuzzleArgs>,
         spend_this_coin: Rc<RefereePuzzleArgs>,
+
+        // How to spend
+        move_spend: Option<Rc<OnChainRefereeMoveData>>,
+        #[allow(dead_code)]
+        slash_spend: Rc<OnChainRefereeSlashData>,
     },
 }
 
@@ -347,6 +348,13 @@ impl MyTurnReferee {
         }
     }
 
+    pub fn get_move_info(&self) -> Option<Rc<OnChainRefereeMoveData>> {
+        match self.state.borrow() {
+            MyTurnRefereeMakerGameState::Initial { .. } => None,
+            MyTurnRefereeMakerGameState::AfterTheirTurn { move_spend, .. } => move_spend.clone(),
+        }
+    }
+
     #[allow(dead_code)]
     pub fn get_amount(&self) -> Amount {
         self.fixed.amount.clone()
@@ -373,27 +381,23 @@ impl MyTurnReferee {
         &self,
         game_handler: GameHandler,
         new_state: Rc<Program>,
+        current_state: Rc<Program>,
         current_puzzle_args: Rc<RefereePuzzleArgs>,
         new_puzzle_args: Rc<RefereePuzzleArgs>,
         my_turn_result: Rc<MyTurnResult>,
         message_handler: Option<MessageHandler>,
         state_number: usize,
     ) -> Result<TheirTurnReferee, Error> {
-        // assert_ne!(
-        //     current_puzzle_args.mover_puzzle_hash,
-        //     new_puzzle_args.mover_puzzle_hash
-        // );
-        // assert_eq!(
-        //     current_puzzle_args.mover_puzzle_hash,
-        //     new_puzzle_args.waiter_puzzle_hash
-        // );
-        assert_eq!(
-            self.fixed.my_identity.puzzle_hash,
-            new_puzzle_args.mover_puzzle_hash
-        );
+        let move_spend = Rc::new(OnChainRefereeMoveData {
+            validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
+            state: current_state.clone(),
+            new_move: new_puzzle_args.game_move.clone(),
+            before_args: current_puzzle_args.clone(),
+            after_args: new_puzzle_args.clone(),
+        });
 
         debug!(
-            "MY TURN FINISHED WITH STATE {new_state:?} REPLACING {:?}",
+            "MY TURN FINISHED WITH STATE {current_state:?} REPLACING {:?}",
             self.get_game_state()
         );
         let new_state = TheirTurnRefereeMakerGameState::AfterOurTurn {
@@ -401,9 +405,12 @@ impl MyTurnReferee {
             their_turn_validation_program: my_turn_result
                 .incoming_move_state_update_program
                 .clone(),
+            my_turn_validation_program: my_turn_result.outgoing_move_state_update_program.clone(),
             state_after_our_turn: new_state.clone(),
+            state_preceding_our_turn: current_state.clone(),
             create_this_coin: current_puzzle_args,
             spend_this_coin: new_puzzle_args,
+            move_spend,
         };
 
         let new_parent = MyTurnReferee {
@@ -494,8 +501,8 @@ impl MyTurnReferee {
             validation_info_hash: v.hash().clone(),
         };
         let rc_puzzle_args = Rc::new(RefereePuzzleArgs {
-            mover_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
-            waiter_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            mover_puzzle_hash: self.fixed.their_referee_puzzle_hash.clone(),
+            waiter_puzzle_hash: self.fixed.my_identity.puzzle_hash.clone(),
             game_move: game_move_details.clone(),
             validation_program: result.outgoing_move_state_update_program.clone(),
             previous_validation_info_hash: if matches!(
@@ -515,7 +522,7 @@ impl MyTurnReferee {
         let new_state_following_my_move = self.run_validator_for_my_move(
             allocator,
             rc_puzzle_args.clone(),
-            state_to_update,
+            state_to_update.clone(),
             Evidence::nil()?,
         )?;
 
@@ -530,6 +537,7 @@ impl MyTurnReferee {
         let new_self = self.accept_this_move(
             result.waiting_driver.clone(),
             new_state_following_my_move,
+            state_to_update,
             args.clone(),
             rc_puzzle_args.clone(),
             result.clone(),
@@ -592,90 +600,6 @@ impl MyTurnReferee {
         curry_referee_puzzle_hash(allocator, &self.fixed.referee_coin_puzzle_hash, &args)
     }
 
-    // Ensure this returns
-    #[allow(dead_code)]
-    fn get_transaction(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-        always_produce_transaction: bool,
-        puzzle: Puzzle,
-        targs: &RefereePuzzleArgs,
-        args: &OnChainRefereeSolution,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        let our_move = self.is_my_turn();
-
-        let my_mover_share = if our_move {
-            targs.game_move.basic.mover_share.clone()
-        } else {
-            self.fixed.amount.clone() - targs.game_move.basic.mover_share.clone()
-        };
-
-        if always_produce_transaction || my_mover_share != Amount::default() {
-            let signature = args.get_signature().unwrap_or_default();
-
-            // The transaction solution is not the same as the solution for the
-            // inner puzzle as we take additional move or slash data.
-            //
-            // OnChainRefereeSolution encodes this properly.
-            let transaction_solution = args.to_clvm(allocator).into_gen()?;
-            debug!("transaction solution inputs {args:?}");
-            let transaction_bundle = Spend {
-                puzzle: puzzle.clone(),
-                solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
-                signature,
-            };
-            let output_coin_string = CoinString::from_parts(
-                &coin_string.to_coin_id(),
-                &puzzle.sha256tree(allocator),
-                &my_mover_share,
-            );
-            return Ok(Some(RefereeOnChainTransaction {
-                bundle: transaction_bundle,
-                amount: self.fixed.amount.clone(),
-                coin: output_coin_string,
-            }));
-        }
-
-        // Zero mover share case.
-        Ok(None)
-    }
-
-    /// Output coin_string:
-    /// Parent is hash of current_coin
-    /// Puzzle hash is my_referee_puzzle_hash.
-    ///
-    /// Timeout unlike other actions applies to the current ph, not the one at the
-    /// start of a turn proper.
-    #[allow(dead_code)]
-    pub fn get_transaction_for_timeout(
-        &self,
-        allocator: &mut AllocEncoder,
-        coin_string: &CoinString,
-    ) -> Result<Option<RefereeOnChainTransaction>, Error> {
-        debug!("get_transaction_for_timeout turn {}", self.is_my_turn());
-        debug!(
-            "mover share at start of action   {:?}",
-            self.args_for_this_coin().game_move.basic.mover_share
-        );
-        debug!(
-            "mover share at end   of action   {:?}",
-            self.spend_this_coin().game_move.basic.mover_share
-        );
-
-        let targs = self.spend_this_coin();
-        let puzzle = curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &targs)?;
-
-        self.get_transaction(
-            allocator,
-            coin_string,
-            false,
-            puzzle,
-            &targs,
-            &OnChainRefereeSolution::Timeout,
-        )
-    }
-
     #[allow(dead_code)]
     pub fn run_validator_for_my_move(
         &self,
@@ -695,7 +619,7 @@ impl MyTurnReferee {
         debug!("my turn update using state {state:?}");
         let validator_move_args = InternalStateUpdateArgs {
             validation_program: referee_args.validation_program.clone(),
-            referee_args: referee_args.clone(),
+            referee_args: Rc::new(referee_args.swap()),
             state_update_args: StateUpdateMoveArgs {
                 evidence: evidence.to_program(),
                 state: state.clone(),

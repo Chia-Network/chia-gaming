@@ -281,6 +281,7 @@ struct SynchronousGameCradleState {
     outbound_messages: VecDeque<Vec<u8>>,
     outbound_transactions: VecDeque<SpendBundle>,
     coin_solution_requests: VecDeque<CoinString>,
+    resync: Option<(usize, bool)>,
     our_moves: VecDeque<(GameID, usize, Vec<u8>)>,
     opponent_moves: VecDeque<(GameID, usize, ReadableMove, Amount)>,
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
@@ -376,6 +377,7 @@ impl SynchronousGameCradle {
                 funding_coin: None,
                 unfunded_offer: None,
                 shutdown: None,
+                resync: None,
                 finished: false,
             },
             peer: PotatoHandler::new(PotatoHandlerInit {
@@ -417,6 +419,16 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
+    fn resync_move(
+        &mut self,
+        _id: &GameID,
+        state_number: usize,
+        is_my_turn: bool,
+    ) -> Result<(), Error> {
+        self.resync = Some((state_number, is_my_turn));
+        Ok(())
+    }
+
     fn self_move(
         &mut self,
         id: &GameID,
@@ -907,6 +919,8 @@ impl GameCradle for SynchronousGameCradle {
             &mut result.coin_solution_requests,
             &mut self.state.coin_solution_requests,
         );
+
+        swap(&mut result.resync, &mut self.state.resync);
 
         self.state.coin_solution_requests.clear();
 
