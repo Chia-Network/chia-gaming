@@ -893,7 +893,10 @@ fn run_game_container_with_action_list_with_success_predicate(
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
                     debug!("resync requested at id {:?}", result.resync);
-                    while move_number > 0 && (move_number >= moves_input.len() || !matches!(moves_input[move_number], GameAction::Move(_, _, _))) {
+                    while move_number > 0
+                        && (move_number >= moves_input.len()
+                            || !matches!(moves_input[move_number], GameAction::Move(_, _, _)))
+                    {
                         move_number -= 1;
                     }
                     debug!(
