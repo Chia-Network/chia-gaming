@@ -1,3 +1,4 @@
+use clvm_traits::ClvmEncoder;
 use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -11,8 +12,8 @@ use crate::channel_handler::types::{
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program, SpendBundle,
-    Timeout,
+    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
+    SpendBundle, Timeout,
 };
 use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,

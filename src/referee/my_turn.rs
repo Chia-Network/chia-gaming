@@ -685,7 +685,6 @@ impl MyTurnReferee {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
-        state_number: usize,
         conditions: &[CoinCondition],
         state_number: usize,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
@@ -749,7 +748,6 @@ impl MyTurnReferee {
                 &after_puzzle_hash,
                 &self.fixed.amount,
             ),
-            state_number: state_number,
             readable: nil_readable,
             state_number: state_number,
             mover_share: spend_args.game_move.basic.mover_share.clone(),

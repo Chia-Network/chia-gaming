@@ -78,7 +78,6 @@ pub enum TheirTurnCoinSpentResult {
     },
     Expected(usize, PuzzleHash, Amount, Option<Rc<PotatoMoveCachedData>>),
     Moved {
-        state_number: usize,
         // New iteration of the game coin.
         new_coin_string: CoinString,
         state_number: usize,
