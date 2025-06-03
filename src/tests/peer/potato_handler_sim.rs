@@ -817,7 +817,7 @@ fn run_game_container_with_action_list_with_success_predicate(
     while !matches!(ending, Some(0)) {
         num_steps += 1;
         debug!(
-            "{num_steps} can move {can_move} {:?}",
+            "{num_steps} can move {can_move} {move_number} {:?}",
             &moves_input[move_number..]
         );
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
@@ -893,7 +893,13 @@ fn run_game_container_with_action_list_with_success_predicate(
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
                     debug!("resync requested at id {:?}", result.resync);
-                    move_number -= 1;
+                    while move_number > 0 && (move_number >= moves_input.len() || !matches!(moves_input[move_number], GameAction::Move(_, _, _))) {
+                        move_number -= 1;
+                    }
+                    debug!(
+                        "{num_steps} can move {can_move} {move_number} {:?}",
+                        &moves_input[move_number..]
+                    );
                 }
 
                 for coin in result.coin_solution_requests.iter() {
@@ -1476,6 +1482,11 @@ pub fn setup_debug_test(
 
     debug!("alice mover puzzle hash is {:?}", identities[0].puzzle_hash);
     debug!("bob   mover puzzle hash is {:?}", identities[0].puzzle_hash);
+
+    game_actions.push(GameAction::WaitBlocks(5, 0));
+    game_actions.push(GameAction::WaitBlocks(5, 1));
+    game_actions.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+    game_actions.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
     Ok(DebugGameSimSetup {
         private_keys,
