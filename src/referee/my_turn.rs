@@ -685,6 +685,7 @@ impl MyTurnReferee {
         &self,
         allocator: &mut AllocEncoder,
         coin_string: &CoinString,
+        state_number: usize,
         conditions: &[CoinCondition],
     ) -> Result<TheirTurnCoinSpentResult, Error> {
         let after_puzzle_hash = curry_referee_puzzle_hash(
@@ -722,7 +723,6 @@ impl MyTurnReferee {
         } else {
             return Err(Error::StrErr("no coin created".to_string()));
         };
-
         debug!("repeat: current state {:?}", self.state);
 
         // This state was the state of our parent, a their turn handler.
@@ -749,6 +749,7 @@ impl MyTurnReferee {
                 &self.fixed.amount,
             ),
             readable: nil_readable,
+            state_number: state_number,
             mover_share: spend_args.game_move.basic.mover_share.clone(),
         })
     }

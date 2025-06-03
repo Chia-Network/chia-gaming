@@ -6,5 +6,6 @@ pub struct OnChainGameState {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
     pub our_turn: bool,
+    pub state_number: usize,
     pub accept: AcceptTransactionState,
 }

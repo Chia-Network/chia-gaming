@@ -371,25 +371,29 @@ impl PotatoHandler {
                 self.update_channel_coin_after_receive(penv, &spend_info)?;
             }
             PeerMessage::Move(game_id, m) => {
-                let (spend_info, readable_move, message, mover_share) = {
+                let move_result = {
                     let (env, _) = penv.env();
                     ch.received_potato_move(env, game_id, m)?
                 };
                 {
                     let (env, system_interface) = penv.env();
-                    let opponent_readable = ReadableMove::from_program(readable_move);
+                    let opponent_readable =
+                        ReadableMove::from_program(move_result.readable_their_move);
                     system_interface.opponent_moved(
                         env.allocator,
                         game_id,
+                        move_result.state_number,
                         opponent_readable,
-                        mover_share,
+                        move_result.mover_share,
                     )?;
-                    if !message.is_empty() {
-                        system_interface
-                            .send_message(&PeerMessage::Message(game_id.clone(), message))?;
+                    if !move_result.message.is_empty() {
+                        system_interface.send_message(&PeerMessage::Message(
+                            game_id.clone(),
+                            move_result.message,
+                        ))?;
                     }
                 }
-                self.update_channel_coin_after_receive(penv, &spend_info)?;
+                self.update_channel_coin_after_receive(penv, &move_result.spend_info)?;
             }
             PeerMessage::Message(game_id, message) => {
                 let decoded_message = {
@@ -649,7 +653,11 @@ impl PotatoHandler {
                 };
 
                 let (_, system_interface) = penv.env();
-                system_interface.self_move(&game_id, &move_result.game_move.basic.move_made)?;
+                system_interface.self_move(
+                    &game_id,
+                    move_result.state_number,
+                    &move_result.game_move.basic.move_made,
+                )?;
 
                 system_interface.send_message(&PeerMessage::Move(game_id, move_result))?;
                 self.have_potato = PotatoState::Absent;
