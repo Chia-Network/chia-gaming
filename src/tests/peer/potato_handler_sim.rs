@@ -190,6 +190,7 @@ impl ToLocalUI for SimulatedPeer {
         &mut self,
         _allocator: &mut AllocEncoder,
         _id: &GameID,
+        _state_number: usize,
         _readable: ReadableMove,
         _my_share: Amount,
     ) -> Result<(), Error> {
@@ -650,6 +651,7 @@ impl ToLocalUI for LocalTestUIReceiver {
         &mut self,
         _allocator: &mut AllocEncoder,
         id: &GameID,
+        _state_number: usize,
         readable: ReadableMove,
         my_share: Amount,
     ) -> Result<(), Error> {

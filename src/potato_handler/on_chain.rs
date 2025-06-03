@@ -172,6 +172,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved {
                 new_coin_string,
+                state_number,
                 readable,
                 mover_share,
                 ..
@@ -200,7 +201,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     },
                 );
 
-                system_interface.opponent_moved(env.allocator, &game_id, readable, mover_share)?;
+                system_interface.opponent_moved(
+                    env.allocator,
+                    &game_id,
+                    state_number,
+                    readable,
+                    mover_share,
+                )?;
                 system_interface.register_coin(
                     &new_coin_string,
                     &self.channel_timeout,
@@ -288,6 +295,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         if let Some(mut game_def) = self.game_map.remove(coin_id) {
             let initial_potato = self.player_ch.is_initial_potato();
             let game_id = game_def.game_id.clone();
+            let state_number = game_def.state_number;
             let (env, system_interface) = penv.env();
             debug!("{initial_potato} timeout coin {coin_id:?}, do accept");
 
@@ -340,7 +348,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             let readable = ReadableMove::from_nodeptr(env.allocator, nil)?;
             let mover_share = Amount::default();
 
-            system_interface.opponent_moved(env.allocator, &game_id, readable, mover_share)?;
+            system_interface.opponent_moved(
+                env.allocator,
+                &game_id,
+                state_number,
+                readable,
+                mover_share,
+            )?;
             self.next_action(penv)?;
         }
 
@@ -370,7 +384,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        let (initial_potato, (old_ph, new_ph, move_result, transaction)) = {
+        let (initial_potato, (old_ph, new_ph, state_number, move_result, transaction)) = {
             let initial_potato = self.player_ch.is_initial_potato();
             let my_turn = self.player_ch.game_is_my_turn(&game_id);
             if my_turn != Some(true) {
@@ -423,6 +437,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             OnChainGameState {
                 puzzle_hash: new_ph,
                 our_turn: false,
+                state_number: state_number,
                 ..old_definition
             },
         );
@@ -441,7 +456,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 bundle: transaction.bundle.clone(),
             }],
         })?;
-        system_interface.self_move(&game_id, &move_result.basic.move_made)?;
+        system_interface.self_move(&game_id, state_number, &move_result.basic.move_made)?;
 
         Ok(())
     }

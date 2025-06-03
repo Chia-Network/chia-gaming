@@ -20,12 +20,12 @@ use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo,
     ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
-    ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, ChannelHandlerUnrollSpendInfo,
-    CoinDataForReward, CoinSpentAccept, CoinSpentDisposition, CoinSpentInformation,
-    CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo, GameStartInfoInterface,
-    HandshakeResult, LiveGame, MoveResult, OnChainGameCoin, OnChainGameState,
-    PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove, UnrollCoin,
-    UnrollCoinConditionInputs, UnrollTarget,
+    ChannelHandlerInitiationResult, ChannelHandlerMoveResult, ChannelHandlerPrivateKeys,
+    ChannelHandlerUnrollSpendInfo, CoinDataForReward, CoinSpentAccept, CoinSpentDisposition,
+    CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
+    GameStartInfoInterface, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
+    OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
+    UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
 
 use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
@@ -959,7 +959,7 @@ impl ChannelHandler {
 
         // We let them spend a state number 1 higher but nothing else changes.
         self.update_cache_for_potato_send(Some(
-            CachedPotatoRegenerateLastHop::PotatoMoveHappening(PotatoMoveCachedData {
+            CachedPotatoRegenerateLastHop::PotatoMoveHappening(Rc::new(PotatoMoveCachedData {
                 state_number: self.current_state_number,
                 game_id: game_id.clone(),
                 match_puzzle_hash,
@@ -967,7 +967,7 @@ impl ChannelHandler {
                 move_data: readable_move.clone(),
                 move_entropy: new_entropy,
                 amount,
-            }),
+            })),
         ));
 
         //self.live_games[game_idx]
@@ -975,6 +975,7 @@ impl ChannelHandler {
 
         Ok(MoveResult {
             signatures,
+            state_number: self.current_state_number,
             game_move: referee_result.details.clone(),
         })
     }
@@ -984,7 +985,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         game_id: &GameID,
         move_result: &MoveResult,
-    ) -> Result<(ChannelCoinSpendInfo, Rc<Program>, Vec<u8>, Amount), Error> {
+    ) -> Result<ChannelHandlerMoveResult, Error> {
         debug!(
             "{} RECEIVED_POTATO_MOVE {}",
             self.is_initial_potato(),
@@ -1049,16 +1050,17 @@ impl ChannelHandler {
         // the unroll puzzle hash that was given to us.
         self.cached_last_action = None;
 
-        Ok((
-            ChannelCoinSpendInfo {
+        Ok(ChannelHandlerMoveResult {
+            spend_info: ChannelCoinSpendInfo {
                 aggsig: spend.signature,
                 solution: spend.solution.p(),
                 conditions: spend.conditions.p(),
             },
-            readable_move.p(),
+            readable_their_move: readable_move.p(),
+            state_number: self.current_state_number,
             message,
             mover_share,
-        ))
+        })
     }
 
     pub fn received_message<R: Rng>(
@@ -1106,7 +1108,7 @@ impl ChannelHandler {
         self.update_cache_for_potato_send(if amount == Amount::default() {
             None
         } else {
-            Some(CachedPotatoRegenerateLastHop::PotatoAccept(
+            Some(CachedPotatoRegenerateLastHop::PotatoAccept(Box::new(
                 PotatoAcceptCachedData {
                     game_id: game_id.clone(),
                     puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
@@ -1114,7 +1116,7 @@ impl ChannelHandler {
                     at_stake_amount: at_stake,
                     our_share_amount: amount.clone(),
                 },
-            ))
+            )))
         });
 
         let signatures = self.update_cached_unroll_state(env)?;
@@ -1622,6 +1624,7 @@ impl ChannelHandler {
                             game_id: cached.live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
                             our_turn: cached.live_game.is_my_turn(),
+                            state_number: self.current_state_number,
                             accept: AcceptTransactionState::Waiting,
                         },
                     );
@@ -1659,6 +1662,7 @@ impl ChannelHandler {
                             game_id: live_game.game_id.clone(),
                             puzzle_hash: game_coin.clone(),
                             our_turn: live_game.is_my_turn(),
+                            state_number: self.current_state_number,
                             accept: AcceptTransactionState::Waiting,
                         },
                     );
@@ -1692,6 +1696,7 @@ impl ChannelHandler {
         (
             PuzzleHash,
             PuzzleHash,
+            usize,
             GameMoveDetails,
             RefereeOnChainTransaction,
         ),
@@ -1743,6 +1748,7 @@ impl ChannelHandler {
         Ok((
             last_puzzle_hash,
             self.live_games[game_idx].last_referee_puzzle_hash.clone(),
+            self.current_state_number,
             move_result.details.clone(),
             tx,
         ))
