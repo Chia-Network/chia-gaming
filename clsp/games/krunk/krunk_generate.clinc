@@ -1,5 +1,7 @@
 (export krunk_factory)
 (import onchain.krunk.commit exposing commit_validate commit_validate_hash)
+(import onchain.krunk.guess exposing guess)
+(import onchain.krunk.clue exposing clue_validate)
 (import std.assert)
 (import std.shatree)
 (import std.curry)
@@ -13,7 +15,7 @@
         (= alice_contribution 100)
         (= bob_contribution 0)
         (li alice_handler_commit bob_handler_commit 32 0 0
-            (commit_hash commit guess_hash guess clue_hash clue))
+            (commit_validate_hash commit_validate guess_hash guess clue_hash clue))
     )
 )
 
@@ -43,14 +45,14 @@
 ; checks for Bob's guess being in dictionary
 ; readable_move is Bob's guess
 ; next turn handler is alice_handler_clue or nil if Bob guessed right or ran out of guesses
-(defun alice_handler_guess (PREIMAGE WORD remote_move pre_state post_state mover_share)
+(defun alice_handler_guess (SALT WORD remote_move pre_state post_state mover_share)
     (assign
         evidence check_if_word_in_dictionary
         (if evidence
             (li 0 0 (li evidence))
             (assign
                 clue (make_clue WORD remote_move)
-                (li (li remote_move (expand_clue clue)) (curry alice_handler_clue PREIMAGE WORD clue))
+                (li (li remote_move (expand_clue clue)) (curry alice_handler_clue SALT WORD clue))
             )
         )
     )
@@ -59,13 +61,13 @@
 ; my turn handler
 ; local_move is nil (should be called immediately)
 ; next turn handler is alice_handler_guess
-(defun alice_handler_clue (PREIMAGE WORD CLUE local_move (bob_guesses alice_clues guess_validate_hash dictionary_key alice_commit)
+(defun alice_handler_clue (SALT WORD CLUE local_move (bob_guesses alice_clues guess_validate_hash dictionary_key alice_commit)
         amount entropy raw_amount)
     (if (= CLUE right_word)
-        (li (concat PREIMAGE WORD) 0 (index (li 100 100 20 5 1) (len alice_clues)))
+        (li (concat SALT WORD) 0 (index (li 100 100 20 5 1) (len alice_clues)))
         (= (len alice_clues 4))
-        (li (concat PREIMAGE WORD) 0 0)
-        (li CLUE (curry alice_handler_guess PREIMAGE WORD))
+        (li (concat SALT WORD) 0 0)
+        (li CLUE (curry alice_handler_guess SALT WORD))
     )
 )
 
@@ -87,6 +89,8 @@
     )
 )
 
+(defconst evidences (li 0x00 1 2 3 4))
+
 ; their turn handler
 ; when there's a reveal, special check is Alice's word being in dictionary
 ; when there's a reveal possible evidence is indices of alice clues
@@ -99,45 +103,11 @@
         (assign
             word (substr remote_move 16 21)
             evidence (make_evidence my_dictionary word)
-            evidence2 (no_credit_evidence bob_guesses word)
-            evidence3 (wrong_clue_evidence (r bob_guesses) alice_clues word 0x00)
             (if evidence
                 (li 0 0 (li evidence))
-                evidence2
-                (li 0 0 (li evidence2))
-                evidence3
-                (li 0 0 (li evidence3))
-                (li (li word (make_clue word (f bob_guesses))))
+                (li (li word (make_clue word (f bob_guesses))) 0 evidences)
             )
         )
-    )
-)
-
-(defun wrong_clue_evidence (bob_guesses alice_clues word so_far)
-    (if (not bob_guesses)
-        0
-        (!= (make_clue (f bob_guesses) word) (f alice_clues))
-        so_far
-        (wrong_clue_evidence (r bob_guesses) (r alice_clues) word (+ 1 so_far))
-    )
-)
-
-(defun no_credit_evidence (old_guesses word)
-    (assign
-        fail_index (no_credit_inner (r old_guesses) word 0x00)
-        (if fail_index
-            (concat 0x00 fail_index)
-            0
-        )
-    )
-)
-
-(defun no_credit_inner (old_guesses word so_far)
-    (if (not old_guesses)
-        0
-        (= (f old_guesses) word)
-        so_far
-        (no_credit_inner (r old_guesses) word (+ 1 so_far))
     )
 )
 
