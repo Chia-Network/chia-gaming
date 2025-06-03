@@ -20,7 +20,6 @@ use crate::common::types::{
     u64_from_atom, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
     IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend,
 };
-use crate::referee::RefereeInterface;
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
@@ -32,6 +31,7 @@ use crate::referee::v1::types::{
     REM_CONDITION_FIELDS,
 };
 use crate::referee::v1::{BrokenOutCoinSpendInfo, RefereeByTurn};
+use crate::referee::RefereeInterface;
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
@@ -288,8 +288,16 @@ impl TheirTurnReferee {
     }
 
     pub fn slash_infohash_inputs(&self) -> Option<(StateUpdateProgram, Rc<Program>)> {
-        if let TheirTurnRefereeMakerGameState::AfterOurTurn { my_turn_validation_program, state_preceding_our_turn, .. } = self.state.borrow() {
-            return Some((my_turn_validation_program.clone(), state_preceding_our_turn.clone()));
+        if let TheirTurnRefereeMakerGameState::AfterOurTurn {
+            my_turn_validation_program,
+            state_preceding_our_turn,
+            ..
+        } = self.state.borrow()
+        {
+            return Some((
+                my_turn_validation_program.clone(),
+                state_preceding_our_turn.clone(),
+            ));
         }
 
         None
@@ -669,18 +677,21 @@ impl TheirTurnReferee {
                 } else {
                     todo!();
                 };
-                let to_spend_ph =
-                    if let Some(p) = conditions.iter().filter_map(|c| {
+                let to_spend_ph = if let Some(p) = conditions
+                    .iter()
+                    .filter_map(|c| {
                         if let CoinCondition::CreateCoin(ph, _) = c {
                             Some(ph.clone())
                         } else {
                             None
                         }
-                    }).next() {
-                        p
-                    } else {
-                        todo!();
-                    };
+                    })
+                    .next()
+                {
+                    p
+                } else {
+                    todo!();
+                };
                 let coin_string_to_spend = CoinString::from_parts(
                     &referee_coin_string.to_coin_id(),
                     &to_spend_ph,
@@ -692,9 +703,18 @@ impl TheirTurnReferee {
                     slash_state.clone(),
                 );
 
-                debug!("our notion of previous validation program hash {:?}", slash_validation_program.sha256tree(allocator));
-                debug!("our notion of state hash {:?}", slash_state.sha256tree(allocator));
-                debug!("our notion of validation info hash {:?}", infohash_for_slash.hash());
+                debug!(
+                    "our notion of previous validation program hash {:?}",
+                    slash_validation_program.sha256tree(allocator)
+                );
+                debug!(
+                    "our notion of state hash {:?}",
+                    slash_state.sha256tree(allocator)
+                );
+                debug!(
+                    "our notion of validation info hash {:?}",
+                    infohash_for_slash.hash()
+                );
 
                 // Slash specified.
                 debug!("their turn: slash specified {:?}", evidence);
@@ -703,13 +723,25 @@ impl TheirTurnReferee {
                 let a_infohash = ValidationInfo::new_state_update(
                     allocator,
                     slash_validation_program.clone(),
-                    slash_state.clone()
+                    slash_state.clone(),
                 );
                 debug!("a_infohash {a_infohash:?}");
-                debug!("aa_infohash {:?}", after_args.game_move.validation_info_hash);
-                debug!("aa_prev_infohash {:?}", after_args.previous_validation_info_hash);
-                debug!("current_args.validation_info_hash {:?}", current_args.game_move.validation_info_hash);
-                debug!("current_args.previous_validation_info_hash {:?}", current_args.previous_validation_info_hash);
+                debug!(
+                    "aa_infohash {:?}",
+                    after_args.game_move.validation_info_hash
+                );
+                debug!(
+                    "aa_prev_infohash {:?}",
+                    after_args.previous_validation_info_hash
+                );
+                debug!(
+                    "current_args.validation_info_hash {:?}",
+                    current_args.game_move.validation_info_hash
+                );
+                debug!(
+                    "current_args.previous_validation_info_hash {:?}",
+                    current_args.previous_validation_info_hash
+                );
                 assert_eq!(self.outcome_referee_puzzle_hash(allocator)?, spent_ph);
 
                 let args = Rc::new(RefereePuzzleArgs {
@@ -721,14 +753,13 @@ impl TheirTurnReferee {
                     nonce: self.fixed.nonce,
                     referee_coin_puzzle_hash: self.fixed.referee_coin_puzzle_hash.clone(),
                     validation_program: slash_validation_program.clone(),
-                    previous_validation_info_hash: Some(after_args.game_move.validation_info_hash.clone()),
+                    previous_validation_info_hash: Some(
+                        after_args.game_move.validation_info_hash.clone(),
+                    ),
                 });
                 debug!("match 2c9e2c? {args:?}");
-                let puzzle = curry_referee_puzzle(
-                    allocator,
-                    &self.fixed.referee_coin_puzzle,
-                    &args,
-                )?;
+                let puzzle =
+                    curry_referee_puzzle(allocator, &self.fixed.referee_coin_puzzle, &args)?;
                 let new_puzzle_hash = curry_referee_puzzle_hash(
                     allocator,
                     &self.fixed.referee_coin_puzzle_hash,
@@ -771,13 +802,10 @@ impl TheirTurnReferee {
         debug!("slash spend: parent coin is {coin_string:?} => {new_puzzle_hash:?}");
         let slash_conditions = [(
             CREATE_COIN,
-            (
-                new_puzzle_hash,
-                (self.fixed.amount.clone(), ()),
-            ),
+            (new_puzzle_hash, (self.fixed.amount.clone(), ())),
         )]
-            .to_clvm(allocator)
-            .into_gen()?;
+        .to_clvm(allocator)
+        .into_gen()?;
         let slash_spend = standard_solution_partial(
             allocator,
             &self.fixed.my_identity.synthetic_private_key,

@@ -650,7 +650,11 @@ impl PotatoHandler {
                 };
 
                 let (_, system_interface) = penv.env();
-                system_interface.self_move(&game_id, move_result.state_number, &move_result.game_move.basic.move_made)?;
+                system_interface.self_move(
+                    &game_id,
+                    move_result.state_number,
+                    &move_result.game_move.basic.move_made,
+                )?;
 
                 system_interface.send_message(&PeerMessage::Move(game_id, move_result))?;
                 self.have_potato = PotatoState::Absent;

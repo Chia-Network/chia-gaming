@@ -10,7 +10,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::TheirTurnResult;
-use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo, PotatoMoveCachedData};
+use crate::channel_handler::types::{Evidence, PotatoMoveCachedData, ReadableMove, ValidationInfo};
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, ChiaIdentity,
 };

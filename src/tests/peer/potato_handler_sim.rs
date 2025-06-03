@@ -658,7 +658,8 @@ impl ToLocalUI for LocalTestUIReceiver {
         my_share: Amount,
     ) -> Result<(), Error> {
         self.opponent_moved = true;
-        self.opponent_moves.push((id.clone(), state_number, readable, my_share));
+        self.opponent_moves
+            .push((id.clone(), state_number, readable, my_share));
         Ok(())
     }
 
@@ -806,16 +807,19 @@ fn run_game_container_with_action_list_with_success_predicate(
     cradles[1].opening_coin(allocator, rng, parent_coin_1)?;
 
     let global_move = |moves: &[GameAction], move_number: usize| {
-        move_number < moves.len() &&
-        matches!(
-            &moves[move_number],
-            GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _)
-        )
+        move_number < moves.len()
+            && matches!(
+                &moves[move_number],
+                GameAction::Shutdown(_, _) | GameAction::WaitBlocks(_, _)
+            )
     };
 
     while !matches!(ending, Some(0)) {
         num_steps += 1;
-        debug!("{num_steps} can move {can_move} {:?}", &moves_input[move_number..]);
+        debug!(
+            "{num_steps} can move {can_move} {:?}",
+            &moves_input[move_number..]
+        );
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
         debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
 
@@ -983,7 +987,10 @@ fn run_game_container_with_action_list_with_success_predicate(
             if *wb > 0 {
                 *wb -= 1;
             };
-        } else if can_move || local_uis.iter().any(|l| l.opponent_moved) || global_move(&moves_input, move_number) {
+        } else if can_move
+            || local_uis.iter().any(|l| l.opponent_moved)
+            || global_move(&moves_input, move_number)
+        {
             can_move = false;
             assert!(!game_ids.is_empty());
 

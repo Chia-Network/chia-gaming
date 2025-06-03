@@ -419,13 +419,24 @@ impl BootstrapTowardWallet for SynchronousGameCradleState {
 }
 
 impl ToLocalUI for SynchronousGameCradleState {
-    fn resync_move(&mut self, _id: &GameID, state_number: usize, is_my_turn: bool) -> Result<(), Error> {
+    fn resync_move(
+        &mut self,
+        _id: &GameID,
+        state_number: usize,
+        is_my_turn: bool,
+    ) -> Result<(), Error> {
         self.resync = Some((state_number, is_my_turn));
         Ok(())
     }
 
-    fn self_move(&mut self, id: &GameID, state_number: usize, readable: &[u8]) -> Result<(), Error> {
-        self.our_moves.push_back((id.clone(), state_number, readable.to_vec()));
+    fn self_move(
+        &mut self,
+        id: &GameID,
+        state_number: usize,
+        readable: &[u8],
+    ) -> Result<(), Error> {
+        self.our_moves
+            .push_back((id.clone(), state_number, readable.to_vec()));
         Ok(())
     }
 
@@ -909,10 +920,7 @@ impl GameCradle for SynchronousGameCradle {
             &mut self.state.coin_solution_requests,
         );
 
-        swap(
-            &mut result.resync,
-            &mut self.state.resync
-        );
+        swap(&mut result.resync, &mut self.state.resync);
 
         self.state.coin_solution_requests.clear();
 
@@ -926,7 +934,8 @@ impl GameCradle for SynchronousGameCradle {
             return Ok(Some(result));
         }
 
-        if let Some((id, state_number, readable, my_share)) = self.state.opponent_moves.pop_front() {
+        if let Some((id, state_number, readable, my_share)) = self.state.opponent_moves.pop_front()
+        {
             local_ui.opponent_moved(allocator, &id, state_number, readable, my_share)?;
             result.continue_on = true;
             return Ok(Some(result));

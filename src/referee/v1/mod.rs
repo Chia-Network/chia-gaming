@@ -14,7 +14,6 @@ use crate::common::types::{
     Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
 };
 use crate::referee;
-use crate::referee::RewindResult;
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
     TheirTurnCoinSpentResult, TheirTurnMoveResult,
@@ -25,6 +24,7 @@ use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, OnChainRefereeMoveData,
     OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
 };
+use crate::referee::RewindResult;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -261,7 +261,9 @@ impl RefereeByTurn {
 }
 
 impl RefereeInterface for RefereeByTurn {
-    fn version(&self) -> usize { 1 }
+    fn version(&self) -> usize {
+        1
+    }
     fn is_my_turn(&self) -> bool {
         matches!(self, RefereeByTurn::MyTurn(_))
     }
@@ -285,7 +287,12 @@ impl RefereeInterface for RefereeByTurn {
         self.fixed().amount.clone() - self.get_our_current_share()
     }
 
-    fn suitable_redo(&self, allocator: &mut AllocEncoder, coin: &CoinString, ph: &PuzzleHash) -> Result<bool, Error> {
+    fn suitable_redo(
+        &self,
+        allocator: &mut AllocEncoder,
+        coin: &CoinString,
+        ph: &PuzzleHash,
+    ) -> Result<bool, Error> {
         Ok(!self.is_my_turn())
     }
 
@@ -383,7 +390,12 @@ impl RefereeInterface for RefereeByTurn {
 
                     return Ok((
                         Some(Rc::new(self.clone())),
-                        TheirTurnCoinSpentResult::Expected(self.state_number(), ph.clone(), amt.clone(), None),
+                        TheirTurnCoinSpentResult::Expected(
+                            self.state_number(),
+                            ph.clone(),
+                            amt.clone(),
+                            None,
+                        ),
                     ));
                 }
             }
@@ -537,17 +549,12 @@ impl RefereeInterface for RefereeByTurn {
                 // One farther down so we're in a their turn after the turn we took.
                 let state_number = old_referee.state_number();
                 let to_use = old_referee.clone();
-                let transaction =
-                    if !old_referee.is_my_turn() {
-                        debug!("will redo: {}", to_use.state_number());
-                        Some(to_use.get_transaction_for_move(
-                            allocator,
-                            coin,
-                            true,
-                        )?)
-                    } else {
-                        None
-                    };
+                let transaction = if !old_referee.is_my_turn() {
+                    debug!("will redo: {}", to_use.state_number());
+                    Some(to_use.get_transaction_for_move(allocator, coin, true)?)
+                } else {
+                    None
+                };
                 let to_return = old_referee.clone();
                 return Ok(RewindResult {
                     outcome_puzzle_hash: to_return.outcome_referee_puzzle_hash(allocator)?,

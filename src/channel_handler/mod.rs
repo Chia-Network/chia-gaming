@@ -1604,17 +1604,12 @@ impl ChannelHandler {
             self.initiated_on_chain, self.current_state_number, self.unroll.coin.state_number,
         );
 
-        debug!(
-            "{initial_potato} cached state {:?}",
-            self.did_rewind
-        );
+        debug!("{initial_potato} cached state {:?}", self.did_rewind);
         debug!("{initial_potato} #game coins {}", coins.len());
 
         let mover_puzzle_hash = private_to_public_key(&self.referee_private_key());
         for game_coin in coins.iter() {
-            if let Some(CachedPotatoRegenerateLastHop::PotatoAccept(cached)) =
-                &self.did_rewind
-            {
+            if let Some(CachedPotatoRegenerateLastHop::PotatoAccept(cached)) = &self.did_rewind {
                 if *game_coin == cached.puzzle_hash {
                     let coin_id = CoinString::from_parts(
                         &unroll_coin.to_coin_id(),
@@ -1821,14 +1816,18 @@ impl ChannelHandler {
             conditions,
             self.current_state_number,
         )?;
-        if let Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) = &self.did_rewind {
+        if let Some(CachedPotatoRegenerateLastHop::PotatoMoveHappening(move_data)) =
+            &self.did_rewind
+        {
             if let TheirTurnCoinSpentResult::Expected(state_number, ph, amt, _) = &spent_result {
-                return Ok(CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(
-                    *state_number,
-                    ph.clone(),
-                    amt.clone(),
-                    Some(move_data.clone())
-                )));
+                return Ok(CoinSpentInformation::TheirSpend(
+                    TheirTurnCoinSpentResult::Expected(
+                        *state_number,
+                        ph.clone(),
+                        amt.clone(),
+                        Some(move_data.clone()),
+                    ),
+                ));
             }
         }
 

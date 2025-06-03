@@ -11,8 +11,8 @@ use crate::channel_handler::types::{
 };
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program,
-    SpendBundle, Timeout,
+    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, Program, SpendBundle,
+    Timeout,
 };
 use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
@@ -139,7 +139,12 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
             "{initial_potato} game coin spent result from channel handler {their_turn_result:?}"
         );
         match their_turn_result {
-            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(state_number, ph, amt, redo)) => {
+            CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Expected(
+                state_number,
+                ph,
+                amt,
+                redo,
+            )) => {
                 debug!("{initial_potato} got an expected spend {ph:?} {amt:?}");
                 let new_coin_id = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
 
@@ -165,19 +170,26 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
                 let mut is_my_turn = false;
                 if let Some(redo_data) = &redo {
-                    is_my_turn = matches!(self.player_ch.game_is_my_turn(&redo_data.game_id), Some(true));
+                    is_my_turn = matches!(
+                        self.player_ch.game_is_my_turn(&redo_data.game_id),
+                        Some(true)
+                    );
                     if is_my_turn {
-                        debug!("{} redo back at potato handler", self.player_ch.is_initial_potato());
+                        debug!(
+                            "{} redo back at potato handler",
+                            self.player_ch.is_initial_potato()
+                        );
                         let (old_ph, new_ph, state_number, move_result, transaction) =
                             self.player_ch.on_chain_our_move(
                                 env,
                                 &redo_data.game_id,
                                 &redo_data.move_data,
                                 redo_data.move_entropy.clone(),
-                                &new_coin_id
+                                &new_coin_id,
                             )?;
 
-                        let final_coin = CoinString::from_parts(&new_coin_id.to_coin_id(), &new_ph, &amt);
+                        let final_coin =
+                            CoinString::from_parts(&new_coin_id.to_coin_id(), &new_ph, &amt);
 
                         system_interface.spend_transaction_and_add_fee(&SpendBundle {
                             name: Some("redo move from data".to_string()),
@@ -237,7 +249,13 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     },
                 );
 
-                system_interface.opponent_moved(env.allocator, &game_id, state_number, readable, mover_share)?;
+                system_interface.opponent_moved(
+                    env.allocator,
+                    &game_id,
+                    state_number,
+                    readable,
+                    mover_share,
+                )?;
                 system_interface.register_coin(
                     &new_coin_string,
                     &self.channel_timeout,
@@ -550,7 +568,10 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 let new_coin = CoinString::from_parts(&coin.to_coin_id(), &new_ph, &amt);
                 debug!("the v1 redo move was for puzzle hash {new_ph:?}");
                 debug!("the v1 redo move turned into {new_coin:?}");
-                debug!("the v1 redo move turned into id {:?}", new_coin.to_coin_id());
+                debug!(
+                    "the v1 redo move turned into id {:?}",
+                    new_coin.to_coin_id()
+                );
 
                 // let (ph_before_redo_move, ph_after_redo_move, new_state, new_move, new_tx) =
                 //     self.player_ch.on_chain_our_move(
