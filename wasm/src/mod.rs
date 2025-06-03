@@ -494,7 +494,12 @@ where
 }
 
 impl ToLocalUI for JsLocalUI {
-    fn self_move(&mut self, game_id: &GameID, readable: &[u8]) -> Result<(), types::Error> {
+    fn self_move(
+        &mut self,
+        game_id: &GameID,
+        _state_number: usize,
+        readable: &[u8],
+    ) -> Result<(), types::Error> {
         call_javascript_from_collection(&self.callbacks, "self_move", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
             args_array.set(1, JsValue::from_str(&hex::encode(readable)));
@@ -506,6 +511,7 @@ impl ToLocalUI for JsLocalUI {
         &mut self,
         _allocator: &mut AllocEncoder,
         game_id: &GameID,
+        _state_number: usize,
         readable_move: ReadableMove,
         _amount: Amount,
     ) -> Result<(), chia_gaming::common::types::Error> {
@@ -676,7 +682,7 @@ impl<T, Err: IntoE<E = types::Error>> IntoE for Result<T, Err> {
 }
 
 fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> {
-    let opponent_move = if let Some((gid, vs)) = &idle_result.opponent_move {
+    let opponent_move = if let Some((gid, _sn, vs)) = &idle_result.opponent_move {
         Some((game_id_to_string(gid), readable_move_to_hex(vs)?))
     } else {
         None
