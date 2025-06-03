@@ -1745,7 +1745,7 @@ impl ChannelHandler {
 
         Ok((
             last_puzzle_hash,
-            self.live_games[game_idx].last_referee_puzzle_hash.clone(),
+            self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?,
             self.current_state_number,
             move_result.details.clone(),
             tx,
