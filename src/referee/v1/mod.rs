@@ -10,8 +10,8 @@ use crate::channel_handler::types::{Evidence, ReadableMove};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program,
-    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
+    AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, Puzzle, PuzzleHash,
+    Sha256Input, Sha256tree, Spend,
 };
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
