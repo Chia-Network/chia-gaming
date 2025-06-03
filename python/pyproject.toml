@@ -1,0 +1,27 @@
+[project]
+name = "chia_gaming"
+version = "0.1.0"
+description = "A proof-of-concept and tutorial for writing games enforced by on-chain contracts, with faster-than-blocktime moves."
+authors = [
+    {name = "Adam Kelly",email = "338792+aqk@users.noreply.github.com"},
+    {name = "Art Yerkes",email = "a.yerkes@chia.net"},
+    {name = "Bram Cohen",email = "bram@chia.net"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "clvm-tools-rs (==0.1.40)",
+    "chia-rs (==0.6.1)",
+    "clvm (==0.9.9) ; python_version >= '3.9' and python_version < '4'"
+]
+
+[tool.black]
+line-length = 120
+target-version =  ['py312']
+include = '''
+^/(
+    [^/]*.py
+    | (calpoker|krunk|tests|tools)/.*\.pyi?
+)$
+'''
+exclude = ''
