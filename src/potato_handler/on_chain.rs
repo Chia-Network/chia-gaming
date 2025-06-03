@@ -561,7 +561,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 )?;
                 Ok(())
             }
-            GameAction::RedoMoveV1(coin, new_ph, tx, _move_data) => {
+            GameAction::RedoMoveV1(coin, new_ph, tx, _move_data, amt) => {
                 let (_, system_interface) = penv.env();
                 self.have_potato = PotatoState::Absent;
 
@@ -572,12 +572,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                         bundle: tx.bundle.clone(),
                     }],
                 })?;
-                let amt = if let Some((_, _, amt)) = coin.to_parts() {
-                    amt
-                } else {
-                    return Err(Error::StrErr("bad coin".to_string()));
-                };
-
                 let new_coin = CoinString::from_parts(&coin.to_coin_id(), &new_ph, &amt);
                 debug!("the v1 redo move was for puzzle hash {new_ph:?}");
                 debug!("the v1 redo move turned into {new_coin:?}");
@@ -585,27 +579,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     "the v1 redo move turned into id {:?}",
                     new_coin.to_coin_id()
                 );
-
-                // let (ph_before_redo_move, ph_after_redo_move, new_state, new_move, new_tx) =
-                //     self.player_ch.on_chain_our_move(
-                //         env,
-                //         &move_data.game_id,
-                //         &move_data.move_data,
-                //         move_data.move_entropy.clone(),
-                //         &new_coin
-                //     )?;
-
-                // assert_eq!(ph_before_redo_move, new_ph);
-                // debug!("the v1 redo new_tx {new_tx:?}");
-                // let final_coin = CoinString::from_parts(&new_coin.to_coin_id(), &ph_after_redo_move, &amt);
-
-                // system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                //     name: Some("redo move from data".to_string()),
-                //     spends: vec![CoinSpend {
-                //         coin: new_coin,
-                //         bundle: new_tx.bundle.clone(),
-                //     }],
-                // })?;
 
                 system_interface.register_coin(
                     &new_coin,

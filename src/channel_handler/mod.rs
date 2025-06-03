@@ -1913,6 +1913,7 @@ impl ChannelHandler {
                                 rwo.outcome_puzzle_hash.clone(),
                                 Box::new(transaction.clone()),
                                 None,
+                                self.live_games[game_idx].get_amount(),
                             )));
                         }
                     }

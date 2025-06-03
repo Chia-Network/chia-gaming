@@ -475,6 +475,7 @@ pub enum GameAction {
         PuzzleHash,
         Box<RefereeOnChainTransaction>,
         Option<PotatoMoveCachedData>,
+        Amount,
     ),
     RedoAccept(
         GameID,
@@ -495,8 +496,8 @@ impl std::fmt::Debug for GameAction {
             GameAction::RedoMoveV0(gi, cs, ph, rt) => {
                 write!(formatter, "RedoMoveV0({gi:?},{cs:?},{ph:?},{rt:?})")
             }
-            GameAction::RedoMoveV1(cs, ph, rt, md) => {
-                write!(formatter, "RedoMoveV1({cs:?},{ph:?},{rt:?},{md:?})")
+            GameAction::RedoMoveV1(cs, ph, rt, md, amt) => {
+                write!(formatter, "RedoMoveV1({cs:?},{ph:?},{rt:?},{md:?},{amt:?})")
             }
             GameAction::RedoAccept(gi, cs, ph, rt) => {
                 write!(formatter, "RedoAccept({gi:?},{cs:?},{ph:?},{rt:?})")
