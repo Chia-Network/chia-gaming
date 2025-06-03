@@ -1934,12 +1934,6 @@ impl ChannelHandler {
             self.unroll.coin.state_number
         );
 
-        let new_ph = if let Some((_, ph, _)) = coin.to_parts() {
-            ph
-        } else {
-            return Err(Error::StrErr("malformed coin".to_string()));
-        };
-
         // We're on chain due to error.
         let mut cla = None;
         swap(&mut cla, &mut self.did_rewind);

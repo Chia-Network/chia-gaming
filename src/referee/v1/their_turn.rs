@@ -2,7 +2,6 @@ use std::borrow::Borrow;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::NodePtr;
 
 use log::debug;
 
@@ -30,8 +29,7 @@ use crate::referee::v1::types::{
     OnChainRefereeSolution, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
     REM_CONDITION_FIELDS,
 };
-use crate::referee::v1::{BrokenOutCoinSpendInfo, RefereeByTurn};
-use crate::referee::RefereeInterface;
+use crate::referee::v1::RefereeByTurn;
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
@@ -456,7 +454,7 @@ impl TheirTurnReferee {
         allocator: &mut AllocEncoder,
         details: &GameMoveDetails,
         state_number: usize,
-        coin: Option<&CoinString>,
+        _coin: Option<&CoinString>,
     ) -> Result<(Option<MyTurnReferee>, TheirTurnMoveResult), Error> {
         // Did we get a slash?
 
@@ -821,7 +819,6 @@ impl TheirTurnReferee {
         // My reward coin string is the coin that we'll make
         // after the transaction below has been spent so its
         // parent is the coin id of that coin.
-        let current_mover_share = self.get_our_current_share();
         let reward_amount = self.fixed.amount.clone();
         let mover_coin = IdentityCoinAndSolution {
             mover_coin_puzzle: self.fixed.my_identity.puzzle.clone(),

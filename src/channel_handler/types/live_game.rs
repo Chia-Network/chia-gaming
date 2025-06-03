@@ -177,7 +177,7 @@ impl LiveGame {
         allocator: &mut AllocEncoder,
         coin: &CoinString,
         want_ph: &PuzzleHash,
-        current_state: usize,
+        _current_state: usize,
     ) -> Result<RewindResult, Error> {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 

@@ -514,7 +514,7 @@ impl RefereeInterface for RefereeByTurn {
     fn suitable_redo(
         &self,
         allocator: &mut AllocEncoder,
-        coin: &CoinString,
+        _coin: &CoinString,
         ph: &PuzzleHash,
     ) -> Result<bool, Error> {
         let outcome = self.outcome_referee_puzzle_hash(allocator)?;
@@ -625,7 +625,7 @@ impl RefereeInterface for RefereeByTurn {
     fn rewind(
         &self,
         allocator: &mut AllocEncoder,
-        myself: Rc<dyn RefereeInterface>,
+        _myself: Rc<dyn RefereeInterface>,
         coin: &CoinString,
         puzzle_hash: &PuzzleHash,
     ) -> Result<RewindResult, Error> {

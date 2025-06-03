@@ -168,9 +168,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     Some("coin gives their turn"),
                 )?;
 
-                let mut is_my_turn = false;
                 if let Some(redo_data) = &redo {
-                    is_my_turn = matches!(
+                    let is_my_turn = matches!(
                         self.player_ch.game_is_my_turn(&redo_data.game_id),
                         Some(true)
                     );
@@ -179,7 +178,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                             "{} redo back at potato handler",
                             self.player_ch.is_initial_potato()
                         );
-                        let (old_ph, new_ph, state_number, move_result, transaction) =
+                        let (_old_ph, _new_ph, _state_number, _move_result, transaction) =
                             self.player_ch.on_chain_our_move(
                                 env,
                                 &redo_data.game_id,
@@ -187,9 +186,6 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                                 redo_data.move_entropy.clone(),
                                 &new_coin_id,
                             )?;
-
-                        let final_coin =
-                            CoinString::from_parts(&new_coin_id.to_coin_id(), &new_ph, &amt);
 
                         system_interface.spend_transaction_and_add_fee(&SpendBundle {
                             name: Some("redo move from data".to_string()),
@@ -524,7 +520,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 let current_coin = get_current_coin(&game_id)?;
                 self.do_on_chain_move(penv, &current_coin, game_id, readable_move, hash)
             }
-            GameAction::RedoMoveV0(game_id, coin, new_ph, tx) => {
+            GameAction::RedoMoveV0(_game_id, coin, new_ph, tx) => {
                 let (_env, system_interface) = penv.env();
                 self.have_potato = PotatoState::Absent;
                 system_interface.spend_transaction_and_add_fee(&SpendBundle {
@@ -548,8 +544,8 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 )?;
                 Ok(())
             }
-            GameAction::RedoMoveV1(coin, new_ph, tx, move_data) => {
-                let (env, system_interface) = penv.env();
+            GameAction::RedoMoveV1(coin, new_ph, tx, _move_data) => {
+                let (_, system_interface) = penv.env();
                 self.have_potato = PotatoState::Absent;
 
                 system_interface.spend_transaction_and_add_fee(&SpendBundle {

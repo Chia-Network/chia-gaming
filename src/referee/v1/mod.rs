@@ -10,10 +10,9 @@ use crate::channel_handler::types::{Evidence, ReadableMove};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinString, Error, Hash, Program,
+    AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program,
     Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend,
 };
-use crate::referee;
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
     TheirTurnCoinSpentResult, TheirTurnMoveResult,
@@ -289,9 +288,9 @@ impl RefereeInterface for RefereeByTurn {
 
     fn suitable_redo(
         &self,
-        allocator: &mut AllocEncoder,
-        coin: &CoinString,
-        ph: &PuzzleHash,
+        _allocator: &mut AllocEncoder,
+        _coin: &CoinString,
+        _ph: &PuzzleHash,
     ) -> Result<bool, Error> {
         Ok(!self.is_my_turn())
     }
@@ -463,7 +462,7 @@ impl RefereeInterface for RefereeByTurn {
     fn rewind(
         &self,
         allocator: &mut AllocEncoder,
-        myself: Rc<dyn RefereeInterface>,
+        _myself: Rc<dyn RefereeInterface>,
         coin: &CoinString,
         puzzle_hash: &PuzzleHash,
     ) -> Result<RewindResult, Error> {
@@ -536,7 +535,7 @@ impl RefereeInterface for RefereeByTurn {
             old_end = Some(end_hash.clone());
         }
 
-        for (i, old_referee) in ancestors.iter().enumerate() {
+        for old_referee in ancestors.iter() {
             let origin_puzzle_hash = old_referee.on_chain_referee_puzzle_hash(allocator)?;
             let destination_puzzle_hash = old_referee.outcome_referee_puzzle_hash(allocator)?;
 
@@ -547,7 +546,6 @@ impl RefereeInterface for RefereeByTurn {
             );
             if *puzzle_hash == origin_puzzle_hash {
                 // One farther down so we're in a their turn after the turn we took.
-                let state_number = old_referee.state_number();
                 let to_use = old_referee.clone();
                 let transaction = if !old_referee.is_my_turn() {
                     debug!("will redo: {}", to_use.state_number());
