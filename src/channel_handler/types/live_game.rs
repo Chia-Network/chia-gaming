@@ -40,7 +40,9 @@ impl LiveGame {
         }
     }
 
-    pub fn version(&self) -> usize { self.referee_maker.version() }
+    pub fn version(&self) -> usize {
+        self.referee_maker.version()
+    }
 
     pub fn is_my_turn(&self) -> bool {
         self.referee_maker.is_my_turn()
@@ -180,7 +182,9 @@ impl LiveGame {
         let referee_puzzle_hash = self.referee_maker.on_chain_referee_puzzle_hash(allocator)?;
 
         debug!("live game: current state is {referee_puzzle_hash:?} want {want_ph:?}");
-        let result = self.referee_maker.rewind(allocator, self.referee_maker.clone(), coin, want_ph)?;
+        let result =
+            self.referee_maker
+                .rewind(allocator, self.referee_maker.clone(), coin, want_ph)?;
         if let Some(new_ref) = result.new_referee.as_ref() {
             self.referee_maker = new_ref.clone();
             self.rewind_outcome = Some(result.clone());

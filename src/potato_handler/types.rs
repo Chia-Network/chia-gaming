@@ -237,11 +237,21 @@ pub trait WalletSpendInterface {
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
-    fn resync_move(&mut self, _id: &GameID, _state_number: usize, _is_my_turn: bool) -> Result<(), Error> {
+    fn resync_move(
+        &mut self,
+        _id: &GameID,
+        _state_number: usize,
+        _is_my_turn: bool,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
-    fn self_move(&mut self, _id: &GameID, _state_number: usize, _readable: &[u8]) -> Result<(), Error> {
+    fn self_move(
+        &mut self,
+        _id: &GameID,
+        _state_number: usize,
+        _readable: &[u8],
+    ) -> Result<(), Error> {
         Ok(())
     }
     fn opponent_moved(

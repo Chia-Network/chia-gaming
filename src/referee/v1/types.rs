@@ -327,7 +327,10 @@ impl InternalStateUpdateArgs {
             self.referee_args.validation_program.hash(),
             self.validation_program.hash()
         );
-        debug!("<X> state hash {:?}", self.state_update_args.state.sha256tree(allocator));
+        debug!(
+            "<X> state hash {:?}",
+            self.state_update_args.state.sha256tree(allocator)
+        );
         let validation_program_mod_hash = self.validation_program.hash();
         debug!("<X> validation_program_mod_hash {validation_program_mod_hash:?}");
         let predicted_info_hash = ValidationInfo::new_state_update(
