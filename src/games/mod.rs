@@ -15,7 +15,12 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         allocator,
         "clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex",
     )
-    .expect("should load");
+        .expect("should load");
+    let calpoker_factory_v1 = read_hex_puzzle(
+        allocator,
+        "clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex",
+    )
+        .expect("should load");
     let debug_game_raw =
         read_hex_puzzle(allocator, "clsp/test/debug_game.hex").expect("should load");
     let debug_game_node = CurriedProgram {
@@ -31,6 +36,13 @@ pub fn poker_collection(allocator: &mut AllocEncoder) -> BTreeMap<GameType, Game
         GameFactory {
             version: 0,
             program: calpoker_factory.to_program(),
+        },
+    );
+    game_type_map.insert(
+        GameType(b"ca1poker".to_vec()),
+        GameFactory {
+            version: 1,
+            program: calpoker_factory_v1.to_program(),
         },
     );
     game_type_map.insert(
