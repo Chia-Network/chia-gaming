@@ -1450,6 +1450,9 @@ pub fn add_debug_test_slash_shutdown(test_setup: &mut DebugGameSimSetup, wait: u
     test_setup
         .game_actions
         .push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+    test_setup
+        .game_actions
+        .push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 }
 
 pub fn setup_debug_test(
