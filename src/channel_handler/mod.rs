@@ -1091,13 +1091,15 @@ impl ChannelHandler {
         self.my_allocated_balance -= live_game.my_contribution.clone();
         self.their_allocated_balance -= live_game.their_contribution.clone();
 
-        let amount = live_game.get_our_current_share();
+        let our_share = live_game.get_our_current_share();
         let at_stake = live_game.get_amount();
 
+        debug!("{} send accept game my contrib {:?} their contrib {:?} our share {:?} at stake {:?}", self.is_initial_potato(), live_game.my_contribution, live_game.their_contribution, our_share, at_stake);
+
         self.my_out_of_game_balance -= live_game.my_contribution.clone();
-        self.my_out_of_game_balance += amount.clone();
+        self.my_out_of_game_balance += our_share.clone();
         self.their_out_of_game_balance -= live_game.their_contribution.clone();
-        self.their_out_of_game_balance += at_stake.clone() - amount.clone();
+        self.their_out_of_game_balance += at_stake.clone() - our_share.clone();
 
         debug!(
             "accept: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}",
@@ -1107,7 +1109,7 @@ impl ChannelHandler {
             self.their_out_of_game_balance
         );
 
-        self.update_cache_for_potato_send(if amount == Amount::default() {
+        self.update_cache_for_potato_send(if our_share == Amount::default() {
             None
         } else {
             Some(CachedPotatoRegenerateLastHop::PotatoAccept(Box::new(
@@ -1116,14 +1118,14 @@ impl ChannelHandler {
                     puzzle_hash: live_game.last_referee_puzzle_hash.clone(),
                     live_game,
                     at_stake_amount: at_stake,
-                    our_share_amount: amount.clone(),
+                    our_share_amount: our_share.clone(),
                 },
             )))
         });
 
         let signatures = self.update_cached_unroll_state(env)?;
 
-        Ok((signatures, amount))
+        Ok((signatures, our_share))
     }
 
     pub fn received_potato_accept<R: Rng>(

@@ -578,7 +578,7 @@ impl RefereeInterface for RefereeByTurn {
 
     fn get_our_current_share(&self) -> Amount {
         let args = self.spend_this_coin();
-        if self.processing_my_turn() {
+        if self.is_my_turn() {
             args.game_move.basic.mover_share.clone()
         } else {
             self.fixed().amount.clone() - args.game_move.basic.mover_share.clone()

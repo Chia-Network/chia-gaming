@@ -1427,6 +1427,19 @@ impl DebugGameTestMove {
     }
 }
 
+pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
+    test_setup.game_actions.push(GameAction::Accept(0));
+    test_setup.game_actions.push(GameAction::WaitBlocks(wait, 0));
+    test_setup.game_actions.push(GameAction::WaitBlocks(wait, 1));
+    test_setup.game_actions.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+}
+
+pub fn add_debug_test_slash_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
+    test_setup.game_actions.push(GameAction::WaitBlocks(wait, 0));
+    test_setup.game_actions.push(GameAction::WaitBlocks(wait, 1));
+    test_setup.game_actions.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+}
+
 pub fn setup_debug_test(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
@@ -1486,11 +1499,6 @@ pub fn setup_debug_test(
     debug!("alice mover puzzle hash is {:?}", identities[0].puzzle_hash);
     debug!("bob   mover puzzle hash is {:?}", identities[0].puzzle_hash);
 
-    game_actions.push(GameAction::WaitBlocks(5, 0));
-    game_actions.push(GameAction::WaitBlocks(5, 1));
-    game_actions.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
-    game_actions.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-
     Ok(DebugGameSimSetup {
         private_keys,
         identities,
@@ -1514,7 +1522,8 @@ fn test_referee_play_debug_game_alice_slash() {
         DebugGameTestMove::new(150, 3),
     ];
 
-    let sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+    let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+    add_debug_test_slash_shutdown(&mut sim_setup, 5);
     let outcome = run_game_container_with_action_list(
         &mut allocator,
         &mut rng,
@@ -1545,7 +1554,8 @@ fn test_referee_play_debug_game_bob_slash() {
         DebugGameTestMove::new(49, 7),
     ];
 
-    let sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+    let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+    add_debug_test_slash_shutdown(&mut sim_setup, 5);
     let outcome = run_game_container_with_action_list(
         &mut allocator,
         &mut rng,
@@ -1555,9 +1565,78 @@ fn test_referee_play_debug_game_bob_slash() {
         sim_setup.args_program.clone(),
         &sim_setup.game_actions,
     )
-    .expect("should finish");
+        .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // Alice was slashable so bob gets the money.
     assert_eq!(p1_balance + 200, p2_balance);
+}
+
+#[test]
+#[cfg(feature = "sim-tests")]
+fn test_debug_game_normal_with_mover_share_alice() {
+    let mut allocator = AllocEncoder::new();
+    let seed_data: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed_data);
+    let moves = [
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(50, 0),
+        DebugGameTestMove::new(150, 0),
+        DebugGameTestMove::new(49, 0),
+    ];
+
+    let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+    add_debug_test_accept_shutdown(&mut sim_setup, 20);
+    let outcome = run_game_container_with_action_list(
+        &mut allocator,
+        &mut rng,
+        sim_setup.private_keys.clone(),
+        &sim_setup.identities,
+        b"debug",
+        sim_setup.args_program.clone(),
+        &sim_setup.game_actions,
+    )
+        .expect("should finish");
+
+    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    // Alice assigned bob 49, so alice is greater.
+    let amount_diff = 151 - 49;
+    debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
+    assert_eq!(p1_balance, p2_balance + amount_diff);
+}
+
+#[test]
+#[cfg(feature = "sim-tests")]
+fn test_debug_game_normal_with_mover_share_bob() {
+    let mut allocator = AllocEncoder::new();
+    let seed_data: [u8; 32] = [0; 32];
+    let mut rng = ChaCha8Rng::from_seed(seed_data);
+    let moves = [
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(0, 0),
+        DebugGameTestMove::new(50, 0),
+        DebugGameTestMove::new(150, 0),
+        DebugGameTestMove::new(49, 0),
+        DebugGameTestMove::new(49, 0),
+    ];
+
+    let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+    add_debug_test_accept_shutdown(&mut sim_setup, 20);
+    let outcome = run_game_container_with_action_list(
+        &mut allocator,
+        &mut rng,
+        sim_setup.private_keys.clone(),
+        &sim_setup.identities,
+        b"debug",
+        sim_setup.args_program.clone(),
+        &sim_setup.game_actions,
+    )
+        .expect("should finish");
+
+    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    // Alice assigned bob 49, so alice is greater.
+    let amount_diff = 151 - 49;
+    debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
+    assert_eq!(p1_balance + amount_diff, p2_balance);
 }
