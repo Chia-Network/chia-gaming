@@ -30,7 +30,6 @@ impl LiveGame {
         my_contribution: Amount,
         their_contribution: Amount,
     ) -> LiveGame {
-        debug!("new live game: my_contrib {my_contribution:?} vs {their_contribution:?}");
         LiveGame {
             game_id,
             last_referee_puzzle_hash,
