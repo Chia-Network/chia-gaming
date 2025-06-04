@@ -1617,7 +1617,11 @@ impl PotatoHandler {
             return Ok(true);
         }
 
-        if matches!(&self.handshake_state, HandshakeState::OnChainWaitingForUnrollConditions(_) | HandshakeState::OnChainWaitingForUnrollSpend(_)) {
+        if matches!(
+            &self.handshake_state,
+            HandshakeState::OnChainWaitingForUnrollConditions(_)
+                | HandshakeState::OnChainWaitingForUnrollSpend(_)
+        ) {
             self.game_action_queue.push_back(action);
             return Ok(false);
         }

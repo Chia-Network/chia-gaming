@@ -1429,15 +1429,27 @@ impl DebugGameTestMove {
 
 pub fn add_debug_test_accept_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
     test_setup.game_actions.push(GameAction::Accept(0));
-    test_setup.game_actions.push(GameAction::WaitBlocks(wait, 0));
-    test_setup.game_actions.push(GameAction::WaitBlocks(wait, 1));
-    test_setup.game_actions.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+    test_setup
+        .game_actions
+        .push(GameAction::WaitBlocks(wait, 0));
+    test_setup
+        .game_actions
+        .push(GameAction::WaitBlocks(wait, 1));
+    test_setup
+        .game_actions
+        .push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 }
 
 pub fn add_debug_test_slash_shutdown(test_setup: &mut DebugGameSimSetup, wait: usize) {
-    test_setup.game_actions.push(GameAction::WaitBlocks(wait, 0));
-    test_setup.game_actions.push(GameAction::WaitBlocks(wait, 1));
-    test_setup.game_actions.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+    test_setup
+        .game_actions
+        .push(GameAction::WaitBlocks(wait, 0));
+    test_setup
+        .game_actions
+        .push(GameAction::WaitBlocks(wait, 1));
+    test_setup
+        .game_actions
+        .push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
 }
 
 pub fn setup_debug_test(
@@ -1565,7 +1577,7 @@ fn test_referee_play_debug_game_bob_slash() {
         sim_setup.args_program.clone(),
         &sim_setup.game_actions,
     )
-        .expect("should finish");
+    .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // Alice was slashable so bob gets the money.
@@ -1597,7 +1609,7 @@ fn test_debug_game_normal_with_mover_share_alice() {
         sim_setup.args_program.clone(),
         &sim_setup.game_actions,
     )
-        .expect("should finish");
+    .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // Alice assigned bob 49, so alice is greater.
@@ -1632,7 +1644,7 @@ fn test_debug_game_normal_with_mover_share_bob() {
         sim_setup.args_program.clone(),
         &sim_setup.game_actions,
     )
-        .expect("should finish");
+    .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // Alice assigned bob 49, so alice is greater.

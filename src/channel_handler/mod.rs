@@ -1094,7 +1094,14 @@ impl ChannelHandler {
         let our_share = live_game.get_our_current_share();
         let at_stake = live_game.get_amount();
 
-        debug!("{} send accept game my contrib {:?} their contrib {:?} our share {:?} at stake {:?}", self.is_initial_potato(), live_game.my_contribution, live_game.their_contribution, our_share, at_stake);
+        debug!(
+            "{} send accept game my contrib {:?} their contrib {:?} our share {:?} at stake {:?}",
+            self.is_initial_potato(),
+            live_game.my_contribution,
+            live_game.their_contribution,
+            our_share,
+            at_stake
+        );
 
         self.my_out_of_game_balance -= live_game.my_contribution.clone();
         self.my_out_of_game_balance += our_share.clone();
