@@ -1262,8 +1262,8 @@ fn sim_test_with_peer_container_off_chain_complete() {
     let mut moves = test_moves_1(&mut allocator, false).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
     let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -1294,8 +1294,8 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     } else {
         panic!("no move 1 to replace");
     }
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     debug!("outcome 0 {:?}", outcome.local_uis[0].opponent_moves);
     debug!("outcome 1 {:?}", outcome.local_uis[1].opponent_moves);
@@ -1326,8 +1326,8 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
         GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
     ];
 
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     assert_eq!(p2_balance, p1_balance + 200);
@@ -1343,8 +1343,8 @@ fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
     moves.push(GameAction::WaitBlocks(20, 1));
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
     let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -1374,8 +1374,8 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     assert_eq!(p1_balance, p2_balance + 200);
@@ -1404,8 +1404,8 @@ fn sim_test_with_peer_container_piss_off_peer_slash() {
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // p1 (index 0) won the money because p2 (index 1) cheated by choosing 5 cards.
@@ -1673,8 +1673,8 @@ fn test_calpoker_v1_smoke() {
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves, true).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+        .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     assert_eq!(p2_balance, p1_balance + 200);

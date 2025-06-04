@@ -85,21 +85,17 @@ pub fn test_moves_1(allocator: &mut AllocEncoder, v1: bool) -> [GameAction; 5] {
     let bob_word = allocator
         .encode_atom(clvm_traits::Atom::Borrowed(b"0bob456789abcdef"))
         .expect("should work");
-    let alice_picks =
-        if v1 {
-            allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0x55]))
-        } else {
-            [0, 1, 0, 1, 0, 1, 0, 1]
-                .to_clvm(allocator)
-        }
+    let alice_picks = if v1 {
+        allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0x55]))
+    } else {
+        [0, 1, 0, 1, 0, 1, 0, 1].to_clvm(allocator)
+    }
     .expect("should work");
-    let bob_picks =
-        if v1 {
-            allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0xaa]))
-        } else {
-            [1, 0, 1, 0, 1, 0, 1, 0]
-                .to_clvm(allocator)
-        }
+    let bob_picks = if v1 {
+        allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0xaa]))
+    } else {
+        [1, 0, 1, 0, 1, 0, 1, 0].to_clvm(allocator)
+    }
     .expect("should work");
     let win_move_200 = 200.to_clvm(allocator).expect("should work");
 
