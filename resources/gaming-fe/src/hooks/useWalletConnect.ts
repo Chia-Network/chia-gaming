@@ -10,7 +10,7 @@ interface WalletState {
 }
 
 export const useWalletConnect = () => {
-  const [client, setClient] = useState<SignClient | null>(null);
+  const [client, setClient] = useState<any | null>(null);
   const [state, setState] = useState<WalletState>({
     isConnected: false
   });

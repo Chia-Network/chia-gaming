@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { JSX, useState } from 'react';
 import { useLobby } from '../hooks/useLobby';
 import { useWalletConnect } from '../hooks/useWalletConnect';
-import { GameType, MatchmakingPreferences } from '../types/lobby';
+import { GameType, MatchmakingPreferences, Room } from '../types/lobby';
 import {
   Box,
   Button,
@@ -23,6 +23,16 @@ import {
   IconButton
 } from '@mui/material';
 import { Send as SendIcon, ExitToApp as ExitIcon } from '@mui/icons-material';
+
+class GridComponent extends React.Component {
+    render() {
+        return <div/>;
+    }
+}
+
+function component(c: any): React.ElementType<any, any> {
+    return c;
+}
 
 const Lobby: React.FC = () => {
   const { isConnected, connect, disconnect } = useWalletConnect();
@@ -48,7 +58,8 @@ const Lobby: React.FC = () => {
     const preferences: MatchmakingPreferences = {
       gameType: selectedGame,
       minPlayers,
-      maxPlayers
+      maxPlayers,
+      parameters: {}
     };
     joinLobby(preferences);
   };
@@ -57,7 +68,8 @@ const Lobby: React.FC = () => {
     const preferences: MatchmakingPreferences = {
       gameType: selectedGame,
       minPlayers,
-      maxPlayers
+      maxPlayers,
+      parameters: {}
     };
     createRoom(preferences);
   };
@@ -120,7 +132,7 @@ const Lobby: React.FC = () => {
       )}
 
       <Grid container spacing={3}>
-        <Grid item xs={12} md={6}>
+        <Grid component={component(GridComponent)} xs={12} md={6}>
           <Paper sx={{ p: 3 }}>
             <Typography variant="h6" gutterBottom>
               Lobby Settings
@@ -190,7 +202,7 @@ const Lobby: React.FC = () => {
               Active Rooms
             </Typography>
             <List>
-              {rooms.map((room) => (
+              {rooms.map((room: Room) => (
                 <React.Fragment key={room.id}>
                   <ListItem
                     secondaryAction={
@@ -247,7 +259,7 @@ const Lobby: React.FC = () => {
                         }}
                       />
                     </ListItemIcon>
-                    <ListItemText primary={player.address} />
+                    <ListItemText primary={player.walletAddress} />
                   </ListItem>
                 ))}
               </List>

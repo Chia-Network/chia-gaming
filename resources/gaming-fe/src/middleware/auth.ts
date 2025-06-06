@@ -2,7 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { AppError, ErrorCodes } from '../types/errors';
 import { SignClient } from '@walletconnect/sign-client';
 import { SessionTypes } from '@walletconnect/types';
-import { verifyMessage } from '@chia-network/chia-utils';
+// @ts-ignore
+import { verifyMessage } from 'chia-utils';
 
 declare global {
   namespace Express {
@@ -13,7 +14,11 @@ declare global {
   }
 }
 
-let signClient: typeof SignClient;
+interface TopicObj {
+    topic: string;
+}
+
+let signClient: any; // typeof SignClient;
 
 export const initWalletConnect = async () => {
   signClient = await SignClient.init({
@@ -26,10 +31,10 @@ export const initWalletConnect = async () => {
     }
   });
 
-  signClient.on('session_delete', async ({ topic }) => {
-    const session = await signClient.session.get(topic);
+    signClient.on('session_delete', async (topicObj: TopicObj) => {
+    const session = await signClient.session.get(topicObj.topic);
     if (session) {
-      await signClient.session.delete(topic, {
+      await signClient.session.delete(topicObj.topic, {
         reason: {
           code: 6000,
           message: 'Session expired'

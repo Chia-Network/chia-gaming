@@ -40,8 +40,9 @@ export class GameService {
       roomId: room.id,
       gameType: room.gameType,
       players: room.players,
-      startedAt: new Date(),
-      status: 'in_progress'
+      startedAt: Date.now(),
+      status: 'in_progress',
+      parameters: []
     };
 
     this.activeSessions.set(session.id, session);

@@ -1,4 +1,5 @@
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react";
+import { waitFor } from "@testing-library/dom";
 import useGameSocket from "./useGameSocket";
 import io from "socket.io-client";
 
@@ -17,7 +18,7 @@ describe("useGameSocket Hook", () => {
       disconnect: jest.fn(),
     };
 
-    (io as jest.Mock).mockReturnValue(mockSocket);
+    (io as any).mockReturnValue(mockSocket);
   });
 
   afterEach(() => {

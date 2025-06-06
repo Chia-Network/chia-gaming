@@ -16,6 +16,9 @@ import { useLobbySocket } from '../hooks/useLobbyConnection';
 
 interface LobbyComponentProps {
   alias: string;
+  wagerAmount: string;
+  setWagerAmount: (value: string) => void;
+  handleFindOpponent: (value: string) => void;
 }
 
 const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
@@ -82,7 +85,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
         <Box mb={1} height={200} overflow="auto" border="1px solid #ccc" p={1}>
           {messages.map((m, i) => (
             <Typography key={i} variant="body2">
-              <strong>{m.alias}:</strong> {m.content}
+              <strong>{m.alias}:</strong> {m.content.text}
             </Typography>
           ))}
         </Box>

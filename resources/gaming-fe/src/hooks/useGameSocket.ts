@@ -59,7 +59,8 @@ const useGameSocket = (): UseGameSocketReturn => {
 
   useEffect(() => {
     if (!socketRef.current) {
-      socketRef.current = io(SOCKET_URL);
+      const socketResult: any = io(SOCKET_URL);
+      socketRef.current = socketResult;
     }
     const socket = socketRef.current;
 
@@ -114,14 +115,14 @@ const useGameSocket = (): UseGameSocketReturn => {
       }
     };
 
-    socket.on("waiting", handleWaiting);
-    socket.on("startGame", handleStartGame);
-    socket.on("action", handleAction);
+    socket?.on("waiting", handleWaiting);
+    socket?.on("startGame", handleStartGame);
+    socket?.on("action", handleAction);
 
     return () => {
-      socket.off("waiting", handleWaiting);
-      socket.off("startGame", handleStartGame);
-      socket.off("action", handleAction);
+      socket?.off("waiting", handleWaiting);
+      socket?.off("startGame", handleStartGame);
+      socket?.off("action", handleAction);
     };
   }, []);
 

@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import io, { Socket } from 'socket.io-client';
 import axios from 'axios';
 
+interface ChatMsgData { text: string; sender: string; }
+interface ChatMsg { alias: string; from: string; message: ChatMsgData; }
 interface Player { id: string; game: string; parameters: any; }
 interface Room  { token: string; host: Player; joiner?: Player; createdAt: number; expiresAt: number; }
 
@@ -10,8 +12,8 @@ const LOBBY_URL = 'http://localhost:3000';
 export function useLobbySocket(alias: string) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [messages, setMessages] = useState<{ alias: string; content: string }[]>([]);
-  const socketRef = useRef<Socket>();
+  const [messages, setMessages] = useState<{ alias: string; content: ChatMsgData }[]>([]);
+  const socketRef = useRef<Socket>(undefined);
 
   useEffect(() => {
     const socket = io(LOBBY_URL);
@@ -28,8 +30,10 @@ export function useLobbySocket(alias: string) {
         return Array.from(map.values());
       });
     });
-    socket.on('chat_message', ({ alias: from, message }) => {
-      setMessages(m => [...m, { alias: from, content: message }]);
+      socket.on('chat_message', (chatMsg: ChatMsg) => {
+      const newObject: any = { content: chatMsg.message };
+      newObject[chatMsg.alias] = chatMsg.from;
+      setMessages(m => [...m, newObject]);
     });
 
     return () => {

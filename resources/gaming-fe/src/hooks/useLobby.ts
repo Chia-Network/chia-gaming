@@ -8,14 +8,16 @@ interface LobbyState {
   rooms: Room[];
   currentRoom?: Room;
   error?: string;
+  status?: string;
 }
 
 export const useLobby = () => {
   const [socket, setSocket] = useState<Socket | null>(null);
-  const [state, setState] = useState<LobbyState>({
-    players: [],
-    rooms: []
-  });
+  const emptyState: LobbyState = {
+      players: [],
+      rooms: []
+  };
+  const [state, setState] = useState<LobbyState>(emptyState);
   const { isConnected, address, signMessage } = useWalletConnect();
 
   const connect = useCallback(() => {
@@ -26,11 +28,13 @@ export const useLobby = () => {
     });
 
     newSocket.on('lobby_update', (players: Player[]) => {
-      setState(prev => ({ ...prev, players }));
+      const append_list: any = (prev: Player[]) => ({ ...prev, players });
+      setState(append_list);
     });
 
     newSocket.on('room_update', (rooms: Room[]) => {
-      setState(prev => ({ ...prev, rooms }));
+      const append_list: any = (prev: Room[]) => ({ ...prev, rooms });
+      setState(append_list);
     });
 
     newSocket.on('match_found', (room: Room) => {
@@ -126,6 +130,8 @@ export const useLobby = () => {
     }
   }, [isConnected, connect]);
 
+  const chat: string[] = [];
+
   return {
     ...state,
     joinLobby,
@@ -133,6 +139,7 @@ export const useLobby = () => {
     createRoom,
     joinRoom,
     leaveRoom,
+    chat,
     sendChatMessage
   };
 }; 

@@ -30,10 +30,12 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
     socket.on('join_lobby', (preferences: MatchmakingPreferences) => {
       const player: Player = {
         id: socket.id,
+        name: "player",
         gameType: preferences.gameType,
         parameters: preferences.parameters,
         walletAddress: '', // TODO: Get from auth
-        lastSeen: Date.now(),
+        joinedAt: Date.now(),
+        lastActive: Date.now(),
         status: 'waiting'
       };
 

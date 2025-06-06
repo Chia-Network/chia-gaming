@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Player, Room, GameType, GameSession, MatchmakingPreferences } from '../types/lobby';
+import { Player, Room, GameType, GameTypes, GameSession, MatchmakingPreferences } from '../types/lobby';
 
 const ROOM_TTL = 10 * 60 * 1000;
 const CLEANUP_INTERVAL = 60 * 1000;
@@ -24,7 +24,7 @@ export const shutdownLobby = () => {
 export const addPlayer = (player: Omit<Player, 'lastSeen' | 'status'>): Player => {
   const newPlayer: Player = {
     ...player,
-    lastSeen: Date.now(),
+    lastActive: Date.now(),
     status: 'waiting'
   };
   players.set(player.id, newPlayer);
@@ -39,21 +39,24 @@ export const updatePlayerStatus = (playerId: string, status: Player['status']): 
   const player = players.get(playerId);
   if (!player) return false;
   player.status = status;
-  player.lastSeen = Date.now();
+  player.lastActive = Date.now();
   return true;
 };
 
 export const createRoom = (host: Player, preferences: MatchmakingPreferences): Room => {
   const room: Room = {
     id: uuidv4(),
+    name: "room",
+    minPlayers: 0,
     gameType: preferences.gameType,
     parameters: preferences.parameters,
     host,
     players: [host],
-    createdAt: Date.now(),
+    createdAt: new Date(Date.now()),
     expiresAt: Date.now() + ROOM_TTL,
     status: 'waiting',
-    maxPlayers: getMaxPlayers(preferences.gameType, preferences.parameters)
+    maxPlayers: getMaxPlayers(preferences.gameType, preferences.parameters),
+    chat: []
   };
   rooms.set(room.id, room);
   return room;
@@ -115,7 +118,7 @@ const startGameSession = (room: Room): GameSession => {
     players: [...room.players],
     gameType: room.gameType,
     parameters: room.parameters,
-    startTime: Date.now(),
+    startedAt: Date.now(),
     status: 'active'
   };
   gameSessions.set(session.id, session);
@@ -139,10 +142,10 @@ export const endGameSession = (sessionId: string, winnerId?: string): GameSessio
 
 const getMaxPlayers = (gameType: GameType, parameters: any): number => {
   switch (gameType) {
-    case GameType.CALIFORNIA_POKER:
-    case GameType.EXOTIC_POKER:
+    case GameTypes.CALIFORNIA_POKER:
+    case GameTypes.EXOTIC_POKER:
       return parameters.maxPlayers;
-    case GameType.KRUNK:
+    case GameTypes.KRUNK:
       return 2;
     default:
       return 2;
@@ -163,7 +166,7 @@ const cleanup = () => {
   }
 
   for (const [playerId, player] of players.entries()) {
-    if (now - player.lastSeen > ROOM_TTL) {
+    if (now - player.lastActive > ROOM_TTL) {
       players.delete(playerId);
     }
   }

@@ -24,7 +24,7 @@ interface GameState {
   currentBet: number;
   dealerIndex: number;
   currentPlayerIndex: number;
-  phase: '';
+  phase: string;
   deck: Card[];
   lastAction?: {
     playerId: string;

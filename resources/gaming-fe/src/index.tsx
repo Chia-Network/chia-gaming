@@ -1,14 +1,15 @@
 import { CssBaseline } from '@mui/material';
 import React from 'react';
-import ReactDOM from 'react-dom/client';
 import App from './App';
+import ReactDOM from 'react-dom';
 
 import { CHAIN_ID, PROJECT_ID, RELAY_URL } from './constants/env';
 import { JsonRpcProvider } from './hooks/JsonRpcContext';
 import { WalletConnectProvider } from './hooks/WalletConnectContext';
 
 const container = document.getElementById('root');
-const root = ReactDOM.createRoot(container!);
+const reactDom: any = ReactDOM;
+const root = reactDom.createRoot(container!);
 
 root.render(
   <React.StrictMode>
