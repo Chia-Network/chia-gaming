@@ -301,9 +301,11 @@ fn do_first_game_start<'a, 'b: 'a>(
     env: &'b mut ChannelHandlerEnv<'a, ChaCha8Rng>,
     peer: &'b mut SimulatedPeer,
     handler: &'b mut PotatoHandler,
+    v1: bool,
 ) -> Vec<GameID> {
     let mut penv = SimulatedPeerSystem::new(env, peer);
     let nil = Program::from_hex("80").unwrap();
+    let type_id = if v1 { b"ca1poker" } else { b"calpoker" };
 
     let game_ids: Vec<GameID> = handler
         .start_games(
@@ -312,7 +314,7 @@ fn do_first_game_start<'a, 'b: 'a>(
             &GameStart {
                 amount: Amount::new(200),
                 my_contribution: Amount::new(100),
-                game_type: GameType(b"calpoker".to_vec()),
+                game_type: GameType(type_id.to_vec()),
                 timeout: Timeout::new(25),
                 my_turn: true,
                 parameters: nil.clone(),
@@ -327,9 +329,11 @@ fn do_second_game_start<'a, 'b: 'a>(
     env: &'b mut ChannelHandlerEnv<'a, ChaCha8Rng>,
     peer: &'b mut SimulatedPeer,
     handler: &'b mut PotatoHandler,
+    v1: bool,
 ) {
     let mut penv = SimulatedPeerSystem::new(env, peer);
     let nil = Program::from_hex("80").unwrap();
+    let type_id = if v1 { b"ca1poker" } else { b"calpoker" };
 
     handler
         .start_games(
@@ -338,7 +342,7 @@ fn do_second_game_start<'a, 'b: 'a>(
             &GameStart {
                 amount: Amount::new(200),
                 my_contribution: Amount::new(100),
-                game_type: GameType(b"calpoker".to_vec()),
+                game_type: GameType(type_id.to_vec()),
                 timeout: Timeout::new(25),
                 my_turn: false,
                 parameters: nil.clone(),
@@ -481,6 +485,7 @@ fn run_calpoker_test_with_action_list(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
     moves: &[GameAction],
+    v1: bool,
 ) {
     let game_type_map = poker_collection(allocator);
 
@@ -594,12 +599,12 @@ fn run_calpoker_test_with_action_list(
     // Start game
     let game_ids = {
         let mut env = channel_handler_env(allocator, rng).expect("should work");
-        do_first_game_start(&mut env, &mut peers[1], &mut handlers[1])
+        do_first_game_start(&mut env, &mut peers[1], &mut handlers[1], v1)
     };
 
     {
         let mut env = channel_handler_env(allocator, rng).expect("should work");
-        do_second_game_start(&mut env, &mut peers[0], &mut handlers[0]);
+        do_second_game_start(&mut env, &mut peers[0], &mut handlers[0], v1);
     }
 
     quiesce(rng, allocator, Amount::new(200), &mut handlers, &mut peers).expect("should work");
@@ -634,8 +639,8 @@ fn test_peer_in_sim() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
 
     // Play moves
-    let moves = test_moves_1(&mut allocator);
-    run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves);
+    let moves = test_moves_1(&mut allocator, false);
+    run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, false);
 }
 
 #[derive(Default)]
@@ -1120,6 +1125,7 @@ fn run_game_container_with_action_list(
 fn run_calpoker_container_with_action_list(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
+    v1: bool,
 ) -> Result<GameRunOutcome, Error> {
     let seed_data: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed_data);
@@ -1127,6 +1133,7 @@ fn run_calpoker_container_with_action_list(
     let id1 = ChiaIdentity::new(allocator, pk1).expect("ok");
     let pk2: PrivateKey = rng.gen();
     let id2 = ChiaIdentity::new(allocator, pk2).expect("ok");
+    let type_id = if v1 { b"ca1poker" } else { b"calpoker" };
 
     let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
@@ -1135,7 +1142,7 @@ fn run_calpoker_container_with_action_list(
         &mut rng,
         private_keys,
         &identities,
-        b"calpoker",
+        type_id,
         &Program::from_hex("80")?,
         moves,
         None,
@@ -1155,7 +1162,7 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
-    let mut moves = test_moves_1(&mut allocator).to_vec();
+    let mut moves = test_moves_1(&mut allocator, false).to_vec();
     if let GameAction::Move(player, readable, _) = moves[3].clone() {
         moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
     } else {
@@ -1252,11 +1259,11 @@ fn check_calpoker_economic_result(
 fn sim_test_with_peer_container_off_chain_complete() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator).to_vec();
+    let mut moves = test_moves_1(&mut allocator, false).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
     let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -1277,7 +1284,7 @@ fn sim_test_with_peer_container_off_chain_complete() {
 fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator).to_vec();
+    let mut moves = test_moves_1(&mut allocator, false).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::Accept(1));
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
@@ -1287,8 +1294,8 @@ fn sim_test_with_peer_container_piss_off_peer_complete() {
     } else {
         panic!("no move 1 to replace");
     }
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     debug!("outcome 0 {:?}", outcome.local_uis[0].opponent_moves);
     debug!("outcome 1 {:?}", outcome.local_uis[1].opponent_moves);
@@ -1319,8 +1326,8 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
         GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
     ];
 
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     assert_eq!(p2_balance, p1_balance + 200);
@@ -1330,14 +1337,14 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
 fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator).to_vec();
+    let mut moves = test_moves_1(&mut allocator, false).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::GoOnChain(1));
     moves.push(GameAction::WaitBlocks(20, 1));
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
     let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
@@ -1358,7 +1365,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
 fn sim_test_with_peer_container_piss_off_peer_timeout() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator).to_vec();
+    let mut moves = test_moves_1(&mut allocator, false).to_vec();
     let moves_len = moves.len();
     moves.remove(moves_len - 2);
     moves.remove(moves_len - 2);
@@ -1367,8 +1374,8 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     assert_eq!(p1_balance, p2_balance + 200);
@@ -1378,7 +1385,7 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
 fn sim_test_with_peer_container_piss_off_peer_slash() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator).to_vec();
+    let mut moves = test_moves_1(&mut allocator, false).to_vec();
     // p2 chooses 5 cards.
     let move_3_node = [1, 0, 1, 0, 1, 0, 1, 1]
         .to_clvm(&mut allocator)
@@ -1397,8 +1404,8 @@ fn sim_test_with_peer_container_piss_off_peer_slash() {
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
-    let outcome =
-        run_calpoker_container_with_action_list(&mut allocator, &moves).expect("should finish");
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+        .expect("should finish");
 
     let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
     // p1 (index 0) won the money because p2 (index 1) cheated by choosing 5 cards.
@@ -1654,4 +1661,21 @@ fn test_debug_game_normal_with_mover_share_bob() {
     let amount_diff = 151 - 49;
     debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
     assert_eq!(p1_balance + amount_diff, p2_balance);
+}
+
+#[test]
+#[cfg(feature = "sim-tests")]
+fn test_calpoker_v1_smoke() {
+    let mut allocator = AllocEncoder::new();
+
+    // Play moves
+    let mut moves = test_moves_1(&mut allocator, true).to_vec();
+    moves.push(GameAction::Accept(0));
+    moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
+
+    let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+        .expect("should finish");
+
+    let (p1_balance, p2_balance) = get_balances_from_outcome(&outcome).expect("should work");
+    assert_eq!(p2_balance, p1_balance + 200);
 }
