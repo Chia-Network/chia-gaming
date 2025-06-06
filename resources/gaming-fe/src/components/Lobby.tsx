@@ -24,16 +24,6 @@ import {
 } from '@mui/material';
 import { Send as SendIcon, ExitToApp as ExitIcon } from '@mui/icons-material';
 
-class GridComponent extends React.Component {
-    render() {
-        return <div/>;
-    }
-}
-
-function component(c: any): React.ElementType<any, any> {
-    return c;
-}
-
 const Lobby: React.FC = () => {
   const { isConnected, connect, disconnect } = useWalletConnect();
   const {
@@ -132,7 +122,7 @@ const Lobby: React.FC = () => {
       )}
 
       <Grid container spacing={3}>
-        <Grid component={component(GridComponent)} xs={12} md={6}>
+        <Grid component="div" xs={12} md={6}>
           <Paper sx={{ p: 3 }}>
             <Typography variant="h6" gutterBottom>
               Lobby Settings
