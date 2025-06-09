@@ -65,7 +65,7 @@ const Game: React.FC = () => {
   if (gameState === "idle") {
     return (
       <LobbyScreen
-        alias="lobbyScreen"
+        alias="Lobby Screen"
         wagerAmount={wagerAmount}
         setWagerAmount={setWagerAmount}
         handleFindOpponent={handleFindOpponent}
