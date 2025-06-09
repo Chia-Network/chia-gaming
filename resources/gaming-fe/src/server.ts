@@ -12,7 +12,26 @@ config();
 const app = (express as any)();
 const httpServer = createServer(app);
 
-app.use(helmet());
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            "connect-src": [
+                "ws://localhost:*",
+                "wss://localhost:*",
+                "http://localhost:*",
+                "https://localhost:*",
+                "https://explorer-api.walletconnect.com"
+            ],
+            "default-src": [
+                "ws://localhost:*",
+                "wss://localhost:*",
+                "http://localhost:*",
+                "https://localhost:*"
+            ],
+            "style-src": ["'self'", "'unsafe-inline'"]
+        }
+    }
+}));
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:3000',
   methods: ['GET', 'POST']

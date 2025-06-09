@@ -76,7 +76,7 @@ export class ChatService {
     }
 
     room.players.add(player.id);
-    
+
     let playerRooms = this.playerRooms.get(player.id);
     if (!playerRooms) {
       playerRooms = new Set();
@@ -264,4 +264,4 @@ export class ChatService {
   public clearPlayerMessages(playerId: string): void {
     this.lastMessageTime.delete(playerId);
   }
-} 
+}
