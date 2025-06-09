@@ -1,7 +1,10 @@
+import EventEmitter from "events"
+import TypedEmitter from "typed-emitter"
+
 import { Request, Response, NextFunction } from 'express';
 import { AppError, ErrorCodes } from '../types/errors';
 import { SignClient } from '@walletconnect/sign-client';
-import { SessionTypes } from '@walletconnect/types';
+import { SessionTypes, ISignClient } from '@walletconnect/types';
 // @ts-ignore
 import { verifyMessage } from 'chia-utils';
 
@@ -14,11 +17,16 @@ declare global {
   }
 }
 
-interface TopicObj {
-    topic: string;
-}
+interface SessionDelete { id: number, topic: string; }
 
-let signClient: any; // typeof SignClient;
+type SignClientEvents = {
+    session_delete: (t: SessionDelete) => void,
+};
+
+let signClient: ISignClient;
+function emitter(sc: ISignClient): TypedEmitter<SignClientEvents> {
+    return (sc as any);
+}
 
 export const initWalletConnect = async () => {
   signClient = await SignClient.init({
@@ -31,14 +39,12 @@ export const initWalletConnect = async () => {
     }
   });
 
-    signClient.on('session_delete', async (topicObj: TopicObj) => {
-    const session = await signClient.session.get(topicObj.topic);
+  emitter(signClient).on('session_delete', async (t: SessionDelete) => {
+    const session = await signClient.session.get(t.topic);
     if (session) {
-      await signClient.session.delete(topicObj.topic, {
-        reason: {
-          code: 6000,
-          message: 'Session expired'
-        }
+      await signClient.session.delete(t.topic, {
+        code: 6000,
+        message: 'Session expired'
       });
     }
   });
@@ -57,7 +63,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 
     const token = authHeader.split(' ')[1];
     const session = await signClient.session.get(token);
-    
+
     if (!session) {
       throw new AppError(
         ErrorCodes.AUTH.INVALID_TOKEN,
@@ -125,7 +131,7 @@ export const createSession = async (
       );
     }
 
-    const session = await signClient.session.create({
+    const session = await (signClient.session as any).create({
       requiredNamespaces: {
         chia: {
           methods: ['chia_signMessage'],
@@ -157,10 +163,8 @@ export const createSession = async (
 export const deleteSession = async (topic: string): Promise<void> => {
   try {
     await signClient.session.delete(topic, {
-      reason: {
-        code: 6000,
-        message: 'User disconnected'
-      }
+      code: 6000,
+      message: 'User disconnected'
     });
   } catch (error) {
     throw new AppError(
@@ -189,7 +193,7 @@ export const refreshSession = async (topic: string): Promise<void> => {
         url: process.env.CLIENT_URL || 'http://localhost:3000',
         icons: [`${process.env.CLIENT_URL}/logo.png`]
       }
-    });
+    } as any);
   } catch (error) {
     if (error instanceof AppError) {
       throw error;
@@ -200,4 +204,4 @@ export const refreshSession = async (topic: string): Promise<void> => {
       401
     );
   }
-}; 
+};
