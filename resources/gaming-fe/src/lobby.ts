@@ -1,147 +1,111 @@
 import express from 'express';
 import { createServer } from 'http';
-import { setupWebSocket } from './lobby/websocket';
-import { initLobby, shutdownLobby } from './lobby/lobbyState';
 import { readFile } from 'node:fs/promises';
-import { Server } from 'socket.io';
-import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+import crypto from 'crypto';
 
-const SocketServer: any = Server;
-const app = (express as any)();
-const server = http.createServer(app);
-
-const io = new SocketServer(server, {
-  cors: {
-    origin: "http://localhost:3000",
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
+const app = express();
+const httpServer = createServer(app);
+const io = new SocketIOServer(httpServer, {
+  cors: { origin: 'http://localhost:3000', methods: ['GET','POST'] }
 });
 
-let waitingPlayer: any | null = null;
-interface FindOpponentData { wagerAmount: number; }
+app.use(express.json());
 
-io.on("connection", (socket: any) => {
-  console.log("A user connected:", socket.id);
+interface Player { id: string; game: string; parameters: any; }
+interface Room  { token: string; host: Player; joiner?: Player; createdAt: number; expiresAt: number; }
 
-  socket.on("findOpponent", (data: FindOpponentData) => {
-    socket.wagerAmount = data.wagerAmount;
-
-    if (waitingPlayer) {
-      const roomName = `room-${waitingPlayer.id}-${socket.id}`;
-      socket.join(roomName);
-      waitingPlayer.join(roomName);
-
-      const deck = createDeck();
-      shuffleDeck(deck);
-
-      const playerHand = deck.slice(0, 5);
-      const opponentHand = deck.slice(5, 10);
-
-      const startingPlayerNumber = Math.random() >= 0.5 ? 1 : 2;
-
-      io.to(waitingPlayer.id).emit("startGame", {
-        room: roomName,
-        playerHand: playerHand,
-        opponentHand: opponentHand,
-        playerNumber: 1,
-        opponentWager: socket.wagerAmount,
-        wagerAmount: waitingPlayer.wagerAmount,
-        currentTurn: startingPlayerNumber,
-      });
-
-      io.to(socket.id).emit("startGame", {
-        room: roomName,
-        playerHand: opponentHand,
-        opponentHand: playerHand,
-        playerNumber: 2,
-        opponentWager: waitingPlayer.wagerAmount,
-        wagerAmount: socket.wagerAmount,
-        currentTurn: startingPlayerNumber,
-      });
-
-      waitingPlayer = null;
-    } else {
-      waitingPlayer = socket;
-      socket.emit("waiting", { message: "Waiting for an opponent..." });
-    }
-  });
-
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-    if (waitingPlayer && waitingPlayer.id === socket.id) {
-      waitingPlayer = null;
-    }
-  });
-
-  socket.on("action", (data: any) => {
-    if (data.type === "bet") {
-      io.in(data.room).emit("action", data);
-    } else if (data.type === "endTurn") {
-      const nextTurn = data.actionBy === 1 ? 2 : 1;
-
-      io.in(data.room).emit("action", {
-        type: "endTurn",
-        actionBy: data.actionBy,
-        currentTurn: nextTurn,
-      });
-    } else if (data.type === "move") {
-      io.in(data.room).emit("action", data);
-    }
-  });
-});
-
-const createDeck = () => {
-  const suits = ["♠", "♥", "♦", "♣"];
-  const ranks = [
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "10",
-    "J",
-    "Q",
-    "K",
-    "A",
-  ];
-  const deck = [];
-  for (let suit of suits) {
-    for (let rank of ranks) {
-      deck.push(`${rank}${suit}`);
-    }
-  }
-  return deck;
-};
-
-const shuffleDeck = (deck: string[]) => {
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-};
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+const lobbyQueue: Player[] = [];
+const rooms: Record<string,Room> = {};
+const TOKEN_TTL = 10 * 60 * 1000;
 
 // Kick the root.
 async function serveFile(file: string, contentType: string, res: any) {
-    const content = await readFile(file);
-    res.set('Content-Type', contentType);
-    res.send(content);
+  const content = await readFile(file);
+  res.set('Content-Type', contentType);
+  res.send(content);
 }
 app.get('/', async (req: any, res: any) => {
-    serveFile("dist/index.html", "text/html", res);
+  serveFile("dist/index.html", "text/html", res);
 });
 app.get('/index.js', async (req: any, res: any) => {
-    serveFile("dist/index-rollup.js", "application/javascript", res);
+  serveFile("dist/index-rollup.js", "application/javascript", res);
 });
-app.post('/lobby/generate-room', async (req: any, res: any) => {
-    console.error('generate-root', req);
-    res.status(500).end()
+app.post('/lobby/generate-room', (req, res) => {
+  const { id, game, parameters } = req.body;
+  if (!id || !game) return res.status(400).json({ error: 'Missing id or game.' });
+  const token = crypto.randomBytes(16).toString('hex');
+  const now = Date.now();
+  rooms[token] = {
+    token,
+    host: { id, game, parameters },
+    createdAt: now,
+    expiresAt: now + TOKEN_TTL,
+  };
+  const secureUrl = `${req.protocol}://${req.get('host')}/join/${token}`;
+  res.json({ secureUrl });
 });
+
+app.post('/lobby/join-room', (req, res) => {
+  const { token, id, game, parameters } = req.body;
+  const room = rooms[token];
+  if (!room) {
+    return res.status(404).json({ error: 'Invalid room token.' });
+  }
+  if (Date.now() > room.expiresAt) {
+    delete rooms[token];
+    return res.status(400).json({ error: 'Room token has expired.' });
+  }
+  if (room.joiner) {
+    return res.status(400).json({ error: 'Room is already full.' });
+  }
+  room.joiner = { id, game, parameters };
+  io.emit('room_update', room);
+  res.json({ room });
+});
+
+app.post('/lobby/join', (req, res) => {
+  const { id, game, parameters } = req.body;
+  if (!id || !game) return res.status(400).json({ error: 'Missing id or game.' });
+  lobbyQueue.push({ id, game, parameters });
+  io.emit('lobby_update', lobbyQueue);
+  res.json({ lobbyQueue });
+});
+app.post('/lobby/leave', (req, res) => {
+  const { id } = req.body;
+  const idx = lobbyQueue.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    lobbyQueue.splice(idx, 1);
+    io.emit('lobby_update', lobbyQueue);
+    return res.json({ lobbyQueue });
+  }
+  res.status(404).json({ error: 'Player not found in lobby.' });
+});
+
+app.get('/lobby/status', (req, res) => res.json({ lobbyQueue }));
+
+io.on('connection', socket => {
+  socket.emit('lobby_update', lobbyQueue);
+  socket.emit('room_update', Object.values(rooms));
+
+  socket.on('join', ({ id }) => {
+    if (!lobbyQueue.find(p => p.id === id)) {
+      lobbyQueue.push({ id, game: 'lobby', parameters: {} });
+      io.emit('lobby_update', lobbyQueue);
+    }
+  });
+
+  socket.on('leave', ({ id }) => {
+    const i = lobbyQueue.findIndex(p => p.id === id);
+    if (i !== -1) {
+      lobbyQueue.splice(i, 1);
+      io.emit('lobby_update', lobbyQueue);
+    }
+  });
+
+  socket.on('chat_message', ({ alias, message }) => {
+    io.emit('chat_message', { alias, message });
+  });
+});
+
+httpServer.listen(3000, () => console.log('Lobby server listening on port 3000'));

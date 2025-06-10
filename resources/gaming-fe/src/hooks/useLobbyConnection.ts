@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import io, { Socket } from 'socket.io-client';
 import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
 
 interface ChatMsgData { text: string; sender: string; }
 interface ChatMsg { alias: string; from: string; message: ChatMsgData; }
@@ -10,6 +11,7 @@ interface Room  { token: string; host: Player; joiner?: Player; createdAt: numbe
 const LOBBY_URL = 'http://localhost:3000';
 
 export function useLobbySocket(alias: string) {
+  const [uniqueId, setUniqueId] = useState<string>(uuidv4());
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<{ alias: string; content: ChatMsgData }[]>([]);
@@ -48,7 +50,8 @@ export function useLobbySocket(alias: string) {
 
   const generateRoom = useCallback(async (game: string, wager: string) => {
     const { data } = await axios.post(`${LOBBY_URL}/lobby/generate-room`, {
-      id: alias,
+      id: uniqueId,
+      alias,
       game,
       parameters: { wagerAmount: wager },
     });
@@ -58,7 +61,8 @@ export function useLobbySocket(alias: string) {
   const joinRoom = useCallback(async (token: string) => {
     const { data } = await axios.post(`${LOBBY_URL}/lobby/join-room`, {
       token,
-      id: alias,
+      id: uniqueId,
+      alias,
       game: 'lobby',
       parameters: {},
     });
