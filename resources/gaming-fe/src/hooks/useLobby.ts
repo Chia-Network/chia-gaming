@@ -21,7 +21,7 @@ export const useLobby = () => {
   const { isConnected, address, signMessage } = useWalletConnect();
 
   const connect = useCallback(() => {
-    const newSocket = io(process.env.REACT_APP_LOBBY_URL || 'http://localhost:3001', {
+    const newSocket = io(process.env.REACT_APP_LOBBY_URL || 'http://localhost:3000', {
       auth: {
         token: localStorage.getItem('auth_token')
       }
