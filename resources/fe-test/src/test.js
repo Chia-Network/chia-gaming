@@ -26,11 +26,6 @@ function byAttribute(attr,val) {
 describe("Basic element tests", function() {
   const baseUrl = "http://localhost:3000";
 
-  // After each test, close the browser.
-  afterAll(async function() {
-    await driver.quit();
-  });
-
   it("starts", async function() {
     // Load the login page
     await driver.get(baseUrl);
@@ -54,5 +49,7 @@ describe("Basic element tests", function() {
     let alert = await driver.switchTo().alert();
     let alertText = await alert.getText();
     await alert.accept();
+
+    await driver.quit();
   });
 });
