@@ -141,3 +141,7 @@ app.get('/', async (req: any, res: any) => {
 app.get('/index.js', async (req: any, res: any) => {
     serveFile("dist/index-rollup.js", "application/javascript", res);
 });
+app.post('/lobby/generate-room', async (req: any, res: any) => {
+    console.error('generate-root', req);
+    res.status(500).end()
+});
