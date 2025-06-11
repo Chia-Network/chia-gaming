@@ -7,6 +7,16 @@ export const GameTypes = {
 }
 export type GameType = 'california_poker' | 'krunk' | 'exotic_poker'
 
+export type FragmentData = { [k: string]: string }
+
+export interface LobbyState {
+  players: Player[];
+  rooms: Room[];
+  currentRoom?: Room;
+  error?: string;
+  status?: string;
+}
+
 export interface Player {
   id: string;
   walletAddress: string;
@@ -19,9 +29,19 @@ export interface Player {
 }
 
 export interface ChatMessage {
-  sender: string;
+  sender?: string;
   text: string;
-  timestamp: Date;
+  timestamp?: number;
+}
+
+export interface ChatEnvelope {
+  alias: string;
+  content: ChatMessage;
+}
+
+export interface GenerateRoomResult {
+  secureUrl: string;
+  token: string;
 }
 
 export interface Room {

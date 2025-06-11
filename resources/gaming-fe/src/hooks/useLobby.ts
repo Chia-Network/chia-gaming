@@ -1,21 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useWalletConnect } from './useWalletConnect';
-import { Player, Room, GameType, MatchmakingPreferences } from '../types/lobby';
-
-interface LobbyState {
-  players: Player[];
-  rooms: Room[];
-  currentRoom?: Room;
-  error?: string;
-  status?: string;
-}
+import { getFragmentParams } from '../util';
+import { Player, Room, GameType, MatchmakingPreferences, FragmentData, LobbyState } from '../types/lobby';
 
 export const useLobby = () => {
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [fragment, setFragment] = useState<FragmentData>(getFragmentParams());
   const emptyState: LobbyState = {
-      players: [],
-      rooms: []
+    players: [],
+    rooms: [],
   };
   const [state, setState] = useState<LobbyState>(emptyState);
   const { isConnected, address, signMessage } = useWalletConnect();
@@ -76,7 +70,7 @@ export const useLobby = () => {
     socket.emit('leave_lobby');
   }, [socket]);
 
-  const createRoom = useCallback(async (preferences: MatchmakingPreferences) => {
+  const generateRoom = useCallback(async (preferences: MatchmakingPreferences) => {
     if (!socket || !address) return;
 
     try {
@@ -134,12 +128,13 @@ export const useLobby = () => {
 
   return {
     ...state,
+    fragment,
     joinLobby,
     leaveLobby,
-    createRoom,
+    generateRoom,
     joinRoom,
     leaveRoom,
     chat,
     sendChatMessage
   };
-}; 
+};

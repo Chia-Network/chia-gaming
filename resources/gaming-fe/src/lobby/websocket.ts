@@ -1,15 +1,15 @@
 import { Server as SocketIOServer } from 'socket.io';
 import { Server as HTTPServer } from 'http';
-import { 
-  addPlayer, 
-  removePlayer, 
-  createRoom, 
-  joinRoom, 
-  leaveRoom, 
+import {
+  addPlayer,
+  removePlayer,
+  createRoom,
+  joinRoom,
+  leaveRoom,
   findMatch,
   getPlayers,
   getRooms,
-  updatePlayerStatus
+  updatePlayerStatus,
 } from './lobbyState';
 import { Player, MatchmakingPreferences, Room } from '../types/lobby';
 

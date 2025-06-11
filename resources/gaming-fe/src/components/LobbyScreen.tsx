@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -22,7 +22,7 @@ interface LobbyComponentProps {
 }
 
 const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
-  const { players, rooms, messages, sendMessage, generateRoom, joinRoom } = useLobbySocket(alias);
+  const { players, rooms, messages, sendMessage, generateRoom, joinRoom, fragment } = useLobbySocket(alias);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
@@ -40,10 +40,17 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
 
   const handleCreate = async () => {
     if (!gameChoice || !wagerInput) return;
-    const url = await generateRoom(gameChoice, wagerInput);
-    window.prompt('Share this room URL:', url);
+    const { secureUrl, token } = await generateRoom(gameChoice, wagerInput);
+    window.prompt('Share this room URL:', secureUrl);
     closeDialog();
+    await joinRoom(token);
   };
+
+  useEffect(() => {
+    if (fragment.token) {
+      joinRoom(fragment.token);
+    }
+  });
 
   return (
     <Box p={4} maxWidth={600} mx="auto">
@@ -85,7 +92,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
         <Box mb={1} height={200} overflow="auto" border="1px solid #ccc" p={1}>
           {messages.map((m, i) => (
             <Typography key={i} variant="body2">
-              <strong>{m.alias}:</strong> {m.content.text}
+              <strong>{m.alias}:</strong> <span>{m.content.text}</span>
             </Typography>
           ))}
         </Box>

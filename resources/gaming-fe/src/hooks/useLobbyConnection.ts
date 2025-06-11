@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { ChatMessage, ChatEnvelope, FragmentData, GenerateRoomResult } from '../types/lobby';
+import { getFragmentParams } from '../util';
+import { v4 as uuidv4 } from 'uuid';
 import io, { Socket } from 'socket.io-client';
 import axios from 'axios';
-import { v4 as uuidv4 } from 'uuid';
 
-interface ChatMsgData { text: string; sender: string; }
-interface ChatMsg { alias: string; from: string; message: ChatMsgData; }
 interface Player { id: string; game: string; parameters: any; }
 interface Room  { token: string; host: Player; joiner?: Player; createdAt: number; expiresAt: number; }
 
@@ -14,8 +14,9 @@ export function useLobbySocket(alias: string) {
   const [uniqueId, setUniqueId] = useState<string>(uuidv4());
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [messages, setMessages] = useState<{ alias: string; content: ChatMsgData }[]>([]);
+  const [messages, setMessages] = useState<ChatEnvelope[]>([]);
   const socketRef = useRef<Socket>(undefined);
+  const [fragment, setFragment] = useState<FragmentData>(getFragmentParams());
 
   useEffect(() => {
     const socket = io(LOBBY_URL);
@@ -32,10 +33,8 @@ export function useLobbySocket(alias: string) {
         return Array.from(map.values());
       });
     });
-      socket.on('chat_message', (chatMsg: ChatMsg) => {
-      const newObject: any = { content: chatMsg.message };
-      newObject[chatMsg.alias] = chatMsg.from;
-      setMessages(m => [...m, newObject]);
+      socket.on('chat_message', (chatMsg: ChatEnvelope) => {
+      setMessages(m => [...m, chatMsg]);
     });
 
     return () => {
@@ -45,17 +44,17 @@ export function useLobbySocket(alias: string) {
   }, [alias]);
 
   const sendMessage = useCallback((msg: string) => {
-    socketRef.current?.emit('chat_message', { alias, message: msg });
+    socketRef.current?.emit('chat_message', { alias, content: { text: msg, sender: alias } });
   }, [alias]);
 
-  const generateRoom = useCallback(async (game: string, wager: string) => {
+  const generateRoom = useCallback(async (game: string, wager: string): Promise<GenerateRoomResult> => {
     const { data } = await axios.post(`${LOBBY_URL}/lobby/generate-room`, {
       id: uniqueId,
       alias,
       game,
       parameters: { wagerAmount: wager },
     });
-    return data.secureUrl as string;
+    return data;
   }, [alias]);
 
   const joinRoom = useCallback(async (token: string) => {
@@ -69,5 +68,5 @@ export function useLobbySocket(alias: string) {
     return data.room as Room;
   }, [alias]);
 
-  return { players, rooms, messages, sendMessage, generateRoom, joinRoom };
+  return { players, rooms, messages, sendMessage, generateRoom, joinRoom, fragment };
 }

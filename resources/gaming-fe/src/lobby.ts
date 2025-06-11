@@ -2,7 +2,9 @@ import express from 'express';
 import { createServer } from 'http';
 import { readFile } from 'node:fs/promises';
 import { Server as SocketIOServer } from 'socket.io';
+import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+import { GenerateRoomResult } from './types/lobby';
 
 const app = express();
 const httpServer = createServer(app);
@@ -13,11 +15,12 @@ const io = new SocketIOServer(httpServer, {
 app.use(express.json());
 
 interface Player { id: string; game: string; parameters: any; }
-interface Room  { token: string; host: Player; joiner?: Player; createdAt: number; expiresAt: number; }
+interface Room { token: string; host: Player; joiner?: Player; createdAt: number; expiresAt: number; }
 
 const lobbyQueue: Player[] = [];
 const rooms: Record<string,Room> = {};
 const TOKEN_TTL = 10 * 60 * 1000;
+const socketUsers = {};
 
 // Kick the root.
 async function serveFile(file: string, contentType: string, res: any) {
@@ -43,7 +46,8 @@ app.post('/lobby/generate-room', (req, res) => {
     expiresAt: now + TOKEN_TTL,
   };
   const secureUrl = `${req.protocol}://${req.get('host')}/join/${token}`;
-  res.json({ secureUrl });
+  const result: GenerateRoomResult = { secureUrl, token };
+  res.json(result);
 });
 
 app.post('/lobby/join-room', (req, res) => {
@@ -64,6 +68,11 @@ app.post('/lobby/join-room', (req, res) => {
   res.json({ room });
 });
 
+app.get('/join/:token', (req, res) => {
+  const params = req.params;
+  res.setHeader('Location', `${req.protocol}://${req.get('host')}/#token=${params.token}`);
+  res.status(302).end();
+});
 app.post('/lobby/join', (req, res) => {
   const { id, game, parameters } = req.body;
   if (!id || !game) return res.status(400).json({ error: 'Missing id or game.' });
@@ -91,8 +100,9 @@ io.on('connection', socket => {
   socket.on('join', ({ id }) => {
     if (!lobbyQueue.find(p => p.id === id)) {
       lobbyQueue.push({ id, game: 'lobby', parameters: {} });
-      io.emit('lobby_update', lobbyQueue);
     }
+    // We should send the lobby update so we can observe the person we gave a url to.
+    io.emit('lobby_update', lobbyQueue);
   });
 
   socket.on('leave', ({ id }) => {
@@ -103,8 +113,8 @@ io.on('connection', socket => {
     }
   });
 
-  socket.on('chat_message', ({ alias, message }) => {
-    io.emit('chat_message', { alias, message });
+  socket.on('chat_message', ({ alias, content }) => {
+    io.emit('chat_message', { alias, content });
   });
 });
 

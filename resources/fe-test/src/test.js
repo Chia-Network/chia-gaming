@@ -22,6 +22,10 @@ function byAttribute(attr,val) {
   return By.xpath(`//*[@${attr}='${val}']`);
 }
 
+function byElementAndAttribute(element,attr,val) {
+  return By.xpath(`//${element}[@${attr}='${val}']`);
+}
+
 // Define a category of tests using test framework, in this case Jasmine
 describe("Basic element tests", function() {
   const baseUrl = "http://localhost:3000";
@@ -32,6 +36,18 @@ describe("Basic element tests", function() {
 
     await driver.wait(until.elementLocated(byExactText("Connected Players")));
 
+    // Test chat loopback
+    let chatEntry = await driver.wait(until.elementLocated(byElementAndAttribute("input", "id", "«r0»")));
+    await chatEntry.sendKeys("test?");
+    let chatButton = await driver.wait(until.elementLocated(byExactText("Send")));
+    chatButton.click();
+
+    await wait(1.0);
+
+    let chatFound = await driver.wait(until.elementLocated(byExactText("test?")));
+    expect(!!chatFound).toBe(true);
+
+    // Try generating a room.
     let generateRoomButton = await driver.wait(until.elementLocated(byExactText("Generate Room")));
     await generateRoomButton.click();
 

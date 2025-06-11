@@ -33,7 +33,7 @@ const Lobby: React.FC = () => {
     error,
     joinLobby,
     leaveLobby,
-    createRoom,
+    generateRoom,
     joinRoom,
     leaveRoom,
     sendChatMessage
@@ -61,7 +61,7 @@ const Lobby: React.FC = () => {
       maxPlayers,
       parameters: {}
     };
-    createRoom(preferences);
+    generateRoom(preferences);
   };
 
   const handleSendChat = (e: React.FormEvent) => {
