@@ -29,7 +29,7 @@ async function serveFile(file: string, contentType: string, res: any) {
   res.send(content);
 }
 app.get('/', async (req: any, res: any) => {
-  serveFile("dist/index.html", "text/html", res);
+  serveFile("public/index.html", "text/html", res);
 });
 app.get('/index.js', async (req: any, res: any) => {
   serveFile("dist/index-rollup.js", "application/javascript", res);

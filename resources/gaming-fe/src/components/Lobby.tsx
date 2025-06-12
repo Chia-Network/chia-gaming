@@ -41,7 +41,7 @@ const Lobby: React.FC = () => {
 
   const [selectedGame, setSelectedGame] = useState<GameType>('california_poker');
   const [minPlayers, setMinPlayers] = useState(2);
-  const [maxPlayers, setMaxPlayers] = useState(6);
+  const [maxPlayers, setMaxPlayers] = useState(2);
   const [chatMessage, setChatMessage] = useState('');
 
   const handleJoinLobby = () => {
