@@ -3,18 +3,18 @@
 (import onchain.poker.begin_round exposing (program_hash as beginhash))
 (import std.assert)
 
-; state is (minraise waiter_image_5)
+; state is (units_on_table waiter_image_5)
 ; move is mover_image_4
 ; evidence is empty
 (export (mod_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
         mover_image_4 MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (minraise waiter_image_5) previous_validation_program mover_puzzle solution evidence)
+        (units_on_table waiter_image_5) previous_validation_program mover_puzzle solution evidence)
 
     (if_any_fail
         (= (strlen move) 32)
-        (= mover_share (- (/ AMOUNT 2) minraise))
+        (= mover_share (/ AMOUNT 2))
         (list SLASH 0)
-        (list MAKE_MOVE beginhash (li minraise minraise waiter_image_5 mover_image_4 4) 42)
+        (list MAKE_MOVE beginhash (li units_on_table 1 waiter_image_5 mover_image_4 4) 42)
     )
 )

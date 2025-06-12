@@ -3,30 +3,30 @@
 (import onchain.poker.end exposing (program_hash as end_hash))
 (import std.assert)
 
-; state is (minraise half_pot raise_amount mover_image_N waiter_image_N begin_round_hash)
+; state is (units_on_table half_pot raise_amount mover_image_N waiter_image_N begin_round_hash)
 ; move is concatenation of mover_image_N and raise amount
 ; evidence is empty
 (export (quine_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (minraise half_pot_size last_raise_amount mover_image_N waiter_image_N N begin_round_hash)
+        (units_on_table half_pot_size last_raise_amount mover_image_N waiter_image_N N begin_round_hash)
         previous_validation_program mover_puzzle solution evidence)
 
     (if (!= (strlen MOVE) 32)
         (if_any_fail
-            (= mover_share (- (/ amount 2) half_pot))
+            (= mover_share (* (/ AMOUNT units_on_table) (- (/ units_on_table 2) (+ half_pot_size last_raise_amount))))
             (> MOVE 0)
-            (= (% MOVE minraise) 0)
-            (<= (+ half_pot_size last_raise_amount MOVE) (/ amount 2))
+            (<= (+ half_pot_size last_raise_amount MOVE) (/ units_on_table 2))
             (list SLASH 0)
-            (list MAKE_MOVE quine_hash (li minraise (+ half_pot_size last_raise_amount) MOVE waiter_image_N mover_image_N N begin_round_hash) 32)
+            (list MAKE_MOVE quine_hash (li units_on_table (+ half_pot_size last_raise_amount) MOVE waiter_image_N mover_image_N N begin_round_hash) 32)
         )
         (if_any_fail
             (= (sha256 MOVE) mover_image_N)
+            (= mover_share (* (/ AMOUNT units_on_table) (- (/ units_on_table 2) (+ half_pot_size last_raise_amount))))
             (list SLASH 0)
             (if (= N 1)
-                (li MAKE_MOVE end_hash (li (+ half_pot_size last_raise_amount) waiter_image_N MOVE) 33)
-                (li MAKE_MOVE begin_round_hash (li (+ half_pot_size last_raise_amount) waiter_image_N MOVE (- N 1)) 42)
+                (li MAKE_MOVE end_hash (li units_on_table (+ half_pot_size last_raise_amount) waiter_image_N MOVE) 33)
+                (li MAKE_MOVE begin_round_hash (li units_on_table (+ half_pot_size last_raise_amount) waiter_image_N MOVE (- N 1)) 42)
             )
         )
     )

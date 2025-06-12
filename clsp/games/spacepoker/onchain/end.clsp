@@ -4,13 +4,13 @@
 (import onchain.poker.space_hand_eval exposing space_hand_eval)
 (import std.assert)
 
-; state is (minraise half_pot raise_amount mover_image_N waiter_image_N begin_round_hash)
+; state is (units_on_table half_pot raise_amount mover_image_N waiter_image_N begin_round_hash)
 ; move is concatenation of mover_image_N and raise amount
 ; evidence is empty
 (export (quine_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (half_pot_size mover_image waiter_preimage)
+        (units_on_table half_pot_size mover_image waiter_preimage)
         previous_validation_program mover_puzzle solution evidence)
 
     (if_any_fail
@@ -20,23 +20,23 @@
         (assign
             (mover_cards waiter_cards mover_boost waiter_boost) (make_all_cards (substr move 0 32) waiter_preimage)
             mover_selected_cards (pull_from_bitfield mover_cards (substr move 32 33))
-            waiter_selected_cards (pull_from_bitfield waiter_cards evidence)
             (if (!= (len mover_selected_cards) 5)
                 (list SLASH 0)
-                (assert (= (len waiter_selected_cards) 5)
-                    (if (< MOVER_SHARE
-                            (assign result (deep_compare (space_hand_eval mover_selected_cards mover_boost)
-                                    (space_hand_calc waiter_selected_cards waiter_boost))
-                                (if (not result)
-                                    (/ amount 2)
-                                    (= result 1)
-                                    (- (/ amount 2) half_pot_size)
-                                    (+ (/ amount 2) half_pot_size)
+                (if (and (not evidence) (not WAITER_PUZZLE_HASH))
+                    (list MAKE_MOVE 0 0 0)
+                    (assign
+                        waiter_selected_cards (pull_from_bitfield waiter_cards evidence)
+                        (assert (= (len waiter_selected_cards) 5)
+                            (if (< MOVER_SHARE
+                                    (assign result (deep_compare (space_hand_eval mover_selected_cards mover_boost)
+                                            (space_hand_calc waiter_selected_cards waiter_boost))
+                                        (- (/ AMOUNT 2) (* (/ AMOUNT units_on_table) half_pot_size result)
+                                    )
                                 )
+                                (list SLASH 0)
+                                (list MAKE_MOVE 0 0 0)
                             )
                         )
-                        (list SLASH 0)
-                        (list MAKE_MOVE 0 0 0)
                     )
                 )
             )

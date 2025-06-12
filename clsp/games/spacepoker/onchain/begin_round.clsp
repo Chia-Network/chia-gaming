@@ -3,26 +3,26 @@
 (import onchain.poker.mid_round exposing (program_hash as mid_hash))
 (import std.assert)
 
-; state is (minraise half_pot_size mover_image_Nplus1 waiter_image_N N)
+; state is (units_on_table half_pot_size mover_image_Nplus1 waiter_image_N N)
 ; move is concatenation of mover_image_N and raise amount
 ; evidence is empty
 (export (quine_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
         MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (minraise half_pot_size mover_image_Nplus1 waiter_image_N N) previous_validation_program mover_puzzle solution evidence)
+        (units_on_table half_pot_size mover_image_Nplus1 waiter_image_N N) previous_validation_program mover_puzzle solution evidence)
 
     (if_any_fail
         (>= (strlen MOVE) 32)
-        (= mover_share (- (/ amount 2) half_pot))
+        (= mover_share (* (/ AMOUNT units_on_table) (- (/ units_on_table 2) half_pot_size)))
+        (list SLASH 0)
         (assign
             raise_amount (substr MOVE 32 (strlen MOVE))
             mover_image_N (substr MOVE 0 32)
             (if_any_fail
                 (= waiter_image_Nplus1 (sha256 waiter_image_N))
-                (>= raise_amount 0)
-                (<= (+ half_pot_size raise_amount) (/ amount 2))
+                (<= (+ half_pot_size raise_amount) (/ units_on_table 2))
                 (list SLASH 0)
-                (list MAKE_MOVE mid_hash (li minraise half_pot_size raise_amount mover_image_N waiter_image_N N quine_hash) 32)
+                (list MAKE_MOVE mid_hash (li units_on_table half_pot_size raise_amount mover_image_N waiter_image_N N quine_hash) 32)
             )
         )
     )

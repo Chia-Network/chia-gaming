@@ -3,18 +3,18 @@
 (import onchain.poker.commitB exposing (program_hash as bhash))
 (import std.assert)
 
-; state is minraise
+; state is units_on_table
 ; move is alice commit to a salted word
 ; evidence is empty
 (export (mod_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
         mover_image_5 MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        minraise previous_validation_program mover_puzzle solution evidence)
+        units_on_table previous_validation_program mover_puzzle solution evidence)
 
     (if_any_fail
         (= (strlen move) 32)
-        (= mover_share (- (/ AMOUNT 2) minraise))
+        (= mover_share (/ AMOUNT 2))
         (list SLASH 0)
-        (list MAKE_MOVE bhash (li minraise mover_image_5) 32)
+        (list MAKE_MOVE bhash (li units_on_table mover_image_5) 32)
     )
 )
