@@ -13,5 +13,8 @@ dist/
 wheels/
 *.egg-info
 
+# javascript
+node_modules
+
 # Virtual environments
 .venv
