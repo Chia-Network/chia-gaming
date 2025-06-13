@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { Server as SocketIOServer } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
-import { GenerateRoomResult, Room } from './types/lobby';
+import { GenerateRoomResult, Room, Player } from './types/lobby';
 
 const app = express();
 const httpServer = createServer(app);
@@ -14,12 +14,27 @@ const io = new SocketIOServer(httpServer, {
 
 app.use(express.json());
 
-interface Player { id: string; alias: string; game: string; parameters: any; }
-
 const lobbyQueue: Player[] = [];
 const rooms: Record<string,Room> = {};
 const TOKEN_TTL = 10 * 60 * 1000;
 const socketUsers = {};
+
+function joinLobby(id: string, alias: string, parameters: any): any {
+  if (!id || !alias) {
+    return { error: 'Missing id or alias for joining lobby.' };
+  };
+  const lastActive = Date.now();
+  lobbyQueue.push({
+    id,
+    alias,
+    joinedAt: lastActive,
+    lastActive,
+    status: 'waiting',
+    parameters,
+  });
+  io.emit('lobby_update', lobbyQueue);
+  return null;
+}
 
 function leaveLobby(id: string): any {
   const idx = lobbyQueue.findIndex(p => p.id === id);
@@ -95,7 +110,7 @@ app.post('/lobby/join-room', (req, res) => {
   }
   room.joiner = id;
   io.emit('room_update', room);
-  res.json({ room });
+  res.json(room);
 });
 
 app.get('/join/:token', (req, res) => {
@@ -104,12 +119,11 @@ app.get('/join/:token', (req, res) => {
   res.status(302).end();
 });
 app.post('/lobby/join', (req, res) => {
-  const { id, alias, game, parameters } = req.body;
-  if (!id || !game) return res.status(400).json({ error: 'Missing id or game.' });
-  let newPlayer: Player = { id, alias, game, parameters };
-  console.log('lobby joined:', newPlayer);
-  lobbyQueue.push(newPlayer);
-  io.emit('lobby_update', lobbyQueue);
+  const { id, alias, parameters } = req.body;
+  const result = joinLobby(id, alias, parameters);
+  if (result) {
+    return res.status(400).json(result);
+  }
   res.json({ lobbyQueue });
 });
 app.post('/lobby/leave', (req, res) => {
@@ -129,7 +143,7 @@ io.on('connection', socket => {
 
   socket.on('join', ({ id, alias }) => {
     if (!lobbyQueue.find(p => p.id === id)) {
-      lobbyQueue.push({ id, alias, game: 'lobby', parameters: {} });
+      joinLobby(id, alias, {});
     }
     // We should send the lobby update so we can observe the person we gave a url to.
     io.emit('lobby_update', lobbyQueue);

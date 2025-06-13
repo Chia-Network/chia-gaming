@@ -31,7 +31,6 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
       const player: Player = {
         id: preferences.id,
         alias: preferences.alias,
-        game: preferences.game,
         parameters: preferences.parameters,
         walletAddress: '', // TODO: Get from auth
         joinedAt: Date.now(),

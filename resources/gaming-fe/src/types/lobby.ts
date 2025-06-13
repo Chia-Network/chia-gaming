@@ -20,8 +20,7 @@ export interface LobbyState {
 export interface Player {
   id: string;
   alias: string;
-  walletAddress: string;
-  game: string;
+  walletAddress?: string;
   joinedAt: number;
   lastActive: number;
   status: string;
