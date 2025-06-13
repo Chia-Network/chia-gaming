@@ -20,7 +20,6 @@ import { useWalletConnect } from "../hooks/WalletConnectContext";
 import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
 import Debug from "./Debug";
-import { generateOrRetrieveAlias } from "../util";
 
 const Game: React.FC = () => {
   const { client, session, pairings, connect, disconnect } = useWalletConnect();
@@ -62,12 +61,10 @@ const Game: React.FC = () => {
   } = useGameSocket();
 
   const { wcInfo, setWcInfo } = useDebug();
-  const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
 
   if (gameState === "idle") {
     return (
       <LobbyScreen
-        alias={myAlias}
         wagerAmount={wagerAmount}
         setWagerAmount={setWagerAmount}
         handleFindOpponent={handleFindOpponent}

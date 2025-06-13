@@ -15,7 +15,7 @@ const httpServer = createServer(app);
 app.use(helmet());
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:3000',
-  methods: ['GET', 'POST']
+  methods: ['GET', 'POST', 'HEAD', 'OPTIONS']
 }));
 app.use(express.json());
 

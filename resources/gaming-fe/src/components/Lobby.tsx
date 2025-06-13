@@ -1,5 +1,5 @@
 import React, { JSX, useState } from 'react';
-import { useLobby } from '../hooks/useLobby';
+import { useLobbySocket } from '../hooks/useLobbyConnection';
 import { useWalletConnect } from '../hooks/useWalletConnect';
 import { GameType, MatchmakingPreferences, Room } from '../types/lobby';
 import {
@@ -23,52 +23,45 @@ import {
   IconButton
 } from '@mui/material';
 import { Send as SendIcon, ExitToApp as ExitIcon } from '@mui/icons-material';
+import { generateOrRetrieveAlias } from '../util';
 
 const Lobby: React.FC = () => {
+  const [alias, setAlias] = useState<string>(generateOrRetrieveAlias());
   const { isConnected, connect, disconnect } = useWalletConnect();
   const {
     players,
     rooms,
-    currentRoom,
-    error,
-    joinLobby,
-    leaveLobby,
     generateRoom,
     joinRoom,
     leaveRoom,
-    sendChatMessage
-  } = useLobby();
+    sendMessage,
+    uniqueId
+  } = useLobbySocket(alias);
 
+  const [error, setError] = useState<string | undefined>();
+  const [currentRoom, setCurrrentRoom] = useState<Room | undefined>();
   const [selectedGame, setSelectedGame] = useState<GameType>('california_poker');
+  const [wager, setWager] = useState<number>(0);
   const [minPlayers, setMinPlayers] = useState(2);
   const [maxPlayers, setMaxPlayers] = useState(2);
   const [chatMessage, setChatMessage] = useState('');
 
-  const handleJoinLobby = () => {
-    const preferences: MatchmakingPreferences = {
-      gameType: selectedGame,
-      minPlayers,
-      maxPlayers,
-      parameters: {}
-    };
-    joinLobby(preferences);
-  };
-
   const handleCreateRoom = () => {
     const preferences: MatchmakingPreferences = {
-      gameType: selectedGame,
+      id: uniqueId,
+      alias,
+      game: selectedGame,
       minPlayers,
       maxPlayers,
       parameters: {}
     };
-    generateRoom(preferences);
+    generateRoom(selectedGame, wager.toString());
   };
 
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
     if (currentRoom && chatMessage.trim()) {
-      sendChatMessage(currentRoom.id, chatMessage);
-      setChatMessage('');
+      sendMessage(chatMessage);
     }
   };
 
@@ -146,6 +139,16 @@ const Lobby: React.FC = () => {
                   <TextField
                     fullWidth
                     type="number"
+                    label="Wager"
+                    value={wager}
+                    onChange={(e) => setWager(parseInt(e.target.value))}
+                    inputProps={{ min: 2, max: 10 }}
+                  />
+                </Grid>
+                <Grid item xs={6}>
+                  <TextField
+                    fullWidth
+                    type="number"
                     label="Min Players"
                     value={minPlayers}
                     onChange={(e) => setMinPlayers(parseInt(e.target.value))}
@@ -168,14 +171,6 @@ const Lobby: React.FC = () => {
                 <Button
                   fullWidth
                   variant="contained"
-                  color="primary"
-                  onClick={handleJoinLobby}
-                >
-                  Join Lobby
-                </Button>
-                <Button
-                  fullWidth
-                  variant="contained"
                   color="success"
                   onClick={handleCreateRoom}
                 >
@@ -192,22 +187,22 @@ const Lobby: React.FC = () => {
               Active Rooms
             </Typography>
             <List>
-              {rooms.map((room: Room) => (
-                <React.Fragment key={room.id}>
+              {rooms.map((room, i, arr) => (
+                <React.Fragment key={room.token}>
                   <ListItem
                     secondaryAction={
                       <Button
                         variant="contained"
                         color="primary"
-                        onClick={() => joinRoom(room.id)}
+                        onClick={() => joinRoom(room.token)}
                       >
                         Join
                       </Button>
                     }
                   >
                     <ListItemText
-                      primary={room.gameType}
-                      secondary={`Players: ${room.players.length}/${room.maxPlayers}`}
+                      primary={room.game}
+                      secondary={`Players: ${room.joiner ? 2 : 1}/2`}
                     />
                   </ListItem>
                   <Divider />
@@ -225,7 +220,7 @@ const Lobby: React.FC = () => {
             <Button
               variant="contained"
               color="error"
-              onClick={() => leaveRoom(currentRoom.id)}
+              onClick={() => leaveRoom(currentRoom.token)}
             >
               Leave Room
             </Button>
@@ -237,21 +232,34 @@ const Lobby: React.FC = () => {
                 Players
               </Typography>
               <List>
-                {currentRoom.players.map((player) => (
-                  <ListItem key={player.id}>
-                    <ListItemIcon>
-                      <Box
-                        sx={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          bgcolor: 'success.main'
-                        }}
-                      />
-                    </ListItemIcon>
-                    <ListItemText primary={player.walletAddress} />
-                  </ListItem>
-                ))}
+                {(currentRoom.joiner ? [currentRoom.host, currentRoom.joiner] : [currentRoom.host]).map((playerId) => {
+                  let player;
+                  for (var i = 0; i < players.length; i++) {
+                    if (players[i].id == playerId) {
+                      player = players[i];
+                      break;
+                    }
+                  }
+                  if (player) {
+                    return (
+                      <ListItem key={playerId}>
+                        <ListItemIcon>
+                          <Box
+                            sx={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              bgcolor: 'success.main'
+                            }}
+                          />
+                        </ListItemIcon>
+                        <ListItemText primary={player?.walletAddress} />
+                      </ListItem>
+                    );
+                  } else {
+                    return <div/>;
+                  }
+                })}
               </List>
             </Grid>
 

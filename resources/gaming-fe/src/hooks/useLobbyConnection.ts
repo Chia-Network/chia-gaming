@@ -1,32 +1,45 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ChatMessage, ChatEnvelope, FragmentData, GenerateRoomResult } from '../types/lobby';
-import { getFragmentParams } from '../util';
-import { v4 as uuidv4 } from 'uuid';
+import { ChatMessage, ChatEnvelope, FragmentData, GenerateRoomResult, Room } from '../types/lobby';
+import { getFragmentParams, generateOrRetrieveUniqueId } from '../util';
 import io, { Socket } from 'socket.io-client';
 import axios from 'axios';
 
-interface Player { id: string; game: string; parameters: any; }
-interface Room  { token: string; host: Player; joiner?: Player; createdAt: number; expiresAt: number; }
-
-const LOBBY_URL = 'http://localhost:3000';
+interface Player { id: string; alias: string, game: string; walletAddress?: string; parameters: any; }
 
 export function useLobbySocket(alias: string) {
-  const [uniqueId, setUniqueId] = useState<string>(uuidv4());
+  const LOBBY_URL = process.env.REACT_APP_LOBBY_URL || 'http://localhost:3000';
+
+  const [uniqueId, setUniqueId] = useState<string>(generateOrRetrieveUniqueId());
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<ChatEnvelope[]>([]);
   const socketRef = useRef<Socket>(undefined);
   const [fragment, setFragment] = useState<FragmentData>(getFragmentParams());
+  console.log('fragment retrieved', fragment);
 
   useEffect(() => {
     const socket = io(LOBBY_URL);
     socketRef.current = socket;
 
-    socket.emit('join', { id: alias });
+    socket.emit('join', { id: uniqueId, alias: alias });
 
     socket.on('lobby_update', (q: Player[]) => setPlayers(q));
     socket.on('room_update', (r: Room | Room[]) => {
       const updated = Array.isArray(r) ? r : [r];
+      // Determine whether we've been connected with someone based on the .host and .joined
+      // members of the rooms.
+      for (const room of updated) {
+        console.log('checking room', room);
+        if (!room.host || !room.joiner) {
+          continue;
+        }
+        if (room.host == uniqueId || room.joiner == uniqueId) {
+          // This room is inhabited and contains us, redirect.
+          console.log('take us to game', room);
+          window.location.href = "https://example.com";
+          break;
+        }
+      }
       setRooms(prev => {
         const map = new Map(prev.map(x => [x.token, x]));
         updated.forEach(x => map.set(x.token, x));
@@ -41,11 +54,11 @@ export function useLobbySocket(alias: string) {
       socket.emit('leave', { id: alias });
       socket.disconnect();
     };
-  }, [alias]);
+  }, [uniqueId]);
 
   const sendMessage = useCallback((msg: string) => {
     socketRef.current?.emit('chat_message', { alias, content: { text: msg, sender: alias } });
-  }, [alias]);
+  }, [uniqueId]);
 
   const generateRoom = useCallback(async (game: string, wager: string): Promise<GenerateRoomResult> => {
     const { data } = await axios.post(`${LOBBY_URL}/lobby/generate-room`, {
@@ -55,7 +68,7 @@ export function useLobbySocket(alias: string) {
       parameters: { wagerAmount: wager },
     });
     return data;
-  }, [alias]);
+  }, [uniqueId]);
 
   const joinRoom = useCallback(async (token: string) => {
     const { data } = await axios.post(`${LOBBY_URL}/lobby/join-room`, {
@@ -66,7 +79,19 @@ export function useLobbySocket(alias: string) {
       parameters: {},
     });
     return data.room as Room;
-  }, [alias]);
+  }, [uniqueId]);
 
-  return { players, rooms, messages, sendMessage, generateRoom, joinRoom, fragment };
+  const setLobbyAlias = useCallback(async (id: string, alias: string) => {
+    console.log('setLobbyAlias', id, alias);
+    const { data } = await axios.post(`${LOBBY_URL}/lobby/change-alias`, {
+      id, newAlias: alias
+    });
+    return data.player;
+  }, [uniqueId]);
+
+  const leaveRoom = useCallback(async (token: string) => {
+    console.error('implement leave room');
+  }, [uniqueId]);
+
+  return { players, rooms, messages, sendMessage, generateRoom, joinRoom, leaveRoom, setLobbyAlias, uniqueId, fragment };
 }

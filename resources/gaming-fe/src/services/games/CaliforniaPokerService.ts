@@ -53,17 +53,9 @@ export class CaliforniaPokerService {
   }
 
   public async startGame(session: GameSession): Promise<GameState> {
-    if (session.players.length < 2 || session.players.length > 10) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Invalid number of players for California Poker',
-        400
-      );
-    }
-
     const deck = this.createDeck();
     const shuffledDeck = this.shuffleDeck(deck);
-    const players = this.initializePlayers(session.players, shuffledDeck);
+      const players = this.initializePlayers([session.host, session.joiner], shuffledDeck);
 
     const gameState: GameState = {
       id: uuidv4(),
@@ -104,9 +96,9 @@ export class CaliforniaPokerService {
     return shuffled;
   }
 
-  private initializePlayers(players: Player[], deck: Card[]): PlayerHand[] {
+  private initializePlayers(players: string[], deck: Card[]): PlayerHand[] {
     return players.map((player, index) => ({
-      playerId: player.id,
+      playerId: player,
       cards: [deck[index * 2], deck[index * 2 + 1]],
       bet: 0,
       status: 'active'

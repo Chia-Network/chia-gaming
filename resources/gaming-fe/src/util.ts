@@ -17,6 +17,11 @@ export function getFragmentParams(): FragmentData {
   return params;
 }
 
+
+export function updateAlias(alias: string) {
+  localStorage.setItem("alias", alias);
+}
+
 export function generateOrRetrieveAlias(): string {
   let previousName = localStorage.getItem("alias");
   if (previousName) {
@@ -24,6 +29,16 @@ export function generateOrRetrieveAlias(): string {
   }
 
   previousName = `newUser${uuidv4()}`;
-  localStorage.setItem("alias", previousName);
+  updateAlias(previousName);
   return previousName;
+}
+
+export function generateOrRetrieveUniqueId(): string {
+  let existingId = localStorage.getItem("uniqueId");
+  if (existingId) {
+    return existingId;
+  }
+  existingId = uuidv4();
+  localStorage.setItem("uniqueId", existingId);
+  return existingId;
 }

@@ -15,7 +15,7 @@ import { Player, MatchmakingPreferences, Room } from '../types/lobby';
 
 export const setupWebSocket = (httpServer: HTTPServer) => {
   const io = new SocketIOServer(httpServer, {
-    cors: { 
+    cors: {
       origin: process.env.CLIENT_URL || 'http://localhost:3000',
       methods: ['GET', 'POST']
     }
@@ -29,9 +29,9 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
 
     socket.on('join_lobby', (preferences: MatchmakingPreferences) => {
       const player: Player = {
-        id: socket.id,
-        name: "player",
-        gameType: preferences.gameType,
+        id: preferences.id,
+        alias: preferences.alias,
+        game: preferences.game,
         parameters: preferences.parameters,
         walletAddress: '', // TODO: Get from auth
         joinedAt: Date.now(),
@@ -62,8 +62,8 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
         return;
       }
 
-      const room = createRoom(currentPlayer, preferences);
-      socket.join(room.id);
+      const room = createRoom(currentPlayer.id, preferences);
+      socket.join(room.token);
       io.emit('room_update', getRooms());
     });
 
@@ -79,8 +79,8 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
         return;
       }
 
-      socket.join(room.id);
-      io.to(room.id).emit('room_update', room);
+      socket.join(room.token);
+      io.to(room.token).emit('room_update', room);
       io.emit('room_update', getRooms());
     });
 
@@ -89,7 +89,7 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
 
       if (leaveRoom(roomId, currentPlayer.id)) {
         socket.leave(roomId);
-        io.to(roomId).emit('room_update', getRooms().find(r => r.id === roomId));
+        io.to(roomId).emit('room_update', getRooms().find(r => r.token === roomId));
         io.emit('room_update', getRooms());
       }
     });

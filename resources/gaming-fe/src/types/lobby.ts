@@ -19,9 +19,9 @@ export interface LobbyState {
 
 export interface Player {
   id: string;
+  alias: string;
   walletAddress: string;
-  gameType: string;
-  name: string;
+  game: string;
   joinedAt: number;
   lastActive: number;
   status: string;
@@ -45,24 +45,25 @@ export interface GenerateRoomResult {
 }
 
 export interface Room {
-  id: string;
-  name: string;
-  host: Player;
-  gameType: GameType;
+  token: string;
+  host: string;
+  joiner?: string;
+  game: GameType;
   minPlayers: number;
   maxPlayers: number;
   status: 'waiting' | 'in_progress' | 'completed';
-  players: Player[];
-  createdAt: Date;
-  startedAt?: Date;
-  endedAt?: Date;
+  createdAt: number;
+  startedAt?: number;
+  endedAt?: number;
   expiresAt: number;
   parameters: any;
   chat: ChatMessage[];
 }
 
 export interface MatchmakingPreferences {
-  gameType: GameType;
+  id: string;
+  alias: string;
+  game: GameType;
   minPlayers: number;
   maxPlayers: number;
   parameters: any;
@@ -72,7 +73,8 @@ export interface GameSession {
   id: string;
   roomId: string;
   gameType: GameType;
-  players: Player[];
+  host: string;
+  joiner: string;
   startedAt: number;
   status: 'active' | 'in_progress' | 'completed';
   winner?: string;

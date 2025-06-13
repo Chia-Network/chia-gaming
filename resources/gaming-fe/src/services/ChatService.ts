@@ -84,7 +84,7 @@ export class ChatService {
     }
     playerRooms.add(roomId);
 
-    this.addSystemMessage(roomId, `${player.name} has joined the chat`);
+    this.addSystemMessage(roomId, `${player.alias} has joined the chat`);
   }
 
   public leaveChatRoom(roomId: string, player: Player): void {
@@ -104,7 +104,7 @@ export class ChatService {
       playerRooms.delete(roomId);
     }
 
-    this.addSystemMessage(roomId, `${player.name} has left the chat`);
+    this.addSystemMessage(roomId, `${player.alias} has left the chat`);
   }
 
   public async sendMessage(
@@ -179,7 +179,7 @@ export class ChatService {
       id: uuidv4(),
       roomId,
       playerId: player.id,
-      playerName: player.name,
+      playerName: player.alias,
       content: content.trim(),
       timestamp: new Date(),
       type,

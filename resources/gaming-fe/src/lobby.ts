@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { Server as SocketIOServer } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
-import { GenerateRoomResult } from './types/lobby';
+import { GenerateRoomResult, Room } from './types/lobby';
 
 const app = express();
 const httpServer = createServer(app);
@@ -14,13 +14,23 @@ const io = new SocketIOServer(httpServer, {
 
 app.use(express.json());
 
-interface Player { id: string; game: string; parameters: any; }
-interface Room { token: string; host: Player; joiner?: Player; createdAt: number; expiresAt: number; }
+interface Player { id: string; alias: string; game: string; parameters: any; }
 
 const lobbyQueue: Player[] = [];
 const rooms: Record<string,Room> = {};
 const TOKEN_TTL = 10 * 60 * 1000;
 const socketUsers = {};
+
+function leaveLobby(id: string): any {
+  const idx = lobbyQueue.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    lobbyQueue.splice(idx, 1);
+    io.emit('lobby_update', lobbyQueue);
+    return { lobbyQueue };
+  }
+
+  return undefined;
+}
 
 // Kick the root.
 async function serveFile(file: string, contentType: string, res: any) {
@@ -34,19 +44,39 @@ app.get('/', async (req: any, res: any) => {
 app.get('/index.js', async (req: any, res: any) => {
   serveFile("dist/index-rollup.js", "application/javascript", res);
 });
+app.post('/lobby/change-alias', (req, res) => {
+  const { id, newAlias } = req.body;
+  if (!id || !newAlias) return res.status(400).json({ error: 'Missing id or new_alias.' });
+  for (var i = 0; i < lobbyQueue.length; i++) {
+    if (lobbyQueue[i].id == id) {
+      lobbyQueue[i].alias = newAlias;
+      io.emit('lobby_update', lobbyQueue);
+      return res.json(lobbyQueue[i]);
+    }
+  }
+  res.json({});
+});
 app.post('/lobby/generate-room', (req, res) => {
   const { id, game, parameters } = req.body;
   if (!id || !game) return res.status(400).json({ error: 'Missing id or game.' });
   const token = crypto.randomBytes(16).toString('hex');
   const now = Date.now();
-  rooms[token] = {
+  const newRoom: Room = {
     token,
-    host: { id, game, parameters },
+    host: id,
+    game,
+    status: 'waiting',
     createdAt: now,
     expiresAt: now + TOKEN_TTL,
+    minPlayers: 2,
+    maxPlayers: 2,
+    chat: [],
+    parameters
   };
+  rooms[token] = newRoom;
   const secureUrl = `${req.protocol}://${req.get('host')}/join/${token}`;
   const result: GenerateRoomResult = { secureUrl, token };
+  io.emit('room_update', newRoom);
   res.json(result);
 });
 
@@ -63,7 +93,7 @@ app.post('/lobby/join-room', (req, res) => {
   if (room.joiner) {
     return res.status(400).json({ error: 'Room is already full.' });
   }
-  room.joiner = { id, game, parameters };
+  room.joiner = id;
   io.emit('room_update', room);
   res.json({ room });
 });
@@ -74,19 +104,19 @@ app.get('/join/:token', (req, res) => {
   res.status(302).end();
 });
 app.post('/lobby/join', (req, res) => {
-  const { id, game, parameters } = req.body;
+  const { id, alias, game, parameters } = req.body;
   if (!id || !game) return res.status(400).json({ error: 'Missing id or game.' });
-  lobbyQueue.push({ id, game, parameters });
+  let newPlayer: Player = { id, alias, game, parameters };
+  console.log('lobby joined:', newPlayer);
+  lobbyQueue.push(newPlayer);
   io.emit('lobby_update', lobbyQueue);
   res.json({ lobbyQueue });
 });
 app.post('/lobby/leave', (req, res) => {
   const { id } = req.body;
-  const idx = lobbyQueue.findIndex(p => p.id === id);
-  if (idx !== -1) {
-    lobbyQueue.splice(idx, 1);
-    io.emit('lobby_update', lobbyQueue);
-    return res.json({ lobbyQueue });
+  const result = leaveLobby(id);
+  if (result) {
+    return res.json(result);
   }
   res.status(404).json({ error: 'Player not found in lobby.' });
 });
@@ -97,20 +127,16 @@ io.on('connection', socket => {
   socket.emit('lobby_update', lobbyQueue);
   socket.emit('room_update', Object.values(rooms));
 
-  socket.on('join', ({ id }) => {
+  socket.on('join', ({ id, alias }) => {
     if (!lobbyQueue.find(p => p.id === id)) {
-      lobbyQueue.push({ id, game: 'lobby', parameters: {} });
+      lobbyQueue.push({ id, alias, game: 'lobby', parameters: {} });
     }
     // We should send the lobby update so we can observe the person we gave a url to.
     io.emit('lobby_update', lobbyQueue);
   });
 
   socket.on('leave', ({ id }) => {
-    const i = lobbyQueue.findIndex(p => p.id === id);
-    if (i !== -1) {
-      lobbyQueue.splice(i, 1);
-      io.emit('lobby_update', lobbyQueue);
-    }
+    leaveLobby(id);
   });
 
   socket.on('chat_message', ({ alias, content }) => {

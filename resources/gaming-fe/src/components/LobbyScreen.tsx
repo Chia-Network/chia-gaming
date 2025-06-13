@@ -13,20 +13,22 @@ import {
   Typography,
 } from '@mui/material';
 import { useLobbySocket } from '../hooks/useLobbyConnection';
+import { generateOrRetrieveAlias, updateAlias } from "../util";
 
 interface LobbyComponentProps {
-  alias: string;
   wagerAmount: string;
   setWagerAmount: (value: string) => void;
   handleFindOpponent: (value: string) => void;
 }
 
-const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
-  const { players, rooms, messages, sendMessage, generateRoom, joinRoom, fragment } = useLobbySocket(alias);
+const LobbyScreen: React.FC<LobbyComponentProps> = () => {
+  const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
+  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
   const [wagerInput, setWagerInput] = useState('');
+  const [editingAlias, setEditingAlias] = useState(false);
 
   const handleSend = () => {
     if (chatInput.trim()) {
@@ -43,19 +45,53 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
     const { secureUrl, token } = await generateRoom(gameChoice, wagerInput);
     window.prompt('Share this room URL:', secureUrl);
     closeDialog();
-    await joinRoom(token);
   };
 
   useEffect(() => {
+    console.log('check fragment',fragment);
     if (fragment.token) {
+      console.log('joining channel',fragment);
       joinRoom(fragment.token);
     }
   });
 
+  function commitEdit(e: any) {
+    console.log('commit edit', e.target.value);
+    setEditingAlias(false);
+    updateAlias(e.target.value);
+    setLobbyAlias(uniqueId, e.target.value);
+  }
+
+  function getPlayerAlias(id: string): string {
+    const index = players.findIndex(p => p.id === id);
+    if (index === -1) {
+      return `unknown player id: ${id}`;
+    }
+    return players[index].alias;
+  }
+
+  let aliasDisplay;
+  if (editingAlias) {
+      aliasDisplay = (
+        <TextField
+          fullWidth
+          placeholder="Display name"
+          value={myAlias}
+          onChange={e => setMyAlias(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && commitEdit(e)}
+          onBlur={commitEdit}
+          />
+      );
+  } else {
+      aliasDisplay = (
+        <span onClick={() => setEditingAlias(true)} >{myAlias}</span>
+      );
+  };
+
   return (
     <Box p={4} maxWidth={600} mx="auto">
       <Typography variant="h4" gutterBottom>
-        Lobby — Alias: {alias}
+        Lobby — Alias: {aliasDisplay}
       </Typography>
 
       <Box mb={3}>
@@ -63,7 +99,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
         <List>
           {players.map(p => (
             <ListItem key={p.id} dense>
-              <ListItemText primary={p.id === alias ? `${p.id} (You)` : p.id} />
+              <ListItemText primary={p.id === uniqueId ? `${p.alias} (You)` : p.alias} />
             </ListItem>
           ))}
         </List>
@@ -79,8 +115,8 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
               </Button>
             }>
               <ListItemText
-                primary={r.host.game}
-                secondary={`Host: ${r.host.id} | Token: ${r.token}`}
+                primary={r.token}
+                secondary={`Host: ${getPlayerAlias(r.host)} | Token: ${r.token}`}
               />
             </ListItem>
           ))}
@@ -97,12 +133,12 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
           ))}
         </Box>
         <Box display="flex">
-          <TextField
-            fullWidth
-            placeholder="Type a message"
-            value={chatInput}
-            onChange={e => setChatInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSend()}
+            <TextField
+                fullWidth
+                placeholder="Type a message"
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleSend()}
           />
           <Button onClick={handleSend} variant="contained" sx={{ ml: 1 }}>
             Send
