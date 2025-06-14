@@ -18,12 +18,12 @@
         (= mover_image (sha256 (substr move 0 32)))
         (list SLASH 0)
         (assign
-            (mover_cards waiter_cards mover_boost waiter_boost) (make_all_cards (substr move 0 32) waiter_preimage)
+            (@ cardinfo (mover_cards waiter_cards mover_boost waiter_boost)) (make_all_cards (substr move 0 32) waiter_preimage)
             mover_selected_cards (pull_from_bitfield mover_cards (substr move 32 33))
             (if (!= (len mover_selected_cards) 5)
                 (list SLASH 0)
                 (if (and (not evidence) (not WAITER_PUZZLE_HASH))
-                    (list MAKE_MOVE 0 0 0)
+                    (list MAKE_MOVE 0 (c mover_selected_cards cardinfo) 0)
                     (assign
                         waiter_selected_cards (pull_from_bitfield waiter_cards evidence)
                         (assert (= (len waiter_selected_cards) 5)

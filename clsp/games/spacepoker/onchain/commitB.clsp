@@ -12,7 +12,7 @@
         (units_on_table waiter_image_5) previous_validation_program mover_puzzle solution evidence)
 
     (if_any_fail
-        (= (strlen move) 32)
+        (= (strlen mover_image_4) 32)
         (= mover_share (/ AMOUNT 2))
         (list SLASH 0)
         (list MAKE_MOVE beginhash (li units_on_table 1 waiter_image_5 mover_image_4 4) 42)
