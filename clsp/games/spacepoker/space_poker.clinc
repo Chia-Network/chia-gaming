@@ -1,45 +1,79 @@
-(include spacehandcalc.clinc)
+(export space_poker_factory)
 
+(import spacehandcalc)
+
+(defun space_poker_factory ()
+)
+
+; move is nil
 (defun commitA_our_turn)
 
+; readable is nil
 (defun commitA_their_turn)
 
+; move is nil
 (defun commitB_our_turn)
 
+; readable is (whether_we_go_first, our_hole_cards)
 (defun commitB_their_turn)
 
+; if we go first move is nil and and state goes to begin_preflop_their_turn
+; otherwise move is raise amount and state goes to continue_preflop_their_turn
 (defun begin_preflop_our_turn)
 
+; if we go first readable is (True, our_hole_cards) and state goes to begin_preflop_our_turn
+; otherwise readable is (False, raise_amount, our_hole_cards) and state goes to continue_preflop_our_turn
+; our_hole_cards is previewed from message
 (defun begin_preflop_their_turn)
 
+; move is raise amount, 0 for call
 (defun continue_preflop_our_turn)
 
+; readable is (raise_amount, flop_cards) flop_cards is nil if raise amount is not 0
 (defun continue_preflop_their_turn)
 
+; move is raise amount
 (defun begin_flop_our_turn)
 
+; readable is (raise_amount, flop_cards)
+; flop_cards is previewed from message
 (defun begin_flop_their_turn)
 
+; move is raise amount, 0 for call
 (defun continue_flop_our_turn)
 
+; readable is (raise_amount, turn_card) turn_card is nil if raise amount is not 0
 (defun continue_flop_their_turn)
 
+; move is raise amount
 (defun begin_turn_our_turn)
 
+; readable is (raise_amount, turn_card)
+; turn_card is previewed from message
 (defun begin_turn_their_turn)
 
+; move is raise amount, 0 for call
 (defun continue_turn_our_turn)
 
+; readable is (raise_amount, river_card) river_card is nil if raise amount is not 0
 (defun continue_turn_their_turn)
 
+; move is raise amount
 (defun_begin_river_our_turn)
 
+; readable is (raise_amount, river_card)
+; river_card is previewed from message
 (defun begin_river_their_turn)
 
+; move is raise amount, 0 for call
 (defun continue_river_our_turn)
 
+; readable is (raise_amount, their_hole_cards, our_card_selections, their_card_selections, our_hand_value, their_hand_value)
+; everything past raise_amount is only there if raise_amount is 0
 (defun continue_river_their_turn)
 
+; move is nil
 (defun end_our_turn)
 
+; readable is (their_hole_cards, our_card_selections, their_card_selections, our_hand_value, their_hand_value)
 (defun end_their_turn)
