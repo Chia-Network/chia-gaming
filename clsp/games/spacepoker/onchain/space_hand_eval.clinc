@@ -1,7 +1,7 @@
 
 ; ranks are 2-14 with 14 being ace
 ; there are no suits, flushes, or ace-to-four straights
-; takes a list of card ranks and returns the value of the best poker 
+; takes a list of card ranks and returns the value of the best poker
 ; hand which can be made with them
 ; returned list is hand type followed by cards in descending order
 ; all sorting is done highest to lowest
@@ -9,12 +9,23 @@
 ; Hands are represented:
 ; 5 of a kind (5 rank)
 ; 4 of a kind  (4 1 quad_rank kicker)
+; straight (3 3 high_card)
 ; full house (3 2 set_rank pair_rank)
-; straight (3 1 2 high_card)
 ; set (3 1 1 set_rank first_kicker second_kicker)
 ; two pair (2 2 1 high_pair_rank low_pair_rank kicker)
 ; pair (2 1 1 1 pair_rank first_kicker second_kicker third_kicker)
 ; high card (1 1 1 1 1 high_card first_kicker second_kicker third_kicker fourth_kicker)
+
+; Hand possibilities:
+; 5 of a kind: 13
+; 4 of a kind: 13 * 12 * 5 = 780
+; straight: 8 * 5 * 4 * 3 * 2 = 960
+; full house: 13 * 12 * 5 * 4 / 2 = 1560
+; set: 13 * 12 * 11 / 2 * 5 * 4 = 17160
+; two pair: 13 * 12 * 11 / 2 * 5 * 4 / 2 * 3 = 25740
+; pair: 13 * 12 * 11 * 10 / (3 * 2) * 5 * 4 * 3 = 171600
+; high card: 13 * 12 * 11 * 10 * 9 - 960 = 153480
+; total = 13 * 13 * 13 * 13 * 13 = 371293
 
 (import std.map)
 (import std.relops)
@@ -22,10 +33,10 @@
 (import std.atomsort)
 
 ; returns the high card of a straight or 0 if there isn't any
-(defun straight_high (@ all-args (count1 count2 count3 count4 count5 rank1 rank2 rank3 rank4 rank5))
-    (if (not (= count1 1))
-        0
+(defun straight_high (count1 count2 count3 count4 count5 rank1 rank2 rank3 rank4 rank5)
+    (if (= count1 1)
         (* (= rank5 (- rank1 4)) rank1)
+        0
     )
 )
 
@@ -51,7 +62,7 @@
         shigh (straight_high &rest hand)
         (if shigh
             (if (logior (< (f hand) 3) (= (f (r hand)) 2))
-                (list 3 1 2 shigh)
+                (list 3 3 shigh)
                 hand
             )
             hand
@@ -60,7 +71,7 @@
 )
 
 (defun space_hand_eval (cards boosted)
-    (assign 
+    (assign
         result (space_hand_calc_inner cards)
         (list (f result) boosted (r result))
     )
