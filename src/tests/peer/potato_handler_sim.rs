@@ -912,7 +912,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 for coin in result.coin_solution_requests.iter() {
                     let ps_res = simulator
-                        .get_puzzle_and_solution(coin)
+                        .get_puzzle_and_solution(&coin.to_coin_id())
                         .expect("should work");
                     for cradle in cradles.iter_mut() {
                         cradle.report_puzzle_and_solution(
