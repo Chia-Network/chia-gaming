@@ -28,7 +28,7 @@ use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
-    Sha256Input, Timeout,
+    Sha256Input, SpendBundle, Timeout,
 };
 use chia_gaming::peer_container::{FullCoinSetAdapter, WatchReport};
 use chia_gaming::simulator::Simulator;
@@ -91,6 +91,7 @@ struct GameRunner {
     rng: ChaCha8Rng,
 
     neutral_identity: ChiaIdentity,
+    identities: BTreeMap<String, ChiaIdentity>,
 
     simulator: Simulator,
     coinset_adapter: FullCoinSetAdapter,
@@ -102,6 +103,7 @@ struct GameRunner {
 enum WebRequest {
     Reset,
     Exit,
+    Register(String),      // Register a user
     GetCurrentPeak,        // Ask for the current peak
     GetBlockData(u64),     // Get the additions and deletons from the given block
     GetPuzzleAndSolution(String), // Given a coin id, get the puzzle and solution
@@ -133,6 +135,10 @@ struct GlobalInfo {
     block_height: usize,
 }
 
+fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
+    hex::decode(hexstr).map_err(|e| Error::StrErr("not hex".to_string()))
+}
+
 impl GameRunner {
     fn new(simulator: Simulator, coinset_adapter: FullCoinSetAdapter) -> Result<Self, Error> {
         let mut allocator = AllocEncoder::new();
@@ -140,30 +146,6 @@ impl GameRunner {
 
         let neutral_pk: PrivateKey = rng.gen();
         let neutral_identity = ChiaIdentity::new(&mut allocator, neutral_pk).expect("should work");
-
-        let pk1: PrivateKey = rng.gen();
-        let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("should work");
-        let pk2: PrivateKey = rng.gen();
-        let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("should work");
-
-        // Give some money to the users.
-        simulator.farm_block(&id1.puzzle_hash);
-        simulator.farm_block(&id2.puzzle_hash);
-
-        let coins0 = simulator
-            .get_my_coins(&id1.puzzle_hash)
-            .expect("should work");
-        let coins1 = simulator
-            .get_my_coins(&id2.puzzle_hash)
-            .expect("should work");
-
-        // Make a 100 coin for each player (and test the deleted and created events).
-        let (parent_coin_0, _rest_0) = simulator
-            .transfer_coin_amount(&mut allocator, &id1, &id1, &coins0[0], Amount::new(100))
-            .expect("should work");
-        let (parent_coin_1, _rest_1) = simulator
-            .transfer_coin_amount(&mut allocator, &id2, &id2, &coins1[0], Amount::new(100))
-            .expect("should work");
 
         simulator.farm_block(&neutral_identity.puzzle_hash);
 
@@ -173,6 +155,7 @@ impl GameRunner {
             neutral_identity,
             coinset_adapter,
             simulator,
+            identities: BTreeMap::default(),
             sim_record: BTreeMap::default(),
         })
     }
@@ -219,10 +202,12 @@ impl GameRunner {
     }
 
     fn get_puzzle_and_solution(&self, coin: &str) -> StringWithError {
-        let bytes = hex::decode(coin).map_err(|e| Error::StrErr("not hex".to_string()))?;
+        let bytes = hex_to_bytes(coin)?;
         let coin_id =
-            if coin.len() > 64 {
-                CoinString::from_bytes(&bytes).to_coin_id()
+            if bytes.len() > 32 {
+                let cs = CoinString::from_bytes(&bytes);
+                debug!("coin string: {cs:?}");
+                cs.to_coin_id()
             } else {
                 CoinID::new(Hash::from_slice(&bytes))
             };
@@ -231,7 +216,54 @@ impl GameRunner {
             return Ok(format!("[\"{}\",\"{}\"]\n", prog.to_hex(), sol.to_hex()));
         }
 
-        Ok("null".to_string())
+        Ok("null\n".to_string())
+    }
+
+    fn register(&mut self, name: &str) -> StringWithError {
+        let public_key =
+            if let Some(identity) = self.identities.get(name) {
+                hex::encode(&identity.puzzle_hash.bytes())
+            } else {
+                let pk1: PrivateKey = self.rng.gen();
+                let identity = ChiaIdentity::new(&mut self.allocator, pk1)?;
+                self.wait_block()?;
+                let result = hex::encode(&identity.puzzle_hash.bytes());
+                self.identities.insert(name.to_string(), identity);
+                result
+            };
+
+        Ok(format!("\"{public_key}\"\n"))
+    }
+
+    fn create_spendable(&mut self, who: &str, target: &str, amt: u64) -> StringWithError {
+        if let Some(identity) = self.identities.get(who) {
+            let coins0 = self.simulator
+                .get_my_coins(&identity.puzzle_hash)
+                .expect("should work");
+            let coin_amt = Amount::new(amt);
+            for c in coins0.iter() {
+                if let Some((_, ph, amt)) = c.to_parts() {
+                    if amt >= coin_amt {
+                        let (parent_coin_0, _rest_0) = self.simulator
+                            .transfer_coin_amount(&mut self.allocator, identity, identity, c, coin_amt.clone())?;
+                        let parent_coin_bytes = parent_coin_0.to_bytes();
+                        self.wait_block()?;
+                        return Ok(format!("\"{}\",", hex::encode(&parent_coin_bytes)));
+                    }
+                }
+            }
+        }
+
+        Ok("null\n".to_string())
+    }
+
+    fn spend(&mut self, blob: &str) -> StringWithError {
+        let spend_program = Program::from_hex(&blob)?;
+        let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
+        let spend_bundle = SpendBundle::from_clvm(&mut self.allocator, spend_node)?;
+        let result = self.simulator.push_tx(&mut self.allocator, &spend_bundle.spends).into_gen()?;
+        let e_res = result.e.map(|e| format!("{e}")).unwrap_or_else(|| "null".to_string());
+        Ok(format!("[{},{e_res}]\n", result.code))
     }
 }
 
@@ -322,6 +354,12 @@ async fn reset(_req: &mut Request) -> Result<String, String> {
 }
 
 #[handler]
+async fn register(req: &mut Request) -> Result<String, String> {
+    let arg = get_arg_string(req, "name").report_err()?;
+    pass_on_request(WebRequest::Register(arg)).report_err()
+}
+
+#[handler]
 async fn get_peak(_req: &mut Request) -> Result<String, String> {
     pass_on_request(WebRequest::GetCurrentPeak).report_err()
 }
@@ -335,6 +373,20 @@ async fn wait_block(_req: &mut Request) -> Result<String, String> {
 async fn get_puzzle_and_solution(req: &mut Request) -> Result<String, String> {
     let arg = get_arg_string(req, "coin").report_err()?;
     pass_on_request(WebRequest::GetPuzzleAndSolution(arg)).report_err()
+}
+
+#[handler]
+async fn create_spendable(req: &mut Request) -> Result<String, String> {
+    let who = get_arg_string(req, "who").report_err()?;
+    let target = get_arg_string(req, "target").report_err()?;
+    let amount = get_arg_integer(req, "amount").report_err()?;
+    pass_on_request(WebRequest::CreateSpendable(who, target, amount)).report_err()
+}
+
+#[handler]
+async fn spend(req: &mut Request) -> Result<String, String> {
+    let blob = get_arg_string(req, "blob").report_err()?;
+    pass_on_request(WebRequest::Spend(blob)).report_err()
 }
 
 fn detect_run_as_python(args: &[String]) -> bool {
@@ -375,10 +427,13 @@ fn main() {
             .push(Router::with_path("player.js").get(player_js))
             .push(Router::with_path("exit").post(exit))
             .push(Router::with_path("reset").post(reset))
+            .push(Router::with_path("register").post(register))
             .push(Router::with_path("get_peak").post(get_peak))
             .push(Router::with_path("get_block_data").post(get_block_data))
             .push(Router::with_path("wait_block").post(wait_block))
-            .push(Router::with_path("get_puzzle_and_solution").post(get_puzzle_and_solution));
+            .push(Router::with_path("get_puzzle_and_solution").post(get_puzzle_and_solution))
+            .push(Router::with_path("spend").post(spend))
+            .push(Router::with_path("create_spendable").post(create_spendable));
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
         let s = std::thread::spawn(move || {
@@ -397,6 +452,9 @@ fn main() {
                 debug!("request {request:?}");
                 let result = {
                     match request {
+                        WebRequest::Register(name) => {
+                            game_runner.register(&name)
+                        }
                         WebRequest::GetCurrentPeak => {
                             let result = game_runner.simulator.get_current_height();
                             Ok(format!("{result}\n"))
@@ -409,6 +467,12 @@ fn main() {
                         }
                         WebRequest::GetPuzzleAndSolution(coin) => {
                             game_runner.get_puzzle_and_solution(&coin)
+                        }
+                        WebRequest::CreateSpendable(who, target, amt) => {
+                            game_runner.create_spendable(&who, &target, amt)
+                        }
+                        WebRequest::Spend(blob) => {
+                            game_runner.spend(&blob)
                         }
                         WebRequest::Reset => {
                             game_runner.reset_sim()
