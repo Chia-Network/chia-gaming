@@ -46,6 +46,7 @@ export interface GenerateRoomResult {
 export interface Room {
   token: string;
   host: string;
+  target?: string;
   joiner?: string;
   game: GameType;
   minPlayers: number;

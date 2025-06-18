@@ -20,8 +20,12 @@ import { useWalletConnect } from "../hooks/WalletConnectContext";
 import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
 import Debug from "./Debug";
+import { getGameSelection } from '../util';
 
 const Game: React.FC = () => {
+  const gameSelection = getGameSelection();
+  console.log('gameSelection', gameSelection);
+
   const { client, session, pairings, connect, disconnect } = useWalletConnect();
   const [command, setCommand] = useState(0);
   const { commands } = useRpcUi();
@@ -62,7 +66,7 @@ const Game: React.FC = () => {
 
   const { wcInfo, setWcInfo } = useDebug();
 
-  if (gameState === "idle") {
+  if (gameSelection === undefined && gameState === "idle") {
     return (
       <LobbyScreen
         wagerAmount={wagerAmount}

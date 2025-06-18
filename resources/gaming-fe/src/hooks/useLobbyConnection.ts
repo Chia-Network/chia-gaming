@@ -33,10 +33,10 @@ export function useLobbySocket(alias: string) {
         if (!room.host || !room.joiner) {
           continue;
         }
-        if (room.host == uniqueId || room.joiner == uniqueId) {
+        if (room.host == uniqueId || room.joiner == uniqueId && room.target) {
           // This room is inhabited and contains us, redirect.
-          console.log('take us to game', room);
-          window.location.href = "https://example.com";
+          console.log('take us to game', JSON.stringify(room));
+          window.location.href = room.target as string;
           break;
         }
       }

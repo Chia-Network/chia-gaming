@@ -12,12 +12,30 @@ config();
 const app = (express as any)();
 const httpServer = createServer(app);
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'", "https://explorer-api.walletconnect.com", "http://localhost:3000"]
+    }
+  }
+}));
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:3000',
   methods: ['GET', 'POST', 'HEAD', 'OPTIONS']
 }));
 app.use(express.json());
+
+async function serveFile(file: string, contentType: string, res: any) {
+    const content = await readFile(file);
+    res.set('Content-Type', contentType);
+    res.send(content);
+}
+app.get('/', async (req: any, res: any) => {
+    serveFile('public/index.html', 'text/html', res);
+});
+app.get('/index.js', async (req: any, res: any) => {
+    serveFile("dist/index-rollup.js", "application/javascript", res);
+});
 
 const io = setupWebSocket(httpServer);
 

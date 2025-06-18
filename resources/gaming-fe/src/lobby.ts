@@ -18,6 +18,8 @@ const lobbyQueue: Player[] = [];
 const rooms: Record<string,Room> = {};
 const TOKEN_TTL = 10 * 60 * 1000;
 const socketUsers = {};
+// XXX Take from games calling in.
+const games: { [id: string]: string; } = {'calpoker': 'http://localhost:3001/?game=calpoker'};
 
 function joinLobby(id: string, alias: string, parameters: any): any {
   if (!id || !alias) {
@@ -49,15 +51,15 @@ function leaveLobby(id: string): any {
 
 // Kick the root.
 async function serveFile(file: string, contentType: string, res: any) {
-  const content = await readFile(file);
-  res.set('Content-Type', contentType);
-  res.send(content);
+    const content = await readFile(file);
+    res.set('Content-Type', contentType);
+    res.send(content);
 }
 app.get('/', async (req: any, res: any) => {
   serveFile("public/index.html", "text/html", res);
 });
 app.get('/index.js', async (req: any, res: any) => {
-  serveFile("dist/index-rollup.js", "application/javascript", res);
+    serveFile("dist/index-rollup.js", "application/javascript", res);
 });
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;
@@ -109,6 +111,8 @@ app.post('/lobby/join-room', (req, res) => {
     return res.status(400).json({ error: 'Room is already full.' });
   }
   room.joiner = id;
+  room.target = games[room.game] + `&token=${token};`;
+
   io.emit('room_update', room);
   res.json(room);
 });
