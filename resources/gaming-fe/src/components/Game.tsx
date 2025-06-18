@@ -19,6 +19,7 @@ import LobbyScreen from "./LobbyScreen";
 import { useWalletConnect } from "../hooks/WalletConnectContext";
 import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
+import { useWasmBlob } from "../hooks/useWasmBlob";
 import Debug from "./Debug";
 import { getGameSelection } from '../util';
 
@@ -31,6 +32,7 @@ const Game: React.FC = () => {
   const { commands } = useRpcUi();
   const commandEntries = Object.entries(commands);
   const selectedCommandEntry = commandEntries[command];
+  const { wasmConnection } = useWasmBlob();
 
   console.log("WC", client, session, pairings, connect, disconnect);
 
