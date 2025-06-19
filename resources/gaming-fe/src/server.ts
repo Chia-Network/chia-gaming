@@ -15,7 +15,8 @@ const httpServer = createServer(app);
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
-      defaultSrc: ["'self'", "https://explorer-api.walletconnect.com", "http://localhost:3000"]
+      defaultSrc: ["'self'", "https://explorer-api.walletconnect.com", "http://localhost:3000"],
+      scriptSrc: ["'self'", "http://localhost:3001", "'wasm-unsafe-eval'", "'unsafe-inline'"]
     }
   }
 }));
@@ -34,7 +35,13 @@ app.get('/', async (req: any, res: any) => {
     serveFile('public/index.html', 'text/html', res);
 });
 app.get('/index.js', async (req: any, res: any) => {
-    serveFile("dist/index-rollup.js", "application/javascript", res);
+  serveFile("dist/index-rollup.js", "application/javascript", res);
+});
+app.get('/chia_gaming_wasm_bg.wasm', async (req: any, res: any) => {
+  serveFile("dist/chia_gaming_wasm_bg.wasm", "application/wasm", res);
+});
+app.get('/chia_gaming_wasm.js', async (req: any, res: any) => {
+  serveFile("dist/chia_gaming_wasm.js", "application/javascript", res);
 });
 
 const io = setupWebSocket(httpServer);

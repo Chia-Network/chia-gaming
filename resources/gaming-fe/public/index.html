@@ -9,6 +9,14 @@
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
+    <script type="module">
+     import { initSync } from './chia_gaming_wasm.js';
+     function chia_gaming_init(modData) {
+         console.log('chia_gaming_init running');
+         return initSync(modData);
+     }
+     window.chia_gaming_init = chia_gaming_init;
+    </script>
     <script src="index.js"></script>
   </body>
 </html>

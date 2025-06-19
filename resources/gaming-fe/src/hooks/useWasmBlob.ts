@@ -25,20 +25,32 @@ interface WasmConnection {
 };
 
 export function useWasmBlob() {
-  const WASM_URL = process.env.REACT_APP_WASM_BLOB_URL || "http://localhost:3000/chia-gaming.wasm";
-
+  const fetchUrl = process.env.REACT_APP_WASM_URL = 'http://localhost:3001/chia_gaming_wasm_bg.wasm';
   const [wasmConnection, setWasmConnection] = useState<WasmConnection | undefined>(undefined);
 
-  fetch(WASM_URL).then(r => r.blob()).then(blob => {
-    const moduleParams = {
-      module: {},
-      env: {
-        memory: new WebAssembly.Memory({ initial: 4096 * 1024 })
+  console.log('running chia gaming init');
+  useEffect(() => {
+    function timerCheckWasm() {
+      const chia_gaming_init: any = (window as any).chia_gaming_init;
+      if (!chia_gaming_init) {
+        console.log('cycling, no wasm');
+        setTimeout(() => {
+          timerCheckWasm();
+        }, 100);
+      } else {
+        console.log('wasm detected');
+        fetch(fetchUrl).then(wasm => wasm.blob()).then(blob => {
+          return blob.arrayBuffer();
+        }).then(modData => {
+          const cg = chia_gaming_init(modData);
+          console.log('in react, have chia_gaming', cg);
+          cg.init();
+          setWasmConnection(cg);
+        })
       }
-    };
-    return WebAssembly.instantiate(blob, moduleParams);
-  }).then(wasmResult => {
-    console.log('wasmLoadResult', wasmResult);
+    }
+
+    timerCheckWasm();
   });
 
   return { wasmConnection };

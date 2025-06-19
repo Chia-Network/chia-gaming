@@ -2,3 +2,4 @@ target/debug
 target/release/build
 target/release/deps
 target/release/incremental
+wasm/target/release
