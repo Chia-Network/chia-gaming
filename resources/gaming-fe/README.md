@@ -23,8 +23,8 @@ Cal Poker is a simple real-time poker game where two players can connect, place 
 1. **Install dependencies for the client:**
    ```npm install```
 
-2. **Starting the Server:**
-   ```node server.js```
+2. **Starting the lobby service:**
+   ```node ./dist/lobby.js```
 
 3. **Start the React application:**
    ```npm start```

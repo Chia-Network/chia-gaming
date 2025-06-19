@@ -344,10 +344,10 @@ impl Simulator {
 
     pub fn get_puzzle_and_solution(
         &self,
-        coin_string: &CoinString,
+        coin_id: &CoinID,
     ) -> PyResult<Option<(Program, Program)>> {
         Python::with_gil(|py| -> PyResult<_> {
-            let hash_bytes = PyBytes::new(py, coin_string.to_coin_id().bytes());
+            let hash_bytes = PyBytes::new(py, coin_id.bytes());
             let record = self.async_client(py, "get_coin_record_by_name", (&hash_bytes,))?;
             let height_of_spend =
                 if let Ok(height_of_spend) = record.getattr(py, "spent_block_index") {

@@ -1,48 +1,84 @@
 import { z } from 'zod';
 
-export type GameType = 'california_poker' | 'krunk' | 'exotic_poker';
+export const GameTypes = {
+    CALIFORNIA_POKER: 'california_poker',
+    KRUNK: 'krunk',
+    EXOTIC_POKER: 'exotic_poker'
+}
+export type GameType = 'california_poker' | 'krunk' | 'exotic_poker'
+
+export type FragmentData = { [k: string]: string }
+
+export interface LobbyState {
+  players: Player[];
+  rooms: Room[];
+  currentRoom?: Room;
+  error?: string;
+  status?: string;
+}
 
 export interface Player {
   id: string;
-  walletAddress: string;
-  name: string;
-  joinedAt: Date;
-  lastActive: Date;
+  alias: string;
+  walletAddress?: string;
+  joinedAt: number;
+  lastActive: number;
+  status: string;
+  parameters: any;
 }
 
 export interface ChatMessage {
-  sender: string;
+  sender?: string;
   text: string;
-  timestamp: Date;
+  timestamp?: number;
+}
+
+export interface ChatEnvelope {
+  alias: string;
+  content: ChatMessage;
+}
+
+export interface GenerateRoomResult {
+  secureUrl: string;
+  token: string;
 }
 
 export interface Room {
-  id: string;
-  name: string;
-  gameType: GameType;
+  token: string;
+  host: string;
+  target?: string;
+  joiner?: string;
+  game: GameType;
   minPlayers: number;
   maxPlayers: number;
   status: 'waiting' | 'in_progress' | 'completed';
-  players: Player[];
-  createdAt: Date;
-  startedAt?: Date;
-  endedAt?: Date;
+  createdAt: number;
+  startedAt?: number;
+  endedAt?: number;
+  expiresAt: number;
+  parameters: any;
+  chat: ChatMessage[];
 }
 
 export interface MatchmakingPreferences {
-  gameType: GameType;
+  id: string;
+  alias: string;
+  game: GameType;
   minPlayers: number;
   maxPlayers: number;
+  parameters: any;
 }
 
 export interface GameSession {
   id: string;
   roomId: string;
   gameType: GameType;
-  players: Player[];
-  startedAt: Date;
-  status: 'in_progress' | 'completed';
+  host: string;
+  joiner: string;
+  startedAt: number;
+  status: 'active' | 'in_progress' | 'completed';
   winner?: string;
+  parameters: string[];
 }
 
 export const gameTypeSchema = z.enum(['california_poker', 'krunk', 'exotic_poker']);
@@ -88,4 +124,4 @@ export const gameSessionSchema = z.object({
   startedAt: z.date(),
   status: z.enum(['in_progress', 'completed']),
   winner: z.string().optional()
-}); 
+});
