@@ -2,78 +2,247 @@
 
 (import spacehandcalc)
 
-(defun space_poker_factory ()
+; game factory takes (alice_contribution bob_contribution) and returns
+; (initial_mover_handler initial_waiter_handler
+; initial_max_move_size initial_state initial_mover_share
+; (validator_hash validator validator_hash validator ...) first one is initial)
+(defun space_poker_factory (alice_contribution bob_contribution)
+    (assert
+        (= alice_contribution bob_contribution)
+        (li commitA_our_turn commitA_their_turn 32 (+ alice_contribution bob_contribution) alice_contribution
+        (li commitA_hash commitA commitB_hash commitB begin_round_hash begin_round
+        mid_round_hash mid_round end_hash end))
+    )
 )
 
-; move is nil
-(defun commitA_our_turn)
+; my turn handler takes (local_move pre_state amount entropy raw_amount) and
+; returns (binary_move their_turn_handler mover_share message_parser)
+
+; their turn handler takes (remote_move pre_state post_state mover_share amount raw_amount) and
+; returns (readable_info my_turn_handler list_of_evidence message)
+
+; user_move is nil
+; state is units_on_table
+(defun commitA_our_turn (local_move units_on_table amount entropy raw_amount)
+    (assign
+        my_move (sha256 (sha256 (sha256 (sha256 (sha256 entropy raw_amount)))))
+        (li my_move (curry commitB_ther_turn entropy) (/ amount 2))
+    )
+)
 
 ; readable is nil
-(defun commitA_their_turn)
+; prestate is units_on_table
+; poststate is (units_on_table waiter_image_5)
+(defun commitA_their_turn (remote_move prestate (units_on_table waiter_image_5) mover_share amount raw_amount)
+    (li 0 commitB_our_turn)
+)
 
-; move is nil
-(defun commitB_our_turn)
+; user_move is nil
+; state is (units_on_table waiter_image_5)
+(defun commitB_our_turn (local_move (units_on_table waiter_image_5) amount entropy raw_amount)
+    (assign
+        my_move (sha256 (sha256 (sha256 (sha256 (sha256 entropy raw_amount)))))
+        (li my_move (curry begin_preflop_their_turn entropy) (/ amount 2))
+    )
+)
 
 ; readable is (whether_we_go_first, our_hole_cards)
-(defun commitB_their_turn)
+; prestate is (units_on_table waiter_image_5)
+; poststate is (units_on_table half_pot_size mover_image_5 waiter_image_4 4)
+(defun commitB_their_turn (MY_PREIMAGE their_image_4 prestate poststate mover_share amount raw_amount)
+    (assign
+        my_hole_cards (make_cards remote_move (sha256 MY_PREIMAGE raw_amount) 2)
+        my_image_4 (sha256 (sha256 (sha256 (sha256 (sha256 MY_PREIMAGE raw_amount)))))
+        ; there is a 50% chance the orientation of this is wrong
+        our_turn (< (sha256 their_image_4 my_image_4) (sha256 my_image_4 their_image_4))
+        (li (our_turn my_hole_cards) (curry begin_preflop_our_turn MY_PREIMAGE our_turn) 0 my_image_4)
+    )
+)
 
-; if we go first move is nil and and state goes to begin_preflop_their_turn
-; otherwise move is raise amount and state goes to continue_preflop_their_turn
-(defun begin_preflop_our_turn)
+; if we go first user_move is raise amount and state goes to continue_preflop_their_turn
+; if they go first user_move is nil and and state goes to begin_preflop_their_turn
+; state is (units_on_table half_pot_size mover_image_5 waiter_image_4 4)
+(defun begin_preflop_our_turn (MY_PREIMAGE OUR_TURN raise_amount (units_on_table half_pot_size mover_image_5 waiter_image_4 4) amount entropy raw_amount)
+    (assign
+        my_image_4 (sha256 (sha256 (sha256 (sha256 (sha256 MY_PREIMAGE raw_amount)))))
+        (if OUR_TURN
+            (assert
+                (<= (+ raise_amount raise_amount) amount)
+                (li (concat my_image_4 raise_amount) (curry continue_preflop_their_turn MY_PREIMAGE) (/ units_on_table 2))
+            )
+            (li my_image_4 (curry begin_preflop_their_turn MY_PREIMAGE) (/ amount 2) 0
+                (curry parse_message_for_begin_preflop_their_turn MY_PREIMAGE raw_amount))
+        )
+    )
+)
+
+(defun parse_message_for_begin_preflop_their_turn (MY_PREIMAGE RAW_AMOUNT THEIR_IMAGE_5 message)
+    (assert
+        (= strlen message 32)
+        (= (sha256 message) THEIR_IMAGE_5)
+        (make_cards message (sha256 MY_PREIMAGE RAW_AMOUNT) 2)
+    )
+)
 
 ; if we go first readable is (True, our_hole_cards) and state goes to begin_preflop_our_turn
-; otherwise readable is (False, raise_amount, our_hole_cards) and state goes to continue_preflop_our_turn
+; if they go first readable is (False, raise_amount, our_hole_cards) and state goes to continue_preflop_our_turn
 ; our_hole_cards is previewed from message
-(defun begin_preflop_their_turn)
+; prestate is (units_on_table half_pot_size mover_image_5 waiter_image_4 4)
+; if we move first poststate is (units_on_table half_pot_size their_image_5 my_image_4 4)
+; if they move first poststate is (units_on_table half_pot their_image_4 my_image_4 4 begin_round_hash)
+(defun begin_preflop_their_turn (MY_PREIMAGE remote_move pre_state (units_on_table half_pot raise_amount
+        their_image_4 my_image_4 n_4 begin_round_hash) mover_share amount raw_amount)
+    (if (> (strlen remote_move) 32)
+        ; they go first
+        (assign
+            raise_amount (substr remote_move 32 (strlen remote_move))
+            my_hole_cards (make_cards their_image_4 (sha256 MY_PREIMAGE raw_amount) 2)
+            (li (li 0 raise_amount my_hole_cards) (curry continue_preflop_our_turn MY_PREIMAGE))
+        )
+        ; we go first
+        (assign
+            my_hole_cards (make_cards remote_move (sha256 MY_PREIMAGE raw_amount) 2)
+            (li (li 1 my_hole_cards) (curry begin_preflop_my_turn MY_PREIMAGE))
+        )
+    )
+)
 
-; move is raise amount, 0 for call
-(defun continue_preflop_our_turn)
+; user_move is raise amount, 0 for call
+; state is (units_on_table half_pot raise_amount mover_image_4 waiter_image_4 4 begin_round_hash)
+(defun continue_preflop_our_turn (MY_PREIMAGE my_reraise_amount
+            (units_on_table half_pot raise_amount mover_image_4 waiter_image_4 4 begin_round_hash)
+            amount entropy raw_amount)
+    (assert
+        (>= my_reraise_amount 0)
+        (if my_reraise_amount
+            ; we're raising
+            (li my_reraise_amount (curry continue_preflop_their_turn MY_PREIMAGE) (+ half_pot raise_amount))
+            ; we're calling
+            (li my_reraise_amount (curry begin_flop_their_turn MY_PREIMAGE) (+ half_pot raise_amount)
+                (curry parse_message_for_begin_flop_their_turn MY_PREIMAGE))
+        )
+    )
+)
 
 ; readable is (raise_amount, flop_cards) flop_cards is nil if raise amount is not 0
-(defun continue_preflop_their_turn)
+; prestate is (units_on_table half_pot raise_amount mover_image_4 waiter_image_4 4 begin_round_hash)
+; if raise_amount > 0 poststate is (units_on_table half_pot raise_amount mover_image_4 waiter_image_4 4 begin_round_hash)
+; if raise amount = 0 poststate is (units_on_table half_pot_size mover_image_4 waiter_image_3 3)
+(defun continue_preflop_their_turn (MY_PREIMAGE remote_move pre_state post_state mover_share amount raw_amount)
+    (if (= (strlen remote_move) 32)
+        ; they called
+        (assign
+            my_image_3 (sha256 (sha256 (sha256 (sha256 MY_PREIMAGE raw_amount))))
+            (li (li 0 (make_cards remote_move my_image_3 3)) (curry begin_flop_our_turn MY_PREIMAGE) 0 my_image_3)
+        )
+        ; they raised
+        (li (li remote_move 0) (curry continue_flop_our_turn MY_PREIMAGE))
+    )
+)
 
-; move is raise amount
-(defun begin_flop_our_turn)
+; user_move is raise amount
+; state is (units_on_table half_pot_size mover_4 waiter_image_3 3)
+(defun begin_flop_our_turn (MY_PREIMAGE local_move pre_state amount entropy raw_amount)
+)
+
+(defun parse_message_for_begin_flop_their_turn (MY_PREIMAGE RAW_AMOUNT THEIR_IMAGE_4 message)
+    (assert
+        (= strlen message 32)
+        (= (sha256 message) THEIR_IMAGE_4)
+        (make_cards message (sha256 (sha256 (sha256 (sha256 MY_PREIMAGE RAW_AMOUNT)))) 3)
+    )
+)
 
 ; readable is (raise_amount, flop_cards)
 ; flop_cards is previewed from message
-(defun begin_flop_their_turn)
+; prestate is (units_on_table half_pot_size mover_image_4 waiter_image_3 3)
+; poststate is (units_on_table half_pot raise_amount mover_image_3 waiter_image_3 3 begin_round_hash)
+(defun begin_flop_their_turn (MY_PREIMAGE remote_move pre_state post_state mover_share amount raw_amount)
+)
 
-; move is raise amount, 0 for call
-(defun continue_flop_our_turn)
+; user_move is raise amount, 0 for call
+; state is (units_on_table half_pot raise_amount mover_image_3 waiter_image_3 3 begin_round_hash)
+(defun continue_flop_our_turn (MY_PREIMAGE local_move pre_state amount entropy raw_amount)
+)
 
 ; readable is (raise_amount, turn_card) turn_card is nil if raise amount is not 0
-(defun continue_flop_their_turn)
+; prestate is (units_on_table half_pot raise_amount mover_image_3 waiter_image_3 3 begin_round_hash)
+; if raise_amount > 0 poststate is (units_on_table half_pot raise_amount mover_image_3 waiter_image_3 3 begin_round_hash)
+; if raise amount = 0 poststate is (units_on_table half_pot_size mover_image_3 waiter_image_2 2)
+(defun continue_flop_their_turn (MY_PREIMAGE remote_move pre_state post_state mover_share amount raw_amount)
+)
 
-; move is raise amount
-(defun begin_turn_our_turn)
+; user_move is raise amount
+; state is (units_on_table half_pot_size mover_3 waiter_image_2 2)
+(defun begin_turn_our_turn (MY_PREIMAGE local_move pre_state amount entropy raw_amount)
+)
+
+(defun parse_message_for_begin_turn_their_turn (MY_PREIMAGE RAW_AMOUNT THEIR_IMAGE_3 message)
+    (assert
+        (= strlen message 32)
+        (= (sha256 message) THEIR_IMAGE_3)
+        (make_cards message (sha256 (sha256 (sha256 MY_PREIMAGE RAW_AMOUNT))) 1)
+    )
+)
 
 ; readable is (raise_amount, turn_card)
 ; turn_card is previewed from message
-(defun begin_turn_their_turn)
+; prestate is (units_on_table half_pot_size mover_image_3 waiter_image_2 2)
+; poststate is (units_on_table half_pot raise_amount mover_image_2 waiter_image_2 2 begin_round_hash)
+(defun begin_turn_their_turn (MY_PREIMAGE remote_move pre_state post_state mover_share amount raw_amount)
+)
 
-; move is raise amount, 0 for call
-(defun continue_turn_our_turn)
+; user_move is raise amount, 0 for call
+; state is (units_on_table half_pot raise_amount mover_image_2 waiter_image_2 2 begin_round_hash)
+(defun continue_turn_our_turn (MY_PREIMAGE local_move pre_state amount entropy raw_amount)
+)
 
 ; readable is (raise_amount, river_card) river_card is nil if raise amount is not 0
-(defun continue_turn_their_turn)
+; prestate is (units_on_table half_pot raise_amount mover_image_2 waiter_image_2 2 begin_round_hash)
+; if raise_amount > 0 poststate is (units_on_table half_pot raise_amount mover_image_2 waiter_image_2 2 begin_round_hash)
+; if raise amount = 0 poststate is (units_on_table half_pot_size mover_image_2 waiter_image_1 1)
+(defun continue_turn_their_turn (MY_PREIMAGE remote_move pre_state post_state mover_share amount raw_amount)
+)
 
-; move is raise amount
-(defun_begin_river_our_turn)
+; user_move is raise amount
+; state is (units_on_table half_pot_size mover_2 waiter_image_1 1)
+(defun begin_river_our_turn (MY_PREIMAGE local_move pre_state amount entropy raw_amount)
+)
 
+(defun parse_message_for_begin_river_their_turn (MY_PREIMAGE RAW_AMOUNT THEIR_IMAGE_2 message)
+    (assert
+        (= strlen message 32)
+        (= (sha256 message) THEIR_IMAGE_2)
+        (make_cards message (sha256 (sha256 MY_PREIMAGE RAW_AMOUNT))) 1)
+    )
+)
 ; readable is (raise_amount, river_card)
 ; river_card is previewed from message
-(defun begin_river_their_turn)
+; prestate is (units_on_table half_pot_size mover_image_2 waiter_image_1 1)
+; poststate is (units_on_table half_pot raise_amount mover_image_1 waiter_image_1 1 begin_round_hash)
+(defun begin_river_their_turn (MY_PREIMAGE remote_move pre_state post_state mover_share amount raw_amount)
+)
 
-; move is raise amount, 0 for call
-(defun continue_river_our_turn)
+; user_move is raise amount, 0 for call
+; state is (units_on_table half_pot raise_amount mover_image_1 waiter_image_1 1 begin_round_hash)
+(defun continue_river_our_turn (MY_PREIMAGE local_move pre_state amount entropy raw_amount)
+)
 
 ; readable is (raise_amount, their_hole_cards, our_card_selections, their_card_selections, our_hand_value, their_hand_value)
 ; everything past raise_amount is only there if raise_amount is 0
-(defun continue_river_their_turn)
+; prestate is (units_on_table half_pot raise_amount mover_image_2 waiter_image_2 2 begin_round_hash)
+; if raise_amount > 0 poststate is (units_on_table half_pot raise_amount mover_image_2 waiter_image_2 2 begin_round_hash)
+; if raise amount = 0 poststate is (units_on_table half_pot raise_amount mover_image waiter_preimage)
+(defun continue_river_their_turn (MY_PREIMAGE remote_move pre_state post_state mover_share amount raw_amount)
+)
 
-; move is nil
-(defun end_our_turn)
+; user_move is nil
+; state is (units_on_table half_pot raise_amount mover_image waiter_preimage)
+(defun end_our_turn (MY_PREIMAGE local_move pre_state amount entropy raw_amount)
+)
 
 ; readable is (their_hole_cards, our_card_selections, their_card_selections, our_hand_value, their_hand_value)
-(defun end_their_turn)
+; prestate is (units_on_table half_pot raise_amount mover_image waiter_preimage)
+; poststate is nil
+(defun end_their_turn (remote_move pre_state post_state mover_share amount raw_amount)
+)

@@ -58,17 +58,17 @@
     (assign-lambda
         ranks (atomsort (list card1rank card2rank card3rank card4rank card5rank))
         raw_groups (atomsort (group_by_count ranks))
-        hand (map (lambda (x) (lsh x -4)) raw_groups (map (lambda (x) (logand x 15)) raw_groups))
+        (@ hand (hand1 hand2)) (map (lambda (x) (lsh x -4)) raw_groups (map (lambda (x) (logand x 15)) raw_groups))
         shigh (straight_high &rest hand)
         (if shigh
             (if (check_flush &rest cards)
                 (list 5 shigh)
-                (if (logior (= (f hand) 4) (logand (= (f hand) 3) (= (f (r hand)) 2)))
+                (if (logior (= hand1 4) (logand (= hand1 3) (= hand2 2)))
                     hand
                     (list 3 1 2 shigh)
                 )
             )
-            (if (logand (check_flush &rest cards) (logior (< (f hand) 3) (logand (= (f hand) 3) (< (f (r hand)) 2))))
+            (if (logand (check_flush &rest cards) (logior (< hand1 3) (logand (= hand1 3) (< hand2 2))))
                 (list 3 1 3 (ranks_of_hand &rest hand))
                 hand
             )
