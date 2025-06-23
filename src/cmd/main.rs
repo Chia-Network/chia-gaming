@@ -1,5 +1,7 @@
 use exec::execvp;
 use std::collections::{BTreeMap, VecDeque};
+use std::convert::TryFrom;
+use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::stdin;
@@ -7,6 +9,7 @@ use std::mem::swap;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::SExp;
@@ -27,7 +30,7 @@ use serde_json::{Map, Value};
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
+    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program, PuzzleHash,
     Sha256Input, SpendBundle, Timeout,
 };
 use chia_gaming::peer_container::{FullCoinSetAdapter, WatchReport};
@@ -91,7 +94,8 @@ struct GameRunner {
     rng: ChaCha8Rng,
 
     neutral_identity: ChiaIdentity,
-    identities: BTreeMap<String, ChiaIdentity>,
+    identities: BTreeMap<String, String>,
+    pubkeys: BTreeMap<String, ChiaIdentity>,
 
     simulator: Simulator,
     coinset_adapter: FullCoinSetAdapter,
@@ -156,6 +160,7 @@ impl GameRunner {
             coinset_adapter,
             simulator,
             identities: BTreeMap::default(),
+            pubkeys: BTreeMap::default(),
             sim_record: BTreeMap::default(),
         })
     }
@@ -178,8 +183,7 @@ impl GameRunner {
         Ok("1\n".to_string())
     }
 
-    fn wait_block(&mut self) -> StringWithError {
-        self.simulator.farm_block(&self.neutral_identity.puzzle_hash);
+    fn chase_block(&mut self) -> Result<u64, Error> {
         let new_height = self.simulator.get_current_height() as u64;
         let new_coins = self.simulator.get_all_coins().into_gen()?;
         let watch_report = self.coinset_adapter.make_report_from_coin_set_update(
@@ -187,6 +191,12 @@ impl GameRunner {
             &new_coins
         )?;
         self.sim_record.insert(new_height, watch_report);
+        Ok(new_height)
+    }
+
+    fn wait_block(&mut self) -> StringWithError {
+        self.simulator.farm_block(&self.neutral_identity.puzzle_hash);
+        let new_height = self.chase_block()?;
         Ok(format!("{}\n", new_height))
     }
 
@@ -219,16 +229,28 @@ impl GameRunner {
         Ok("null\n".to_string())
     }
 
+    fn lookup_identity(&self, name: &str) -> Option<&ChiaIdentity> {
+        if let Some(pk) = self.identities.get(name) {
+            return self.pubkeys.get(pk);
+        } else if let Some(pki) = self.pubkeys.get(name) {
+            return Some(pki);
+        }
+
+        None
+    }
+
     fn register(&mut self, name: &str) -> StringWithError {
         let public_key =
-            if let Some(identity) = self.identities.get(name) {
+            if let Some(identity) = self.lookup_identity(name) {
                 hex::encode(&identity.puzzle_hash.bytes())
             } else {
                 let pk1: PrivateKey = self.rng.gen();
                 let identity = ChiaIdentity::new(&mut self.allocator, pk1)?;
-                self.wait_block()?;
+                self.simulator.farm_block(&identity.puzzle_hash);
+                self.chase_block()?;
                 let result = hex::encode(&identity.puzzle_hash.bytes());
-                self.identities.insert(name.to_string(), identity);
+                self.identities.insert(name.to_string(), result.clone());
+                self.pubkeys.insert(result.clone(), identity);
                 result
             };
 
@@ -236,19 +258,22 @@ impl GameRunner {
     }
 
     fn create_spendable(&mut self, who: &str, target: &str, amt: u64) -> StringWithError {
-        if let Some(identity) = self.identities.get(who) {
+        let target_ph_bytes: Vec<u8> = hex::decode(&target).map_err(|_| Error::StrErr("bad target hex".to_string()))?;
+        let target_ph = PuzzleHash::from_hash(Hash::from_slice(&target_ph_bytes));
+        let identity = self.lookup_identity(who).cloned();
+        if let Some(identity) = identity {
             let coins0 = self.simulator
                 .get_my_coins(&identity.puzzle_hash)
-                .expect("should work");
+                .into_gen()?;
             let coin_amt = Amount::new(amt);
             for c in coins0.iter() {
                 if let Some((_, ph, amt)) = c.to_parts() {
                     if amt >= coin_amt {
                         let (parent_coin_0, _rest_0) = self.simulator
-                            .transfer_coin_amount(&mut self.allocator, identity, identity, c, coin_amt.clone())?;
+                            .transfer_coin_amount(&mut self.allocator, &target_ph, &identity, c, coin_amt.clone())?;
                         let parent_coin_bytes = parent_coin_0.to_bytes();
                         self.wait_block()?;
-                        return Ok(format!("\"{}\",", hex::encode(&parent_coin_bytes)));
+                        return Ok(format!("\"{}\"\n", hex::encode(&parent_coin_bytes)));
                     }
                 }
             }
@@ -301,7 +326,7 @@ async fn index_css(response: &mut Response) -> Result<(), String> {
     get_file("resources/web/index.css", "text/css", response)
 }
 
-fn pass_on_request(wr: WebRequest) -> Result<String, Error> {
+fn pass_on_request(req: &mut Request, response: &mut Response, wr: WebRequest) -> Result<(), String> {
     let locked = ONE_REQUEST.lock().unwrap();
 
     {
@@ -313,12 +338,18 @@ fn pass_on_request(wr: WebRequest) -> Result<String, Error> {
     let result = (*from_web).recv().unwrap();
     drop(locked);
 
-    result
+    result.report_err().and_then(|r| {
+        cors_origin(req, response)?;
+
+        let response_bytes: Vec<u8> = r.bytes().collect();
+        response.replace_body(ResBody::Once(Bytes::from(response_bytes)));
+        Ok(())
+    })
 }
 
 #[handler]
-async fn get_current_peak(_req: &mut Request) -> Result<String, String> {
-    pass_on_request(WebRequest::GetCurrentPeak).report_err()
+async fn get_current_peak(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    pass_on_request(req, response, WebRequest::GetCurrentPeak)
 }
 
 fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
@@ -338,9 +369,9 @@ fn get_arg_integer(req: &mut Request, name: &str) -> Result<u64, Error> {
 }
 
 #[handler]
-async fn get_block_data(req: &mut Request) -> Result<String, String> {
+async fn get_block_data(req: &mut Request, response: &mut Response) -> Result<(), String> {
     let arg = get_arg_integer(req, "block").report_err()?;
-    pass_on_request(WebRequest::GetBlockData(arg)).report_err()
+    pass_on_request(req, response, WebRequest::GetBlockData(arg))
 }
 
 #[handler]
@@ -349,44 +380,61 @@ async fn exit(_req: &mut Request) -> Result<String, String> {
 }
 
 #[handler]
-async fn reset(_req: &mut Request) -> Result<String, String> {
-    pass_on_request(WebRequest::Reset).report_err()
+async fn reset(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    pass_on_request(req, response, WebRequest::Reset)
 }
 
 #[handler]
-async fn register(req: &mut Request) -> Result<String, String> {
+async fn register(req: &mut Request, response: &mut Response) -> Result<(), String> {
     let arg = get_arg_string(req, "name").report_err()?;
-    pass_on_request(WebRequest::Register(arg)).report_err()
+    pass_on_request(req, response, WebRequest::Register(arg))
 }
 
 #[handler]
-async fn get_peak(_req: &mut Request) -> Result<String, String> {
-    pass_on_request(WebRequest::GetCurrentPeak).report_err()
+async fn get_peak(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    pass_on_request(req, response, WebRequest::GetCurrentPeak)
 }
 
 #[handler]
-async fn wait_block(_req: &mut Request) -> Result<String, String> {
-    pass_on_request(WebRequest::WaitBlock).report_err()
+async fn wait_block(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    pass_on_request(req, response, WebRequest::WaitBlock)
 }
 
 #[handler]
-async fn get_puzzle_and_solution(req: &mut Request) -> Result<String, String> {
+async fn get_puzzle_and_solution(req: &mut Request, response: &mut Response) -> Result<(), String> {
     let arg = get_arg_string(req, "coin").report_err()?;
-    pass_on_request(WebRequest::GetPuzzleAndSolution(arg)).report_err()
+    pass_on_request(req, response, WebRequest::GetPuzzleAndSolution(arg))
 }
 
 #[handler]
-async fn create_spendable(req: &mut Request) -> Result<String, String> {
+async fn create_spendable(req: &mut Request, response: &mut Response) -> Result<(), String> {
     let who = get_arg_string(req, "who").report_err()?;
     let target = get_arg_string(req, "target").report_err()?;
     let amount = get_arg_integer(req, "amount").report_err()?;
-    pass_on_request(WebRequest::CreateSpendable(who, target, amount)).report_err()
+    pass_on_request(req, response, WebRequest::CreateSpendable(who, target, amount))
 }
 
 #[handler]
-async fn spend(req: &mut Request) -> Result<String, String> {
+async fn spend(req: &mut Request, response: &mut Response) -> Result<(), String> {
     let blob = get_arg_string(req, "blob").report_err()?;
-    pass_on_request(WebRequest::Spend(blob)).report_err()
+    pass_on_request(req, response, WebRequest::Spend(blob))
+}
+
+fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let origin_header: Option<String> = req.header("Origin");
+    if let Some(origin) = origin_header {
+        response
+            .add_header("Access-Control-Allow-Origin", origin, true)
+            .map_err(|e| format!("{e:?}"))?;
+    }
+    Ok(())
+}
+
+#[handler]
+async fn cors(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    cors_origin(req, response)?;
+    response.replace_body(ResBody::Once(Bytes::from(Vec::new())));
+    Ok(())
 }
 
 fn detect_run_as_python(args: &[String]) -> bool {
@@ -427,12 +475,19 @@ fn main() {
             .push(Router::with_path("player.js").get(player_js))
             .push(Router::with_path("exit").post(exit))
             .push(Router::with_path("reset").post(reset))
+            .push(Router::with_path("register").options(cors))
             .push(Router::with_path("register").post(register))
+            .push(Router::with_path("get_peak").options(cors))
             .push(Router::with_path("get_peak").post(get_peak))
+            .push(Router::with_path("get_block_data").options(cors))
             .push(Router::with_path("get_block_data").post(get_block_data))
+            .push(Router::with_path("wait_block").options(cors))
             .push(Router::with_path("wait_block").post(wait_block))
+            .push(Router::with_path("get_puzzle_and_solution").options(cors))
             .push(Router::with_path("get_puzzle_and_solution").post(get_puzzle_and_solution))
+            .push(Router::with_path("spend").options(cors))
             .push(Router::with_path("spend").post(spend))
+            .push(Router::with_path("create_spendable").options(cors))
             .push(Router::with_path("create_spendable").post(create_spendable));
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
@@ -463,7 +518,13 @@ fn main() {
                             game_runner.get_block_data(n)
                         }
                         WebRequest::WaitBlock => {
-                            game_runner.wait_block()
+                            let result = game_runner.wait_block();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(Duration::from_millis(1000));
+                                let channel = FROM_WEB.0.lock().unwrap();
+                                (*channel).send(result).unwrap();
+                            });
+                            continue;
                         }
                         WebRequest::GetPuzzleAndSolution(coin) => {
                             game_runner.get_puzzle_and_solution(&coin)
@@ -491,8 +552,10 @@ fn main() {
         println!("port 5800.  press return to exit gracefully...");
         let t = std::thread::spawn(|| {
             let mut buffer = String::default();
-            stdin().read_line(&mut buffer).ok();
-            std::process::exit(0);
+            if !matches!(stdin().read_line(&mut buffer), Ok(0)) {
+                println!("simulator server stopping");
+                std::process::exit(0);
+            }
         });
 
         Server::new(acceptor).serve(router).await;

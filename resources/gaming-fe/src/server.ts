@@ -15,8 +15,9 @@ const httpServer = createServer(app);
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
-      defaultSrc: ["'self'", "https://explorer-api.walletconnect.com", "http://localhost:3000"],
-      scriptSrc: ["'self'", "http://localhost:3001", "'wasm-unsafe-eval'", "'unsafe-inline'"]
+      defaultSrc: ["'self'", "https://explorer-api.walletconnect.com", "http://localhost:3000", "http://localhost:5800"],
+      scriptSrc: ["'self'", "http://localhost:3001", "'wasm-unsafe-eval'", "'unsafe-inline'"],
+      connectSrc: ["'self'", "https://explorer-api.walletconnect.com", "http://localhost:3000", "http://localhost:5800"]
     }
   }
 }));
@@ -31,8 +32,12 @@ async function serveFile(file: string, contentType: string, res: any) {
     res.set('Content-Type', contentType);
     res.send(content);
 }
+async function serveDirectory(dir: string, req: any, res: any) {
+  let targetFile = dir + req.path;
+  serveFile(targetFile, 'text/plain', res);
+}
 app.get('/', async (req: any, res: any) => {
-    serveFile('public/index.html', 'text/html', res);
+  serveFile('public/index.html', 'text/html', res);
 });
 app.get('/index.js', async (req: any, res: any) => {
   serveFile("dist/index-rollup.js", "application/javascript", res);
@@ -42,6 +47,12 @@ app.get('/chia_gaming_wasm_bg.wasm', async (req: any, res: any) => {
 });
 app.get('/chia_gaming_wasm.js', async (req: any, res: any) => {
   serveFile("dist/chia_gaming_wasm.js", "application/javascript", res);
+});
+app.get('/clsp*', async (req: any, res: any) => {
+  serveDirectory("./", req, res);
+});
+app.get('/resources*', async (req: any, res: any) => {
+  serveDirectory("./", req, res);
 });
 
 const io = setupWebSocket(httpServer);

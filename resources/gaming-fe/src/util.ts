@@ -57,12 +57,13 @@ export function generateOrRetrieveUniqueId(): string {
 interface GameSelection {
   game: string;
   token: string;
+  walletToken: string;
 };
 // Return true if game= and token= are present in the url.
 export function getGameSelection(): GameSelection | undefined {
   const search = getSearchParams();
-  if (search.game && search.token) {
-    return { game: search.game, token: search.token };
+  if (search.game && search.token && search.walletToken) {
+    return { game: search.game, token: search.token, walletToken: search.walletToken };
   }
   return undefined;
 }

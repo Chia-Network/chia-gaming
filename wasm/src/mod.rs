@@ -2,10 +2,12 @@ mod map_m;
 
 use js_sys::{Array, Function, JsString, Object};
 
-use std::cell::RefCell;
+use std::borrow::Borrow;
+use std::cell::{Ref, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::thread::LocalKey;
 
 use hex::FromHexError;
 
@@ -28,6 +30,13 @@ use chia_gaming::peer_container::{
 };
 use chia_gaming::potato_handler::types::{GameFactory, GameStart, GameType, ToLocalUI};
 use chia_gaming::shutdown::BasicShutdownConditions;
+
+#[cfg(target_arch = "wasm32")]
+use lol_alloc::{FreeListAllocator, LockedAllocator};
+
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static ALLOCATOR: LockedAllocator<FreeListAllocator> = LockedAllocator::new(FreeListAllocator::new());
 
 use crate::map_m::map_m;
 
@@ -95,7 +104,7 @@ export type IdleCallbacks = {
 };
 "#;
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct JsAmount {
     amt: Amount,
 }
@@ -106,6 +115,36 @@ struct JsCradle {
     cradle: SynchronousGameCradle,
 }
 
+trait DebugDisplay {
+    fn show(&self, s: &str);
+}
+
+#[derive(Default)]
+struct DummyDebugDisplay { }
+impl DebugDisplay for DummyDebugDisplay {
+    fn show(&self, s: &str) { }
+}
+
+struct JsDebugDisplay {
+    callable: JsValue
+}
+
+impl JsDebugDisplay {
+    fn new(callable: JsValue) -> JsDebugDisplay {
+        JsDebugDisplay { callable }
+    }
+}
+
+impl DebugDisplay for JsDebugDisplay {
+    fn show(&self, s: &str) {
+        if let Some(f) = Function::try_from(&self.callable) {
+            let mut args_array = Array::new();
+            args_array.push(&JsValue::from_str(s));
+            let _ = f.apply(&JsValue::NULL, &args_array);
+        }
+    }
+}
+
 thread_local! {
     static NEXT_ID: AtomicI32 = {
         return AtomicI32::new(0);
@@ -113,11 +152,21 @@ thread_local! {
     static CRADLES: RefCell<HashMap<i32, JsCradle>> = {
         return RefCell::new(HashMap::new());
     };
+    static DPRINT: RefCell<Box<dyn DebugDisplay>> = {
+        return RefCell::new(Box::new(DummyDebugDisplay::default()));
+    };
+}
+
+fn dprint(s: &str) {
+    DPRINT.with(|dprint| dprint.borrow().show(s));
 }
 
 #[wasm_bindgen]
-pub fn init() {
+pub fn init(show: JsValue) {
+    DPRINT.replace(Box::new(JsDebugDisplay::new(show)));
+    dprint("doing init");
     wasm_init();
+    dprint("done init");
 }
 
 #[wasm_bindgen]
@@ -136,19 +185,19 @@ fn insert_cradle(this_id: i32, runner: JsCradle) {
     });
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct JsRndConfig {
     // hex string.
     seed: String,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct JsGameFactory {
     version: i32,
     hex: String,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct JsGameCradleConfig {
     // name vs hex string for program
     game_types: BTreeMap<String, JsGameFactory>,
@@ -198,6 +247,7 @@ fn get_game_config<'b>(
     js_config: JsValue,
 ) -> Result<SynchronousGameCradleConfig<'b>, JsValue> {
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
+    dprint(&format!("jsconfig {jsconfig:?}"));
 
     let game_types = convert_game_types(&jsconfig.game_types)?;
     let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).into_js()?;
@@ -260,6 +310,7 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     if let Some(js_rnd_config) =
         serde_wasm_bindgen::from_value::<JsRndConfig>(js_config.clone()).ok()
     {
+        dprint(&format!("js_rnd_config {js_rnd_config:?}"));
         let seed_bytes = hex::decode(&js_rnd_config.seed).into_js()?;
         for (i, b) in seed_bytes.iter().enumerate() {
             use_seed[i % use_seed.len()] = *b;
@@ -744,6 +795,16 @@ impl From<ChiaIdentity> for JsChiaIdentity {
             puzzle_hash: hex::encode(&value.puzzle_hash.bytes()),
         }
     }
+}
+
+#[wasm_bindgen]
+pub fn test_string() -> JsValue {
+    JsValue::from_str("hi there")
+}
+
+#[wasm_bindgen]
+pub fn test_string_err() -> Result<JsValue, JsValue> {
+    Ok(JsValue::from_str("ok but could have been err"))
 }
 
 #[wasm_bindgen(typescript_type = "IChiaIdentityFun")]

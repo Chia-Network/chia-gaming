@@ -8,6 +8,7 @@ interface Player { id: string; alias: string, game: string; walletAddress?: stri
 
 export function useLobbySocket(alias: string) {
   const LOBBY_URL = process.env.REACT_APP_LOBBY_URL || 'http://localhost:3000';
+  const BLOCKCHAIN_SERVICE_URL = process.env.REACT_APP_BLOCKCHAIN_SERVICE_URL || 'http://localhost:5800';
 
   const [uniqueId, setUniqueId] = useState<string>(generateOrRetrieveUniqueId());
   const [players, setPlayers] = useState<Player[]>([]);
@@ -15,7 +16,27 @@ export function useLobbySocket(alias: string) {
   const [messages, setMessages] = useState<ChatEnvelope[]>([]);
   const socketRef = useRef<Socket>(undefined);
   const [fragment, setFragment] = useState<FragmentData>(getFragmentParams());
+  const [walletToken, setWalletToken] = useState<string | undefined>(undefined);
   console.log('fragment retrieved', fragment);
+
+  function tryJoinRoom() {
+    for (let i = 0; i < rooms.length; i++) {
+      let room = rooms[i];
+      console.log('checking room', room);
+      if (!room.host || !room.joiner) {
+        continue;
+      }
+      if (room.host === uniqueId || room.joiner === uniqueId && room.target && walletToken) {
+        const iStarted = room.host === uniqueId;
+        // This room is inhabited and contains us, redirect.
+        console.log('take us to game', JSON.stringify(room));
+        window.location.href = `${room.target}&walletToken=${walletToken}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
+        break;
+      }
+    }
+  }
+
+  tryJoinRoom();
 
   useEffect(() => {
     const socket = io(LOBBY_URL);
@@ -28,23 +49,13 @@ export function useLobbySocket(alias: string) {
       const updated = Array.isArray(r) ? r : [r];
       // Determine whether we've been connected with someone based on the .host and .joined
       // members of the rooms.
-      for (const room of updated) {
-        console.log('checking room', room);
-        if (!room.host || !room.joiner) {
-          continue;
-        }
-        if (room.host == uniqueId || room.joiner == uniqueId && room.target) {
-          // This room is inhabited and contains us, redirect.
-          console.log('take us to game', JSON.stringify(room));
-          window.location.href = room.target as string;
-          break;
-        }
-      }
       setRooms(prev => {
         const map = new Map(prev.map(x => [x.token, x]));
         updated.forEach(x => map.set(x.token, x));
         return Array.from(map.values());
       });
+
+      tryJoinRoom();
     });
       socket.on('chat_message', (chatMsg: ChatEnvelope) => {
       setMessages(m => [...m, chatMsg]);
@@ -55,6 +66,17 @@ export function useLobbySocket(alias: string) {
       socket.disconnect();
     };
   }, [uniqueId]);
+
+  useEffect(() => {
+    fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {
+        method: 'POST',
+        body: ''
+    }).then(result => result.json()).then(publicKey => {
+      console.log(`wallet token ${publicKey}`);
+      setWalletToken(publicKey);
+      tryJoinRoom();
+    });
+  });
 
   const sendMessage = useCallback((msg: string) => {
     socketRef.current?.emit('chat_message', { alias, content: { text: msg, sender: alias } });
@@ -93,5 +115,5 @@ export function useLobbySocket(alias: string) {
     console.error('implement leave room');
   }, [uniqueId]);
 
-  return { players, rooms, messages, sendMessage, generateRoom, joinRoom, leaveRoom, setLobbyAlias, uniqueId, fragment };
+  return { players, rooms, messages, sendMessage, generateRoom, joinRoom, leaveRoom, setLobbyAlias, uniqueId, fragment, walletToken };
 }

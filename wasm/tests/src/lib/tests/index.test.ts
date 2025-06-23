@@ -10,7 +10,7 @@ function rooted(name: string) {
 }
 
 function preset_file(name: string) {
-    deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
+  deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
 }
 
 class ChiaGame {
@@ -99,7 +99,7 @@ function action_with_messages(cradle1: ChiaGame, cradle2: ChiaGame) {
 }
 
 it('loads', async () => {
-    init();
+    init((msg) => console.log(msg));
     preset_file("resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex");
     preset_file("clsp/unroll/unroll_meta_puzzle.hex");
     preset_file("clsp/unroll/unroll_puzzle_state_channel_unrolling.hex");

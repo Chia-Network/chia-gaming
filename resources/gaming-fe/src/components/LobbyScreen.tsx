@@ -23,7 +23,7 @@ interface LobbyComponentProps {
 
 const LobbyScreen: React.FC<LobbyComponentProps> = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
-  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias);
+  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment, walletToken } = useLobbySocket(myAlias);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
@@ -147,7 +147,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
       </Box>
 
       <Box display="flex" justifyContent="space-between">
-        <Button variant="outlined" onClick={openDialog}>
+        <Button disabled={!walletToken} variant="outlined" onClick={openDialog}>
           Generate Room
         </Button>
       </Box>

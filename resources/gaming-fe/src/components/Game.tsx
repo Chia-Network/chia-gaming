@@ -32,7 +32,7 @@ const Game: React.FC = () => {
   const { commands } = useRpcUi();
   const commandEntries = Object.entries(commands);
   const selectedCommandEntry = commandEntries[command];
-  const { wasmConnection } = useWasmBlob();
+  const { wasmConnection, gameConnectionState } = useWasmBlob();
 
   console.log("WC", client, session, pairings, connect, disconnect);
 
@@ -78,8 +78,8 @@ const Game: React.FC = () => {
     );
   }
 
-  if (gameState === "searching") {
-    return <WaitingScreen />;
+  if (gameState === "searching" || gameConnectionState.stateIdentifier == 'starting') {
+    return <WaitingScreen stateName={gameConnectionState.stateIdentifier} messages={gameConnectionState.stateDetail}  />;
   }
 
   return (

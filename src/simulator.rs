@@ -476,7 +476,7 @@ impl Simulator {
     pub fn transfer_coin_amount(
         &self,
         allocator: &mut AllocEncoder,
-        identity_target: &ChiaIdentity,
+        identity_target: &PuzzleHash,
         identity_source: &ChiaIdentity,
         source_coin: &CoinString,
         target_amt: Amount,
@@ -486,7 +486,7 @@ impl Simulator {
         let change_amt = amt.clone() - target_amt.clone();
         let first_coin = CoinString::from_parts(
             &source_coin.to_coin_id(),
-            &identity_target.puzzle_hash,
+            &identity_target,
             &target_amt,
         );
         let second_coin = CoinString::from_parts(
@@ -499,7 +499,7 @@ impl Simulator {
             (
                 CREATE_COIN,
                 (
-                    identity_target.puzzle_hash.clone(),
+                    identity_target.clone(),
                     (target_amt.clone(), ()),
                 ),
             ),

@@ -59,7 +59,7 @@ app.get('/', async (req: any, res: any) => {
   serveFile("public/index.html", "text/html", res);
 });
 app.get('/index.js', async (req: any, res: any) => {
-    serveFile("dist/index-rollup.js", "application/javascript", res);
+  serveFile("dist/index-rollup.js", "application/javascript", res);
 });
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;
@@ -98,7 +98,7 @@ app.post('/lobby/generate-room', (req, res) => {
 });
 
 app.post('/lobby/join-room', (req, res) => {
-  const { token, id, game, parameters } = req.body;
+  const { token, id } = req.body;
   const room = rooms[token];
   if (!room) {
     return res.status(404).json({ error: 'Invalid room token.' });
@@ -111,7 +111,7 @@ app.post('/lobby/join-room', (req, res) => {
     return res.status(400).json({ error: 'Room is already full.' });
   }
   room.joiner = id;
-  room.target = games[room.game] + `&token=${token};`;
+  room.target = games[room.game] + `&token=${token}&amount=${room.parameters.wagerAmount}`;
 
   io.emit('room_update', room);
   res.json(room);
