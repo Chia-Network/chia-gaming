@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { getSearchParams } from '../util';
 import io, { Socket } from "socket.io-client";
 
 export type GameState = "idle" | "searching" | "playing";
 
 interface StartGameData {
-  room: string;
   playerHand: string[];
   opponentHand: string[];
   playerNumber: number;
@@ -20,7 +20,16 @@ interface ActionData {
   currentTurn?: number;
 }
 
+interface SendMessageInput {
+  party: boolean;
+  token: string;
+  msg: string;
+};
+
 export interface UseGameSocketReturn {
+  incomingMessages: string[];
+  setIncomingMessages: (msgs: string[]) => void;
+  sendMessage: (input: SendMessageInput) => void;
   gameState: GameState;
   wagerAmount: string;
   setWagerAmount: (value: string) => void;
@@ -42,10 +51,14 @@ export interface UseGameSocketReturn {
 const SOCKET_URL = "http://localhost:3001";
 
 const useGameSocket = (): UseGameSocketReturn => {
+  const searchParams = getSearchParams();
+  const token = searchParams.token;
+  const iStarted = searchParams.iStarted !== 'false';
   const socketRef = useRef<Socket | null>(null);
   const playerNumberRef = useRef<number>(0);
 
   const [gameState, setGameState] = useState<GameState>("idle");
+  const [incomingMessages, setIncomingMessages] = useState<string[]>([]);
   const [wagerAmount, setWagerAmount] = useState<string>("");
   const [opponentWager, setOpponentWager] = useState<string>("");
   const [log, setLog] = useState<string[]>([]);
@@ -70,7 +83,6 @@ const useGameSocket = (): UseGameSocketReturn => {
 
     const handleStartGame = (data: StartGameData) => {
       setGameState("playing");
-      setRoom(data.room);
       setLog((prev) => [...prev, "Opponent found! Starting game..."]);
       setPlayerHand(data.playerHand);
       setOpponentHand(data.opponentHand);
@@ -119,11 +131,25 @@ const useGameSocket = (): UseGameSocketReturn => {
     socket?.on("startGame", handleStartGame);
     socket?.on("action", handleAction);
 
+    socket?.on('game_message', (input: SendMessageInput) => {
+      if (input.token !== token || input.party === iStarted) {
+        return;
+      }
+
+      console.log('got remote message', input.msg);
+      let new_im = [...incomingMessages, input.msg];
+      setIncomingMessages(new_im);
+    });
+
     return () => {
       socket?.off("waiting", handleWaiting);
       socket?.off("startGame", handleStartGame);
       socket?.off("action", handleAction);
     };
+  }, []);
+
+  const sendMessage = useCallback((input: SendMessageInput) => {
+    socketRef.current?.emit('game_message', input);
   }, []);
 
   const handleFindOpponent = useCallback(() => {
@@ -179,6 +205,9 @@ const useGameSocket = (): UseGameSocketReturn => {
   }, [isPlayerTurn, room]);
 
   return {
+    sendMessage,
+    incomingMessages,
+    setIncomingMessages,
     gameState,
     wagerAmount,
     setWagerAmount,

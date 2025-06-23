@@ -100,6 +100,11 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
       io.to(roomId).emit('player_ready', { playerId: currentPlayer.id });
     });
 
+    socket.on('game_message', ({ party, token, msg }) => {
+      console.log('game message', party, token, msg);
+      io.emit('game_message', { party, token, msg });
+    });
+
     socket.on('chat_message', ({ roomId, text }: { roomId: string; text: string }) => {
       if (!currentPlayer) return;
 

@@ -56,12 +56,12 @@ export type GameCradleConfig = {
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
 export type IdleCallbacks = {
-    "self_move": ((game_id: string, move_hex: string) => void) | undefined,
-    "opponent_moved": ((game_id: string, readable_move_hex: string) => void) | undefined,
-    "game_message": ((game_id: string, readable_move_hex: string) => void) | undefined,
-    "game_finished": ((game_id: string) => void) | undefined,
-    "shutdown_complete": ((coin: string) => void) | undefined,
-    "going_on_chain": (() => void) | undefined
+    self_move?: ((game_id: string, move_hex: string) => void) | undefined,
+    opponent_moved?: ((game_id: string, readable_move_hex: string) => void) | undefined,
+    game_message?: ((game_id: string, readable_move_hex: string) => void) | undefined,
+    game_finished?: ((game_id: string) => void) | undefined,
+    shutdown_complete?: ((coin: string) => void) | undefined,
+    going_on_chain?: (() => void) | undefined
 };
 
 export interface WasmConnection {
@@ -113,7 +113,7 @@ export class ChiaGame {
       unroll_timeout: env.unroll_timeout,
       reward_puzzle_hash: identity.puzzle_hash,
     });
-    console.log(`constructed ${have_potato}`);
+    console.log(`constructed ${have_potato} cradle ${this.cradle}`);
   }
 
   deliver_message(msg: string) {

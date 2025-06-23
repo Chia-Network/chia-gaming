@@ -1,4 +1,6 @@
 import { FragmentData } from './types/lobby';
+
+import { useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
 export function getParamsFromString(paramString: string): any {
@@ -52,6 +54,29 @@ export function generateOrRetrieveUniqueId(): string {
   existingId = uuidv4();
   localStorage.setItem("uniqueId", existingId);
   return existingId;
+}
+
+// https://overreacted.io/making-setinterval-declarative-with-react-hooks/
+export function useInterval(callback: () => void, delay: number) {
+  const savedCallback = useRef<() => void | undefined>(undefined);
+
+  // Remember the latest callback.
+  useEffect(() => {
+    savedCallback.current = callback;
+  }, [callback]);
+
+  // Set up the interval.
+  useEffect(() => {
+    function tick() {
+      if (savedCallback.current) {
+        savedCallback.current();
+      }
+    }
+    if (delay !== null) {
+      let id = setInterval(tick, delay);
+      return () => clearInterval(id);
+    }
+  }, [delay]);
 }
 
 interface GameSelection {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame } from '../types/ChiaGaming';
-import { getSearchParams } from '../util';
+import useGameSocket from './useGameSocket';
+import { getSearchParams, useInterval } from '../util';
 import { v4 as uuidv4 } from 'uuid';
 
 export function useWasmBlob() {
@@ -15,6 +16,7 @@ export function useWasmBlob() {
     "clsp/referee/onchain/referee-v1.hex"
   ];
   const [wasmConnection, setWasmConnection] = useState<WasmConnection | undefined>(undefined);
+  const { sendMessage, incomingMessages, setIncomingMessages } = useGameSocket();
   const [cradleId, setCradleId] = useState<number | undefined>(undefined);
   const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
@@ -24,6 +26,7 @@ export function useWasmBlob() {
   const [game, setGame] = useState<ChiaGame | undefined>(undefined);
 
   const searchParams = getSearchParams();
+  const token = searchParams.token;
   const uniqueId = searchParams.uniqueId;
   const iStarted = searchParams.iStarted !== 'false';
   const amount = parseInt(searchParams.amount);
@@ -99,13 +102,41 @@ export function useWasmBlob() {
         unroll_timeout: 5
       };
       const cradle = new ChiaGame(cg, env, rngSeed, identity, iStarted, amount, amount);
+      cradle.opening_coin(coin);
       setGame(cradle);
       setGameConnectionState({
-        stateIdentifier: "running",
-        stateDetail: []
+        stateIdentifier: "starting",
+        stateDetail: ["doing handshake"]
       });
     });
   }
+
+  if (game && incomingMessages.length) {
+    let haveMessages = [...incomingMessages];
+    setIncomingMessages([]);
+    for (let i = 0; i < haveMessages.length; i++) {
+      console.log('deliver message', haveMessages[i]);
+      game.deliver_message(haveMessages[i]);
+    }
+  }
+
+  useInterval(() => {
+    if (game === undefined || wasmConnection === undefined) {
+      return;
+    }
+
+    const idle = game.idle({
+      // Local ui callbacks.
+    });
+    for (let i = 0; i < idle.outbound_messages.length; i++) {
+      console.log('send message to remote');
+      sendMessage({
+        party: iStarted,
+        token: token,
+        msg: idle.outbound_messages[i]
+      });
+    }
+  }, 100);
 
   (window as any).loadWasm = loadWasm;
 

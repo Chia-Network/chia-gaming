@@ -78,7 +78,7 @@ const Game: React.FC = () => {
     );
   }
 
-  if (gameState === "searching" || gameConnectionState.stateIdentifier == 'starting') {
+  if (gameState === "searching" || gameConnectionState.stateIdentifier === 'starting') {
     return <WaitingScreen stateName={gameConnectionState.stateIdentifier} messages={gameConnectionState.stateDetail}  />;
   }
 
