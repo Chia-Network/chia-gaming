@@ -25,16 +25,12 @@ import { getGameSelection } from '../util';
 
 const Game: React.FC = () => {
   const gameSelection = getGameSelection();
-  console.log('gameSelection', gameSelection);
-
   const { client, session, pairings, connect, disconnect } = useWalletConnect();
   const [command, setCommand] = useState(0);
   const { commands } = useRpcUi();
   const commandEntries = Object.entries(commands);
   const selectedCommandEntry = commandEntries[command];
   const { wasmConnection, gameConnectionState } = useWasmBlob();
-
-  console.log("WC", client, session, pairings, connect, disconnect);
 
   const handleConnectWallet = () => {
     if (!client) throw new Error("WalletConnect is not initialized.");

@@ -189,6 +189,10 @@ impl PotatoHandler {
         matches!(self.handshake_state, HandshakeState::OnChain(_))
     }
 
+    pub fn handshake_done(&self) -> bool {
+        !matches!(self.handshake_state, HandshakeState::StepA | HandshakeState::StepB | HandshakeState::StepC(_, _) | HandshakeState::StepD(_) | HandshakeState::StepE(_) | HandshakeState::PostStepE(_) | HandshakeState::StepF(_) | HandshakeState::PostStepF(_))
+    }
+
     pub fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
         if let HandshakeState::OnChain(ocs) = &self.handshake_state {
             return ocs.my_move_in_game(game_id);

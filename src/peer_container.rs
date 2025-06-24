@@ -149,6 +149,7 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
 #[derive(Default)]
 pub struct IdleResult {
     pub continue_on: bool,
+    pub handshake_done: bool,
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
@@ -902,6 +903,7 @@ impl GameCradle for SynchronousGameCradle {
         }
 
         let mut result = IdleResult::default();
+        result.handshake_done = self.peer.handshake_done();
 
         swap(
             &mut result.outbound_transactions,

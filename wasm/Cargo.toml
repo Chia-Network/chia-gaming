@@ -30,4 +30,8 @@ wasm-bindgen-test = "0.3.25"
 js-sys = "0.3.77"
 num-bigint = "0.4.0"
 num-traits = "0.2.15"
+log = "0.4.22"
 lol_alloc = "0.4.1"
+tracing-core = "0.1.34"
+tracing-subscriber = { version = "0.3", features = ["alloc"] }
+wasm-logger = "0.2.0"

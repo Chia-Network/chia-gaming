@@ -5,15 +5,19 @@ use js_sys::{Array, Function, JsString, Object};
 use std::borrow::Borrow;
 use std::cell::{Ref, RefCell};
 use std::collections::{BTreeMap, HashMap};
+use std::io;
+use std::mem::swap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread::LocalKey;
 
 use hex::FromHexError;
+use log::debug;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
+use wasm_logger;
 
 use wasm_bindgen::prelude::*;
 
@@ -161,12 +165,36 @@ fn dprint(s: &str) {
     DPRINT.with(|dprint| dprint.borrow().show(s));
 }
 
+#[derive(Default)]
+struct DprintWrite {
+    bytes: Vec<Vec<u8>>
+}
+impl io::Write for DprintWrite {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.bytes.push(buf.to_vec());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let mut result: Vec<u8> = Vec::new();
+        let mut new_bytes = Vec::new();
+        swap(&mut new_bytes, &mut self.bytes);
+        for mut v in new_bytes.into_iter() {
+            result.append(&mut v);
+        }
+        if let Ok(result) = std::str::from_utf8(&result) {
+            dprint(&result);
+        }
+        self.bytes.clear();
+        Ok(())
+    }
+}
+
 #[wasm_bindgen]
 pub fn init(show: JsValue) {
     DPRINT.replace(Box::new(JsDebugDisplay::new(show)));
     dprint("doing init");
-    wasm_init();
-    dprint("done init");
+    wasm_logger::init(wasm_logger::Config::default());
 }
 
 #[wasm_bindgen]
@@ -243,11 +271,22 @@ fn convert_game_types(
 // return a collection of clvm factory programs indexed by byte strings used to identify
 // them.  probably the indexes should be hashes, thinking about it, but can be anything.
 fn get_game_config<'b>(
+    allocator: &mut AllocEncoder,
     identity: &'b mut ChiaIdentity,
     js_config: JsValue,
 ) -> Result<SynchronousGameCradleConfig<'b>, JsValue> {
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
     dprint(&format!("jsconfig {jsconfig:?}"));
+
+    if let Some(identity_str) = &jsconfig.identity {
+        let private_key_bytes = hex::decode(&identity_str).into_js()?;
+        let mut bytes: [u8; 32] = [0; 32];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = private_key_bytes[i];
+        }
+        let private_key = PrivateKey::from_bytes(&bytes).into_js()?;
+        *identity = ChiaIdentity::new(allocator, private_key).into_js()?;
+    }
 
     let game_types = convert_game_types(&jsconfig.game_types)?;
     let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).into_js()?;
@@ -321,7 +360,7 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
 
     let random_private_key: PrivateKey = rng.gen();
     let mut identity = ChiaIdentity::new(&mut allocator, random_private_key).into_js()?;
-    let synchronous_game_cradle_config = get_game_config(&mut identity, js_config.clone())?;
+    let synchronous_game_cradle_config = get_game_config(&mut allocator, &mut identity, js_config.clone())?;
     let game_cradle = SynchronousGameCradle::new(&mut rng, synchronous_game_cradle_config);
     let cradle = JsCradle {
         allocator,
@@ -674,6 +713,7 @@ struct JsIdleResult {
     outbound_messages: Vec<String>,
     opponent_move: Option<(String, String)>,
     game_finished: Option<(String, u64)>,
+    handshake_done: bool,
 }
 
 fn spend_to_js(spend: &Spend) -> JsSpend {
@@ -754,6 +794,7 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
             .collect(),
         opponent_move: opponent_move,
         game_finished: game_finished,
+        handshake_done: idle_result.handshake_done,
     })
     .into_e()
 }

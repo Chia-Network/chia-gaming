@@ -39,7 +39,8 @@ export type IdleResult = {
   "outbound_transactions": Array<SpendBundle>,
   "outbound_messages": Array<string>,
   "opponent_move": OpponentMove | undefined,
-  "game_finished": GameFinished | undefined
+  "game_finished": GameFinished | undefined,
+  "handshake_done": boolean
 };
 
 export type GameCradleConfig = {
@@ -86,8 +87,6 @@ export interface WasmConnection {
   // Misc
   chia_identity: (seed: string) => any;
   sha256bytes: (hex: string) => string;
-  test_string: () => string;
-  test_string_err: () => string;
 };
 
 export class ChiaGame {
@@ -136,9 +135,12 @@ export class ChiaGame {
 
   idle(callbacks: IdleCallbacks) : IdleResult {
     let result = this.wasm.idle(this.cradle, callbacks);
-    console.log('idle', result);
     this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
     return result;
+  }
+
+  block_data(block_number: number, block_data: any) {
+    this.wasm.new_block(this.cradle, block_number, block_data.created, block_data.deleted, block_data.timed_out);
   }
 }
 

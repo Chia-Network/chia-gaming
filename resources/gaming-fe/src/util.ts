@@ -88,7 +88,52 @@ interface GameSelection {
 export function getGameSelection(): GameSelection | undefined {
   const search = getSearchParams();
   if (search.game && search.token && search.walletToken) {
-    return { game: search.game, token: search.token, walletToken: search.walletToken };
+    return {
+      game: search.game,
+      token: search.token,
+      walletToken: search.walletToken
+    };
   }
   return undefined;
+}
+
+function clvm_enlist(clvms: string[]): string {
+  let result = [];
+
+  for (var i = 0; i < clvms.length; i++) {
+    result.push('ff');
+    result.push(clvms[i]);
+  }
+
+  result.push('80');
+  console.log(result);
+  return result.join("");
+}
+
+function clvm_length(atom: string): string {
+  if (atom.length <= 0x80) {
+    const alen = ((atom.length / 2) | 0x80).toString(16);
+    return alen + atom;
+  } else {
+    const alen = ((atom.length / 2) | 0xc000).toString(16);
+    return alen + atom;
+  }
+}
+
+function spend_to_clvm(spend: any): string {
+  const spend_clvm = clvm_enlist([spend.puzzle, spend.solution, clvm_length(spend.signature)]);
+  console.log('spend', spend_clvm);
+  return spend_clvm;
+}
+
+function coin_spend_to_clvm(coinspend: any): string {
+  const coin_spend_clvm = clvm_enlist([clvm_length(coinspend.coin), spend_to_clvm(coinspend.bundle)]);
+  console.log('coin_spend', coin_spend_clvm);
+  return coin_spend_clvm;
+}
+
+export function spend_bundle_to_clvm(sbundle: any): string {
+  const bundle_clvm = clvm_enlist(sbundle.spends.map((s: any) => coin_spend_to_clvm(s)));
+  console.log('bundle', bundle_clvm);
+  return bundle_clvm;
 }

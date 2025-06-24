@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
-import { getSearchParams, useInterval } from '../util';
+import { getSearchParams, useInterval, spend_bundle_to_clvm } from '../util';
 import { v4 as uuidv4 } from 'uuid';
 
 export function useWasmBlob() {
@@ -24,13 +24,16 @@ export function useWasmBlob() {
   const [gameStartCoin, setGameStartCoin] = useState<string | undefined>(undefined);
   const [gameConnectionState, setGameConnectionState] = useState<GameConnectionState>({ stateIdentifier: "starting", stateDetail: ["before handshake"] });
   const [game, setGame] = useState<ChiaGame | undefined>(undefined);
+  const [blockNumber, setBlockNumber] = useState<number>(0);
+  const [haveBlockNumber, setHaveBlockNumber] = useState<number>(0);
+  const [blockReports, setBlockReports] = useState<any[]>([]);
+  const [handshakeDone, setHandshakeDone] = useState<boolean>(false);
 
   const searchParams = getSearchParams();
   const token = searchParams.token;
   const uniqueId = searchParams.uniqueId;
   const iStarted = searchParams.iStarted !== 'false';
   const amount = parseInt(searchParams.amount);
-  const rngSeed = uniqueId ? uniqueId.substr(0, 8) : '00';
 
   function loadPresets() {
     const presetFetches = presetFiles.map((partialUrl) => {
@@ -43,6 +46,24 @@ export function useWasmBlob() {
     });
     return Promise.all(presetFetches);
   };
+
+  async function crawl_block(): Promise<number> {
+    const useBlockNumber = blockNumber
+    return fetch(`${BLOCKCHAIN_SERVICE_URL}/get_block_data?block=${blockNumber}`, {
+      body: '',
+      method: 'POST'
+    }).then(res => res.json()).then(block_data => {
+      if (block_data) {
+        console.log(useBlockNumber, block_data);
+        setBlockReports([...blockReports, {
+          number: useBlockNumber,
+          data: block_data
+        }]);
+      }
+
+      return blockNumber;
+    });
+  }
 
   function loadWasm(chia_gaming_init: any, cg: WasmConnection) {
     console.log('wasm detected');
@@ -62,6 +83,7 @@ export function useWasmBlob() {
         stateIdentifier: "satarting",
         stateDetail: ["loaded preset files"]
       });
+      const rngSeed = uniqueId.substr(0, 8);
       let newGameIdentity = cg.chia_identity(rngSeed);
       console.log('gameIdentity', newGameIdentity);
       setGameIdentity(newGameIdentity);
@@ -98,9 +120,10 @@ export function useWasmBlob() {
             hex: calpoker_hex
           }
         },
-        timeout: 20,
-        unroll_timeout: 5
+        timeout: 30,
+        unroll_timeout: 30
       };
+      const rngSeed = uniqueId.substr(0, 8);
       const cradle = new ChiaGame(cg, env, rngSeed, identity, iStarted, amount, amount);
       cradle.opening_coin(coin);
       setGame(cradle);
@@ -111,30 +134,93 @@ export function useWasmBlob() {
     });
   }
 
-  if (game && incomingMessages.length) {
-    let haveMessages = [...incomingMessages];
-    setIncomingMessages([]);
-    for (let i = 0; i < haveMessages.length; i++) {
-      console.log('deliver message', haveMessages[i]);
-      game.deliver_message(haveMessages[i]);
-    }
-  }
+  useInterval(() => {
+    fetch(`${BLOCKCHAIN_SERVICE_URL}/wait_block`, {
+      body: '',
+      method: 'POST'
+    }).then(res => res.json()).then(new_block_number => {
+      setHaveBlockNumber(new_block_number);
+    });
+  }, 2000);
 
   useInterval(() => {
     if (game === undefined || wasmConnection === undefined) {
       return;
     }
 
-    const idle = game.idle({
-      // Local ui callbacks.
-    });
-    for (let i = 0; i < idle.outbound_messages.length; i++) {
-      console.log('send message to remote');
-      sendMessage({
-        party: iStarted,
-        token: token,
-        msg: idle.outbound_messages[i]
+    function handleGameIdle() {
+      const idle = game?.idle({
+        // Local ui callbacks.
       });
+
+      if (!idle) {
+        return;
+      }
+
+      if (idle.handshake_done && !handshakeDone) {
+        console.warn("HANDSHAKE DONE");
+        setHandshakeDone(true);
+        setGameConnectionState({
+          stateIdentifier: "running",
+          stateDetail: []
+        });
+      }
+
+      for (let i = 0; i < idle.outbound_messages.length; i++) {
+        console.log('send message to remote');
+        sendMessage({
+          party: iStarted,
+          token: token,
+          msg: idle.outbound_messages[i]
+        });
+      }
+
+      for (let i = 0; i < idle.outbound_transactions.length; i++) {
+        const tx = idle.outbound_transactions[i];
+        console.log('send transaction', tx);
+        // Compose blob to spend
+        let blob = spend_bundle_to_clvm(tx);
+        fetch(`${BLOCKCHAIN_SERVICE_URL}/spend?blob=${blob}`, {
+          body: '',
+          method: 'POST'
+        }).then(res => res.json()).then(res => {
+          console.log('spend res', res);
+        });
+      }
+    }
+
+    handleGameIdle();
+
+    if (incomingMessages.length) {
+      let haveMessages = [...incomingMessages];
+      setIncomingMessages([]);
+      for (let i = 0; i < haveMessages.length; i++) {
+        console.log('deliver message', haveMessages[i]);
+        game.deliver_message(haveMessages[i]);
+      }
+    }
+
+    if (haveBlockNumber > blockNumber) {
+      crawl_block();
+      setBlockNumber(blockNumber + 1);
+    }
+
+    let theBlockReports = blockReports;
+    setBlockReports([]);
+    theBlockReports.sort((a, b) => {
+      return a.number - b.number;
+    });
+    if (theBlockReports.length !== 0) {
+      let startNumber = theBlockReports[0].number;
+      for (let i = 0; i < theBlockReports.length; i++) {
+        let report = theBlockReports[i];
+        if (report.number === startNumber) {
+          startNumber += 1;
+          game?.block_data(report.number, report.data);
+          handleGameIdle();
+          continue;
+        }
+      }
     }
   }, 100);
 

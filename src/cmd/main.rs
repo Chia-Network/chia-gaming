@@ -286,6 +286,7 @@ impl GameRunner {
         let spend_program = Program::from_hex(&blob)?;
         let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
         let spend_bundle = SpendBundle::from_clvm(&mut self.allocator, spend_node)?;
+        debug!("spend with bundle {spend_bundle:?}");
         let result = self.simulator.push_tx(&mut self.allocator, &spend_bundle.spends).into_gen()?;
         let e_res = result.e.map(|e| format!("{e}")).unwrap_or_else(|| "null".to_string());
         Ok(format!("[{},{e_res}]\n", result.code))

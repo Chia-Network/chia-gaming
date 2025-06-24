@@ -69,8 +69,8 @@ export function useLobbySocket(alias: string) {
 
   useEffect(() => {
     fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {
-        method: 'POST',
-        body: ''
+      method: 'POST',
+      body: ''
     }).then(result => result.json()).then(publicKey => {
       console.log(`wallet token ${publicKey}`);
       setWalletToken(publicKey);
