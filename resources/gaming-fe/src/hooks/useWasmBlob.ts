@@ -33,6 +33,7 @@ export function useWasmBlob() {
   const token = searchParams.token;
   const uniqueId = searchParams.uniqueId;
   const iStarted = searchParams.iStarted !== 'false';
+  const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const amount = parseInt(searchParams.amount);
 
   function loadPresets() {
@@ -164,6 +165,18 @@ export function useWasmBlob() {
           stateIdentifier: "running",
           stateDetail: []
         });
+        if (iStarted) {
+          let gids = game?.start_games(iStarted, {
+            game_type: "63616c706f6b6572",
+            timeout: 30,
+            amount: amount * 2,
+            my_contribution: amount,
+            my_turn: iStarted,
+            parameters: "80"
+          });
+          console.log("game_ids", gids);
+        }
+        setMyTurn(iStarted);
       }
 
       for (let i = 0; i < idle.outbound_messages.length; i++) {
@@ -232,6 +245,7 @@ export function useWasmBlob() {
     gameConnectionState,
     uniqueWalletConnectionId,
     realPublicKey,
+    isPlayerTurn,
     game
   };
 }

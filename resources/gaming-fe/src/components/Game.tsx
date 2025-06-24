@@ -30,7 +30,7 @@ const Game: React.FC = () => {
   const { commands } = useRpcUi();
   const commandEntries = Object.entries(commands);
   const selectedCommandEntry = commandEntries[command];
-  const { wasmConnection, gameConnectionState } = useWasmBlob();
+  const { wasmConnection, gameConnectionState, isPlayerTurn } = useWasmBlob();
 
   const handleConnectWallet = () => {
     if (!client) throw new Error("WalletConnect is not initialized.");
@@ -54,7 +54,6 @@ const Game: React.FC = () => {
     opponentHand,
     playerCoins,
     opponentCoins,
-    isPlayerTurn,
     playerNumber,
     handleFindOpponent,
     handleBet,
