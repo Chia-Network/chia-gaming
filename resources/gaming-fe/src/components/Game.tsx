@@ -30,7 +30,17 @@ const Game: React.FC = () => {
   const { commands } = useRpcUi();
   const commandEntries = Object.entries(commands);
   const selectedCommandEntry = commandEntries[command];
-  const { wasmConnection, gameConnectionState, isPlayerTurn } = useWasmBlob();
+  const {
+    wasmConnection,
+    gameConnectionState,
+    isPlayerTurn,
+    iStarted,
+    moveNumber,
+    handleMakeMove,
+    playerHand,
+    opponentHand,
+    playerNumber
+  } = useWasmBlob();
 
   const handleConnectWallet = () => {
     if (!client) throw new Error("WalletConnect is not initialized.");
@@ -48,17 +58,8 @@ const Game: React.FC = () => {
     gameState,
     wagerAmount,
     setWagerAmount,
-    opponentWager,
-    log,
-    playerHand,
-    opponentHand,
-    playerCoins,
-    opponentCoins,
-    playerNumber,
     handleFindOpponent,
-    handleBet,
-    handleMakeMove,
-    handleEndTurn,
+    log,
   } = useGameSocket();
 
   const { wcInfo, setWcInfo } = useDebug();
@@ -80,7 +81,7 @@ const Game: React.FC = () => {
   return (
     <Box p={4}>
       <Typography variant="h4" align="center">
-        Cal Poker
+      {`Cal Poker ${moveNumber}`}
       </Typography>
       <br />
       <Typography
@@ -101,21 +102,18 @@ const Game: React.FC = () => {
         <Box flex={1} display="flex" flexDirection="column">
           <PlayerSection
             playerNumber={playerNumber}
-            playerCoins={playerCoins}
-            wagerAmount={wagerAmount}
             playerHand={playerHand}
             isPlayerTurn={isPlayerTurn}
-            handleBet={handleBet}
+            iStarted={iStarted}
+            moveNumber={moveNumber}
             handleMakeMove={handleMakeMove}
-            handleEndTurn={handleEndTurn}
           />
         </Box>
         <Box flex={1} display="flex" flexDirection="column">
           <OpponentSection
             playerNumber={playerNumber}
-            opponentCoins={opponentCoins}
-            opponentWager={opponentWager}
             opponentHand={opponentHand}
+            iStarted={iStarted}
           />
         </Box>
       </Box>

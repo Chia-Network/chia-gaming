@@ -33,7 +33,12 @@ export function useWasmBlob() {
   const token = searchParams.token;
   const uniqueId = searchParams.uniqueId;
   const iStarted = searchParams.iStarted !== 'false';
+  const playerNumber = iStarted ? 1 : 2;
+  const [playerHand, setMyHand] = useState<string[]>([]);
+  const [opponentHand, setTheirHand] = useState<string[]>([]);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
+  const [gameIds, setGameIds] = useState<string[]>([]);
+  const [moveNumber, setMoveNumber] = useState<number>(0);
   const amount = parseInt(searchParams.amount);
 
   function loadPresets() {
@@ -49,13 +54,12 @@ export function useWasmBlob() {
   };
 
   async function crawl_block(): Promise<number> {
-    const useBlockNumber = blockNumber
+    const useBlockNumber = blockNumber;
     return fetch(`${BLOCKCHAIN_SERVICE_URL}/get_block_data?block=${blockNumber}`, {
       body: '',
       method: 'POST'
     }).then(res => res.json()).then(block_data => {
       if (block_data) {
-        console.log(useBlockNumber, block_data);
         setBlockReports([...blockReports, {
           number: useBlockNumber,
           data: block_data
@@ -121,8 +125,8 @@ export function useWasmBlob() {
             hex: calpoker_hex
           }
         },
-        timeout: 30,
-        unroll_timeout: 30
+        timeout: 100,
+        unroll_timeout: 100
       };
       const rngSeed = uniqueId.substr(0, 8);
       const cradle = new ChiaGame(cg, env, rngSeed, identity, iStarted, amount, amount);
@@ -142,7 +146,7 @@ export function useWasmBlob() {
     }).then(res => res.json()).then(new_block_number => {
       setHaveBlockNumber(new_block_number);
     });
-  }, 2000);
+  }, 5000);
 
   useInterval(() => {
     if (game === undefined || wasmConnection === undefined) {
@@ -151,6 +155,9 @@ export function useWasmBlob() {
 
     function handleGameIdle() {
       const idle = game?.idle({
+        opponent_moved: (game_id, readable_move_hex) => {
+          console.error('got opponent move', game_id, readable_move_hex);
+        }
         // Local ui callbacks.
       });
 
@@ -165,16 +172,17 @@ export function useWasmBlob() {
           stateIdentifier: "running",
           stateDetail: []
         });
-        if (iStarted) {
-          let gids = game?.start_games(iStarted, {
-            game_type: "63616c706f6b6572",
-            timeout: 30,
-            amount: amount * 2,
-            my_contribution: amount,
-            my_turn: iStarted,
-            parameters: "80"
-          });
-          console.log("game_ids", gids);
+        let gids = game?.start_games(iStarted, {
+          game_type: "63616c706f6b6572",
+          timeout: 100,
+          amount: amount * 2,
+          my_contribution: amount,
+          my_turn: iStarted,
+          parameters: "80"
+        });
+        console.log("game_ids", gids);
+        if (gids) {
+          setGameIds(gids);
         }
         setMyTurn(iStarted);
       }
@@ -210,6 +218,7 @@ export function useWasmBlob() {
       for (let i = 0; i < haveMessages.length; i++) {
         console.log('deliver message', haveMessages[i]);
         game.deliver_message(haveMessages[i]);
+        handleGameIdle();
       }
     }
 
@@ -237,6 +246,23 @@ export function useWasmBlob() {
     }
   }, 100);
 
+  const handleMakeMove = (move: any) => {
+    console.log('handleMakeMove', wasmConnection, game, isPlayerTurn, move);
+    if (wasmConnection === undefined) {
+      return;
+    }
+
+    if (moveNumber === 0) {
+      let entropy = wasmConnection.sha256bytes(uniqueId.substr(0,8));
+      console.log('move 0 with entropy', entropy);
+      game?.make_move_entropy(gameIds[0], "80", entropy);
+      setMyTurn(false);
+      return;
+    }
+
+    throw `Don't yet know what to do for move {moveNumber}`;
+  };
+
   (window as any).loadWasm = loadWasm;
 
   return {
@@ -246,6 +272,12 @@ export function useWasmBlob() {
     uniqueWalletConnectionId,
     realPublicKey,
     isPlayerTurn,
+    iStarted,
+    playerNumber,
+    handleMakeMove,
+    playerHand,
+    opponentHand,
+    moveNumber,
     game
   };
 }

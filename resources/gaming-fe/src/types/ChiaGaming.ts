@@ -119,6 +119,10 @@ export class ChiaGame {
     return this.wasm.start_games(this.cradle, initiator, game);
   }
 
+  make_move_entropy(id: string, readable: string, new_entropy: string): any {
+    return this.wasm.make_move_entropy(this.cradle, id, readable, new_entropy);
+  }
+
   deliver_message(msg: string) {
     this.wasm.deliver_message(this.cradle, msg);
   }
