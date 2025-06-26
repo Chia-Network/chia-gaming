@@ -322,7 +322,6 @@ class WasmBlobWrapper {
         result.setGameIds = this.gameIds;
       }
       result.setMyTurn = !this.iStarted;
-      return result;
     }
 
     console.log('idle2');
