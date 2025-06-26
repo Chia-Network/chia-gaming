@@ -329,7 +329,7 @@
     )
 )
 
-; readable is (raise_amount, their_hole_cards, my_card_selections, their_card_selections, my_hand_value, their_hand_value)
+; readable is (raise_amount, their_hole_cards, my_hand_value, their_hand_value)
 ; everything past raise_amount is only there if raise_amount is 0
 ; prestate is (units_on_table half_pot raise_amount their_image_1 my_image_1 n_1 begin_round_hash)
 ; if raise_amount > 0 poststate is (units_on_table half_pot raise_amount my_image_1 their_image_1 n_1 begin_round_hash)
@@ -338,8 +338,15 @@
     (if (= (strlen remote_move) 32)
         ; they called
         (assign
-            my_image_0 (sha256 (sha256 MY_PREIMAGE raw_amount))
-            (li (li 0 (f (make_cards remote_move my_image_0 1))) (curry end_my_turn MY_PREIMAGE) 0 MY_PREIMAGE)
+            my_image_0 (sha256 MY_PREIMAGE raw_amount)
+            (my_cards (@ their_cards (their_first_card their_second_card)) my_boost their_boost) (make_cards MY_PREIMAGE remote_move)
+            my_card_selections (space_hand_eval my_cards my_boost)
+            my_hand_value (space_hand_eval (pull_from_bitfield my_cards my_card_selections) my_boost)
+            their_card_selections (space_hand_eval their_cards their_boost)
+            their_hand_value (space_hand_eval (pull_from_bitfield their_cards their_card_selections) their_boost)
+            result (deep_compare my_hand_value their_hand_value)
+            (li (li 0 (li their_first_card their_second_card) my_hand_value their_hand_value)
+                (curry end_my_turn MY_PREIMAGE result my_card_selections) 0 MY_PREIMAGE)
         )
         ; they raised
         (li (li remote_move 0) (curry continue_river_my_turn MY_PREIMAGE))
@@ -348,11 +355,23 @@
 
 ; user_move is nil
 ; state is (units_on_table half_pot raise_amount my_image_1 their_preimage)
-(defun end_my_turn (MY_PREIMAGE local_move pre_state amount entropy raw_amount)
+(defun end_my_turn (MY_PREIMAGE RESULT MY_SELECTIONS local_move
+    (units_on_table half_pot raise_amount my_image_1 their_preimage) amount entropy raw_amount)
+    (li (concat MY_PREIMAGE MY_SELECTIONS) 0 (+ (/ units_on_table 2) (* half_pot RESULT)))
 )
 
-; readable is (their_hole_cards, my_card_selections, their_card_selections, my_hand_value, their_hand_value)
+; readable is (their_hole_cards, my_hand_value, their_hand_value)
 ; prestate is (units_on_table half_pot raise_amount their_image_1 my_preimage)
 ; poststate is nil
 (defun end_their_turn (remote_move pre_state post_state mover_share amount raw_amount)
+    (assign
+        (units_on_table half_pot raise_amount their_image_1 my_preimage) pre_state
+        their_preimage (substr remote_move 0 32)
+        their_selections (substr remote_move 32 33)
+        (my_cards (@ their_cards (their_first_card their_second_card)) my_boost their_boost) (make_cards my_preimage their_preimage)
+        my_card_selections (space_hand_eval my_cards my_boost)
+        my_hand_value (space_hand_eval (pull_from_bitfield my_cards my_card_selections) my_boost)
+        their_hand_value (space_hand_eval (pull_from_bitfield their_cards their_card_selections) their_boost)
+        (li (li (li their_first_card their_second_card) my_hand_value their_hand_value) 0 (li my_card_selections))
+    )
 )
