@@ -15,11 +15,7 @@ import {
 import { useLobbySocket } from '../hooks/useLobbyConnection';
 import { generateOrRetrieveAlias, updateAlias } from "../util";
 
-interface LobbyComponentProps {
-  wagerAmount: string;
-  setWagerAmount: (value: string) => void;
-  handleFindOpponent: (value: string) => void;
-}
+interface LobbyComponentProps { }
 
 const LobbyScreen: React.FC<LobbyComponentProps> = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());

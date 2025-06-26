@@ -190,7 +190,7 @@ export class ExternalBlockchainInterface {
   }
 
   getBlockData(block: number): Promise<WatchReport | null> {
-    return fetch(`${this.baseUrl}/get_block_data?${block}`, {
+    return fetch(`${this.baseUrl}/get_block_data?block=${block}`, {
       body: '', method: 'POST'
     }).then(f => f.json());
   }

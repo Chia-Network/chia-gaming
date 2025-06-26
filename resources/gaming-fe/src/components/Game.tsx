@@ -1,4 +1,4 @@
-import React, { cloneElement, useState } from "react";
+import React, { cloneElement, useState, useEffect, useCallback } from "react";
 import {
   Box,
   Button,
@@ -31,8 +31,8 @@ const Game: React.FC = () => {
   const commandEntries = Object.entries(commands);
   const selectedCommandEntry = commandEntries[command];
   const {
-    wasmConnection,
     gameConnectionState,
+    setState,
     isPlayerTurn,
     iStarted,
     moveNumber,
@@ -54,27 +54,27 @@ const Game: React.FC = () => {
     }
   };
 
-  const {
-    gameState,
-    wagerAmount,
-    setWagerAmount,
-    handleFindOpponent,
-    log,
-  } = useGameSocket();
-
   const { wcInfo, setWcInfo } = useDebug();
 
-  if (gameSelection === undefined && gameState === "idle") {
+  if (gameSelection === undefined) {
     return (
-      <LobbyScreen
-        wagerAmount={wagerAmount}
-        setWagerAmount={setWagerAmount}
-        handleFindOpponent={handleFindOpponent}
-      />
+      <LobbyScreen />
     );
   }
 
-  if (gameState === "searching" || gameConnectionState.stateIdentifier === 'starting') {
+  const setStateFromMessage = useCallback((evt: any) => {
+    setState(evt.data);
+  }, []);
+
+  useEffect(function () {
+    window.addEventListener("message", setStateFromMessage);
+
+    return function () {
+      window.removeEventListener("message", setStateFromMessage);
+    };
+  });
+
+  if (gameConnectionState.stateIdentifier === 'starting') {
     return <WaitingScreen stateName={gameConnectionState.stateIdentifier} messages={gameConnectionState.stateDetail}  />;
   }
 
@@ -117,7 +117,7 @@ const Game: React.FC = () => {
           />
         </Box>
       </Box>
-      <GameLog log={log} />
+      <GameLog log={[]} />
       <Debug connectString={wcInfo} setConnectString={setWcInfo} />
       <Typography variant="h4" align="center">
         WC Client state: {client ? JSON.stringify(client.context) : "nil"}

@@ -27,9 +27,7 @@ interface SendMessageInput {
 };
 
 export interface UseGameSocketReturn {
-  incomingMessages: string[];
-  setIncomingMessages: (msgs: string[]) => void;
-  sendMessage: (input: SendMessageInput) => void;
+  sendMessage: (input: string) => void;
   gameState: GameState;
   wagerAmount: string;
   setWagerAmount: (value: string) => void;
@@ -42,15 +40,11 @@ export interface UseGameSocketReturn {
   opponentCoins: number;
   isPlayerTurn: boolean;
   playerNumber: number;
-  handleFindOpponent: () => void;
-  handleBet: (amount: number) => void;
-  handleMakeMove: () => void;
-  handleEndTurn: () => void;
 }
 
 const SOCKET_URL = "http://localhost:3001";
 
-const useGameSocket = (): UseGameSocketReturn => {
+const useGameSocket = (deliverMessage: (m: string) => void): UseGameSocketReturn => {
   const searchParams = getSearchParams();
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
@@ -58,7 +52,6 @@ const useGameSocket = (): UseGameSocketReturn => {
   const playerNumberRef = useRef<number>(0);
 
   const [gameState, setGameState] = useState<GameState>("idle");
-  const [incomingMessages, setIncomingMessages] = useState<string[]>([]);
   const [wagerAmount, setWagerAmount] = useState<string>("");
   const [opponentWager, setOpponentWager] = useState<string>("");
   const [log, setLog] = useState<string[]>([]);
@@ -70,7 +63,7 @@ const useGameSocket = (): UseGameSocketReturn => {
   const [isPlayerTurn, setIsPlayerTurn] = useState<boolean>(false);
   const [playerNumber, setPlayerNumber] = useState<number>(0);
 
-  useEffect(() => {
+  const eff = () => {
     if (!socketRef.current) {
       const socketResult: any = io(SOCKET_URL);
       socketRef.current = socketResult;
@@ -81,133 +74,35 @@ const useGameSocket = (): UseGameSocketReturn => {
       setGameState("searching");
     };
 
-    const handleStartGame = (data: StartGameData) => {
-      setGameState("playing");
-      setLog((prev) => [...prev, "Opponent found! Starting game..."]);
-      setPlayerHand(data.playerHand);
-      setOpponentHand(data.opponentHand);
-      setPlayerNumber(data.playerNumber);
-      playerNumberRef.current = data.playerNumber;
-      setOpponentWager(data.opponentWager);
-      setWagerAmount(data.wagerAmount);
-      setIsPlayerTurn(data.currentTurn === data.playerNumber);
-    };
-
-    const handleAction = (data: ActionData) => {
-      const currentPlayer = playerNumberRef.current;
-      switch (data.type) {
-        case "bet":
-          if (data.actionBy === currentPlayer) {
-            setPlayerCoins((coins) => coins - (data.amount || 0));
-            setLog((prev) => [...prev, `You bet ${data.amount} coins.`]);
-          } else {
-            setOpponentCoins((coins) => coins - (data.amount || 0));
-            setLog((prev) => [...prev, `Opponent bets ${data.amount} coins.`]);
-          }
-          break;
-        case "endTurn":
-          setIsPlayerTurn(data.currentTurn === currentPlayer);
-          setLog((prev) => [
-            ...prev,
-            data.actionBy === currentPlayer
-              ? "You ended your turn."
-              : "Opponent ended their turn.",
-          ]);
-          break;
-        case "move":
-          setLog((prev) => [
-            ...prev,
-            data.actionBy === currentPlayer
-              ? "You made a move."
-              : "Opponent made a move.",
-          ]);
-          break;
-        default:
-          break;
-      }
-    };
-
     socket?.on("waiting", handleWaiting);
-    socket?.on("startGame", handleStartGame);
-    socket?.on("action", handleAction);
 
     socket?.on('game_message', (input: SendMessageInput) => {
+      console.log('raw message', input);
       if (input.token !== token || input.party === iStarted) {
         return;
       }
 
       console.log('got remote message', input.msg);
-      let new_im = [...incomingMessages, input.msg];
-      setIncomingMessages(new_im);
+      deliverMessage(input.msg);
     });
 
     return () => {
-      socket?.off("waiting", handleWaiting);
-      socket?.off("startGame", handleStartGame);
-      socket?.off("action", handleAction);
+      socket?.off("game_message", handleWaiting);
     };
-  }, []);
+  };
 
-  const sendMessage = useCallback((input: SendMessageInput) => {
-    socketRef.current?.emit('game_message', input);
-  }, []);
+  eff();
 
-  const handleFindOpponent = useCallback(() => {
-    if (!wagerAmount) {
-      alert("Please enter a wager amount.");
-      return;
-    }
-    socketRef.current?.emit("findOpponent", { wagerAmount });
-  }, [wagerAmount]);
-
-  const handleEndTurn = useCallback(() => {
-    if (!isPlayerTurn) {
-      alert("It's not your turn.");
-      return;
-    }
-    socketRef.current?.emit("action", {
-      room,
-      type: "endTurn",
-      actionBy: playerNumberRef.current,
+  const sendMessage = (msg: string) => {
+    socketRef.current?.emit('game_message', {
+      party: iStarted,
+      token,
+      msg
     });
-  }, [isPlayerTurn, room]);
-
-  const handleBet = useCallback(
-    (amount: number) => {
-      if (!isPlayerTurn) {
-        alert("It's not your turn.");
-        return;
-      }
-      if (playerCoins < amount) {
-        alert("You don't have enough coins.");
-        return;
-      }
-      socketRef.current?.emit("action", {
-        room,
-        type: "bet",
-        amount,
-        actionBy: playerNumberRef.current,
-      });
-    },
-    [isPlayerTurn, playerCoins, room]
-  );
-
-  const handleMakeMove = useCallback(() => {
-    if (!isPlayerTurn) {
-      alert("It's not your turn.");
-      return;
-    }
-    socketRef.current?.emit("action", {
-      room,
-      type: "move",
-      actionBy: playerNumberRef.current,
-    });
-  }, [isPlayerTurn, room]);
+  };
 
   return {
     sendMessage,
-    incomingMessages,
-    setIncomingMessages,
     gameState,
     wagerAmount,
     setWagerAmount,
@@ -220,10 +115,6 @@ const useGameSocket = (): UseGameSocketReturn => {
     opponentCoins,
     isPlayerTurn,
     playerNumber,
-    handleFindOpponent,
-    handleBet,
-    handleMakeMove,
-    handleEndTurn,
   };
 };
 

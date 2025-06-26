@@ -1220,9 +1220,8 @@ impl PotatoHandler {
                 let bundle = if let PeerMessage::HandshakeE { bundle } = msg_envelope.borrow() {
                     bundle
                 } else {
-                    return Err(Error::StrErr(format!(
-                        "Expected handshake e message, got {msg_envelope:?}"
-                    )));
+                    self.incoming_messages.push_front(msg_envelope.clone());
+                    return Ok(());
                 };
 
                 let channel_coin = {
