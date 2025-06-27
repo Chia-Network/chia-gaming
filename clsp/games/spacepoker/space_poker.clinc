@@ -1,7 +1,5 @@
 (export space_poker_factory)
 
-(import spacehandcalc)
-
 ; game factory takes (alice_contribution bob_contribution) and returns
 ; (initial_mover_handler initial_waiter_handler
 ; initial_max_move_size initial_state initial_mover_share
@@ -340,10 +338,8 @@
         (assign
             my_image_0 (sha256 MY_PREIMAGE raw_amount)
             (my_cards (@ their_cards (their_first_card their_second_card)) my_boost their_boost) (make_cards MY_PREIMAGE remote_move)
-            my_card_selections (space_hand_eval my_cards my_boost)
-            my_hand_value (space_hand_eval (pull_from_bitfield my_cards my_card_selections) my_boost)
-            their_card_selections (space_hand_eval their_cards their_boost)
-            their_hand_value (space_hand_eval (pull_from_bitfield their_cards their_card_selections) their_boost)
+            (my_card_selections my_hand_value) (best_space_poker_hand my_cards my_boost)
+            (their_card_selections their_hand_value) (best_space_poker_hand their_cards their_boost)
             result (deep_compare my_hand_value their_hand_value)
             (li (li 0 (li their_first_card their_second_card) my_hand_value their_hand_value)
                 (curry end_my_turn MY_PREIMAGE result my_card_selections) 0 MY_PREIMAGE)
@@ -369,9 +365,28 @@
         their_preimage (substr remote_move 0 32)
         their_selections (substr remote_move 32 33)
         (my_cards (@ their_cards (their_first_card their_second_card)) my_boost their_boost) (make_cards my_preimage their_preimage)
-        my_card_selections (space_hand_eval my_cards my_boost)
-        my_hand_value (space_hand_eval (pull_from_bitfield my_cards my_card_selections) my_boost)
+        (my_card_selections my_hand_value) (best_space_poker_hand my_cards my_boost)
         their_hand_value (space_hand_eval (pull_from_bitfield their_cards their_card_selections) their_boost)
         (li (li (li their_first_card their_second_card) my_hand_value their_hand_value) 0 (li my_card_selections))
+    )
+)
+
+(defun best_space_poker_hand (cards boosted)
+    (best_space_poker_hand_inner cards 0x7F 0 (li 0))
+)
+
+(defun best_space_poker_hand_inner (cards boosted next_try best_so_far best_eval_so_far)
+    (if (not next_try)
+        (li best_so_far best_eval_so_far)
+        (if (!= (bit_count next_try 5))
+            (best_space_poker_hand_inner cards boosted (- next_try 1) best_so_far best_eval_so_far)
+            (assign
+                next_eval (space_hand_eval (pull_from_bitfield cards next_try) boosted)
+                (if (> (deep_compare next_eval best_eval_so_far) 0)
+                    (best_space_poker_hand_inner boosted (- next_try 1) best_so_far best_eval_so_far)
+                    (best_space_poker_hand_inner boosted (- next_try 1) next_try next_eval)
+                )
+            )
+        )
     )
 )

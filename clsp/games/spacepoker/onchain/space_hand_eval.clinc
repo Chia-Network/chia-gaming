@@ -7,14 +7,14 @@
 ; all sorting is done highest to lowest
 
 ; Hands are represented:
-; 5 of a kind (5 rank)
-; 4 of a kind  (4 1 quad_rank kicker)
-; straight (3 3 high_card)
-; full house (3 2 set_rank pair_rank)
-; set (3 1 1 set_rank first_kicker second_kicker)
-; two pair (2 2 1 high_pair_rank low_pair_rank kicker)
-; pair (2 1 1 1 pair_rank first_kicker second_kicker third_kicker)
-; high card (1 1 1 1 1 high_card first_kicker second_kicker third_kicker fourth_kicker)
+; 5 of a kind (5 boosted rank)
+; 4 of a kind  (4 1 boosted quad_rank kicker)
+; straight (3 3 boosted high_card)
+; full house (3 2 boosted set_rank pair_rank)
+; set (3 1 1 boosted set_rank first_kicker second_kicker)
+; two pair (2 2 1 boosted high_pair_rank low_pair_rank kicker)
+; pair (2 1 1 1 boosted pair_rank first_kicker second_kicker third_kicker)
+; high card (1 1 1 1 1 boosted high_card first_kicker second_kicker third_kicker fourth_kicker)
 
 ; Hand possibilities:
 ; 5 of a kind: 13
@@ -54,25 +54,22 @@
     (group_by_count_inner items (f items) 0)
 )
 
-(defun space_hand_eval_inner (cards)
-    (assign-lambda
+(defun space_hand_eval (cards boosted)
+    (assign
         ranks (atomsort cards)
         raw_groups (atomsort (group_by_count ranks))
-        hand (map (lambda (x) (lsh x -4)) raw_groups (map (lambda (x) (logand x 15)) raw_groups))
+        hand (concat
+            (map (lambda (x) (lsh x -4)) raw_groups)
+            (li boosted)
+            (map (lambda (x) (logand x 15)) raw_groups)
+        )
         shigh (straight_high &rest hand)
         (if shigh
-            (if (logior (< (f hand) 3) (= (f (r hand)) 2))
-                (list 3 3 shigh)
+            (if (logior (< (f hand) 3) (= (f (r hand)) 1))
+                (list 3 3 boosted shigh)
                 hand
             )
             hand
         )
-    )
-)
-
-(defun space_hand_eval (cards boosted)
-    (assign
-        result (space_hand_calc_inner cards)
-        (list (f result) boosted (r result))
     )
 )

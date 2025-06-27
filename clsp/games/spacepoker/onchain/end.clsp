@@ -5,7 +5,7 @@
 (import std.assert)
 
 ; state is (units_on_table half_pot raise_amount mover_image waiter_preimage)
-; move is concatenation of mover_image_N and mover_selected_cards
+; move is concatenation of mover preimage and mover_selected_cards
 ; evidence is empty or waiter_selected_cards
 (export (quine_hash
     (MOVER_PUZZLE_HASH WAITER_PUZZLE_HASH TIMEOUT AMOUNT MOD_HASH NONCE
