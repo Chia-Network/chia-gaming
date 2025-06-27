@@ -1,4 +1,5 @@
 import React from "react";
+import { useCallback } from "react";
 import { Box, Button, Typography, Paper } from "@mui/material";
 import PlayingCard from "./PlayingCard";
 
@@ -6,7 +7,6 @@ interface PlayerSectionProps {
   playerNumber: number;
   playerHand: string[];
   isPlayerTurn: boolean;
-  iStarted: boolean;
   moveNumber: number;
   handleMakeMove: (move: any) => void;
 }
@@ -15,13 +15,13 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
   playerNumber,
   playerHand,
   isPlayerTurn,
-  iStarted,
   moveNumber,
   handleMakeMove,
 }) => {
-  let players = ["You", "Other"];
-  let playerSwap = iStarted ? 0 : 1;
   let moveData = "80";
+  let doHandleMakeMove = useCallback(() => {
+    handleMakeMove(moveData);
+  }, []);
   return (
     <Paper
       elevation={3}
@@ -33,7 +33,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
       }}
     >
       <Typography variant="h5">
-      {`Player ${playerNumber} (${players[playerNumber ^ playerSwap]})`}
+      {"You"}
       </Typography>
       <br />
       <Typography variant="h6">Your Hand:</Typography>
@@ -47,7 +47,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
         <Button
           variant="contained"
           color="secondary"
-          onClick={() => handleMakeMove(moveData)}
+          onClick={doHandleMakeMove}
           disabled={!isPlayerTurn}
           style={{ marginRight: "8px" }}
         >

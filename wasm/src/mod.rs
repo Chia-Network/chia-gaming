@@ -474,6 +474,7 @@ pub fn start_games(cid: i32, initiator: bool, game: JsValue) -> Result<Vec<Strin
     let js_game_start = serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
     let res = with_game(cid, move |cradle: &mut JsCradle| {
         let game_start = GameStart {
+            game_id: cradle.cradle.next_game_id()?,
             game_type: GameType(hex::decode(&js_game_start.game_type).into_gen()?),
             timeout: Timeout::new(js_game_start.timeout),
             amount: Amount::new(js_game_start.amount),
@@ -714,6 +715,9 @@ struct JsIdleResult {
     opponent_move: Option<(String, String)>,
     game_finished: Option<(String, u64)>,
     handshake_done: bool,
+    receive_error: Option<String>,
+    action_queue: Vec<String>,
+    incoming_messages: Vec<String>,
 }
 
 fn spend_to_js(spend: &Spend) -> JsSpend {
@@ -795,6 +799,9 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
         opponent_move: opponent_move,
         game_finished: game_finished,
         handshake_done: idle_result.handshake_done,
+        action_queue: idle_result.action_queue.clone(),
+        incoming_messages: idle_result.incoming_messages.clone(),
+        receive_error: idle_result.receive_error.as_ref().map(|e| format!("{e:?}"))
     })
     .into_e()
 }
@@ -806,7 +813,7 @@ pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
         if let Some(idle_result) =
             cradle
                 .cradle
-                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui)?
+                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui, 3)? // Give extras
         {
             idle_result_to_js(&idle_result)
         } else {

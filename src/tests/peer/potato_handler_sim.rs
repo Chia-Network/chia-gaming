@@ -889,7 +889,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
             loop {
                 let result =
-                    if let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i])? {
+                    if let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
                         result
                     } else {
                         break;

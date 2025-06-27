@@ -94,8 +94,7 @@ class WasmBlobWrapper {
     return this.messageQueue.length > 0;
   }
 
-  pushEvent(msg: any): any {
-    this.messageQueue.push(msg);
+  internalKickIdle(): any {
     this.kickMessageHandling().then((res: any) => {
       let idle_info;
       do {
@@ -104,6 +103,11 @@ class WasmBlobWrapper {
       } while (!idle_info.stop);
       return res;
     });
+  }
+
+  pushEvent(msg: any): any {
+    this.messageQueue.push(msg);
+    return this.internalKickIdle();
   }
 
   handleOneMessage(msg: any): any {
@@ -127,10 +131,23 @@ class WasmBlobWrapper {
       return this.getInitialBlock();
     } else if (msg.move) {
       return this.internalMakeMove(msg.move);
+    } else if (msg.takeOpponentMove) {
+      return this.takeOpponentMove(msg.game_id, msg.readable_move_hex);
+    } else if (msg.kickIdle) {
+      return this.internalKickIdle();
     }
 
     console.error("Unknown event:", msg);
     return empty();
+  }
+
+  takeOpponentMove(game_id: string, readable_move_hex: string): any {
+    const result = {
+      setMyTurn: true
+    };
+    if (this.moveNumber == 1) {
+    }
+    return empty().then(() => result);
   }
 
   kickMessageHandling(): any {
@@ -288,6 +305,7 @@ class WasmBlobWrapper {
     const idle = this.cradle?.idle({
       opponent_moved: (game_id, readable_move_hex) => {
         console.error('got opponent move', game_id, readable_move_hex);
+        this.pushEvent({ takeOpponentMove: { game_id, readable_move_hex } });
       }
       // Local ui callbacks.
     });
@@ -298,7 +316,8 @@ class WasmBlobWrapper {
 
     result.stop = !idle.continue_on;
 
-    console.log('idle1');
+    result.setError = idle.receive_error;
+    console.log('idle1', idle.action_queue);
     if (idle.handshake_done && !this.handshakeDone) {
       console.warn("HANDSHAKE DONE");
       this.handshakeDone = true;
@@ -306,6 +325,7 @@ class WasmBlobWrapper {
         stateIdentifier: "running",
         stateDetail: []
       };
+      console.log("starting games", this.iStarted);
       let gids = this.cradle?.start_games(!this.iStarted, {
         game_type: "63616c706f6b6572",
         timeout: 100,
@@ -324,7 +344,7 @@ class WasmBlobWrapper {
       result.setMyTurn = !this.iStarted;
     }
 
-    console.log('idle2');
+    console.log('idle2', idle.incoming_messages);
     for (let i = 0; i < idle.outbound_messages.length; i++) {
       console.log('send message to remote');
       this.sendMessage(idle.outbound_messages[i]);
@@ -343,9 +363,14 @@ class WasmBlobWrapper {
     return result;
   }
 
+  kickIdle() {
+    this.pushEvent({ kickIdle: true });
+    return empty();
+  }
+
   internalMakeMove(move: any): any {
     if (!this.handshakeDone || !this.wc || !this.cradle) {
-      return;
+      return empty();
     }
 
     if (this.moveNumber === 0) {
@@ -356,7 +381,7 @@ class WasmBlobWrapper {
       return empty().then(() => {
         return {
           setMyTurn: false,
-          setMoveNumber: this.moveNumber,
+          setMoveNumber: this.moveNumber
         };
       })
     }
@@ -400,15 +425,19 @@ export function useWasmBlob() {
   const uniqueId = searchParams.uniqueId;
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
-  const [playerHand, setMyHand] = useState<string[]>([]);
-  const [opponentHand, setTheirHand] = useState<string[]>([]);
+  const [playerHand, setPlayerHand] = useState<string[]>([]);
+  const [opponentHand, setOpponentHand] = useState<string[]>([]);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [gameIds, setGameIds] = useState<string[]>([]);
   const [moveNumber, setMoveNumber] = useState<number>(0);
+  const [error, setError] = useState<string | undefined>(undefined);
   const amount = parseInt(searchParams.amount);
   const settable: any = {
     'setGameConnectionState': setGameConnectionState,
-    'setMyTurn': setMyTurn
+    'setPlayerHand': setPlayerHand,
+    'setOpponentHand': setOpponentHand,
+    'setMyTurn': setMyTurn,
+    'setError': setError
   };
 
   let messageSender = useCallback((msg: string) => {
@@ -458,13 +487,13 @@ export function useWasmBlob() {
       gameObject?.waitBlock(new_block_number);
     });
   }, 5000);
-
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
     console.log('start loading wasm', gameObject);
     gameObject?.loadWasm(chia_gaming_init, cg);
   }, []);
 
   return {
+    error,
     setState,
     gameIdentity,
     gameConnectionState,

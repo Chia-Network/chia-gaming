@@ -40,7 +40,10 @@ export type IdleResult = {
   "outbound_messages": Array<string>,
   "opponent_move": OpponentMove | undefined,
   "game_finished": GameFinished | undefined,
-  "handshake_done": boolean
+  "handshake_done": boolean,
+  "receive_error": string | undefined,
+  "action_queue": Array<string>,
+  "incoming_messages": Array<string>
 };
 
 export type GameCradleConfig = {
@@ -51,7 +54,8 @@ export type GameCradleConfig = {
   "my_contribution": Amount,
   "their_contribution": Amount,
   "channel_timeout": number,
-  "reward_puzzle_hash": string
+  "reward_puzzle_hash": string,
+  "receive_error": string | undefined
 };
 
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;

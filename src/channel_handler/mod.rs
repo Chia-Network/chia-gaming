@@ -842,7 +842,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         signatures: &PotatoSignatures,
         start_info_list: &[Rc<dyn GameStartInfoInterface>],
-    ) -> Result<ChannelCoinSpendInfo, Error> {
+    ) -> Result<(Vec<GameID>, ChannelCoinSpendInfo), Error> {
         debug!(
             "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",
             self.is_initial_potato(),
@@ -850,6 +850,7 @@ impl ChannelHandler {
             self.unroll.coin.state_number
         );
         let mut new_games = self.add_games(env, start_info_list)?;
+        let result_game_ids: Vec<GameID> = new_games.iter().map(|g| &g.game_id).cloned().collect();
 
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
@@ -897,11 +898,11 @@ impl ChannelHandler {
         )?;
         self.live_games.append(&mut new_games);
 
-        Ok(ChannelCoinSpendInfo {
+        Ok((result_game_ids, ChannelCoinSpendInfo {
             aggsig: spend.signature,
             solution: spend.solution.p(),
             conditions: spend.conditions.p(),
-        })
+        }))
     }
 
     pub fn get_game_by_id(&self, game_id: &GameID) -> Result<usize, Error> {

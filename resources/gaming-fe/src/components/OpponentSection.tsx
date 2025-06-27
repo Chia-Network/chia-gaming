@@ -5,16 +5,12 @@ import PlayingCard from "./PlayingCard";
 interface OpponentSectionProps {
   playerNumber: number;
   opponentHand: string[];
-  iStarted: boolean;
 }
 
 const OpponentSection: React.FC<OpponentSectionProps> = ({
   playerNumber,
-  iStarted,
   opponentHand,
 }) => {
-  let players = ["You", "Other"];
-  let playerSwap = iStarted ? 0 : 1;
   return (
     <Paper
       elevation={3}
@@ -26,7 +22,7 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
       }}
     >
       <Typography variant="h5">
-      {`Player ${playerNumber} (${players[playerNumber ^ playerSwap]})`}
+      {"Opponent"}
       </Typography>
       <br />
       <Typography variant="h6">Opponent's Hand:</Typography>

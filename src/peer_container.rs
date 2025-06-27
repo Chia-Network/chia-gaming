@@ -156,6 +156,8 @@ pub struct IdleResult {
     pub opponent_move: Option<(GameID, usize, ReadableMove)>,
     pub game_finished: Option<(GameID, Amount)>,
     pub receive_error: Option<Error>,
+    pub action_queue: Vec<String>,
+    pub incoming_messages: Vec<String>,
     pub resync: Option<(usize, bool)>,
 }
 
@@ -230,6 +232,7 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
+        flags: u32,
     ) -> Result<Option<IdleResult>, Error>;
 
     /// Check whether we're on chain.
@@ -542,6 +545,10 @@ impl SynchronousGameCradle {
 
     pub fn finished(&self) -> bool {
         self.state.finished
+    }
+
+    pub fn next_game_id(&mut self) -> Result<GameID, Error> {
+        self.peer.next_game_id()
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(
@@ -897,12 +904,24 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
+        flags: u32,
     ) -> Result<Option<IdleResult>, Error> {
         if self.state.shutdown.is_some() {
             return Ok(None);
         }
 
         let mut result = IdleResult::default();
+        if (flags & 1) != 0 {
+            self.peer.examine_game_action_queue(|actions| {
+                actions.map(|a| format!("{a:?}")).collect::<Vec<String>>()
+            });
+        }
+        if (flags & 2) != 0 {
+            self.peer.examine_incoming_messages(|messages| {
+                messages.map(|m| format!("{m:?}")).collect::<Vec<String>>()
+            });
+        }
+
         result.handshake_done = self.peer.handshake_done();
 
         swap(

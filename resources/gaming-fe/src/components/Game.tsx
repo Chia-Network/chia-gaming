@@ -31,6 +31,7 @@ const Game: React.FC = () => {
   const commandEntries = Object.entries(commands);
   const selectedCommandEntry = commandEntries[command];
   const {
+    error,
     gameConnectionState,
     setState,
     isPlayerTurn,
@@ -56,12 +57,6 @@ const Game: React.FC = () => {
 
   const { wcInfo, setWcInfo } = useDebug();
 
-  if (gameSelection === undefined) {
-    return (
-      <LobbyScreen />
-    );
-  }
-
   const setStateFromMessage = useCallback((evt: any) => {
     setState(evt.data);
   }, []);
@@ -74,6 +69,17 @@ const Game: React.FC = () => {
     };
   });
 
+  // All early returns need to be after all useEffect, etc.
+  if (gameSelection === undefined) {
+    return (
+      <LobbyScreen />
+    );
+  }
+
+  if (error) {
+    return (<div>{error}</div>);
+  }
+
   if (gameConnectionState.stateIdentifier === 'starting') {
     return <WaitingScreen stateName={gameConnectionState.stateIdentifier} messages={gameConnectionState.stateDetail}  />;
   }
@@ -81,9 +87,9 @@ const Game: React.FC = () => {
   return (
     <Box p={4}>
       <Typography variant="h4" align="center">
-      {`Cal Poker ${moveNumber}`}
+      {`Cal Poker - move ${moveNumber}`}
       </Typography>
-      <br />
+      (<br />
       <Typography
         variant="h6"
         align="center"
@@ -104,16 +110,14 @@ const Game: React.FC = () => {
             playerNumber={playerNumber}
             playerHand={playerHand}
             isPlayerTurn={isPlayerTurn}
-            iStarted={iStarted}
             moveNumber={moveNumber}
             handleMakeMove={handleMakeMove}
           />
         </Box>
         <Box flex={1} display="flex" flexDirection="column">
           <OpponentSection
-            playerNumber={playerNumber}
+            playerNumber={(playerNumber == 1) ? 2 : 1}
             opponentHand={opponentHand}
-            iStarted={iStarted}
           />
         </Box>
       </Box>
