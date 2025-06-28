@@ -10,6 +10,7 @@ interface PlayerSectionProps {
   isPlayerTurn: boolean;
   moveNumber: number;
   handleMakeMove: (move: any) => void;
+  cardSelections: number,
   setCardSelections: (mask: number) => void;
 }
 
@@ -19,22 +20,23 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
   isPlayerTurn,
   moveNumber,
   handleMakeMove,
+  cardSelections,
   setCardSelections,
 }) => {
-  let moveData = "80";
-  let [cardSelections, setMyCardSelections] = useState<number>(0);
-  let doHandleMakeMove = useCallback(() => {
+  let doHandleMakeMove = () => {
+    let moveData = "80";
     handleMakeMove(moveData);
-  }, []);
-  let setSelection = useCallback((index: number, selected: boolean) => {
+  };
+  let setSelection = (index: number, selected: boolean) => {
+    let selections = cardSelections;
     if (selected) {
-      cardSelections |= 1 << index;
+      selections |= (1 << index);
     } else {
-      cardSelections &= 0xff ^ (1 << index);
+      selections &= ~(1 << index);
     };
-    setMyCardSelections(cardSelections);
-    setCardSelections(cardSelections);
-  }, []);
+    setCardSelections(selections);
+    console.warn(isPlayerTurn, moveNumber, 'cardSelections', selections, selected);
+  };
   return (
     <Paper
       elevation={3}
@@ -53,7 +55,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
         {playerHand.map((card, index) => (
-          <PlayingCard key={index} index={index} cardValue={card} setSelection={setSelection} />
+          <PlayingCard key={index} index={index} selected={!!(cardSelections & (1 << index))} cardValue={card} setSelection={setSelection} />
         ))}
       </Box>
       <Box mt="auto">

@@ -154,7 +154,7 @@ class WasmBlobWrapper {
       return this.takeGameMessage(data.moveNumber, data.game_id, data.readable_hex);
     } else if (msg.kickIdle) {
       return this.internalKickIdle();
-    } else if (msg.setCardSelections) {
+    } else if (msg.setCardSelections !== undefined) {
       return this.internalSetCardSelections(msg.setCardSelections);
     }
 
@@ -513,6 +513,7 @@ export function useWasmBlob() {
   const [gameIds, setGameIds] = useState<string[]>([]);
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [cardSelections, setOurCardSelections] = useState<number>(0);
   const amount = parseInt(searchParams.amount);
   const settable: any = {
     'setGameConnectionState': setGameConnectionState,
@@ -520,7 +521,8 @@ export function useWasmBlob() {
     'setOpponentHand': setOpponentHand,
     'setMyTurn': setMyTurn,
     'setMoveNumber': setMoveNumber,
-    'setError': setError
+    'setError': setError,
+    'setCardSelections': setOurCardSelections,
   };
 
   let setCardSelections = useCallback((mask: number) => {
@@ -592,6 +594,7 @@ export function useWasmBlob() {
     playerHand,
     opponentHand,
     moveNumber,
+    cardSelections,
     setCardSelections,
   };
 }

@@ -32,7 +32,7 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
         {opponentHand.map((card, index) => (
-          <PlayingCard key={index} cardValue={card} isFaceDown={false} index={index} setSelection={setSelection} />
+          <PlayingCard key={index} cardValue={card} isFaceDown={false} index={index} setSelection={setSelection} selected={false} />
         ))}
       </Box>
     </Paper>

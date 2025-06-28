@@ -6,23 +6,24 @@ interface PlayingCardProps {
   index: number;
   cardValue: string;
   isFaceDown?: boolean;
+  selected: boolean;
   setSelection: (index: number, selected: boolean) => void;
 }
 
 const PlayingCard: React.FC<PlayingCardProps> = ({
   index,
   cardValue,
+  selected,
   setSelection,
   isFaceDown = false,
 }) => {
   const suitNames = ['Q', '♥', '♦', '♤', '♧'];
   const rank = cardValue.slice(0, -1);
   const suit = suitNames[(cardValue.slice(-1)[0] as any)];
-  const [selected, setSelected] = useState<boolean>(false);
-  const setSelectedCB = useCallback(() => {
-    setSelected(!selected);
-    setSelection(index, selected);
-  }, []);
+  const setSelectedCB = () => {
+    const newSelected = !selected;
+    setSelection(index, newSelected);
+  };
 
   const isRedSuit = suit === '♥' || suit === '♦';
   const suitColor = isRedSuit ? 'red' : 'black';
@@ -39,6 +40,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     padding: '8px',
     backgroundColor: selected ? '#ddd' : (isFaceDown ? '#2E7D32' : '#FFFFFF'),
     color: isFaceDown ? '#FFFFFF' : suitColor,
+    cursor: 'pointer',
     textAlign: 'center' as 'center',
     boxSizing: 'border-box' as 'border-box',
   };
