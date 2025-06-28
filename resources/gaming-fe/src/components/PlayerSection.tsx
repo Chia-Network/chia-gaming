@@ -1,6 +1,7 @@
 import React from "react";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { Box, Button, Typography, Paper } from "@mui/material";
+import { popcount } from '../util';
 import PlayingCard from "./PlayingCard";
 
 interface PlayerSectionProps {
@@ -9,6 +10,7 @@ interface PlayerSectionProps {
   isPlayerTurn: boolean;
   moveNumber: number;
   handleMakeMove: (move: any) => void;
+  setCardSelections: (mask: number) => void;
 }
 
 const PlayerSection: React.FC<PlayerSectionProps> = ({
@@ -17,10 +19,21 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
   isPlayerTurn,
   moveNumber,
   handleMakeMove,
+  setCardSelections,
 }) => {
   let moveData = "80";
+  let [cardSelections, setMyCardSelections] = useState<number>(0);
   let doHandleMakeMove = useCallback(() => {
     handleMakeMove(moveData);
+  }, []);
+  let setSelection = useCallback((index: number, selected: boolean) => {
+    if (selected) {
+      cardSelections |= 1 << index;
+    } else {
+      cardSelections &= 0xff ^ (1 << index);
+    };
+    setMyCardSelections(cardSelections);
+    setCardSelections(cardSelections);
   }, []);
   return (
     <Paper
@@ -40,7 +53,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
         {playerHand.map((card, index) => (
-          <PlayingCard key={index} cardValue={card} />
+          <PlayingCard key={index} index={index} cardValue={card} setSelection={setSelection} />
         ))}
       </Box>
       <Box mt="auto">
@@ -48,7 +61,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
           variant="contained"
           color="secondary"
           onClick={doHandleMakeMove}
-          disabled={!isPlayerTurn}
+          disabled={!isPlayerTurn || (moveNumber === 1 && popcount(cardSelections) != 4)}
           style={{ marginRight: "8px" }}
         >
           Make Move

@@ -28,7 +28,7 @@ describe("useGameSocket Hook", () => {
   });
 
   test("should initialize with correct default values", () => {
-    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg));
+    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg, () => { }));
 
     expect(result.current.gameState).toBe("idle");
     expect(result.current.wagerAmount).toBe("");
@@ -43,7 +43,7 @@ describe("useGameSocket Hook", () => {
   });
 
   test("should update gameState to searching on waiting event", () => {
-    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg));
+    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg, () => { }));
 
     const waitingCallback = mockSocket.on.mock.calls.find(
       (call: any) => call[0] === "waiting"
@@ -57,7 +57,7 @@ describe("useGameSocket Hook", () => {
   });
 
   test("should handle startGame event correctly", () => {
-    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg));
+    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg, () => { }));
 
     const startGameCallback = mockSocket.on.mock.calls.find(
       (call: any) => call[0] === "startGame"
@@ -88,7 +88,7 @@ describe("useGameSocket Hook", () => {
   });
 
   test("should handle action events correctly", () => {
-    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg));
+    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg, () => { }));
 
     const startGameCallback = mockSocket.on.mock.calls.find(
       (call: any) => call[0] === "startGame"

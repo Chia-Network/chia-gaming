@@ -1,4 +1,5 @@
 import React from "react";
+import { useCallback } from "react";
 import { Box, Typography, Paper } from "@mui/material";
 import PlayingCard from "./PlayingCard";
 
@@ -11,6 +12,8 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
   playerNumber,
   opponentHand,
 }) => {
+  const setSelection = useCallback((index: number, selected: boolean) => {}, []);
+
   return (
     <Paper
       elevation={3}
@@ -29,7 +32,7 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
         {opponentHand.map((card, index) => (
-          <PlayingCard key={index} cardValue={card} isFaceDown={false} />
+          <PlayingCard key={index} cardValue={card} isFaceDown={false} index={index} setSelection={setSelection} />
         ))}
       </Box>
     </Paper>

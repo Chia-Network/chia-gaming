@@ -575,11 +575,16 @@ fn call_javascript_from_collection<F>(
 where
     F: FnOnce(&mut Array) -> Result<(), types::Error>,
 {
+    debug!("try to call {name} from {callbacks:?}");
     if let Some(function) = callbacks.get(name).and_then(Function::try_from) {
         let mut args_array = Array::new();
+        debug!("call user's injected function in {name}");
         f(&mut args_array)?;
+        debug!("call javascript for {name}");
         function.apply(&JsValue::NULL, &args_array).into_e()?;
     }
+
+    debug!("finished {name} callback");
 
     Ok(())
 }

@@ -40,7 +40,8 @@ const Game: React.FC = () => {
     handleMakeMove,
     playerHand,
     opponentHand,
-    playerNumber
+    playerNumber,
+    setCardSelections,
   } = useWasmBlob();
 
   const handleConnectWallet = () => {
@@ -112,6 +113,7 @@ const Game: React.FC = () => {
             isPlayerTurn={isPlayerTurn}
             moveNumber={moveNumber}
             handleMakeMove={handleMakeMove}
+            setCardSelections={setCardSelections}
           />
         </Box>
         <Box flex={1} display="flex" flexDirection="column">
