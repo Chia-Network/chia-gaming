@@ -5,7 +5,7 @@ import PlayingCard from "./PlayingCard";
 
 interface OpponentSectionProps {
   playerNumber: number;
-  opponentHand: string[];
+  opponentHand: number[][];
 }
 
 const OpponentSection: React.FC<OpponentSectionProps> = ({
@@ -32,7 +32,7 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
         {opponentHand.map((card, index) => (
-          <PlayingCard key={index} cardValue={card} isFaceDown={false} index={index} setSelection={setSelection} selected={false} />
+          <PlayingCard id={`card-${playerNumber}-${card}`} key={index} cardValue={card} isFaceDown={false} index={index} setSelection={setSelection} selected={false} />
         ))}
       </Box>
     </Paper>

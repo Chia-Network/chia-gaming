@@ -13,6 +13,7 @@ import {
 import useGameSocket from "../hooks/useGameSocket";
 import PlayerSection from "./PlayerSection";
 import OpponentSection from "./OpponentSection";
+import GameEndPlayer from "./GameEndPlayer";
 import GameLog from "./GameLog";
 import WaitingScreen from "./WaitingScreen";
 import LobbyScreen from "./LobbyScreen";
@@ -105,6 +106,55 @@ const Game: React.FC = () => {
   } else if (myWinOutcome === 'tie') {
     banner = 'Game tied';
   }
+  const moveDescription = [
+    "Commit to random number",
+    "Choose 4 cards to discard",
+    "Finish game"
+  ][moveNumber];
+
+  if (outcome) {
+    return (
+      <div id='total'>
+        <div id='overlay'> </div>
+        <Box p={4}>
+          <Typography variant="h4" align="center">
+          {`Cal Poker - move ${moveNumber}`}
+          </Typography>
+          <br />
+          <Typography
+            variant="h6"
+            align="center"
+            color={colors[color]}
+          >
+            {banner}
+          </Typography>
+          <br />
+          <Box
+            display="flex"
+            flexDirection={{ xs: "column", md: "row" }}
+            alignItems="stretch"
+            gap={2}
+            mb={4}
+          >
+            <Box flex={1} display="flex" flexDirection="column">
+              <GameEndPlayer
+                iStarted={iStarted}
+                playerNumber={playerNumber}
+                outcome={outcome}
+              />
+            </Box>
+            <Box flex={1} display="flex" flexDirection="column">
+                <GameEndPlayer
+                    iStarted={iStarted}
+                    playerNumber={(playerNumber == 1) ? 2 : 1}
+                    outcome={outcome}
+                />
+            </Box>
+          </Box>
+        </Box>
+      </div>
+    );
+  }
 
   return (
     <Box p={4}>
@@ -139,17 +189,17 @@ const Game: React.FC = () => {
           />
         </Box>
         <Box flex={1} display="flex" flexDirection="column">
-          <OpponentSection
-            playerNumber={(playerNumber == 1) ? 2 : 1}
-            opponentHand={opponentHand}
-          />
+            <OpponentSection
+                playerNumber={(playerNumber == 1) ? 2 : 1}
+                opponentHand={opponentHand}
+            />
         </Box>
       </Box>
+      <br/>
+      <Typography>{moveDescription}</Typography>
+      <br/>
       <GameLog log={[]} />
       <Debug connectString={wcInfo} setConnectString={setWcInfo} />
-      <Typography variant="h4" align="center">
-        WC Client state: {client ? JSON.stringify(client.context) : "nil"}
-      </Typography>
       {session ? (
         <>
           <FormControl fullWidth sx={{ mt: 2 }}>

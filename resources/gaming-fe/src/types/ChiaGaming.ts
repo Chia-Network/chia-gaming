@@ -239,6 +239,32 @@ function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
   return [result0, result1];
 }
 
+function card_matches(cards: number[][], card: number[]): boolean {
+  for (let i = 0; i < cards.length; i++) {
+    if (cards[i].toString() === card.toString()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function card_color(outcome: CalpokerOutcome, iAmAlice: boolean, card: number[]): 'my-used' | 'my-final' | 'their-used' | 'their-final' {
+  let my_used_cards = iAmAlice ? outcome.alice_used_cards : outcome.bob_used_cards;
+  if (card_matches(my_used_cards, card)) {
+    return 'my-used';
+  }
+  let their_used_cards = iAmAlice ? outcome.bob_used_cards : outcome.alice_used_cards;
+  if (card_matches(their_used_cards, card)) {
+    return 'their-used';
+  }
+  let my_final_cards = iAmAlice ? outcome.alice_final_hand : outcome.bob_final_hand;
+  if (card_matches(my_final_cards, card)) {
+    return 'my-final';
+  }
+  return 'their-final';
+}
+
 export class CalpokerOutcome {
   alice_discards: number;
   bob_discards: number;
@@ -266,6 +292,9 @@ export class CalpokerOutcome {
     console.warn('result_list', result_list);
     this.alice_cards = alice_cards;
     this.bob_cards = bob_cards;
+
+    console.log('alice_cards', alice_cards);
+    console.log('bob_cards', bob_cards);
 
     this.alice_selects = result_list[1];
     this.bob_selects = result_list[2];
@@ -296,10 +325,15 @@ export class CalpokerOutcome {
     const [alice_for_alice, alice_for_bob] = select_cards_using_bits(this.alice_cards, this.alice_discards);
     const [bob_for_bob, bob_for_alice] = select_cards_using_bits(this.bob_cards, this.bob_discards);
 
+    console.log('alice_for_alice', alice_for_alice);
+    console.log('alice_for_bob', alice_for_bob);
+    console.log('bob_for_alice', bob_for_alice);
+    console.log('bob_for_bob', bob_for_bob);
+
     this.bob_final_hand = [...bob_for_bob];
-    alice_for_bob.forEach((c) => bob_cards.push(c));
+    alice_for_bob.forEach((c) => this.bob_final_hand.push(c));
     this.alice_final_hand = [...alice_for_alice];
-    bob_for_alice.forEach((c) => alice_cards.push(c));
+    bob_for_alice.forEach((c) => this.alice_final_hand.push(c));
 
     this.alice_used_cards = select_cards_using_bits(this.alice_final_hand, this.alice_selects)[1];
     this.bob_used_cards = select_cards_using_bits(this.bob_final_hand, this.bob_selects)[1];

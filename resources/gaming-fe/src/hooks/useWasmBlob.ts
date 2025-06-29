@@ -208,9 +208,12 @@ class WasmBlobWrapper {
     console.log('readable move', JSON.stringify(p));
     if (moveNumber === 1) {
       this.updateCards(p, result);
-    } else if (moveNumber === 2) {
+    } else if (!this.iStarted && moveNumber === 2) {
+      console.warn('finalOutcome:', this.iStarted, moveNumber);
       this.finalOutcome(p, result);
-    } else if (this.iStarted && moveNumber === 3) {
+      this.makeMove('80');
+    } else if (moveNumber > 1) {
+      console.warn('finalOutcome:', this.iStarted, moveNumber);
       this.finalOutcome(p, result);
     }
 
@@ -486,7 +489,11 @@ class WasmBlobWrapper {
       return empty().then(() => {
         return {
           setMyTurn: false,
-          setMoveNumber: this.moveNumber
+          setMoveNumber: this.moveNumber,
+          setGameConnectionState: {
+            stateIdentifier: "end",
+            stateDetail: []
+          }
         };
       })
     }
@@ -540,8 +547,8 @@ export function useWasmBlob() {
   const uniqueId = searchParams.uniqueId;
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
-  const [playerHand, setPlayerHand] = useState<string[]>([]);
-  const [opponentHand, setOpponentHand] = useState<string[]>([]);
+  const [playerHand, setPlayerHand] = useState<number[][]>([]);
+  const [opponentHand, setOpponentHand] = useState<number[][]>([]);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [finalPlayerHand, setFinalPlayerHand] = useState<string[]>([]);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);

@@ -6,7 +6,7 @@ import PlayingCard from "./PlayingCard";
 
 interface PlayerSectionProps {
   playerNumber: number;
-  playerHand: string[];
+  playerHand: number[][];
   isPlayerTurn: boolean;
   moveNumber: number;
   handleMakeMove: (move: any) => void;
@@ -54,8 +54,8 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
       <Typography variant="h6">Your Hand:</Typography>
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
-        {playerHand.map((card, index) => (
-          <PlayingCard key={index} index={index} selected={!!(cardSelections & (1 << index))} cardValue={card} setSelection={setSelection} />
+        {playerHand.map((card: number[], index) => (
+          <PlayingCard id={`card-${playerNumber}-${card}`} key={index} index={index} selected={!!(cardSelections & (1 << index))} cardValue={card} setSelection={setSelection} />
         ))}
       </Box>
       <Box mt="auto">

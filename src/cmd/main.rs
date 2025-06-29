@@ -505,7 +505,9 @@ fn main() {
                     (*channel).recv().unwrap()
                 };
 
-                debug!("request {request:?}");
+                if !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
+                    debug!("request {request:?}");
+                }
                 let result = {
                     match request {
                         WebRequest::Register(name) => {
