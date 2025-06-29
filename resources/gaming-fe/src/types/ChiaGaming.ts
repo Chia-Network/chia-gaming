@@ -1,3 +1,5 @@
+import { proper_list } from '../util';
+
 export type Amount = {
   "amt": number,
 };
@@ -221,5 +223,85 @@ export class ExternalBlockchainInterface {
     return fetch(`${this.baseUrl}/create_spendable?who=${this.token}&target=${target_ph}&amount=${amt}`, {
       body: '', method: 'POST'
     }).then(f => f.json());
+  }
+}
+
+function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
+  let result0: T[] = [];
+  let result1: T[] = [];
+  card.forEach((c, i) => {
+    if (mask & (1 << i)) {
+      result1.push(c);
+    } else {
+      result0.push(c);
+    }
+  });
+  return [result0, result1];
+}
+
+export class CalpokerOutcome {
+  alice_discards: number;
+  bob_discards: number;
+
+  alice_selects: number;
+  bob_selects: number;
+
+  alice_hand_value: number[];
+  bob_hand_value: number[];
+
+  win_direction: number;
+  my_win_outcome: 'win' | 'lose' | 'tie';
+
+  alice_cards: number[][];
+  bob_cards: number[][];
+
+  alice_final_hand: number[][];
+  bob_final_hand: number[][];
+
+  alice_used_cards: number[][];
+  bob_used_cards: number[][];
+
+  constructor(iStarted: boolean, myDiscards: number, alice_cards: number[][], bob_cards: number[][], readable: any) {
+    const result_list = proper_list(readable);
+    console.warn('result_list', result_list);
+    this.alice_cards = alice_cards;
+    this.bob_cards = bob_cards;
+
+    this.alice_selects = result_list[1];
+    this.bob_selects = result_list[2];
+    this.alice_hand_value = proper_list(result_list[3]);
+    this.bob_hand_value = proper_list(result_list[4]);
+    let raw_win_direction = result_list[5][0] === 255 ? -1 : result_list[5][0];
+    if (iStarted) {
+      raw_win_direction *= -1;
+      this.alice_discards = myDiscards;
+      this.bob_discards = result_list[0];
+    } else {
+      this.alice_discards = result_list[0];
+      this.bob_discards = myDiscards;
+    };
+
+    this.win_direction = raw_win_direction;
+    const alice_win = this.win_direction < 0;
+    const bob_win = this.win_direction > 0;
+
+    if (this.win_direction === 0) {
+      this.my_win_outcome = 'tie';
+    } else if (alice_win) {
+      this.my_win_outcome = iStarted ? 'win' : 'lose';
+    } else {
+      this.my_win_outcome = iStarted ? 'lose' : 'win';
+    }
+
+    const [alice_for_alice, alice_for_bob] = select_cards_using_bits(this.alice_cards, this.alice_discards);
+    const [bob_for_bob, bob_for_alice] = select_cards_using_bits(this.bob_cards, this.bob_discards);
+
+    this.bob_final_hand = [...bob_for_bob];
+    alice_for_bob.forEach((c) => bob_cards.push(c));
+    this.alice_final_hand = [...alice_for_alice];
+    bob_for_alice.forEach((c) => alice_cards.push(c));
+
+    this.alice_used_cards = select_cards_using_bits(this.alice_final_hand, this.alice_selects)[1];
+    this.bob_used_cards = select_cards_using_bits(this.bob_final_hand, this.bob_selects)[1];
   }
 }

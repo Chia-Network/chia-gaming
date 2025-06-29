@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame } from '../types/ChiaGaming';
+import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
 import { getSearchParams, useInterval, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
 import { v4 as uuidv4 } from 'uuid';
@@ -32,6 +32,9 @@ class WasmBlobWrapper {
   qualifyingEvents: number;
   loadWasmEvent: any | undefined;
   cardSelections: number;
+  playerHand: number[][];
+  opponentHand: number[][];
+  gameOutcome: CalpokerOutcome | undefined;
   stateChanger: (stateSettings: any) => void;
 
   constructor(stateChanger: (stateSettings: any) => void, blockchain: ExternalBlockchainInterface, walletToken: string, uniqueId: string, amount: number, iStarted: boolean) {
@@ -60,6 +63,8 @@ class WasmBlobWrapper {
     this.moveNumber = 0;
     this.messageQueue = [{ getPeak: true }];
     this.cardSelections = 0;
+    this.playerHand = [];
+    this.opponentHand = [];
     this.qualifyingEvents = 0;
   }
 
@@ -173,10 +178,25 @@ class WasmBlobWrapper {
     if (this.iStarted) {
       result.setPlayerHand = card_lists[0];
       result.setOpponentHand = card_lists[1];
+      this.playerHand = card_lists[0];
+      this.opponentHand = card_lists[1];
     } else {
       result.setPlayerHand = card_lists[1];
       result.setOpponentHand = card_lists[0];
+      this.playerHand = card_lists[1];
+      this.opponentHand = card_lists[0];
     }
+  }
+
+  finalOutcome(readable: any, result: any) {
+    const outcome = new CalpokerOutcome(
+      this.iStarted,
+      this.cardSelections,
+      this.iStarted ? this.playerHand : this.opponentHand,
+      this.iStarted ? this.opponentHand : this.playerHand,
+      readable
+    );
+    result.setOutcome = outcome;
   }
 
   takeOpponentMove(moveNumber: number, game_id: string, readable_move_hex: string): any {
@@ -189,6 +209,9 @@ class WasmBlobWrapper {
     if (moveNumber === 1) {
       this.updateCards(p, result);
     } else if (moveNumber === 2) {
+      this.finalOutcome(p, result);
+    } else if (this.iStarted && moveNumber === 3) {
+      this.finalOutcome(p, result);
     }
 
     result.setMoveNumber = this.moveNumber;
@@ -456,6 +479,16 @@ class WasmBlobWrapper {
           setMoveNumber: this.moveNumber
         };
       })
+    } else if (this.moveNumber === 2) {
+      this.moveNumber += 1;
+      let entropy = this.wc?.sha256bytes(this.uniqueId.substr(0,10));
+      this.cradle?.make_move_entropy(this.gameIds[0], '80', entropy);
+      return empty().then(() => {
+        return {
+          setMyTurn: false,
+          setMoveNumber: this.moveNumber
+        };
+      })
     }
 
     throw `Don't yet know what to do for move ${this.moveNumber}`;
@@ -509,6 +542,8 @@ export function useWasmBlob() {
   const playerNumber = iStarted ? 1 : 2;
   const [playerHand, setPlayerHand] = useState<string[]>([]);
   const [opponentHand, setOpponentHand] = useState<string[]>([]);
+  const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
+  const [finalPlayerHand, setFinalPlayerHand] = useState<string[]>([]);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [gameIds, setGameIds] = useState<string[]>([]);
   const [moveNumber, setMoveNumber] = useState<number>(0);
@@ -523,6 +558,7 @@ export function useWasmBlob() {
     'setMoveNumber': setMoveNumber,
     'setError': setError,
     'setCardSelections': setOurCardSelections,
+    'setOutcome': setOutcome
   };
 
   let setCardSelections = useCallback((mask: number) => {
@@ -596,5 +632,6 @@ export function useWasmBlob() {
     moveNumber,
     cardSelections,
     setCardSelections,
+    outcome
   };
 }

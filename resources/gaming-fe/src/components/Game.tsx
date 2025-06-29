@@ -43,6 +43,7 @@ const Game: React.FC = () => {
     playerNumber,
     cardSelections,
     setCardSelections,
+    outcome,
   } = useWasmBlob();
 
   const handleConnectWallet = () => {
@@ -86,18 +87,37 @@ const Game: React.FC = () => {
     return <WaitingScreen stateName={gameConnectionState.stateIdentifier} messages={gameConnectionState.stateDetail}  />;
   }
 
+  console.log('game outcome', outcome);
+  let myWinOutcome = outcome?.my_win_outcome;
+  let colors = {
+    'win': 'green',
+    'lose': 'red',
+    'tie': '#ccc',
+    'success': '#363',
+    'warning': '#633',
+  };
+  let color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome ? myWinOutcome : isPlayerTurn ? "success" : "warning";
+  let banner = isPlayerTurn ? "Your turn" : "Opponent's turn";
+  if (myWinOutcome === 'win') {
+    banner = 'You win';
+  } else if (myWinOutcome === 'lose') {
+    banner = 'You lose';
+  } else if (myWinOutcome === 'tie') {
+    banner = 'Game tied';
+  }
+
   return (
     <Box p={4}>
       <Typography variant="h4" align="center">
       {`Cal Poker - move ${moveNumber}`}
       </Typography>
-      (<br />
+      <br />
       <Typography
         variant="h6"
         align="center"
-        color={isPlayerTurn ? "success" : "warning"}
+        color={colors[color]}
       >
-        {isPlayerTurn ? "Your turn" : "Opponent's turn"}
+        {banner}
       </Typography>
       <br />
       <Box
