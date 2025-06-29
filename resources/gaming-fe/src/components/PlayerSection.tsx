@@ -1,28 +1,42 @@
 import React from "react";
+import { useCallback, useState } from "react";
 import { Box, Button, Typography, Paper } from "@mui/material";
+import { popcount } from '../util';
 import PlayingCard from "./PlayingCard";
 
 interface PlayerSectionProps {
   playerNumber: number;
-  playerCoins: number;
-  wagerAmount: string;
-  playerHand: string[];
+  playerHand: number[][];
   isPlayerTurn: boolean;
-  handleBet: (amount: number) => void;
-  handleMakeMove: () => void;
-  handleEndTurn: () => void;
+  moveNumber: number;
+  handleMakeMove: (move: any) => void;
+  cardSelections: number,
+  setCardSelections: (mask: number) => void;
 }
 
 const PlayerSection: React.FC<PlayerSectionProps> = ({
   playerNumber,
-  playerCoins,
-  wagerAmount,
   playerHand,
   isPlayerTurn,
-  handleBet,
+  moveNumber,
   handleMakeMove,
-  handleEndTurn,
+  cardSelections,
+  setCardSelections,
 }) => {
+  let doHandleMakeMove = () => {
+    let moveData = "80";
+    handleMakeMove(moveData);
+  };
+  let setSelection = (index: number, selected: boolean) => {
+    let selections = cardSelections;
+    if (selected) {
+      selections |= (1 << index);
+    } else {
+      selections &= ~(1 << index);
+    };
+    setCardSelections(selections);
+    console.warn(isPlayerTurn, moveNumber, 'cardSelections', selections, selected);
+  };
   return (
     <Paper
       elevation={3}
@@ -34,63 +48,25 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
       }}
     >
       <Typography variant="h5">
-        {playerNumber === 1 ? "Player 1 (You)" : "Player 2 (You)"}
+      {"You"}
       </Typography>
-      <br />
-      <Typography>Coins: {playerCoins}</Typography>
-      <Typography>Wager Amount: {wagerAmount} XCH</Typography>
       <br />
       <Typography variant="h6">Your Hand:</Typography>
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
-        {playerHand.map((card, index) => (
-          <PlayingCard key={index} cardValue={card} />
+        {playerHand.map((card: number[], index) => (
+          <PlayingCard id={`card-${playerNumber}-${card}`} key={index} index={index} selected={!!(cardSelections & (1 << index))} cardValue={card} setSelection={setSelection} />
         ))}
-      </Box>
-      <Typography>Bet:</Typography>
-      <Box display="flex" flexDirection="row" mb={2}>
-        <Button
-          variant="outlined"
-          onClick={() => handleBet(5)}
-          style={{ marginRight: "8px" }}
-          disabled={!isPlayerTurn}
-        >
-          Bet 5
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={() => handleBet(10)}
-          style={{ marginRight: "8px" }}
-          disabled={!isPlayerTurn}
-        >
-          Bet 10
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={() => handleBet(20)}
-          disabled={!isPlayerTurn}
-        >
-          Bet 20
-        </Button>
       </Box>
       <Box mt="auto">
         <Button
           variant="contained"
           color="secondary"
-          onClick={handleMakeMove}
-          disabled={!isPlayerTurn}
+          onClick={doHandleMakeMove}
+          disabled={!isPlayerTurn || (moveNumber === 1 && popcount(cardSelections) != 4)}
           style={{ marginRight: "8px" }}
         >
           Make Move
-        </Button>
-
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={handleEndTurn}
-          disabled={!isPlayerTurn}
-        >
-          End Turn
         </Button>
       </Box>
     </Paper>

@@ -539,7 +539,7 @@ fn run_calpoker_test_with_action_list(
     let (parent_coin_0, _rest_0) = simulator
         .transfer_coin_amount(
             allocator,
-            &identities[0],
+            &identities[0].puzzle_hash,
             &identities[0],
             &coins0[0],
             Amount::new(100),
@@ -548,7 +548,7 @@ fn run_calpoker_test_with_action_list(
     let (parent_coin_1, _rest_1) = simulator
         .transfer_coin_amount(
             allocator,
-            &identities[1],
+            &identities[1].puzzle_hash,
             &identities[1],
             &coins1[0],
             Amount::new(100),
@@ -756,14 +756,14 @@ fn run_game_container_with_action_list_with_success_predicate(
     // Make a 100 coin for each player (and test the deleted and created events).
     let (parent_coin_0, _rest_0) = simulator.transfer_coin_amount(
         allocator,
-        &identities[0],
+        &identities[0].puzzle_hash,
         &identities[0],
         &coins0[0],
         Amount::new(100),
     )?;
     let (parent_coin_1, _rest_1) = simulator.transfer_coin_amount(
         allocator,
-        &identities[1],
+        &identities[1].puzzle_hash,
         &identities[1],
         &coins1[0],
         Amount::new(100),
@@ -889,7 +889,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
             loop {
                 let result =
-                    if let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i])? {
+                    if let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
                         result
                     } else {
                         break;
@@ -912,7 +912,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
                 for coin in result.coin_solution_requests.iter() {
                     let ps_res = simulator
-                        .get_puzzle_and_solution(coin)
+                        .get_puzzle_and_solution(&coin.to_coin_id())
                         .expect("should work");
                     for cradle in cradles.iter_mut() {
                         cradle.report_puzzle_and_solution(

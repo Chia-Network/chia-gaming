@@ -149,12 +149,15 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
 #[derive(Default)]
 pub struct IdleResult {
     pub continue_on: bool,
+    pub handshake_done: bool,
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
     pub opponent_move: Option<(GameID, usize, ReadableMove)>,
     pub game_finished: Option<(GameID, Amount)>,
     pub receive_error: Option<Error>,
+    pub action_queue: Vec<String>,
+    pub incoming_messages: Vec<String>,
     pub resync: Option<(usize, bool)>,
 }
 
@@ -229,6 +232,7 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
+        flags: u32,
     ) -> Result<Option<IdleResult>, Error>;
 
     /// Check whether we're on chain.
@@ -541,6 +545,10 @@ impl SynchronousGameCradle {
 
     pub fn finished(&self) -> bool {
         self.state.finished
+    }
+
+    pub fn next_game_id(&mut self) -> Result<GameID, Error> {
+        self.peer.next_game_id()
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(
@@ -896,12 +904,29 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
+        flags: u32,
     ) -> Result<Option<IdleResult>, Error> {
+        debug!("idle-1");
         if self.state.shutdown.is_some() {
             return Ok(None);
         }
 
+        debug!("idle-2");
         let mut result = IdleResult::default();
+        if (flags & 1) != 0 {
+            self.peer.examine_game_action_queue(|actions| {
+                actions.map(|a| format!("{a:?}")).collect::<Vec<String>>()
+            });
+        }
+        debug!("idle-3");
+        if (flags & 2) != 0 {
+            self.peer.examine_incoming_messages(|messages| {
+                messages.map(|m| format!("{m:?}")).collect::<Vec<String>>()
+            });
+        }
+
+        debug!("idle-4");
+        result.handshake_done = self.peer.handshake_done();
 
         swap(
             &mut result.outbound_transactions,
@@ -924,16 +949,19 @@ impl GameCradle for SynchronousGameCradle {
 
         self.state.coin_solution_requests.clear();
 
+        debug!("idle-5");
         if let Some((id, state_number, msg)) = self.state.our_moves.pop_front() {
             local_ui.self_move(&id, state_number, &msg)?;
             return Ok(Some(result));
         }
 
+        debug!("idle-6");
         if let Some((id, msg)) = self.state.game_messages.pop_front() {
             local_ui.game_message(allocator, &id, msg)?;
             return Ok(Some(result));
         }
 
+        debug!("idle-7");
         if let Some((id, state_number, readable, my_share)) = self.state.opponent_moves.pop_front()
         {
             local_ui.opponent_moved(allocator, &id, state_number, readable, my_share)?;
@@ -941,12 +969,14 @@ impl GameCradle for SynchronousGameCradle {
             return Ok(Some(result));
         }
 
+        debug!("idle-8");
         if let Some((id, amount)) = self.state.game_finished.pop_front() {
             local_ui.game_finished(&id, amount.clone())?;
             result.continue_on = true;
             return Ok(Some(result));
         }
 
+        debug!("idle-9");
         // If there's a message to deliver, deliver it and signal to continue.
         if let Some(msg) = self.state.inbound_messages.pop_front() {
             let mut env = channel_handler_env(allocator, rng)?;
@@ -971,16 +1001,19 @@ impl GameCradle for SynchronousGameCradle {
             }
         }
 
+        debug!("idle-10");
         if let Some(ph) = self.state.channel_puzzle_hash.clone() {
             result.continue_on = self.create_partial_spend_for_channel_coin(allocator, rng, ph)?;
             return Ok(Some(result));
         }
 
+        debug!("idle-11");
         if let (false, Some(uo)) = (self.state.is_initiator, self.state.unfunded_offer.clone()) {
             result.continue_on = self.respond_to_unfunded_offer(allocator, rng, uo)?;
             return Ok(Some(result));
         }
 
+        debug!("idle-end");
         Ok(Some(result))
     }
 

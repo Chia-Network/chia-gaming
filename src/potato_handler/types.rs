@@ -20,6 +20,7 @@ use crate::shutdown::ShutdownConditions;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStart {
+    pub game_id: GameID,
     pub game_type: GameType,
     pub timeout: Timeout,
     pub amount: Amount,
@@ -35,7 +36,7 @@ pub struct WireGameStart {
 }
 
 #[derive(Debug, Clone)]
-pub struct GameStartQueueEntry;
+pub struct GameStartQueueEntry(pub Vec<GameID>);
 
 #[derive(Debug, Clone)]
 pub struct MyGameStartQueueEntry {
@@ -406,7 +407,6 @@ impl PeerMessage {
 
 #[derive(Debug, Clone)]
 pub struct HandshakeStepInfo {
-    #[allow(dead_code)]
     pub first_player_hs_info: HandshakeA,
     #[allow(dead_code)]
     pub second_player_hs_info: HandshakeB,
@@ -414,7 +414,6 @@ pub struct HandshakeStepInfo {
 
 #[derive(Debug, Clone)]
 pub struct HandshakeStepWithSpend {
-    #[allow(dead_code)]
     pub info: HandshakeStepInfo,
     #[allow(dead_code)]
     pub spend: SpendBundle,

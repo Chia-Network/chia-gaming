@@ -1,7 +1,12 @@
 import React from 'react';
 import { Box, Typography, CircularProgress } from '@mui/material';
 
-const WaitingScreen: React.FC = () => {
+interface WaitingScreenProps {
+  stateName: string;
+  messages: string[];
+};
+
+const WaitingScreen: React.FC<WaitingScreenProps> = ({ stateName, messages }) => {
   return (
     <Box
       p={4}
@@ -11,7 +16,8 @@ const WaitingScreen: React.FC = () => {
       justifyContent="center"
       height="100vh"
     >
-      <Typography variant="h4">Searching for an opponent...</Typography>
+      <Typography variant="h4">{stateName}</Typography>
+      <div>{messages.map((msg) => <div>{msg}</div>)}</div>
       <CircularProgress />
     </Box>
   );

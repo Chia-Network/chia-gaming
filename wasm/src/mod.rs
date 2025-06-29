@@ -2,16 +2,22 @@ mod map_m;
 
 use js_sys::{Array, Function, JsString, Object};
 
-use std::cell::RefCell;
+use std::borrow::Borrow;
+use std::cell::{Ref, RefCell};
 use std::collections::{BTreeMap, HashMap};
+use std::io;
+use std::mem::swap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::thread::LocalKey;
 
 use hex::FromHexError;
+use log::debug;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
+use wasm_logger;
 
 use wasm_bindgen::prelude::*;
 
@@ -28,6 +34,13 @@ use chia_gaming::peer_container::{
 };
 use chia_gaming::potato_handler::types::{GameFactory, GameStart, GameType, ToLocalUI};
 use chia_gaming::shutdown::BasicShutdownConditions;
+
+#[cfg(target_arch = "wasm32")]
+use lol_alloc::{FreeListAllocator, LockedAllocator};
+
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static ALLOCATOR: LockedAllocator<FreeListAllocator> = LockedAllocator::new(FreeListAllocator::new());
 
 use crate::map_m::map_m;
 
@@ -95,7 +108,7 @@ export type IdleCallbacks = {
 };
 "#;
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct JsAmount {
     amt: Amount,
 }
@@ -106,6 +119,36 @@ struct JsCradle {
     cradle: SynchronousGameCradle,
 }
 
+trait DebugDisplay {
+    fn show(&self, s: &str);
+}
+
+#[derive(Default)]
+struct DummyDebugDisplay { }
+impl DebugDisplay for DummyDebugDisplay {
+    fn show(&self, s: &str) { }
+}
+
+struct JsDebugDisplay {
+    callable: JsValue
+}
+
+impl JsDebugDisplay {
+    fn new(callable: JsValue) -> JsDebugDisplay {
+        JsDebugDisplay { callable }
+    }
+}
+
+impl DebugDisplay for JsDebugDisplay {
+    fn show(&self, s: &str) {
+        if let Some(f) = Function::try_from(&self.callable) {
+            let mut args_array = Array::new();
+            args_array.push(&JsValue::from_str(s));
+            let _ = f.apply(&JsValue::NULL, &args_array);
+        }
+    }
+}
+
 thread_local! {
     static NEXT_ID: AtomicI32 = {
         return AtomicI32::new(0);
@@ -113,11 +156,45 @@ thread_local! {
     static CRADLES: RefCell<HashMap<i32, JsCradle>> = {
         return RefCell::new(HashMap::new());
     };
+    static DPRINT: RefCell<Box<dyn DebugDisplay>> = {
+        return RefCell::new(Box::new(DummyDebugDisplay::default()));
+    };
+}
+
+fn dprint(s: &str) {
+    DPRINT.with(|dprint| dprint.borrow().show(s));
+}
+
+#[derive(Default)]
+struct DprintWrite {
+    bytes: Vec<Vec<u8>>
+}
+impl io::Write for DprintWrite {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.bytes.push(buf.to_vec());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let mut result: Vec<u8> = Vec::new();
+        let mut new_bytes = Vec::new();
+        swap(&mut new_bytes, &mut self.bytes);
+        for mut v in new_bytes.into_iter() {
+            result.append(&mut v);
+        }
+        if let Ok(result) = std::str::from_utf8(&result) {
+            dprint(&result);
+        }
+        self.bytes.clear();
+        Ok(())
+    }
 }
 
 #[wasm_bindgen]
-pub fn init() {
-    wasm_init();
+pub fn init(show: JsValue) {
+    DPRINT.replace(Box::new(JsDebugDisplay::new(show)));
+    dprint("doing init");
+    wasm_logger::init(wasm_logger::Config::default());
 }
 
 #[wasm_bindgen]
@@ -136,19 +213,19 @@ fn insert_cradle(this_id: i32, runner: JsCradle) {
     });
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct JsRndConfig {
     // hex string.
     seed: String,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct JsGameFactory {
     version: i32,
     hex: String,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct JsGameCradleConfig {
     // name vs hex string for program
     game_types: BTreeMap<String, JsGameFactory>,
@@ -194,10 +271,22 @@ fn convert_game_types(
 // return a collection of clvm factory programs indexed by byte strings used to identify
 // them.  probably the indexes should be hashes, thinking about it, but can be anything.
 fn get_game_config<'b>(
+    allocator: &mut AllocEncoder,
     identity: &'b mut ChiaIdentity,
     js_config: JsValue,
 ) -> Result<SynchronousGameCradleConfig<'b>, JsValue> {
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
+    dprint(&format!("jsconfig {jsconfig:?}"));
+
+    if let Some(identity_str) = &jsconfig.identity {
+        let private_key_bytes = hex::decode(&identity_str).into_js()?;
+        let mut bytes: [u8; 32] = [0; 32];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = private_key_bytes[i];
+        }
+        let private_key = PrivateKey::from_bytes(&bytes).into_js()?;
+        *identity = ChiaIdentity::new(allocator, private_key).into_js()?;
+    }
 
     let game_types = convert_game_types(&jsconfig.game_types)?;
     let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).into_js()?;
@@ -260,6 +349,7 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     if let Some(js_rnd_config) =
         serde_wasm_bindgen::from_value::<JsRndConfig>(js_config.clone()).ok()
     {
+        dprint(&format!("js_rnd_config {js_rnd_config:?}"));
         let seed_bytes = hex::decode(&js_rnd_config.seed).into_js()?;
         for (i, b) in seed_bytes.iter().enumerate() {
             use_seed[i % use_seed.len()] = *b;
@@ -270,7 +360,7 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
 
     let random_private_key: PrivateKey = rng.gen();
     let mut identity = ChiaIdentity::new(&mut allocator, random_private_key).into_js()?;
-    let synchronous_game_cradle_config = get_game_config(&mut identity, js_config.clone())?;
+    let synchronous_game_cradle_config = get_game_config(&mut allocator, &mut identity, js_config.clone())?;
     let game_cradle = SynchronousGameCradle::new(&mut rng, synchronous_game_cradle_config);
     let cradle = JsCradle {
         allocator,
@@ -384,6 +474,7 @@ pub fn start_games(cid: i32, initiator: bool, game: JsValue) -> Result<Vec<Strin
     let js_game_start = serde_wasm_bindgen::from_value::<JsGameStart>(game.clone()).into_js()?;
     let res = with_game(cid, move |cradle: &mut JsCradle| {
         let game_start = GameStart {
+            game_id: cradle.cradle.next_game_id()?,
             game_type: GameType(hex::decode(&js_game_start.game_type).into_gen()?),
             timeout: Timeout::new(js_game_start.timeout),
             amount: Amount::new(js_game_start.amount),
@@ -484,11 +575,16 @@ fn call_javascript_from_collection<F>(
 where
     F: FnOnce(&mut Array) -> Result<(), types::Error>,
 {
+    debug!("try to call {name} from {callbacks:?}");
     if let Some(function) = callbacks.get(name).and_then(Function::try_from) {
         let mut args_array = Array::new();
+        debug!("call user's injected function in {name}");
         f(&mut args_array)?;
+        debug!("call javascript for {name}");
         function.apply(&JsValue::NULL, &args_array).into_e()?;
     }
+
+    debug!("finished {name} callback");
 
     Ok(())
 }
@@ -623,6 +719,10 @@ struct JsIdleResult {
     outbound_messages: Vec<String>,
     opponent_move: Option<(String, String)>,
     game_finished: Option<(String, u64)>,
+    handshake_done: bool,
+    receive_error: Option<String>,
+    action_queue: Vec<String>,
+    incoming_messages: Vec<String>,
 }
 
 fn spend_to_js(spend: &Spend) -> JsSpend {
@@ -703,6 +803,10 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
             .collect(),
         opponent_move: opponent_move,
         game_finished: game_finished,
+        handshake_done: idle_result.handshake_done,
+        action_queue: idle_result.action_queue.clone(),
+        incoming_messages: idle_result.incoming_messages.clone(),
+        receive_error: idle_result.receive_error.as_ref().map(|e| format!("{e:?}"))
     })
     .into_e()
 }
@@ -714,7 +818,7 @@ pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
         if let Some(idle_result) =
             cradle
                 .cradle
-                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui)?
+                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui, 3)? // Give extras
         {
             idle_result_to_js(&idle_result)
         } else {
@@ -746,6 +850,16 @@ impl From<ChiaIdentity> for JsChiaIdentity {
     }
 }
 
+#[wasm_bindgen]
+pub fn test_string() -> JsValue {
+    JsValue::from_str("hi there")
+}
+
+#[wasm_bindgen]
+pub fn test_string_err() -> Result<JsValue, JsValue> {
+    Ok(JsValue::from_str("ok but could have been err"))
+}
+
 #[wasm_bindgen(typescript_type = "IChiaIdentityFun")]
 pub fn chia_identity(seed: &str) -> Result<JsValue, JsValue> {
     let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
@@ -759,6 +873,6 @@ pub fn chia_identity(seed: &str) -> Result<JsValue, JsValue> {
 
 #[wasm_bindgen]
 pub fn sha256bytes(bytes_str: &str) -> Result<JsValue, JsValue> {
-    let hashed = Sha256Input::Bytes(bytes_str.as_bytes()).hash();
+    let hashed = hex::encode(&Sha256Input::Bytes(bytes_str.as_bytes()).hash().bytes());
     serde_wasm_bindgen::to_value(&hashed).into_js()
 }
