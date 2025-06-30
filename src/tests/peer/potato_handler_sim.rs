@@ -307,11 +307,13 @@ fn do_first_game_start<'a, 'b: 'a>(
     let nil = Program::from_hex("80").unwrap();
     let type_id = if v1 { b"ca1poker" } else { b"calpoker" };
 
+    let game_id = handler.next_game_id().unwrap();
     let game_ids: Vec<GameID> = handler
         .start_games(
             &mut penv,
             true,
             &GameStart {
+                game_id,
                 amount: Amount::new(200),
                 my_contribution: Amount::new(100),
                 game_type: GameType(type_id.to_vec()),
@@ -335,11 +337,13 @@ fn do_second_game_start<'a, 'b: 'a>(
     let nil = Program::from_hex("80").unwrap();
     let type_id = if v1 { b"ca1poker" } else { b"calpoker" };
 
+    let game_id = handler.next_game_id().unwrap();
     handler
         .start_games(
             &mut penv,
             false,
             &GameStart {
+                game_id,
                 amount: Amount::new(200),
                 my_contribution: Amount::new(100),
                 game_type: GameType(type_id.to_vec()),
@@ -962,11 +966,14 @@ fn run_game_container_with_action_list_with_success_predicate(
             // Start game.
             handshake_done = true;
 
+            let game_id = cradles[0].next_game_id().unwrap();
+            debug!("testing with game id {game_id:?}");
             game_ids = cradles[0].start_games(
                 allocator,
                 rng,
                 true,
                 &GameStart {
+                    game_id: game_id.clone(),
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
                     game_type: GameType(game_type.to_vec()),
@@ -981,6 +988,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 rng,
                 false,
                 &GameStart {
+                    game_id,
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
                     game_type: GameType(game_type.to_vec()),

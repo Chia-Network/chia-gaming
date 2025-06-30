@@ -162,6 +162,8 @@ class WasmBlobWrapper {
       return this.internalKickIdle();
     } else if (msg.setCardSelections !== undefined) {
       return this.internalSetCardSelections(msg.setCardSelections);
+    } else if (msg.startGame) {
+      return this.internalStartGame();
     }
 
     console.error("Unknown event:", msg);
@@ -216,6 +218,10 @@ class WasmBlobWrapper {
     } else if (moveNumber > 1) {
       console.warn('finalOutcome:', this.iStarted, moveNumber);
       this.finalOutcome(p, result);
+      console.warn('accept game');
+      this.cradle?.accept(this.gameIds[0]);
+      console.log('did accept', this.iStarted);
+      this.gameIds.pop();
     }
 
     result.setMoveNumber = this.moveNumber;
@@ -381,6 +387,27 @@ class WasmBlobWrapper {
     return empty();
   }
 
+  internalStartGame(): any {
+    let result: any = {};
+    let gids = this.cradle?.start_games(!this.iStarted, {
+      game_type: "63616c706f6b6572",
+      timeout: 100,
+      amount: this.amount * 2 / 10,
+      my_contribution: this.amount / 10,
+      my_turn: !this.iStarted,
+      parameters: "80"
+    });
+    console.log("gameIds", gids);
+    if (gids) {
+      gids.forEach((g) => {
+        this.gameIds.push(g);
+      });
+      result.setGameIds = this.gameIds;
+    }
+    result.setMyTurn = !this.iStarted;
+    return empty().then(() => result);
+  }
+
   idle(): any {
     const result: any = {};
     const idle = this.cradle?.idle({
@@ -389,8 +416,33 @@ class WasmBlobWrapper {
         this.messageQueue.push({ takeOpponentMove: { game_id, readable_move_hex, moveNumber: this.moveNumber } });
       },
       game_message: (game_id, readable_hex) => {
-        console.error('got opponent move', game_id, readable_hex);
-        this.messageQueue.push({ takeGameMessage: { game_id, readable_hex, moveNumber: this.moveNumber } });
+        console.error('got opponent msg', game_id, readable_hex);
+        if (typeof readable_hex === 'string') {
+          this.messageQueue.push({ takeGameMessage: { game_id, readable_hex, moveNumber: this.moveNumber } });
+        } else {
+          // Signals accept.
+          this.gameIds.pop();
+          console.log('got accept', this.iStarted);
+
+          this.myTurn = false;
+          this.cardSelections = 0;
+          this.moveNumber = 0;
+          this.playerHand = [];
+          this.opponentHand = [];
+
+          result.setCardSelections = 0;
+          result.setMoveNumber = 0;
+          result.setPlayerHand = [];
+          result.setOpponentHand = [];
+          result.setOutcome = undefined;
+          result.setGameConnectionState = {
+            stateIdentifier: "running",
+            stateDetail: []
+          };
+
+          result.setMyTurn = false;
+          this.messageQueue.push({ startGame: true });
+        }
       }
       // Local ui callbacks.
     });
@@ -411,22 +463,7 @@ class WasmBlobWrapper {
         stateDetail: []
       };
       console.log("starting games", this.iStarted);
-      let gids = this.cradle?.start_games(!this.iStarted, {
-        game_type: "63616c706f6b6572",
-        timeout: 100,
-        amount: this.amount * 2,
-        my_contribution: this.amount,
-        my_turn: !this.iStarted,
-        parameters: "80"
-      });
-      console.log("game_ids", gids);
-      if (gids) {
-        gids.forEach((g) => {
-          this.gameIds.push(g);
-        });
-        result.setGameIds = this.gameIds;
-      }
-      result.setMyTurn = !this.iStarted;
+      this.pushEvent({ startGame: true });
     }
 
     console.log('idle2', idle.incoming_messages);
@@ -568,9 +605,14 @@ export function useWasmBlob() {
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [gameIds, setGameIds] = useState<string[]>([]);
   const [moveNumber, setMoveNumber] = useState<number>(0);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
   const amount = parseInt(searchParams.amount);
+  const setError = (e: any) => {
+    if (e !== undefined && error === undefined) {
+      setRealError(e);
+    }
+  };
   const settable: any = {
     'setGameConnectionState': setGameConnectionState,
     'setPlayerHand': setPlayerHand,

@@ -213,7 +213,7 @@ pub fn new_channel_handler_game<R: Rng>(
         .ch
         .send_potato_start_game(env, &[our_game_start])?;
 
-    let solidified_state =
+    let (_, solidified_state) =
         party
             .player(1)
             .ch

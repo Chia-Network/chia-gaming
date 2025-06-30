@@ -857,11 +857,7 @@ impl PotatoHandler {
             ));
         }
 
-        let mut game_ids = Vec::new();
-        for _ in my_info_list.iter() {
-            game_ids.push(self.next_game_id()?);
-        }
-
+        let mut game_ids = vec![game_start.game_id.clone()];
         let convert_info_list = |allocator: &mut AllocEncoder,
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<Rc<dyn GameStartInfoInterface>>, Error> {
@@ -1023,6 +1019,7 @@ impl PotatoHandler {
                 return Err(Error::StrErr("no waiting games to start".to_string()));
             };
         let game_id_set: HashSet<&GameID> = our_game_ids.iter().collect();
+        debug!("game start queue: {game_id_set:?}");
 
         let ch = self.channel_handler_mut()?;
         let spend_info = {
@@ -1033,6 +1030,7 @@ impl PotatoHandler {
                 rehydrated_games.push(game.0.clone());
             }
             let (game_ids, spend_info) = ch.received_potato_start_game(env, sigs, &rehydrated_games)?;
+            debug!("game_ids from channel handler {game_ids:?}");
 
             if game_ids.len() != our_game_ids.len() {
                 return Err(Error::StrErr(format!("wrong number of game_ids {game_ids:?} vs {our_game_ids:?}")));
