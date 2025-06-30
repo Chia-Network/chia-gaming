@@ -265,6 +265,19 @@ export function card_color(outcome: CalpokerOutcome, iAmAlice: boolean, card: nu
   return 'their-final';
 }
 
+function compare_card(a: number[], b: number[]): number {
+  if (a.length === 0 && b.length === 0) {
+    return 0;
+  }
+  if (a[0] < b[0]) {
+    return -1;
+  }
+  if (a[0] > b[0]) {
+    return 1;
+  }
+  return compare_card(a.slice(1), b.slice(1));
+}
+
 export class CalpokerOutcome {
   alice_discards: number;
   bob_discards: number;
@@ -303,11 +316,11 @@ export class CalpokerOutcome {
     let raw_win_direction = result_list[5][0] === 255 ? -1 : result_list[5][0];
     if (iStarted) {
       raw_win_direction *= -1;
-      this.alice_discards = myDiscards;
-      this.bob_discards = result_list[0];
-    } else {
       this.alice_discards = result_list[0];
       this.bob_discards = myDiscards;
+    } else {
+      this.alice_discards = myDiscards;
+      this.bob_discards = result_list[0];
     };
 
     this.win_direction = raw_win_direction;
@@ -330,12 +343,19 @@ export class CalpokerOutcome {
     console.log('bob_for_alice', bob_for_alice);
     console.log('bob_for_bob', bob_for_bob);
 
-    this.bob_final_hand = [...bob_for_bob];
-    alice_for_bob.forEach((c) => this.bob_final_hand.push(c));
-    this.alice_final_hand = [...alice_for_alice];
-    bob_for_alice.forEach((c) => this.alice_final_hand.push(c));
+    this.alice_final_hand = [...bob_for_alice];
+    alice_for_alice.forEach((c) => this.alice_final_hand.push(c));
+    this.alice_final_hand.sort(compare_card);
+    console.log('final alice hand', this.alice_final_hand);
+
+    this.bob_final_hand = [...alice_for_bob];
+    bob_for_bob.forEach((c) => this.bob_final_hand.push(c));
+    this.bob_final_hand.sort(compare_card);
+    console.log('final bob hand', this.bob_final_hand);
 
     this.alice_used_cards = select_cards_using_bits(this.alice_final_hand, this.alice_selects)[1];
+    console.log('alice selects', this.alice_selects.toString(16), this.alice_used_cards);
     this.bob_used_cards = select_cards_using_bits(this.bob_final_hand, this.bob_selects)[1];
+    console.log('bob selects', this.bob_selects.toString(16), this.bob_used_cards);
   }
 }

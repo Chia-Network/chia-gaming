@@ -98,13 +98,15 @@ const Game: React.FC = () => {
     'warning': '#633',
   };
   let color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome ? myWinOutcome : isPlayerTurn ? "success" : "warning";
+  const iAmAlice = playerNumber === 2;
+  const myHandValue = iAmAlice ? outcome?.alice_hand_value : outcome?.bob_hand_value;
   let banner = isPlayerTurn ? "Your turn" : "Opponent's turn";
   if (myWinOutcome === 'win') {
-    banner = 'You win';
+    banner = `You win ${myHandValue}`;
   } else if (myWinOutcome === 'lose') {
-    banner = 'You lose';
+    banner = `You lose ${myHandValue}`;
   } else if (myWinOutcome === 'tie') {
-    banner = 'Game tied';
+    banner = `Game tied ${myHandValue}`;
   }
   const moveDescription = [
     "Commit to random number",
@@ -139,14 +141,14 @@ const Game: React.FC = () => {
             <Box flex={1} display="flex" flexDirection="column">
               <GameEndPlayer
                 iStarted={iStarted}
-                playerNumber={playerNumber}
+                playerNumber={iStarted ? 1 : 2}
                 outcome={outcome}
               />
             </Box>
             <Box flex={1} display="flex" flexDirection="column">
                 <GameEndPlayer
                     iStarted={iStarted}
-                    playerNumber={(playerNumber == 1) ? 2 : 1}
+                    playerNumber={iStarted ? 2 : 1}
                     outcome={outcome}
                 />
             </Box>

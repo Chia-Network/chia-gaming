@@ -16,10 +16,10 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
     playerNumber,
     outcome,
 }) => {
-  const iAmAlice = iStarted === (playerNumber === 2);
+  const iAmAlice = playerNumber === 2;
   const playerHand: number[][] = iAmAlice ? outcome.alice_cards : outcome.bob_cards;
-  const who = (iStarted !== iAmAlice) ? 'Opponent' : 'Your';
-  const whoTitle = (iStarted !== iAmAlice) ? 'Opponent' : 'You';
+  const who = (iStarted !== iAmAlice) ? 'Your' : 'Opponent';
+  const whoTitle = (iStarted !== iAmAlice) ? 'You' : 'Opponent';
   const cardColors = {
     'my-used': '#4d4',
     'my-final': '#bfb',
@@ -45,7 +45,7 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
       <Box display="flex" flexDirection="row" mb={2}>
         {playerHand.map((card: number[], index: number) => {
           const id = `at-rest-${iStarted}-${card}`;
-          let selectionColor = cardColors[card_color(outcome, iAmAlice, card)];
+          let selectionColor = cardColors[card_color(outcome, !iStarted, card)];
           return (
             <PlayingCard
                 id={id}

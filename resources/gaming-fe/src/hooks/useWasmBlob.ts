@@ -176,15 +176,15 @@ class WasmBlobWrapper {
     })));
     console.log('card_lists', card_lists);
     if (this.iStarted) {
-      result.setPlayerHand = card_lists[0];
-      result.setOpponentHand = card_lists[1];
-      this.playerHand = card_lists[0];
-      this.opponentHand = card_lists[1];
-    } else {
       result.setPlayerHand = card_lists[1];
       result.setOpponentHand = card_lists[0];
       this.playerHand = card_lists[1];
       this.opponentHand = card_lists[0];
+    } else {
+      result.setPlayerHand = card_lists[0];
+      result.setOpponentHand = card_lists[1];
+      this.playerHand = card_lists[0];
+      this.opponentHand = card_lists[1];
     }
   }
 
@@ -192,8 +192,8 @@ class WasmBlobWrapper {
     const outcome = new CalpokerOutcome(
       this.iStarted,
       this.cardSelections,
-      this.iStarted ? this.playerHand : this.opponentHand,
       this.iStarted ? this.opponentHand : this.playerHand,
+      this.iStarted ? this.playerHand : this.opponentHand,
       readable
     );
     result.setOutcome = outcome;
@@ -458,7 +458,7 @@ class WasmBlobWrapper {
     }
 
     if (this.moveNumber === 0) {
-      let entropy = this.wc?.sha256bytes(this.uniqueId.substr(0,8));
+      let entropy = this.wc?.sha256bytes('abcdef');
       console.log('move 0 with entropy', entropy);
       this.cradle?.make_move_entropy(this.gameIds[0], "80", entropy);
       this.moveNumber += 1;
@@ -473,7 +473,7 @@ class WasmBlobWrapper {
         return empty();
       }
       this.moveNumber += 1;
-      let entropy = this.wc?.sha256bytes(this.uniqueId.substr(0,9));
+      let entropy = this.wc?.sha256bytes('abcde0');
       const encoded = (this.cardSelections | 0x8100).toString(16);
       this.cradle?.make_move_entropy(this.gameIds[0], encoded, entropy);
       return empty().then(() => {
@@ -484,7 +484,7 @@ class WasmBlobWrapper {
       })
     } else if (this.moveNumber === 2) {
       this.moveNumber += 1;
-      let entropy = this.wc?.sha256bytes(this.uniqueId.substr(0,10));
+      let entropy = this.wc?.sha256bytes('abcde1');
       this.cradle?.make_move_entropy(this.gameIds[0], '80', entropy);
       return empty().then(() => {
         return {
