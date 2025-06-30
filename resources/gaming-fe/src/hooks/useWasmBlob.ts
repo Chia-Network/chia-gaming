@@ -9,6 +9,7 @@ async function empty() {
 }
 
 let blobSingleton: any = null;
+
 class WasmBlobWrapper {
   amount: number;
   walletToken: string;
@@ -452,13 +453,26 @@ class WasmBlobWrapper {
     return empty();
   }
 
+  generateEntropy() {
+    let hexDigits = [];
+    for (let i = 0; i < 16; i++) {
+      hexDigits.push(Math.floor(Math.random() * 16)).toString(16);
+    }
+    let entropy = this.wc?.sha256bytes(hexDigits.join(""));
+    if (!entropy) {
+      throw 'tried to make entropy without a wasm connection';
+    }
+    return entropy;
+  }
+
+
   internalMakeMove(move: any): any {
     if (!this.handshakeDone || !this.wc || !this.cradle) {
       return empty();
     }
 
     if (this.moveNumber === 0) {
-      let entropy = this.wc?.sha256bytes('abcdef');
+      let entropy = this.generateEntropy();
       console.log('move 0 with entropy', entropy);
       this.cradle?.make_move_entropy(this.gameIds[0], "80", entropy);
       this.moveNumber += 1;
@@ -473,7 +487,7 @@ class WasmBlobWrapper {
         return empty();
       }
       this.moveNumber += 1;
-      let entropy = this.wc?.sha256bytes('abcde0');
+      let entropy = this.generateEntropy();
       const encoded = (this.cardSelections | 0x8100).toString(16);
       this.cradle?.make_move_entropy(this.gameIds[0], encoded, entropy);
       return empty().then(() => {
@@ -484,7 +498,7 @@ class WasmBlobWrapper {
       })
     } else if (this.moveNumber === 2) {
       this.moveNumber += 1;
-      let entropy = this.wc?.sha256bytes('abcde1');
+      let entropy = this.generateEntropy();
       this.cradle?.make_move_entropy(this.gameIds[0], '80', entropy);
       return empty().then(() => {
         return {
