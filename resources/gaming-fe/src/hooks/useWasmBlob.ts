@@ -465,6 +465,13 @@ class WasmBlobWrapper {
     if (idle.finished && !this.finished) {
       console.error('we shut down');
       this.finished = true;
+      this.stateChanger({
+        setGameConnectionState: {
+          stateIdentifier: "shutdown",
+          stateDetail: []
+        },
+        outcome: undefined
+      });
       this.messageQueue.push({ receivedShutdown: true });
       return result;
     }
