@@ -149,6 +149,7 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
 #[derive(Default)]
 pub struct IdleResult {
     pub continue_on: bool,
+    pub finished: bool,
     pub handshake_done: bool,
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
@@ -481,6 +482,7 @@ impl ToLocalUI for SynchronousGameCradleState {
         Ok(())
     }
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+        debug!("cradle detected shutdown");
         self.shutdown = reward_coin_string.cloned();
         self.finished = true;
         Ok(())
@@ -911,6 +913,7 @@ impl GameCradle for SynchronousGameCradle {
         }
 
         let mut result = IdleResult::default();
+        result.finished = self.finished();
         if (flags & 1) != 0 {
             self.peer.examine_game_action_queue(|actions| {
                 actions.map(|a| format!("{a:?}")).collect::<Vec<String>>()

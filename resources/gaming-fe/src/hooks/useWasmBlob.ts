@@ -458,11 +458,15 @@ class WasmBlobWrapper {
       }
     });
 
-    if (!idle) {
-      if (this.handshakeDone) {
-        this.messageQueue.push({ receivedShutdown: true });
-      }
+    if (!idle || this.finished) {
       return { stop: true };
+    }
+
+    if (idle.finished && !this.finished) {
+      console.error('we shut down');
+      this.finished = true;
+      this.messageQueue.push({ receivedShutdown: true });
+      return result;
     }
 
     result.stop = !idle.continue_on;
@@ -599,16 +603,12 @@ class WasmBlobWrapper {
   internalReceivedShutdown() {
     const result: any = {};
     console.warn('internalReceivedShutdown', this.finished);
-    if (!this.finished) {
-      console.warn('setting shutdown state in ui');
-      this.finished = true;
-      result.setGameConnectionState = {
-        stateIdentifier: "shutdown",
-        stateDetail: []
-      };
-      result.outcome = undefined;
-      this.stateChanger(result);
-    }
+    console.warn('setting shutdown state in ui');
+    result.setGameConnectionState = {
+      stateIdentifier: "shutdown",
+      stateDetail: []
+    };
+    result.outcome = undefined;
     return empty().then(() => result);
   }
 }

@@ -38,6 +38,7 @@ export type GameFinished = [string, number];
 
 export type IdleResult = {
   "continue_on": boolean,
+  "finished": boolean,
   "outbound_transactions": Array<SpendBundle>,
   "outbound_messages": Array<string>,
   "opponent_move": OpponentMove | undefined,

@@ -501,9 +501,6 @@ impl PotatoHandler {
                     }],
                 })?;
 
-                debug!("calling shutdown complete");
-                system_interface.shutdown_complete(Some(&my_reward))?;
-
                 self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone());
             }
             _ => {

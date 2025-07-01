@@ -644,6 +644,7 @@ struct JsSpendBundle {
 #[derive(Serialize)]
 struct JsIdleResult {
     continue_on: bool,
+    finished: bool,
     outbound_transactions: Vec<JsSpendBundle>,
     outbound_messages: Vec<String>,
     opponent_move: Option<(String, String)>,
@@ -720,6 +721,7 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
     };
     serde_wasm_bindgen::to_value(&JsIdleResult {
         continue_on: idle_result.continue_on,
+        finished: idle_result.finished,
         outbound_transactions: idle_result
             .outbound_transactions
             .iter()
