@@ -912,8 +912,11 @@ impl GameCradle for SynchronousGameCradle {
             return Ok(None);
         }
 
-        let mut result = IdleResult::default();
-        result.finished = self.finished();
+        let mut result = IdleResult {
+            finished: self.finished(),
+            ..IdleResult::default()
+        };
+
         if (flags & 1) != 0 {
             self.peer.examine_game_action_queue(|actions| {
                 actions.map(|a| format!("{a:?}")).collect::<Vec<String>>()
