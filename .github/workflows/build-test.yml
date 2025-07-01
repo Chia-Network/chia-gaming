@@ -268,7 +268,7 @@ jobs:
         run: cargo +stable install --version 0.11.1 wasm-pack
 
       - name: wasm-pack build and pack
-        run: cd wasm && wasm-pack build --release --target=node
+        run: cd wasm && wasm-pack build --release --target=nodejs
 
       - name: yarn install
         run: cd wasm/tests && yarn install
