@@ -99,7 +99,7 @@ function action_with_messages(cradle1: ChiaGame, cradle2: ChiaGame) {
 }
 
 it('loads', async () => {
-    init((msg) => console.log(msg));
+    init();
     preset_file("resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex");
     preset_file("clsp/unroll/unroll_meta_puzzle.hex");
     preset_file("clsp/unroll/unroll_puzzle_state_channel_unrolling.hex");
