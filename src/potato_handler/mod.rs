@@ -112,7 +112,8 @@ pub struct PotatoHandler {
 }
 
 fn init_game_id(parent_coin_string: &[u8]) -> Vec<u8> {
-    Sha256Input::Bytes(parent_coin_string).hash()
+    Sha256Input::Bytes(parent_coin_string)
+        .hash()
         .bytes()
         .to_vec()
 }
@@ -186,12 +187,22 @@ impl PotatoHandler {
     }
 
     pub fn handshake_done(&self) -> bool {
-        !matches!(self.handshake_state, HandshakeState::StepA | HandshakeState::StepB | HandshakeState::StepC(_, _) | HandshakeState::StepD(_) | HandshakeState::StepE(_) | HandshakeState::PostStepE(_) | HandshakeState::StepF(_) | HandshakeState::PostStepF(_))
+        !matches!(
+            self.handshake_state,
+            HandshakeState::StepA
+                | HandshakeState::StepB
+                | HandshakeState::StepC(_, _)
+                | HandshakeState::StepD(_)
+                | HandshakeState::StepE(_)
+                | HandshakeState::PostStepE(_)
+                | HandshakeState::StepF(_)
+                | HandshakeState::PostStepF(_)
+        )
     }
 
     pub fn examine_game_action_queue<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut dyn Iterator<Item=&GameAction>) -> R
+        F: FnOnce(&mut dyn Iterator<Item = &GameAction>) -> R,
     {
         let mut iter = self.game_action_queue.iter();
         f(&mut iter)
@@ -199,7 +210,7 @@ impl PotatoHandler {
 
     pub fn examine_incoming_messages<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut dyn Iterator<Item=Rc<PeerMessage>>) -> R
+        F: FnOnce(&mut dyn Iterator<Item = Rc<PeerMessage>>) -> R,
     {
         let mut iter = self.incoming_messages.iter().cloned();
         f(&mut iter)
@@ -602,7 +613,10 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        debug!("have potato start game: my queue length {}", self.my_start_queue.len());
+        debug!(
+            "have potato start game: my queue length {}",
+            self.my_start_queue.len()
+        );
         if let Some(desc) = self.my_start_queue.pop_front() {
             let mut dehydrated_games = Vec::new();
 
@@ -638,7 +652,10 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if matches!(self.have_potato, PotatoState::Present) {
-            debug!("don't send a potato request because have_potato is {:?}", self.have_potato);
+            debug!(
+                "don't send a potato request because have_potato is {:?}",
+                self.have_potato
+            );
             return Ok(true);
         }
 
@@ -1032,11 +1049,14 @@ impl PotatoHandler {
                 debug!("their game {:?} {:?}", game.0.game_id(), game);
                 rehydrated_games.push(game.0.clone());
             }
-            let (game_ids, spend_info) = ch.received_potato_start_game(env, sigs, &rehydrated_games)?;
+            let (game_ids, spend_info) =
+                ch.received_potato_start_game(env, sigs, &rehydrated_games)?;
             debug!("game_ids from channel handler {game_ids:?}");
 
             if game_ids.len() != our_game_ids.len() {
-                return Err(Error::StrErr(format!("wrong number of game_ids {game_ids:?} vs {our_game_ids:?}")));
+                return Err(Error::StrErr(format!(
+                    "wrong number of game_ids {game_ids:?} vs {our_game_ids:?}"
+                )));
             }
 
             for g in game_ids.iter() {
@@ -1910,7 +1930,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             self.have_potato_move(penv)?;
         } else {
             // All checking needed is done by channel handler.
-            self.their_start_queue.push_back(GameStartQueueEntry(game_id_list.clone()));
+            self.their_start_queue
+                .push_back(GameStartQueueEntry(game_id_list.clone()));
         }
 
         Ok(game_id_list)

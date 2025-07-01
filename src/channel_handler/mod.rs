@@ -328,15 +328,14 @@ impl ChannelHandler {
     ) -> UnrollCoinConditionInputs {
         let my_referee_public_key =
             private_to_public_key(&self.private_keys.my_referee_private_key);
-        let inputs =
-            UnrollCoinConditionInputs {
-                ref_pubkey: my_referee_public_key,
-                their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
-                my_balance,
-                their_balance,
-                puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
-                rem_condition_state: self.current_state_number,
-            };
+        let inputs = UnrollCoinConditionInputs {
+            ref_pubkey: my_referee_public_key,
+            their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
+            my_balance,
+            their_balance,
+            puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
+            rem_condition_state: self.current_state_number,
+        };
         debug!("computed unroll inputs {inputs:?}");
         inputs
     }
@@ -890,7 +889,10 @@ impl ChannelHandler {
         self.their_allocated_balance += their_full_contribution;
 
         // Make a list of all game outputs in order.
-        let cached_game_ids = self.get_cached_game_id().map(|g| vec![g.clone()]).unwrap_or_default();
+        let cached_game_ids = self
+            .get_cached_game_id()
+            .map(|g| vec![g.clone()])
+            .unwrap_or_default();
         debug!("taking into account cached game ids when doing receive_potato_start_games: {cached_game_ids:?}");
         let mut unroll_data_for_all_games =
             self.compute_unroll_data_for_games(&cached_game_ids, None, &self.live_games)?;
@@ -927,11 +929,14 @@ impl ChannelHandler {
         )?;
         self.live_games.append(&mut new_games);
 
-        Ok((result_game_ids, ChannelCoinSpendInfo {
-            aggsig: spend.signature,
-            solution: spend.solution.p(),
-            conditions: spend.conditions.p(),
-        }))
+        Ok((
+            result_game_ids,
+            ChannelCoinSpendInfo {
+                aggsig: spend.signature,
+                solution: spend.solution.p(),
+                conditions: spend.conditions.p(),
+            },
+        ))
     }
 
     pub fn get_game_by_id(&self, game_id: &GameID) -> Result<usize, Error> {
