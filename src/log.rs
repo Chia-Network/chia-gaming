@@ -1,6 +1,8 @@
 use log::debug;
 use std::io;
-use simplelog::{Config, ColorChoice, TermLogger, TerminalMode, WriteLogger, LevelFilter};
+use simplelog::{Config, WriteLogger, LevelFilter};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+use simplelog::{ColorChoice, TermLogger, TerminalMode};
 
 pub fn init<W: io::Write + Send + 'static>(writer: W) {
     let res = WriteLogger::init(

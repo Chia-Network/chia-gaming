@@ -66,7 +66,7 @@ export type IdleCallbacks = {
   self_move?: ((game_id: string, move_hex: string) => void) | undefined,
   opponent_moved?: ((game_id: string, readable_move_hex: string) => void) | undefined,
   game_message?: ((game_id: string, readable_move_hex: string) => void) | undefined,
-  game_finished?: ((game_id: string) => void) | undefined,
+  game_finished?: ((game_id: string, amount: number) => void) | undefined,
   shutdown_complete?: ((coin: string) => void) | undefined,
   going_on_chain?: (() => void) | undefined
 };
@@ -129,6 +129,10 @@ export class ChiaGame {
     return this.wasm.accept(this.cradle, id);
   }
 
+  shut_down() {
+    return this.wasm.shut_down(this.cradle);
+  }
+
   make_move_entropy(id: string, readable: string, new_entropy: string): any {
     return this.wasm.make_move_entropy(this.cradle, id, readable, new_entropy);
   }
@@ -153,7 +157,9 @@ export class ChiaGame {
 
   idle(callbacks: IdleCallbacks) : IdleResult {
     let result = this.wasm.idle(this.cradle, callbacks);
-    this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
+    if (result) {
+      this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
+    }
     return result;
   }
 

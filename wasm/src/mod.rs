@@ -2,14 +2,10 @@ mod map_m;
 
 use js_sys::{Array, Function, JsString, Object};
 
-use std::borrow::Borrow;
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::io;
-use std::mem::swap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::thread::LocalKey;
 
 use hex::FromHexError;
 use log::debug;
@@ -28,7 +24,6 @@ use chia_gaming::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, GameID, Hash, IntoErr, PrivateKey, Program,
     PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
 };
-use chia_gaming::log::init as wasm_init;
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
@@ -119,36 +114,6 @@ struct JsCradle {
     cradle: SynchronousGameCradle,
 }
 
-trait DebugDisplay {
-    fn show(&self, s: &str);
-}
-
-#[derive(Default)]
-struct DummyDebugDisplay { }
-impl DebugDisplay for DummyDebugDisplay {
-    fn show(&self, s: &str) { }
-}
-
-struct JsDebugDisplay {
-    callable: JsValue
-}
-
-impl JsDebugDisplay {
-    fn new(callable: JsValue) -> JsDebugDisplay {
-        JsDebugDisplay { callable }
-    }
-}
-
-impl DebugDisplay for JsDebugDisplay {
-    fn show(&self, s: &str) {
-        if let Some(f) = Function::try_from(&self.callable) {
-            let mut args_array = Array::new();
-            args_array.push(&JsValue::from_str(s));
-            let _ = f.apply(&JsValue::NULL, &args_array);
-        }
-    }
-}
-
 thread_local! {
     static NEXT_ID: AtomicI32 = {
         return AtomicI32::new(0);
@@ -156,44 +121,10 @@ thread_local! {
     static CRADLES: RefCell<HashMap<i32, JsCradle>> = {
         return RefCell::new(HashMap::new());
     };
-    static DPRINT: RefCell<Box<dyn DebugDisplay>> = {
-        return RefCell::new(Box::new(DummyDebugDisplay::default()));
-    };
-}
-
-fn dprint(s: &str) {
-    DPRINT.with(|dprint| dprint.borrow().show(s));
-}
-
-#[derive(Default)]
-struct DprintWrite {
-    bytes: Vec<Vec<u8>>
-}
-impl io::Write for DprintWrite {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.bytes.push(buf.to_vec());
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        let mut result: Vec<u8> = Vec::new();
-        let mut new_bytes = Vec::new();
-        swap(&mut new_bytes, &mut self.bytes);
-        for mut v in new_bytes.into_iter() {
-            result.append(&mut v);
-        }
-        if let Ok(result) = std::str::from_utf8(&result) {
-            dprint(&result);
-        }
-        self.bytes.clear();
-        Ok(())
-    }
 }
 
 #[wasm_bindgen]
-pub fn init(show: JsValue) {
-    DPRINT.replace(Box::new(JsDebugDisplay::new(show)));
-    dprint("doing init");
+pub fn init() {
     wasm_logger::init(wasm_logger::Config::default());
 }
 
@@ -276,7 +207,6 @@ fn get_game_config<'b>(
     js_config: JsValue,
 ) -> Result<SynchronousGameCradleConfig<'b>, JsValue> {
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
-    dprint(&format!("jsconfig {jsconfig:?}"));
 
     if let Some(identity_str) = &jsconfig.identity {
         let private_key_bytes = hex::decode(&identity_str).into_js()?;
@@ -349,7 +279,6 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     if let Some(js_rnd_config) =
         serde_wasm_bindgen::from_value::<JsRndConfig>(js_config.clone()).ok()
     {
-        dprint(&format!("js_rnd_config {js_rnd_config:?}"));
         let seed_bytes = hex::decode(&js_rnd_config.seed).into_js()?;
         for (i, b) in seed_bytes.iter().enumerate() {
             use_seed[i % use_seed.len()] = *b;
@@ -633,7 +562,7 @@ impl ToLocalUI for JsLocalUI {
         game_id: &GameID,
         amount: Amount,
     ) -> Result<(), chia_gaming::common::types::Error> {
-        call_javascript_from_collection(&self.callbacks, "game_message", |args_array| {
+        call_javascript_from_collection(&self.callbacks, "game_finished", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
             args_array.set(1, amount.to_u64().into());
             Ok(())

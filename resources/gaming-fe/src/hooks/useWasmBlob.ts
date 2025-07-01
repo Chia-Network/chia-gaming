@@ -35,6 +35,7 @@ class WasmBlobWrapper {
   cardSelections: number;
   playerHand: number[][];
   opponentHand: number[][];
+  finished: boolean;
   gameOutcome: CalpokerOutcome | undefined;
   stateChanger: (stateSettings: any) => void;
 
@@ -66,6 +67,7 @@ class WasmBlobWrapper {
     this.cardSelections = 0;
     this.playerHand = [];
     this.opponentHand = [];
+    this.finished = false;
     this.qualifyingEvents = 0;
   }
 
@@ -120,6 +122,9 @@ class WasmBlobWrapper {
       let idle_info;
       do {
         idle_info = this.idle();
+        if (!idle_info) {
+          return res;
+        }
         this.stateChanger(idle_info);
       } while (!idle_info.stop);
       return res;
@@ -127,6 +132,9 @@ class WasmBlobWrapper {
   }
 
   pushEvent(msg: any): any {
+    if (this.finished) {
+      return;
+    }
     this.messageQueue.push(msg);
     return this.internalKickIdle();
   }
@@ -164,6 +172,10 @@ class WasmBlobWrapper {
       return this.internalSetCardSelections(msg.setCardSelections);
     } else if (msg.startGame) {
       return this.internalStartGame();
+    } else if (msg.shutDown) {
+      return this.internalShutdown();
+    } else if (msg.receivedShutdown) {
+      return this.internalReceivedShutdown();
     }
 
     console.error("Unknown event:", msg);
@@ -411,43 +423,45 @@ class WasmBlobWrapper {
   idle(): any {
     const result: any = {};
     const idle = this.cradle?.idle({
+      // Local ui callbacks.
       opponent_moved: (game_id, readable_move_hex) => {
         console.error('got opponent move', game_id, readable_move_hex);
         this.messageQueue.push({ takeOpponentMove: { game_id, readable_move_hex, moveNumber: this.moveNumber } });
       },
       game_message: (game_id, readable_hex) => {
         console.error('got opponent msg', game_id, readable_hex);
-        if (typeof readable_hex === 'string') {
-          this.messageQueue.push({ takeGameMessage: { game_id, readable_hex, moveNumber: this.moveNumber } });
-        } else {
-          // Signals accept.
-          this.gameIds.pop();
-          console.log('got accept', this.iStarted);
+        this.messageQueue.push({ takeGameMessage: { game_id, readable_hex, moveNumber: this.moveNumber } });
+      },
+      game_finished: (game_id, amount) => {
+        // Signals accept.
+        this.gameIds.pop();
+        console.log('got accept', this.iStarted);
 
-          this.myTurn = false;
-          this.cardSelections = 0;
-          this.moveNumber = 0;
-          this.playerHand = [];
-          this.opponentHand = [];
+        this.myTurn = false;
+        this.cardSelections = 0;
+        this.moveNumber = 0;
+        this.playerHand = [];
+        this.opponentHand = [];
 
-          result.setCardSelections = 0;
-          result.setMoveNumber = 0;
-          result.setPlayerHand = [];
-          result.setOpponentHand = [];
-          result.setOutcome = undefined;
-          result.setGameConnectionState = {
-            stateIdentifier: "running",
-            stateDetail: []
-          };
+        result.setCardSelections = 0;
+        result.setMoveNumber = 0;
+        result.setPlayerHand = [];
+        result.setOpponentHand = [];
+        result.setOutcome = undefined;
+        result.setGameConnectionState = {
+          stateIdentifier: "running",
+          stateDetail: []
+        };
 
-          result.setMyTurn = false;
-          this.messageQueue.push({ startGame: true });
-        }
+        result.setMyTurn = false;
+        this.messageQueue.push({ startGame: true });
       }
-      // Local ui callbacks.
     });
 
     if (!idle) {
+      if (this.handshakeDone) {
+        this.messageQueue.push({ receivedShutdown: true });
+      }
       return { stop: true };
     }
 
@@ -565,6 +579,38 @@ class WasmBlobWrapper {
     this.cardSelections = mask;
     return empty().then(() => result);
   }
+
+  shutDown() {
+    this.pushEvent({ shutDown: true });
+  }
+
+  internalShutdown() {
+    const result = {
+      setGameConnectionState: {
+        stateIdentifier: "shutdown",
+        stateDetail: []
+      },
+      outcome: undefined
+    };
+    this.cradle?.shut_down();
+    return empty().then(() => result);
+  }
+
+  internalReceivedShutdown() {
+    const result: any = {};
+    console.warn('internalReceivedShutdown', this.finished);
+    if (!this.finished) {
+      console.warn('setting shutdown state in ui');
+      this.finished = true;
+      result.setGameConnectionState = {
+        stateIdentifier: "shutdown",
+        stateDetail: []
+      };
+      result.outcome = undefined;
+      this.stateChanger(result);
+    }
+    return empty().then(() => result);
+  }
 }
 
 function getBlobSingleton(stateChanger: (state: any) => void, blockchain: ExternalBlockchainInterface, walletToken: string, uniqueId: string, amount: number, iStarted: boolean) {
@@ -629,6 +675,9 @@ export function useWasmBlob() {
   }, []);
   let messageSender = useCallback((msg: string) => {
     console.error('send message with no sender defined', msg);
+  }, []);
+  let stopPlaying = useCallback(() => {
+    gameObject?.shutDown();
   }, []);
 
   const stateChanger = useCallback((state: any) => {
@@ -695,6 +744,7 @@ export function useWasmBlob() {
     moveNumber,
     cardSelections,
     setCardSelections,
+    stopPlaying,
     outcome
   };
 }

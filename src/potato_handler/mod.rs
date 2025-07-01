@@ -490,6 +490,9 @@ impl PotatoHandler {
                     }],
                 })?;
 
+                debug!("calling shutdown complete");
+                system_interface.shutdown_complete(Some(&my_reward))?;
+
                 self.handshake_state = HandshakeState::OnChainWaitingForUnrollSpend(coin.clone());
             }
             _ => {
@@ -857,7 +860,7 @@ impl PotatoHandler {
             ));
         }
 
-        let mut game_ids = vec![game_start.game_id.clone()];
+        let game_ids = vec![game_start.game_id.clone()];
         let convert_info_list = |allocator: &mut AllocEncoder,
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<Rc<dyn GameStartInfoInterface>>, Error> {

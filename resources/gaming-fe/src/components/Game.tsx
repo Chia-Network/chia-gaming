@@ -45,6 +45,7 @@ const Game: React.FC = () => {
     cardSelections,
     setCardSelections,
     outcome,
+    stopPlaying
   } = useWasmBlob();
 
   const handleConnectWallet = () => {
@@ -86,6 +87,16 @@ const Game: React.FC = () => {
 
   if (gameConnectionState.stateIdentifier === 'starting') {
     return <WaitingScreen stateName={gameConnectionState.stateIdentifier} messages={gameConnectionState.stateDetail}  />;
+  }
+
+  if (gameConnectionState.stateIdentifier === 'shutdown') {
+    return (
+      <Box p={4}>
+          <Typography variant="h4" align="center">
+              {`Cal Poker - shutdown succeeded`}
+          </Typography>
+      </Box>
+    );
   }
 
   console.log('game outcome', outcome);
@@ -163,6 +174,7 @@ const Game: React.FC = () => {
       <Typography variant="h4" align="center">
       {`Cal Poker - move ${moveNumber}`}
       </Typography>
+      <Button onClick={stopPlaying} disabled={moveNumber !== 0}>Stop</Button>
       <br />
       <Typography
         variant="h6"
