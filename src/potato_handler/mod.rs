@@ -877,7 +877,7 @@ impl PotatoHandler {
             ));
         }
 
-        let game_ids = vec![game_start.game_id.clone()];
+        let game_ids = [game_start.game_id.clone()];
         let convert_info_list = |allocator: &mut AllocEncoder,
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<Rc<dyn GameStartInfoInterface>>, Error> {
@@ -1272,7 +1272,7 @@ impl PotatoHandler {
                 let parent_coin = info.first_player_hs_info.parent.clone();
                 self.handshake_state = HandshakeState::StepF(info.clone());
 
-                self.next_game_id = init_game_id(&parent_coin.to_bytes());
+                self.next_game_id = init_game_id(parent_coin.to_bytes());
                 debug!("StepD next game id {:?}", self.next_game_id);
 
                 self.pass_on_channel_handler_message(penv, msg_envelope)?;

@@ -485,7 +485,7 @@ impl Simulator {
 
         let change_amt = amt.clone() - target_amt.clone();
         let first_coin =
-            CoinString::from_parts(&source_coin.to_coin_id(), &identity_target, &target_amt);
+            CoinString::from_parts(&source_coin.to_coin_id(), identity_target, &target_amt);
         let second_coin = CoinString::from_parts(
             &source_coin.to_coin_id(),
             &identity_source.puzzle_hash,

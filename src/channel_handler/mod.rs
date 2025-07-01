@@ -280,7 +280,7 @@ impl ChannelHandler {
     pub fn clear_cached_game_id_for_send(&mut self) {
         if let Some(game_id) = self.get_cached_game_id() {
             debug!("cached game id {game_id:?}");
-            if let Some(idx) = self.get_game_by_id(game_id).ok() {
+            if let Ok(idx) = self.get_game_by_id(game_id) {
                 debug!("delete old matching game {idx}");
                 self.live_games.remove(idx);
             }

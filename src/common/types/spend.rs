@@ -63,7 +63,7 @@ pub struct CoinSpend {
 impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for CoinSpend {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         let cs_bytes = self.coin.to_bytes();
-        let cs_atom = encoder.encode_atom(clvm_traits::Atom::Borrowed(&cs_bytes))?;
+        let cs_atom = encoder.encode_atom(clvm_traits::Atom::Borrowed(cs_bytes))?;
         (Node(cs_atom), (self.bundle.clone(), ())).to_clvm(encoder)
     }
 }
