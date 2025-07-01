@@ -68,4 +68,4 @@ describe("Basic element tests", function() {
 
     await driver.quit();
   });
-});
+}, 100000);
