@@ -51,13 +51,13 @@ describe("Basic element tests", function() {
     let generateRoomButton = await driver.wait(until.elementLocated(byExactText("Generate Room")));
     await generateRoomButton.click();
 
-      let gameId = await driver.wait(until.elementLocated(byAttribute("id", ":r5:")));
-      let wager = await driver.wait(until.elementLocated(byAttribute("id", ":r7:")));
+    let gameId = await driver.wait(until.elementLocated(byAttribute("id", ":r5:")), 1000);
+    let wager = await driver.wait(until.elementLocated(byAttribute("id", ":r7:")), 1000);
 
     await gameId.sendKeys("calpoker");
     await wager.sendKeys("200");
 
-    let createButton = await driver.wait(until.elementLocated(byExactText("Create")));
+    let createButton = await driver.wait(until.elementLocated(byExactText("Create")), 1000);
     await createButton.click();
 
     await wait(2.0);
