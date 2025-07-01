@@ -14,7 +14,7 @@ COPY Cargo.lock /app/rust/Cargo.lock
 ADD src /app/rust/src
 RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && cargo build --release --features=server,simulator && cp ./target/release/chia-gaming /app
 ADD wasm /app/rust/wasm
-ENV LOCAL_WASM_BUILD=false
+ENV LOCAL_WASM_BUILD=true
 RUN echo local wasm build $LOCAL_WASM_BUILD
 RUN if $LOCAL_WASM_BUILD ; then (. $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --release --target=web) ; fi
 RUN mkdir -p /app/dist
