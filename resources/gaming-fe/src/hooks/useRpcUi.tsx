@@ -387,15 +387,15 @@ export function useRpcUi() {
                     royaltyPercentage,
                     targetAddress,
                     uris: uris.trim().length
-                        ? uris.split(',').map((id) => id.trim())
+                        ? uris.split(',').map((id: string) => id.trim())
                         : [],
                     hash,
                     metaUris: metaUris.trim().length
-                        ? metaUris.split(',').map((id) => id.trim())
+                        ? metaUris.split(',').map((id: string) => id.trim())
                         : [],
                     metaHash,
                     licenseUris: licenseUris.trim().length
-                        ? licenseUris.split(',').map((id) => id.trim())
+                        ? licenseUris.split(',').map((id: string) => id.trim())
                         : [],
                     licenseHash,
                     editionNumber,

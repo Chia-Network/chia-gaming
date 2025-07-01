@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -13,17 +13,18 @@ import {
   Typography,
 } from '@mui/material';
 import { useLobbySocket } from '../hooks/useLobbyConnection';
+import { generateOrRetrieveAlias, updateAlias } from "../util";
 
-interface LobbyComponentProps {
-  alias: string;
-}
+interface LobbyComponentProps { }
 
-const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
-  const { players, rooms, messages, sendMessage, generateRoom, joinRoom } = useLobbySocket(alias);
+const LobbyScreen: React.FC<LobbyComponentProps> = () => {
+  const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
+  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment, walletToken } = useLobbySocket(myAlias);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
   const [wagerInput, setWagerInput] = useState('');
+  const [editingAlias, setEditingAlias] = useState(false);
 
   const handleSend = () => {
     if (chatInput.trim()) {
@@ -37,15 +38,56 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
 
   const handleCreate = async () => {
     if (!gameChoice || !wagerInput) return;
-    const url = await generateRoom(gameChoice, wagerInput);
-    window.prompt('Share this room URL:', url);
+    const { secureUrl, token } = await generateRoom(gameChoice, wagerInput);
+    window.prompt('Share this room URL:', secureUrl);
     closeDialog();
+  };
+
+  useEffect(() => {
+    console.log('check fragment',fragment);
+    if (fragment.token) {
+      console.log('joining channel',fragment);
+      joinRoom(fragment.token);
+    }
+  });
+
+  function commitEdit(e: any) {
+    console.log('commit edit', e.target.value);
+    setEditingAlias(false);
+    updateAlias(e.target.value);
+    setLobbyAlias(uniqueId, e.target.value);
+  }
+
+  function getPlayerAlias(id: string): string {
+    const index = players.findIndex(p => p.id === id);
+    if (index === -1) {
+      return `unknown player id: ${id}`;
+    }
+    return players[index].alias;
+  }
+
+  let aliasDisplay;
+  if (editingAlias) {
+      aliasDisplay = (
+        <TextField
+          fullWidth
+          placeholder="Display name"
+          value={myAlias}
+          onChange={e => setMyAlias(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && commitEdit(e)}
+          onBlur={commitEdit}
+          />
+      );
+  } else {
+      aliasDisplay = (
+        <span onClick={() => setEditingAlias(true)} >{myAlias}</span>
+      );
   };
 
   return (
     <Box p={4} maxWidth={600} mx="auto">
       <Typography variant="h4" gutterBottom>
-        Lobby — Alias: {alias}
+        Lobby — Alias: {aliasDisplay}
       </Typography>
 
       <Box mb={3}>
@@ -53,7 +95,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
         <List>
           {players.map(p => (
             <ListItem key={p.id} dense>
-              <ListItemText primary={p.id === alias ? `${p.id} (You)` : p.id} />
+              <ListItemText primary={p.id === uniqueId ? `${p.alias} (You)` : p.alias} />
             </ListItem>
           ))}
         </List>
@@ -69,8 +111,8 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
               </Button>
             }>
               <ListItemText
-                primary={r.host.game}
-                secondary={`Host: ${r.host.id} | Token: ${r.token}`}
+                primary={r.token}
+                secondary={`Host: ${getPlayerAlias(r.host)} | Token: ${r.token}`}
               />
             </ListItem>
           ))}
@@ -82,17 +124,17 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
         <Box mb={1} height={200} overflow="auto" border="1px solid #ccc" p={1}>
           {messages.map((m, i) => (
             <Typography key={i} variant="body2">
-              <strong>{m.alias}:</strong> {m.content}
+              <strong>{m.alias}:</strong> <span>{m.content.text}</span>
             </Typography>
           ))}
         </Box>
         <Box display="flex">
-          <TextField
-            fullWidth
-            placeholder="Type a message"
-            value={chatInput}
-            onChange={e => setChatInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSend()}
+            <TextField
+                fullWidth
+                placeholder="Type a message"
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleSend()}
           />
           <Button onClick={handleSend} variant="contained" sx={{ ml: 1 }}>
             Send
@@ -101,7 +143,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ alias }) => {
       </Box>
 
       <Box display="flex" justifyContent="space-between">
-        <Button variant="outlined" onClick={openDialog}>
+        <Button disabled={!walletToken} variant="outlined" onClick={openDialog}>
           Generate Room
         </Button>
       </Box>

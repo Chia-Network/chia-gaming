@@ -344,10 +344,10 @@ impl Simulator {
 
     pub fn get_puzzle_and_solution(
         &self,
-        coin_string: &CoinString,
+        coin_id: &CoinID,
     ) -> PyResult<Option<(Program, Program)>> {
         Python::with_gil(|py| -> PyResult<_> {
-            let hash_bytes = PyBytes::new(py, coin_string.to_coin_id().bytes());
+            let hash_bytes = PyBytes::new(py, coin_id.bytes());
             let record = self.async_client(py, "get_coin_record_by_name", (&hash_bytes,))?;
             let height_of_spend =
                 if let Ok(height_of_spend) = record.getattr(py, "spent_block_index") {
@@ -476,7 +476,7 @@ impl Simulator {
     pub fn transfer_coin_amount(
         &self,
         allocator: &mut AllocEncoder,
-        identity_target: &ChiaIdentity,
+        identity_target: &PuzzleHash,
         identity_source: &ChiaIdentity,
         source_coin: &CoinString,
         target_amt: Amount,
@@ -484,11 +484,8 @@ impl Simulator {
         let (_parent, _, amt) = source_coin.get_coin_string_parts()?;
 
         let change_amt = amt.clone() - target_amt.clone();
-        let first_coin = CoinString::from_parts(
-            &source_coin.to_coin_id(),
-            &identity_target.puzzle_hash,
-            &target_amt,
-        );
+        let first_coin =
+            CoinString::from_parts(&source_coin.to_coin_id(), identity_target, &target_amt);
         let second_coin = CoinString::from_parts(
             &source_coin.to_coin_id(),
             &identity_source.puzzle_hash,
@@ -498,10 +495,7 @@ impl Simulator {
         let conditions = (
             (
                 CREATE_COIN,
-                (
-                    identity_target.puzzle_hash.clone(),
-                    (target_amt.clone(), ()),
-                ),
+                (identity_target.clone(), (target_amt.clone(), ())),
             ),
             (
                 (

@@ -9,5 +9,16 @@
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
+    <script type="module">
+     import * as cg from './chia_gaming_wasm.js';
+     const intervalId = setInterval(() => {
+         if (window.loadWasm) {
+             console.log('chia_gaming_init running');
+             clearInterval(intervalId);
+             window.loadWasm(cg.initSync, cg);
+         }
+     }, 500);
+    </script>
+    <script src="index.js"></script>
   </body>
 </html>

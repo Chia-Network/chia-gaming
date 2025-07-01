@@ -269,6 +269,24 @@ impl ChannelHandler {
         self.their_out_of_game_balance.clone()
     }
 
+    pub fn get_cached_game_id(&self) -> Option<&GameID> {
+        if let Some(CachedPotatoRegenerateLastHop::PotatoAccept(acc)) = &self.cached_last_action {
+            return Some(&acc.game_id);
+        }
+
+        None
+    }
+
+    pub fn clear_cached_game_id_for_send(&mut self) {
+        if let Some(game_id) = self.get_cached_game_id() {
+            debug!("cached game id {game_id:?}");
+            if let Ok(idx) = self.get_game_by_id(game_id) {
+                debug!("delete old matching game {idx}");
+                self.live_games.remove(idx);
+            }
+        }
+    }
+
     pub fn get_reward_puzzle_hash<R: Rng>(
         &self,
         env: &mut ChannelHandlerEnv<R>,
@@ -310,14 +328,16 @@ impl ChannelHandler {
     ) -> UnrollCoinConditionInputs {
         let my_referee_public_key =
             private_to_public_key(&self.private_keys.my_referee_private_key);
-        UnrollCoinConditionInputs {
+        let inputs = UnrollCoinConditionInputs {
             ref_pubkey: my_referee_public_key,
             their_referee_puzzle_hash: self.their_referee_puzzle_hash.clone(),
             my_balance,
             their_balance,
             puzzle_hashes_and_amounts: puzzle_hashes_and_amounts.to_vec(),
             rem_condition_state: self.current_state_number,
-        }
+        };
+        debug!("computed unroll inputs {inputs:?}");
+        inputs
     }
 
     pub fn state_channel_coin(&self) -> &ChannelCoin {
@@ -742,6 +762,8 @@ impl ChannelHandler {
             ),
         )?;
 
+        self.cached_last_action = None;
+
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,
             solution: spend.solution.p(),
@@ -811,6 +833,10 @@ impl ChannelHandler {
             "send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
+        self.clear_cached_game_id_for_send();
+        let live_game_ids: Vec<&GameID> = self.live_games.iter().map(|l| &l.game_id).collect();
+        debug!("current game ids: {live_game_ids:?}");
+
         // We let them spend a state number 1 higher but nothing else changes.
         self.update_cache_for_potato_send(Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
             start_info_list
@@ -842,7 +868,7 @@ impl ChannelHandler {
         env: &mut ChannelHandlerEnv<R>,
         signatures: &PotatoSignatures,
         start_info_list: &[Rc<dyn GameStartInfoInterface>],
-    ) -> Result<ChannelCoinSpendInfo, Error> {
+    ) -> Result<(Vec<GameID>, ChannelCoinSpendInfo), Error> {
         debug!(
             "{} RECEIVED_POTATO_START_GAME: our state is {}, unroll state is {}",
             self.is_initial_potato(),
@@ -850,6 +876,7 @@ impl ChannelHandler {
             self.unroll.coin.state_number
         );
         let mut new_games = self.add_games(env, start_info_list)?;
+        let result_game_ids: Vec<GameID> = new_games.iter().map(|g| &g.game_id).cloned().collect();
 
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
@@ -862,8 +889,13 @@ impl ChannelHandler {
         self.their_allocated_balance += their_full_contribution;
 
         // Make a list of all game outputs in order.
+        let cached_game_ids = self
+            .get_cached_game_id()
+            .map(|g| vec![g.clone()])
+            .unwrap_or_default();
+        debug!("taking into account cached game ids when doing receive_potato_start_games: {cached_game_ids:?}");
         let mut unroll_data_for_all_games =
-            self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
+            self.compute_unroll_data_for_games(&cached_game_ids, None, &self.live_games)?;
         debug!("start with {} games", unroll_data_for_all_games.len());
         unroll_data_for_all_games.append(&mut self.compute_unroll_data_for_games(
             &[],
@@ -897,11 +929,14 @@ impl ChannelHandler {
         )?;
         self.live_games.append(&mut new_games);
 
-        Ok(ChannelCoinSpendInfo {
-            aggsig: spend.signature,
-            solution: spend.solution.p(),
-            conditions: spend.conditions.p(),
-        })
+        Ok((
+            result_game_ids,
+            ChannelCoinSpendInfo {
+                aggsig: spend.signature,
+                solution: spend.solution.p(),
+                conditions: spend.conditions.p(),
+            },
+        ))
     }
 
     pub fn get_game_by_id(&self, game_id: &GameID) -> Result<usize, Error> {
@@ -1176,6 +1211,8 @@ impl ChannelHandler {
 
         self.my_out_of_game_balance = my_balance;
         self.their_out_of_game_balance = their_balance;
+
+        self.live_games.remove(game_idx);
 
         Ok(ChannelCoinSpendInfo {
             aggsig: spend.signature,

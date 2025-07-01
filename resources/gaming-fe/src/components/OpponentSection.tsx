@@ -1,20 +1,19 @@
 import React from "react";
+import { useCallback } from "react";
 import { Box, Typography, Paper } from "@mui/material";
 import PlayingCard from "./PlayingCard";
 
 interface OpponentSectionProps {
   playerNumber: number;
-  opponentCoins: number;
-  opponentWager: string;
-  opponentHand: string[];
+  opponentHand: number[][];
 }
 
 const OpponentSection: React.FC<OpponentSectionProps> = ({
   playerNumber,
-  opponentCoins,
-  opponentWager,
   opponentHand,
 }) => {
+  const setSelection = useCallback((index: number, selected: boolean) => {}, []);
+
   return (
     <Paper
       elevation={3}
@@ -26,17 +25,14 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
       }}
     >
       <Typography variant="h5">
-        {playerNumber === 1 ? "Player 2 (Opponent)" : "Player 1 (Opponent)"}
+      {"Opponent"}
       </Typography>
-      <br />
-      <Typography>Coins: {opponentCoins}</Typography>
-      <Typography>Wager Amount: {opponentWager} XCH</Typography>
       <br />
       <Typography variant="h6">Opponent's Hand:</Typography>
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
         {opponentHand.map((card, index) => (
-          <PlayingCard key={index} cardValue={card} isFaceDown={false} />
+          <PlayingCard id={`card-${playerNumber}-${card}`} key={index} cardValue={card} isFaceDown={false} index={index} setSelection={setSelection} selected={false} />
         ))}
       </Box>
     </Paper>

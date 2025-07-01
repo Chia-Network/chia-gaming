@@ -111,15 +111,11 @@ pub struct PotatoHandler {
     incoming_messages: VecDeque<Rc<PeerMessage>>,
 }
 
-fn init_game_id(private_keys: &ChannelHandlerPrivateKeys) -> Vec<u8> {
-    Sha256Input::Array(vec![
-        Sha256Input::Bytes(&private_keys.my_channel_coin_private_key.bytes()),
-        Sha256Input::Bytes(&private_keys.my_unroll_coin_private_key.bytes()),
-        Sha256Input::Bytes(&private_keys.my_referee_private_key.bytes()),
-    ])
-    .hash()
-    .bytes()
-    .to_vec()
+fn init_game_id(parent_coin_string: &[u8]) -> Vec<u8> {
+    Sha256Input::Bytes(parent_coin_string)
+        .hash()
+        .bytes()
+        .to_vec()
 }
 
 /// Peer interface for high level opaque messages.
@@ -157,12 +153,13 @@ impl PotatoHandler {
                 HandshakeState::StepB
             },
 
-            next_game_id: Vec::new(),
             game_types: phi.game_types,
 
             their_start_queue: VecDeque::default(),
             my_start_queue: VecDeque::default(),
             game_action_queue: VecDeque::default(),
+
+            next_game_id: Vec::new(),
 
             channel_handler: None,
             channel_initiation_transaction: None,
@@ -187,6 +184,41 @@ impl PotatoHandler {
 
     pub fn is_on_chain(&self) -> bool {
         matches!(self.handshake_state, HandshakeState::OnChain(_))
+    }
+
+    pub fn handshake_done(&self) -> bool {
+        !matches!(
+            self.handshake_state,
+            HandshakeState::StepA
+                | HandshakeState::StepB
+                | HandshakeState::StepC(_, _)
+                | HandshakeState::StepD(_)
+                | HandshakeState::StepE(_)
+                | HandshakeState::PostStepE(_)
+                | HandshakeState::StepF(_)
+                | HandshakeState::PostStepF(_)
+        )
+    }
+
+    pub fn examine_game_action_queue<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut dyn Iterator<Item = &GameAction>) -> R,
+    {
+        let mut iter = self.game_action_queue.iter();
+        f(&mut iter)
+    }
+
+    pub fn examine_incoming_messages<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut dyn Iterator<Item = Rc<PeerMessage>>) -> R,
+    {
+        let mut iter = self.incoming_messages.iter().cloned();
+        f(&mut iter)
+    }
+
+    pub fn push_action(&mut self, action: GameAction) {
+        debug!("pushed action {action:?}");
+        self.game_action_queue.push_back(action);
     }
 
     pub fn my_move_in_game(&self, game_id: &GameID) -> Option<bool> {
@@ -578,6 +610,10 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        debug!(
+            "have potato start game: my queue length {}",
+            self.my_start_queue.len()
+        );
         if let Some(desc) = self.my_start_queue.pop_front() {
             let mut dehydrated_games = Vec::new();
 
@@ -585,6 +621,7 @@ impl PotatoHandler {
                 let ch = self.channel_handler_mut()?;
                 let (env, _) = penv.env();
                 for game in desc.their_games.iter() {
+                    debug!("their game {:?}", game);
                     dehydrated_games.push(GSI(game.clone()));
                 }
                 for game in desc.my_games.iter() {
@@ -600,6 +637,7 @@ impl PotatoHandler {
             return Ok(true);
         }
 
+        debug!("have_potato_start_game: no games in queue");
         Ok(false)
     }
 
@@ -611,6 +649,10 @@ impl PotatoHandler {
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
         if matches!(self.have_potato, PotatoState::Present) {
+            debug!(
+                "don't send a potato request because have_potato is {:?}",
+                self.have_potato
+            );
             return Ok(true);
         }
 
@@ -630,7 +672,9 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
-        match self.game_action_queue.pop_front() {
+        let action = self.game_action_queue.pop_front();
+        debug!("have_potato_move, dequeue {action:?}");
+        match action {
             Some(GameAction::LocalStartGame) => {
                 self.have_potato_start_game(penv)?;
                 Ok(true)
@@ -640,9 +684,13 @@ impl PotatoHandler {
                 let move_result = {
                     let ch = self.channel_handler_mut()?;
                     let (env, _) = penv.env();
-                    if let Some(true) = ch.game_is_my_turn(&game_id) {
+                    let game_is_my_turn = ch.game_is_my_turn(&game_id);
+                    debug!("our turn in game {game_id:?}: {game_is_my_turn:?}");
+                    if let Some(true) = game_is_my_turn {
+                        debug!("have_potato_move, send to channel handler {game_id:?} {readable_move:?}");
                         ch.send_potato_move(env, &game_id, &readable_move, new_entropy)?
                     } else {
+                        debug!("have_potato_move, not my turn {game_id:?} {readable_move:?}");
                         self.game_action_queue.push_front(GameAction::Move(
                             game_id,
                             readable_move,
@@ -653,12 +701,14 @@ impl PotatoHandler {
                 };
 
                 let (_, system_interface) = penv.env();
+                debug!("have_potato_move: self move notify {move_result:?}");
                 system_interface.self_move(
                     &game_id,
                     move_result.state_number,
                     &move_result.game_move.basic.move_made,
                 )?;
 
+                debug!("have_potato_move: send move message");
                 system_interface.send_message(&PeerMessage::Move(game_id, move_result))?;
                 self.have_potato = PotatoState::Absent;
 
@@ -824,11 +874,7 @@ impl PotatoHandler {
             ));
         }
 
-        let mut game_ids = Vec::new();
-        for _ in my_info_list.iter() {
-            game_ids.push(self.next_game_id()?);
-        }
-
+        let game_ids = [game_start.game_id.clone()];
         let convert_info_list = |allocator: &mut AllocEncoder,
                                  my_info_list: &[NodePtr]|
          -> Result<Vec<Rc<dyn GameStartInfoInterface>>, Error> {
@@ -870,12 +916,11 @@ impl PotatoHandler {
         )
             .to_clvm(env.allocator)
             .into_gen()?;
-        let game_id = self.next_game_id()?;
         let params_prog = Rc::new(Program::from_nodeptr(env.allocator, program_run_args)?);
         let alice_game = v1::game::Game::new_program(
             env.allocator,
             i_initiated,
-            &game_id,
+            &game_start.game_id,
             program.clone().into(),
             params_prog.clone(),
         )?;
@@ -884,7 +929,7 @@ impl PotatoHandler {
             .iter()
             .map(|g| {
                 let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
-                    &game_id,
+                    &game_start.game_id,
                     &game_start.amount,
                     &game_start.timeout,
                     &game_start.my_contribution,
@@ -896,7 +941,7 @@ impl PotatoHandler {
         let bob_game = v1::game::Game::new_program(
             env.allocator,
             !i_initiated,
-            &game_id,
+            &game_start.game_id,
             program.into(),
             params_prog,
         )?;
@@ -905,7 +950,7 @@ impl PotatoHandler {
             .iter()
             .map(|g| {
                 let rc: Rc<dyn GameStartInfoInterface> = Rc::new(g.game_start(
-                    &game_id,
+                    &game_start.game_id,
                     &game_start.amount,
                     &game_start.timeout,
                     &their_contribution,
@@ -956,7 +1001,7 @@ impl PotatoHandler {
         }
     }
 
-    fn next_game_id(&mut self) -> Result<GameID, Error> {
+    pub fn next_game_id(&mut self) -> Result<GameID, Error> {
         if self.next_game_id.is_empty() {
             return Err(Error::StrErr("no game id set".to_string()));
         }
@@ -984,19 +1029,40 @@ impl PotatoHandler {
     {
         // We must have received a peer layer message indicating that we're waiting for this
         // game start.
-        if self.their_start_queue.pop_front().is_none() {
-            return Err(Error::StrErr("no waiting games to start".to_string()));
-        };
+        let our_game_ids =
+            if let Some(GameStartQueueEntry(game_ids)) = self.their_start_queue.pop_front() {
+                game_ids
+            } else {
+                return Err(Error::StrErr("no waiting games to start".to_string()));
+            };
+        let game_id_set: HashSet<&GameID> = our_game_ids.iter().collect();
+        debug!("game start queue: {game_id_set:?}");
 
         let ch = self.channel_handler_mut()?;
         let spend_info = {
             let (env, _system_interface) = penv.env();
             let mut rehydrated_games = Vec::new();
             for game in games.iter() {
-                debug!("their game {:?}", game);
+                debug!("their game {:?} {:?}", game.0.game_id(), game);
                 rehydrated_games.push(game.0.clone());
             }
-            ch.received_potato_start_game(env, sigs, &rehydrated_games)?
+            let (game_ids, spend_info) =
+                ch.received_potato_start_game(env, sigs, &rehydrated_games)?;
+            debug!("game_ids from channel handler {game_ids:?}");
+
+            if game_ids.len() != our_game_ids.len() {
+                return Err(Error::StrErr(format!(
+                    "wrong number of game_ids {game_ids:?} vs {our_game_ids:?}"
+                )));
+            }
+
+            for g in game_ids.iter() {
+                if !game_id_set.contains(g) {
+                    return Err(Error::StrErr(format!("channel handler got a game id that didn't match one of the game ids we predicted {:?}", g)));
+                }
+            }
+
+            spend_info
         };
 
         self.update_channel_coin_after_receive(penv, &spend_info)?;
@@ -1131,7 +1197,8 @@ impl PotatoHandler {
                     system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                 }
 
-                self.next_game_id = init_game_id(&self.private_keys);
+                self.next_game_id = init_game_id(parent_coin.to_bytes());
+                debug!("StepC next game id {:?}", self.next_game_id);
                 self.channel_handler = Some(channel_handler);
 
                 self.handshake_state = HandshakeState::StepE(Box::new(HandshakeStepInfo {
@@ -1186,7 +1253,6 @@ impl PotatoHandler {
                     referee_puzzle_hash,
                 };
 
-                self.next_game_id = init_game_id(&self.private_keys);
                 self.channel_handler = Some(channel_handler);
                 self.handshake_state = HandshakeState::StepD(Box::new(HandshakeStepInfo {
                     first_player_hs_info: msg.clone(),
@@ -1200,7 +1266,11 @@ impl PotatoHandler {
             }
 
             HandshakeState::StepD(info) => {
+                let parent_coin = info.first_player_hs_info.parent.clone();
                 self.handshake_state = HandshakeState::StepF(info.clone());
+
+                self.next_game_id = init_game_id(parent_coin.to_bytes());
+                debug!("StepD next game id {:?}", self.next_game_id);
 
                 self.pass_on_channel_handler_message(penv, msg_envelope)?;
 
@@ -1216,9 +1286,8 @@ impl PotatoHandler {
                 let bundle = if let PeerMessage::HandshakeE { bundle } = msg_envelope.borrow() {
                     bundle
                 } else {
-                    return Err(Error::StrErr(format!(
-                        "Expected handshake e message, got {msg_envelope:?}"
-                    )));
+                    self.incoming_messages.push_front(msg_envelope.clone());
+                    return Ok(());
                 };
 
                 let channel_coin = {
@@ -1267,7 +1336,7 @@ impl PotatoHandler {
                         if matches!(self.have_potato, PotatoState::Present) {
                             self.do_game_action(penv, GameAction::SendPotato)?;
                         } else {
-                            self.game_action_queue.push_back(GameAction::SendPotato);
+                            self.push_action(GameAction::SendPotato);
                         }
                     }
                     PeerMessage::StartGames(sigs, g) => {
@@ -1622,20 +1691,16 @@ impl PotatoHandler {
             HandshakeState::OnChainWaitingForUnrollConditions(_)
                 | HandshakeState::OnChainWaitingForUnrollSpend(_)
         ) {
-            self.game_action_queue.push_back(action);
+            self.push_action(action);
             return Ok(false);
         }
 
         if matches!(self.handshake_state, HandshakeState::Finished(_)) {
-            if matches!(action, GameAction::SendPotato)
-                && matches!(self.have_potato, PotatoState::Absent)
-            {
-                return Ok(true);
-            }
-
-            self.game_action_queue.push_back(action);
+            debug!("potato handler enqueue game action in finished state: {action:?}");
+            self.push_action(action);
 
             if !self.send_potato_request_if_needed(penv)? {
+                debug!("potato handler don't have potato");
                 return Ok(false);
             }
 
@@ -1842,7 +1907,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
 
         let (my_games, their_games) = self.get_games_by_start_type(penv, i_initiated, game)?;
 
-        let game_id_list = my_games.iter().map(|g| g.game_id().clone()).collect();
+        let game_id_list: Vec<GameID> = my_games.iter().map(|g| g.game_id().clone()).collect();
 
         // This comes to both peers before any game start happens.
         // In the didn't initiate scenario, we hang onto the game start to ensure that
@@ -1853,16 +1918,17 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
                 their_games,
             });
 
-            self.game_action_queue.push_back(GameAction::LocalStartGame);
+            self.push_action(GameAction::LocalStartGame);
 
             if !self.send_potato_request_if_needed(penv)? {
-                return Ok(game_id_list);
+                return Ok(game_id_list.clone());
             }
 
             self.have_potato_move(penv)?;
         } else {
             // All checking needed is done by channel handler.
-            self.their_start_queue.push_back(GameStartQueueEntry);
+            self.their_start_queue
+                .push_back(GameStartQueueEntry(game_id_list.clone()));
         }
 
         Ok(game_id_list)
@@ -1879,6 +1945,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         G: 'a,
         R: 'a,
     {
+        debug!("potato handler make move {id:?} {readable:?}");
         self.do_game_action(
             penv,
             GameAction::Move(id.clone(), readable.clone(), new_entropy),

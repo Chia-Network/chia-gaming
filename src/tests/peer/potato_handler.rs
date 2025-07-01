@@ -477,11 +477,13 @@ fn test_peer_smoke() {
         };
 
         let nil = Program::from_hex("80").unwrap();
+        let game_id = peers[1].next_game_id().unwrap();
         let game_ids = peers[1]
             .start_games(
                 &mut penv,
                 true,
                 &GameStart {
+                    game_id: game_id.clone(),
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
                     game_type: GameType(b"calpoker".to_vec()),
@@ -497,6 +499,7 @@ fn test_peer_smoke() {
                 &mut penv,
                 false,
                 &GameStart {
+                    game_id,
                     amount: Amount::new(200),
                     my_contribution: Amount::new(100),
                     game_type: GameType(b"calpoker".to_vec()),
