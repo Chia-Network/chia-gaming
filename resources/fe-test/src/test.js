@@ -67,5 +67,5 @@ describe("Basic element tests", function() {
     await alert.accept();
 
     await driver.quit();
-  });
-}, 100000);
+  }, 100000);
+});
