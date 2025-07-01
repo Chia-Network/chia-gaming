@@ -51,8 +51,8 @@ describe("Basic element tests", function() {
     let generateRoomButton = await driver.wait(until.elementLocated(byExactText("Generate Room")));
     await generateRoomButton.click();
 
-    let gameId = await driver.wait(until.elementLocated(byAttribute("id", "«r2»")));
-    let wager = await driver.wait(until.elementLocated(byAttribute("id", "«r3»")));
+      let gameId = await driver.wait(until.elementLocated(byAttribute("id", ":r5:")));
+      let wager = await driver.wait(until.elementLocated(byAttribute("id", ":r7:")));
 
     await gameId.sendKeys("calpoker");
     await wager.sendKeys("200");
