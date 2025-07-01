@@ -1200,7 +1200,7 @@ impl PotatoHandler {
                     system_interface.send_message(&PeerMessage::Nil(nil_msg))?;
                 }
 
-                self.next_game_id = init_game_id(&parent_coin.to_bytes());
+                self.next_game_id = init_game_id(parent_coin.to_bytes());
                 debug!("StepC next game id {:?}", self.next_game_id);
                 self.channel_handler = Some(channel_handler);
 
