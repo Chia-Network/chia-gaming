@@ -6,7 +6,7 @@ yarn install --dev
 
 docker kill chia-gaming-test || true
 docker rm chia-gaming-test || true
-docker run --name chia-gaming-test --network=host -it chia-gaming-test &
+docker run --name chia-gaming-test --network=host -t chia-gaming-test &
 
 echo 'waiting for service alive .'
 /bin/bash ./wait-for-it.sh -t 90 -h localhost -p 3000
