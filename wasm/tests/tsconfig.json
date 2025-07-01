@@ -15,5 +15,5 @@
       "target": "es2020"
     },
     "include": ["src/lib"],
-    "exclude": ["src/lib/**/tests"],
+    "exclude": ["src/lib/**/tests"]
 }
