@@ -1,0 +1,21 @@
+# Default values for generic.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# This is considered the primary container in the deployment
+# Ingress/Service will point here
+image:
+  repository: ghcr.io/chia-network/chia-gaming
+  pullPolicy: Always
+  tag: {{ DOCKER_TAG }}
+
+imagePullSecrets:
+  - name: chia-gaming-image-pull
+
+#ingress:
+#  hostname: gaming-dev.chia.net
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http

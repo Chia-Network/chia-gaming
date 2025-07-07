@@ -1,0 +1,73 @@
+name: Build & Deploy dev environment
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-deploy-dev
+
+  jobs:
+    package:
+      uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
+      with:
+        docker-platforms: "linux/amd64"
+
+    deploy:
+      needs:
+        - package
+      runs-on: [k8s-internal-msp]
+      container:
+        image: registry.gitlab.com/cmmarslender/kubectl-helm:v3
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Vault Login
+          uses: Chia-Network/actions/vault/login@main
+          with:
+            vault_url: ${{ secrets.VAULT_URL }}
+            role_name: github
+
+        - name: Get secrets from vault
+          uses: hashicorp/vault-action@v3
+          with:
+            url: ${{ secrets.VAULT_URL }}
+            token: ${{ env.VAULT_TOKEN }}
+            secrets: |
+              secret/data/github/ghcr_image_pull username | IMAGE_PULL_USERNAME;
+              secret/data/github/ghcr_image_pull password | IMAGE_PULL_PASSWORD;
+              secret/data/msp/k8s/k8s-sin api_server_url | K8S_API_SERVER_URL;
+
+        - name: Login to k8s cluster
+          uses: Chia-Network/actions/vault/k8s-login@main
+          with:
+            vault_url: ${{ secrets.VAULT_URL }}
+            vault_token: ${{ env.VAULT_TOKEN }}
+            backend_name: k8s-sin
+            role_name: github-actions
+            cluster_url: ${{ env.K8S_API_SERVER_URL }}
+
+        - uses: Chia-Network/actions/k8s/image-pull-secret@main
+          with:
+            secret_name: chia-gaming-image-pull
+            namespace: chia-gaming-dev
+            username: ${{ env.IMAGE_PULL_USERNAME }}
+            password: ${{ env.IMAGE_PULL_PASSWORD }}
+            docker_server: "ghcr.io"
+
+        - uses: Chia-Network/actions/helm/deploy@main
+          env:
+            DOCKER_TAG: "sha-${{ github.sha }}" #Allows using helm rollback with using the specific hash
+          with:
+            namespace: chia-gaming-dev
+            app_name: "chia-gaming-dev"
+            helm_chart_repo: "https://chia-network.github.io/helm-charts"
+            helm_chart: "generic"
+            helm_values: "./k8s/values/dev/values.yaml"
