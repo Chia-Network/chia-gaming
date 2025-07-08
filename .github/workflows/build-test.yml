@@ -268,7 +268,7 @@ jobs:
         run: cargo +stable install --version 0.11.1 wasm-pack
 
       - name: wasm-pack build and pack
-        run: cd wasm && wasm-pack build --release --target=nodejs
+        run: cd wasm && export RUSTFLAGS='--cfg getrandom_backend="wasm_js" --cfg=web_sys_unstable_apis' && wasm-pack build --release --target=nodejs
 
       - name: yarn install
         run: cd wasm/tests && yarn install
