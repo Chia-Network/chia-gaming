@@ -784,18 +784,25 @@ impl GameCradle for SynchronousGameCradle {
         rng: &mut R,
         coin: CoinString,
     ) -> Result<(), Error> {
+        debug!("oc1");
         self.state.funding_coin = Some(coin.clone());
 
+        debug!("oc2");
         if !self.peer.is_initiator() {
+            debug!("oc3");
             return Ok(());
         }
 
+        debug!("oc4");
         let mut env = channel_handler_env(allocator, rng)?;
+        debug!("oc5");
         let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
             env: &mut env,
             system_interface: &mut self.state,
         };
+        debug!("oc6");
         self.peer.start(&mut penv, coin)?;
+        debug!("oc7");
 
         Ok(())
     }
