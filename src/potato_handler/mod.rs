@@ -317,6 +317,7 @@ impl PotatoHandler {
         let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
 
         debug!("Start: our channel public key {:?}", channel_public_key);
+        debug!("handshake state {:?}", self.handshake_state);
 
         assert!(matches!(self.handshake_state, HandshakeState::StepA));
         let my_hs_info = HandshakeA {
