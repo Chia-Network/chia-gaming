@@ -320,6 +320,7 @@ impl PotatoHandler {
         debug!("handshake state {:?}", self.handshake_state);
 
         assert!(matches!(self.handshake_state, HandshakeState::StepA));
+        debug!("assert done");
         let my_hs_info = HandshakeA {
             parent: parent_coin.clone(),
             simple: HandshakeB {
@@ -329,9 +330,12 @@ impl PotatoHandler {
                 referee_puzzle_hash,
             },
         };
+        debug!("update handshake state");
         self.handshake_state =
             HandshakeState::StepC(parent_coin.clone(), Box::new(my_hs_info.clone()));
+        debug!("send message");
         system_interface.send_message(&PeerMessage::HandshakeA(my_hs_info))?;
+        debug!("done");
 
         Ok(())
     }
