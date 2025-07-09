@@ -299,9 +299,13 @@ struct SynchronousGameCradleState {
 
 impl PacketSender for SynchronousGameCradleState {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
+        debug!("send_message, converting");
         let bson_doc = bson::to_bson(&msg).map_err(|e| Error::StrErr(format!("{e:?}")))?;
+        debug!("send_message, extracting");
         let msg_data = bson::to_vec(&bson_doc).map_err(|e| Error::StrErr(format!("{e:?}")))?;
+        debug!("send_message, enqueue");
         self.outbound_messages.push_back(msg_data);
+        debug!("send_message, done");
         Ok(())
     }
 }
