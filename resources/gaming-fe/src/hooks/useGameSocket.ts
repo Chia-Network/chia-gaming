@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { getSearchParams } from '../util';
 import io, { Socket } from "socket.io-client";
 
 export type GameState = "idle" | "searching" | "playing";
 
 interface StartGameData {
-  room: string;
   playerHand: string[];
   opponentHand: string[];
   playerNumber: number;
@@ -20,7 +20,14 @@ interface ActionData {
   currentTurn?: number;
 }
 
+interface SendMessageInput {
+  party: boolean;
+  token: string;
+  msg: string;
+};
+
 export interface UseGameSocketReturn {
+  sendMessage: (input: string) => void;
   gameState: GameState;
   wagerAmount: string;
   setWagerAmount: (value: string) => void;
@@ -33,15 +40,14 @@ export interface UseGameSocketReturn {
   opponentCoins: number;
   isPlayerTurn: boolean;
   playerNumber: number;
-  handleFindOpponent: () => void;
-  handleBet: (amount: number) => void;
-  handleMakeMove: () => void;
-  handleEndTurn: () => void;
 }
 
 const SOCKET_URL = "http://localhost:3001";
 
-const useGameSocket = (): UseGameSocketReturn => {
+const useGameSocket = (deliverMessage: (m: string) => void, setSocketEnabled: (e: boolean) => void): UseGameSocketReturn => {
+  const searchParams = getSearchParams();
+  const token = searchParams.token;
+  const iStarted = searchParams.iStarted !== 'false';
   const socketRef = useRef<Socket | null>(null);
   const playerNumberRef = useRef<number>(0);
 
@@ -57,9 +63,11 @@ const useGameSocket = (): UseGameSocketReturn => {
   const [isPlayerTurn, setIsPlayerTurn] = useState<boolean>(false);
   const [playerNumber, setPlayerNumber] = useState<number>(0);
 
-  useEffect(() => {
+  const eff = () => {
+    let fullyConnected = false;
     if (!socketRef.current) {
-      socketRef.current = io(SOCKET_URL);
+      const socketResult: any = io(SOCKET_URL);
+      socketRef.current = socketResult;
     }
     const socket = socketRef.current;
 
@@ -67,117 +75,52 @@ const useGameSocket = (): UseGameSocketReturn => {
       setGameState("searching");
     };
 
-    const handleStartGame = (data: StartGameData) => {
-      setGameState("playing");
-      setRoom(data.room);
-      setLog((prev) => [...prev, "Opponent found! Starting game..."]);
-      setPlayerHand(data.playerHand);
-      setOpponentHand(data.opponentHand);
-      setPlayerNumber(data.playerNumber);
-      playerNumberRef.current = data.playerNumber;
-      setOpponentWager(data.opponentWager);
-      setWagerAmount(data.wagerAmount);
-      setIsPlayerTurn(data.currentTurn === data.playerNumber);
-    };
+    socket?.on("waiting", handleWaiting);
 
-    const handleAction = (data: ActionData) => {
-      const currentPlayer = playerNumberRef.current;
-      switch (data.type) {
-        case "bet":
-          if (data.actionBy === currentPlayer) {
-            setPlayerCoins((coins) => coins - (data.amount || 0));
-            setLog((prev) => [...prev, `You bet ${data.amount} coins.`]);
-          } else {
-            setOpponentCoins((coins) => coins - (data.amount || 0));
-            setLog((prev) => [...prev, `Opponent bets ${data.amount} coins.`]);
-          }
-          break;
-        case "endTurn":
-          setIsPlayerTurn(data.currentTurn === currentPlayer);
-          setLog((prev) => [
-            ...prev,
-            data.actionBy === currentPlayer
-              ? "You ended your turn."
-              : "Opponent ended their turn.",
-          ]);
-          break;
-        case "move":
-          setLog((prev) => [
-            ...prev,
-            data.actionBy === currentPlayer
-              ? "You made a move."
-              : "Opponent made a move.",
-          ]);
-          break;
-        default:
-          break;
+    // Try to get through a 'peer' message until we succeed.
+    const beacon = setInterval(() => {
+      socketRef.current?.emit('peer', { iStarted });
+    }, 500);
+
+    // When we receive a message from our peer, we know we're connected.
+    socket?.on('peer', msg => {
+      if (msg.iStarted != iStarted && !fullyConnected) {
+        // If they haven't seen our message yet, we know we're connected so
+        // we can send a ping to them now.
+        fullyConnected = true;
+        socketRef.current?.emit('peer', { iStarted });
+        clearInterval(beacon);
+        setSocketEnabled(true);
       }
-    };
+    });
 
-    socket.on("waiting", handleWaiting);
-    socket.on("startGame", handleStartGame);
-    socket.on("action", handleAction);
+    socket?.on('game_message', (input: SendMessageInput) => {
+      console.log('raw message', input);
+      if (input.token !== token || input.party === iStarted) {
+        return;
+      }
+
+      console.log('got remote message', input.msg);
+      deliverMessage(input.msg);
+    });
 
     return () => {
-      socket.off("waiting", handleWaiting);
-      socket.off("startGame", handleStartGame);
-      socket.off("action", handleAction);
+      socket?.off("game_message", handleWaiting);
     };
-  }, []);
+  };
 
-  const handleFindOpponent = useCallback(() => {
-    if (!wagerAmount) {
-      alert("Please enter a wager amount.");
-      return;
-    }
-    socketRef.current?.emit("findOpponent", { wagerAmount });
-  }, [wagerAmount]);
+  eff();
 
-  const handleEndTurn = useCallback(() => {
-    if (!isPlayerTurn) {
-      alert("It's not your turn.");
-      return;
-    }
-    socketRef.current?.emit("action", {
-      room,
-      type: "endTurn",
-      actionBy: playerNumberRef.current,
+  const sendMessage = (msg: string) => {
+    socketRef.current?.emit('game_message', {
+      party: iStarted,
+      token,
+      msg
     });
-  }, [isPlayerTurn, room]);
-
-  const handleBet = useCallback(
-    (amount: number) => {
-      if (!isPlayerTurn) {
-        alert("It's not your turn.");
-        return;
-      }
-      if (playerCoins < amount) {
-        alert("You don't have enough coins.");
-        return;
-      }
-      socketRef.current?.emit("action", {
-        room,
-        type: "bet",
-        amount,
-        actionBy: playerNumberRef.current,
-      });
-    },
-    [isPlayerTurn, playerCoins, room]
-  );
-
-  const handleMakeMove = useCallback(() => {
-    if (!isPlayerTurn) {
-      alert("It's not your turn.");
-      return;
-    }
-    socketRef.current?.emit("action", {
-      room,
-      type: "move",
-      actionBy: playerNumberRef.current,
-    });
-  }, [isPlayerTurn, room]);
+  };
 
   return {
+    sendMessage,
     gameState,
     wagerAmount,
     setWagerAmount,
@@ -190,10 +133,6 @@ const useGameSocket = (): UseGameSocketReturn => {
     opponentCoins,
     isPlayerTurn,
     playerNumber,
-    handleFindOpponent,
-    handleBet,
-    handleMakeMove,
-    handleEndTurn,
   };
 };
 

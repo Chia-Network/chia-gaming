@@ -1,0 +1,89 @@
+name: Frontend
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - base
+      - dev
+  release:
+    types: [published]
+  pull_request:
+    branches:
+      - '**'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 1
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20.0.0
+
+    - name: build
+      run: |
+        cd resources/gaming-fe
+        yarn install
+        yarn run build
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    needs: [build]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set Job Env
+        uses: Chia-Network/actions/setjobenv@main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install latest nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+            target: wasm32-unknown-unknown
+            components: rustfmt
+      - name: Install wasm-pack
+        run: |
+          cargo install --version 0.13.1 wasm-pack
+      - name: Run headless test
+        env:
+          DETECT_CHROMEDRIVER_VERSION: "true"
+        run: |
+          (cd resources/gaming-fe &&
+           yarn install &&
+           yarn run build) &&
+           docker build -t chia-gaming-test .
+          sudo apt update
+          sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
+          (cd resources/fe-test && xvfb-run -a ./test.sh)
+
+      - name: Cleanup xvfb pidx
+        run: |
+          xvfb_pids="$(pgrep tmp/xvfb-run | grep -v grep | awk '{print $2}')"
+          if [ "$xvfb_pids" != "" ]; then
+              echo "Killing the following xvfb processes: $xvfb_pids"
+              sudo kill "$xvfb_pids"
+          else
+              echo "No xvfb processes to kill"
+          fi

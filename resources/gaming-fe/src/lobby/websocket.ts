@@ -1,21 +1,21 @@
 import { Server as SocketIOServer } from 'socket.io';
 import { Server as HTTPServer } from 'http';
-import { 
-  addPlayer, 
-  removePlayer, 
-  createRoom, 
-  joinRoom, 
-  leaveRoom, 
+import {
+  addPlayer,
+  removePlayer,
+  createRoom,
+  joinRoom,
+  leaveRoom,
   findMatch,
   getPlayers,
   getRooms,
-  updatePlayerStatus
+  updatePlayerStatus,
 } from './lobbyState';
 import { Player, MatchmakingPreferences, Room } from '../types/lobby';
 
 export const setupWebSocket = (httpServer: HTTPServer) => {
   const io = new SocketIOServer(httpServer, {
-    cors: { 
+    cors: {
       origin: process.env.CLIENT_URL || 'http://localhost:3000',
       methods: ['GET', 'POST']
     }
@@ -29,11 +29,12 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
 
     socket.on('join_lobby', (preferences: MatchmakingPreferences) => {
       const player: Player = {
-        id: socket.id,
-        gameType: preferences.gameType,
+        id: preferences.id,
+        alias: preferences.alias,
         parameters: preferences.parameters,
         walletAddress: '', // TODO: Get from auth
-        lastSeen: Date.now(),
+        joinedAt: Date.now(),
+        lastActive: Date.now(),
         status: 'waiting'
       };
 
@@ -60,8 +61,8 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
         return;
       }
 
-      const room = createRoom(currentPlayer, preferences);
-      socket.join(room.id);
+      const room = createRoom(currentPlayer.id, preferences);
+      socket.join(room.token);
       io.emit('room_update', getRooms());
     });
 
@@ -77,8 +78,8 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
         return;
       }
 
-      socket.join(room.id);
-      io.to(room.id).emit('room_update', room);
+      socket.join(room.token);
+      io.to(room.token).emit('room_update', room);
       io.emit('room_update', getRooms());
     });
 
@@ -87,7 +88,7 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
 
       if (leaveRoom(roomId, currentPlayer.id)) {
         socket.leave(roomId);
-        io.to(roomId).emit('room_update', getRooms().find(r => r.id === roomId));
+        io.to(roomId).emit('room_update', getRooms().find(r => r.token === roomId));
         io.emit('room_update', getRooms());
       }
     });
@@ -97,6 +98,16 @@ export const setupWebSocket = (httpServer: HTTPServer) => {
 
       updatePlayerStatus(currentPlayer.id, 'matched');
       io.to(roomId).emit('player_ready', { playerId: currentPlayer.id });
+    });
+
+    socket.on('game_message', ({ party, token, msg }) => {
+      console.log('game message', party, token, msg);
+      io.emit('game_message', { party, token, msg });
+    });
+
+    socket.on('peer', ({ iStarted }) => {
+      console.log('peer', iStarted);
+      io.emit('peer', { iStarted });
     });
 
     socket.on('chat_message', ({ roomId, text }: { roomId: string; text: string }) => {

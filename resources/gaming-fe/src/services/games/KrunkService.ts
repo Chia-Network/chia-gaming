@@ -55,15 +55,7 @@ export class KrunkService {
   }
 
   public async startGame(session: GameSession): Promise<GameState> {
-    if (session.players.length < 2 || session.players.length > 8) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Invalid number of players for Krunk',
-        400
-      );
-    }
-
-    const players = this.initializePlayers(session.players);
+    const players = this.initializePlayers([session.host, session.joiner]);
     const gameState: GameState = {
       id: uuidv4(),
       sessionId: session.id,
@@ -80,9 +72,9 @@ export class KrunkService {
     return gameState;
   }
 
-  private initializePlayers(players: Player[]): PlayerState[] {
+  private initializePlayers(players: string[]): PlayerState[] {
     return players.map(player => ({
-      playerId: player.id,
+      playerId: player,
       score: 0,
       hintsUsed: 0,
       correctGuesses: 0,

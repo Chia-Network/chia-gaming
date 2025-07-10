@@ -1,4 +1,5 @@
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react";
+import { waitFor } from "@testing-library/dom";
 import useGameSocket from "./useGameSocket";
 import io from "socket.io-client";
 
@@ -6,6 +7,8 @@ jest.mock("socket.io-client");
 
 describe("useGameSocket Hook", () => {
   let mockSocket: any;
+
+  function fakeDeliverMsg(msg: string) { };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -17,7 +20,7 @@ describe("useGameSocket Hook", () => {
       disconnect: jest.fn(),
     };
 
-    (io as jest.Mock).mockReturnValue(mockSocket);
+    (io as any).mockReturnValue(mockSocket);
   });
 
   afterEach(() => {
@@ -25,7 +28,7 @@ describe("useGameSocket Hook", () => {
   });
 
   test("should initialize with correct default values", () => {
-    const { result } = renderHook(() => useGameSocket());
+    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg, () => { }));
 
     expect(result.current.gameState).toBe("idle");
     expect(result.current.wagerAmount).toBe("");
@@ -39,44 +42,8 @@ describe("useGameSocket Hook", () => {
     expect(result.current.playerNumber).toBe(0);
   });
 
-  test("should handle handleFindOpponent correctly", async () => {
-    const { result } = renderHook(() => useGameSocket());
-
-    act(() => {
-      result.current.setWagerAmount("50");
-    });
-
-    await waitFor(() => expect(result.current.wagerAmount).toBe("50"));
-
-    act(() => {
-      result.current.handleFindOpponent();
-    });
-
-    expect(mockSocket.emit).toHaveBeenCalledWith("findOpponent", {
-      wagerAmount: "50",
-    });
-  });
-
-  test("should not find opponent if wager amount is empty", () => {
-    const alertMock = jest.spyOn(window, "alert").mockImplementation(() => {});
-
-    const { result } = renderHook(() => useGameSocket());
-
-    act(() => {
-      result.current.handleFindOpponent();
-    });
-
-    expect(alertMock).toHaveBeenCalledWith("Please enter a wager amount.");
-    expect(mockSocket.emit).not.toHaveBeenCalledWith(
-      "findOpponent",
-      expect.anything()
-    );
-
-    alertMock.mockRestore();
-  });
-
   test("should update gameState to searching on waiting event", () => {
-    const { result } = renderHook(() => useGameSocket());
+    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg, () => { }));
 
     const waitingCallback = mockSocket.on.mock.calls.find(
       (call: any) => call[0] === "waiting"
@@ -90,7 +57,7 @@ describe("useGameSocket Hook", () => {
   });
 
   test("should handle startGame event correctly", () => {
-    const { result } = renderHook(() => useGameSocket());
+    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg, () => { }));
 
     const startGameCallback = mockSocket.on.mock.calls.find(
       (call: any) => call[0] === "startGame"
@@ -121,7 +88,7 @@ describe("useGameSocket Hook", () => {
   });
 
   test("should handle action events correctly", () => {
-    const { result } = renderHook(() => useGameSocket());
+    const { result } = renderHook(() => useGameSocket(fakeDeliverMsg, () => { }));
 
     const startGameCallback = mockSocket.on.mock.calls.find(
       (call: any) => call[0] === "startGame"
@@ -184,111 +151,6 @@ describe("useGameSocket Hook", () => {
     });
 
     expect(result.current.log).toContain("Opponent made a move.");
-  });
-
-  test("should handle handleBet correctly", () => {
-    const { result } = renderHook(() => useGameSocket());
-
-    const startGameCallback = mockSocket.on.mock.calls.find(
-      (call: any) => call[0] === "startGame"
-    )[1];
-
-    act(() => {
-      startGameCallback({
-        room: "room-1",
-        playerHand: [],
-        opponentHand: [],
-        playerNumber: 1,
-        opponentWager: "50",
-        wagerAmount: "50",
-        currentTurn: 1,
-      });
-    });
-
-    act(() => {
-      result.current.handleBet(10);
-    });
-
-    expect(mockSocket.emit).toHaveBeenCalledWith("action", {
-      room: "room-1",
-      type: "bet",
-      amount: 10,
-      actionBy: 1,
-    });
-  });
-
-  test("should prevent handleBet when not player turn", () => {
-    const alertMock = jest.spyOn(window, "alert").mockImplementation(() => {});
-    const { result } = renderHook(() => useGameSocket());
-
-    const startGameCallback = mockSocket.on.mock.calls.find(
-      (call: any) => call[0] === "startGame"
-    )[1];
-
-    act(() => {
-      startGameCallback({
-        room: "room-1",
-        playerHand: [],
-        opponentHand: [],
-        playerNumber: 1,
-        opponentWager: "50",
-        wagerAmount: "50",
-        currentTurn: 2,
-      });
-    });
-
-    act(() => {
-      result.current.handleBet(10);
-    });
-
-    expect(alertMock).toHaveBeenCalledWith("It's not your turn.");
-    expect(mockSocket.emit).not.toHaveBeenCalledWith(
-      "action",
-      expect.anything()
-    );
-
-    alertMock.mockRestore();
-  });
-
-  test("should prevent handleBet when insufficient coins", async () => {
-    const alertMock = jest.spyOn(window, "alert").mockImplementation(() => {});
-    const { result } = renderHook(() => useGameSocket());
-
-    const startGameCallback = mockSocket.on.mock.calls.find(
-      (call: any) => call[0] === "startGame"
-    )?.[1];
-
-    expect(startGameCallback).toBeDefined();
-
-    act(() => {
-      startGameCallback({
-        room: "room-1",
-        playerHand: [],
-        opponentHand: [],
-        playerNumber: 1,
-        opponentWager: "50",
-        wagerAmount: "50",
-        currentTurn: 1,
-      });
-    });
-
-    act(() => {
-      result.current.setPlayerCoins(5);
-    });
-
-    await waitFor(() => expect(result.current.playerCoins).toBe(5));
-
-    act(() => {
-      result.current.handleBet(10);
-    });
-
-    expect(alertMock).toHaveBeenCalledWith("You don't have enough coins.");
-    expect(mockSocket.emit).not.toHaveBeenCalledWith(
-      "action",
-      expect.anything()
-    );
-
-    alertMock.mockRestore();
   });
 });
 

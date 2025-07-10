@@ -1,4 +1,4 @@
-import React, { cloneElement, useState } from "react";
+import React, { cloneElement, useState, useEffect, useCallback } from "react";
 import {
   Box,
   Button,
@@ -13,22 +13,40 @@ import {
 import useGameSocket from "../hooks/useGameSocket";
 import PlayerSection from "./PlayerSection";
 import OpponentSection from "./OpponentSection";
+import GameEndPlayer from "./GameEndPlayer";
 import GameLog from "./GameLog";
 import WaitingScreen from "./WaitingScreen";
 import LobbyScreen from "./LobbyScreen";
 import { useWalletConnect } from "../hooks/WalletConnectContext";
 import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
+import { useWasmBlob } from "../hooks/useWasmBlob";
 import Debug from "./Debug";
+import { getGameSelection } from '../util';
 
 const Game: React.FC = () => {
+  const gameSelection = getGameSelection();
   const { client, session, pairings, connect, disconnect } = useWalletConnect();
   const [command, setCommand] = useState(0);
   const { commands } = useRpcUi();
   const commandEntries = Object.entries(commands);
   const selectedCommandEntry = commandEntries[command];
-
-  console.log("WC", client, session, pairings, connect, disconnect);
+  const {
+    error,
+    gameConnectionState,
+    setState,
+    isPlayerTurn,
+    iStarted,
+    moveNumber,
+    handleMakeMove,
+    playerHand,
+    opponentHand,
+    playerNumber,
+    cardSelections,
+    setCardSelections,
+    outcome,
+    stopPlaying
+  } = useWasmBlob();
 
   const handleConnectWallet = () => {
     if (!client) throw new Error("WalletConnect is not initialized.");
@@ -42,52 +60,128 @@ const Game: React.FC = () => {
     }
   };
 
-  const {
-    gameState,
-    wagerAmount,
-    setWagerAmount,
-    opponentWager,
-    log,
-    playerHand,
-    opponentHand,
-    playerCoins,
-    opponentCoins,
-    isPlayerTurn,
-    playerNumber,
-    handleFindOpponent,
-    handleBet,
-    handleMakeMove,
-    handleEndTurn,
-  } = useGameSocket();
-
   const { wcInfo, setWcInfo } = useDebug();
 
-  if (gameState === "idle") {
+  const setStateFromMessage = useCallback((evt: any) => {
+    setState(evt.data);
+  }, []);
+
+  useEffect(function () {
+    window.addEventListener("message", setStateFromMessage);
+
+    return function () {
+      window.removeEventListener("message", setStateFromMessage);
+    };
+  });
+
+  // All early returns need to be after all useEffect, etc.
+  if (gameSelection === undefined) {
     return (
-      <LobbyScreen
-        wagerAmount={wagerAmount}
-        setWagerAmount={setWagerAmount}
-        handleFindOpponent={handleFindOpponent}
-      />
+      <LobbyScreen />
     );
   }
 
-  if (gameState === "searching") {
-    return <WaitingScreen />;
+  if (error) {
+    return (<div>{error}</div>);
+  }
+
+  if (gameConnectionState.stateIdentifier === 'starting') {
+    return <WaitingScreen stateName={gameConnectionState.stateIdentifier} messages={gameConnectionState.stateDetail}  />;
+  }
+
+  if (gameConnectionState.stateIdentifier === 'shutdown') {
+    return (
+      <Box p={4}>
+          <Typography variant="h4" align="center">
+              {`Cal Poker - shutdown succeeded`}
+          </Typography>
+      </Box>
+    );
+  }
+
+  console.log('game outcome', outcome);
+  let myWinOutcome = outcome?.my_win_outcome;
+  let colors = {
+    'win': 'green',
+    'lose': 'red',
+    'tie': '#ccc',
+    'success': '#363',
+    'warning': '#633',
+  };
+  let color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome ? myWinOutcome : isPlayerTurn ? "success" : "warning";
+  const iAmAlice = playerNumber === 2;
+  const myHandValue = iAmAlice ? outcome?.alice_hand_value : outcome?.bob_hand_value;
+  let banner = isPlayerTurn ? "Your turn" : "Opponent's turn";
+  if (myWinOutcome === 'win') {
+    banner = `You win ${myHandValue}`;
+  } else if (myWinOutcome === 'lose') {
+    banner = `You lose ${myHandValue}`;
+  } else if (myWinOutcome === 'tie') {
+    banner = `Game tied ${myHandValue}`;
+  }
+  const moveDescription = [
+    "Commit to random number",
+    "Choose 4 cards to discard",
+    "Finish game"
+  ][moveNumber];
+
+  if (outcome) {
+    return (
+      <div id='total'>
+        <div id='overlay'> </div>
+        <Box p={4}>
+          <Typography variant="h4" align="center">
+          {`Cal Poker - move ${moveNumber}`}
+          </Typography>
+          <br />
+          <Typography
+            variant="h6"
+            align="center"
+            color={colors[color]}
+          >
+            {banner}
+          </Typography>
+          <br />
+          <Box
+            display="flex"
+            flexDirection={{ xs: "column", md: "row" }}
+            alignItems="stretch"
+            gap={2}
+            mb={4}
+          >
+            <Box flex={1} display="flex" flexDirection="column">
+              <GameEndPlayer
+                iStarted={iStarted}
+                playerNumber={iStarted ? 1 : 2}
+                outcome={outcome}
+              />
+            </Box>
+            <Box flex={1} display="flex" flexDirection="column">
+                <GameEndPlayer
+                    iStarted={iStarted}
+                    playerNumber={iStarted ? 2 : 1}
+                    outcome={outcome}
+                />
+            </Box>
+          </Box>
+        </Box>
+      </div>
+    );
   }
 
   return (
     <Box p={4}>
       <Typography variant="h4" align="center">
-        Cal Poker
+      {`Cal Poker - move ${moveNumber}`}
       </Typography>
+      <Button onClick={stopPlaying} disabled={moveNumber !== 0}>Stop</Button>
       <br />
       <Typography
         variant="h6"
         align="center"
-        color={isPlayerTurn ? "success" : "warning"}
+        color={colors[color]}
       >
-        {isPlayerTurn ? "Your turn" : "Opponent's turn"}
+        {banner}
       </Typography>
       <br />
       <Box
@@ -100,29 +194,26 @@ const Game: React.FC = () => {
         <Box flex={1} display="flex" flexDirection="column">
           <PlayerSection
             playerNumber={playerNumber}
-            playerCoins={playerCoins}
-            wagerAmount={wagerAmount}
             playerHand={playerHand}
             isPlayerTurn={isPlayerTurn}
-            handleBet={handleBet}
+            moveNumber={moveNumber}
             handleMakeMove={handleMakeMove}
-            handleEndTurn={handleEndTurn}
+            cardSelections={cardSelections}
+            setCardSelections={setCardSelections}
           />
         </Box>
         <Box flex={1} display="flex" flexDirection="column">
-          <OpponentSection
-            playerNumber={playerNumber}
-            opponentCoins={opponentCoins}
-            opponentWager={opponentWager}
-            opponentHand={opponentHand}
-          />
+            <OpponentSection
+                playerNumber={(playerNumber == 1) ? 2 : 1}
+                opponentHand={opponentHand}
+            />
         </Box>
       </Box>
-      <GameLog log={log} />
+      <br/>
+      <Typography>{moveDescription}</Typography>
+      <br/>
+      <GameLog log={[]} />
       <Debug connectString={wcInfo} setConnectString={setWcInfo} />
-      <Typography variant="h4" align="center">
-        WC Client state: {client ? JSON.stringify(client.context) : "nil"}
-      </Typography>
       {session ? (
         <>
           <FormControl fullWidth sx={{ mt: 2 }}>

@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Player, Room, GameType, GameSession, MatchmakingPreferences } from '../types/lobby';
+import { Player, Room, GameType, GameTypes, GameSession, MatchmakingPreferences } from '../types/lobby';
 
 const ROOM_TTL = 10 * 60 * 1000;
 const CLEANUP_INTERVAL = 60 * 1000;
@@ -16,7 +16,6 @@ export const initLobby = () => {
 
 export const shutdownLobby = () => {
   clearInterval(cleanupInterval);
-  players.clear();
   rooms.clear();
   gameSessions.clear();
 };
@@ -24,51 +23,41 @@ export const shutdownLobby = () => {
 export const addPlayer = (player: Omit<Player, 'lastSeen' | 'status'>): Player => {
   const newPlayer: Player = {
     ...player,
-    lastSeen: Date.now(),
+    lastActive: Date.now(),
     status: 'waiting'
   };
-  players.set(player.id, newPlayer);
   return newPlayer;
 };
 
 export const removePlayer = (playerId: string): boolean => {
-  return players.delete(playerId);
-};
-
-export const updatePlayerStatus = (playerId: string, status: Player['status']): boolean => {
-  const player = players.get(playerId);
-  if (!player) return false;
-  player.status = status;
-  player.lastSeen = Date.now();
   return true;
 };
 
-export const createRoom = (host: Player, preferences: MatchmakingPreferences): Room => {
+export const updatePlayerStatus = (playerId: string, status: Player['status']): boolean => {
+  return true;
+};
+
+export const createRoom = (host: string, preferences: MatchmakingPreferences): Room => {
   const room: Room = {
-    id: uuidv4(),
-    gameType: preferences.gameType,
+    token: uuidv4(),
+    minPlayers: 0,
+    game: preferences.game,
     parameters: preferences.parameters,
     host,
-    players: [host],
     createdAt: Date.now(),
     expiresAt: Date.now() + ROOM_TTL,
     status: 'waiting',
-    maxPlayers: getMaxPlayers(preferences.gameType, preferences.parameters)
+    maxPlayers: getMaxPlayers(preferences.game, preferences.parameters),
+    chat: []
   };
-  rooms.set(room.id, room);
+  rooms.set(room.token, room);
   return room;
 };
 
 export const joinRoom = (roomId: string, player: Player): Room | null => {
   const room = rooms.get(roomId);
-  if (!room || room.status !== 'waiting' || room.players.length >= room.maxPlayers) {
+  if (!room || room.status !== 'waiting') {
     return null;
-  }
-
-  room.players.push(player);
-  if (room.players.length === room.maxPlayers) {
-    room.status = 'in_progress';
-    startGameSession(room);
   }
 
   return room;
@@ -78,26 +67,16 @@ export const leaveRoom = (roomId: string, playerId: string): boolean => {
   const room = rooms.get(roomId);
   if (!room) return false;
 
-  const playerIndex = room.players.findIndex(p => p.id === playerId);
-  if (playerIndex === -1) return false;
-
-  room.players.splice(playerIndex, 1);
-  
-  if (room.players.length === 0) {
-    rooms.delete(roomId);
-  } else if (playerId === room.host.id) {
-    room.host = room.players[0];
-  }
+  // Close room if the host or joiner leaves.
 
   return true;
 };
 
 export const findMatch = (player: Player, preferences: MatchmakingPreferences): Room | null => {
   const availableRooms = Array.from(rooms.values())
-    .filter(room => 
-      room.gameType === preferences.gameType &&
+    .filter(room =>
+      room.game === preferences.game &&
       room.status === 'waiting' &&
-      room.players.length < room.maxPlayers &&
       areParametersCompatible(room.parameters, preferences.parameters)
     );
 
@@ -111,11 +90,12 @@ export const findMatch = (player: Player, preferences: MatchmakingPreferences): 
 const startGameSession = (room: Room): GameSession => {
   const session: GameSession = {
     id: uuidv4(),
-    roomId: room.id,
-    players: [...room.players],
-    gameType: room.gameType,
+    roomId: room.token,
+    gameType: room.game,
+    host: room.host,
+    joiner: (room.joiner as string),
     parameters: room.parameters,
-    startTime: Date.now(),
+    startedAt: Date.now(),
     status: 'active'
   };
   gameSessions.set(session.id, session);
@@ -138,15 +118,7 @@ export const endGameSession = (sessionId: string, winnerId?: string): GameSessio
 };
 
 const getMaxPlayers = (gameType: GameType, parameters: any): number => {
-  switch (gameType) {
-    case GameType.CALIFORNIA_POKER:
-    case GameType.EXOTIC_POKER:
-      return parameters.maxPlayers;
-    case GameType.KRUNK:
-      return 2;
-    default:
-      return 2;
-  }
+  return 2;
 };
 
 const areParametersCompatible = (roomParams: any, playerParams: any): boolean => {
@@ -158,17 +130,12 @@ const cleanup = () => {
 
   for (const [roomId, room] of rooms.entries()) {
     if (now > room.expiresAt) {
+      // Remove players corresponding to .host and .joiner
       rooms.delete(roomId);
-    }
-  }
-
-  for (const [playerId, player] of players.entries()) {
-    if (now - player.lastSeen > ROOM_TTL) {
-      players.delete(playerId);
     }
   }
 };
 
 export const getPlayers = (): Player[] => Array.from(players.values());
 export const getRooms = (): Room[] => Array.from(rooms.values());
-export const getGameSessions = (): GameSession[] => Array.from(gameSessions.values()); 
+export const getGameSessions = (): GameSession[] => Array.from(gameSessions.values());

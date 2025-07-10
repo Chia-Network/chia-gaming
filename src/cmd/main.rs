@@ -1,5 +1,7 @@
 use exec::execvp;
 use std::collections::{BTreeMap, VecDeque};
+use std::convert::TryFrom;
+use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::stdin;
@@ -7,6 +9,7 @@ use std::mem::swap;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
 use clvmr::allocator::SExp;
@@ -27,169 +30,11 @@ use serde_json::{Map, Value};
 use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
-    AllocEncoder, Amount, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
-    Sha256Input, Timeout,
+    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
+    PuzzleHash, Sha256Input, SpendBundle, Timeout,
 };
-use chia_gaming::games::calpoker::{
-    decode_calpoker_readable, decode_readable_card_choices, CalpokerResult, Card,
-};
-use chia_gaming::games::poker_collection;
-use chia_gaming::peer_container::{
-    FullCoinSetAdapter, GameCradle, SynchronousGameCradle, SynchronousGameCradleConfig,
-};
-use chia_gaming::potato_handler::{GameStart, GameType, ToLocalUI};
+use chia_gaming::peer_container::{FullCoinSetAdapter, WatchReport};
 use chia_gaming::simulator::Simulator;
-
-#[derive(Debug)]
-struct UIReceiver {
-    received_moves: usize,
-    our_readable_move: Vec<u8>,
-    remote_message: ReadableMove,
-    opponent_readable_move: ReadableMove,
-}
-
-impl UIReceiver {
-    fn new(allocator: &mut AllocEncoder) -> Self {
-        let nil_readable = ReadableMove::from_nodeptr(allocator.encode_atom(&[]).unwrap());
-        UIReceiver {
-            received_moves: 0,
-            our_readable_move: Vec::default(),
-            remote_message: nil_readable.clone(),
-            opponent_readable_move: nil_readable,
-        }
-    }
-}
-
-impl ToLocalUI for UIReceiver {
-    fn self_move(&mut self, _id: &GameID, readable: &[u8]) -> Result<(), Error> {
-        self.our_readable_move = readable.to_vec();
-        Ok(())
-    }
-
-    fn opponent_moved(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        _id: &GameID,
-        readable: ReadableMove,
-    ) -> Result<(), Error> {
-        self.received_moves += 1;
-        self.our_readable_move = Vec::default();
-        self.opponent_readable_move = readable;
-        Ok(())
-    }
-
-    fn game_message(
-        &mut self,
-        _allocator: &mut AllocEncoder,
-        _id: &GameID,
-        readable: ReadableMove,
-    ) -> Result<(), Error> {
-        self.remote_message = readable;
-        Ok(())
-    }
-
-    fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
-        todo!();
-    }
-
-    fn shutdown_complete(&mut self, _reward_coin_string: &CoinString) -> Result<(), Error> {
-        todo!();
-    }
-
-    fn going_on_chain(&mut self) -> Result<(), Error> {
-        todo!();
-    }
-}
-
-#[derive(Debug, Clone)]
-enum IncomingAction {
-    Word(Vec<u8>),
-    Picks(Vec<bool>),
-    Finish,
-}
-
-//
-// player, received moves, incoming actions
-//
-// 0, 0, 0 -> BeforeAliceWord
-// 0, 0, 1 -> AfterAliceWord
-// 0, 1, 1 -> BeforeAlicePicks
-// 0, 1, 2 -> AfterAlicePicks
-// 0, 2, 2 -> BeforeAliceFinish
-// 0, 2, 3 -> AliceEnd
-// 0, 3, 3 -> AliceEnd
-//
-// 1, 0, 0 -> BobStart
-// 1, 1, 0 -> BeforeBobWord
-// 1, 1, 1 -> AfterBobWord
-// 1, 2, 1 -> BeforeBobPicks
-// 1, 2, 2 -> AfterBobPicks
-// 1, 3, 2 -> BeforeBobFinish
-// 1, 3, 3 -> BobEnd
-//
-// Alice:
-//
-// If incoming_actions goes from == received_moves to > received_moves, then release a move.
-// If received_moves transitions to incoming_actions - 1, then release a move.
-//
-// Bob:
-//
-// If incoming_actions goes from < received_moves to = received_moves, then release a move.
-//
-#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
-enum PlayState {
-    BeforeAliceWord,
-    AfterAliceWord,
-    BeforeAlicePicks,
-    AfterAlicePicks,
-    BeforeAliceFinish,
-    AliceEnd,
-
-    BobWaiting,
-    BeforeBobWord,
-    AfterBobWord,
-    BeforeBobPicks,
-    AfterBobPicks,
-    BobEnd,
-}
-
-impl PlayState {
-    fn incr(&self) -> Self {
-        match self {
-            PlayState::BeforeAliceWord => PlayState::AfterAliceWord,
-            PlayState::AfterAliceWord => PlayState::BeforeAlicePicks,
-            PlayState::BeforeAlicePicks => PlayState::AfterAlicePicks,
-            PlayState::AfterAlicePicks => PlayState::BeforeAliceFinish,
-            PlayState::BeforeAliceFinish => PlayState::AliceEnd,
-            PlayState::AliceEnd => PlayState::AliceEnd,
-
-            PlayState::BobWaiting => PlayState::BeforeBobWord,
-            PlayState::BeforeBobWord => PlayState::AfterBobWord,
-            PlayState::AfterBobWord => PlayState::BeforeBobPicks,
-            PlayState::BeforeBobPicks => PlayState::AfterBobPicks,
-            PlayState::AfterBobPicks => PlayState::BobEnd,
-            PlayState::BobEnd => PlayState::BobEnd,
-        }
-    }
-}
-
-pub struct PerPlayerInfo {
-    player_id: bool,
-    local_ui: UIReceiver,
-    cradle: SynchronousGameCradle,
-    play_state: PlayState,
-    fund_coin: CoinString,
-    // Demonstration purposes: allows the optional message delivery to be gated.
-    allow_remote_message: bool,
-    incoming_actions: VecDeque<IncomingAction>,
-    num_incoming_actions: usize,
-    game_outcome: CalpokerResult,
-    known_cards: (Vec<Card>, Vec<Card>),
-}
 
 struct ReleaseObject<'a, T: Clone> {
     ob: T,
@@ -243,290 +88,39 @@ impl<V> HttpError<V> for Result<V, Error> {
     }
 }
 
-impl PerPlayerInfo {
-    fn new(
-        allocator: &mut AllocEncoder,
-        player_id: bool,
-        fund_coin: CoinString,
-        cradle: SynchronousGameCradle,
-        play_state: PlayState,
-        allow_remote_message: bool,
-    ) -> Self {
-        PerPlayerInfo {
-            player_id,
-            fund_coin,
-            cradle,
-            play_state,
-            local_ui: UIReceiver::new(allocator),
-            game_outcome: CalpokerResult::default(),
-            known_cards: (Vec::default(), Vec::default()),
-            incoming_actions: VecDeque::default(),
-            allow_remote_message,
-            num_incoming_actions: 0,
-        }
-    }
-
-    // Check whether the message we hold is non-nil and allow_remote_message is false.
-    fn gated_messages(&self, allocator: &mut AllocEncoder) -> usize {
-        if let SExp::Pair(_, _) = allocator
-            .allocator()
-            .sexp(self.local_ui.remote_message.to_nodeptr())
-        {
-            !self.allow_remote_message as usize
-        } else {
-            0
-        }
-    }
-
-    fn set_allow_messages(&mut self, new_auto: bool) {
-        self.allow_remote_message = new_auto;
-    }
-
-    fn enqueue_outbound_move(&mut self, incoming_action: IncomingAction) {
-        eprintln!("enqueue outbound move: {incoming_action:?}");
-        // Ensure we skip already made moves in case of multiple posts.
-        // We can make moves idempotent in this way.
-        match (self.num_incoming_actions, &incoming_action) {
-            (0, IncomingAction::Word(_)) => {}
-            (1, IncomingAction::Picks(_)) => {}
-            (2, IncomingAction::Finish) => {}
-            _ => {
-                return;
-            }
-        }
-        self.incoming_actions.push_back(incoming_action);
-        self.num_incoming_actions += 1;
-    }
-
-    fn player_cards_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
-        // See if we have enough info to get the cardlists.
-        let decode_input = if self.player_id && self.allow_remote_message {
-            // bob
-            self.local_ui.remote_message.clone()
-        } else if matches!(self.play_state, PlayState::BeforeBobPicks) {
-            self.local_ui.opponent_readable_move.clone()
-        } else {
-            // alice
-            self.local_ui.opponent_readable_move.clone()
-        };
-        let cardlist_result = decode_readable_card_choices(allocator, decode_input).ok();
-        if let Some(player_hands) = cardlist_result {
-            // make_cards
-            self.known_cards = player_hands.clone();
-            serde_json::to_value(player_hands).into_gen()
-        } else {
-            let empty_vec: Vec<(usize, usize)> = vec![];
-            serde_json::to_value(empty_vec).into_gen()
-        }
-    }
-
-    fn player_readable(&mut self, allocator: &mut AllocEncoder) -> Result<Value, Error> {
-        match &self.play_state {
-            PlayState::BeforeAlicePicks => self.player_cards_readable(allocator),
-            PlayState::AfterBobWord => self.player_cards_readable(allocator),
-            PlayState::BeforeBobPicks => self.player_cards_readable(allocator),
-            PlayState::AfterAlicePicks => serde_json::to_value(&self.game_outcome).into_gen(),
-            PlayState::BeforeAliceFinish => serde_json::to_value(&self.game_outcome).into_gen(),
-            PlayState::AliceEnd => serde_json::to_value(&self.game_outcome).into_gen(),
-            PlayState::BobEnd => serde_json::to_value(&self.game_outcome).into_gen(),
-            _ => Ok(Value::String("".to_string())),
-        }
-    }
-
-    fn pass_on_move<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        game_ids: &[GameID],
-    ) -> Result<(), Error> {
-        let mut g = if let Some(g) = ReleaseObject::new(&mut self.incoming_actions) {
-            g
-        } else {
-            return Ok(());
-        };
-
-        match g.value() {
-            IncomingAction::Word(hash) => {
-                if !matches!(
-                    self.play_state,
-                    PlayState::BeforeAliceWord | PlayState::BeforeBobWord
-                ) {
-                    return Ok(());
-                }
-
-                g.release();
-                self.play_state = self.play_state.incr();
-
-                let encoded_node = allocator.encode_atom(&hash).unwrap();
-                let encoded = node_to_bytes(allocator.allocator(), encoded_node).unwrap();
-
-                self.cradle.make_move(
-                    allocator,
-                    rng,
-                    &game_ids[0],
-                    encoded,
-                    Hash::from_slice(&hash),
-                )
-            }
-            IncomingAction::Picks(other_picks) => {
-                if !matches!(
-                    self.play_state,
-                    PlayState::BeforeAlicePicks | PlayState::BeforeBobPicks
-                ) {
-                    return Ok(());
-                }
-
-                g.release();
-                self.play_state = self.play_state.incr();
-
-                let encoded_node = other_picks.to_clvm(allocator).unwrap();
-                let encoded = node_to_bytes(allocator.allocator(), encoded_node).unwrap();
-                let new_entropy = rng.gen();
-                self.cradle
-                    .make_move(allocator, rng, &game_ids[0], encoded, new_entropy)
-            }
-            IncomingAction::Finish => {
-                if !matches!(self.play_state, PlayState::BeforeAliceFinish) {
-                    return Ok(());
-                }
-
-                g.release();
-                self.play_state = self.play_state.incr();
-                let new_entropy = rng.gen();
-                self.cradle
-                    .make_move(allocator, rng, &game_ids[0], vec![0x80], new_entropy)
-            }
-        }
-    }
-
-    fn report(&mut self, allocator: &mut AllocEncoder, auto: bool) -> Result<String, Error> {
-        let player_readable = self.player_readable(allocator)?;
-        serde_json::to_string(&PlayerResult {
-            can_move: self.cradle.handshake_finished(),
-            known_cards: self.known_cards.clone(),
-            received_moves: self.local_ui.received_moves,
-            state: format!("{:?}", self.play_state),
-            our_move: self.local_ui.our_readable_move.to_vec(),
-            auto,
-            readable: player_readable,
-            move_number: self.num_incoming_actions,
-            debug_state: format!("{:?}", self.local_ui),
-        })
-        .into_gen()
-    }
-
-    fn idle<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        game_ids: &[GameID],
-    ) -> Result<(), Error> {
-        let prev = self.play_state.clone();
-
-        match (self.local_ui.received_moves, &self.play_state) {
-            (1, PlayState::BobWaiting) => {
-                self.play_state = self.play_state.incr();
-            }
-            (1, PlayState::AfterAliceWord) => {
-                self.play_state = self.play_state.incr();
-            }
-            (2, PlayState::AfterBobWord) => {
-                self.play_state = self.play_state.incr();
-            }
-            (2, PlayState::AfterAlicePicks) => {
-                self.play_state = self.play_state.incr();
-            }
-            (2, PlayState::AfterBobPicks) => {
-                self.play_state = self.play_state.incr();
-            }
-            (_, PlayState::AliceEnd | PlayState::BobEnd) => {
-                if let Ok(res) = decode_calpoker_readable(
-                    allocator,
-                    self.local_ui.opponent_readable_move.to_nodeptr(),
-                    self.cradle.amount(),
-                    self.player_id,
-                ) {
-                    if res.raw_alice_selects != 0 {
-                        self.game_outcome = res;
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        if prev != self.play_state {
-            eprintln!(
-                "{} R {} transition {prev:?} to {:?}",
-                self.player_id, self.local_ui.received_moves, self.play_state
-            );
-        }
-
-        self.pass_on_move(allocator, rng, game_ids)
-    }
-}
-
 #[allow(dead_code)]
 struct GameRunner {
     allocator: AllocEncoder,
     rng: ChaCha8Rng,
 
-    game_type_map: BTreeMap<GameType, Program>,
-
     neutral_identity: ChiaIdentity,
+    identities: BTreeMap<String, String>,
+    pubkeys: BTreeMap<String, ChiaIdentity>,
 
     simulator: Simulator,
     coinset_adapter: FullCoinSetAdapter,
 
-    player_info: [PerPlayerInfo; 2],
-
-    game_ids: Vec<GameID>,
-
-    handshake_done: bool,
-    can_move: bool,
-    funded: bool,
-
-    tick_count: usize,
-
-    auto: bool,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct UpdateResult {
-    info: Value,
-}
-
-// TODO: Check if still using Serialize, Deserialize
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PlayerResult {
-    can_move: bool,
-    received_moves: usize,
-    known_cards: (Vec<Card>, Vec<Card>),
-    state: String,
-    auto: bool,
-    our_move: Vec<u8>,
-    readable: Value,
-    debug_state: String,
-    move_number: usize,
+    sim_record: BTreeMap<u64, WatchReport>,
 }
 
 #[derive(Debug, Clone)]
 enum WebRequest {
-    Idle,
     Reset,
-    Player(bool),
-    WordHash(bool, Vec<u8>),
-    Picks(bool, Vec<bool>),
-    FinishMove(bool),
-    SetAuto(bool),
-    AllowMessage,
+    Exit,
+    Register(String),                     // Register a user
+    GetCurrentPeak,                       // Ask for the current peak
+    GetBlockData(u64),                    // Get the additions and deletons from the given block
+    GetPuzzleAndSolution(String),         // Given a coin id, get the puzzle and solution
+    CreateSpendable(String, String, u64), // Use the named wallet to give n mojo to a target puzzle hash
+    Spend(String),                        // Perform this spend on the blockchain
+    WaitBlock,                            // Return when a new block arrives
 }
 
 type StringWithError = Result<String, Error>;
 
 lazy_static! {
     static ref ONE_REQUEST: Mutex<()> = Mutex::new(());
-    static ref MUTEX: Mutex<GameRunner> =
-        Mutex::new(GameRunner::new(Simulator::default(), FullCoinSetAdapter::default()).unwrap());
+    static ref PERFORM_REQUEST: Mutex<()> = Mutex::new(());
     static ref TO_WEB: (Mutex<Sender<WebRequest>>, Mutex<Receiver<WebRequest>>) = {
         let (tx, rx) = mpsc::channel();
         (tx.into(), rx.into())
@@ -542,109 +136,32 @@ lazy_static! {
 
 #[derive(Serialize)]
 struct GlobalInfo {
-    auto: bool,
     block_height: usize,
-    handshake_done: bool,
-    can_move: bool,
-    gated_messages: usize,
+}
+
+fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
+    hex::decode(hexstr).map_err(|e| Error::StrErr("not hex".to_string()))
 }
 
 impl GameRunner {
     fn new(simulator: Simulator, coinset_adapter: FullCoinSetAdapter) -> Result<Self, Error> {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
-        let game_type_map = poker_collection(&mut allocator);
 
         let neutral_pk: PrivateKey = rng.gen();
         let neutral_identity = ChiaIdentity::new(&mut allocator, neutral_pk).expect("should work");
 
-        let pk1: PrivateKey = rng.gen();
-        let id1 = ChiaIdentity::new(&mut allocator, pk1).expect("should work");
-        let pk2: PrivateKey = rng.gen();
-        let id2 = ChiaIdentity::new(&mut allocator, pk2).expect("should work");
-
-        // Give some money to the users.
-        simulator.farm_block(&id1.puzzle_hash);
-        simulator.farm_block(&id2.puzzle_hash);
-
-        let coins0 = simulator
-            .get_my_coins(&id1.puzzle_hash)
-            .expect("should work");
-        let coins1 = simulator
-            .get_my_coins(&id2.puzzle_hash)
-            .expect("should work");
-
-        // Make a 100 coin for each player (and test the deleted and created events).
-        let (parent_coin_0, _rest_0) = simulator
-            .transfer_coin_amount(&mut allocator, &id1, &id1, &coins0[0], Amount::new(100))
-            .expect("should work");
-        let (parent_coin_1, _rest_1) = simulator
-            .transfer_coin_amount(&mut allocator, &id2, &id2, &coins1[0], Amount::new(100))
-            .expect("should work");
-
         simulator.farm_block(&neutral_identity.puzzle_hash);
-
-        let cradle1 = SynchronousGameCradle::new(
-            &mut rng,
-            SynchronousGameCradleConfig {
-                game_types: game_type_map.clone(),
-                have_potato: true,
-                identity: &id1,
-                my_contribution: Amount::new(100),
-                their_contribution: Amount::new(100),
-                channel_timeout: Timeout::new(100),
-                reward_puzzle_hash: id1.puzzle_hash.clone(),
-                unroll_timeout: Timeout::new(5),
-            },
-        );
-        let cradle2 = SynchronousGameCradle::new(
-            &mut rng,
-            SynchronousGameCradleConfig {
-                game_types: game_type_map.clone(),
-                have_potato: false,
-                identity: &id2,
-                my_contribution: Amount::new(100),
-                their_contribution: Amount::new(100),
-                channel_timeout: Timeout::new(100),
-                reward_puzzle_hash: id2.puzzle_hash.clone(),
-                unroll_timeout: Timeout::new(5),
-            },
-        );
-        let game_ids = Vec::default();
-        let handshake_done = false;
-        let can_move = false;
-
-        let player1 = PerPlayerInfo::new(
-            &mut allocator,
-            false,
-            parent_coin_0.clone(),
-            cradle1,
-            PlayState::BeforeAliceWord,
-            false,
-        );
-        let player2 = PerPlayerInfo::new(
-            &mut allocator,
-            true,
-            parent_coin_1.clone(),
-            cradle2,
-            PlayState::BobWaiting,
-            false,
-        );
 
         Ok(GameRunner {
             allocator,
             rng,
-            game_type_map,
             neutral_identity,
             coinset_adapter,
             simulator,
-            game_ids,
-            handshake_done,
-            can_move,
-            funded: false,
-            auto: false,
-            tick_count: 0,
-            player_info: [player1, player2],
+            identities: BTreeMap::default(),
+            pubkeys: BTreeMap::default(),
+            sim_record: BTreeMap::default(),
         })
     }
 
@@ -659,191 +176,147 @@ impl GameRunner {
         (simulator, coinset_adapter)
     }
 
-    fn set_allow_messages(&mut self) {
-        self.player_info[0].set_allow_messages(true);
-        self.player_info[1].set_allow_messages(true);
+    fn reset_sim(&mut self) -> StringWithError {
+        let coinset_adapter = FullCoinSetAdapter::default();
+        let simulator = Simulator::default();
+        self.detach_simulator(simulator, coinset_adapter);
+        Ok("1\n".to_string())
     }
 
-    fn set_auto(&mut self, new_auto: bool) {
-        self.auto = new_auto;
-        if new_auto {
-            self.set_allow_messages();
-        }
-    }
-
-    fn info(&mut self) -> Value {
-        let p1_gated = self.player_info[0].gated_messages(&mut self.allocator);
-        let p2_gated = self.player_info[1].gated_messages(&mut self.allocator);
-        serde_json::to_value(GlobalInfo {
-            auto: self.auto,
-            block_height: self.coinset_adapter.current_height as usize,
-            handshake_done: self.handshake_done,
-            can_move: self.can_move,
-            gated_messages: p1_gated + p2_gated,
-        })
-        .unwrap()
-    }
-
-    // Produce the state result for when a move is possible.
-    fn move_state(&mut self) -> String {
-        serde_json::to_string(&UpdateResult { info: self.info() }).unwrap()
-    }
-
-    fn player(&mut self, id: bool) -> Result<String, Error> {
-        self.player_info[id as usize].report(&mut self.allocator, self.auto)
-    }
-
-    fn word_hash(&mut self, id: bool, hash: &[u8]) -> String {
-        self.player_info[id as usize].enqueue_outbound_move(IncomingAction::Word(hash.to_vec()));
-
-        self.move_state()
-    }
-
-    fn do_picks(&mut self, id: bool, picks: &[bool]) -> String {
-        self.player_info[id as usize].enqueue_outbound_move(IncomingAction::Picks(picks.to_vec()));
-        self.move_state()
-    }
-
-    fn finish_move(&mut self, id: bool) -> String {
-        self.player_info[id as usize].enqueue_outbound_move(IncomingAction::Finish);
-        self.move_state()
-    }
-
-    fn idle(&mut self) -> Result<String, Error> {
-        self.tick_count += 1;
-
-        if self.tick_count % 10 == 0 {
-            self.simulator
-                .farm_block(&self.neutral_identity.puzzle_hash);
-        }
-
-        let current_height = self.simulator.get_current_height();
-        let current_coins = self.simulator.get_all_coins().expect("should work");
+    fn chase_block(&mut self) -> Result<u64, Error> {
+        let new_height = self.simulator.get_current_height() as u64;
+        let new_coins = self.simulator.get_all_coins().into_gen()?;
         let watch_report = self
             .coinset_adapter
-            .make_report_from_coin_set_update(current_height as u64, &current_coins)
-            .expect("should work");
+            .make_report_from_coin_set_update(new_height, &new_coins)?;
+        self.sim_record.insert(new_height, watch_report);
+        Ok(new_height)
+    }
 
-        for i in 0..=1 {
-            self.player_info[i]
-                .cradle
-                .new_block(
-                    &mut self.allocator,
-                    &mut self.rng,
-                    current_height,
-                    &watch_report,
-                )
-                .expect("should work");
+    fn wait_block(&mut self) -> StringWithError {
+        self.simulator
+            .farm_block(&self.neutral_identity.puzzle_hash);
+        let new_height = self.chase_block()?;
+        Ok(format!("{}\n", new_height))
+    }
 
-            loop {
-                let result = self.player_info[i].cradle.idle(
-                    &mut self.allocator,
-                    &mut self.rng,
-                    &mut self.player_info[i].local_ui,
-                )?;
-                debug!(
-                    "cradle {i}: continue_on {} outbound {}",
-                    result.continue_on,
-                    result.outbound_messages.len()
-                );
-
-                for tx in result.outbound_transactions.iter() {
-                    let included_result = self
-                        .simulator
-                        .push_tx(&mut self.allocator, &tx.spends)
-                        .expect("should work");
-                    debug!("included_result {included_result:?}");
-                    assert_eq!(included_result.code, 1);
-                }
-
-                for msg in result.outbound_messages.iter() {
-                    self.player_info[i ^ 1]
-                        .cradle
-                        .deliver_message(msg)
-                        .expect("should work");
-                }
-
-                if !result.continue_on {
-                    break;
-                }
-            }
+    fn get_block_data(&self, block: u64) -> StringWithError {
+        if let Some(report) = self.sim_record.get(&block) {
+            let created: Vec<String> = report
+                .created_watched
+                .iter()
+                .map(|c| hex::encode(c.to_bytes()))
+                .collect();
+            let deleted: Vec<String> = report
+                .deleted_watched
+                .iter()
+                .map(|c| hex::encode(c.to_bytes()))
+                .collect();
+            let timed_out: Vec<String> = report
+                .timed_out
+                .iter()
+                .map(|c| hex::encode(c.to_bytes()))
+                .collect();
+            return Ok(format!("{{ \"created\": {created:?}, \"deleted\": {deleted:?}, \"timed_out\": {timed_out:?} }}\n"));
         }
 
-        if !self.funded {
-            // Give coins to the cradles.
-            self.player_info[0]
-                .cradle
-                .opening_coin(
-                    &mut self.allocator,
-                    &mut self.rng,
-                    self.player_info[0].fund_coin.clone(),
-                )
-                .expect("should work");
-            self.player_info[1]
-                .cradle
-                .opening_coin(
-                    &mut self.allocator,
-                    &mut self.rng,
-                    self.player_info[1].fund_coin.clone(),
-                )
-                .expect("should work");
+        Ok(format!("null\n"))
+    }
 
-            self.funded = true;
+    fn get_puzzle_and_solution(&self, coin: &str) -> StringWithError {
+        let bytes = hex_to_bytes(coin)?;
+        let coin_id = if bytes.len() > 32 {
+            let cs = CoinString::from_bytes(&bytes);
+            debug!("coin string: {cs:?}");
+            cs.to_coin_id()
+        } else {
+            CoinID::new(Hash::from_slice(&bytes))
+        };
 
-            return serde_json::to_string(&UpdateResult { info: self.info() }).into_gen();
-        }
-
-        if self.can_move {
-            for i in 0..=1 {
-                self.player_info[i].idle(&mut self.allocator, &mut self.rng, &self.game_ids)?;
-            }
-
-            return Ok(self.move_state());
-        }
-
-        if !self.handshake_done
-            && self.player_info[0].cradle.handshake_finished()
-            && self.player_info[1].cradle.handshake_finished()
+        if let Some((prog, sol)) = self
+            .simulator
+            .get_puzzle_and_solution(&coin_id)
+            .map_err(|e| Error::StrErr(format!("{e:?}")))?
         {
-            self.game_ids = self.player_info[0]
-                .cradle
-                .start_games(
-                    &mut self.allocator,
-                    &mut self.rng,
-                    true,
-                    &GameStart {
-                        amount: Amount::new(200),
-                        my_contribution: Amount::new(100),
-                        game_type: GameType(b"calpoker".to_vec()),
-                        timeout: Timeout::new(10),
-                        my_turn: true,
-                        parameters: vec![0x80],
-                    },
-                )
-                .expect("should run");
-
-            self.player_info[1]
-                .cradle
-                .start_games(
-                    &mut self.allocator,
-                    &mut self.rng,
-                    false,
-                    &GameStart {
-                        amount: Amount::new(200),
-                        my_contribution: Amount::new(100),
-                        game_type: GameType(b"calpoker".to_vec()),
-                        timeout: Timeout::new(10),
-                        my_turn: false,
-                        parameters: vec![0x80],
-                    },
-                )
-                .expect("should run");
-
-            self.can_move = true;
-            self.handshake_done = true;
+            return Ok(format!("[\"{}\",\"{}\"]\n", prog.to_hex(), sol.to_hex()));
         }
 
-        serde_json::to_string(&UpdateResult { info: self.info() }).into_gen()
+        Ok("null\n".to_string())
+    }
+
+    fn lookup_identity(&self, name: &str) -> Option<&ChiaIdentity> {
+        if let Some(pk) = self.identities.get(name) {
+            return self.pubkeys.get(pk);
+        } else if let Some(pki) = self.pubkeys.get(name) {
+            return Some(pki);
+        }
+
+        None
+    }
+
+    fn register(&mut self, name: &str) -> StringWithError {
+        let public_key = if let Some(identity) = self.lookup_identity(name) {
+            hex::encode(&identity.puzzle_hash.bytes())
+        } else {
+            let pk1: PrivateKey = self.rng.gen();
+            let identity = ChiaIdentity::new(&mut self.allocator, pk1)?;
+            self.simulator.farm_block(&identity.puzzle_hash);
+            self.chase_block()?;
+            let result = hex::encode(&identity.puzzle_hash.bytes());
+            self.identities.insert(name.to_string(), result.clone());
+            self.pubkeys.insert(result.clone(), identity);
+            result
+        };
+
+        Ok(format!("\"{public_key}\"\n"))
+    }
+
+    fn create_spendable(&mut self, who: &str, target: &str, amt: u64) -> StringWithError {
+        let target_ph_bytes: Vec<u8> =
+            hex::decode(&target).map_err(|_| Error::StrErr("bad target hex".to_string()))?;
+        let target_ph = PuzzleHash::from_hash(Hash::from_slice(&target_ph_bytes));
+        let identity = self.lookup_identity(who).cloned();
+        if let Some(identity) = identity {
+            let coins0 = self
+                .simulator
+                .get_my_coins(&identity.puzzle_hash)
+                .into_gen()?;
+            let coin_amt = Amount::new(amt);
+            for c in coins0.iter() {
+                if let Some((_, ph, amt)) = c.to_parts() {
+                    if amt >= coin_amt {
+                        let (parent_coin_0, _rest_0) = self.simulator.transfer_coin_amount(
+                            &mut self.allocator,
+                            &target_ph,
+                            &identity,
+                            c,
+                            coin_amt.clone(),
+                        )?;
+                        let parent_coin_bytes = parent_coin_0.to_bytes();
+                        self.wait_block()?;
+                        return Ok(format!("\"{}\"\n", hex::encode(&parent_coin_bytes)));
+                    }
+                }
+            }
+        }
+
+        Ok("null\n".to_string())
+    }
+
+    fn spend(&mut self, blob: &str) -> StringWithError {
+        let spend_program = Program::from_hex(&blob)?;
+        let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
+        let spend_bundle = SpendBundle::from_clvm(&mut self.allocator, spend_node)?;
+        debug!("spend with bundle {spend_bundle:?}");
+        let result = self
+            .simulator
+            .push_tx(&mut self.allocator, &spend_bundle.spends)
+            .into_gen()?;
+        let e_res = result
+            .e
+            .map(|e| format!("{e}"))
+            .unwrap_or_else(|| "null".to_string());
+        Ok(format!("[{},{e_res}]\n", result.code))
     }
 }
 
@@ -881,7 +354,11 @@ async fn index_css(response: &mut Response) -> Result<(), String> {
     get_file("resources/web/index.css", "text/css", response)
 }
 
-fn pass_on_request(wr: WebRequest) -> Result<String, Error> {
+fn pass_on_request(
+    req: &mut Request,
+    response: &mut Response,
+    wr: WebRequest,
+) -> Result<(), String> {
     let locked = ONE_REQUEST.lock().unwrap();
 
     {
@@ -893,51 +370,45 @@ fn pass_on_request(wr: WebRequest) -> Result<String, Error> {
     let result = (*from_web).recv().unwrap();
     drop(locked);
 
-    result
+    result.report_err().and_then(|r| {
+        cors_origin(req, response)?;
+
+        let response_bytes: Vec<u8> = r.bytes().collect();
+        response.replace_body(ResBody::Once(Bytes::from(response_bytes)));
+        Ok(())
+    })
 }
 
 #[handler]
-async fn idle(_req: &mut Request) -> Result<String, String> {
-    pass_on_request(WebRequest::Idle).report_err()
+async fn get_current_peak(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    pass_on_request(req, response, WebRequest::GetCurrentPeak)
 }
 
-fn get_arg_bytes(req: &mut Request) -> Result<Vec<u8>, Error> {
+fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
     let uri_string = req.uri().to_string();
-    if let Some(found_eq) = uri_string.bytes().position(|x| x == b'=') {
-        let arg: Vec<u8> = uri_string.bytes().skip(found_eq + 1).collect();
+    let want_string = format!("{name}=");
+    if let Some(found_eq) = uri_string.find(&want_string) {
+        let arg: String = uri_string
+            .chars()
+            .skip(found_eq + want_string.len())
+            .take_while(|c| *c != '&')
+            .collect();
         return Ok(arg);
     }
 
     Err(Error::StrErr("no argument".to_string()))
 }
 
-#[handler]
-async fn player(req: &mut Request) -> Result<String, String> {
-    let arg = get_arg_bytes(req).report_err()?;
-    let pid = if arg.is_empty() {
-        false
-    } else {
-        arg[0] == b'2'
-    };
-    pass_on_request(WebRequest::Player(pid)).report_err()
+fn get_arg_integer(req: &mut Request, name: &str) -> Result<u64, Error> {
+    let arg = get_arg_string(req, name)?;
+    arg.parse::<u64>()
+        .map_err(|e| Error::StrErr(format!("{name} is not an integer")))
 }
 
 #[handler]
-async fn word_hash(req: &mut Request) -> Result<String, String> {
-    let arg = get_arg_bytes(req).report_err()?;
-    if arg.is_empty() {
-        return Err("empty arg".to_string());
-    }
-    let player_id = arg[0] == b'2';
-    let hash = Sha256Input::Bytes(&arg[1..]).hash();
-    pass_on_request(WebRequest::WordHash(player_id, hash.bytes().to_vec())).report_err()
-}
-
-#[handler]
-async fn do_picks(req: &mut Request) -> Result<String, String> {
-    let arg = get_arg_bytes(req).report_err()?;
-    let bool_arg: Vec<bool> = arg.iter().skip(1).map(|b| *b == b'1').collect();
-    pass_on_request(WebRequest::Picks(arg[0] == b'2', bool_arg)).report_err()
+async fn get_block_data(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let arg = get_arg_integer(req, "block").report_err()?;
+    pass_on_request(req, response, WebRequest::GetBlockData(arg))
 }
 
 #[handler]
@@ -946,49 +417,65 @@ async fn exit(_req: &mut Request) -> Result<String, String> {
 }
 
 #[handler]
-async fn reset(_req: &mut Request) -> Result<String, String> {
-    pass_on_request(WebRequest::Reset).report_err()
+async fn reset(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    pass_on_request(req, response, WebRequest::Reset)
 }
 
 #[handler]
-async fn finish(req: &mut Request) -> Result<String, String> {
-    let arg = get_arg_bytes(req).report_err()?;
-    let player_id = if arg.is_empty() {
-        false
-    } else {
-        arg[0] == b'2'
-    };
-    pass_on_request(WebRequest::FinishMove(player_id)).report_err()
+async fn register(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let arg = get_arg_string(req, "name").report_err()?;
+    pass_on_request(req, response, WebRequest::Register(arg))
 }
 
 #[handler]
-fn set_auto(req: &mut Request) -> Result<String, String> {
-    let arg = get_arg_bytes(req).report_err()?;
-    let do_auto = if arg.is_empty() {
-        false
-    } else {
-        arg[0] == b'1'
-    };
-    pass_on_request(WebRequest::SetAuto(do_auto)).report_err()
+async fn get_peak(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    pass_on_request(req, response, WebRequest::GetCurrentPeak)
 }
 
 #[handler]
-fn allow_message(_req: &mut Request) -> Result<String, String> {
-    pass_on_request(WebRequest::AllowMessage).report_err()
+async fn wait_block(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    pass_on_request(req, response, WebRequest::WaitBlock)
 }
 
-fn reset_sim(sim: &mut GameRunner, auto: bool) -> Result<String, Error> {
-    let empty_simulator = Simulator::default();
-    let empty_coinset_adapter = FullCoinSetAdapter::default();
+#[handler]
+async fn get_puzzle_and_solution(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let arg = get_arg_string(req, "coin").report_err()?;
+    pass_on_request(req, response, WebRequest::GetPuzzleAndSolution(arg))
+}
 
-    let (simulator, adapter) = sim.detach_simulator(empty_simulator, empty_coinset_adapter);
+#[handler]
+async fn create_spendable(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let who = get_arg_string(req, "who").report_err()?;
+    let target = get_arg_string(req, "target").report_err()?;
+    let amount = get_arg_integer(req, "amount").report_err()?;
+    pass_on_request(
+        req,
+        response,
+        WebRequest::CreateSpendable(who, target, amount),
+    )
+}
 
-    let mut new_game = GameRunner::new(simulator, adapter)?;
-    new_game.set_auto(auto);
+#[handler]
+async fn spend(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let blob = get_arg_string(req, "blob").report_err()?;
+    pass_on_request(req, response, WebRequest::Spend(blob))
+}
 
-    // Ensure we can continue from the same simulator.
-    swap(sim, &mut new_game);
-    Ok("{}".to_string())
+fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let origin_header: Option<String> = req.header("Origin");
+    if let Some(origin) = origin_header {
+        response
+            .add_header("Access-Control-Allow-Origin", origin, true)
+            .map_err(|e| format!("{e:?}"))?;
+    }
+    Ok(())
+}
+
+#[handler]
+async fn cors(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    cors_origin(req, response)?;
+    response.replace_body(ResBody::Once(Bytes::from(Vec::new())));
+    Ok(())
 }
 
 fn detect_run_as_python(args: &[String]) -> bool {
@@ -1029,46 +516,66 @@ fn main() {
             .push(Router::with_path("player.js").get(player_js))
             .push(Router::with_path("exit").post(exit))
             .push(Router::with_path("reset").post(reset))
-            .push(Router::with_path("idle.json").post(idle))
-            .push(Router::with_path("player.json").post(player))
-            .push(Router::with_path("word_hash").post(word_hash))
-            .push(Router::with_path("picks").post(do_picks))
-            .push(Router::with_path("set_auto").post(set_auto))
-            .push(Router::with_path("allow_message").post(allow_message))
-            .push(Router::with_path("finish").post(finish));
+            .push(Router::with_path("register").options(cors))
+            .push(Router::with_path("register").post(register))
+            .push(Router::with_path("get_peak").options(cors))
+            .push(Router::with_path("get_peak").post(get_peak))
+            .push(Router::with_path("get_block_data").options(cors))
+            .push(Router::with_path("get_block_data").post(get_block_data))
+            .push(Router::with_path("wait_block").options(cors))
+            .push(Router::with_path("wait_block").post(wait_block))
+            .push(Router::with_path("get_puzzle_and_solution").options(cors))
+            .push(Router::with_path("get_puzzle_and_solution").post(get_puzzle_and_solution))
+            .push(Router::with_path("spend").options(cors))
+            .push(Router::with_path("spend").post(spend))
+            .push(Router::with_path("create_spendable").options(cors))
+            .push(Router::with_path("create_spendable").post(create_spendable));
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
         let s = std::thread::spawn(move || {
-            {
-                let mut locked = MUTEX.lock().unwrap();
-                (*locked).set_auto(auto);
-            }
+            let mut simulator = Simulator::default();
+            let coinset_adapter = FullCoinSetAdapter::default();
+            let mut game_runner = GameRunner::new(simulator, coinset_adapter)
+                .map_err(|e| format!("{e}"))
+                .unwrap();
 
             loop {
-                let mut locked = MUTEX.lock().unwrap();
+                let mut locked = PERFORM_REQUEST.lock().unwrap();
+
                 let request = {
                     let channel = TO_WEB.1.lock().unwrap();
                     (*channel).recv().unwrap()
                 };
 
-                debug!("request {request:?}");
+                if !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
+                    debug!("request {request:?}");
+                }
                 let result = {
                     match request {
-                        WebRequest::Idle => (*locked).idle(),
-                        WebRequest::Player(id) => (*locked).player(id),
-                        WebRequest::WordHash(id, hash) => Ok((*locked).word_hash(id, &hash)),
-                        WebRequest::Picks(id, picks) => Ok((*locked).do_picks(id, &picks)),
-                        WebRequest::FinishMove(id) => Ok((*locked).finish_move(id)),
-                        WebRequest::Reset => reset_sim(&mut locked, auto),
-                        WebRequest::AllowMessage => {
-                            (*locked).set_allow_messages();
-                            Ok("{}".to_string())
+                        WebRequest::Register(name) => game_runner.register(&name),
+                        WebRequest::GetCurrentPeak => {
+                            let result = game_runner.simulator.get_current_height();
+                            Ok(format!("{result}\n"))
                         }
-                        WebRequest::SetAuto(new_auto) => {
-                            auto = new_auto;
-                            (*locked).set_auto(auto);
-                            Ok("{}".to_string())
+                        WebRequest::GetBlockData(n) => game_runner.get_block_data(n),
+                        WebRequest::WaitBlock => {
+                            let result = game_runner.wait_block();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(Duration::from_millis(1000));
+                                let channel = FROM_WEB.0.lock().unwrap();
+                                (*channel).send(result).unwrap();
+                            });
+                            continue;
                         }
+                        WebRequest::GetPuzzleAndSolution(coin) => {
+                            game_runner.get_puzzle_and_solution(&coin)
+                        }
+                        WebRequest::CreateSpendable(who, target, amt) => {
+                            game_runner.create_spendable(&who, &target, amt)
+                        }
+                        WebRequest::Spend(blob) => game_runner.spend(&blob),
+                        WebRequest::Reset => game_runner.reset_sim(),
+                        _ => todo!(),
                     }
                 };
 
@@ -1082,8 +589,10 @@ fn main() {
         println!("port 5800.  press return to exit gracefully...");
         let t = std::thread::spawn(|| {
             let mut buffer = String::default();
-            stdin().read_line(&mut buffer).ok();
-            std::process::exit(0);
+            if !matches!(stdin().read_line(&mut buffer), Ok(0)) {
+                println!("simulator server stopping");
+                std::process::exit(0);
+            }
         });
 
         Server::new(acceptor).serve(router).await;

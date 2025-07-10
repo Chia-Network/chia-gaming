@@ -27,21 +27,15 @@ export class GameService {
       );
     }
 
-    if (room.players.length < room.minPlayers) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Not enough players to start the game',
-        400
-      );
-    }
-
     const session: GameSession = {
       id: uuidv4(),
-      roomId: room.id,
-      gameType: room.gameType,
-      players: room.players,
-      startedAt: new Date(),
-      status: 'in_progress'
+      roomId: room.token,
+      gameType: room.game,
+      host: room.host,
+      joiner: (room.joiner as string),
+      startedAt: Date.now(),
+      status: 'in_progress',
+      parameters: room.parameters
     };
 
     this.activeSessions.set(session.id, session);
@@ -98,15 +92,6 @@ export class GameService {
         ErrorCodes.LOBBY.GAME_IN_PROGRESS,
         'Game is not in progress',
         400
-      );
-    }
-
-    const player = session.players.find(p => p.id === playerId);
-    if (!player) {
-      throw new AppError(
-        ErrorCodes.LOBBY.PLAYER_NOT_FOUND,
-        'Player not found in game session',
-        404
       );
     }
 
