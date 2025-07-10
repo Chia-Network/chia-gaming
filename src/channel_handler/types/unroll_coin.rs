@@ -272,6 +272,7 @@ impl UnrollCoin {
     }
 }
 
+#[derive(Debug)]
 pub struct UnrollCoinConditionInputs {
     pub ref_pubkey: PublicKey,
     pub their_referee_puzzle_hash: PuzzleHash,

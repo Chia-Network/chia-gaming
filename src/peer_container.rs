@@ -149,12 +149,16 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
 #[derive(Default)]
 pub struct IdleResult {
     pub continue_on: bool,
+    pub finished: bool,
+    pub handshake_done: bool,
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
     pub opponent_move: Option<(GameID, usize, ReadableMove)>,
     pub game_finished: Option<(GameID, Amount)>,
     pub receive_error: Option<Error>,
+    pub action_queue: Vec<String>,
+    pub incoming_messages: Vec<String>,
     pub resync: Option<(usize, bool)>,
 }
 
@@ -229,6 +233,7 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
+        flags: u32,
     ) -> Result<Option<IdleResult>, Error>;
 
     /// Check whether we're on chain.
@@ -477,6 +482,7 @@ impl ToLocalUI for SynchronousGameCradleState {
         Ok(())
     }
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
+        debug!("cradle detected shutdown");
         self.shutdown = reward_coin_string.cloned();
         self.finished = true;
         Ok(())
@@ -541,6 +547,10 @@ impl SynchronousGameCradle {
 
     pub fn finished(&self) -> bool {
         self.state.finished
+    }
+
+    pub fn next_game_id(&mut self) -> Result<GameID, Error> {
+        self.peer.next_game_id()
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(
@@ -896,12 +906,29 @@ impl GameCradle for SynchronousGameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
         local_ui: &mut dyn ToLocalUI,
+        flags: u32,
     ) -> Result<Option<IdleResult>, Error> {
         if self.state.shutdown.is_some() {
             return Ok(None);
         }
 
-        let mut result = IdleResult::default();
+        let mut result = IdleResult {
+            finished: self.finished(),
+            ..IdleResult::default()
+        };
+
+        if (flags & 1) != 0 {
+            self.peer.examine_game_action_queue(|actions| {
+                actions.map(|a| format!("{a:?}")).collect::<Vec<String>>()
+            });
+        }
+        if (flags & 2) != 0 {
+            self.peer.examine_incoming_messages(|messages| {
+                messages.map(|m| format!("{m:?}")).collect::<Vec<String>>()
+            });
+        }
+
+        result.handshake_done = self.peer.handshake_done();
 
         swap(
             &mut result.outbound_transactions,

@@ -10,7 +10,7 @@ function rooted(name: string) {
 }
 
 function preset_file(name: string) {
-    deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
+  deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
 }
 
 class ChiaGame {
