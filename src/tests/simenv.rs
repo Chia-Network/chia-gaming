@@ -511,7 +511,7 @@ fn test_simulator_transfer_coin() {
     assert!(coins2_empty.is_empty());
     s.transfer_coin_amount(
         &mut allocator,
-        &identity2,
+        &identity2.puzzle_hash,
         &identity1,
         &coins1[0],
         Amount::new(100),

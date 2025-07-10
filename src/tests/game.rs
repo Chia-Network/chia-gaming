@@ -136,7 +136,7 @@ pub fn new_channel_handler_game<R: Rng>(
     // Spend coin1 to person 0 creating their_amount and change (u1).
     let (u1, _) = simulator.transfer_coin_amount(
         env.allocator,
-        &identities[0],
+        &identities[0].puzzle_hash,
         &identities[1],
         &coins[1][0],
         contributions[1].clone(),
@@ -146,7 +146,7 @@ pub fn new_channel_handler_game<R: Rng>(
     // Spend coin0 to person 0 creating my_amount and change (u0).
     let (u2, _) = simulator.transfer_coin_amount(
         env.allocator,
-        &identities[0],
+        &identities[0].puzzle_hash,
         &identities[0],
         &coins[0][0],
         contributions[0].clone(),
@@ -213,7 +213,7 @@ pub fn new_channel_handler_game<R: Rng>(
         .ch
         .send_potato_start_game(env, &[our_game_start])?;
 
-    let solidified_state =
+    let (_, solidified_state) =
         party
             .player(1)
             .ch
