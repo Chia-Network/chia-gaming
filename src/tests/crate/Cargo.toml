@@ -1,0 +1,18 @@
+[package]
+name = "chia_gaming_test"
+version = "0.0.0"
+authors = ["Adam Kelly <adam@chia.net>", "Art Yerkes <>", "Bram Cohen <>"]
+
+publish = false
+
+[lib]
+path = "test.rs"
+
+[dependencies]
+chia_gaming = { path = "../../..", default-features = false }
+pyo3 = { version = "0.20.0", features = ["auto-initialize"], optional = true }
+
+
+[features]
+default = ["sim-tests"]
+sim-tests = ["dep:pyo3"]
