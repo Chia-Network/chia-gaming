@@ -91,7 +91,7 @@ app.post('/lobby/generate-room', (req, res) => {
     parameters
   };
   rooms[token] = newRoom;
-  const secureUrl = `${req.protocol}://${req.get('host')}/join/${token}`;
+  const secureUrl = `${req.protocol}://${req.get('host')}/?join=${token}`;
   const result: GenerateRoomResult = { secureUrl, token };
   io.emit('room_update', newRoom);
   res.json(result);
@@ -111,17 +111,13 @@ app.post('/lobby/join-room', (req, res) => {
     return res.status(400).json({ error: 'Room is already full.' });
   }
   room.joiner = id;
-  room.target = games[room.game] + `&token=${token}&amount=${room.parameters.wagerAmount}`;
+  console.log('join room, target', games[room.game]);
+  room.target = `${games[room.game]}&token=${token}&amount=${room.parameters.wagerAmount}`;
 
   io.emit('room_update', room);
   res.json(room);
 });
 
-app.get('/join/:token', (req, res) => {
-  const params = req.params;
-  res.setHeader('Location', `${req.protocol}://${req.get('host')}/#token=${params.token}`);
-  res.status(302).end();
-});
 app.post('/lobby/join', (req, res) => {
   const { id, alias, parameters } = req.body;
   const result = joinLobby(id, alias, parameters);

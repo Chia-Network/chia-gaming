@@ -17,7 +17,8 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'", "https://explorer-api.walletconnect.com", "http://localhost:3000", "http://localhost:5800"],
       scriptSrc: ["'self'", "http://localhost:3001", "'wasm-unsafe-eval'", "'unsafe-inline'"],
-      connectSrc: ["'self'", "https://explorer-api.walletconnect.com", "http://localhost:3000", "http://localhost:5800"]
+      connectSrc: ["'self'", "https://explorer-api.walletconnect.com", "http://localhost:3000", "http://localhost:5800", "wss://relay.walletconnect.com", "https://verify.walletconnect.org", "https://verify.walletconnect.org", "https://api.coinset.org"],
+      frameAncestors: ["http://localhost:3000", "'self'"],
     }
   }
 }));

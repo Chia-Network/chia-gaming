@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome } from '../types/ChiaGaming';
+import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, BlockchainConnection, ChiaGame, CalpokerOutcome } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
+import { getBlockchainInterfaceSingleton } from './useFullNode';
 import { getSearchParams, useInterval, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -12,11 +13,10 @@ let blobSingleton: any = null;
 
 class WasmBlobWrapper {
   amount: number;
-  walletToken: string;
   wc: WasmConnection | undefined;
   rngSeed: string;
   sendMessage: (msg: string) => void;
-  blockchain: ExternalBlockchainInterface;
+  blockchain: BlockchainConnection;
   identity: IChiaIdentity | undefined;
   cradle: ChiaGame | undefined;
   uniqueId: string;
@@ -39,7 +39,7 @@ class WasmBlobWrapper {
   gameOutcome: CalpokerOutcome | undefined;
   stateChanger: (stateSettings: any) => void;
 
-  constructor(stateChanger: (stateSettings: any) => void, blockchain: ExternalBlockchainInterface, walletToken: string, uniqueId: string, amount: number, iStarted: boolean) {
+  constructor(stateChanger: (stateSettings: any) => void, blockchain: BlockchainConnection, uniqueId: string, amount: number, iStarted: boolean) {
     const deliverMessage = useCallback((msg: string) => {
       this.deliverMessage(msg);
     }, []);
@@ -52,7 +52,6 @@ class WasmBlobWrapper {
     this.uniqueId = uniqueId;
     this.rngSeed = this.uniqueId.substr(0, 8);
     this.sendMessage = sendMessage;
-    this.walletToken = walletToken;
     this.amount = amount;
     this.currentBlock = 0;
     this.blockchain = blockchain;
@@ -107,7 +106,7 @@ class WasmBlobWrapper {
   };
 
   getInitialBlock(): any {
-    return this.blockchain.getPeak().then(new_block_number => {
+    return this.blockchain.get_peak().then(new_block_number => {
       this.currentBlock = new_block_number;
       return {};
     });
@@ -310,7 +309,7 @@ class WasmBlobWrapper {
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
     return this.blockchain.
-      createSpendable(identity.puzzle_hash, this.amount).then(coin => {
+      create_spendable(identity.puzzle_hash, this.amount).then(coin => {
         if (!coin) {
           console.error('tried to create spendable but failed');
           return empty();
@@ -372,7 +371,7 @@ class WasmBlobWrapper {
       this.currentBlock = new_block_number;
     }
     let currentBlock = this.currentBlock;
-    return this.blockchain.getBlockData(currentBlock).then(block_data => {
+    return this.blockchain.get_block_data(currentBlock).then(block_data => {
       if (block_data) {
         console.log(currentBlock, block_data);
         this.cradle?.block_data(currentBlock, block_data);
@@ -620,15 +619,15 @@ class WasmBlobWrapper {
   }
 }
 
-function getBlobSingleton(stateChanger: (state: any) => void, blockchain: ExternalBlockchainInterface, walletToken: string, uniqueId: string, amount: number, iStarted: boolean) {
+function getBlobSingleton(stateChanger: (state: any) => void, uniqueId: string, amount: number, iStarted: boolean) {
   if (blobSingleton) {
     return blobSingleton;
   }
 
+  let blockchain = getBlockchainInterfaceSingleton();
   blobSingleton = new WasmBlobWrapper(
     stateChanger,
     blockchain,
-    walletToken,
     uniqueId,
     amount,
     iStarted
@@ -637,8 +636,6 @@ function getBlobSingleton(stateChanger: (state: any) => void, blockchain: Extern
 }
 
 export function useWasmBlob() {
-  const BLOCKCHAIN_SERVICE_URL = process.env.REACT_APP_BLOCKCHAIN_SERVICE_URL || 'http://localhost:5800';
-
   const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
   const [uniqueWalletConnectionId, setUniqueWalletConnectionId] = useState(uuidv4());
@@ -705,16 +702,19 @@ export function useWasmBlob() {
     });
   }, []);
 
-  const walletObject = new ExternalBlockchainInterface(
-    BLOCKCHAIN_SERVICE_URL,
-    searchParams.walletToken
-  );
+  useEffect(() => {
+    window.addEventListener('message', (e: any) => {
+      const key = e.message ? 'message' : 'data';
+      const data = e[key];
+      if (data.name === 'create_spendable') {
+        console.warn('create spendable:', data);
+      }
+    });
+  });
 
   const gameObject = uniqueId ?
     getBlobSingleton(
       stateChanger,
-      walletObject,
-      searchParams.walletToken,
       uniqueId,
       amount,
       iStarted
@@ -725,11 +725,6 @@ export function useWasmBlob() {
     gameObject?.makeMove(move);
   }, []);
 
-  useInterval(() => {
-    walletObject.waitBlock().then(new_block_number => {
-      gameObject?.waitBlock(new_block_number);
-    });
-  }, 5000);
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
     console.log('start loading wasm', gameObject);
     gameObject?.loadWasm(chia_gaming_init, cg);
