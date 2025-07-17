@@ -1,3 +1,4 @@
 resources/gaming-fe/node_modules
 target
 wasm/target
+node_modules
