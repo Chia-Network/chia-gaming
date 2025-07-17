@@ -20,8 +20,15 @@ RUN if $LOCAL_WASM_BUILD ; then (. $HOME/.cargo/env && cd /app/rust/wasm && wasm
 RUN mkdir -p /app/dist
 RUN cp /app/rust/wasm/pkg/chia_gaming_wasm_bg.wasm /app/dist/chia_gaming_wasm_bg.wasm
 RUN cp /app/rust/wasm/pkg/chia_gaming_wasm.js /app/dist/chia_gaming_wasm.js
-ADD resources/gaming-fe/dist /app/dist
-ADD resources/gaming-fe/public /app/public
+# Build the front-end / UI / UX
+COPY resources/gaming-fe /app/ux
+RUN  rm -rf /app/ux/dist /app/ux/node_modules
+RUN cd /app/ux && && npm run build
+# These two copies can be removed when we tell the rest of the app where it is built
+COPY /app/ux/dist /app/dist
+COPY /app/ux/public /app/public
+
+
 COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 ADD clsp /app/clsp
 COPY resources/gaming-fe/package.json /app/package.json
