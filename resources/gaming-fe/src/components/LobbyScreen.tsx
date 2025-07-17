@@ -153,6 +153,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
         <DialogContent>
           <TextField
             label="Game"
+            aria-label="game-id"
             fullWidth
             margin="normal"
             value={gameChoice}
@@ -160,6 +161,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
           />
           <TextField
             label="Wager (XCH)"
+            aria-label="game-wager"
             fullWidth
             type="number"
             margin="normal"
