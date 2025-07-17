@@ -19,17 +19,18 @@ ADD src /app/rust/src
 RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && cargo build --release --features=server,simulator && cp ./target/release/chia-gaming /app
 ADD wasm /app/rust/wasm
 RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --release --target=web
+
+#Stage front-end / UI / UX into the container
+COPY resources/gaming-fe /app
+
+# Place wasm backend in docker container
 RUN mkdir -p /app/dist
 RUN cp /app/rust/wasm/pkg/chia_gaming_wasm_bg.wasm /app/dist/chia_gaming_wasm_bg.wasm
 RUN cp /app/rust/wasm/pkg/chia_gaming_wasm.js /app/dist/chia_gaming_wasm.js
-# Build the front-end / UI / UX
-COPY resources/gaming-fe /app/ux
-#RUN  rm -rf /app/ux/dist /app/ux/node_modules # See .dockerignore
-RUN cd /app/ux && npm install
-RUN cd /app/ux && npm run build && ln -s /app/dist /app/ux/dist && ln -s /app/public /app/ux/public
-# These two copies can be removed when we tell the rest of the app where it is built
-#COPY /app/ux/dist /app/dist
-#COPY /app/ux/public /app/public
+
+# Build the front-end / UI / UX within the container env
+RUN cd /app && npm install
+RUN cd /app && npm run build
 
 COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 ADD clsp /app/clsp

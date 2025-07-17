@@ -275,3 +275,12 @@ jobs:
 
       - name: wasm tests
         run: cd wasm/tests && yarn test
+
+  build_docker_images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [build_and_test, build_npm]
+    steps:
+      - name: Building Docker Images
+        run: bash -x ./build-docker-images.sh
+
