@@ -3,10 +3,11 @@ mod map_m;
 use js_sys::{Array, Function, JsString, Object};
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
+use clvmr::run_program;
 use hex::FromHexError;
 use log::debug;
 
@@ -21,8 +22,8 @@ use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, GameID, Hash, IntoErr, PrivateKey, Program,
-    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, GameID, Hash, IntoErr, PrivateKey, Program,
+    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, chia_dialect
 };
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
@@ -112,6 +113,33 @@ struct JsCradle {
     allocator: AllocEncoder,
     rng: ChaCha8Rng,
     cradle: SynchronousGameCradle,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug)]
+struct JsWatchReport {
+    created_watched: Vec<String>,
+    deleted_watched: Vec<String>,
+    timed_out: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug)]
+struct JsCoin {
+    amount: u64,
+    parent_coin_info: String,
+    puzzle_hash: String,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug)]
+struct JsCoinSetSpend {
+    coin: JsCoin,
+    puzzle_reveal: String,
+    solution: String,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug)]
+struct JsCoinSetSpendBundle {
+    aggregated_signature: String,
+    coin_spends: Vec<JsCoinSetSpend>,
 }
 
 thread_local! {
@@ -356,6 +384,47 @@ fn watch_report_from_params(
             .iter()
             .cloned()
             .collect(),
+    })
+}
+
+fn coin_string_to_hex(cs: &CoinString) -> String {
+    let cs_bytes = cs.to_bytes();
+    hex::encode(&cs_bytes)
+}
+
+fn watch_report_to_js(watch_report: &WatchReport) -> JsWatchReport {
+    JsWatchReport {
+        timed_out: watch_report.timed_out.iter().map(coin_string_to_hex).collect(),
+        created_watched: watch_report.created_watched.iter().map(coin_string_to_hex).collect(),
+        deleted_watched: watch_report.deleted_watched.iter().map(coin_string_to_hex).collect()
+    }
+}
+
+fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<JsCoinSetSpendBundle, JsValue> {
+    let mut aggsig = Aggsig::default();
+    for cs in spend.spends.iter() {
+        aggsig += cs.bundle.signature.clone();
+    }
+    let mut coin_spends = Vec::new();
+    for s in spend.spends.iter() {
+        if let Some((parent, pph, amt)) = s.coin.to_parts() {
+            coin_spends.push(JsCoinSetSpend {
+                coin: JsCoin {
+                    amount: amt.to_u64(),
+                    parent_coin_info: format!("0x{}", hex::encode(&parent.bytes())),
+                    puzzle_hash: format!("0x{}", hex::encode(&pph.bytes()))
+                },
+                puzzle_reveal: format!("0x{}", s.bundle.puzzle.to_program().to_hex()),
+                solution: format!("0x{}", s.bundle.solution.p().to_hex())
+            });
+        } else {
+            return Err(JsValue::from_str(&format!("bad coin string {s:?}")));
+        }
+    }
+
+    Ok(JsCoinSetSpendBundle {
+        aggregated_signature: format!("0x{}", hex::encode(&aggsig.bytes())),
+        coin_spends
     })
 }
 
@@ -623,14 +692,14 @@ fn to_local_ui(callbacks: JsValue) -> Result<JsLocalUI, JsValue> {
     Ok(jslocalui)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct JsSpend {
     puzzle: String,
     solution: String,
     signature: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct JsCoinSpend {
     coin: String,
     bundle: JsSpend,
@@ -779,6 +848,72 @@ impl From<ChiaIdentity> for JsChiaIdentity {
             puzzle_hash: hex::encode(&value.puzzle_hash.bytes()),
         }
     }
+}
+
+fn check_for_hex(hex_with_prefix: &str) -> Result<Vec<u8>, JsValue> {
+    if hex_with_prefix.starts_with("0x") {
+        return hex::decode(&hex_with_prefix[2..]).into_js();
+    }
+
+    return hex::decode(hex_with_prefix).into_js();
+}
+
+#[wasm_bindgen]
+pub fn convert_coinset_org_block_spend_to_watch_report(
+    parent_coin_info: &str,
+    puzzle_hash: &str,
+    amount: u64,
+    puzzle_reveal: &str,
+    solution: &str
+) -> Result<JsValue, JsValue> {
+    let mut allocator = AllocEncoder::new();
+    let parent_coin_info_bytes = check_for_hex(parent_coin_info)?;
+    let puzzle_hash_bytes = check_for_hex(puzzle_hash)?;
+    let puzzle_reveal_bytes = check_for_hex(puzzle_reveal)?;
+    let solution_bytes = check_for_hex(solution)?;
+    let puzzle_reveal_prog = Program::from_bytes(&puzzle_reveal_bytes);
+    let solution_prog = Program::from_bytes(&solution_bytes);
+    let puzzle_reveal_node = puzzle_reveal_prog.to_nodeptr(&mut allocator).into_js()?;
+    let solution_node = solution_prog.to_nodeptr(&mut allocator).into_js()?;
+    let coinid_hash = Hash::from_slice(&parent_coin_info_bytes);
+    let parent_id = CoinID::new(coinid_hash);
+    let puzzle_hash = PuzzleHash::from_hash(Hash::from_slice(&puzzle_hash_bytes));
+    let coin_string = CoinString::from_parts(&parent_id, &puzzle_hash, &Amount::new(amount));
+    let parent_of_created = coin_string.to_coin_id();
+    let run_output = run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        puzzle_reveal_node,
+        solution_node,
+        0
+    ).into_gen().into_js()?;
+    let conditions = CoinCondition::from_nodeptr(
+        &mut allocator,
+        run_output.1
+    );
+    let mut watch_result = WatchReport::default();
+    watch_result.deleted_watched.insert(coin_string.clone());
+    for condition in conditions.into_iter() {
+        if let CoinCondition::CreateCoin(ph, amt) = condition {
+            let new_coin = CoinString::from_parts(
+                &parent_of_created,
+                &ph,
+                &amt
+            );
+            watch_result.created_watched.insert(new_coin);
+        }
+    }
+    Ok(serde_wasm_bindgen::to_value(&watch_report_to_js(&watch_result)).into_js()?)
+}
+
+#[wasm_bindgen]
+pub fn convert_spend_to_coinset_org(spend: &str) -> Result<JsValue, JsValue> {
+    let mut allocator = AllocEncoder::new();
+    let spend_bytes = hex::decode(spend).into_js()?;
+    let spend_program = Program::from_bytes(&spend_bytes);
+    let spend_node = spend_program.to_nodeptr(&mut allocator).into_js()?;
+    let spend = SpendBundle::from_clvm(&mut allocator, spend_node).into_js()?;
+    Ok(serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&spend)?).into_js()?)
 }
 
 #[wasm_bindgen]

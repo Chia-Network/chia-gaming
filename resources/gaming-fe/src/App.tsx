@@ -47,7 +47,7 @@ const App: React.FC = () => {
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
           <WalletConnectHeading client={client} session={session} pairings={pairings} connect={connect} disconnect={disconnect}/>
         </div>
-        <iframe style={{ display: 'flex', width: '100%', flexShrink: 1, flexGrow: 1, height: '100%' }} src={`?lobby=true&join=${params.join}`}></iframe>
+        <iframe id='subframe' style={{ display: 'flex', width: '100%', flexShrink: 1, flexGrow: 1, height: '100%' }} src={`?lobby=true&join=${params.join}`}></iframe>
       </div>
     );
   }
