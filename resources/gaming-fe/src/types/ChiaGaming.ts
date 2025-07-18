@@ -89,6 +89,7 @@ export interface WasmConnection {
     solution: string
   ) => any;
   convert_spend_to_coinset_org: (spend: string) => any;
+  convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: number) => string;
 
   // Game
   start_games: (cid: number, initiator: boolean, game: any) => any;

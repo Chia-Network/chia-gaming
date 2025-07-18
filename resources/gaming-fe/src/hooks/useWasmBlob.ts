@@ -72,7 +72,7 @@ class WasmBlobWrapper {
         const one_report = this.wc?.convert_coinset_org_block_spend_to_watch_report(
           block.coin.parent_coin_info,
           block.coin.puzzle_hash,
-          block.coin.amount,
+          block.coin.amount.toString(),
           block.puzzle_reveal,
           block.solution
         );
@@ -360,7 +360,21 @@ class WasmBlobWrapper {
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
     return this.blockchain.
-      create_spendable(identity.puzzle_hash, this.amount).then(coin => {
+      create_spendable(identity.puzzle_hash, this.amount).then((tx : any) => {
+        console.log('create_spendable returned', tx);
+        if (tx.transaction.additions.length < 1) {
+          console.error('create spendable with no outputs');
+          return empty();
+        }
+        let coin = null;
+        for (var i = 0; i < tx.transaction.additions.length; i++) {
+          let a = tx.transaction.additions[i];
+          console.log('check addition', a);
+          if (a.amount === this.amount) {
+            console.log('right amount use', a);
+            coin = this.wc?.convert_coinset_to_coin_string(a.parentCoinInfo, a.puzzleHash, a.amount.toString());
+          }
+        }
         if (!coin) {
           console.error('tried to create spendable but failed');
           return empty();

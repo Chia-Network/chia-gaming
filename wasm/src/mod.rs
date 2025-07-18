@@ -917,6 +917,21 @@ pub fn convert_spend_to_coinset_org(spend: &str) -> Result<JsValue, JsValue> {
 }
 
 #[wasm_bindgen]
+pub fn convert_coinset_to_coin_string(parent_coin_info: &str, puzzle_hash: &str, amount: u64) -> Result<String, JsValue> {
+    let parent_coin_bytes = check_for_hex(parent_coin_info)?;
+    let puzzle_hash_bytes = check_for_hex(puzzle_hash)?;
+    let parent_coin_info_hash = Hash::from_slice(&parent_coin_bytes);
+    let puzzle_hash_hash = Hash::from_slice(&puzzle_hash_bytes);
+    let coin_string = CoinString::from_parts(
+        &CoinID::new(parent_coin_info_hash),
+        &PuzzleHash::from_hash(puzzle_hash_hash),
+        &Amount::new(amount)
+    );
+    let coin_string_bytes = coin_string.to_bytes();
+    Ok(hex::encode(&coin_string_bytes))
+}
+
+#[wasm_bindgen]
 pub fn test_string() -> JsValue {
     JsValue::from_str("hi there")
 }

@@ -50,7 +50,7 @@ export class BlockchainInterface {
       const requestId = messageData.requestId;
       console.log('blockchain_reply', messageData);
       if (this.requests[requestId]) {
-        this.requests[requestId].complete(e);
+        this.requests[requestId].complete(messageData.result);
       } else {
         console.error('no such request id', requestId);
       }
@@ -80,8 +80,8 @@ export class BlockchainInterface {
         header_hash: header_hash
       })
     }).then(r => r.json());
-    console.log('br_spends', br_spends);
-    this.notify_block(this.at_block, br_spends);
+    console.log('br_spends', br_spends.block_spends);
+    this.notify_block(this.at_block, br_spends.block_spends);
   }
 
   async internalCheckPeak() {
@@ -112,6 +112,7 @@ export class BlockchainInterface {
       this.handlingEvent = true;
       try {
         const event = this.incomingEvents.shift();
+        console.log('full node: do event', event);
         await this.handleEvent(event);
       } catch (e) {
         console.log('incoming event failed', e);
@@ -175,8 +176,19 @@ export class BlockchainInterface {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: JSON.stringify(spend)
-    }).then(r => r.json());
+      body: JSON.stringify({ spend_bundle: spend })
+    }).then(r => r.json()).then(r => {
+      if (r.error && r.error.indexOf("UNKNOWN_UNSPENT") != -1) {
+        console.log('unknown unspent, retry in 60 seconds');
+        return new Promise((resolve, reject) => {
+          setTimeout(() => {
+            this.spend(spend).then(r => resolve(r)).catch(reject);
+          }, 60000);
+        });
+      }
+
+      return r;
+    });
   }
 }
 

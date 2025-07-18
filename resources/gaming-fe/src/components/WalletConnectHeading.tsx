@@ -27,6 +27,28 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   }, [expanded]);
   const { rpc } = useRpcUi();
 
+  function getWalletAddresses() {
+    return rpc.getWalletAddresses({}).catch((e) => {
+      console.error('retry getWalletAddress', e);
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          getWalletAddresses().catch(reject).then(resolve);
+        }, 1000);
+      });
+    })
+  }
+
+  function sendTransaction(data: any) {
+    return rpc.sendTransaction(data).catch((e) => {
+      console.error('retry sendTransaction', e);
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          sendTransaction(data).catch(reject).then(resolve);
+        }, 5000);
+      });
+    })
+  }
+
   useEffect(() => {
     function receivedWindowMessage(evt: any) {
       console.log('parent window received message', evt);
@@ -51,11 +73,11 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
 
       const subframe = document.getElementById('subframe');
       if (data.method === 'create_spendable') {
-        rpc.getWalletAddresses({}).then((wids) => {
+        getWalletAddresses().then((wids) => {
           console.warn('walletIds', wids);
           const targetXch = bech32m.encode(data.target, 'xch');
           console.warn('about to send transaction');
-          return rpc.sendTransaction({
+          return sendTransaction({
             walletId,
             amount: data.amt,
             fee: 0,
