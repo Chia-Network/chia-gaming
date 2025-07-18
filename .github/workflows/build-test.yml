@@ -238,8 +238,8 @@ jobs:
         # "+stable" flag is not supported here yet
         cargo test --features=sim-tests
 
-      - name: Build Docker Images
-        run: bash -x build-docker-images.sh
+    - name: Build Docker Images
+      run: bash -x build-docker-images.sh
 
   build_npm:
     name: Npm
