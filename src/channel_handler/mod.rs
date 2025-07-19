@@ -2219,11 +2219,7 @@ impl ChannelHandler {
             .filter_map(|c| {
                 if let CoinCondition::CreateCoin(ph, amt) = c {
                     if ph == &referee_puzzle_hash && amt > &Amount::default() {
-                        return Some(CoinString::from_parts(
-                            &coin_id.to_coin_id(),
-                            ph,
-                            amt
-                        ));
+                        return Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amt));
                     }
                 }
 

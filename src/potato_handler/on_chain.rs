@@ -127,7 +127,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
         if let Some(spend_bundle) =
             self.player_ch
-            .handle_reward_spends(env, coin_id, &conditions)?
+                .handle_reward_spends(env, coin_id, &conditions)?
         {
             system_interface.spend_transaction_and_add_fee(&spend_bundle)?;
         }
@@ -364,11 +364,15 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                     bundle: tx.bundle.clone(),
                 }];
 
-                let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, &tx.bundle.puzzle.to_program(), &tx.bundle.solution.p())?;
+                let conditions = CoinCondition::from_puzzle_and_solution(
+                    env.allocator,
+                    &tx.bundle.puzzle.to_program(),
+                    &tx.bundle.solution.p(),
+                )?;
 
                 if let Some(mut spend_bundle) =
                     self.player_ch
-                    .handle_reward_spends(env, coin_id, &conditions)?
+                        .handle_reward_spends(env, coin_id, &conditions)?
                 {
                     total_spends.append(&mut spend_bundle.spends);
                 }

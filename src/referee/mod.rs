@@ -425,7 +425,7 @@ impl RefereeByTurn {
             let output_coin_string = CoinString::from_parts(
                 &coin_string.to_coin_id(),
                 &puzzle.sha256tree(allocator),
-                &self.fixed().amount.clone()
+                &self.fixed().amount.clone(),
             );
             return Ok(Some(RefereeOnChainTransaction {
                 bundle: transaction_bundle,
