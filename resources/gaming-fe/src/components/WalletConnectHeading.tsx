@@ -20,12 +20,25 @@ import { useWalletConnect } from "../hooks/WalletConnectContext";
 const WalletConnectHeading: React.FC<any> = (args: any) => {
   const { client, session, pairings, connect, disconnect } = args;
   const { wcInfo, setWcInfo } = useDebug();
+  const [alreadyConnected, setAlreadyConnected] = useState(false);
   const [walletId, setWalletId] = useState(1);
+  const [walletIds, setWalletIds] = useState<any[]>([]);
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = useCallback(() => {
     setExpanded(!expanded);
   }, [expanded]);
   const { rpc } = useRpcUi();
+
+  function getWallets() {
+    return rpc.getWallets({includeData:true}).catch((e) => {
+      console.error('retry getWallets', e);
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          getWallets().catch(reject).then(resolve);
+        }, 1000);
+      });
+    });
+  }
 
   function getWalletAddresses() {
     return rpc.getWalletAddresses({}).catch((e) => {
@@ -36,6 +49,17 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
         }, 1000);
       });
     })
+  }
+
+  function getCurrentAddress() {
+    return rpc.getCurrentAddress({}).catch((e) => {
+      console.error('retry getCurrentAddress', e);
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          getCurrentAddress().catch(reject).then(resolve);
+        }, 1000);
+      });
+    });
   }
 
   function sendTransaction(data: any) {
@@ -73,9 +97,10 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
 
       const subframe = document.getElementById('subframe');
       if (data.method === 'create_spendable') {
-        getWalletAddresses().then((wids) => {
-          console.warn('walletIds', wids);
+        getCurrentAddress().then((ca) => {
+          console.warn('currentAddress', JSON.stringify(ca));
           const targetXch = bech32m.encode(data.target, 'xch');
+          const fromPuzzleHash = bech32m.decode(ca);
           console.warn('about to send transaction');
           return sendTransaction({
             walletId,
@@ -83,18 +108,18 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
             fee: 0,
             address: targetXch,
             waitForConfirmation: false
+          }).then((tx) => {
+            console.warn('create_spendable result', tx);
+            if (!subframe) {
+              console.error('no element named subframe');
+              return;
+            }
+            (subframe as any).contentWindow.postMessage({
+              name: 'blockchain_reply',
+              requestId: data.requestId,
+              result: { tx, fromPuzzleHash }
+            }, '*');
           });
-        }).then((tx) => {
-          console.warn('create_spendable result', tx);
-          if (!subframe) {
-            console.error('no element named subframe');
-            return;
-          }
-          (subframe as any).contentWindow.postMessage({
-            name: 'blockchain_reply',
-            requestId: data.requestId,
-            result: tx
-          }, '*');
         });
       }
     }
@@ -118,6 +143,13 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       connect();
     }
   };
+
+  if (!alreadyConnected && session) {
+    setAlreadyConnected(true);
+    getWallets().then(wallets => {
+      setWalletIds(wallets as any);
+    });
+  }
 
   const sessionConnected = session ? "connected" : "disconnected";
   const ifSession = session ? (

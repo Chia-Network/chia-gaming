@@ -15,6 +15,7 @@ export class BlockchainInterface {
   at_block: number;
   handlingEvent: boolean;
   incomingEvents: any[];
+  publicKey?: string;
   ws: any;
   notify_block: (peak: number, block: any[]) => void;
 

@@ -199,8 +199,8 @@ fn test_unroll_can_verify_own_signature() {
     };
 
     let inputs_1 = UnrollCoinConditionInputs {
-        ref_pubkey: public_key_1.clone(),
-        their_referee_puzzle_hash: ref_puzzle_hash_2.clone(),
+        reward_puzzle_hash: ref_puzzle_hash_1.clone(),
+        their_reward_puzzle_hash: ref_puzzle_hash_2.clone(),
         my_balance: Amount::new(0),
         their_balance: Amount::new(100),
         puzzle_hashes_and_amounts: vec![],
@@ -212,8 +212,8 @@ fn test_unroll_can_verify_own_signature() {
         .expect("should work");
 
     let inputs_2 = UnrollCoinConditionInputs {
-        ref_pubkey: public_key_2.clone(),
-        their_referee_puzzle_hash: ref_puzzle_hash_1.clone(),
+        reward_puzzle_hash: ref_puzzle_hash_2.clone(),
+        their_reward_puzzle_hash: ref_puzzle_hash_1.clone(),
         my_balance: inputs_1.their_balance.clone(),
         their_balance: inputs_1.my_balance.clone(),
         ..inputs_1

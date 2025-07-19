@@ -263,15 +263,6 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
     ) -> Result<PuzzleHash, Error>;
-
-    /// Return a transaction to spend a reward coin to a given target
-    fn spend_reward_coins<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        coin_string: &[CoinString],
-        target: &PuzzleHash,
-    ) -> Result<SpendRewardResult, Error>;
 }
 
 struct SynchronousGameCradleState {
@@ -761,21 +752,6 @@ impl GameCradle for SynchronousGameCradle {
             system_interface: &mut self.state,
         };
         self.peer.get_reward_puzzle_hash(&mut penv)
-    }
-
-    fn spend_reward_coins<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        coin_string: &[CoinString],
-        target: &PuzzleHash,
-    ) -> Result<SpendRewardResult, Error> {
-        let mut env = channel_handler_env(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
-        };
-        self.peer.spend_reward_coins(&mut penv, coin_string, target)
     }
 
     fn opening_coin<R: Rng>(

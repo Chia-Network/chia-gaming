@@ -360,8 +360,10 @@ class WasmBlobWrapper {
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
     return this.blockchain.
-      create_spendable(identity.puzzle_hash, this.amount).then((tx : any) => {
-        console.log('create_spendable returned', tx);
+      create_spendable(identity.puzzle_hash, this.amount).then((result: any) => {
+        const tx = result.tx;
+        const fromPuzzleHash = result.fromPuzzleHash;
+        console.log('create_spendable returned', fromPuzzleHash, tx);
         if (tx.transaction.additions.length < 1) {
           console.error('create spendable with no outputs');
           return empty();
@@ -390,7 +392,7 @@ class WasmBlobWrapper {
           timeout: 100,
           unroll_timeout: 100
         };
-        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount);
+        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount, fromPuzzleHash);
         this.storedMessages.forEach((m) => {
           this.cradle?.deliver_message(m);
         });

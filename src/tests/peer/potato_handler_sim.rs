@@ -857,26 +857,6 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
 
         for i in 0..=1 {
-            if cradles[i].handshake_finished() || cradles[i].finished() {
-                let reward_ph = cradles[i].get_reward_puzzle_hash(allocator, rng)?;
-                let reward_coins = simulator.get_my_coins(&reward_ph).into_gen()?;
-                debug!("{i} reward coins {reward_coins:?}");
-                // Spend the reward coin to the player.
-                if !reward_coins.is_empty() {
-                    let spends = cradles[i].spend_reward_coins(
-                        allocator,
-                        rng,
-                        &reward_coins,
-                        &identities[i].puzzle_hash,
-                    )?;
-                    let included = simulator
-                        .push_tx(allocator, &spends.coins_with_solutions)
-                        .into_gen()?;
-                    debug!("reward spends: {included:?}");
-                    assert_eq!(included.code, 1);
-                }
-            }
-
             if local_uis[i].go_on_chain {
                 // Perform on chain move.
                 // Turn off the flag to go on chain.

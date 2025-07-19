@@ -9,7 +9,7 @@ use rand::prelude::*;
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_hash_for_pk, unsafe_sign_partial,
+    private_to_public_key, unsafe_sign_partial,
 };
 use crate::common::types::{
     Aggsig, Amount, Error, IntoErr, Node, PrivateKey, PublicKey, PuzzleHash, Sha256tree,
@@ -179,16 +179,14 @@ impl UnrollCoin {
         let their_first_coin = (
             CREATE_COIN,
             (
-                inputs.their_referee_puzzle_hash.clone(),
+                inputs.their_reward_puzzle_hash.clone(),
                 (inputs.their_balance.clone(), ()),
             ),
         );
 
-        let standard_puzzle_hash_of_ref = puzzle_hash_for_pk(env.allocator, &inputs.ref_pubkey)?;
-
         let our_first_coin = (
             CREATE_COIN,
-            (standard_puzzle_hash_of_ref, (inputs.my_balance.clone(), ())),
+            (inputs.reward_puzzle_hash.clone(), (inputs.my_balance.clone(), ())),
         );
 
         let (start_coin_one, start_coin_two) = if self.started_with_potato {
@@ -274,8 +272,8 @@ impl UnrollCoin {
 
 #[derive(Debug)]
 pub struct UnrollCoinConditionInputs {
-    pub ref_pubkey: PublicKey,
-    pub their_referee_puzzle_hash: PuzzleHash,
+    pub reward_puzzle_hash: PuzzleHash,
+    pub their_reward_puzzle_hash: PuzzleHash,
     pub my_balance: Amount,
     pub their_balance: Amount,
     pub puzzle_hashes_and_amounts: Vec<(PuzzleHash, Amount)>,

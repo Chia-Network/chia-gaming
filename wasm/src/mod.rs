@@ -23,8 +23,9 @@ use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, GameID, Hash, IntoErr, PrivateKey, Program,
-    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, chia_dialect
+    PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, chia_dialect
 };
+use chia_gaming::common::standard_coin::{get_standard_coin_puzzle, puzzle_hash_for_pk};
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
@@ -358,10 +359,12 @@ fn coinstring_to_hex(cs: &CoinString) -> String {
 #[wasm_bindgen]
 pub fn opening_coin(cid: i32, hex_coinstring: &str) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
+        let coin_string = hex_to_coinstring(hex_coinstring)?;
+        debug!("opening coin: decoded string {coin_string:?}");
         cradle.cradle.opening_coin(
             &mut cradle.allocator,
             &mut cradle.rng,
-            hex_to_coinstring(hex_coinstring)?,
+            coin_string
         )
     })
 }
@@ -438,6 +441,7 @@ pub fn new_block(
 ) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
         let watch_report = watch_report_from_params(additions, removals, timed_out)?;
+        debug!("watch report: {height} {watch_report:?}");
         cradle.cradle.new_block(
             &mut cradle.allocator,
             &mut cradle.rng,
@@ -929,6 +933,19 @@ pub fn convert_coinset_to_coin_string(parent_coin_info: &str, puzzle_hash: &str,
     );
     let coin_string_bytes = coin_string.to_bytes();
     Ok(hex::encode(&coin_string_bytes))
+}
+
+#[wasm_bindgen]
+pub fn convert_chia_public_key_to_puzzle_hash(public_key: &str) -> Result<String, JsValue> {
+    let mut allocator = AllocEncoder::new();
+    debug!("decode public key {public_key:?}");
+    let public_key_bytes = check_for_hex(public_key)?;
+    debug!("public key bytes {public_key_bytes:?}");
+    let pubkey = PublicKey::from_slice(&public_key_bytes).into_js()?;
+    debug!("decoded public key {pubkey:?}");
+    let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &pubkey).into_js()?;
+    debug!("use puzzle hash {puzzle_hash:?}");
+    Ok(hex::encode(&puzzle_hash.bytes()))
 }
 
 #[wasm_bindgen]
