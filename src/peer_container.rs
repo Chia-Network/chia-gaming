@@ -14,7 +14,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
-    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
+    Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, GameStart, GameType,

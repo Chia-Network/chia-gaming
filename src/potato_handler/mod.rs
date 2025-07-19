@@ -21,7 +21,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
     GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
+    Sha256tree, Spend, SpendBundle, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -2144,13 +2144,10 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         if let Some((puzzle, solution)) = puzzle_and_solution {
             let player_ch = self.channel_handler_mut()?;
             let (env, system_interface) = penv.env();
-            let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+            let conditions =
+                CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
 
-            if let Some(spend_bundle) = player_ch.handle_reward_spends(
-                env,
-                coin_id,
-                &conditions
-            )? {
+            if let Some(spend_bundle) = player_ch.handle_reward_spends(env, coin_id, &conditions)? {
                 system_interface.spend_transaction_and_add_fee(&spend_bundle)?;
             }
         }

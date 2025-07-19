@@ -420,10 +420,12 @@ impl RefereeByTurn {
                 solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
                 signature,
             };
+            // We want to watch for this coin to be deleted as it's invoked
+            // as a timeout.
             let output_coin_string = CoinString::from_parts(
                 &coin_string.to_coin_id(),
                 &puzzle.sha256tree(allocator),
-                &my_mover_share,
+                &self.fixed().amount.clone()
             );
             return Ok(Some(RefereeOnChainTransaction {
                 bundle: transaction_bundle,

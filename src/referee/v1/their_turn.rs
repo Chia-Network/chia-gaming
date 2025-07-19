@@ -20,7 +20,8 @@ use crate::common::types::{
     IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult, RMFixed,
+    GameMoveDetails, GameMoveStateInfo, RMFixed, SlashOutcome, TheirTurnCoinSpentResult,
+    TheirTurnMoveResult,
 };
 use crate::referee::v1::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
@@ -791,11 +792,15 @@ impl TheirTurnReferee {
         puzzle: &Puzzle,
         evidence: Evidence,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        debug!("slash spend: parent coin is {coin_string:?} => {:?}", self.fixed.reward_puzzle_hash);
+        debug!(
+            "slash spend: parent coin is {coin_string:?} => {:?}",
+            self.fixed.reward_puzzle_hash
+        );
         let slash_conditions = [(
             CREATE_COIN,
-            (self.fixed.reward_puzzle_hash.clone(),
-             (self.fixed.amount.clone(), ())
+            (
+                self.fixed.reward_puzzle_hash.clone(),
+                (self.fixed.amount.clone(), ()),
             ),
         )]
         .to_clvm(allocator)
@@ -830,8 +835,11 @@ impl TheirTurnReferee {
         }));
         let slashing_coin_solution = solution.to_nodeptr(allocator, &self.fixed)?;
 
-        let coin_string_of_output_coin =
-            CoinString::from_parts(&coin_string.to_coin_id(), &self.fixed.reward_puzzle_hash, &reward_amount);
+        let coin_string_of_output_coin = CoinString::from_parts(
+            &coin_string.to_coin_id(),
+            &self.fixed.reward_puzzle_hash,
+            &reward_amount,
+        );
 
         Ok(TheirTurnCoinSpentResult::Slash(Box::new(
             SlashOutcome::Reward {

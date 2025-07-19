@@ -16,8 +16,8 @@ use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, GameMoveWireData
 use crate::referee::v1::their_turn::{TheirTurnReferee, TheirTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, InternalStateUpdateArgs,
-    OnChainRefereeMoveData, OnChainRefereeSlashData, RefereePuzzleArgs,
-    StateUpdateMoveArgs, StateUpdateResult,
+    OnChainRefereeMoveData, OnChainRefereeSlashData, RefereePuzzleArgs, StateUpdateMoveArgs,
+    StateUpdateResult,
 };
 use crate::referee::v1::RefereeByTurn;
 

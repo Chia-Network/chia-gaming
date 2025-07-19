@@ -14,8 +14,8 @@ use crate::common::types::{
     Sha256Input, Sha256tree, Spend,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
-    TheirTurnCoinSpentResult, TheirTurnMoveResult, RMFixed,
+    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed, RefereeOnChainTransaction,
+    TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 use crate::referee::v1::my_turn::MyTurnReferee;
 use crate::referee::v1::their_turn::TheirTurnReferee;

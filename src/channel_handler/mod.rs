@@ -37,7 +37,8 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID,
     CoinSpend, CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey,
-    Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
+    Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendBundle, SpendRewardResult,
+    Timeout,
 };
 use crate::potato_handler::types::GameAction;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
@@ -2213,40 +2214,31 @@ impl ChannelHandler {
         let referee_public_key = private_to_public_key(&referee_private_key);
         let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
 
-        let pay_to_me: Vec<CoinString> = conditions.iter().filter_map(|c| {
-            if let CoinCondition::CreateCoin(ph, amt) = c {
-                if ph == &referee_puzzle_hash && amt > &Amount::default() {
-                    return Some(CoinString::from_parts(
-                        &coin_id.to_coin_id(),
-                        ph,
-                        amt
-                    ));
+        let pay_to_me: Vec<CoinString> = conditions
+            .iter()
+            .filter_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    if ph == &referee_puzzle_hash && amt > &Amount::default() {
+                        return Some(CoinString::from_parts(
+                            &coin_id.to_coin_id(),
+                            ph,
+                            amt
+                        ));
+                    }
                 }
-            }
 
-            None
-        }).collect();
+                None
+            })
+            .collect();
 
-        let is_timeout = true; /*conditions.iter().find(|c| {
-            if let CoinCondition::Rem(bs) = c {
-                return bs.len() == 1 && bs[0].is_empty()
-            }
-
-            return false;
-        }).is_some();*/
-
-        if is_timeout && !pay_to_me.is_empty() {
-            debug!("{conditions:?} is_timeout {is_timeout:?} output {pay_to_me:?}");
+        if !pay_to_me.is_empty() {
+            debug!("handle rewards {conditions:?} output {pay_to_me:?}");
             // Check for conditions that pay us
             let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
-            let spend_rewards = self.spend_reward_coins(
-                env,
-                &pay_to_me,
-                &reward_puzzle_hash
-            )?;
+            let spend_rewards = self.spend_reward_coins(env, &pay_to_me, &reward_puzzle_hash)?;
             return Ok(Some(SpendBundle {
                 name: Some("spend reward".to_string()),
-                spends: spend_rewards.coins_with_solutions
+                spends: spend_rewards.coins_with_solutions,
             }));
         }
 
