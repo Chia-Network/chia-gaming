@@ -2141,7 +2141,20 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             return on_chain.handle_game_coin_spent(penv, coin_id, p, s);
         }
 
-        let player_ch = self.channel_handler()?;
+        if let Some((puzzle, solution)) = puzzle_and_solution {
+            let player_ch = self.channel_handler_mut()?;
+            let (env, system_interface) = penv.env();
+            let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+
+            if let Some(spend_bundle) = player_ch.handle_reward_spends(
+                env,
+                coin_id,
+                &conditions
+            )? {
+                system_interface.spend_transaction_and_add_fee(&spend_bundle)?;
+            }
+        }
+
         let state_coin_id = match &self.handshake_state {
             HandshakeState::OnChainWaitForConditions(state_coin_id, _data) => {
                 Some(ConditionWaitKind::Channel(state_coin_id.clone()))
@@ -2155,6 +2168,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             _ => None,
         };
 
+        let player_ch = self.channel_handler()?;
         debug!(
             "{} coin puzzle and solution {coin_id:?} = {state_coin_id:?}",
             player_ch.is_initial_potato()

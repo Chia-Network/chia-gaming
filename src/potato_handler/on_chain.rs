@@ -1,4 +1,4 @@
-use clvm_traits::ClvmEncoder;
+use clvm_traits::{ClvmEncoder, ToClvm};
 use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -11,9 +11,11 @@ use crate::channel_handler::types::{
     AcceptTransactionState, CoinSpentInformation, OnChainGameState, ReadableMove,
 };
 use crate::channel_handler::ChannelHandler;
+use crate::common::constants::CREATE_COIN;
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, standard_solution_partial, puzzle_for_pk, calculate_synthetic_secret_key, calculate_synthetic_public_key};
 use crate::common::types::{
-    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
-    SpendBundle, Timeout,
+    Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
+    Spend, SpendBundle, Timeout,
 };
 use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
@@ -124,9 +126,19 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         // A game coin was spent and we have the puzzle and solution.
         let (env, system_interface) = penv.env();
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+
+        if let Some(spend_bundle) = self.player_ch.handle_reward_spends(
+            env,
+            coin_id,
+            &conditions
+        )? {
+            system_interface.spend_transaction_and_add_fee(&spend_bundle)?;
+        }
+
         let result =
             self.player_ch
                 .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
+
         let their_turn_result = if let Ok(result) = result {
             result
         } else {
