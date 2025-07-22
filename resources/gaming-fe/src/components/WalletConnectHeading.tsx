@@ -16,11 +16,14 @@ import Debug from "./Debug";
 // @ts-ignore
 import { bech32m } from 'bech32m-chia';
 import { useWalletConnect } from "../hooks/WalletConnectContext";
+import { WalletConnectChoice } from './WalletConnectChoice';
 
 const WalletConnectHeading: React.FC<any> = (args: any) => {
   const { client, session, pairings, connect, disconnect } = args;
   const { wcInfo, setWcInfo } = useDebug();
   const [alreadyConnected, setAlreadyConnected] = useState(false);
+  const [fingerprint, setFingerprint] = useState<number>(0);
+  const [fingerprints, setFingerprints] = useState<any[]>([]);
   const [walletId, setWalletId] = useState(1);
   const [walletIds, setWalletIds] = useState<any[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -30,7 +33,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const { rpc } = useRpcUi();
 
   function getWallets() {
-    return rpc.getWallets({includeData:true}).catch((e) => {
+    return rpc.getWallets({includeData:false}).catch((e) => {
       console.error('retry getWallets', e);
       return new Promise((resolve, reject) => {
         setTimeout(() => {
@@ -61,6 +64,16 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       });
     });
   }
+
+  const updateFingerprint = useCallback((fingerprint) => {
+    setWalletId(1);
+    setFingerprint(fingerprint);
+    rpc.login({ fingerprint: fingerprint }).then(res => {
+      if (res.success) {
+        getWallets()
+      }
+    });
+  });
 
   function sendTransaction(data: any) {
     return rpc.sendTransaction(data).catch((e) => {
@@ -97,8 +110,15 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
 
       const subframe = document.getElementById('subframe');
       if (data.method === 'create_spendable') {
-        getCurrentAddress().then((ca) => {
+        return getCurrentAddress().then((ca) => {
           console.warn('currentAddress', JSON.stringify(ca));
+          for (var i = 0; i < knownFingerprints.length; i++) {
+            var fp_check = knownFingerprints[i];
+            if (data.target == fp_check.address) {
+              setFingerprint(knownFingerprints[i].fingerprint);
+              break;
+            }
+          }
           const targetXch = bech32m.encode(data.target, 'xch');
           const fromPuzzleHash = bech32m.decode(ca);
           console.warn('about to send transaction');
@@ -147,7 +167,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   if (!alreadyConnected && session) {
     setAlreadyConnected(true);
     getWallets().then(wallets => {
-      setWalletIds(wallets as any);
+      setWalletIds(wallets.wallets as any);
     });
   }
 
@@ -156,6 +176,11 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Box>
         <ButtonGroup variant="outlined" fullWidth>
+          <WalletConnectChoice
+            walletId={setWalletIdAndName}
+            walletIds={walletIds}
+            setWalletId={setWalletId}
+          />
           <Button variant="outlined" color="error" onClick={() => disconnect()}>
             Unlink Wallet
           </Button>
@@ -193,10 +218,20 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     </Button>
   );
 
+  const selectedWallet = (session ? (
+    <span>Selected Wallet {walletId}</span>
+  ) : <div/>);
+
   const ifExpanded = expanded ? (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '17em', position: 'relative', background: 'white', padding: '1em' }}>
       {ifSession}
-      <Debug connectString={wcInfo} setConnectString={setWcInfo} />
+      <WalletConnectChoice
+        walletId={walletId}
+        setWalletId={setWalletId}
+        fingerprint={fingerprint}
+        fingerprints={fingerprints}
+        setFingerprint={updateFingerprint}
+      />
     </div>
   ) : (
     <div style={{ display: 'flex', width: '100%', height: 0 }}></div>
@@ -209,6 +244,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
           Chia Gaming - WalletConnect {sessionConnected}
         </div>
         <div style={{ display: 'flex', flexGrow: 1 }}> </div>
+        {selectedWallet}
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, width: '3em', height: '3em', alignItems: 'center', justifyContent: 'center' }} onClick={toggleExpanded}>☰</div>
       </div>
       {ifExpanded}
