@@ -4,26 +4,19 @@ import { Player, Room, GameType, GameTypes, GameSession, MatchmakingPreferences 
 const ROOM_TTL = 10 * 60 * 1000;
 const CLEANUP_INTERVAL = 60 * 1000;
 
-const players = new Map<string, Player>();
+export const players: Record<string, Player> = {};
 export const rooms: Record<string, Room> = {};
 export const games: { [id: string]: string; } = {'calpoker': 'http://localhost:3001/?game=calpoker'};
 const gameSessions = new Map<string, GameSession>();
 
-export const addPlayer = (player: Omit<Player, 'lastSeen' | 'status'>): Player => {
-  const newPlayer: Player = {
-    ...player,
-    lastActive: Date.now(),
-    status: 'waiting'
-  };
-  return newPlayer;
+export const addPlayer = (player: Player) => {
+  players[player.id] = player;
 };
 
 export const removePlayer = (playerId: string): boolean => {
-  return true;
-};
-
-export const updatePlayerStatus = (playerId: string, status: Player['status']): boolean => {
-  return true;
+  let existing = !!players[playerId];
+  delete players[playerId];
+  return existing;
 };
 
 export const createRoom = (host: string, preferences: MatchmakingPreferences): Room => {
@@ -128,12 +121,15 @@ const cleanup = (now: number) => {
   });
 };
 
-export const getPlayers = (): Player[] => Array.from(players.values());
-export const getRooms = (): Room[] => {
-  const result: Room[] = [];
-  Object.keys(rooms).forEach((k) => {
-    result.push(rooms[k]);
+function listOfObject<T>(object: Record<string, T>): T[] {
+  const result: T[] = [];
+  Object.keys(object).forEach((k) => {
+    result.push(object[k]);
   });
   return result;
-};
+}
+
+export const getPlayers = (): Player[] => listOfObject(players);
+export const getLobbyQueue = getPlayers;
+export const getRooms = (): Room[] => listOfObject(rooms);
 export const getGameSessions = (): GameSession[] => Array.from(gameSessions.values());
