@@ -5,20 +5,8 @@ const ROOM_TTL = 10 * 60 * 1000;
 const CLEANUP_INTERVAL = 60 * 1000;
 
 const players = new Map<string, Player>();
-const rooms = new Map<string, Room>();
+export const rooms: Record<string, Room> = {};
 const gameSessions = new Map<string, GameSession>();
-
-let cleanupInterval: NodeJS.Timeout;
-
-export const initLobby = () => {
-  cleanupInterval = setInterval(cleanup, CLEANUP_INTERVAL);
-};
-
-export const shutdownLobby = () => {
-  clearInterval(cleanupInterval);
-  rooms.clear();
-  gameSessions.clear();
-};
 
 export const addPlayer = (player: Omit<Player, 'lastSeen' | 'status'>): Player => {
   const newPlayer: Player = {
@@ -50,12 +38,12 @@ export const createRoom = (host: string, preferences: MatchmakingPreferences): R
     maxPlayers: getMaxPlayers(preferences.game, preferences.parameters),
     chat: []
   };
-  rooms.set(room.token, room);
+  rooms[room.token] = room;
   return room;
 };
 
 export const joinRoom = (roomId: string, player: Player): Room | null => {
-  const room = rooms.get(roomId);
+  const room = rooms[roomId];
   if (!room || room.status !== 'waiting') {
     return null;
   }
@@ -64,7 +52,7 @@ export const joinRoom = (roomId: string, player: Player): Room | null => {
 };
 
 export const leaveRoom = (roomId: string, playerId: string): boolean => {
-  const room = rooms.get(roomId);
+  const room = rooms[roomId];
   if (!room) return false;
 
   // Close room if the host or joiner leaves.
@@ -73,7 +61,11 @@ export const leaveRoom = (roomId: string, playerId: string): boolean => {
 };
 
 export const findMatch = (player: Player, preferences: MatchmakingPreferences): Room | null => {
-  const availableRooms = Array.from(rooms.values())
+  const availableRooms: Room[] = [];
+  Object.keys(rooms).forEach((k) => {
+    availableRooms.push(rooms[k]);
+  });
+  availableRooms
     .filter(room =>
       room.game === preferences.game &&
       room.status === 'waiting' &&
@@ -109,7 +101,7 @@ export const endGameSession = (sessionId: string, winnerId?: string): GameSessio
   session.status = 'completed';
   if (winnerId) session.winner = winnerId;
 
-  const room = rooms.get(session.roomId);
+  const room = rooms[session.roomId];
   if (room) {
     room.status = 'completed';
   }
@@ -125,17 +117,22 @@ const areParametersCompatible = (roomParams: any, playerParams: any): boolean =>
   return JSON.stringify(roomParams) === JSON.stringify(playerParams);
 };
 
-const cleanup = () => {
-  const now = Date.now();
-
-  for (const [roomId, room] of rooms.entries()) {
+const cleanup = (now: number) => {
+  Object.keys(rooms).forEach((roomId) => {
+    let room = rooms[roomId];
     if (now > room.expiresAt) {
       // Remove players corresponding to .host and .joiner
-      rooms.delete(roomId);
+      delete rooms[roomId];
     }
-  }
+  });
 };
 
 export const getPlayers = (): Player[] => Array.from(players.values());
-export const getRooms = (): Room[] => Array.from(rooms.values());
+export const getRooms = (): Room[] => {
+  const result: Room[] = [];
+  Object.keys(rooms).forEach((k) => {
+    result.push(rooms[k]);
+  });
+  return result;
+};
 export const getGameSessions = (): GameSession[] => Array.from(gameSessions.values());

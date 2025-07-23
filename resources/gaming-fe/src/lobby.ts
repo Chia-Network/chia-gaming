@@ -5,6 +5,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import { GenerateRoomResult, Room, Player } from './types/lobby';
+import { rooms } from './lobby/lobbyState';
 
 const app = express();
 const httpServer = createServer(app);
@@ -15,7 +16,6 @@ const io = new SocketIOServer(httpServer, {
 app.use(express.json());
 
 const lobbyQueue: Player[] = [];
-const rooms: Record<string,Room> = {};
 const TOKEN_TTL = 10 * 60 * 1000;
 const socketUsers = {};
 // XXX Take from games calling in.

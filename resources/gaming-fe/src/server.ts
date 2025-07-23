@@ -1,7 +1,6 @@
 import express from 'express';
 import { createServer } from 'http';
 import { setupWebSocket } from './lobby/websocket';
-import { initLobby, shutdownLobby } from './lobby/lobbyState';
 import { readFile } from 'node:fs/promises';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -59,17 +58,14 @@ app.get('/resources*', async (req: any, res: any) => {
 const io = setupWebSocket(httpServer);
 
 process.on('SIGTERM', () => {
-  shutdownLobby();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  shutdownLobby();
   process.exit(0);
 });
 
 const port = process.env.PORT || 3001;
 httpServer.listen(port, () => {
   console.log(`Server running on port ${port}`);
-  initLobby();
 });
