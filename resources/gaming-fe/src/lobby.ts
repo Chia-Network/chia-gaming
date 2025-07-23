@@ -5,7 +5,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import { GenerateRoomResult, Room, Player } from './types/lobby';
-import { rooms } from './lobby/lobbyState';
+import { rooms, games } from './lobby/lobbyState';
 
 const app = express();
 const httpServer = createServer(app);
@@ -18,8 +18,6 @@ app.use(express.json());
 const lobbyQueue: Player[] = [];
 const TOKEN_TTL = 10 * 60 * 1000;
 const socketUsers = {};
-// XXX Take from games calling in.
-const games: { [id: string]: string; } = {'calpoker': 'http://localhost:3001/?game=calpoker'};
 
 function joinLobby(id: string, alias: string, parameters: any): any {
   if (!id || !alias) {

@@ -6,6 +6,7 @@ const CLEANUP_INTERVAL = 60 * 1000;
 
 const players = new Map<string, Player>();
 export const rooms: Record<string, Room> = {};
+export const games: { [id: string]: string; } = {'calpoker': 'http://localhost:3001/?game=calpoker'};
 const gameSessions = new Map<string, GameSession>();
 
 export const addPlayer = (player: Omit<Player, 'lastSeen' | 'status'>): Player => {
