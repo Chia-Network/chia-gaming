@@ -7,7 +7,6 @@ const CLEANUP_INTERVAL = 60 * 1000;
 export const players: Record<string, Player> = {};
 export const rooms: Record<string, Room> = {};
 export const games: { [id: string]: string; } = {'calpoker': 'http://localhost:3001/?game=calpoker'};
-const gameSessions = new Map<string, GameSession>();
 
 export const addPlayer = (player: Player) => {
   players[player.id] = player;
@@ -73,36 +72,6 @@ export const findMatch = (player: Player, preferences: MatchmakingPreferences): 
   return availableRooms[0];
 };
 
-const startGameSession = (room: Room): GameSession => {
-  const session: GameSession = {
-    id: uuidv4(),
-    roomId: room.token,
-    gameType: room.game,
-    host: room.host,
-    joiner: (room.joiner as string),
-    parameters: room.parameters,
-    startedAt: Date.now(),
-    status: 'active'
-  };
-  gameSessions.set(session.id, session);
-  return session;
-};
-
-export const endGameSession = (sessionId: string, winnerId?: string): GameSession | null => {
-  const session = gameSessions.get(sessionId);
-  if (!session) return null;
-
-  session.status = 'completed';
-  if (winnerId) session.winner = winnerId;
-
-  const room = rooms[session.roomId];
-  if (room) {
-    room.status = 'completed';
-  }
-
-  return session;
-};
-
 const getMaxPlayers = (gameType: GameType, parameters: any): number => {
   return 2;
 };
@@ -132,4 +101,3 @@ function listOfObject<T>(object: Record<string, T>): T[] {
 export const getPlayers = (): Player[] => listOfObject(players);
 export const getLobbyQueue = getPlayers;
 export const getRooms = (): Room[] => listOfObject(rooms);
-export const getGameSessions = (): GameSession[] => Array.from(gameSessions.values());
