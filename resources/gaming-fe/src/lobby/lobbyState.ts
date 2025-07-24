@@ -80,9 +80,11 @@ export class Lobby {
     const room = this.rooms[roomId];
     if (!room) return false;
 
-    // Close room if the host or joiner leaves.
-
     return true;
+  }
+
+  removeRoom(roomId: string) {
+    delete this.rooms[roomId];
   }
 
   getPlayers(): Player[] {

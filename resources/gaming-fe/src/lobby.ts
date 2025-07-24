@@ -115,7 +115,19 @@ app.post('/lobby/join-room', (req, res) => {
   io.emit('room_update', room);
   res.json(room);
 });
-
+app.post('/lobby/good', (req, res) => {
+  const { token, id } = req.body;
+  const room = lobby.rooms[token];
+  if (!room) {
+    return res.status(404).json({ error: 'Invalid room token.' });
+  }
+  if (room.joiner != id && room.host != id) {
+    return res.status(400).json({ error: 'Not room owner.' });
+  }
+  lobby.removeRoom(token);
+  io.emit('room_update', lobby.getRooms());
+  res.json({ rooms: lobby.getRooms() });
+});
 app.post('/lobby/join', (req, res) => {
   const { id, alias, parameters } = req.body;
   const result = joinLobby(id, alias, parameters);

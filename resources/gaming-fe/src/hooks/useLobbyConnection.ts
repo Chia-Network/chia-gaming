@@ -34,7 +34,19 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
         const iStarted = room.host === uniqueId;
         // This room is inhabited and contains us, redirect.
         console.log('take us to game', JSON.stringify(room));
-        window.location.href = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
+        // This is gross but should work ok.
+        fetch('/lobby/good', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            id: uniqueId,
+            token: room.token
+          })
+        }).then(res => res.json()).then(() => {
+          window.location.href = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
+        });
         break;
       }
     }
