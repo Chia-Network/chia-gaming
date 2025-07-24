@@ -23,6 +23,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const [alreadyConnected, setAlreadyConnected] = useState(false);
   const [walletId, setWalletId] = useState(1);
   const [walletIds, setWalletIds] = useState<any[]>([]);
+  const [wantSpendable, setWantSpendable] = useState<any | undefined>(undefined);
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = useCallback(() => {
     setExpanded(!expanded);
@@ -73,61 +74,71 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     })
   }
 
+  function receivedWindowMessageData(data: any, origin: string) {
+    if (typeof data === 'string') {
+      data = JSON.parse(data);
+    }
+
+    if (data.type === 'verify_attestation') {
+      console.warn('attestation?', data);
+      return;
+      // const attestationId = event.data
+      // const origin = event.origin
+      // fetch("<Verify_Server_URL>", { method: "POST", body: { attestationId, origin }})
+    };
+
+    const subframe = document.getElementById('subframe');
+    if (data.name === 'lobby') {
+      (subframe as any).contentWindow.postMessage({
+        name: 'walletconnect_up'
+      }, '*');
+    }
+
+    if (data.name !== 'blockchain') {
+      return;
+    }
+
+    if (data.method === 'create_spendable') {
+      setWantSpendable(data);
+      getCurrentAddress().then((ca) => {
+        console.warn('currentAddress', JSON.stringify(ca));
+        const targetXch = bech32m.encode(data.target, 'xch');
+        const fromPuzzleHash = bech32m.decode(ca);
+        console.warn('about to send transaction');
+        return sendTransaction({
+          walletId,
+          amount: data.amt,
+          fee: 0,
+          address: targetXch,
+          waitForConfirmation: false
+        }).then((tx) => {
+          setWantSpendable(undefined);
+          console.warn('create_spendable result', tx);
+          if (!subframe) {
+            console.error('no element named subframe');
+            return;
+          }
+          (subframe as any).contentWindow.postMessage({
+            name: 'blockchain_reply',
+            requestId: data.requestId,
+            result: { tx, fromPuzzleHash }
+          }, '*');
+        });
+      });
+    }
+  }
+
+  function retryCreateSpendable() {
+    receivedWindowMessageData(wantSpendable, '*');
+  }
+
   useEffect(() => {
     function receivedWindowMessage(evt: any) {
       console.log('parent window received message', evt);
       const key = evt.message ? 'message' : 'data';
       // Not decoded, despite how it's displayed in console.log.
       let data = evt[key];
-      if (typeof data === 'string') {
-        data = JSON.parse(data);
-      }
-
-      if (data.type === 'verify_attestation') {
-        console.warn('attestation?', data);
-        return;
-        // const attestationId = event.data
-        // const origin = event.origin
-        // fetch("<Verify_Server_URL>", { method: "POST", body: { attestationId, origin }})
-      };
-
-      const subframe = document.getElementById('subframe');
-      if (data.name === 'lobby') {
-        (subframe as any).contentWindow.postMessage({
-          name: 'walletconnect_up'
-        }, '*');
-      }
-
-      if (data.name !== 'blockchain') {
-        return;
-      }
-
-      if (data.method === 'create_spendable') {
-        getCurrentAddress().then((ca) => {
-          console.warn('currentAddress', JSON.stringify(ca));
-          const targetXch = bech32m.encode(data.target, 'xch');
-          const fromPuzzleHash = bech32m.decode(ca);
-          console.warn('about to send transaction');
-          return sendTransaction({
-            walletId,
-            amount: data.amt,
-            fee: 0,
-            address: targetXch,
-            waitForConfirmation: false
-          }).then((tx) => {
-            console.warn('create_spendable result', tx);
-            if (!subframe) {
-              console.error('no element named subframe');
-              return;
-            }
-            (subframe as any).contentWindow.postMessage({
-              name: 'blockchain_reply',
-              requestId: data.requestId,
-              result: { tx, fromPuzzleHash }
-            }, '*');
-          });
-        });
-      }
+      receivedWindowMessageData(data, evt.origin);
     }
 
     window.addEventListener("message", receivedWindowMessage);
@@ -196,6 +207,12 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     </Button>
   );
 
+  const spendable = wantSpendable ? (
+    <Button style={{ display: 'flex' }} onClick={retryCreateSpendable}>
+      Retry create spendable
+    </Button>
+  ) : (<div/>);
+
   const ifExpanded = expanded ? (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '17em', position: 'relative', background: 'white', padding: '1em' }}>
       {ifSession}
@@ -212,6 +229,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
           Chia Gaming - WalletConnect {sessionConnected}
         </div>
         <div style={{ display: 'flex', flexGrow: 1 }}> </div>
+        {spendable}
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, width: '3em', height: '3em', alignItems: 'center', justifyContent: 'center' }} onClick={toggleExpanded}>☰</div>
       </div>
       {ifExpanded}

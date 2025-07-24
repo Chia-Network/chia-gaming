@@ -171,6 +171,7 @@ io.on('connection', socket => {
 setInterval(() => {
   const time = new Date().getTime();
   lobby.sweep(time);
+  io.emit('lobby_update', lobby.getPlayers());
 }, 15000);
 
 const port = process.env.PORT || 3001;

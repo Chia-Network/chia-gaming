@@ -17,13 +17,35 @@ export class Lobby {
   players: Record<string, Player> = {};
   rooms: Record<string, Room> = {};
   games: Record<string, GameDefinition> = {};
-  // {'calpoker': 'http://localhost:3001/?game=calpoker'}
 
   sweep(time: number) {
+    let playersInRooms: Record<string, boolean> = {};
     Object.keys(this.games).forEach((k) => {
       const game = this.games[k];
       if (time > game.expiration) {
         delete this.games[k];
+      }
+    });
+
+    Object.keys(this.rooms).forEach((k) => {
+      const room: Room = this.rooms[k];
+      if (time > room.expiresAt) {
+        delete this.rooms[k];
+        return;
+      }
+
+      if (room.host) {
+        playersInRooms[room.host] = true;
+      }
+      if (room.joiner) {
+        playersInRooms[room.joiner] = true;
+      }
+    });
+
+    Object.keys(this.players).forEach((k) => {
+      const player = this.players[k];
+      if (!playersInRooms[player.id] && time > player.lastActive + ROOM_TTL) {
+        delete this.players[k];
       }
     });
   }
