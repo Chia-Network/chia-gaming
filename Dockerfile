@@ -25,4 +25,4 @@ ADD resources/gaming-fe/public /app/public
 COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 ADD clsp /app/clsp
 COPY resources/gaming-fe/package.json /app/package.json
-CMD /bin/sh -c "(. /app/test/bin/activate && ./chia-gaming &) && (node ./dist/lobby-rollup.cjs &) && npm run start"
+CMD /bin/sh -c "(. /app/test/bin/activate && ./chia-gaming &) && (node ./dist/lobby-rollup.cjs &) && (node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001)"

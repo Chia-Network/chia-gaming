@@ -91,11 +91,17 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
         // fetch("<Verify_Server_URL>", { method: "POST", body: { attestationId, origin }})
       };
 
+      const subframe = document.getElementById('subframe');
+      if (data.name === 'lobby') {
+        (subframe as any).contentWindow.postMessage({
+          name: 'walletconnect_up'
+        }, '*');
+      }
+
       if (data.name !== 'blockchain') {
         return;
       }
 
-      const subframe = document.getElementById('subframe');
       if (data.method === 'create_spendable') {
         getCurrentAddress().then((ca) => {
           console.warn('currentAddress', JSON.stringify(ca));
@@ -146,9 +152,6 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
 
   if (!alreadyConnected && session) {
     setAlreadyConnected(true);
-    getWallets().then(wallets => {
-      setWalletIds(wallets as any);
-    });
   }
 
   const sessionConnected = session ? "connected" : "disconnected";

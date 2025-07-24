@@ -21,6 +21,7 @@ interface LobbyComponentProps {
 
 const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
   const params = getSearchParams();
+  const [joined, setJoined] = useState(false);
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
   const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias, walletConnect);
   const [chatInput, setChatInput] = useState('');
@@ -46,11 +47,10 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
     closeDialog();
   };
 
-  useEffect(() => {
-    if (params.join && rooms.length != 0) {
-      joinRoom(params.join);
-    }
-  });
+  if (!joined && params.join && rooms.length != 0) {
+    setJoined(true);
+    joinRoom(params.join);
+  }
 
   function commitEdit(e: any) {
     console.log('commit edit', e.target.value);

@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ChatMessage, ChatEnvelope, FragmentData, GenerateRoomResult, Room } from '../types/lobby';
-import { getFragmentParams, generateOrRetrieveUniqueId } from '../util';
+import { getSearchParams, getFragmentParams, generateOrRetrieveUniqueId } from '../util';
 import io, { Socket } from 'socket.io-client';
 import axios from 'axios';
 
 interface Player { id: string; alias: string, game: string; walletAddress?: string; parameters: any; }
 
 export function useLobbySocket(alias: string, walletConnect: boolean) {
-  const LOBBY_URL = process.env.REACT_APP_LOBBY_URL || 'http://localhost:3000';
+  const LOBBY_URL = window.location.origin;
+  const params = getSearchParams();
   const [uniqueId, setUniqueId] = useState<string>(generateOrRetrieveUniqueId());
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -19,11 +20,17 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
   function tryJoinRoom() {
     for (let i = 0; i < rooms.length; i++) {
       let room = rooms[i];
+      console.log('we have: uniqueId', uniqueId, 'params', params);
+      window.parent.postMessage({
+        name: 'lobby'
+      }, '*');
       console.log('checking room', room);
       if (!room.host || !room.joiner) {
+        console.log('either host or joiner missing');
         continue;
       }
-      if (room.host === uniqueId || room.joiner === uniqueId && room.target && walletConnect) {
+      console.log('conditions to enter', room.host === uniqueId, room.joiner === uniqueId, room.target, walletConnect);
+      if ((room.host === uniqueId || room.joiner === uniqueId) && room.target && walletConnect) {
         const iStarted = room.host === uniqueId;
         // This room is inhabited and contains us, redirect.
         console.log('take us to game', JSON.stringify(room));
@@ -86,6 +93,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
       game: 'lobby',
       parameters: {},
     });
+
     return data.room as Room;
   }, [uniqueId]);
 

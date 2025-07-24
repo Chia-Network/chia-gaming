@@ -5,12 +5,13 @@ import { Server as SocketIOServer } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import { GenerateRoomResult, Room, Player } from './types/lobby';
-import { rooms, games, addPlayer, removePlayer, players, getLobbyQueue } from './lobby/lobbyState';
+import { Lobby } from './lobby/lobbyState';
 
+const lobby = new Lobby();
 const app = express();
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
-  cors: { origin: 'http://localhost:3000', methods: ['GET','POST'] }
+  // cors: { origin: process.env.LOBBY_PUBLIC_URL || 'http://localhost:3000', methods: ['GET','POST'] }
 });
 
 app.use(express.json());
@@ -23,7 +24,7 @@ function joinLobby(id: string, alias: string, parameters: any): any {
     return { error: 'Missing id or alias for joining lobby.' };
   };
   const lastActive = new Date().getTime();
-  addPlayer({
+  lobby.addPlayer({
     id,
     alias,
     joinedAt: lastActive,
@@ -31,14 +32,14 @@ function joinLobby(id: string, alias: string, parameters: any): any {
     status: 'waiting',
     parameters,
   });
-  io.emit('lobby_update', getLobbyQueue());
+  io.emit('lobby_update', lobby.getPlayers());
   return null;
 }
 
 function leaveLobby(id: string): any {
-  if (removePlayer(id)) {
-    io.emit('lobby_update', getLobbyQueue());
-    return { lobbyQueue: getLobbyQueue() };
+  if (lobby.removePlayer(id)) {
+    io.emit('lobby_update', lobby.getPlayers());
+    return { lobbyQueue: lobby.getPlayers() };
   }
 
   return undefined;
@@ -59,10 +60,10 @@ app.get('/index.js', async (req: any, res: any) => {
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;
   if (!id || !newAlias) return res.status(400).json({ error: 'Missing id or new_alias.' });
-  let player = players[id];
+  let player = lobby.players[id];
   if (player) {
     player.alias = newAlias;
-    io.emit('lobby_update', getLobbyQueue());
+    io.emit('lobby_update', lobby.getPlayers());
     return res.json(player);
   }
   res.json({});
@@ -84,31 +85,32 @@ app.post('/lobby/generate-room', (req, res) => {
     chat: [],
     parameters
   };
-  rooms[token] = newRoom;
-  const secureUrl = `${req.protocol}://${req.get('host')}/?join=${token}`;
+  lobby.rooms[token] = newRoom;
+  console.log('generate room', game, lobby.games);
+  const secureUrl = `${lobby.games[game].target}&join=${token}`;
   const result: GenerateRoomResult = { secureUrl, token };
   io.emit('room_update', newRoom);
   res.json(result);
 });
 app.post('/lobby/game', (req, res) => {
-  
+  let { game, target } = req.body;
+  let time = new Date().getTime();
+  console.log('update game', game, target);
+  lobby.addGame(time, game, target);
 });
 app.post('/lobby/join-room', (req, res) => {
   const { token, id } = req.body;
-  const room = rooms[token];
+  const room = lobby.rooms[token];
   if (!room) {
     return res.status(404).json({ error: 'Invalid room token.' });
   }
-  if (Date.now() > room.expiresAt) {
-    delete rooms[token];
-    return res.status(400).json({ error: 'Room token has expired.' });
-  }
-  if (room.joiner) {
+  if (room.joiner && room.joiner != id) {
     return res.status(400).json({ error: 'Room is already full.' });
   }
   room.joiner = id;
-  console.log('join room, target', games[room.game]);
-  room.target = `${games[room.game]}&token=${token}&amount=${room.parameters.wagerAmount}`;
+  console.log('games', lobby.games);
+  const fullTargetUrl = `${lobby.games[room.game].target}&token=${token}&amount=${room.parameters.wagerAmount}`;
+  room.target = fullTargetUrl;
 
   io.emit('room_update', room);
   res.json(room);
@@ -120,7 +122,7 @@ app.post('/lobby/join', (req, res) => {
   if (result) {
     return res.status(400).json(result);
   }
-  res.json({ lobbyQueue: getLobbyQueue() });
+  res.json({ lobbyQueue: lobby.getPlayers() });
 });
 app.post('/lobby/leave', (req, res) => {
   const { id } = req.body;
@@ -131,18 +133,18 @@ app.post('/lobby/leave', (req, res) => {
   res.status(404).json({ error: 'Player not found in lobby.' });
 });
 
-app.get('/lobby/status', (req, res) => res.json({ lobbyQueue: getLobbyQueue() }));
+app.get('/lobby/status', (req, res) => res.json({ lobbyQueue: lobby.getPlayers() }));
 
 io.on('connection', socket => {
-  socket.emit('lobby_update', getLobbyQueue());
-  socket.emit('room_update', Object.values(rooms));
+  socket.emit('lobby_update', lobby.getPlayers());
+  socket.emit('room_update', Object.values(lobby.rooms));
 
   socket.on('join', ({ id, alias }) => {
-    if (!players[id]) {
+    if (!lobby.players[id]) {
       joinLobby(id, alias, {});
     }
     // We should send the lobby update so we can observe the person we gave a url to.
-    io.emit('lobby_update', getLobbyQueue());
+    io.emit('lobby_update', lobby.getPlayers());
   });
 
   socket.on('leave', ({ id }) => {
@@ -154,4 +156,12 @@ io.on('connection', socket => {
   });
 });
 
-httpServer.listen(3000, () => console.log('Lobby server listening on port 3000'));
+setInterval(() => {
+  const time = new Date().getTime();
+  lobby.sweep(time);
+}, 15000);
+
+const port = process.env.PORT || 3001;
+httpServer.listen(port, () => {
+  console.log(`Lobby server listening on port ${port}`)
+});

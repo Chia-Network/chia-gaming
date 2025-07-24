@@ -407,7 +407,7 @@ class WasmBlobWrapper {
   }
 
   internalLoadWasm(chia_gaming_init: any, cg: WasmConnection): any {
-    const fetchUrl = process.env.REACT_APP_WASM_URL || 'http://localhost:3001/chia_gaming_wasm_bg.wasm';
+    const fetchUrl = '/chia_gaming_wasm_bg.wasm';
 
     console.log('wasm detected');
     return fetch(fetchUrl).then(wasm => wasm.blob()).then(blob => {
