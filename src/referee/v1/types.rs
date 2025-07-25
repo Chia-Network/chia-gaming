@@ -12,13 +12,13 @@ use log::debug;
 use crate::channel_handler::types::{Evidence, StateUpdateProgram, ValidationInfo};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial, ChiaIdentity,
+    calculate_hash_of_quoted_mod_hash, curry_and_treehash, standard_solution_partial,
 };
 use crate::common::types::{
     atom_from_clvm, chia_dialect, i64_from_atom, Aggsig, AllocEncoder, Amount, CoinString, Error,
     GameID, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::referee::types::GameMoveDetails;
+use crate::referee::types::{GameMoveDetails, RMFixed};
 use crate::utils::proper_list;
 
 pub const REM_CONDITION_FIELDS: usize = 4;
@@ -601,19 +601,4 @@ impl OnChainRefereeSolution {
             }
         }
     }
-}
-
-#[derive(Debug)]
-pub struct RMFixed {
-    pub referee_coin_puzzle: Puzzle,
-    pub referee_coin_puzzle_hash: PuzzleHash,
-
-    pub my_identity: ChiaIdentity,
-
-    pub their_referee_puzzle_hash: PuzzleHash,
-    pub agg_sig_me_additional_data: Hash,
-
-    pub timeout: Timeout,
-    pub amount: Amount,
-    pub nonce: usize,
 }
