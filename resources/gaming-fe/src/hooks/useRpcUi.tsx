@@ -86,7 +86,7 @@ export function useRpcUi() {
     }
 
     function submitButton(name: string, request: () => Promise<any>) {
-        return (
+      return (
             <Button
                 fullWidth
                 variant='contained'
@@ -94,7 +94,7 @@ export function useRpcUi() {
             >
                 {name}
             </Button>
-        );
+      );
     }
 
     const commands = {
@@ -485,7 +485,7 @@ export function useRpcUi() {
         ],
     };
 
-    return { commands, responseData };
+    return { commands, responseData, rpc };
 }
 
 function stringOption(
