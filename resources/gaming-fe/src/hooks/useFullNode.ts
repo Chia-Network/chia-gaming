@@ -1,4 +1,5 @@
 import ReconnectingWebSocket from 'reconnecting-websocket';
+import { CoinOutput } from '../types/ChiaGaming';
 
 function wsUrl(baseurl: string) {
   const url_with_new_method = baseurl.replace('http', 'ws');
@@ -160,12 +161,20 @@ export class BlockchainInterface {
     return p;
   }
 
-  async create_spendable(target: string, amt: number): Promise<any> {
+  async select_coins(amount: number): Promise<any> {
     return this.push_request({
       name: 'blockchain',
-      method: 'create_spendable',
-      target: target,
-      amt: amt
+      method: 'select_coins',
+      amount
+    });
+  }
+
+  async sign_transaction(inputs: any[], outputs: CoinOutput[]): Promise<any> {
+    return this.push_request({
+      name: 'blockchain',
+      method: 'sign_transaction',
+      inputs,
+      outputs
     });
   }
 

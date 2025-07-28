@@ -27,7 +27,7 @@ use chia_gaming::common::types::{
 };
 use chia_gaming::common::standard_coin::{get_standard_coin_puzzle, puzzle_hash_for_pk};
 use chia_gaming::peer_container::{
-    GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
+    FundingRequest, GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
 use chia_gaming::potato_handler::types::{GameFactory, GameStart, GameType, ToLocalUI};
 use chia_gaming::shutdown::BasicShutdownConditions;
@@ -431,6 +431,13 @@ fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<JsCoinSetSpendBundl
     })
 }
 
+fn js_coinset_to_spend_bundle(
+    allocator: &mut AllocEncoder,
+    bundle: &JsValue
+) -> Result<SpendBundle, Error> {
+    Err(Error::StrErr(format!("js_coinset_to_spend_bundle: implement me {bundle:?}")))
+}
+
 #[wasm_bindgen]
 pub fn new_block(
     cid: i32,
@@ -448,6 +455,25 @@ pub fn new_block(
             height,
             &watch_report,
         )
+    })
+}
+
+#[wasm_bindgen]
+pub fn respond_to_unfunded_offer(
+    cid: i32,
+    spend_bundle: &JsValue
+) -> Result<(), Error> {
+    with_game(cid, move |cradle: &mut JsCradle| {
+        let spend_bundle = js_coinset_to_spend_bundle(
+            &mut cradle.allocator,
+            spend_bundle
+        ).into_js()?;
+        cradle.cradle.respond_to_unfunded_offer(
+            &mut cradle.allocator,
+            &mut cradle.rng,
+            &spend_bundle
+        )?;
+        Ok(())
     })
 }
 
@@ -715,11 +741,24 @@ struct JsSpendBundle {
 }
 
 #[derive(Serialize)]
+struct JsSpendTarget {
+    puzzle_hash: String,
+    amount: JsAmount,
+}
+
+#[derive(Serialize)]
+struct JsFundingRequest {
+    spend_targets: Vec<JsSpendTarget>,
+    spend_total: JsAmount,
+}
+
+#[derive(Serialize)]
 struct JsIdleResult {
     continue_on: bool,
     finished: bool,
     outbound_transactions: Vec<JsSpendBundle>,
     outbound_messages: Vec<String>,
+    funding_requests: Vec<JsFundingRequest>,
     opponent_move: Option<(String, String)>,
     game_finished: Option<(String, u64)>,
     handshake_done: bool,
@@ -746,6 +785,20 @@ fn coin_spend_to_js(spend: &CoinSpend) -> JsCoinSpend {
 fn spend_bundle_to_js(spend_bundle: &SpendBundle) -> JsSpendBundle {
     JsSpendBundle {
         spends: spend_bundle.spends.iter().map(coin_spend_to_js).collect(),
+    }
+}
+
+fn spend_target_to_js(pair: &(PuzzleHash, Amount)) -> JsSpendTarget {
+    JsSpendTarget {
+        puzzle_hash: hex::encode(&pair.0.bytes()),
+        amount: JsAmount { amt: pair.1.clone() }
+    }
+}
+
+fn funding_request_to_js(funding_request: &FundingRequest) -> JsFundingRequest {
+    JsFundingRequest {
+        spend_targets: funding_request.spend_targets.iter().map(spend_target_to_js).collect(),
+        spend_total: JsAmount { amt: funding_request.spend_total.clone() }
     }
 }
 
@@ -804,6 +857,11 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
             .outbound_messages
             .iter()
             .map(hex::encode)
+            .collect(),
+        requested_funding: idle_result
+            .funding_requests
+            .iter()
+            .map(funding_request_to_js)
             .collect(),
         opponent_move: opponent_move,
         game_finished: game_finished,

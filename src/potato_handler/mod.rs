@@ -182,6 +182,10 @@ impl PotatoHandler {
         self.my_contribution.clone() + self.their_contribution.clone()
     }
 
+    pub fn my_contribution(&self) -> Amount {
+        self.my_contribution.clone()
+    }
+
     pub fn is_on_chain(&self) -> bool {
         matches!(self.handshake_state, HandshakeState::OnChain(_))
     }

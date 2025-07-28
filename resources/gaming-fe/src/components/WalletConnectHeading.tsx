@@ -16,6 +16,7 @@ import Debug from "./Debug";
 // @ts-ignore
 import { bech32m } from 'bech32m-chia';
 import { useWalletConnect } from "../hooks/WalletConnectContext";
+import { CoinOutput } from '../types/ChiaGaming';
 
 const WalletConnectHeading: React.FC<any> = (args: any) => {
   const { client, session, pairings, connect, disconnect } = args;
@@ -30,48 +31,55 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   }, [expanded]);
   const { rpc } = useRpcUi();
 
-  function getWallets() {
-    return rpc.getWallets({includeData:true}).catch((e) => {
-      console.error('retry getWallets', e);
+  function callRpcWithRetry(functionKey: string, data: any, timeout: number) {
+    return (rpc as any)[functionKey](data).catch((e: any) => {
+      console.error('retry', functionKey, data);
       return new Promise((resolve, reject) => {
         setTimeout(() => {
-          getWallets().catch(reject).then(resolve);
-        }, 1000);
+          callRpcWithRetry(functionKey, data, timeout).catch(reject).then(resolve);
+        }, timeout);
       });
     });
+  }
+
+  // Everything we do is ok to retry since none actually spend.
+  // We use push_tx from coinset.org for everything.
+  function getWallets() {
+    return callRpcWithRetry('getWallets', {includeData: true}, 1000);
   }
 
   function getWalletAddresses() {
-    return rpc.getWalletAddresses({}).catch((e) => {
-      console.error('retry getWalletAddress', e);
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          getWalletAddresses().catch(reject).then(resolve);
-        }, 1000);
-      });
-    })
+    return callRpcWithRetry('getWalletAddresses', {}, 1000);
   }
 
   function getCurrentAddress() {
-    return rpc.getCurrentAddress({}).catch((e) => {
-      console.error('retry getCurrentAddress', e);
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          getCurrentAddress().catch(reject).then(resolve);
-        }, 1000);
-      });
-    });
+    return callRpcWithRetry('getCurrentAddress', {}, 1000);
   }
 
-  function sendTransaction(data: any) {
-    return rpc.sendTransaction(data).catch((e) => {
-      console.error('retry sendTransaction', e);
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          sendTransaction(data).catch(reject).then(resolve);
-        }, 5000);
-      });
-    })
+  function selectCoins(amount: number) {
+    return callRpcWithRetry('selectCoins', {amount}, 1000);
+  }
+
+  function sendTransactionMulti(inputs: any[], outputs: CoinOutput[]) {
+    return callRpcWithRetry('sendTransactionMulti', {
+      walletId: walletId,
+      additions: outputs,
+      coins: inputs,
+      push: false
+    }, 1000);
+  }
+
+  function returnMessage(requestId: string, result: any) {
+    const subframe = document.getElementById('subframe');
+    if (!subframe) {
+      console.error('no element named subframe');
+      return;
+    }
+    (subframe as any).contentWindow.postMessage({
+      name: 'blockchain_reply',
+      requestId,
+      result
+    }, '*');
   }
 
   function receivedWindowMessageData(data: any, origin: string) {
@@ -88,7 +96,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     };
 
     const subframe = document.getElementById('subframe');
-    if (data.name === 'lobby') {
+    if (data.name === 'lobby' && subframe) {
       (subframe as any).contentWindow.postMessage({
         name: 'walletconnect_up'
       }, '*');
@@ -98,38 +106,27 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       return;
     }
 
-    if (data.method === 'create_spendable') {
-      setWantSpendable(data);
-      getCurrentAddress().then((ca) => {
+    if (data.method === 'select_coins') {
+      getCurrentAddress().then((ca: any) => {
         console.warn('currentAddress', JSON.stringify(ca));
         const targetXch = bech32m.encode(data.target, 'xch');
         const fromPuzzleHash = bech32m.decode(ca);
-        console.warn('about to send transaction');
-        return sendTransaction({
-          walletId,
-          amount: data.amt,
-          fee: 0,
-          address: targetXch,
-          waitForConfirmation: false
-        }).then((tx) => {
-          setWantSpendable(undefined);
-          console.warn('create_spendable result', tx);
-          if (!subframe) {
-            console.error('no element named subframe');
-            return;
-          }
-          (subframe as any).contentWindow.postMessage({
-            name: 'blockchain_reply',
-            requestId: data.requestId,
-            result: { tx, fromPuzzleHash }
-          }, '*');
+        let amount = 0;
+
+        return fromPuzzleHash;
+      }).then((fromPuzzleHash: string) => {
+        return selectCoins(data.amount).then((inputs: any[]) => {
+          returnMessage(data.requestId, { inputs, fromPuzzleHash });
         });
       });
+      return;
     }
-  }
 
-  function retryCreateSpendable() {
-    receivedWindowMessageData(wantSpendable, '*');
+    if (data.method === 'sign_transaction') {
+      sendTransactionMulti(data.inputs, data.outputs).then((resultSpend: any) => {
+        returnMessage(data.requestId, { resultSpend });
+      });
+    }
   }
 
   useEffect(() => {
@@ -207,12 +204,6 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     </Button>
   );
 
-  const spendable = wantSpendable ? (
-    <Button style={{ display: 'flex' }} onClick={retryCreateSpendable}>
-      Retry create spendable
-    </Button>
-  ) : (<div/>);
-
   const ifExpanded = expanded ? (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '17em', position: 'relative', background: 'white', padding: '1em' }}>
       {ifSession}
@@ -229,7 +220,6 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
           Chia Gaming - WalletConnect {sessionConnected}
         </div>
         <div style={{ display: 'flex', flexGrow: 1 }}> </div>
-        {spendable}
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, width: '3em', height: '3em', alignItems: 'center', justifyContent: 'center' }} onClick={toggleExpanded}>☰</div>
       </div>
       {ifExpanded}

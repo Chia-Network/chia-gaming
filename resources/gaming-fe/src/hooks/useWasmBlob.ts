@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, BlockchainConnection, ChiaGame, CalpokerOutcome, WatchReport } from '../types/ChiaGaming';
+import { CoinOutput, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, BlockchainConnection, ChiaGame, CalpokerOutcome, WatchReport } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
 import { getBlockchainInterfaceSingleton } from './useFullNode';
 import { getSearchParams, useInterval, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
@@ -47,6 +47,7 @@ class WasmBlobWrapper {
   playerHand: number[][];
   opponentHand: number[][];
   finished: boolean;
+  fromPuzzleHash: string | undefined;
   gameOutcome: CalpokerOutcome | undefined;
   stateChanger: (stateSettings: any) => void;
 
@@ -189,6 +190,11 @@ class WasmBlobWrapper {
     });
   }
 
+  internalTakeFundingResponse(response: any) {
+    
+    return empty();
+  }
+
   handleOneMessage(msg: any): any {
     console.log('handleOneMessage', Object.keys(msg));
     if (msg.loadWasmEvent) {
@@ -198,8 +204,6 @@ class WasmBlobWrapper {
       );
     } else if (msg.loadPresets) {
       return this.loadPresets(msg.loadPresets);
-    } else if (msg.createStartCoin) {
-      return this.createStartCoin();
     } else if (msg.loadCalpoker) {
       return this.loadCalpoker();
     } else if (msg.deliverMessage) {
@@ -226,6 +230,10 @@ class WasmBlobWrapper {
       return this.internalTakeBlock(msg.takeBlockData.peak, msg.takeBlockData.block_report);
     } else if (msg.pushSpend) {
       return this.internalPushSpend(msg.pushSpend);
+    } else if (msg.fundingRequest) {
+      return this.createHalfTransaction(msg.fundingRequest.spend_targets, msg.fundingRequest.spend_total);
+    } else if (msg.returnFundingRequest) {
+      return this.internalTakeFundingResponse(msg.returnFundingRequest);
     }
 
     console.error("Unknown event:", msg);
@@ -324,11 +332,32 @@ class WasmBlobWrapper {
   loadCalpoker(): any {
     return fetch("clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex").then(calpoker => calpoker.text()).then(calpoker_hex => {
       this.calpokerHex = calpoker_hex;
-      this.pushEvent({ createStartCoin: true });
+      if (!this.wc || !this.identity) {
+        return {
+          'setGameConnectionState': {
+            stateIdentifier: "calpoker loading failed",
+            stateDetail: ["got to data preloading without wasm"]
+          }
+        };
+      }
+      const env = {
+        game_types: {
+          "calpoker": {
+            version: 1,
+            hex: this.calpokerHex
+          }
+        },
+        timeout: 100,
+        unroll_timeout: 100
+      };
+      this.cradle = new ChiaGame(this.wc, env, this.rngSeed, this.identity, this.iStarted, this.amount, this.amount, this.fromPuzzleHash);
+      this.storedMessages.forEach((m) => {
+        this.cradle?.deliver_message(m);
+      });
       return {
         'setGameConnectionState': {
           stateIdentifier: "starting",
-          stateDetail: ["loaded calpoker"]
+          stateDetail: ["doing handshake"]
         }
       };
     });
@@ -340,7 +369,7 @@ class WasmBlobWrapper {
     return empty();
   }
 
-  createStartCoin(): any {
+  createHalfTransaction(outputs: CoinOutput[], totalAmount: number): any {
     const identity = this.identity;
     if (!identity) {
       console.error('create start coin with no identity');
@@ -360,49 +389,26 @@ class WasmBlobWrapper {
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
     return this.blockchain.
-      create_spendable(identity.puzzle_hash, this.amount).then((result: any) => {
+      select_coins(this.amount).then((result: any) => {
+        this.fromPuzzleHash = result.fromPuzzleHash;
+        let inputAmount = 0;
+        result.inputs.forEach((c: any) => { inputAmount += c.amount; });
+        if (inputAmount > totalAmount) {
+          outputs.push({
+            puzzle_hash: result.fromPuzzleHash,
+            amount: inputAmount - totalAmount
+          });
+        }
+        return this.blockchain.
+          sign_transaction(
+            result.inputs,
+            outputs,
+          );
+      }).then((result: any) => {
         const tx = result.tx;
-        const fromPuzzleHash = result.fromPuzzleHash;
-        console.log('create_spendable returned', fromPuzzleHash, tx);
-        if (tx.transaction.additions.length < 1) {
-          console.error('create spendable with no outputs');
-          return empty();
-        }
-        let coin = null;
-        for (var i = 0; i < tx.transaction.additions.length; i++) {
-          let a = tx.transaction.additions[i];
-          console.log('check addition', a);
-          if (a.amount === this.amount) {
-            console.log('right amount use', a);
-            coin = this.wc?.convert_coinset_to_coin_string(a.parentCoinInfo, a.puzzleHash, a.amount.toString());
-          }
-        }
-        if (!coin) {
-          console.error('tried to create spendable but failed');
-          return empty();
-        }
-
-        const env = {
-          game_types: {
-            "calpoker": {
-              version: 1,
-              hex: calpokerHex
-            }
-          },
-          timeout: 100,
-          unroll_timeout: 100
-        };
-        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount, fromPuzzleHash);
-        this.storedMessages.forEach((m) => {
-          this.cradle?.deliver_message(m);
-        });
-        this.cradle.opening_coin(coin);
-        return {
-          'setGameConnectionState': {
-            stateIdentifier: "starting",
-            stateDetail: ["doing handshake"]
-          }
-        };
+        console.log('funding request returned', tx);
+        this.pushEvent({ returnFundingRequest: tx });
+        return empty();
       });
   }
 
@@ -534,16 +540,20 @@ class WasmBlobWrapper {
     }
 
     console.log('idle2', idle.incoming_messages);
-    for (let i = 0; i < idle.outbound_messages.length; i++) {
+    idle.outbound_messages.forEach((m) => {
       console.log('send message to remote');
-      this.sendMessage(idle.outbound_messages[i]);
-    }
+      this.sendMessage(m);
+    });
 
-    for (let i = 0; i < idle.outbound_transactions.length; i++) {
-      const tx = idle.outbound_transactions[i];
+    idle.outbound_transactions.forEach((tx) => {
       console.log('send transaction', tx);
       this.pushEvent({ 'pushSpend': tx });
-    }
+    });
+
+    idle.funding_requests.forEach((req) => {
+      console.log('funding request', req);
+      this.pushEvent({ 'fundingRequest': req });
+    });
 
     return result;
   }
