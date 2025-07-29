@@ -731,7 +731,7 @@ impl SynchronousGameCradle {
         Ok(true)
     }
 
-    fn respond_to_unfunded_offer<R: Rng>(
+    pub fn respond_to_unfunded_offer<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,

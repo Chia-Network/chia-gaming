@@ -22,7 +22,7 @@ use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, GameID, Hash, IntoErr, PrivateKey, Program,
+    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
     PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, chia_dialect
 };
 use chia_gaming::common::standard_coin::{get_standard_coin_puzzle, puzzle_hash_for_pk};
@@ -462,16 +462,16 @@ pub fn new_block(
 pub fn respond_to_unfunded_offer(
     cid: i32,
     spend_bundle: &JsValue
-) -> Result<(), Error> {
+) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
         let spend_bundle = js_coinset_to_spend_bundle(
             &mut cradle.allocator,
             spend_bundle
-        ).into_js()?;
+        )?;
         cradle.cradle.respond_to_unfunded_offer(
             &mut cradle.allocator,
             &mut cradle.rng,
-            &spend_bundle
+            spend_bundle
         )?;
         Ok(())
     })
@@ -858,7 +858,7 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
             .iter()
             .map(hex::encode)
             .collect(),
-        requested_funding: idle_result
+        funding_requests: idle_result
             .funding_requests
             .iter()
             .map(funding_request_to_js)

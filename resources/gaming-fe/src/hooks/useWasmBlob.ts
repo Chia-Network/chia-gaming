@@ -191,7 +191,7 @@ class WasmBlobWrapper {
   }
 
   internalTakeFundingResponse(response: any) {
-    
+    console.error('take funding request:', response);
     return empty();
   }
 

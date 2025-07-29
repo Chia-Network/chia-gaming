@@ -116,6 +116,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
         return fromPuzzleHash;
       }).then((fromPuzzleHash: string) => {
         return selectCoins(data.amount).then((inputs: any[]) => {
+          console.warn('selectCoins', inputs);
           returnMessage(data.requestId, { inputs, fromPuzzleHash });
         });
       });
@@ -123,6 +124,8 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     }
 
     if (data.method === 'sign_transaction') {
+      console.error('sign_translaction', data);
+      throw 'idk lol';
       sendTransactionMulti(data.inputs, data.outputs).then((resultSpend: any) => {
         returnMessage(data.requestId, { resultSpend });
       });
