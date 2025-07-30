@@ -147,7 +147,7 @@ impl Default for Simulator {
                 py,
                 indoc! {"
                import asyncio
-               import chia.clvm.spend_sim
+               import chia._tests.util.spend_sim
                from chia.types.coin_spend import make_spend
                from chia_rs import Coin, G2Element
                from chia.types.blockchain_format.program import Program
