@@ -73,7 +73,7 @@ jobs:
           (cd resources/gaming-fe &&
               yarn install &&
               yarn run build) &&
-            ./build-docker-images.sh
+            docker build --platform linux/amd64 --progress=plain -t chia-gaming-test . # TODO: Replace this line with ./build-docker-images.sh
           sudo apt update
           sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
           (cd resources/fe-test && xvfb-run -a ./test.sh)
