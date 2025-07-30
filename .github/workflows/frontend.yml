@@ -58,7 +58,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install latest nightly
+      - name: Install latest rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
             target: wasm32-unknown-unknown
@@ -71,9 +71,9 @@ jobs:
           DETECT_CHROMEDRIVER_VERSION: "true"
         run: |
           (cd resources/gaming-fe &&
-           yarn install &&
-           yarn run build) &&
-           docker build -t chia-gaming-test .
+              yarn install &&
+              yarn run build) &&
+            ./build-docker-images.sh
           sudo apt update
           sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
           (cd resources/fe-test && xvfb-run -a ./test.sh)
