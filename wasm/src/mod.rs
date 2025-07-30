@@ -271,7 +271,16 @@ pub fn config_scaffold() -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&JsGameCradleConfig::default()).into_js()
 }
 
-#[wasm_bindgen(typescript_type = "ICreateGameCradle")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type="ICreateGameCradle")]
+    pub type ICreateGameCradle;
+}
+
+/// The name 'typescript_type' is part of the FFI
+#[allow(unused_variables)]  // 'typescript_type' MUST be named 'typescript_type'
+#[wasm_bindgen(typescript_type="ICreateGameCradle")]
+//#[allow(unused_variables)]  // 'typescript_type' MUST be named 'typescript_type'
 pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     let new_id = get_next_id();
 
