@@ -153,10 +153,11 @@ impl Default for Simulator {
                from chia.types.blockchain_format.program import Program
                from chia.wallet.wallet_spend_bundle import WalletSpendBundle as SpendBundle
                from chia.types.blockchain_format.coin import coin_as_list
+               from chia._tests.util.spend_sim import sim_and_client
 
                def start():
                    evloop = asyncio.new_event_loop()
-                   sac_gen = chia.clvm.spend_sim.sim_and_client()
+                   sac_gen = sim_and_client()
                    (sim, client) = evloop.run_until_complete(sac_gen.__aenter__())
                    return (evloop, sim, client, sac_gen, make_spend, Coin, Program, SpendBundle, G2Element, coin_as_list)
             "},
