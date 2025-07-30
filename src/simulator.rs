@@ -151,7 +151,7 @@ impl Default for Simulator {
                from chia.types.coin_spend import make_spend
                from chia_rs import Coin, G2Element
                from chia.types.blockchain_format.program import Program
-               from chia.types.spend_bundle import SpendBundle
+               from chia.wallet.wallet_spend_bundle import WalletSpendBundle as SpendBundle
                from chia.types.blockchain_format.coin import coin_as_list
 
                def start():
