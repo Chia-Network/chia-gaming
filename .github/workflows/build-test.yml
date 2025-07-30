@@ -179,7 +179,7 @@ jobs:
           export CARGO_TARGET_DIR=$(pwd)/target
           python -m venv venv
           source venv/bin/activate
-          pip install chia-blockchain==2.3.0
+          pip install chia-blockchain==2.5.5-rc3
           cargo +stable test --release --workspace --features=sim-tests
           grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
           python -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
@@ -229,7 +229,7 @@ jobs:
       run: |
         python3 -m venv test
         source ./test/bin/activate
-        pip install chia-blockchain==2.3.0
+        python -m pip install chia-blockchain==2.5.5-rc3
 
     - name: Run tests
       run: |
