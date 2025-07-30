@@ -1,7 +1,5 @@
 use exec::execvp;
 use std::collections::{BTreeMap, VecDeque};
-use std::convert::TryFrom;
-use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::stdin;
@@ -10,10 +8,6 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 use std::time::Duration;
-
-use clvm_traits::{ClvmEncoder, ToClvm};
-use clvmr::allocator::SExp;
-use clvmr::serde::node_to_bytes;
 
 use lazy_static::lazy_static;
 use log::debug;
@@ -24,41 +18,16 @@ use rand_chacha::ChaCha8Rng;
 use salvo::http::ResBody;
 use salvo::hyper::body::Bytes;
 use salvo::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::{Serialize};
 use serde_json::{Map, Value};
 
-use chia_gaming::channel_handler::types::ReadableMove;
 use chia_gaming::common::standard_coin::ChiaIdentity;
 use chia_gaming::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
-    PuzzleHash, Sha256Input, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinString, Error, Hash, IntoErr, PrivateKey, Program,
+    PuzzleHash, SpendBundle,
 };
 use chia_gaming::peer_container::{FullCoinSetAdapter, WatchReport};
 use chia_gaming::simulator::Simulator;
-
-struct ReleaseObject<'a, T: Clone> {
-    ob: T,
-    released: bool,
-    deq: &'a mut VecDeque<T>,
-}
-
-impl<'a, T: Clone> ReleaseObject<'a, T> {
-    fn value(&self) -> T {
-        self.ob.clone()
-    }
-
-    fn release(&mut self) {
-        self.released = true;
-    }
-
-    fn new(deq: &'a mut VecDeque<T>) -> Option<Self> {
-        deq.pop_front().map(|res| ReleaseObject {
-            ob: res,
-            released: false,
-            deq,
-        })
-    }
-}
 
 impl<'a, T: Clone> Drop for ReleaseObject<'a, T> {
     fn drop(&mut self) {
@@ -106,7 +75,7 @@ struct GameRunner {
 #[derive(Debug, Clone)]
 enum WebRequest {
     Reset,
-    Exit,
+    Exit,                                 // TODO: exercise 'Exit'
     Register(String),                     // Register a user
     GetCurrentPeak,                       // Ask for the current peak
     GetBlockData(u64),                    // Get the additions and deletons from the given block
@@ -134,13 +103,8 @@ lazy_static! {
     };
 }
 
-#[derive(Serialize)]
-struct GlobalInfo {
-    block_height: usize,
-}
-
 fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
-    hex::decode(hexstr).map_err(|e| Error::StrErr("not hex".to_string()))
+    hex::decode(hexstr).map_err(|e: hex::FromHexError| format!("not hex {}", e.to_string()))
 }
 
 impl GameRunner {
@@ -283,7 +247,7 @@ impl GameRunner {
                 .into_gen()?;
             let coin_amt = Amount::new(amt);
             for c in coins0.iter() {
-                if let Some((_, ph, amt)) = c.to_parts() {
+                if let Some((_, _ph, amt)) = c.to_parts() {
                     if amt >= coin_amt {
                         let (parent_coin_0, _rest_0) = self.simulator.transfer_coin_amount(
                             &mut self.allocator,
@@ -402,7 +366,7 @@ fn get_arg_string(req: &mut Request, name: &str) -> Result<String, Error> {
 fn get_arg_integer(req: &mut Request, name: &str) -> Result<u64, Error> {
     let arg = get_arg_string(req, name)?;
     arg.parse::<u64>()
-        .map_err(|e| Error::StrErr(format!("{name} is not an integer")))
+        .map_err(|_e| Error::StrErr(format!("{name} is not an integer")))
 }
 
 #[handler]
@@ -506,7 +470,7 @@ fn main() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     rt.block_on(async {
-        let mut auto = args_vec.iter().any(|x| x == "auto");
+        let mut _auto = args_vec.iter().any(|x| x == "auto");
 
         let router = Router::new()
             .get(index)
@@ -533,14 +497,14 @@ fn main() {
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
         let s = std::thread::spawn(move || {
-            let mut simulator = Simulator::default();
+            let simulator = Simulator::default();
             let coinset_adapter = FullCoinSetAdapter::default();
             let mut game_runner = GameRunner::new(simulator, coinset_adapter)
                 .map_err(|e| format!("{e}"))
                 .unwrap();
 
             loop {
-                let mut locked = PERFORM_REQUEST.lock().unwrap();
+                let _locked = PERFORM_REQUEST.lock().unwrap();
 
                 let request = {
                     let channel = TO_WEB.1.lock().unwrap();
