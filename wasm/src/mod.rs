@@ -1,6 +1,6 @@
 mod map_m;
 
-use js_sys::{Array, Function, JsString, Object};
+use js_sys::{Array, JsString, Object};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -505,7 +505,8 @@ where
     F: FnOnce(&mut Array) -> Result<(), types::Error>,
 {
     debug!("try to call {name} from {callbacks:?}");
-    if let Some(function) = callbacks.get(name).and_then(Function::try_from) {
+    if let Some(js_value) = callbacks.get(name) {
+        let function = js_value.dyn_ref::<js_sys::Function>().expect("Not a js function");
         let mut args_array = Array::new();
         debug!("call user's injected function in {name}");
         f(&mut args_array)?;
@@ -613,9 +614,10 @@ fn to_local_ui(callbacks: JsValue) -> Result<JsLocalUI, JsValue> {
     let entries = Object::entries(object);
     for i in 0..entries.length() {
         let entry = Array::from(&entries.at(i as i32));
-        let name = JsString::try_from(&entry.at(0)).and_then(|s| s.as_string());
-        let value = entry.at(1);
-        if let Some(name) = name {
+        let js_name = &entry.at(0);
+
+        if let Some(name) = js_name.dyn_ref::<JsString>().expect("Not a js string").as_string() {
+            let value = entry.at(1);
             jslocalui.callbacks.insert(name, value);
         }
     }
