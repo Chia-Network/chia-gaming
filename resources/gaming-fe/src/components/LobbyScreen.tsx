@@ -154,6 +154,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
         <DialogContent>
           <TextField
             label="Game"
+            aria-label="game-id"
             fullWidth
             margin="normal"
             value={gameChoice}
@@ -161,6 +162,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
           />
           <TextField
             label="Wager (XCH)"
+            aria-label="game-wager"
             fullWidth
             type="number"
             margin="normal"
