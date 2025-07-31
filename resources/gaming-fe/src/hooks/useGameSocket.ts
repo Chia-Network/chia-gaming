@@ -42,7 +42,7 @@ export interface UseGameSocketReturn {
   playerNumber: number;
 }
 
-const SOCKET_URL = "http://localhost:3001";
+const SOCKET_URL = window.location.origin;
 
 const useGameSocket = (deliverMessage: (m: string) => void, setSocketEnabled: (e: boolean) => void): UseGameSocketReturn => {
   const searchParams = getSearchParams();
