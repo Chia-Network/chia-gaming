@@ -81,6 +81,16 @@ export interface WasmConnection {
   // Blockchain
   opening_coin: (cid: number, coinstring: string) => any;
   new_block: (cid: number, height: number, additions: string[], removals: string[], timed_out: string[]) => any;
+  convert_coinset_org_block_spend_to_watch_report: (
+    parent_coin_info: string,
+    puzzle_hash: string,
+    amount: number,
+    puzzle_reveal: string,
+    solution: string
+  ) => any;
+  convert_spend_to_coinset_org: (spend: string) => any;
+  convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: number) => string;
+  convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
   start_games: (cid: number, initiator: boolean, game: any) => any;
@@ -103,11 +113,13 @@ export class ChiaGame {
   cradle: number;
   have_potato: boolean;
 
-  constructor(wasm: WasmConnection, env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number) {
+  constructor(wasm: WasmConnection, env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number, reward_puzzle_hash?: string) {
     this.wasm = wasm;
     this.waiting_messages = [];
     this.private_key = identity.private_key;
     this.have_potato = have_potato;
+    let use_reward_puzzle_hash =
+      reward_puzzle_hash ? reward_puzzle_hash : identity.puzzle_hash;
     this.cradle = wasm.create_game_cradle({
       seed: seed,
       game_types: env.game_types,
@@ -117,7 +129,7 @@ export class ChiaGame {
       their_contribution: {amt: their_contribution},
       channel_timeout: env.timeout,
       unroll_timeout: env.unroll_timeout,
-      reward_puzzle_hash: identity.puzzle_hash,
+      reward_puzzle_hash: use_reward_puzzle_hash
     });
     console.log(`constructed ${have_potato} cradle ${this.cradle}`);
   }
@@ -165,13 +177,13 @@ export class ChiaGame {
   }
 
   block_data(block_number: number, block_data: any) {
-    this.wasm.new_block(this.cradle, block_number, block_data.created, block_data.deleted, block_data.timed_out);
+    this.wasm.new_block(this.cradle, block_number, block_data.created_watched, block_data.deleted_watched, block_data.timed_out);
   }
 }
 
 export interface WatchReport {
-  created: string[];
-  deleted: string[];
+  created_watched: string[];
+  deleted_watched: string[];
   timed_out: string[];
 }
 

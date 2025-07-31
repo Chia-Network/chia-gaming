@@ -31,9 +31,11 @@ pub struct ChannelHandlerInitiationData {
     pub their_channel_pubkey: PublicKey,
     pub their_unroll_pubkey: PublicKey,
     pub their_referee_puzzle_hash: PuzzleHash,
+    pub their_reward_puzzle_hash: PuzzleHash,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
     pub unroll_advance_timeout: Timeout,
+    pub reward_puzzle_hash: PuzzleHash,
 }
 
 #[derive(Clone)]

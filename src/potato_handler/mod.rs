@@ -21,7 +21,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
     GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout,
+    Sha256tree, Spend, SpendBundle, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -286,20 +286,6 @@ impl PotatoHandler {
         player_ch.get_reward_puzzle_hash(env)
     }
 
-    pub fn spend_reward_coins<'a, G, R: Rng + 'a>(
-        &self,
-        penv: &'a mut dyn PeerEnv<'a, G, R>,
-        coin_string: &[CoinString],
-        target: &PuzzleHash,
-    ) -> Result<SpendRewardResult, Error>
-    where
-        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
-    {
-        let player_ch = self.channel_handler()?;
-        let (env, _) = penv.env();
-        player_ch.spend_reward_coins(env, coin_string, target)
-    }
-
     pub fn start<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &'a mut dyn PeerEnv<'a, G, R>,
@@ -324,8 +310,8 @@ impl PotatoHandler {
             simple: HandshakeB {
                 channel_public_key,
                 unroll_public_key,
-                reward_puzzle_hash: self.reward_puzzle_hash.clone(),
                 referee_puzzle_hash,
+                reward_puzzle_hash: self.reward_puzzle_hash.clone(),
             },
         };
         self.handshake_state =
@@ -453,8 +439,7 @@ impl PotatoHandler {
                 let clvm_conditions = conditions.to_nodeptr(env.allocator)?;
                 // conditions must have a reward coin targeted at our referee_public_key.
                 // this is how we'll know we're being paid.
-                let want_public_key = private_to_public_key(&ch.referee_private_key());
-                let want_puzzle_hash = puzzle_hash_for_pk(env.allocator, &want_public_key)?;
+                let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
                 let want_amount = ch.clean_shutdown_amount();
                 if want_amount != Amount::default() {
                     let condition_list =
@@ -755,8 +740,7 @@ impl PotatoHandler {
 
                     // conditions must have a reward coin targeted at our referee_public_key.
                     // this is how we'll know we're being paid.
-                    let want_public_key = private_to_public_key(&ch.referee_private_key());
-                    let want_puzzle_hash = puzzle_hash_for_pk(env.allocator, &want_public_key)?;
+                    let want_puzzle_hash = ch.get_reward_puzzle_hash(env)?;
                     let want_amount = ch.clean_shutdown_amount();
                     (
                         ch.state_channel_coin().coin_string(),
@@ -1114,6 +1098,8 @@ impl PotatoHandler {
                 my_contribution: self.my_contribution.clone(),
                 their_contribution: self.their_contribution.clone(),
                 unroll_advance_timeout: self.channel_timeout.clone(),
+                their_reward_puzzle_hash: msg.reward_puzzle_hash.clone(),
+                reward_puzzle_hash: self.reward_puzzle_hash.clone(),
             };
 
         match &self.handshake_state {
@@ -2155,7 +2141,17 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             return on_chain.handle_game_coin_spent(penv, coin_id, p, s);
         }
 
-        let player_ch = self.channel_handler()?;
+        if let Some((puzzle, solution)) = puzzle_and_solution {
+            let player_ch = self.channel_handler_mut()?;
+            let (env, system_interface) = penv.env();
+            let conditions =
+                CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+
+            if let Some(spend_bundle) = player_ch.handle_reward_spends(env, coin_id, &conditions)? {
+                system_interface.spend_transaction_and_add_fee(&spend_bundle)?;
+            }
+        }
+
         let state_coin_id = match &self.handshake_state {
             HandshakeState::OnChainWaitForConditions(state_coin_id, _data) => {
                 Some(ConditionWaitKind::Channel(state_coin_id.clone()))
@@ -2169,6 +2165,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             _ => None,
         };
 
+        let player_ch = self.channel_handler()?;
         debug!(
             "{} coin puzzle and solution {coin_id:?} = {state_coin_id:?}",
             player_ch.is_initial_potato()

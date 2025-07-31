@@ -528,6 +528,8 @@ pub struct RMFixed {
 
     pub my_identity: ChiaIdentity,
 
+    pub reward_puzzle_hash: PuzzleHash,
+
     pub their_referee_puzzle_hash: PuzzleHash,
     pub agg_sig_me_additional_data: Hash,
 
