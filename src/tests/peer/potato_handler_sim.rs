@@ -643,7 +643,7 @@ fn test_peer_in_sim() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
 
     // Play moves
-    let moves = test_moves_1(&mut allocator, false);
+    let moves = test_moves_1(&mut allocator, CalpokerVersion::V0);
     run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, false);
 }
 
@@ -1170,7 +1170,7 @@ fn sim_test_with_peer_container_piss_off_peer_basic_on_chain() {
     let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
     let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
-    let mut moves = test_moves_1(&mut allocator, false).to_vec();
+    let mut moves = test_moves_1(&mut allocator, CalpokerVersion::V0).to_vec();
     if let GameAction::Move(player, readable, _) = moves[3].clone() {
         moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
     } else {
@@ -1267,7 +1267,7 @@ fn check_calpoker_economic_result(
 fn sim_test_with_peer_container_off_chain_complete() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator, false).to_vec();
+    let mut moves = test_moves_1(&mut allocator, CalpokerVersion::V0).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
     let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
@@ -1292,7 +1292,7 @@ fn sim_test_with_peer_container_off_chain_complete() {
 fn sim_test_with_peer_container_piss_off_peer_complete() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator, false).to_vec();
+    let mut moves = test_moves_1(&mut allocator, CalpokerVersion::V0).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::Accept(1));
     moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
@@ -1345,7 +1345,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_start_complete() {
 fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator, false).to_vec();
+    let mut moves = test_moves_1(&mut allocator, CalpokerVersion::V0).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::GoOnChain(1));
     moves.push(GameAction::WaitBlocks(20, 1));
@@ -1373,7 +1373,7 @@ fn sim_test_with_peer_container_piss_off_peer_after_accept_complete() {
 fn sim_test_with_peer_container_piss_off_peer_timeout() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator, false).to_vec();
+    let mut moves = test_moves_1(&mut allocator, CalpokerVersion::V0).to_vec();
     let moves_len = moves.len();
     moves.remove(moves_len - 2);
     moves.remove(moves_len - 2);
@@ -1393,7 +1393,7 @@ fn sim_test_with_peer_container_piss_off_peer_timeout() {
 fn sim_test_with_peer_container_piss_off_peer_slash() {
     let mut allocator = AllocEncoder::new();
 
-    let mut moves = test_moves_1(&mut allocator, false).to_vec();
+    let mut moves = test_moves_1(&mut allocator, CalpokerVersion::V0).to_vec();
     // p2 chooses 5 cards.
     let move_3_node = [1, 0, 1, 0, 1, 0, 1, 1]
         .to_clvm(&mut allocator)
@@ -1677,7 +1677,7 @@ fn test_calpoker_v1_smoke() {
     let mut allocator = AllocEncoder::new();
 
     // Play moves
-    let mut moves = test_moves_1(&mut allocator, true).to_vec();
+    let mut moves = test_moves_1(&mut allocator, CalpokerVersion::V1).to_vec();
     moves.push(GameAction::Accept(0));
     moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 

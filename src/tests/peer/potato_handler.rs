@@ -525,7 +525,7 @@ fn test_peer_smoke() {
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
-    let moves = test_moves_1(&mut allocator, false);
+    let moves = test_moves_1(&mut allocator, CalpokerVersion::V0);
 
     for this_move in moves.iter() {
         let (who, what) = if let GameAction::Move(who, what, _) = this_move {
