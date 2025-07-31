@@ -98,7 +98,7 @@ pub fn test_moves_1(allocator: &mut AllocEncoder, version: CalpokerVersion) -> [
         [0, 1, 0, 1, 0, 1, 0, 1].to_clvm(allocator)
     }
     .expect("should work");
-    let bob_picks = if v1 {
+    let bob_picks = if version == CalpokerVersion::V1 {
         allocator.encode_atom(clvm_traits::Atom::Borrowed(&[0xaa]))
     } else {
         [1, 0, 1, 0, 1, 0, 1, 0].to_clvm(allocator)

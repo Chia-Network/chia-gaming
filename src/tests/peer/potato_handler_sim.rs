@@ -33,7 +33,7 @@ use crate::potato_handler::PotatoHandler;
 
 use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
-use crate::tests::calpoker::test_moves_1;
+use crate::tests::calpoker::{test_moves_1, CalpokerVersion};
 use crate::tests::debug_game::{
     make_debug_games, BareDebugGameDriver, DebugGameCurry, DebugGameMoveInfo,
 };

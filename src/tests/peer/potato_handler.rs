@@ -26,7 +26,7 @@ use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::CoinSpend;
 
-use crate::tests::calpoker::test_moves_1;
+use crate::tests::calpoker::{test_moves_1, CalpokerVersion};
 use crate::tests::game::GameAction;
 
 #[derive(Default)]
