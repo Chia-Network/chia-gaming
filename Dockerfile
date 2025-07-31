@@ -5,7 +5,7 @@ RUN apt-get install -y python3 python3-dev python3-pip python3-venv clang curl b
 RUN apt-get update
 WORKDIR /app
 RUN python3 -m venv ./test
-RUN sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.3.0"
+RUN sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.5.5-rc3"
 # Gross, check the hash at least.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && sh ./rustup.sh -y
 RUN echo 'source $HOME/.cargo/env' >> $HOME/.profile
