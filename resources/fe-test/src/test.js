@@ -18,8 +18,11 @@ function byExactText(str) {
   return By.xpath(`//*[text()='${str}']`);
 }
 
-function byAttribute(attr,val) {
-  return By.xpath(`//*[@${attr}='${val}']`);
+function byAttribute(attr,val,sub) {
+  if (!sub) {
+    sub = '';
+  }
+  return By.xpath(`//*[@${attr}='${val}']${sub}`);
 }
 
 function byElementAndAttribute(element,attr,val) {
@@ -51,8 +54,8 @@ describe("Basic element tests", function() {
     let generateRoomButton = await driver.wait(until.elementLocated(byExactText("Generate Room")));
     await generateRoomButton.click();
 
-    let gameId = await driver.wait(until.elementLocated(byAttribute("id", ":r5:")), 1000);
-    let wager = await driver.wait(until.elementLocated(byAttribute("id", ":r7:")), 1000);
+    let gameId = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-id", "//input")), 1000);
+    let wager = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-wager", "//input")), 1000);
 
     await gameId.sendKeys("calpoker");
     await wager.sendKeys("200");
