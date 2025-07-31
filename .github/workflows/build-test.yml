@@ -227,16 +227,13 @@ jobs:
 
     - name: Set up a venv for chia-blockchain
       run: |
-        python3 -m venv test
-        source ./test/bin/activate
-        python -m pip install chia-blockchain==2.5.5-rc3
+        python3 -m pip install poetry
+        poetry install
 
     - name: Run tests
       run: |
         echo "PWD=$(pwd)"
-        source ./test/bin/activate
-        # "+stable" flag is not supported here yet
-        cargo test --features=sim-tests
+        poetry run cargo test --features=sim-tests
 
     - name: Build Docker Images
       run: bash -x build-docker-images.sh
