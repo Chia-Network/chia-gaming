@@ -8,9 +8,10 @@ use crate::utils::map_m;
 use indoc::indoc;
 use log::debug;
 
-use pyo3::exceptions::PyIndexError;
+use pyo3::ffi::c_str;
+use pyo3::exceptions::PyBaseException;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyNone, PyTuple};
+use pyo3::types::{PyBytes, PyNone, PyTuple, PyBool};
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, CREATE_COIN};
 use crate::common::standard_coin::{
@@ -55,8 +56,8 @@ impl ErrToError for PyErr {
 
 impl From<Error> for pyo3::PyErr {
     fn from(other: Error) -> Self {
-        Python::with_gil(|py| -> pyo3::PyErr {
-            PyErr::from_value(PyIndexError::new_err(format!("{other:?}")).value(py).into())
+        Python::with_gil(|_py| -> pyo3::PyErr {
+            PyBaseException::new_err(format!("{other:?}"))
         })
     }
 }
@@ -64,25 +65,25 @@ impl From<Error> for pyo3::PyErr {
 impl Drop for Simulator {
     fn drop(&mut self) {
         Python::with_gil(|py| -> PyResult<_> {
-            let none = PyNone::get(py);
+            let none: Py<PyAny> = PyNone::get(py).to_owned().unbind().into();
             let exit_task = self
                 .guard
-                .call_method1(py, "__aexit__", (none, none, none))?;
+                .call_method1(py, "__aexit__", (none.clone_ref(py), none.clone_ref(py), none.clone_ref(py)))?;
             self.evloop
                 .call_method1(py, "run_until_complete", (exit_task,))?;
             self.evloop.call_method0(py, "stop")?;
             self.evloop.call_method0(py, "close")?;
 
-            self.evloop = none.into();
-            self.sim = none.into();
-            self.client = none.into();
-            self.guard = none.into();
-            self.make_spend = none.into();
-            self.chia_rs_coin = none.into();
-            self.program = none.into();
-            self.spend_bundle = none.into();
-            self.g2_element = none.into();
-            self.coin_as_list = none.into();
+            self.evloop = none.clone_ref(py);
+            self.sim = none.clone_ref(py);
+            self.client = none.clone_ref(py);
+            self.guard = none.clone_ref(py);
+            self.make_spend = none.clone_ref(py);
+            self.chia_rs_coin = none.clone_ref(py);
+            self.program = none.clone_ref(py);
+            self.spend_bundle = none.clone_ref(py);
+            self.g2_element = none.clone_ref(py);
+            self.coin_as_list = none.clone_ref(py);
             Ok(())
         })
         .expect("should shutdown");
@@ -145,7 +146,7 @@ impl Default for Simulator {
         Python::with_gil(|py| -> PyResult<_> {
             let module = PyModule::from_code(
                 py,
-                indoc! {"
+                c_str!(indoc! {"
                import asyncio
                import chia.clvm.spend_sim
                from chia.types.coin_spend import make_spend
@@ -159,9 +160,9 @@ impl Default for Simulator {
                    sac_gen = chia.clvm.spend_sim.sim_and_client()
                    (sim, client) = evloop.run_until_complete(sac_gen.__aenter__())
                    return (evloop, sim, client, sac_gen, make_spend, Coin, Program, SpendBundle, G2Element, coin_as_list)
-            "},
-                "tmod.py",
-                "tmod",
+            "}),
+                c_str!("tmod.py"),
+                c_str!("tmod"),
             )?;
             let evloop = module.call_method0("start")?;
             Ok(Simulator {
@@ -252,23 +253,19 @@ impl Simulator {
             .collect())
     }
 
-    fn async_call<ArgT>(&self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
-    where
-        ArgT: IntoPy<Py<PyTuple>>,
+    fn async_call<'a>(&self, py: Python<'a>, name: &str, args: Bound<'_, PyTuple>) -> PyResult<PyObject>
     {
         let coro = self.sim.call_method1(py, name, args)?;
         let task = self
             .evloop
-            .call_method1(py, "create_task", (coro.clone(),))?;
+            .call_method1(py, "create_task", (coro.clone_ref(py),))?;
         self.evloop
-            .call_method1(py, "run_until_complete", (task.clone(),))?;
+            .call_method1(py, "run_until_complete", (task.clone_ref(py),))?;
         let res = task.call_method0(py, "result")?;
         Ok(res)
     }
 
-    fn async_client<ArgT>(&self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
-    where
-        ArgT: IntoPy<Py<PyTuple>>,
+    fn async_client<'a>(&self, py: Python<'a>, name: &str, args: Bound<'_, PyTuple>) -> PyResult<PyObject>
     {
         let task = self.client.call_method1(py, name, args)?;
         let res = self
@@ -280,7 +277,7 @@ impl Simulator {
     pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
         Python::with_gil(|py| -> PyResult<()> {
             let puzzle_hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
-            self.async_call(py, "farm_block", (puzzle_hash_bytes,))?;
+            self.async_call(py, "farm_block", PyTuple::new(py, vec![puzzle_hash_bytes])?)?;
             let old_height = *self.height.borrow();
             self.height.replace(old_height + 1);
             Ok(())
@@ -308,9 +305,9 @@ impl Simulator {
                 };
                 let as_list: Vec<PyObject> =
                     self.coin_as_list.call1(py, (coin_of_item,))?.extract(py)?;
-                let parent_coin_info: &PyBytes = as_list[0].downcast(py)?;
+                let parent_coin_info: &Bound<'_, PyBytes> = as_list[0].downcast_bound(py)?;
                 let parent_coin_info_slice: &[u8] = parent_coin_info.extract()?;
-                let puzzle_hash: &PyBytes = as_list[1].downcast(py)?;
+                let puzzle_hash: &Bound<'_, PyBytes> = as_list[1].downcast_bound(py)?;
                 let puzzle_hash_slice: &[u8] = puzzle_hash.extract()?;
                 let amount: u64 = as_list[2].extract(py)?;
                 let parent_coin_hash = Hash::from_slice(parent_coin_info_slice);
@@ -328,7 +325,8 @@ impl Simulator {
 
     pub fn get_all_coins(&self) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
-            let coins = self.async_call(py, "all_non_reward_coins", ())?;
+            let elements: Vec<Bound<'_, PyAny>> = Vec::new();
+            let coins = self.async_call(py, "all_non_reward_coins", PyTuple::new(py, elements)?)?;
             self.convert_coin_list_to_coin_strings(py, &coins)
         })
     }
@@ -336,8 +334,14 @@ impl Simulator {
     pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
             let hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
+            let hash_bytes_object: Bound<'_, PyBytes> = hash_bytes.into_pyobject(py)?;
+            let false_object: Bound<'_, PyBool> = false.into_pyobject(py)?.to_owned();
+            let args_any: Vec<Bound<'_, PyAny>> = vec![
+                hash_bytes_object.into_any(),
+                false_object.into_any()
+            ];
             let coins =
-                self.async_client(py, "get_coin_records_by_puzzle_hash", (hash_bytes, false))?;
+                self.async_client(py, "get_coin_records_by_puzzle_hash", PyTuple::new(py, args_any)?)?;
             self.convert_coin_list_to_coin_strings(py, &coins)
         })
     }
@@ -348,15 +352,21 @@ impl Simulator {
     ) -> PyResult<Option<(Program, Program)>> {
         Python::with_gil(|py| -> PyResult<_> {
             let hash_bytes = PyBytes::new(py, coin_id.bytes());
-            let record = self.async_client(py, "get_coin_record_by_name", (&hash_bytes,))?;
+            let hash_bytes_object: Bound<'_, PyBytes> = hash_bytes.into_pyobject(py)?;
+            let record = self.async_client(py, "get_coin_record_by_name", PyTuple::new(py, vec![hash_bytes_object.clone()])?)?;
             let height_of_spend =
                 if let Ok(height_of_spend) = record.getattr(py, "spent_block_index") {
                     height_of_spend
                 } else {
                     return Ok(None);
                 };
+            let height_of_spend: Bound<'_, PyAny> = height_of_spend.into_pyobject(py)?;
+            let args_vec: Vec<Bound<'_, PyAny>> = vec![
+                hash_bytes_object.into_any(),
+                height_of_spend
+            ];
             let puzzle_and_solution =
-                self.async_client(py, "get_puzzle_and_solution", (hash_bytes, height_of_spend))?;
+                self.async_client(py, "get_puzzle_and_solution", PyTuple::new(py, args_vec)?)?;
             let puzzle_reveal: PyObject = puzzle_and_solution.getattr(py, "puzzle_reveal")?;
             let solution: PyObject = puzzle_and_solution.getattr(py, "solution")?;
 
@@ -405,18 +415,10 @@ impl Simulator {
         let puzzle_hex = puzzle_reveal.to_hex();
         let puzzle_program = self.hex_to_program(&puzzle_hex)?;
         let solution_hex = Node(solution).to_hex(allocator).map_err(|_| {
-            PyErr::from_value(
-                PyIndexError::new_err("failed hex conversion")
-                    .value(py)
-                    .into(),
-            )
+            PyBaseException::new_err("failed hex conversion")
         })?;
         let solution_program = self.hex_to_program(&solution_hex).map_err(|_| {
-            PyErr::from_value(
-                PyIndexError::new_err("failed hex conversion")
-                    .value(py)
-                    .into(),
-            )
+            PyBaseException::new_err("failed hex conversion")
         })?;
         self.make_spend
             .call1(py, (coin, puzzle_program, solution_program))
@@ -430,15 +432,13 @@ impl Simulator {
         Python::with_gil(|py| {
             let mut spends = Vec::new();
             if txs.is_empty() {
-                return Err(PyErr::from_value(
-                    PyIndexError::new_err("some type error").value(py).into(),
-                ));
+                return Err(PyBaseException::new_err("some type error"));
             }
 
             let mut signature = txs[0].bundle.signature.clone();
             for (i, tx) in txs.iter().enumerate() {
                 let spend_args = tx.bundle.solution.to_clvm(allocator).map_err(|e| {
-                    PyErr::from_value(PyIndexError::new_err(format!("{e:?}")).value(py).into())
+                    PyBaseException::new_err(format!("{e:?}"))
                 })?;
                 let spend = self.make_coin_spend(
                     py,
@@ -465,7 +465,7 @@ impl Simulator {
         let spend_bundle = self.make_spend_bundle(allocator, txs)?;
         Python::with_gil(|py| {
             let spend_res: PyObject = self
-                .async_client(py, "push_tx", (spend_bundle,))?
+                .async_client(py, "push_tx", PyTuple::new(py, vec![spend_bundle])?)?
                 .extract(py)?;
             to_spend_result(py, spend_res)
         })
