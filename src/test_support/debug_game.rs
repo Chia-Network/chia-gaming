@@ -70,7 +70,7 @@ where
                 self.self_hash.clone(),
                 (
                     self.self_prog.clone(),
-                    (self.mover0.clone(), ((self.waiter0.clone(), ()))),
+                    (self.mover0.clone(), (self.waiter0.clone(), ())),
                 ),
             ),
         )
@@ -552,7 +552,7 @@ impl BareDebugGameDriver {
                 self.handler = new_handler.v1();
                 self.mover_share = tt_data.mover_share.clone();
                 self.last_validation_data
-                    .push_back((vprog.clone(), self.state.clone().into()));
+                    .push_back((vprog.clone(), self.state.clone()));
                 self.state = state.clone().into();
                 debug!("Accepted their turn");
             }

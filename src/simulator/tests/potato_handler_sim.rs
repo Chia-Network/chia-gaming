@@ -881,14 +881,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                 cradles[i].new_block(allocator, rng, current_height, &watch_report)?;
             }
 
-            loop {
-                let result =
-                    if let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
-                        result
-                    } else {
-                        break;
-                    };
-
+            while let Some(result) = cradles[i].idle(allocator, rng, &mut local_uis[i], 0)? {
                 if matches!(result.resync, Some((_, true))) {
                     can_move = true;
                     debug!("resync requested at id {:?}", result.resync);
@@ -1001,7 +994,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             };
         } else if can_move
             || local_uis.iter().any(|l| l.opponent_moved)
-            || global_move(&moves_input, move_number)
+            || global_move(moves_input, move_number)
         {
             can_move = false;
             assert!(!game_ids.is_empty());

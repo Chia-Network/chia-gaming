@@ -174,7 +174,7 @@ impl GameRunner {
             return Ok(format!("{{ \"created\": {created:?}, \"deleted\": {deleted:?}, \"timed_out\": {timed_out:?} }}\n"));
         }
 
-        Ok(format!("null\n"))
+        Ok("null\n".to_string())
     }
 
     fn get_puzzle_and_solution(&self, coin: &str) -> StringWithError {
@@ -210,13 +210,13 @@ impl GameRunner {
 
     fn register(&mut self, name: &str) -> StringWithError {
         let public_key = if let Some(identity) = self.lookup_identity(name) {
-            hex::encode(&identity.puzzle_hash.bytes())
+            hex::encode(identity.puzzle_hash.bytes())
         } else {
             let pk1: PrivateKey = self.rng.gen();
             let identity = ChiaIdentity::new(&mut self.allocator, pk1)?;
             self.simulator.farm_block(&identity.puzzle_hash);
             self.chase_block()?;
-            let result = hex::encode(&identity.puzzle_hash.bytes());
+            let result = hex::encode(identity.puzzle_hash.bytes());
             self.identities.insert(name.to_string(), result.clone());
             self.pubkeys.insert(result.clone(), identity);
             result
@@ -258,7 +258,7 @@ impl GameRunner {
     }
 
     fn spend(&mut self, blob: &str) -> StringWithError {
-        let spend_program = Program::from_hex(&blob)?;
+        let spend_program = Program::from_hex(blob)?;
         let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
         let spend_bundle = SpendBundle::from_clvm(&mut self.allocator, spend_node)?;
         debug!("spend with bundle {spend_bundle:?}");
