@@ -29,6 +29,13 @@ function byElementAndAttribute(element,attr,val) {
   return By.xpath(`//${element}[@${attr}='${val}']`);
 }
 
+async function sendEnter(element) {
+    const actions = driver.actions({async: true});
+    await element.keyDown(Key.RETURN);
+    await actions.pause(100);
+    await element.keyUp(Key.RETURN);
+}
+
 // Define a category of tests using test framework, in this case Jasmine
 describe("Basic element tests", function() {
   const baseUrl = "http://localhost:3000";
@@ -52,7 +59,7 @@ describe("Basic element tests", function() {
 
     // Try generating a room.
     let generateRoomButton = await driver.wait(until.elementLocated(byExactText("Generate Room")));
-    await generateRoomButton.click();
+      await sendEnter(generateRoomButton);
 
     let gameId = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-id", "//input")), 1000);
     let wager = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-wager", "//input")), 1000);
