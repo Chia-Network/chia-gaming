@@ -1,4 +1,5 @@
 pub mod tests;
+pub mod service;
 
 use std::cell::RefCell;
 
@@ -27,6 +28,7 @@ use crate::common::types::{
 };
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
 use crate::simulator::tests::simenv::test_funs as simenv_tests;
+use crate::simulator::service::service_main;
 use crate::test_support::calpoker::test_funs as calpoker_tests;
 
 #[derive(Debug, Clone)]
@@ -628,5 +630,6 @@ fn run_simulation_tests() {
 #[pymodule]
 fn chia_gaming(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_simulation_tests, &m)?)?;
+    m.add_function(wrap_pyfunction!(service_main, &m)?)?;
     Ok(())
 }

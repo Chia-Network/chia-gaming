@@ -5,8 +5,7 @@ edition = "2021"
 
 [features]
 sim-tests = ["dep:pyo3"]
-simulator = ["dep:pyo3"]
-server = ["dep:tokio","dep:salvo","dep:exec"]
+simulator = ["dep:pyo3","dep:tokio","dep:salvo","dep:exec"]
 used_linker = []
 
 [dependencies]
@@ -53,8 +52,3 @@ colored = "3.0.0"
 [lib]
 name = "chia_gaming"
 crate-type = ["cdylib", "rlib"]
-
-[[bin]]
-name = "chia-gaming"
-path = "src/cmd/main.rs"
-required-features = ["simulator","server"]
