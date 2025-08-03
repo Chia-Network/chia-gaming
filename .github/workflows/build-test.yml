@@ -237,7 +237,7 @@ jobs:
         source ./test/bin/activate
         # "+stable" flag is not supported here yet
         cargo test
-        python -m pip install maturin
+        python -m pip install maturin==1.9.2
         maturin develop --features sim-tests,simulator
         pip install `find . -name \*.whl`
         python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
