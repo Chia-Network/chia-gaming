@@ -466,63 +466,67 @@ fn service_main_inner() {
             .push(Router::with_path("create_spendable").post(create_spendable));
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
-        let s = std::thread::spawn(move || { std::panic::catch_unwind(move || {
-            debug!("starting simulator thread");
-            let simulator = Simulator::default();
-            debug!("have simulator");
-            let coinset_adapter = FullCoinSetAdapter::default();
-            let mut game_runner = GameRunner::new(simulator, coinset_adapter)
-                .map_err(|e| format!("{e}"))
-                .unwrap();
-            debug!("have game runner");
+        let s = std::thread::spawn(move || {
+            std::panic::catch_unwind(move || {
+                debug!("starting simulator thread");
+                let simulator = Simulator::default();
+                debug!("have simulator");
+                let coinset_adapter = FullCoinSetAdapter::default();
+                let mut game_runner = GameRunner::new(simulator, coinset_adapter)
+                    .map_err(|e| format!("{e}"))
+                    .unwrap();
+                debug!("have game runner");
 
-            loop {
-                debug!("simulator thread getting request");
-                let request = {
-                    let channel = TO_WEB.1.lock().unwrap();
-                    (*channel).recv().unwrap()
-                };
+                loop {
+                    debug!("simulator thread getting request");
+                    let request = {
+                        let channel = TO_WEB.1.lock().unwrap();
+                        (*channel).recv().unwrap()
+                    };
 
-                if true { // !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
-                    debug!("request {request:?}");
-                }
-                let result = {
-                    match request {
-                        WebRequest::Register(name) => game_runner.register(&name),
-                        WebRequest::GetCurrentPeak => {
-                            let result = game_runner.simulator.get_current_height();
-                            Ok(format!("{result}\n"))
-                        }
-                        WebRequest::GetBlockData(n) => game_runner.get_block_data(n),
-                        WebRequest::WaitBlock => {
-                            let result = game_runner.wait_block();
-                            std::thread::spawn(move || {
-                                std::thread::sleep(Duration::from_millis(1000));
-                                let channel = FROM_WEB.0.lock().unwrap();
-                                (*channel).send(result).unwrap();
-                            });
-                            continue;
-                        }
-                        WebRequest::GetPuzzleAndSolution(coin) => {
-                            game_runner.get_puzzle_and_solution(&coin)
-                        }
-                        WebRequest::CreateSpendable(who, target, amt) => {
-                            game_runner.create_spendable(&who, &target, amt)
-                        }
-                        WebRequest::Spend(blob) => game_runner.spend(&blob),
-                        WebRequest::Reset => game_runner.reset_sim(),
+                    if true {
+                        // !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
+                        debug!("request {request:?}");
                     }
-                };
+                    let result = {
+                        match request {
+                            WebRequest::Register(name) => game_runner.register(&name),
+                            WebRequest::GetCurrentPeak => {
+                                let result = game_runner.simulator.get_current_height();
+                                Ok(format!("{result}\n"))
+                            }
+                            WebRequest::GetBlockData(n) => game_runner.get_block_data(n),
+                            WebRequest::WaitBlock => {
+                                let result = game_runner.wait_block();
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(Duration::from_millis(1000));
+                                    let channel = FROM_WEB.0.lock().unwrap();
+                                    (*channel).send(result).unwrap();
+                                });
+                                continue;
+                            }
+                            WebRequest::GetPuzzleAndSolution(coin) => {
+                                game_runner.get_puzzle_and_solution(&coin)
+                            }
+                            WebRequest::CreateSpendable(who, target, amt) => {
+                                game_runner.create_spendable(&who, &target, amt)
+                            }
+                            WebRequest::Spend(blob) => game_runner.spend(&blob),
+                            WebRequest::Reset => game_runner.reset_sim(),
+                        }
+                    };
 
-                {
-                    let channel = FROM_WEB.0.lock().unwrap();
-                    (*channel).send(result).unwrap();
+                    {
+                        let channel = FROM_WEB.0.lock().unwrap();
+                        (*channel).send(result).unwrap();
+                    }
                 }
-            }
-        }).map_err(|e| {
-            eprintln!("error bringing up simulator thread: {e:?}");
-            std::process::exit(0);
-        }) });
+            })
+            .map_err(|e| {
+                eprintln!("error bringing up simulator thread: {e:?}");
+                std::process::exit(0);
+            })
+        });
 
         println!("port 5800.  press return to exit gracefully...");
         let t = std::thread::spawn(|| {
@@ -544,7 +548,9 @@ fn service_main_inner() {
 pub fn service_main() {
     if let Err(e) = std::panic::catch_unwind(|| {
         Python::with_gil(|py| {
-            py.allow_threads(|| { service_main_inner(); })
+            py.allow_threads(|| {
+                service_main_inner();
+            })
         })
     }) {
         eprintln!("panic: {e:?}");
