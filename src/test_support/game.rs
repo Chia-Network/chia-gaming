@@ -26,6 +26,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{Amount, CoinString, Error, IntoErr};
 
+#[cfg(any(feature = "sim-tests", feature = "simulator"))]
 use crate::simulator::Simulator;
 
 #[derive(Clone)]

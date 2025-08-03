@@ -16,9 +16,11 @@ use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choi
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
 use crate::shutdown::BasicShutdownConditions;
-use crate::test_support::game::{GameAction, GameActionResult};
+use crate::test_support::game::GameAction;
+#[cfg(any(feature = "sim-tests", feature = "simulator"))]
+use crate::test_support::game::GameActionResult;
 
-#[cfg(any(test, feature = "sim-tests", feature = "simulator"))]
+#[cfg(any(feature = "sim-tests", feature = "simulator"))]
 use crate::simulator::tests::simenv::SimulatorEnvironment;
 
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
