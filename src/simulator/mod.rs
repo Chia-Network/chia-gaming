@@ -614,7 +614,8 @@ impl Simulator {
 }
 
 #[pyfunction]
-fn run_simulation_tests() {
+#[pyo3(signature = (choices = Vec::new()))]
+fn run_simulation_tests(choices: Vec<String>) {
     if let Err(e) = std::panic::catch_unwind(|| {
         let ref_lists = [
             &simenv_tests(),
@@ -623,9 +624,11 @@ fn run_simulation_tests() {
         ];
         for test_set in ref_lists.iter() {
             for (name, f) in test_set.iter() {
-                eprintln!("{} ...", name);
-                f();
-                eprintln!("{} ... ok\n", name);
+                if choices.is_empty() || choices.iter().any(|choice| name.contains(choice)) {
+                    eprintln!("{} ...", name);
+                    f();
+                    eprintln!("{} ... ok\n", name);
+                }
             }
         }
     }) {
