@@ -19,14 +19,17 @@ use crate::channel_handler::v1::game::Game;
 use crate::channel_handler::v1::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
+#[cfg(test)]
+use crate::common::types::PrivateKey;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 use crate::referee::v1::types::{
     InternalStateUpdateArgs, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
+#[cfg(test)]
 use crate::utils::pair_of_array_mut;
 
 #[derive(Debug)]
@@ -86,6 +89,7 @@ pub struct DebugGameMoveInfo {
 
 /// A driver for the bare debug game, wrapped in a referee coin.
 pub struct BareDebugGameDriver {
+    #[cfg(test)]
     game: Game,
 
     pub alice_identity: ChiaIdentity,
@@ -196,6 +200,7 @@ impl BareDebugGameDriver {
                 last_validation_data: VecDeque::new(),
                 mod_hash: referee_coin_puzzle_hash.clone(),
                 nonce,
+                #[cfg(test)]
                 game: alice_game.clone(),
                 slash_detected: None,
                 rng: rng_sequence

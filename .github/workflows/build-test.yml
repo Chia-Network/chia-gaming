@@ -236,7 +236,11 @@ jobs:
         echo "PWD=$(pwd)"
         source ./test/bin/activate
         # "+stable" flag is not supported here yet
-        cargo test --features=sim-tests
+        cargo test
+        python -m pip install maturin
+        maturin develop --features sim-tests,simulator
+        pip install `find . -name \*.whl`
+        python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
 
     - name: Build Docker Images
       run: bash -x build-docker-images.sh
