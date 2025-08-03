@@ -615,17 +615,22 @@ impl Simulator {
 
 #[pyfunction]
 fn run_simulation_tests() {
-    let ref_lists = [
-        &simenv_tests(),
-        &calpoker_tests(),
-        &potato_handler_sim_tests(),
-    ];
-    for test_set in ref_lists.iter() {
-        for (name, f) in test_set.iter() {
-            eprintln!("{} ...", name);
-            f();
-            eprintln!("{} ... ok\n", name);
+    if let Err(e) = std::panic::catch_unwind(|| {
+        let ref_lists = [
+            &simenv_tests(),
+            &calpoker_tests(),
+            &potato_handler_sim_tests(),
+        ];
+        for test_set in ref_lists.iter() {
+            for (name, f) in test_set.iter() {
+                eprintln!("{} ...", name);
+                f();
+                eprintln!("{} ... ok\n", name);
+            }
         }
+    }) {
+        eprintln!("panic: {e:?}");
+        std::process::exit(1);
     }
 }
 

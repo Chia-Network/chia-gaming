@@ -12,6 +12,7 @@ use std::time::Duration;
 use lazy_static::lazy_static;
 use log::debug;
 
+use pyo3::Python;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -148,6 +149,7 @@ impl GameRunner {
     }
 
     fn wait_block(&mut self) -> StringWithError {
+        debug!("entering wait block");
         self.simulator
             .farm_block(&self.neutral_identity.puzzle_hash);
         let new_height = self.chase_block()?;
@@ -313,6 +315,8 @@ fn pass_on_request(
     response: &mut Response,
     wr: WebRequest,
 ) -> Result<(), String> {
+    debug!("pass on request {wr:?}");
+
     let locked = ONE_REQUEST.lock().unwrap();
 
     {
@@ -432,32 +436,9 @@ async fn cors(req: &mut Request, response: &mut Response) -> Result<(), String> 
     Ok(())
 }
 
-fn detect_run_as_python(args: &[String]) -> bool {
-    args.iter().any(|x: &String| x == "-c")
-}
-
-#[pyfunction]
-pub fn service_main() {
+fn service_main_inner() {
     let args = std::env::args();
     let args_vec: Vec<String> = args.collect();
-    if detect_run_as_python(&args_vec) {
-        let new_args: Vec<OsString> = args_vec
-            .iter()
-            .enumerate()
-            .map(
-                |(i, arg)| {
-                    if i == 0 {
-                        "python3".into()
-                    } else {
-                        arg.into()
-                    }
-                },
-            )
-            .collect();
-        let exec_err = execvp("python3", &new_args);
-        eprintln!("Error Running: {:?}\n{:?}\n", new_args, exec_err);
-        return;
-    }
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     rt.block_on(async {
@@ -485,20 +466,24 @@ pub fn service_main() {
             .push(Router::with_path("create_spendable").post(create_spendable));
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
-        let s = std::thread::spawn(move || {
+        let s = std::thread::spawn(move || { std::panic::catch_unwind(move || {
+            debug!("starting simulator thread");
             let simulator = Simulator::default();
+            debug!("have simulator");
             let coinset_adapter = FullCoinSetAdapter::default();
             let mut game_runner = GameRunner::new(simulator, coinset_adapter)
                 .map_err(|e| format!("{e}"))
                 .unwrap();
+            debug!("have game runner");
 
             loop {
+                debug!("simulator thread getting request");
                 let request = {
                     let channel = TO_WEB.1.lock().unwrap();
                     (*channel).recv().unwrap()
                 };
 
-                if !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
+                if true { // !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
                     debug!("request {request:?}");
                 }
                 let result = {
@@ -534,7 +519,10 @@ pub fn service_main() {
                     (*channel).send(result).unwrap();
                 }
             }
-        });
+        }).map_err(|e| {
+            eprintln!("error bringing up simulator thread: {e:?}");
+            std::process::exit(0);
+        }) });
 
         println!("port 5800.  press return to exit gracefully...");
         let t = std::thread::spawn(|| {
@@ -545,8 +533,21 @@ pub fn service_main() {
             }
         });
 
+        println!("doing actual service");
         Server::new(acceptor).serve(router).await;
         s.join().unwrap();
         t.join().unwrap();
     })
+}
+
+#[pyfunction]
+pub fn service_main() {
+    if let Err(e) = std::panic::catch_unwind(|| {
+        Python::with_gil(|py| {
+            py.allow_threads(|| { service_main_inner(); })
+        })
+    }) {
+        eprintln!("panic: {e:?}");
+        std::process::exit(1);
+    }
 }
