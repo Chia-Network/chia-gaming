@@ -27,7 +27,7 @@ use crate::common::types::{
     GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
     ToQuotedProgram,
 };
-#[cfg(any(feature = "simulator"))]
+#[cfg(feature = "simulator")]
 use crate::simulator::service::service_main;
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
 use crate::simulator::tests::simenv::test_funs as simenv_tests;
