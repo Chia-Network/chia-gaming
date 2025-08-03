@@ -414,11 +414,8 @@ impl BareDebugGameDriver {
             (false, self.validation_program_queue[0].clone())
         };
 
-        let validation_info = ValidationInfo::new_state_update(
-            allocator,
-            validation_program.clone().into(),
-            self.state.p(),
-        );
+        let validation_info =
+            ValidationInfo::new_state_update(allocator, validation_program.clone(), self.state.p());
 
         let emove = ExhaustiveMoveInputs {
             alice_puzzle_hash: self.alice_identity.puzzle_hash.clone(),

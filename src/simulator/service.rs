@@ -227,7 +227,7 @@ impl GameRunner {
 
     fn create_spendable(&mut self, who: &str, target: &str, amt: u64) -> StringWithError {
         let target_ph_bytes: Vec<u8> =
-            hex::decode(&target).map_err(|_| Error::StrErr("bad target hex".to_string()))?;
+            hex::decode(target).map_err(|_| Error::StrErr("bad target hex".to_string()))?;
         let target_ph = PuzzleHash::from_hash(Hash::from_slice(&target_ph_bytes));
         let identity = self.lookup_identity(who).cloned();
         if let Some(identity) = identity {
@@ -248,7 +248,7 @@ impl GameRunner {
                         )?;
                         let parent_coin_bytes = parent_coin_0.to_bytes();
                         self.wait_block()?;
-                        return Ok(format!("\"{}\"\n", hex::encode(&parent_coin_bytes)));
+                        return Ok(format!("\"{}\"\n", hex::encode(parent_coin_bytes)));
                     }
                 }
             }
