@@ -1,6 +1,4 @@
-use exec::execvp;
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::fs;
 use std::io::stdin;
 use std::mem::swap;
@@ -437,8 +435,6 @@ async fn cors(req: &mut Request, response: &mut Response) -> Result<(), String> 
 }
 
 fn service_main_inner() {
-    let args = std::env::args();
-    let args_vec: Vec<String> = args.collect();
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     rt.block_on(async {
@@ -539,8 +535,8 @@ fn service_main_inner() {
 
         println!("doing actual service");
         Server::new(acceptor).serve(router).await;
-        s.join().unwrap();
-        t.join().unwrap();
+        let _ = s.join().unwrap();
+        let _ = t.join().unwrap();
     })
 }
 
