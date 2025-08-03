@@ -536,7 +536,7 @@ fn service_main_inner() {
         println!("doing actual service");
         Server::new(acceptor).serve(router).await;
         let _ = s.join().unwrap();
-        let _ = t.join().unwrap();
+        t.join().unwrap();
     })
 }
 
