@@ -1,7 +1,7 @@
 // Require modules used in the logic below
 const jasmine = require('jasmine');
 const os = require('os');
-const {Builder, By, Key, until} = require('selenium-webdriver');
+const {Builder, By, Key, Keys, until} = require('selenium-webdriver');
 
 // You can use a remote Selenium Hub, but we are not doing that here
 require('chromedriver');
@@ -31,9 +31,7 @@ function byElementAndAttribute(element,attr,val) {
 
 async function sendEnter(element) {
     const actions = driver.actions({async: true});
-    await element.keyDown(Key.RETURN);
-    await actions.pause(100);
-    await element.keyUp(Key.RETURN);
+    await element.sendKeys(Keys.RETURN);
 }
 
 // Define a category of tests using test framework, in this case Jasmine
