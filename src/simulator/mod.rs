@@ -1,5 +1,5 @@
-pub mod tests;
 pub mod service;
+pub mod tests;
 
 use std::cell::RefCell;
 
@@ -26,9 +26,9 @@ use crate::common::types::{
     GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
     ToQuotedProgram,
 };
+use crate::simulator::service::service_main;
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
 use crate::simulator::tests::simenv::test_funs as simenv_tests;
-use crate::simulator::service::service_main;
 use crate::test_support::calpoker::test_funs as calpoker_tests;
 
 #[derive(Debug, Clone)]
