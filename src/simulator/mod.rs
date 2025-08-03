@@ -1,3 +1,4 @@
+#[cfg(feature = "simulator")]
 pub mod service;
 pub mod tests;
 
@@ -26,6 +27,7 @@ use crate::common::types::{
     GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
     ToQuotedProgram,
 };
+#[cfg(any(feature = "simulator"))]
 use crate::simulator::service::service_main;
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
 use crate::simulator::tests::simenv::test_funs as simenv_tests;
@@ -630,6 +632,7 @@ fn run_simulation_tests() {
 #[pymodule]
 fn chia_gaming(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_simulation_tests, &m)?)?;
+    #[cfg(feature = "simulator")]
     m.add_function(wrap_pyfunction!(service_main, &m)?)?;
     Ok(())
 }

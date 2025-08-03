@@ -18,6 +18,7 @@ use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
 use crate::shutdown::BasicShutdownConditions;
 use crate::test_support::game::{GameAction, GameActionResult};
 
+#[cfg(any(test, feature = "sim-tests", feature = "simulator"))]
 use crate::simulator::tests::simenv::SimulatorEnvironment;
 
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
