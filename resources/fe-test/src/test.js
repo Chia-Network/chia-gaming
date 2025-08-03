@@ -30,8 +30,14 @@ function byElementAndAttribute(element,attr,val) {
 }
 
 async function sendEnter(element) {
-    const actions = driver.actions({async: true});
-    await element.sendKeys(Key.ENTER);
+  await element.sendKeys(Key.ENTER);
+}
+
+async function waitEnabled(element) {
+  const actions = driver.actions({async: true});
+  for (var i = 0; i < 10 && !element.isEnabled(); i++) {
+    await actions.pause(500);
+  }
 }
 
 // Define a category of tests using test framework, in this case Jasmine
@@ -57,7 +63,8 @@ describe("Basic element tests", function() {
 
     // Try generating a room.
     let generateRoomButton = await driver.wait(until.elementLocated(byExactText("Generate Room")));
-      await sendEnter(generateRoomButton);
+    await waitEnabled(generateRoomButton);
+    await sendEnter(generateRoomButton);
 
     let gameId = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-id", "//input")), 1000);
     let wager = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-wager", "//input")), 1000);
