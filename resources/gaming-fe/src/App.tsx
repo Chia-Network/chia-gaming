@@ -27,15 +27,18 @@ const App: React.FC = () => {
   const [lobbyUrl, setLobbyUrl] = useState('about:blank');
 
   const listenForWalletConnect = useCallback((e: any) => {
-    if (params.lobby) {
-      const messageKey = e.message ? 'message' : 'data';
-      const messageData = e[messageKey];
-      console.warn('lobby: inner frame received message', messageData);
-      if (messageData.name === 'walletconnect_up') {
-        setReceivedWalletConnect(true);
-      }
+    const messageKey = e.message ? 'message' : 'data';
+    const messageData = e[messageKey];
+    console.warn('lobby: inner frame received message', messageData);
+    if (messageData.name === 'walletconnect_up' && !receivedWalletConnect) {
+      setReceivedWalletConnect(true);
     }
   }, []);
+
+  console.warn('App, simulatorActive', simulatorActive());
+  if (simulatorActive() && !receivedWalletConnect) {
+    setReceivedWalletConnect(true);
+  }
 
   useEffect(() => {
     if (!params.lobby) {
@@ -45,24 +48,24 @@ const App: React.FC = () => {
           urls.tracker;
         setLobbyUrl(trackerUrl);
       });
-    } else {
-      console.log('doing event listener for lobby frame');
-      window.addEventListener('message', listenForWalletConnect);
-      return function() {
-        window.removeEventListener('message', listenForWalletConnect);
-      };
     }
+
+    console.log('doing event listener for lobby frame');
+    window.addEventListener('message', listenForWalletConnect);
+    return function() {
+      window.removeEventListener('message', listenForWalletConnect);
+    };
   });
 
   if (params.lobby) {
-    return (<LobbyScreen walletConnect={receivedWalletConnect}/>);
+    return (<LobbyScreen walletConnect={receivedWalletConnect} simulatorActive={simulatorActive()} />);
   } else if (params.game && !params.join) {
     return (<Game />);
   } else if (!session && !simulatorActive()) {
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
-          <WalletConnectHeading client={client} session={session} pairings={pairings} connect={connect} disconnect={disconnect}/>
+          <WalletConnectHeading client={client} session={session} pairings={pairings} connect={connect} disconnect={disconnect} simulatorActive={simulatorActive()} />
         </div>
         <Box p={4} maxWidth={600} mx="auto">
           <Typography variant="h4" gutterBottom>

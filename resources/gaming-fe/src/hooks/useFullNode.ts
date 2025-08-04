@@ -319,11 +319,11 @@ export function connectRealBlockchain() {
 }
 
 export function getBlockchainInterfaceSingleton() {
-  if (blockchainInterfaceSingleton) {
-    return blockchainInterfaceSingleton;
-  }
-
+  console.warn("simulator active");
   simulatorIsActive = true;
+
+  window.postMessage({ name: "walletconnect_up" }, "*");
+
   blockchainInterfaceSingleton = new FakeBlockchainInterface(
     "https://localhost:5800"
   );

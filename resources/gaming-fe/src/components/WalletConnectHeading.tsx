@@ -187,6 +187,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
 
   if (!alreadyConnected && (session || args.simulatorActive)) {
     setAlreadyConnected(true);
+    setExpanded(false);
   }
 
   const sessionConnected = session ? "connected" : fakeAddress ? "simulator" : "disconnected";
@@ -226,7 +227,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       </Box>
     </div>
   ) : fakeAddress ? (
-    <Typography variant="h5" style={{ background: '#aa2' }}>Simulator</Typography>
+    <Typography variant="h5" style={{ background: '#aa2' }}>Simulator {fakeAddress}</Typography>
   ) : (
     <div style={{ display: 'flex', flexDirection: 'row', width: '100%', height: '3em' }}>
       <Button variant="contained" onClick={handleConnectSimulator} sx={{ mt: 3 }} style={{ background: '#aa2' }}>
