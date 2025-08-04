@@ -1,13 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CoinOutput, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, BlockchainConnection, ChiaGame, CalpokerOutcome, WatchReport } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
-import { getBlockchainInterfaceSingleton } from './useFullNode';
-import { getSearchParams, useInterval, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
+import { getBlockchainInterfaceSingleton, InternalBlockchainInterface, registerBlockchainNotifier } from './useFullNode';
+import { getSearchParams, useInterval, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { v4 as uuidv4 } from 'uuid';
-
-async function empty() {
-  return {};
-}
 
 let blobSingleton: any = null;
 
@@ -28,7 +24,6 @@ class WasmBlobWrapper {
   wc: WasmConnection | undefined;
   rngSeed: string;
   sendMessage: (msg: string) => void;
-  blockchain: BlockchainConnection;
   identity: IChiaIdentity | undefined;
   cradle: ChiaGame | undefined;
   uniqueId: string;
@@ -47,6 +42,7 @@ class WasmBlobWrapper {
   playerHand: number[][];
   opponentHand: number[][];
   finished: boolean;
+  blockNotificationId: number;
   fromPuzzleHash: string | undefined;
   gameOutcome: CalpokerOutcome | undefined;
   stateChanger: (stateSettings: any) => void;
@@ -60,31 +56,10 @@ class WasmBlobWrapper {
       this.kickSystem(2);
     });
 
-    this.blockchain = getBlockchainInterfaceSingleton((peak, blocks) => {
-      console.log('useWasmBlob: block notification', peak, blocks);
-      const block_report = {
-        created_watched: [],
-        deleted_watched: [],
-        timed_out: []
-      };
-      this.kickSystem(4);
-      for (var b = 0; b < blocks.length; b++) {
-        const block = blocks[b];
-        const one_report = this.wc?.convert_coinset_org_block_spend_to_watch_report(
-          block.coin.parent_coin_info,
-          block.coin.puzzle_hash,
-          block.coin.amount.toString(),
-          block.puzzle_reveal,
-          block.solution
-        );
-        if (one_report) {
-          combine_reports(block_report, one_report);
-        }
-      }
-      this.pushEvent({ takeBlockData: {
-        peak: peak,
-        block_report: block_report
-      }});
+    const blockchain = getBlockchainInterfaceSingleton();
+
+    this.blockNotificationId = registerBlockchainNotifier((peak, blocks) => {
+      this.blockNotification(peak, blocks);
     });
 
     this.stateChanger = stateChanger;
@@ -113,6 +88,33 @@ class WasmBlobWrapper {
       this.qualifyingEvents |= 8;
       this.pushEvent(this.loadWasmEvent);
     }
+  }
+
+  blockNotification(peak: number, blocks: any[]) {
+    console.log('useWasmBlob: block notification', peak, blocks);
+    const block_report = {
+      created_watched: [],
+      deleted_watched: [],
+      timed_out: []
+    };
+    this.kickSystem(4);
+    for (var b = 0; b < blocks.length; b++) {
+      const block = blocks[b];
+      const one_report = this.wc?.convert_coinset_org_block_spend_to_watch_report(
+        block.coin.parent_coin_info,
+        block.coin.puzzle_hash,
+        block.coin.amount.toString(),
+        block.puzzle_reveal,
+        block.solution
+      );
+      if (one_report) {
+        combine_reports(block_report, one_report);
+      }
+    }
+    this.pushEvent({ takeBlockData: {
+      peak: peak,
+      block_report: block_report
+    }});
   }
 
   loadPresets(presetFiles: string[]) {
@@ -179,7 +181,8 @@ class WasmBlobWrapper {
     // Compose blob to spend
     console.warn('internalPushSpend', tx);
     let blob = spend_bundle_to_clvm(tx);
-    return this.blockchain.spend(this.wc?.convert_spend_to_coinset_org(blob)).then((res: any) => {
+    const blockchain = getBlockchainInterfaceSingleton();
+    return blockchain.spend(this.wc?.convert_spend_to_coinset_org(blob)).then((res: any) => {
       if (res.success) {
         console.log('successful spend', tx);
       } else {
@@ -388,7 +391,8 @@ class WasmBlobWrapper {
     }
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
-    return this.blockchain.
+    const blockchain = getBlockchainInterfaceSingleton();
+    return blockchain.
       select_coins(this.amount).then((result: any) => {
         this.fromPuzzleHash = result.fromPuzzleHash;
         let inputAmount = 0;
@@ -399,7 +403,8 @@ class WasmBlobWrapper {
             amount: inputAmount - totalAmount
           });
         }
-        return this.blockchain.
+        const blockchain = getBlockchainInterfaceSingleton();
+        return blockchain.
           sign_transaction(
             result.inputs,
             outputs,

@@ -12,11 +12,16 @@ import {
 } from "@mui/material";
 import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
+import {
+  connectRealBlockchain,
+  getBlockchainInterfaceSingleton
+} from '../hooks/useFullNode';
 import Debug from "./Debug";
 // @ts-ignore
 import { bech32m } from 'bech32m-chia';
 import { useWalletConnect } from "../hooks/WalletConnectContext";
 import { CoinOutput } from '../types/ChiaGaming';
+import { generateOrRetrieveUniqueId } from '../util';
 
 const WalletConnectHeading: React.FC<any> = (args: any) => {
   const { client, session, pairings, connect, disconnect } = args;
@@ -24,6 +29,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const [alreadyConnected, setAlreadyConnected] = useState(false);
   const [walletId, setWalletId] = useState(1);
   const [walletIds, setWalletIds] = useState<any[]>([]);
+  const [fakeAddress, setFakeAddress] = useState<string | undefined>();
   const [wantSpendable, setWantSpendable] = useState<any | undefined>(undefined);
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = useCallback(() => {
@@ -152,6 +158,8 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const handleConnectWallet = () => {
     if (!client) throw new Error("WalletConnect is not initialized.");
 
+    connectRealBlockchain();
+
     if (pairings.length === 1) {
       connect({ topic: pairings[0].topic });
     } else if (pairings.length) {
@@ -161,11 +169,27 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     }
   };
 
-  if (!alreadyConnected && session) {
+  const handleConnectSimulator = () => {
+    const uniqueId = generateOrRetrieveUniqueId();
+    const baseUrl = 'http://localhost:5800';
+
+    fetch(`${baseUrl}/register?name=${uniqueId}`, {
+      method: "POST"
+    }).then(res => {
+      return res.json();
+    }).then(res => {
+      // Trigger fake connect if not connected.
+      console.warn('fake address is', res);
+      setFakeAddress(res);
+      getBlockchainInterfaceSingleton();
+    });
+  };
+
+  if (!alreadyConnected && (session || args.simulatorActive)) {
     setAlreadyConnected(true);
   }
 
-  const sessionConnected = session ? "connected" : "disconnected";
+  const sessionConnected = session ? "connected" : fakeAddress ? "simulator" : "disconnected";
   const ifSession = session ? (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Box>
@@ -201,10 +225,17 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
         </Button>
       </Box>
     </div>
+  ) : fakeAddress ? (
+    <Typography variant="h5" style={{ background: '#aa2' }}>Simulator</Typography>
   ) : (
-    <Button variant="contained" onClick={handleConnectWallet} sx={{ mt: 3 }}>
-      Link Wallet
-    </Button>
+    <div style={{ display: 'flex', flexDirection: 'row', width: '100%', height: '3em' }}>
+      <Button variant="contained" onClick={handleConnectSimulator} sx={{ mt: 3 }} style={{ background: '#aa2' }}>
+        Simulator
+      </Button>
+      <Button variant="contained" onClick={handleConnectWallet} sx={{ mt: 3 }}>
+        Link Wallet
+      </Button>
+    </div>
   );
 
   const ifExpanded = expanded ? (

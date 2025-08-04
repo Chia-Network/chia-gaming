@@ -40,7 +40,7 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'", "https://explorer-api.walletconnect.com", ...extras],
       scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'", ...extras],
-      connectSrc: ["'self'", "https://explorer-api.walletconnect.com", "wss://relay.walletconnect.com", "https://verify.walletconnect.org", "https://verify.walletconnect.org", "https://api.coinset.org", "wss://api.coinset.org", args.tracker, ...extras],
+      connectSrc: ["'self'", "https://explorer-api.walletconnect.com", "wss://relay.walletconnect.com", "https://verify.walletconnect.org", "https://verify.walletconnect.org", "https://api.coinset.org", "wss://api.coinset.org", "http://localhost:5800", args.tracker, ...extras],
       frameSrc: ["'self'",  'https://verify.walletconnect.org', args.tracker, ...extras],
       frameAncestors: ["'self'", args.tracker],
     }

@@ -3,6 +3,7 @@ import Game from './components/Game';
 import LobbyScreen from "./components/LobbyScreen";
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { useWalletConnect } from "./hooks/WalletConnectContext";
+import { simulatorActive } from "./hooks/useFullNode";
 import {
   Box,
   Button,
@@ -57,7 +58,7 @@ const App: React.FC = () => {
     return (<LobbyScreen walletConnect={receivedWalletConnect}/>);
   } else if (params.game && !params.join) {
     return (<Game />);
-  } else if (!session) {
+  } else if (!session && !simulatorActive()) {
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
@@ -75,7 +76,7 @@ const App: React.FC = () => {
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
-          <WalletConnectHeading client={client} session={session} pairings={pairings} connect={connect} disconnect={disconnect}/>
+          <WalletConnectHeading client={client} simulatorActive={simulatorActive()} session={session} pairings={pairings} connect={connect} disconnect={disconnect}/>
         </div>
         <iframe id='subframe' style={{ display: 'flex', width: '100%', flexShrink: 1, flexGrow: 1, height: '100%' }} src={lobbyUrl}></iframe>
       </div>
