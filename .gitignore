@@ -18,3 +18,10 @@ node_modules
 
 # Virtual environments
 .venv
+venv
+venv/
+
+target/
+
+.DS_Store
+*.cpython*
