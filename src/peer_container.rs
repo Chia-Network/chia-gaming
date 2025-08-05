@@ -680,7 +680,7 @@ impl SynchronousGameCradle {
 }
 
 impl SynchronousGameCradle {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "sim-tests", feature = "simulator"))]
     pub fn replace_last_message<F>(&mut self, f: F) -> Result<(), Error>
     where
         F: FnOnce(&PeerMessage) -> Result<PeerMessage, Error>,

@@ -1,3 +1,7 @@
+#[cfg(feature = "simulator")]
+pub mod service;
+pub mod tests;
+
 use std::cell::RefCell;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
@@ -23,6 +27,11 @@ use crate::common::types::{
     GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
     ToQuotedProgram,
 };
+#[cfg(feature = "simulator")]
+use crate::simulator::service::service_main;
+use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
+use crate::simulator::tests::simenv::test_funs as simenv_tests;
+use crate::test_support::calpoker::test_funs as calpoker_tests;
 
 #[derive(Debug, Clone)]
 pub struct IncludeTransactionResult {
@@ -602,4 +611,36 @@ impl Simulator {
             &amount,
         ))
     }
+}
+
+#[pyfunction]
+#[pyo3(signature = (choices = Vec::new()))]
+fn run_simulation_tests(choices: Vec<String>) {
+    if let Err(e) = std::panic::catch_unwind(|| {
+        let ref_lists = [
+            &simenv_tests(),
+            &calpoker_tests(),
+            &potato_handler_sim_tests(),
+        ];
+        for test_set in ref_lists.iter() {
+            for (name, f) in test_set.iter() {
+                if choices.is_empty() || choices.iter().any(|choice| name.contains(choice)) {
+                    eprintln!("{} ...", name);
+                    f();
+                    eprintln!("{} ... ok\n", name);
+                }
+            }
+        }
+    }) {
+        eprintln!("panic: {e:?}");
+        std::process::exit(1);
+    }
+}
+
+#[pymodule]
+fn chia_gaming(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(run_simulation_tests, &m)?)?;
+    #[cfg(feature = "simulator")]
+    m.add_function(wrap_pyfunction!(service_main, &m)?)?;
+    Ok(())
 }

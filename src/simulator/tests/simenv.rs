@@ -20,7 +20,7 @@ use crate::common::types::{
 };
 use crate::shutdown::get_conditions_with_channel_handler;
 use crate::simulator::Simulator;
-use crate::tests::game::{new_channel_handler_game, GameAction, GameActionResult};
+use crate::test_support::game::{new_channel_handler_game, GameAction, GameActionResult};
 
 #[derive(Debug, Clone)]
 pub enum OnChainState {
@@ -464,90 +464,95 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
     }
 }
 
-#[test]
-fn test_sim() {
-    let seed: [u8; 32] = [0; 32];
-    let mut rng = ChaCha8Rng::from_seed(seed);
-    let mut allocator = AllocEncoder::new();
-    let s = Simulator::default();
-    let private_key: PrivateKey = rng.gen();
-    let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
-    debug!("identity public key {:?}", identity.public_key);
-    s.farm_block(&identity.puzzle_hash);
+pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
+    let mut res: Vec<(&'static str, &'static dyn Fn())> = Vec::new();
+    res.push(("test_sim", &|| {
+        let seed: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed);
+        let mut allocator = AllocEncoder::new();
+        let s = Simulator::default();
+        let private_key: PrivateKey = rng.gen();
+        let identity =
+            ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
+        debug!("identity public key {:?}", identity.public_key);
+        s.farm_block(&identity.puzzle_hash);
 
-    let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
-    debug!("coin 0 {:?}", coins[0].to_parts());
-    debug!("coin 0 id {:?}", coins[0].to_coin_id());
+        let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
+        debug!("coin 0 {:?}", coins[0].to_parts());
+        debug!("coin 0 id {:?}", coins[0].to_coin_id());
 
-    let (_, _, amt) = coins[0].to_parts().unwrap();
-    s.spend_coin_to_puzzle_hash(
-        &mut allocator,
-        &identity,
-        &identity.puzzle,
-        &coins[0],
-        &[(identity.puzzle_hash.clone(), amt.clone())],
-    )
-    .expect("should spend");
-}
+        let (_, _, amt) = coins[0].to_parts().unwrap();
+        s.spend_coin_to_puzzle_hash(
+            &mut allocator,
+            &identity,
+            &identity.puzzle,
+            &coins[0],
+            &[(identity.puzzle_hash.clone(), amt.clone())],
+        )
+        .expect("should spend");
+    }));
 
-#[test]
-fn test_simulator_transfer_coin() {
-    let seed: [u8; 32] = [0; 32];
-    let mut rng = ChaCha8Rng::from_seed(seed);
-    let mut allocator = AllocEncoder::new();
-    let s = Simulator::default();
-    let private_key: PrivateKey = rng.gen();
-    let identity1 = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
-    let pk2: PrivateKey = rng.gen();
-    let identity2 = ChiaIdentity::new(&mut allocator, pk2.clone()).expect("should create");
+    res.push(("test_simulator_transfer_coin", &|| {
+        let seed: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed);
+        let mut allocator = AllocEncoder::new();
+        let s = Simulator::default();
+        let private_key: PrivateKey = rng.gen();
+        let identity1 =
+            ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
+        let pk2: PrivateKey = rng.gen();
+        let identity2 = ChiaIdentity::new(&mut allocator, pk2.clone()).expect("should create");
 
-    s.farm_block(&identity1.puzzle_hash);
+        s.farm_block(&identity1.puzzle_hash);
 
-    let coins1 = s.get_my_coins(&identity1.puzzle_hash).expect("got coins");
-    let coins2_empty = s
-        .get_my_coins(&identity2.puzzle_hash)
-        .expect("got coin list");
+        let coins1 = s.get_my_coins(&identity1.puzzle_hash).expect("got coins");
+        let coins2_empty = s
+            .get_my_coins(&identity2.puzzle_hash)
+            .expect("got coin list");
 
-    assert!(coins2_empty.is_empty());
-    s.transfer_coin_amount(
-        &mut allocator,
-        &identity2.puzzle_hash,
-        &identity1,
-        &coins1[0],
-        Amount::new(100),
-    )
-    .expect("should transfer");
-
-    s.farm_block(&identity1.puzzle_hash);
-    let coins2 = s.get_my_coins(&identity2.puzzle_hash).expect("got coins");
-    assert_eq!(coins2.len(), 1);
-}
-
-#[test]
-fn test_simulator_combine_coins() {
-    let seed: [u8; 32] = [0; 32];
-    let mut rng = ChaCha8Rng::from_seed(seed);
-    let mut allocator = AllocEncoder::new();
-    let s = Simulator::default();
-    let private_key: PrivateKey = rng.gen();
-    let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
-
-    s.farm_block(&identity.puzzle_hash);
-
-    let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
-
-    s.combine_coins(&mut allocator, &identity, &identity.puzzle_hash, &coins)
+        assert!(coins2_empty.is_empty());
+        s.transfer_coin_amount(
+            &mut allocator,
+            &identity2.puzzle_hash,
+            &identity1,
+            &coins1[0],
+            Amount::new(100),
+        )
         .expect("should transfer");
 
-    let pk2: PrivateKey = rng.gen();
-    let identity2 = ChiaIdentity::new(&mut allocator, pk2.clone()).expect("should create");
-    s.farm_block(&identity2.puzzle_hash);
-    let one_coin = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
+        s.farm_block(&identity1.puzzle_hash);
+        let coins2 = s.get_my_coins(&identity2.puzzle_hash).expect("got coins");
+        assert_eq!(coins2.len(), 1);
+    }));
 
-    let (_, _, a1) = coins[0].to_parts().expect("should parse");
-    let (_, _, a2) = coins[1].to_parts().expect("should parse");
-    let (_, _, amt) = one_coin[0].to_parts().expect("should parse");
+    res.push(("test_simulator_combine_coins", &|| {
+        let seed: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed);
+        let mut allocator = AllocEncoder::new();
+        let s = Simulator::default();
+        let private_key: PrivateKey = rng.gen();
+        let identity =
+            ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
 
-    assert_eq!(one_coin.len(), coins.len() - 1);
-    assert_eq!(a1 + a2, amt);
+        s.farm_block(&identity.puzzle_hash);
+
+        let coins = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
+
+        s.combine_coins(&mut allocator, &identity, &identity.puzzle_hash, &coins)
+            .expect("should transfer");
+
+        let pk2: PrivateKey = rng.gen();
+        let identity2 = ChiaIdentity::new(&mut allocator, pk2.clone()).expect("should create");
+        s.farm_block(&identity2.puzzle_hash);
+        let one_coin = s.get_my_coins(&identity.puzzle_hash).expect("got coins");
+
+        let (_, _, a1) = coins[0].to_parts().expect("should parse");
+        let (_, _, a2) = coins[1].to_parts().expect("should parse");
+        let (_, _, amt) = one_coin[0].to_parts().expect("should parse");
+
+        assert_eq!(one_coin.len(), coins.len() - 1);
+        assert_eq!(a1 + a2, amt);
+    }));
+
+    res
 }

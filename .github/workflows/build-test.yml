@@ -118,7 +118,10 @@ jobs:
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
           cargo +stable test
-          cargo +stable test --features=sim-tests
+          python -m pip install maturin==1.9.2
+          maturin build --features sim-tests,simulator
+          pip install `find . -name \*.whl`
+          python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
 
   calpoker_onchain_tests:
     runs-on: ubuntu-22.04 # ${{ matrix.os }}
@@ -180,7 +183,10 @@ jobs:
           python -m venv venv
           source venv/bin/activate
           pip install chia-blockchain==2.5.5-rc3
-          cargo +stable test --release --workspace --features=sim-tests
+          python -m pip install maturin==1.9.2
+          maturin build --features sim-tests,simulator
+          pip install `find . -name \*.whl`
+          python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
           grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
           python -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
       - name: Upload to Coveralls
@@ -236,7 +242,11 @@ jobs:
         echo "PWD=$(pwd)"
         source ./test/bin/activate
         # "+stable" flag is not supported here yet
-        cargo test --features=sim-tests
+        cargo test
+        python -m pip install maturin==1.9.2
+        maturin build --features sim-tests,simulator
+        pip install `find . -name \*.whl`
+        python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
 
     - name: Build Docker Images
       run: bash -x build-docker-images.sh
