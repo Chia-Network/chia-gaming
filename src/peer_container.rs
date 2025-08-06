@@ -10,7 +10,7 @@ use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
+    sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity, private_to_public_key, puzzle_hash_for_pk,
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
@@ -272,14 +272,6 @@ pub trait GameCradle {
     ) -> Result<PuzzleHash, Error>;
 }
 
-#[derive(Debug, Clone)]
-enum GameCradleSpendRequestState {
-    NotReached,
-    FundingCoin(CoinString),
-    Requested,
-    Completed
-}
-
 struct SynchronousGameCradleState {
     current_height: u64,
     watching_coins: HashMap<CoinString, WatchEntry>,
@@ -292,7 +284,7 @@ struct SynchronousGameCradleState {
     outbound_transactions: VecDeque<SpendBundle>,
     coin_solution_requests: VecDeque<CoinString>,
     funding_requests: VecDeque<FundingRequest>,
-    requested_funding: GameCradleSpendRequestState,
+    funding_coin: Option<CoinString>,
     resync: Option<(usize, bool)>,
     our_moves: VecDeque<(GameID, usize, Vec<u8>)>,
     opponent_moves: VecDeque<(GameID, usize, ReadableMove, Amount)>,
@@ -386,7 +378,7 @@ impl SynchronousGameCradle {
                 raw_game_messages: VecDeque::default(),
                 game_finished: VecDeque::default(),
                 funding_requests: VecDeque::default(),
-                requested_funding: GameCradleSpendRequestState::NotReached,
+                funding_coin: None,
                 channel_puzzle_hash: None,
                 unfunded_offer: None,
                 shutdown: None,
@@ -561,6 +553,18 @@ impl SynchronousGameCradle {
         self.peer.next_game_id()
     }
 
+    pub fn funding_coin_is_for_referee(
+        &self,
+    ) -> Result<Option<(CoinString, bool)>, Error> {
+        if let Some((coin, parent, ph, amt)) = self.state.funding_coin.as_ref().and_then(|c| {
+            c.to_parts().map(|(parent, ph, amt)| (c, parent, ph, amt))
+        }) {
+            return Ok(Some((coin.clone(), ph == self.state.identity.puzzle_hash)));
+        }
+
+        Ok(None)
+    }
+
     fn handle_partial_spend_from_parent_coin<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -625,8 +629,7 @@ impl SynchronousGameCradle {
         rng: &mut R,
         bundle: SpendBundle
     ) -> Result<(), Error> {
-        if matches!(self.state.requested_funding, GameCradleSpendRequestState::Requested) {
-            self.state.requested_funding = GameCradleSpendRequestState::Completed;
+        if matches!(self.funding_coin_is_for_referee()?, Some((_, true))) {
             let mut env = channel_handler_env(allocator, rng)?;
             let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
                 env: &mut env,
@@ -636,7 +639,7 @@ impl SynchronousGameCradle {
             return Ok(())
         }
 
-        Err(Error::StrErr(format!("deliver signed funding transaction in wrong state {:?}", self.state.requested_funding)))
+        Err(Error::StrErr(format!("deliver signed funding transaction in wrong state {:?}", self.state.funding_coin)))
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(
@@ -649,32 +652,20 @@ impl SynchronousGameCradle {
         self.state.channel_puzzle_hash = None;
 
         // Can only create the initial spend if we have the funding coin.
-        let mut request = GameCradleSpendRequestState::NotReached;
-        swap(&mut request, &mut self.state.requested_funding);
-
-        match request {
-            GameCradleSpendRequestState::FundingCoin(parent) => {
-                let res = self.handle_partial_spend_from_parent_coin(
-                    allocator,
-                    rng,
-                    channel_puzzle_hash,
-                    &parent,
-                )?;
-                self.state.requested_funding = GameCradleSpendRequestState::Completed;
-                Ok(res)
-            }
-            GameCradleSpendRequestState::NotReached => {
-                self.state.funding_requests.push_back(FundingRequest {
-                    spend_targets: vec![(channel_puzzle_hash.clone(), self.peer.amount())],
-                    spend_total: self.peer.my_contribution()
-                });
-                self.state.requested_funding = GameCradleSpendRequestState::Requested;
-                Ok(true)
-            }
-            GameCradleSpendRequestState::Requested |
-            GameCradleSpendRequestState::Completed => {
-                Ok(false)
-            }
+        if let Some((parent, true)) = self.funding_coin_is_for_referee()? {
+            let res = self.handle_partial_spend_from_parent_coin(
+                allocator,
+                rng,
+                channel_puzzle_hash,
+                &parent,
+            )?;
+            Ok(res)
+        } else {
+            self.state.funding_requests.push_back(FundingRequest {
+                spend_targets: vec![(channel_puzzle_hash.clone(), self.peer.amount())],
+                spend_total: self.peer.my_contribution()
+            });
+            Ok(false)
         }
     }
 
@@ -737,33 +728,20 @@ impl SynchronousGameCradle {
         rng: &mut R,
         unfunded_offer: SpendBundle,
     ) -> Result<bool, Error> {
-        // Can only create the initial spend if we have the funding coin.
-        let mut request = GameCradleSpendRequestState::NotReached;
-        swap(&mut request, &mut self.state.requested_funding);
-
-        match request {
-            GameCradleSpendRequestState::FundingCoin(parent) => {
-                let res = self.handle_unfunded_offer_with_parent_coin(
-                    allocator,
-                    rng,
-                    &parent,
-                    unfunded_offer,
-                )?;
-                self.state.requested_funding = GameCradleSpendRequestState::Completed;
-                Ok(res)
-            }
-            GameCradleSpendRequestState::NotReached => {
-                self.state.funding_requests.push_back(FundingRequest {
-                    spend_targets: vec![],
-                    spend_total: self.peer.my_contribution()
-                });
-                self.state.requested_funding = GameCradleSpendRequestState::Requested;
-                Ok(true)
-            }
-            GameCradleSpendRequestState::Requested |
-            GameCradleSpendRequestState::Completed => {
-                Ok(false)
-            }
+        if let Some((parent, true)) = self.funding_coin_is_for_referee()? {
+            let res = self.handle_unfunded_offer_with_parent_coin(
+                allocator,
+                rng,
+                &parent,
+                unfunded_offer,
+            )?;
+            Ok(res)
+        } else {
+            self.state.funding_requests.push_back(FundingRequest {
+                spend_targets: vec![],
+                spend_total: self.peer.my_contribution()
+            });
+            Ok(true)
         }
     }
 }
@@ -858,7 +836,7 @@ impl GameCradle for SynchronousGameCradle {
         rng: &mut R,
         coin: CoinString,
     ) -> Result<(), Error> {
-        self.state.requested_funding = GameCradleSpendRequestState::FundingCoin(coin.clone());
+        self.state.funding_coin = Some(coin.clone());
 
         if !self.peer.is_initiator() {
             return Ok(());

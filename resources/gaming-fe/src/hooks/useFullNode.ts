@@ -32,6 +32,7 @@ function doBlockNotifications(peak: number, block: any[], block_report: any) {
 }
 
 export interface InternalBlockchainInterface {
+  does_initial_spend(): undefined | ((target: string, amt: number) => Promise<string>);
   select_coins(amount: number): Promise<any>;
   sign_transaction(inputs: any[], outputs: CoinOutput[]): Promise<any>;
   spend(spend: any): Promise<string>;
@@ -88,6 +89,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       }
     });
   }
+
+  does_initial_spend() { return undefined; }
 
   withdraw() {
     this.ws.close();
@@ -275,6 +278,17 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.at_block = 0;
     this.handlingEvent = false;
     this.incomingEvents = [];
+  }
+
+  does_initial_spend() {
+    return (target: string, amt: number) => {
+      return fetch(`${this.baseUrl}/create_spendable?who=${generateOrRetrieveUniqueId()}&target=${target}&amt=${amt}`, {
+        method: "POST"
+      }).then((res) => res.json()).then((res) => {
+        // Returns the coin string
+        return res;
+      });
+    };
   }
 
   async kickEvent() {

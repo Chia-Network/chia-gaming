@@ -336,40 +336,59 @@ class WasmBlobWrapper {
     });
   }
 
-  loadCalpoker(): any {
-    return fetch("clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex").then(calpoker => calpoker.text()).then(calpoker_hex => {
-      this.calpokerHex = calpoker_hex;
-      if (!this.wc || !this.identity) {
-        console.error('failed loadCalpoker due to missing this.wc or this.identity');
-        return {
-          'setGameConnectionState': {
-            stateIdentifier: "calpoker loading failed",
-            stateDetail: ["got to data preloading without wasm"]
-          }
-        };
-      }
-      const env = {
-        game_types: {
-          "calpoker": {
-            version: 1,
-            hex: this.calpokerHex
-          }
-        },
-        timeout: 100,
-        unroll_timeout: 100
+  async receiveCalpokerHex(calpoker_hex: string): Promise<any> {
+    this.calpokerHex = calpoker_hex;
+    if (!this.wc || !this.identity) {
+      console.error('failed loadCalpoker due to missing this.wc or this.identity');
+      return {
+        'setGameConnectionState': {
+          stateIdentifier: "calpoker loading failed",
+          stateDetail: ["got to data preloading without wasm"]
+        }
       };
-      console.log('create calpoker cradle', env);
-      this.cradle = new ChiaGame(this.wc, env, this.rngSeed, this.identity, this.iStarted, this.amount, this.amount, this.fromPuzzleHash);
-      this.storedMessages.forEach((m) => {
-        this.cradle?.deliver_message(m);
-      });
+    }
+    const env = {
+      game_types: {
+        "calpoker": {
+          version: 1,
+          hex: this.calpokerHex
+        }
+      },
+      timeout: 100,
+      unroll_timeout: 100
+    };
+    console.log('create calpoker cradle', env);
+
+    this.cradle = new ChiaGame(this.wc, env, this.rngSeed, this.identity, this.iStarted, this.amount, this.amount, this.fromPuzzleHash);
+    const blockchain = getBlockchainInterfaceSingleton();
+    const do_initial_spend = blockchain.does_initial_spend();
+
+    if (!do_initial_spend) {
+      throw "Doesn't do initial spend (handle it)";
       return {
         'setGameConnectionState': {
           stateIdentifier: "starting",
           stateDetail: ["doing handshake"]
         }
       };
+    }
+
+    const coin = await do_initial_spend(this.identity.puzzle_hash, this.amount);
+    this.cradle?.opening_coin(coin);
+    this.storedMessages.forEach((m) => {
+      this.cradle?.deliver_message(m);
+      return {
+        'setGameConnectionState': {
+          stateIdentifier: "starting",
+          stateDetail: ["got simulator spend"]
+        }
+      };
     });
+  }
+
+  async loadCalpoker(): Promise<any> {
+    const calpoker_hex = await fetch("clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex").then(calpoker => calpoker.text());
+    return this.receiveCalpokerHex(calpoker_hex);
   }
 
   loadWasm(chia_gaming_init: any, cg: WasmConnection): any {
@@ -753,7 +772,7 @@ export function useWasmBlob() {
     }
     const keys = Object.keys(state.values);
     keys.forEach((k) => {
-      if (settable[k]) {
+      if (settable[k] && state.values[k] !== undefined) {
         console.warn(k, state.values[k]);
         settable[k](state.values[k]);
       }
