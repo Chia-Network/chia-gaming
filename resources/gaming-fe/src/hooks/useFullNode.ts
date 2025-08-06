@@ -6,7 +6,7 @@ function wsUrl(baseurl: string) {
   return `${url_with_new_method}/ws`;
 }
 
-type blockNotifyType = (peak: number, block: any[]) => void;
+type blockNotifyType = (peak: number, block: any[], report: any) => void;
 let blockNotifyId = 0;
 let blockNotify: { [id: string]: blockNotifyType } = {};
 let simulatorIsActive = false;
@@ -24,10 +24,10 @@ export function unregisterBlockchainNotifier(id: number) {
   delete blockNotify[id.toString()];
 }
 
-function doBlockNotifications(peak: number, block: any[]) {
+function doBlockNotifications(peak: number, block: any[], block_report: any) {
   const keys = Object.keys(blockNotify);
   keys.forEach((k) => {
-    blockNotify[k](peak, block);
+    blockNotify[k](peak, block, block_report);
   });
 }
 
@@ -117,7 +117,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       })
     }).then(r => r.json());
     console.log('br_spends', br_spends.block_spends);
-    doBlockNotifications(this.at_block, br_spends.block_spends);
+    doBlockNotifications(this.at_block, br_spends.block_spends, undefined);
   }
 
   async internalCheckPeak() {
@@ -241,19 +241,22 @@ function startSimulatorMonitoring(forWho: any): Promise<any> {
     return empty();
   }
 
+  console.log('startSimulatorMonitoring');
   return fetch(`${forWho.baseUrl}/wait_block`, {
     method: 'POST'
   }).then((res) => res.json()).then((res) => {
+    console.log('wait_block returned', res);
     forWho.setNewPeak(res);
-    return startSimulatorMonitoring(forWho);
   });
 }
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
+  console.log('requestBlockData', block_number);
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
     method: 'POST'
   }).then((res) => res.json()).then((res) => {
-    return forWho.deliverBlock(block_number, res);
+    console.log('requestBlockData, got', res);
+    forWho.deliverBlock(block_number, res);
   });
 }
 
@@ -262,37 +265,84 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   deleted: boolean;
   at_block: number;
   max_block: number;
+  handlingEvent: boolean;
+  incomingEvents: any[];
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
     this.deleted = false;
     this.max_block = 0;
     this.at_block = 0;
+    this.handlingEvent = false;
+    this.incomingEvents = [];
   }
 
-  setNewPeak(peak: number) {
+  async kickEvent() {
+    console.log('full node: kickEvent');
+    while (this.incomingEvents.length) {
+      console.log('incoming events', this.incomingEvents.length);
+      this.handlingEvent = true;
+      try {
+        const event = this.incomingEvents.shift();
+        console.log('full node: do event', event);
+        await this.handleEvent(event);
+      } catch (e) {
+        console.log('incoming event failed', e);
+      } finally {
+        this.handlingEvent = false;
+      }
+    }
+  }
+
+  async pushEvent(evt: any) {
+    this.incomingEvents.push(evt);
+    if (!this.handlingEvent) {
+      await this.kickEvent();
+    }
+  }
+
+  async handleEvent(event: any) {
+    if (event.setNewPeak) {
+      this.internalSetNewPeak(event.setNewPeak);
+    } else if (event.deliverBlock) {
+      this.internalDeliverBlock(event.deliverBlock.block_number, event.deliverBlock.block_data);
+    }
+  }
+
+  async internalNextBlock() {
+    if (this.at_block > this.max_block) {
+      return startSimulatorMonitoring(this);
+    } else {
+      return requestBlockData(this, this.at_block);
+    }
+  }
+
+  async internalSetNewPeak(peak: number) {
     if (this.max_block === 0) {
       this.max_block = peak;
       this.at_block = peak;
-    } else {
+    } else if (peak > this.max_block) {
       this.max_block = peak;
     }
 
-    if (this.at_block <= this.max_block) {
-      return requestBlockData(this, this.at_block);
-    }
+    console.log('FakeBlockchainInterface, peaks', this.at_block, '/', this.max_block);
 
-    return empty();
+    return this.internalNextBlock();
+  }
+
+  setNewPeak(peak: number) {
+    this.pushEvent({ setNewPeak: peak });
   }
 
   deliverBlock(block_number: number, block_data: any[]) {
-    if (this.at_block === block_number) {
-      this.at_block += 1;
-      doBlockNotifications(block_number, block_data);
-      return this.setNewPeak(this.max_block);
-    }
+    this.pushEvent({ deliverBlock: { block_number, block_data } });
+  }
 
-    return empty();
+  internalDeliverBlock(block_number: number, block_data: any[]) {
+    this.at_block += 1;
+    doBlockNotifications(block_number, [], block_data);
+
+    return this.internalNextBlock();
   }
 
   withdraw() {
@@ -300,12 +350,15 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   select_coins(amount: number): Promise<any> {
+    console.error('no-fake-select-coins', amount);
     throw 'no-fake-select-coins';
   }
   sign_transaction(inputs: any[], outputs: CoinOutput[]): Promise<any> {
+    console.error('no-fake-sign-transaction', inputs, outputs);
     throw 'no-fake-sign-transaction';
   }
   spend(spend: any): Promise<string> {
+    console.error('no-fake-spend', spend);
     throw 'no-fake-spend';
   }
 }
@@ -325,8 +378,9 @@ export function getBlockchainInterfaceSingleton() {
   window.postMessage({ name: "walletconnect_up" }, "*");
 
   blockchainInterfaceSingleton = new FakeBlockchainInterface(
-    "https://localhost:5800"
+    "http://localhost:5800"
   );
+  startSimulatorMonitoring(blockchainInterfaceSingleton);
 
   return blockchainInterfaceSingleton;
 }

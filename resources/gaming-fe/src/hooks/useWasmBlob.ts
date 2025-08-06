@@ -59,7 +59,7 @@ class WasmBlobWrapper {
     const blockchain = getBlockchainInterfaceSingleton();
 
     this.blockNotificationId = registerBlockchainNotifier((peak, blocks) => {
-      this.blockNotification(peak, blocks);
+      this.blockNotification(peak, blocks, undefined);
     });
 
     this.stateChanger = stateChanger;
@@ -84,33 +84,37 @@ class WasmBlobWrapper {
 
   kickSystem(flags: number) {
     this.qualifyingEvents |= flags;
+    console.warn("wasmBlob: kicksystem", flags, this.qualifyingEvents);
     if (this.qualifyingEvents == 7) {
+      console.warn("wasmBlob: kicksystem success");
       this.qualifyingEvents |= 8;
       this.pushEvent(this.loadWasmEvent);
     }
   }
 
-  blockNotification(peak: number, blocks: any[]) {
+  blockNotification(peak: number, blocks: any[], block_report: any) {
     console.log('useWasmBlob: block notification', peak, blocks);
-    const block_report = {
-      created_watched: [],
-      deleted_watched: [],
-      timed_out: []
-    };
-    this.kickSystem(4);
-    for (var b = 0; b < blocks.length; b++) {
-      const block = blocks[b];
-      const one_report = this.wc?.convert_coinset_org_block_spend_to_watch_report(
-        block.coin.parent_coin_info,
-        block.coin.puzzle_hash,
-        block.coin.amount.toString(),
-        block.puzzle_reveal,
-        block.solution
-      );
-      if (one_report) {
-        combine_reports(block_report, one_report);
+    if (block_report === undefined) {
+      block_report = {
+        created_watched: [],
+        deleted_watched: [],
+        timed_out: []
+      };
+      for (var b = 0; b < blocks.length; b++) {
+        const block = blocks[b];
+        const one_report = this.wc?.convert_coinset_org_block_spend_to_watch_report(
+          block.coin.parent_coin_info,
+          block.coin.puzzle_hash,
+          block.coin.amount.toString(),
+          block.puzzle_reveal,
+          block.solution
+        );
+        if (one_report) {
+          combine_reports(block_report, one_report);
+        }
       }
     }
+    this.kickSystem(4);
     this.pushEvent({ takeBlockData: {
       peak: peak,
       block_report: block_report
@@ -336,6 +340,7 @@ class WasmBlobWrapper {
     return fetch("clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex").then(calpoker => calpoker.text()).then(calpoker_hex => {
       this.calpokerHex = calpoker_hex;
       if (!this.wc || !this.identity) {
+        console.error('failed loadCalpoker due to missing this.wc or this.identity');
         return {
           'setGameConnectionState': {
             stateIdentifier: "calpoker loading failed",
@@ -353,6 +358,7 @@ class WasmBlobWrapper {
         timeout: 100,
         unroll_timeout: 100
       };
+      console.log('create calpoker cradle', env);
       this.cradle = new ChiaGame(this.wc, env, this.rngSeed, this.identity, this.iStarted, this.amount, this.amount, this.fromPuzzleHash);
       this.storedMessages.forEach((m) => {
         this.cradle?.deliver_message(m);

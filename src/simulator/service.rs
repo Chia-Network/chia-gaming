@@ -495,7 +495,7 @@ fn service_main_inner() {
                             WebRequest::WaitBlock => {
                                 let result = game_runner.wait_block();
                                 std::thread::spawn(move || {
-                                    std::thread::sleep(Duration::from_millis(1000));
+                                    std::thread::sleep(Duration::from_millis(5000));
                                     let channel = FROM_WEB.0.lock().unwrap();
                                     (*channel).send(result).unwrap();
                                 });
