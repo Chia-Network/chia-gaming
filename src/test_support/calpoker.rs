@@ -17,11 +17,13 @@ use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
 use crate::shutdown::BasicShutdownConditions;
 use crate::test_support::game::GameAction;
-#[cfg(any(feature = "sim-tests", feature = "simulator"))]
+#[cfg(any(feature = "sim-tests", ))]
 use crate::test_support::game::GameActionResult;
 
-#[cfg(any(feature = "sim-tests", feature = "simulator"))]
+#[cfg(any(feature = "sim-tests", ))]
 use crate::simulator::tests::simenv::SimulatorEnvironment;
+#[cfg(any(feature = "sim-tests", ))]
+use crate::simulator::tests::potato_handler_sim::run_calpoker_test_with_action_list;
 
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
     Game::new(
@@ -31,11 +33,10 @@ pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Ga
     )
 }
 
-#[cfg(any(feature = "sim-tests", feature = "simulator"))]
+#[cfg(any(feature = "sim-tests", ))]
 fn run_calpoker_play_test(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
-    v1: bool,
 ) -> Result<Vec<GameActionResult>, Error> {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
@@ -47,7 +48,7 @@ fn run_calpoker_play_test(
     let mut simenv = SimulatorEnvironment::new(allocator, &mut rng, &calpoker, &contributions)
         .expect("should get a sim env");
 
-    simenv.play_game(moves, v1)
+    simenv.play_game(moves)
 }
 
 pub fn prefix_test_moves(allocator: &mut AllocEncoder, v1: bool) -> [GameAction; 5] {
@@ -100,7 +101,7 @@ pub fn prefix_test_moves(allocator: &mut AllocEncoder, v1: bool) -> [GameAction;
     ]
 }
 
-#[cfg(any(feature = "sim-tests", feature = "simulator"))]
+#[cfg(any(feature = "sim-tests", ))]
 fn extract_info_from_game(game_results: &[GameActionResult]) -> (Hash, ReadableMove, Vec<u8>) {
     if let GameActionResult::MoveResult(_, _, _, entropy) = &game_results[1] {
         game_results.iter().find_map(|x| {
@@ -118,7 +119,8 @@ fn extract_info_from_game(game_results: &[GameActionResult]) -> (Hash, ReadableM
     .unwrap()
 }
 
-#[cfg(any(feature = "sim-tests", feature = "simulator"))]
+/// ----------------- Tests start here ------------------
+#[cfg(any(feature = "sim-tests", ))]
 pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     let mut res: Vec<(&'static str, &'static dyn Fn())> = Vec::new();
     res.push(("test_load_calpoker", &|| {
@@ -137,8 +139,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
     res.push(("test_play_calpoker_happy_path_v0", &|| {
         let mut allocator = AllocEncoder::new();
+        let seed: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed);
         let moves = prefix_test_moves(&mut allocator, false);
-        let test1 = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+        let test1 = run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, false);
         debug!("play_result {test1:?}");
     }));
 

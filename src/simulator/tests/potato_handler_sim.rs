@@ -33,7 +33,7 @@ use crate::potato_handler::PotatoHandler;
 
 use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
-use crate::test_support::calpoker::test_moves_1;
+use crate::test_support::calpoker::prefix_test_moves;
 use crate::test_support::debug_game::{
     make_debug_games, BareDebugGameDriver, DebugGameCurry, DebugGameMoveInfo,
 };
@@ -485,7 +485,7 @@ pub fn handshake<'a, R: Rng + 'a>(
     Ok(())
 }
 
-fn run_calpoker_test_with_action_list(
+pub fn run_calpoker_test_with_action_list(
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
     moves: &[GameAction],
@@ -1340,7 +1340,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
 
         // Play moves
-        let moves = test_moves_1(&mut allocator, false);
+        let moves = prefix_test_moves(&mut allocator, false);
         run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, false);
     }));
     res.push((
@@ -1357,7 +1357,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             let private_keys: [ChannelHandlerPrivateKeys; 2] = rng.gen();
             let identities: [ChiaIdentity; 2] = [id1.clone(), id2.clone()];
 
-            let mut moves = test_moves_1(&mut allocator, false).to_vec();
+            let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
             if let GameAction::Move(player, readable, _) = moves[3].clone() {
                 moves.insert(3, GameAction::FakeMove(player, readable, vec![0; 500]));
             } else {
@@ -1380,7 +1380,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     res.push(("sim_test_with_peer_container_off_chain_complete", &|| {
         let mut allocator = AllocEncoder::new();
 
-        let mut moves = test_moves_1(&mut allocator, false).to_vec();
+        let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
         moves.push(GameAction::Accept(0));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
         let outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
@@ -1406,7 +1406,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let mut moves = test_moves_1(&mut allocator, false).to_vec();
+            let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
             moves.push(GameAction::Accept(0));
             moves.push(GameAction::Accept(1));
             moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
@@ -1464,7 +1464,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let mut moves = test_moves_1(&mut allocator, false).to_vec();
+            let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
             moves.push(GameAction::Accept(0));
             moves.push(GameAction::GoOnChain(1));
             moves.push(GameAction::WaitBlocks(20, 1));
@@ -1494,7 +1494,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         &|| {
             let mut allocator = AllocEncoder::new();
 
-            let mut moves = test_moves_1(&mut allocator, false).to_vec();
+            let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
             let moves_len = moves.len();
             moves.remove(moves_len - 2);
             moves.remove(moves_len - 2);
@@ -1515,7 +1515,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     res.push(("sim_test_with_peer_container_piss_off_peer_slash", &|| {
         let mut allocator = AllocEncoder::new();
 
-        let mut moves = test_moves_1(&mut allocator, false).to_vec();
+        let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
         // p2 chooses 5 cards.
         let move_3_node = [1, 0, 1, 0, 1, 0, 1, 1]
             .to_clvm(&mut allocator)
@@ -1670,7 +1670,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut allocator = AllocEncoder::new();
 
         // Play moves
-        let mut moves = test_moves_1(&mut allocator, true).to_vec();
+        let mut moves = prefix_test_moves(&mut allocator, true).to_vec();
         moves.push(GameAction::Accept(0));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
