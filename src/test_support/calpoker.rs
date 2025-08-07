@@ -148,8 +148,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
     res.push(("test_play_calpoker_happy_path", &|| {
         let mut allocator = AllocEncoder::new();
+        let seed: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed);
         let moves = prefix_test_moves(&mut allocator, true);
-        let test1 = run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+        let test1 = run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, true);
         debug!("play_result {test1:?}");
     }));
 

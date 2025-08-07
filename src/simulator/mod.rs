@@ -1,6 +1,7 @@
 pub mod service;
 pub mod tests;
 
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
@@ -615,6 +616,10 @@ impl Simulator {
 #[pyfunction]
 #[pyo3(signature = (choices = Vec::new()))]
 fn run_simulation_tests(choices: Vec<String>) {
+    std::panic::set_hook(Box::new(|_| {
+    let trace = Backtrace::capture();
+        eprintln!("{trace}");
+    }));
     if let Err(e) = std::panic::catch_unwind(|| {
         let ref_lists = [
             &simenv_tests(),
