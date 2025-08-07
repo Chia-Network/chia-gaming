@@ -618,7 +618,7 @@ impl Simulator {
 fn run_simulation_tests(choices: Vec<String>) {
     std::panic::set_hook(Box::new(|_| {
     let trace = Backtrace::capture();
-        eprintln!("{trace}");
+        eprintln!("\n    ---- Captured Backtrace from last PANIC ----\n{trace}");
     }));
     if let Err(e) = std::panic::catch_unwind(|| {
         let ref_lists = [
