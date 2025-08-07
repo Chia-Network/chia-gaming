@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-sim-tests = ["dep:pyo3"]
-simulator = ["dep:pyo3","dep:tokio","dep:salvo","dep:exec"]
+sim-tests = ["dep:pyo3","dep:tokio","dep:salvo","dep:exec"]
 used_linker = []
 
 [dependencies]
