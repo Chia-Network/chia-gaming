@@ -192,9 +192,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
                     .into()
             };
             Ok(GameActionResult::MoveResult(
-                move_result
-                    .readable_their_move
-                    .to_nodeptr(self.env.allocator)?,
+                ReadableMove::from_program(move_result.readable_their_move),
                 move_result.message,
                 decoded_message,
                 entropy,

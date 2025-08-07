@@ -637,14 +637,14 @@ pub fn run_calpoker_test_with_action_list(
     }
 }
 
-#[derive(Default)]
-struct LocalTestUIReceiver {
-    shutdown_complete: bool,
-    game_finished: Option<Amount>,
-    opponent_moved: bool,
-    go_on_chain: bool,
-    got_error: bool,
-    opponent_moves: Vec<(GameID, usize, ReadableMove, Amount)>,
+#[derive(Default, Debug)]
+pub struct LocalTestUIReceiver {
+    pub shutdown_complete: bool,
+    pub game_finished: Option<Amount>,
+    pub opponent_moved: bool,
+    pub go_on_chain: bool,
+    pub got_error: bool,
+    pub opponent_moves: Vec<(GameID, usize, ReadableMove, Amount)>,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -695,12 +695,12 @@ impl ToLocalUI for LocalTestUIReceiver {
 
 type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(&[SynchronousGameCradle]) -> bool>;
 
-struct GameRunOutcome {
-    identities: [ChiaIdentity; 2],
+pub struct GameRunOutcome {
+    pub identities: [ChiaIdentity; 2],
     #[allow(dead_code)]
-    cradles: [SynchronousGameCradle; 2],
-    local_uis: [LocalTestUIReceiver; 2],
-    simulator: Simulator,
+    pub cradles: [SynchronousGameCradle; 2],
+    pub local_uis: [LocalTestUIReceiver; 2],
+    pub simulator: Simulator,
 }
 
 fn reports_blocked(i: usize, blocked: &Option<(usize, usize)>) -> bool {
@@ -1113,7 +1113,7 @@ fn run_game_container_with_action_list(
     )
 }
 
-fn run_calpoker_container_with_action_list(
+pub fn run_calpoker_container_with_action_list(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
     v1: bool,
