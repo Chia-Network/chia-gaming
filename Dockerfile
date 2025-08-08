@@ -17,7 +17,11 @@ COPY Cargo.toml /app/rust/Cargo.toml
 COPY Cargo.lock /app/rust/Cargo.lock
 ADD src /app/rust/src
 RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && pip install maturin==1.9.2
+<<<<<<< HEAD
 RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features simulator && pip install `find . -name \*.whl`
+=======
+RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests && pip install `find . -name \*.whl`
+>>>>>>> 20250723-services
 ADD wasm /app/rust/wasm
 RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --release --target=web
 
@@ -36,5 +40,14 @@ RUN cd /app && npm run build
 COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 ADD clsp /app/clsp
 COPY resources/gaming-fe/package.json /app/package.json
+<<<<<<< HEAD
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.sh
 CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 &) && . /app/test/bin/activate && python run_simulator.sh"
+=======
+<<<<<<< HEAD
+CMD /bin/sh -c "(. /app/test/bin/activate && ./chia-gaming &) && (node ./dist/lobby-rollup.cjs &) && (sleep 3 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001)"
+=======
+RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.sh
+CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; npm run start &) && . /app/test/bin/activate && python run_simulator.sh"
+>>>>>>> origin/20250807-python-upgrades-iii
+>>>>>>> 20250723-services

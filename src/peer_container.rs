@@ -10,7 +10,8 @@ use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity, private_to_public_key, puzzle_hash_for_pk,
+    private_to_public_key, puzzle_hash_for_pk, sign_agg_sig_me, solution_for_conditions,
+    standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
@@ -149,7 +150,7 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
 #[derive(Debug, Clone)]
 pub struct FundingRequest {
     pub spend_targets: Vec<(PuzzleHash, Amount)>,
-    pub spend_total: Amount
+    pub spend_total: Amount,
 }
 
 #[derive(Default)]
@@ -553,12 +554,13 @@ impl SynchronousGameCradle {
         self.peer.next_game_id()
     }
 
-    pub fn funding_coin_is_for_referee(
-        &self,
-    ) -> Result<Option<(CoinString, bool)>, Error> {
-        if let Some((coin, parent, ph, amt)) = self.state.funding_coin.as_ref().and_then(|c| {
-            c.to_parts().map(|(parent, ph, amt)| (c, parent, ph, amt))
-        }) {
+    pub fn funding_coin_is_for_referee(&self) -> Result<Option<(CoinString, bool)>, Error> {
+        if let Some((coin, parent, ph, amt)) = self
+            .state
+            .funding_coin
+            .as_ref()
+            .and_then(|c| c.to_parts().map(|(parent, ph, amt)| (c, parent, ph, amt)))
+        {
             return Ok(Some((coin.clone(), ph == self.state.identity.puzzle_hash)));
         }
 
@@ -627,7 +629,7 @@ impl SynchronousGameCradle {
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
-        bundle: SpendBundle
+        bundle: SpendBundle,
     ) -> Result<(), Error> {
         if matches!(self.funding_coin_is_for_referee()?, Some((_, true))) {
             let mut env = channel_handler_env(allocator, rng)?;
@@ -636,10 +638,13 @@ impl SynchronousGameCradle {
                 system_interface: &mut self.state,
             };
             self.peer.channel_offer(&mut penv, bundle)?;
-            return Ok(())
+            return Ok(());
         }
 
-        Err(Error::StrErr(format!("deliver signed funding transaction in wrong state {:?}", self.state.funding_coin)))
+        Err(Error::StrErr(format!(
+            "deliver signed funding transaction in wrong state {:?}",
+            self.state.funding_coin
+        )))
     }
 
     fn create_partial_spend_for_channel_coin<R: Rng>(
@@ -663,7 +668,7 @@ impl SynchronousGameCradle {
         } else {
             self.state.funding_requests.push_back(FundingRequest {
                 spend_targets: vec![(channel_puzzle_hash.clone(), self.peer.amount())],
-                spend_total: self.peer.my_contribution()
+                spend_total: self.peer.my_contribution(),
             });
             Ok(false)
         }
@@ -739,7 +744,7 @@ impl SynchronousGameCradle {
         } else {
             self.state.funding_requests.push_back(FundingRequest {
                 spend_targets: vec![],
-                spend_total: self.peer.my_contribution()
+                spend_total: self.peer.my_contribution(),
             });
             Ok(true)
         }
@@ -747,7 +752,7 @@ impl SynchronousGameCradle {
 }
 
 impl SynchronousGameCradle {
-    #[cfg(any(test, feature = "sim-tests", feature = "simulator"))]
+    #[cfg(any(test, feature = "sim-tests"))]
     pub fn replace_last_message<F>(&mut self, f: F) -> Result<(), Error>
     where
         F: FnOnce(&PeerMessage) -> Result<PeerMessage, Error>,

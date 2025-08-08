@@ -3,7 +3,7 @@ mod map_m;
 use js_sys::{Array, JsString, Object};
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -25,7 +25,7 @@ use chia_gaming::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
     PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, chia_dialect
 };
-use chia_gaming::common::standard_coin::{get_standard_coin_puzzle, puzzle_hash_for_pk};
+use chia_gaming::common::standard_coin::{puzzle_hash_for_pk};
 use chia_gaming::peer_container::{
     FundingRequest, GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };

@@ -20,8 +20,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
-    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, Timeout, PrivateKey,
+    GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey, Program, Puzzle, PuzzleHash,
+    Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
 };
 use crate::utils::proper_list;
 

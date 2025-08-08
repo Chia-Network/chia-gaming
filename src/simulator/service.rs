@@ -97,7 +97,7 @@ fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
 }
 
 impl GameRunner {
-    fn new(simulator: Simulator, coinset_adapter: FullCoinSetAdapter) -> Result<Self, Error> {
+    fn new(mut simulator: Simulator, coinset_adapter: FullCoinSetAdapter) -> Result<Self, Error> {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
 
@@ -177,7 +177,7 @@ impl GameRunner {
         Ok("null\n".to_string())
     }
 
-    fn get_puzzle_and_solution(&self, coin: &str) -> StringWithError {
+    fn get_puzzle_and_solution(&mut self, coin: &str) -> StringWithError {
         let bytes = hex_to_bytes(coin)?;
         let coin_id = if bytes.len() > 32 {
             let cs = CoinString::from_bytes(&bytes);

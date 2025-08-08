@@ -1,4 +1,3 @@
-#[cfg(feature = "simulator")]
 pub mod service;
 pub mod tests;
 
@@ -27,7 +26,6 @@ use crate::common::types::{
     GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
     ToQuotedProgram,
 };
-#[cfg(feature = "simulator")]
 use crate::simulator::service::service_main;
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
 use crate::simulator::tests::simenv::test_funs as simenv_tests;
@@ -55,6 +53,7 @@ pub struct Simulator {
     g2_element: PyObject,
     coin_as_list: PyObject,
     height: RefCell<usize>,
+    i_have_changed: usize,
 }
 
 impl ErrToError for PyErr {
@@ -186,6 +185,7 @@ impl Default for Simulator {
                 g2_element: evloop.get_item(8)?.extract()?,
                 coin_as_list: evloop.get_item(9)?.extract()?,
                 height: RefCell::new(0),
+                i_have_changed: 0,
             })
         })
         .expect("should work")
@@ -195,7 +195,7 @@ impl Default for Simulator {
 impl Simulator {
     /// Given a coin in our inventory, spend the coin to the target puzzle hash.
     pub fn spend_coin_to_puzzle_hash(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
         identity: &ChiaIdentity,
         puzzle: &Puzzle,
@@ -262,12 +262,17 @@ impl Simulator {
             .collect())
     }
 
-    fn async_call<'a>(
-        &self,
-        py: Python<'a>,
+    fn mutate(&mut self) {
+        self.i_have_changed += 1
+    }
+
+    fn async_call(
+        &mut self,
+        py: Python<'_>,
         name: &str,
         args: Bound<'_, PyTuple>,
     ) -> PyResult<PyObject> {
+        self.mutate();
         let coro = self.sim.call_method1(py, name, args)?;
         let task = self
             .evloop
@@ -279,11 +284,12 @@ impl Simulator {
     }
 
     fn async_client<'a>(
-        &self,
+        &mut self,
         py: Python<'a>,
         name: &str,
         args: Bound<'_, PyTuple>,
     ) -> PyResult<PyObject> {
+        self.mutate();
         let task = self.client.call_method1(py, name, args)?;
         let res = self
             .evloop
@@ -291,7 +297,7 @@ impl Simulator {
         Ok(res)
     }
 
-    pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
+    pub fn farm_block(&mut self, puzzle_hash: &PuzzleHash) {
         Python::with_gil(|py| -> PyResult<()> {
             let puzzle_hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
             self.async_call(py, "farm_block", PyTuple::new(py, vec![puzzle_hash_bytes])?)?;
@@ -340,7 +346,7 @@ impl Simulator {
         })
     }
 
-    pub fn get_all_coins(&self) -> PyResult<Vec<CoinString>> {
+    pub fn get_all_coins(&mut self) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
             let elements: Vec<Bound<'_, PyAny>> = Vec::new();
             let coins = self.async_call(py, "all_non_reward_coins", PyTuple::new(py, elements)?)?;
@@ -348,7 +354,7 @@ impl Simulator {
         })
     }
 
-    pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
+    pub fn get_my_coins(&mut self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
             let hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
             let hash_bytes_object: Bound<'_, PyBytes> = hash_bytes.into_pyobject(py)?;
@@ -365,7 +371,7 @@ impl Simulator {
     }
 
     pub fn get_puzzle_and_solution(
-        &self,
+        &mut self,
         coin_id: &CoinID,
     ) -> PyResult<Option<(Program, Program)>> {
         Python::with_gil(|py| -> PyResult<_> {
@@ -480,7 +486,7 @@ impl Simulator {
     }
 
     pub fn push_tx(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
         txs: &[CoinSpend],
     ) -> PyResult<IncludeTransactionResult> {
@@ -496,7 +502,7 @@ impl Simulator {
     /// Create a coin belonging to identity_target which currently belongs
     /// to identity_source.  Return change to identity_source.
     pub fn transfer_coin_amount(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
         identity_target: &PuzzleHash,
         identity_source: &ChiaIdentity,
@@ -555,7 +561,7 @@ impl Simulator {
 
     /// Combine coins, spending to a specific puzzle hash
     pub fn combine_coins(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
         owner: &ChiaIdentity,
         target_ph: &PuzzleHash,
@@ -640,7 +646,6 @@ fn run_simulation_tests(choices: Vec<String>) {
 #[pymodule]
 fn chia_gaming(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_simulation_tests, &m)?)?;
-    #[cfg(feature = "simulator")]
     m.add_function(wrap_pyfunction!(service_main, &m)?)?;
     Ok(())
 }
