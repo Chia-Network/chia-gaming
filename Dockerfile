@@ -17,7 +17,7 @@ COPY Cargo.toml /app/rust/Cargo.toml
 COPY Cargo.lock /app/rust/Cargo.lock
 ADD src /app/rust/src
 RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && pip install maturin==1.9.2
-RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features simulator && pip install `find . -name \*.whl`
+RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests && pip install `find . -name \*.whl`
 ADD wasm /app/rust/wasm
 RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --release --target=web
 
