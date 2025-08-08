@@ -135,6 +135,7 @@ export const useWalletConnect = () => {
     ...state,
     connect,
     disconnect,
+    client,
     signMessage
   };
-}; 
+};
