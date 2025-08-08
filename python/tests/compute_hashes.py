@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-from chia_gaming.clvm_types.load_clvm_hex import load_clvm_hex
+from chia_gaming_tests.clvm_types.load_clvm_hex import load_clvm_hex
 from util import calpoker_onchain_clsp_dir
 
 # TODO: clsp / hex
