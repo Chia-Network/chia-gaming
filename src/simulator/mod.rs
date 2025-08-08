@@ -1,6 +1,7 @@
 pub mod service;
 pub mod tests;
 
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
@@ -26,6 +27,7 @@ use crate::common::types::{
     GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256tree, Spend,
     ToQuotedProgram,
 };
+
 use crate::simulator::service::service_main;
 use crate::simulator::tests::potato_handler_sim::test_funs as potato_handler_sim_tests;
 use crate::simulator::tests::simenv::test_funs as simenv_tests;
@@ -622,6 +624,10 @@ impl Simulator {
 #[pyfunction]
 #[pyo3(signature = (choices = Vec::new()))]
 fn run_simulation_tests(choices: Vec<String>) {
+    std::panic::set_hook(Box::new(|_| {
+        let trace = Backtrace::capture();
+        eprintln!("{trace}");
+    }));
     if let Err(e) = std::panic::catch_unwind(|| {
         let ref_lists = [
             &simenv_tests(),

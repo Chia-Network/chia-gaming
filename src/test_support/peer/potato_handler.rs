@@ -43,7 +43,7 @@ use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::CoinSpend;
 
 #[cfg(test)]
-use crate::test_support::calpoker::test_moves_1;
+use crate::test_support::calpoker::prefix_test_moves;
 #[cfg(test)]
 use crate::test_support::game::GameAction;
 
@@ -549,7 +549,7 @@ fn test_peer_smoke() {
     assert!(pipe_sender[0].message_pipe.queue.is_empty());
     assert!(pipe_sender[1].message_pipe.queue.is_empty());
 
-    let moves = test_moves_1(&mut allocator, false);
+    let moves = prefix_test_moves(&mut allocator, false);
 
     for this_move in moves.iter() {
         let (who, what) = if let GameAction::Move(who, what, _) = this_move {

@@ -11,8 +11,6 @@ use rand::prelude::*;
 
 use log::debug;
 
-use clvmr::NodePtr;
-
 lazy_static! {
     pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
 }
@@ -88,7 +86,7 @@ impl GameAction {
 #[derive(Debug, Clone)]
 #[cfg(any(feature = "sim-tests"))]
 pub enum GameActionResult {
-    MoveResult(NodePtr, Vec<u8>, Option<ReadableMove>, Hash),
+    MoveResult(ReadableMove, Vec<u8>, Option<ReadableMove>, Hash),
     BrokenMove,
     MoveToOnChain,
     Accepted,
