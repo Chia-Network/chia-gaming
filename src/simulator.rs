@@ -259,7 +259,7 @@ impl Simulator {
         self.i_have_changed += 1
     }
 
-    fn async_call<ArgT>(
+    fn async_call(
         &mut self,
         py: Python<'_>,
         name: &str,
@@ -276,7 +276,7 @@ impl Simulator {
         Ok(res)
     }
 
-    fn async_client<ArgT>(
+    fn async_client(
         &mut self,
         py: Python<'_>,
         name: &str,
