@@ -45,6 +45,7 @@ pub struct Simulator {
     g2_element: PyObject,
     coin_as_list: PyObject,
     height: RefCell<usize>,
+    i_have_changed: usize,
 }
 
 impl ErrToError for PyErr {
@@ -176,6 +177,7 @@ impl Default for Simulator {
                 g2_element: evloop.get_item(8)?.extract()?,
                 coin_as_list: evloop.get_item(9)?.extract()?,
                 height: RefCell::new(0),
+                i_have_changed: 0,
             })
         })
         .expect("should work")
@@ -185,7 +187,7 @@ impl Default for Simulator {
 impl Simulator {
     /// Given a coin in our inventory, spend the coin to the target puzzle hash.
     pub fn spend_coin_to_puzzle_hash(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
         identity: &ChiaIdentity,
         puzzle: &Puzzle,
@@ -252,10 +254,12 @@ impl Simulator {
             .collect())
     }
 
-    fn async_call<ArgT>(&self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
+    fn mutate(&mut self) {self.i_have_changed += 1}
+    fn async_call<ArgT>(&mut self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
     where
         ArgT: IntoPy<Py<PyTuple>>,
     {
+        self.mutate();
         let coro = self.sim.call_method1(py, name, args)?;
         let task = self
             .evloop
@@ -266,10 +270,11 @@ impl Simulator {
         Ok(res)
     }
 
-    fn async_client<ArgT>(&self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
+    fn async_client<ArgT>(&mut self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
     where
         ArgT: IntoPy<Py<PyTuple>>,
     {
+        self.mutate();
         let task = self.client.call_method1(py, name, args)?;
         let res = self
             .evloop
@@ -277,7 +282,7 @@ impl Simulator {
         Ok(res)
     }
 
-    pub fn farm_block(&self, puzzle_hash: &PuzzleHash) {
+    pub fn farm_block(&mut self, puzzle_hash: &PuzzleHash) {
         Python::with_gil(|py| -> PyResult<()> {
             let puzzle_hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
             self.async_call(py, "farm_block", (puzzle_hash_bytes,))?;
@@ -326,14 +331,14 @@ impl Simulator {
         })
     }
 
-    pub fn get_all_coins(&self) -> PyResult<Vec<CoinString>> {
+    pub fn get_all_coins(&mut self) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
             let coins = self.async_call(py, "all_non_reward_coins", ())?;
             self.convert_coin_list_to_coin_strings(py, &coins)
         })
     }
 
-    pub fn get_my_coins(&self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
+    pub fn get_my_coins(&mut self, puzzle_hash: &PuzzleHash) -> PyResult<Vec<CoinString>> {
         Python::with_gil(|py| -> PyResult<_> {
             let hash_bytes = PyBytes::new(py, puzzle_hash.bytes());
             let coins =
@@ -343,7 +348,7 @@ impl Simulator {
     }
 
     pub fn get_puzzle_and_solution(
-        &self,
+        &mut self,
         coin_id: &CoinID,
     ) -> PyResult<Option<(Program, Program)>> {
         Python::with_gil(|py| -> PyResult<_> {
@@ -458,7 +463,7 @@ impl Simulator {
     }
 
     pub fn push_tx(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
         txs: &[CoinSpend],
     ) -> PyResult<IncludeTransactionResult> {
@@ -474,7 +479,7 @@ impl Simulator {
     /// Create a coin belonging to identity_target which currently belongs
     /// to identity_source.  Return change to identity_source.
     pub fn transfer_coin_amount(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
         identity_target: &PuzzleHash,
         identity_source: &ChiaIdentity,
@@ -533,7 +538,7 @@ impl Simulator {
 
     /// Combine coins, spending to a specific puzzle hash
     pub fn combine_coins(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
         owner: &ChiaIdentity,
         target_ph: &PuzzleHash,
