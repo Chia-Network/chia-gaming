@@ -1396,8 +1396,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             } else {
                 panic!("no move 1 to replace");
             }
-            let mut outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
-                .expect("should finish");
+            let mut outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+                    .expect("should finish");
 
             debug!("outcome 0 {:?}", outcome.local_uis[0].opponent_moves);
             debug!("outcome 1 {:?}", outcome.local_uis[1].opponent_moves);
@@ -1430,8 +1431,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)),
             ];
 
-            let mut outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
-                .expect("should finish");
+            let mut outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+                    .expect("should finish");
 
             let (p1_balance, p2_balance) =
                 get_balances_from_outcome(&mut outcome).expect("should work");
@@ -1450,8 +1452,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             moves.push(GameAction::WaitBlocks(20, 1));
             moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
             moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-            let mut outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
-                .expect("should finish");
+            let mut outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+                    .expect("should finish");
 
             let p0_view_of_cards = outcome.local_uis[0].opponent_moves[0].clone();
             let p1_view_of_cards = outcome.local_uis[1].opponent_moves[1].clone();
@@ -1483,8 +1486,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
             moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
-            let mut outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
-                .expect("should finish");
+            let mut outcome =
+                run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+                    .expect("should finish");
 
             let (p1_balance, p2_balance) =
                 get_balances_from_outcome(&mut outcome).expect("should work");
@@ -1517,7 +1521,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
             .expect("should finish");
 
-        let (p1_balance, p2_balance) = get_balances_from_outcome(&mut outcome).expect("should work");
+        let (p1_balance, p2_balance) =
+            get_balances_from_outcome(&mut outcome).expect("should work");
         // p1 (index 0) won the money because p2 (index 1) cheated by choosing 5 cards.
         assert_eq!(p1_balance, p2_balance + 200);
     }));
@@ -1546,7 +1551,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         )
         .expect("should finish");
 
-        let (p1_balance, p2_balance) = get_balances_from_outcome(&mut outcome).expect("should work");
+        let (p1_balance, p2_balance) =
+            get_balances_from_outcome(&mut outcome).expect("should work");
         // Bob was slashable so alice gets the money.
         assert_eq!(p1_balance, p2_balance + 200);
     }));
@@ -1576,7 +1582,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         )
         .expect("should finish");
 
-        let (p1_balance, p2_balance) = get_balances_from_outcome(&mut outcome).expect("should work");
+        let (p1_balance, p2_balance) =
+            get_balances_from_outcome(&mut outcome).expect("should work");
         // Alice was slashable so bob gets the money.
         assert_eq!(p1_balance + 200, p2_balance);
     }));
@@ -1606,7 +1613,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         )
         .expect("should finish");
 
-        let (p1_balance, p2_balance) = get_balances_from_outcome(&mut outcome).expect("should work");
+        let (p1_balance, p2_balance) =
+            get_balances_from_outcome(&mut outcome).expect("should work");
         // Alice assigned bob 49, so alice is greater.
         let amount_diff = 151 - 49;
         debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
@@ -1639,7 +1647,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         )
         .expect("should finish");
 
-        let (p1_balance, p2_balance) = get_balances_from_outcome(&mut outcome).expect("should work");
+        let (p1_balance, p2_balance) =
+            get_balances_from_outcome(&mut outcome).expect("should work");
         // Alice assigned bob 49, so alice is greater.
         let amount_diff = 151 - 49;
         debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
@@ -1657,7 +1666,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, true)
             .expect("should finish");
 
-        let (p1_balance, p2_balance) = get_balances_from_outcome(&mut outcome).expect("should work");
+        let (p1_balance, p2_balance) =
+            get_balances_from_outcome(&mut outcome).expect("should work");
         assert_eq!(p2_balance, p1_balance + 200);
     }));
 
