@@ -80,7 +80,7 @@ pub fn u8_from_number(v: BigInt) -> Vec<u8> {
     v.to_signed_bytes_be()
 }
 
-#[cfg(any(test, feature = "sim-tests", ))]
+#[cfg(any(test, feature = "sim-tests"))]
 pub fn pair_of_array_mut<X>(arr: &mut [X]) -> (&mut X, &mut X) {
     let (f, r) = arr.split_at_mut(1);
     (&mut f[0], &mut r[0])

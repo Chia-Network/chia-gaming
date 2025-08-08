@@ -11,18 +11,17 @@ use crate::channel_handler::types::ReadableMove;
 use crate::common::types::Amount;
 use crate::common::types::{AllocEncoder, Program, Sha256Input};
 use crate::common::types::{Error, GameID, Hash};
-use crate::games::calpoker::make_cards;
-use crate::games::calpoker::{decode_calpoker_readable, decode_readable_card_choices};
+use crate::games::calpoker::decode_calpoker_readable;
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
 use crate::shutdown::BasicShutdownConditions;
 use crate::test_support::game::GameAction;
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 use crate::test_support::game::GameActionResult;
 
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 use crate::simulator::tests::simenv::SimulatorEnvironment;
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 use crate::simulator::tests::potato_handler_sim::{run_calpoker_test_with_action_list, GameRunOutcome, run_calpoker_container_with_action_list};
 
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
@@ -33,7 +32,7 @@ pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Ga
     )
 }
 
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 fn run_calpoker_play_test(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
@@ -101,7 +100,7 @@ pub fn prefix_test_moves(allocator: &mut AllocEncoder, v1: bool) -> [GameAction;
     ]
 }
 
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 fn extract_info_from_game(game_results: &[GameActionResult]) -> ReadableMove {
     game_results.iter().find_map(|x| {
         if let GameActionResult::MoveResult(_, _, Some(clvm_data), _) = x {
@@ -125,7 +124,7 @@ fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult>
     let mut iters = [alice_iter, bob_iter];
     let mut who: usize = 1;
 
-    while let Some((index, (game_id, state_number, readable_move, amount))) = iters[who].next() {
+    while let Some((index, (_game_id, _state_number, readable_move, _amount))) = iters[who].next() {
         debug!("processing move {who} {index}: {readable_move:?}, g.local_uis[{who}].opponent_messages {:?}", g.local_uis[who].opponent_messages);
         let message = g.local_uis[who].opponent_messages.iter().find_map(|m| {
             if index == m.opponent_move_size {
@@ -144,7 +143,7 @@ fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult>
 // TODO: Add a bit of infra: helper fnctions for testing move results, and GameRunOutcome
 
 /// ----------------- Tests start here ------------------
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     let mut res: Vec<(&'static str, &'static dyn Fn())> = Vec::new();
     res.push(("test_load_calpoker", &|| {
