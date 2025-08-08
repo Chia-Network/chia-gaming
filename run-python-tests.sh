@@ -4,8 +4,8 @@
 # install chia_gaming into .venv
 cd python
 uv venv
-uv pip install -e .
 source .venv/bin/activate
+uv pip install -e .
 cd tests
 
 # Note: 'cargo build' must have been run

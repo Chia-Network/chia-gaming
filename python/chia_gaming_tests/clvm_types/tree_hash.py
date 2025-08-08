@@ -12,8 +12,8 @@ from typing import Callable, List, Optional, Set
 
 from clvm import CLVMObject
 
-from chia_gaming.util.sized_bytes import bytes32
-from chia_gaming.util.hash import std_hash
+from chia_gaming_tests.util.sized_bytes import bytes32
+from chia_gaming_tests.util.hash import std_hash
 
 Op = Callable[[List["CLVMObject"], List["Op"], Set[bytes32]], None] # type: ignore
 
