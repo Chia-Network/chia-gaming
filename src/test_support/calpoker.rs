@@ -128,6 +128,7 @@ fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult>
     let mut iters = [alice_iter, bob_iter];
     let mut who: usize = 1;
 
+    #[allow(clippy::while_let_on_iterator)]
     while let Some((index, (_game_id, _state_number, readable_move, _amount))) = iters[who].next() {
         debug!("processing move {who} {index}: {readable_move:?}, g.local_uis[{who}].opponent_messages {:?}", g.local_uis[who].opponent_messages);
         let message = g.local_uis[who].opponent_messages.iter().find_map(|m| {
@@ -174,8 +175,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [0; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let moves = prefix_test_moves(&mut allocator, false);
-        let test1 = run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, false);
-        debug!("play_result {test1:?}");
+        run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, false);
     }));
 
     res.push(("test_play_calpoker_happy_path", &|| {
@@ -183,8 +183,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let seed: [u8; 32] = [0; 32];
         let mut rng = ChaCha8Rng::from_seed(seed);
         let moves = prefix_test_moves(&mut allocator, true);
-        let test1 = run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, true);
-        debug!("play_result {test1:?}");
+        run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, true);
     }));
 
     res.push(("test_verify_endgame_data_v0", &|| {
