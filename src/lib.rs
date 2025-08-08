@@ -14,7 +14,7 @@ pub mod peer_container;
 pub mod potato_handler;
 mod referee;
 pub mod shutdown;
-#[cfg(any(feature = "sim-tests"))]
+#[cfg(feature = "sim-tests")]
 pub mod simulator;
 pub mod utils;
 

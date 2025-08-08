@@ -640,7 +640,7 @@ pub fn run_calpoker_test_with_action_list(
 #[derive(Debug)]
 pub struct OpponentMessageInfo {
     pub opponent_move_size: usize,
-    pub decoded_message: ReadableMove,
+    pub opponent_message: ReadableMove,
 }
 
 #[derive(Default, Debug)]
@@ -675,7 +675,10 @@ impl ToLocalUI for LocalTestUIReceiver {
         _id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error> {
-        self.opponent_messages.push(OpponentMessageInfo{opponent_move_size:self.opponent_moves.len(), decoded_message: readable});
+        self.opponent_messages.push(OpponentMessageInfo {
+            opponent_move_size: self.opponent_moves.len(),
+            opponent_message: readable.clone(),
+        });
         Ok(())
     }
 

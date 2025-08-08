@@ -1,8 +1,8 @@
 use crate::common::types::Hash;
 use crate::common::types::Timeout;
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 use crate::shutdown::ShutdownConditions;
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 use std::rc::Rc;
 
 use lazy_static::lazy_static;
@@ -24,11 +24,11 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{Amount, CoinString, Error, IntoErr};
 
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 use crate::simulator::Simulator;
 
 #[derive(Clone)]
-#[cfg(any(test, feature = "sim-tests", ))]
+#[cfg(any(test, feature = "sim-tests"))]
 pub enum GameAction {
     /// Do a timeout
     #[allow(dead_code)]
@@ -37,19 +37,19 @@ pub enum GameAction {
     #[allow(dead_code)]
     Move(usize, ReadableMove, bool),
     /// Fake move, just calls receive on the indicated side.
-    #[cfg(any(feature = "sim-tests", ))]
+    #[cfg(feature = "sim-tests")]
     FakeMove(usize, ReadableMove, Vec<u8>),
     /// Go on chain
-    #[cfg(any(feature = "sim-tests", ))]
+    #[cfg(feature = "sim-tests")]
     GoOnChain(usize),
     /// Wait a number of blocks
-    #[cfg(any(feature = "sim-tests", ))]
+    #[cfg(feature = "sim-tests")]
     WaitBlocks(usize, usize),
     /// Accept
-    #[cfg(any(feature = "sim-tests", ))]
+    #[cfg(feature = "sim-tests")]
     Accept(usize),
     /// Shut down
-    #[cfg(any(feature = "sim-tests", ))]
+    #[cfg(feature = "sim-tests")]
     Shutdown(usize, Rc<dyn ShutdownConditions>),
 }
 
@@ -58,22 +58,22 @@ impl std::fmt::Debug for GameAction {
         match self {
             GameAction::Timeout(t) => write!(formatter, "Timeout({t})"),
             GameAction::Move(p, n, r) => write!(formatter, "Move({p},{n:?},{r})"),
-            #[cfg(any(feature = "sim-tests", ))]
+            #[cfg(feature = "sim-tests")]
             GameAction::FakeMove(p, n, v) => write!(formatter, "FakeMove({p},{n:?},{v:?})"),
-            #[cfg(any(feature = "sim-tests", ))]
+            #[cfg(feature = "sim-tests")]
             GameAction::GoOnChain(p) => write!(formatter, "GoOnChain({p})"),
-            #[cfg(any(feature = "sim-tests", ))]
+            #[cfg(feature = "sim-tests")]
             GameAction::Accept(p) => write!(formatter, "Accept({p})"),
-            #[cfg(any(feature = "sim-tests", ))]
+            #[cfg(feature = "sim-tests")]
             GameAction::WaitBlocks(n, p) => write!(formatter, "WaitBlocks({n},{p})"),
-            #[cfg(any(feature = "sim-tests", ))]
+            #[cfg(feature = "sim-tests")]
             GameAction::Shutdown(p, _) => write!(formatter, "Shutdown({p},..)"),
         }
     }
 }
 
 impl GameAction {
-    #[cfg(any(feature = "sim-tests", ))]
+    #[cfg(feature = "sim-tests")]
     pub fn lose(&self) -> GameAction {
         if let GameAction::Move(p, m, _r) = self {
             return GameAction::Move(*p, m.clone(), false);
@@ -84,7 +84,7 @@ impl GameAction {
 }
 
 #[derive(Debug, Clone)]
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 pub enum GameActionResult {
     MoveResult(ReadableMove, Vec<u8>, Option<ReadableMove>, Hash),
     BrokenMove,
@@ -93,7 +93,7 @@ pub enum GameActionResult {
     Shutdown,
 }
 
-#[cfg(any(feature = "sim-tests", ))]
+#[cfg(feature = "sim-tests")]
 pub fn new_channel_handler_game<R: Rng>(
     simulator: &Simulator,
     env: &mut ChannelHandlerEnv<R>,
