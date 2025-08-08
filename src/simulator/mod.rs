@@ -617,7 +617,7 @@ impl Simulator {
 #[pyo3(signature = (choices = Vec::new()))]
 fn run_simulation_tests(choices: Vec<String>) {
     std::panic::set_hook(Box::new(|_| {
-    let trace = Backtrace::capture();
+        let trace = Backtrace::capture();
         eprintln!("{trace}");
     }));
     if let Err(e) = std::panic::catch_unwind(|| {

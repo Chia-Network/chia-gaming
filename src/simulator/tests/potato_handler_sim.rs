@@ -677,7 +677,7 @@ impl ToLocalUI for LocalTestUIReceiver {
     ) -> Result<(), Error> {
         self.opponent_messages.push(OpponentMessageInfo {
             opponent_move_size: self.opponent_moves.len(),
-            opponent_message: readable.clone()
+            opponent_message: readable.clone(),
         });
         Ok(())
     }

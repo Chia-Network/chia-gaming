@@ -20,9 +20,11 @@ use crate::test_support::game::GameAction;
 use crate::test_support::game::GameActionResult;
 
 #[cfg(feature = "sim-tests")]
-use crate::simulator::tests::simenv::SimulatorEnvironment;
+use crate::simulator::tests::potato_handler_sim::{
+    run_calpoker_container_with_action_list, run_calpoker_test_with_action_list, GameRunOutcome,
+};
 #[cfg(feature = "sim-tests")]
-use crate::simulator::tests::potato_handler_sim::{run_calpoker_test_with_action_list, GameRunOutcome, run_calpoker_container_with_action_list};
+use crate::simulator::tests::simenv::SimulatorEnvironment;
 
 pub fn load_calpoker(allocator: &mut AllocEncoder, game_id: GameID) -> Result<Game, Error> {
     Game::new(
@@ -102,16 +104,18 @@ pub fn prefix_test_moves(allocator: &mut AllocEncoder, v1: bool) -> [GameAction;
 
 #[cfg(feature = "sim-tests")]
 fn extract_info_from_game(game_results: &[GameActionResult]) -> ReadableMove {
-    game_results.iter().find_map(|x| {
-        if let GameActionResult::MoveResult(_, _, Some(clvm_data), _) = x {
-            // Alice: message_bytes
-            // Bob: entropy
-            Some(clvm_data.clone())
-        } else {
-            None
-        }
-    })
-    .unwrap()
+    game_results
+        .iter()
+        .find_map(|x| {
+            if let GameActionResult::MoveResult(_, _, Some(clvm_data), _) = x {
+                // Alice: message_bytes
+                // Bob: entropy
+                Some(clvm_data.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap()
 }
 
 fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult> {
@@ -120,7 +124,7 @@ fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult>
     let mut output: Vec<GameActionResult> = Vec::new();
 
     let alice_iter = g.local_uis[0].opponent_moves.iter().enumerate();
-    let   bob_iter = g.local_uis[1].opponent_moves.iter().enumerate();
+    let bob_iter = g.local_uis[1].opponent_moves.iter().enumerate();
     let mut iters = [alice_iter, bob_iter];
     let mut who: usize = 1;
 
@@ -133,7 +137,12 @@ fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult>
 
             None
         });
-        output.push(GameActionResult::MoveResult(readable_move.clone(), Vec::new(), message, Hash::default()));
+        output.push(GameActionResult::MoveResult(
+            readable_move.clone(),
+            Vec::new(),
+            message,
+            Hash::default(),
+        ));
         who ^= 1;
     }
 
@@ -188,7 +197,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             game_action_results[game_action_results.len() - 1].clone()
         {
             let is_bob_move: bool = true;
-            let readable_node = penultimate_game_data.to_nodeptr(&mut allocator).expect("failed to convert to nodepointer");
+            let readable_node = penultimate_game_data
+                .to_nodeptr(&mut allocator)
+                .expect("failed to convert to nodepointer");
             let decoded = decode_calpoker_readable(
                 &mut allocator,
                 readable_node,
@@ -229,7 +240,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
         moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-        let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("should work");
+        let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+            .expect("should work");
         let game_results = game_run_outcome_to_move_results(&game_outcome);
         let bob_clvm_data = extract_info_from_game(&game_results);
         assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
@@ -242,7 +254,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut moves = prefix_test_moves(&mut allocator, true).to_vec();
         moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
         moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
-        let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, true).expect("should work");
+        let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+            .expect("should work");
         let game_results = game_run_outcome_to_move_results(&game_outcome);
         let bob_clvm_data = extract_info_from_game(&game_results);
         assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
