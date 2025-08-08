@@ -118,6 +118,7 @@ fn extract_info_from_game(game_results: &[GameActionResult]) -> ReadableMove {
         .unwrap()
 }
 
+#[cfg(feature = "sim-tests")]
 fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult> {
     debug!("UI 0: {:?}", g.local_uis[0]);
     debug!("UI 1: {:?}", g.local_uis[1]);
