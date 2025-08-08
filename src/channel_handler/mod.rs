@@ -1172,7 +1172,7 @@ impl ChannelHandler {
         let game_idx = self.get_game_by_id(game_id)?;
         let unroll_data = self.compute_unroll_data_for_games(
             // Skip the removed game.
-            &[game_id.clone()],
+            std::slice::from_ref(game_id),
             None,
             &self.live_games,
         )?;
