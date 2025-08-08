@@ -53,9 +53,9 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
         ];
 
         let mut env = channel_handler_env(allocator, rng)?;
-        let simulator = Simulator::default();
+        let mut simulator = Simulator::default();
         let (parties, coin) = new_channel_handler_game(
-            &simulator,
+            &mut simulator,
             &mut env,
             game,
             &identities,
@@ -469,7 +469,7 @@ fn test_sim() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
-    let s = Simulator::default();
+    let mut s = Simulator::default();
     let private_key: PrivateKey = rng.gen();
     let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
     debug!("identity public key {:?}", identity.public_key);
@@ -495,7 +495,7 @@ fn test_simulator_transfer_coin() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
-    let s = Simulator::default();
+    let mut s = Simulator::default();
     let private_key: PrivateKey = rng.gen();
     let identity1 = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
     let pk2: PrivateKey = rng.gen();
@@ -528,7 +528,7 @@ fn test_simulator_combine_coins() {
     let seed: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed);
     let mut allocator = AllocEncoder::new();
-    let s = Simulator::default();
+    let mut s = Simulator::default();
     let private_key: PrivateKey = rng.gen();
     let identity = ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
 

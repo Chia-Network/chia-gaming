@@ -106,7 +106,7 @@ pub enum GameActionResult {
 
 #[cfg(feature = "sim-tests")]
 pub fn new_channel_handler_game<R: Rng>(
-    simulator: &Simulator,
+    simulator: &mut Simulator,
     env: &mut ChannelHandlerEnv<R>,
     game: &Game,
     identities: &[ChiaIdentity; 2],
@@ -117,7 +117,7 @@ pub fn new_channel_handler_game<R: Rng>(
     // Get at least one coin for the second identity
     simulator.farm_block(&identities[1].puzzle_hash);
 
-    let get_sufficient_coins = |i: usize| -> Result<Vec<CoinString>, Error> {
+    let mut get_sufficient_coins = |i: usize| -> Result<Vec<CoinString>, Error> {
         Ok(simulator
             .get_my_coins(&identities[i].puzzle_hash)
             .into_gen()?
