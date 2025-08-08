@@ -637,6 +637,12 @@ pub fn run_calpoker_test_with_action_list(
     }
 }
 
+#[derive(Debug)]
+pub struct OpponentMessageInfo {
+    pub opponent_move_size: usize,
+    pub opponent_message: ReadableMove,
+}
+
 #[derive(Default, Debug)]
 pub struct LocalTestUIReceiver {
     pub shutdown_complete: bool,
@@ -645,6 +651,7 @@ pub struct LocalTestUIReceiver {
     pub go_on_chain: bool,
     pub got_error: bool,
     pub opponent_moves: Vec<(GameID, usize, ReadableMove, Amount)>,
+    pub opponent_messages: Vec<OpponentMessageInfo>,
 }
 
 impl ToLocalUI for LocalTestUIReceiver {
@@ -666,8 +673,12 @@ impl ToLocalUI for LocalTestUIReceiver {
         &mut self,
         _allocator: &mut AllocEncoder,
         _id: &GameID,
-        _readable: ReadableMove,
+        readable: ReadableMove,
     ) -> Result<(), Error> {
+        self.opponent_messages.push(OpponentMessageInfo {
+            opponent_move_size: self.opponent_moves.len(),
+            opponent_message: readable.clone()
+        });
         Ok(())
     }
 
