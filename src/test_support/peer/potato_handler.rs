@@ -1,35 +1,54 @@
+#[cfg(test)]
 use std::collections::{HashMap, VecDeque};
 
 use clvm_traits::ToClvm;
 
 use log::debug;
 
-use rand::{Rng, SeedableRng};
+use rand::Rng;
+#[cfg(test)]
+use rand::SeedableRng;
+#[cfg(test)]
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
-use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk};
+use crate::channel_handler::types::ChannelHandlerEnv;
+#[cfg(test)]
+use crate::channel_handler::types::ChannelHandlerPrivateKeys;
+#[cfg(test)]
+use crate::channel_handler::types::ReadableMove;
+use crate::common::standard_coin::private_to_public_key;
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, GameID, IntoErr, PrivateKey, Program,
-    PuzzleHash, Spend, SpendBundle, Timeout,
+    AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
+#[cfg(test)]
+use crate::common::types::{GameID, PrivateKey, Program, Timeout};
+#[cfg(test)]
 use crate::games::poker_collection;
-use crate::peer_container::{MessagePeerQueue, MessagePipe, WalletBootstrapState};
+#[cfg(test)]
+use crate::peer_container::WalletBootstrapState;
+use crate::peer_container::{MessagePeerQueue, MessagePipe};
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage,
+    SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
+#[cfg(test)]
+use crate::potato_handler::types::{FromLocalUI, GameStart, GameType, PotatoHandlerInit};
 use crate::potato_handler::PotatoHandler;
 
 use crate::common::constants::CREATE_COIN;
+#[cfg(test)]
+use crate::common::standard_coin::puzzle_hash_for_pk;
 use crate::common::standard_coin::standard_solution_partial;
 use crate::common::types::CoinSpend;
 
-use crate::tests::calpoker::test_moves_1;
-use crate::tests::game::GameAction;
+#[cfg(test)]
+use crate::test_support::calpoker::test_moves_1;
+#[cfg(test)]
+use crate::test_support::game::GameAction;
 
 #[derive(Default)]
+#[cfg(test)]
 struct Pipe {
     message_pipe: MessagePipe,
 
@@ -53,6 +72,7 @@ struct Pipe {
     bootstrap_state: Option<WalletBootstrapState>,
 }
 
+#[cfg(test)]
 impl MessagePeerQueue for Pipe {
     fn message_pipe(&mut self) -> &mut MessagePipe {
         &mut self.message_pipe
@@ -78,12 +98,14 @@ impl PacketSender for MessagePipe {
     }
 }
 
+#[cfg(test)]
 impl PacketSender for Pipe {
     fn send_message(&mut self, msg: &PeerMessage) -> Result<(), Error> {
         self.message_pipe.send_message(msg)
     }
 }
 
+#[cfg(test)]
 impl WalletSpendInterface for Pipe {
     fn spend_transaction_and_add_fee(&mut self, bundle: &SpendBundle) -> Result<(), Error> {
         self.outgoing_transactions.push_back(bundle.clone());
@@ -107,6 +129,7 @@ impl WalletSpendInterface for Pipe {
     }
 }
 
+#[cfg(test)]
 impl BootstrapTowardWallet for Pipe {
     fn channel_puzzle_hash(&mut self, puzzle_hash: &PuzzleHash) -> Result<(), Error> {
         self.channel_puzzle_hash = Some(puzzle_hash.clone());
@@ -126,6 +149,7 @@ impl BootstrapTowardWallet for Pipe {
     }
 }
 
+#[cfg(test)]
 impl ToLocalUI for Pipe {
     fn self_move(
         &mut self,

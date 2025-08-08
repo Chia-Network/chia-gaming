@@ -1,6 +1,4 @@
-use exec::execvp;
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::fs;
 use std::io::stdin;
 use std::mem::swap;
@@ -12,22 +10,23 @@ use std::time::Duration;
 use lazy_static::lazy_static;
 use log::debug;
 
+use pyo3::Python;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use salvo::http::ResBody;
 use salvo::hyper::body::Bytes;
 use salvo::prelude::*;
-use serde::Serialize;
 use serde_json::{Map, Value};
 
-use chia_gaming::common::standard_coin::ChiaIdentity;
-use chia_gaming::common::types::{
+use crate::common::standard_coin::ChiaIdentity;
+use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, Hash, IntoErr, PrivateKey, Program,
     PuzzleHash, SpendBundle,
 };
-use chia_gaming::peer_container::{FullCoinSetAdapter, WatchReport};
-use chia_gaming::simulator::Simulator;
+use crate::peer_container::{FullCoinSetAdapter, WatchReport};
+use crate::simulator::Simulator;
+use pyo3::pyfunction;
 
 trait HttpError<V> {
     fn report_err(self) -> Result<V, String>;
@@ -66,7 +65,6 @@ struct GameRunner {
 #[derive(Debug, Clone)]
 enum WebRequest {
     Reset,
-    Exit,
     Register(String),                     // Register a user
     GetCurrentPeak,                       // Ask for the current peak
     GetBlockData(u64),                    // Get the additions and deletons from the given block
@@ -149,6 +147,7 @@ impl GameRunner {
     }
 
     fn wait_block(&mut self) -> StringWithError {
+        debug!("entering wait block");
         self.simulator
             .farm_block(&self.neutral_identity.puzzle_hash);
         let new_height = self.chase_block()?;
@@ -175,7 +174,7 @@ impl GameRunner {
             return Ok(format!("{{ \"created\": {created:?}, \"deleted\": {deleted:?}, \"timed_out\": {timed_out:?} }}\n"));
         }
 
-        Ok(format!("null\n"))
+        Ok("null\n".to_string())
     }
 
     fn get_puzzle_and_solution(&mut self, coin: &str) -> StringWithError {
@@ -211,13 +210,13 @@ impl GameRunner {
 
     fn register(&mut self, name: &str) -> StringWithError {
         let public_key = if let Some(identity) = self.lookup_identity(name) {
-            hex::encode(&identity.puzzle_hash.bytes())
+            hex::encode(identity.puzzle_hash.bytes())
         } else {
             let pk1: PrivateKey = self.rng.gen();
             let identity = ChiaIdentity::new(&mut self.allocator, pk1)?;
             self.simulator.farm_block(&identity.puzzle_hash);
             self.chase_block()?;
-            let result = hex::encode(&identity.puzzle_hash.bytes());
+            let result = hex::encode(identity.puzzle_hash.bytes());
             self.identities.insert(name.to_string(), result.clone());
             self.pubkeys.insert(result.clone(), identity);
             result
@@ -228,7 +227,7 @@ impl GameRunner {
 
     fn create_spendable(&mut self, who: &str, target: &str, amt: u64) -> StringWithError {
         let target_ph_bytes: Vec<u8> =
-            hex::decode(&target).map_err(|_| Error::StrErr("bad target hex".to_string()))?;
+            hex::decode(target).map_err(|_| Error::StrErr("bad target hex".to_string()))?;
         let target_ph = PuzzleHash::from_hash(Hash::from_slice(&target_ph_bytes));
         let identity = self.lookup_identity(who).cloned();
         if let Some(identity) = identity {
@@ -249,7 +248,7 @@ impl GameRunner {
                         )?;
                         let parent_coin_bytes = parent_coin_0.to_bytes();
                         self.wait_block()?;
-                        return Ok(format!("\"{}\"\n", hex::encode(&parent_coin_bytes)));
+                        return Ok(format!("\"{}\"\n", hex::encode(parent_coin_bytes)));
                     }
                 }
             }
@@ -259,7 +258,7 @@ impl GameRunner {
     }
 
     fn spend(&mut self, blob: &str) -> StringWithError {
-        let spend_program = Program::from_hex(&blob)?;
+        let spend_program = Program::from_hex(blob)?;
         let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
         let spend_bundle = SpendBundle::from_clvm(&mut self.allocator, spend_node)?;
         debug!("spend with bundle {spend_bundle:?}");
@@ -314,6 +313,8 @@ fn pass_on_request(
     response: &mut Response,
     wr: WebRequest,
 ) -> Result<(), String> {
+    debug!("pass on request {wr:?}");
+
     let locked = ONE_REQUEST.lock().unwrap();
 
     {
@@ -433,36 +434,10 @@ async fn cors(req: &mut Request, response: &mut Response) -> Result<(), String> 
     Ok(())
 }
 
-fn detect_run_as_python(args: &[String]) -> bool {
-    args.iter().any(|x: &String| x == "-c")
-}
-
-fn main() {
-    let args = std::env::args();
-    let args_vec: Vec<String> = args.collect();
-    if detect_run_as_python(&args_vec) {
-        let new_args: Vec<OsString> = args_vec
-            .iter()
-            .enumerate()
-            .map(
-                |(i, arg)| {
-                    if i == 0 {
-                        "python3".into()
-                    } else {
-                        arg.into()
-                    }
-                },
-            )
-            .collect();
-        let exec_err = execvp("python3", &new_args);
-        eprintln!("Error Running: {:?}\n{:?}\n", new_args, exec_err);
-        return;
-    }
+fn service_main_inner() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     rt.block_on(async {
-        // let _auto = args_vec.iter().any(|x| x == "auto");
-
         let router = Router::new()
             .get(index)
             .push(Router::with_path("index.css").get(index_css))
@@ -488,57 +463,65 @@ fn main() {
         let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
 
         let s = std::thread::spawn(move || {
-            let simulator = Simulator::default();
-            let coinset_adapter = FullCoinSetAdapter::default();
-            let mut game_runner = GameRunner::new(simulator, coinset_adapter)
-                .map_err(|e| format!("{e}"))
-                .unwrap();
+            std::panic::catch_unwind(move || {
+                debug!("starting simulator thread");
+                let simulator = Simulator::default();
+                debug!("have simulator");
+                let coinset_adapter = FullCoinSetAdapter::default();
+                let mut game_runner = GameRunner::new(simulator, coinset_adapter)
+                    .map_err(|e| format!("{e}"))
+                    .unwrap();
+                debug!("have game runner");
 
-            loop {
-                let _locked = PERFORM_REQUEST.lock().unwrap();
+                loop {
+                    debug!("simulator thread getting request");
+                    let request = {
+                        let channel = TO_WEB.1.lock().unwrap();
+                        (*channel).recv().unwrap()
+                    };
 
-                let request = {
-                    let channel = TO_WEB.1.lock().unwrap();
-                    (*channel).recv().unwrap()
-                };
-
-                if !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
-                    debug!("request {request:?}");
-                }
-                let result = {
-                    match request {
-                        WebRequest::Register(name) => game_runner.register(&name),
-                        WebRequest::GetCurrentPeak => {
-                            let result = game_runner.simulator.get_current_height();
-                            Ok(format!("{result}\n"))
-                        }
-                        WebRequest::GetBlockData(n) => game_runner.get_block_data(n),
-                        WebRequest::WaitBlock => {
-                            let result = game_runner.wait_block();
-                            std::thread::spawn(move || {
-                                std::thread::sleep(Duration::from_millis(1000));
-                                let channel = FROM_WEB.0.lock().unwrap();
-                                (*channel).send(result).unwrap();
-                            });
-                            continue;
-                        }
-                        WebRequest::GetPuzzleAndSolution(coin) => {
-                            game_runner.get_puzzle_and_solution(&coin)
-                        }
-                        WebRequest::CreateSpendable(who, target, amt) => {
-                            game_runner.create_spendable(&who, &target, amt)
-                        }
-                        WebRequest::Spend(blob) => game_runner.spend(&blob),
-                        WebRequest::Reset => game_runner.reset_sim(),
-                        _ => todo!(),
+                    if true {
+                        // !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
+                        debug!("request {request:?}");
                     }
-                };
+                    let result = {
+                        match request {
+                            WebRequest::Register(name) => game_runner.register(&name),
+                            WebRequest::GetCurrentPeak => {
+                                let result = game_runner.simulator.get_current_height();
+                                Ok(format!("{result}\n"))
+                            }
+                            WebRequest::GetBlockData(n) => game_runner.get_block_data(n),
+                            WebRequest::WaitBlock => {
+                                let result = game_runner.wait_block();
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(Duration::from_millis(1000));
+                                    let channel = FROM_WEB.0.lock().unwrap();
+                                    (*channel).send(result).unwrap();
+                                });
+                                continue;
+                            }
+                            WebRequest::GetPuzzleAndSolution(coin) => {
+                                game_runner.get_puzzle_and_solution(&coin)
+                            }
+                            WebRequest::CreateSpendable(who, target, amt) => {
+                                game_runner.create_spendable(&who, &target, amt)
+                            }
+                            WebRequest::Spend(blob) => game_runner.spend(&blob),
+                            WebRequest::Reset => game_runner.reset_sim(),
+                        }
+                    };
 
-                {
-                    let channel = FROM_WEB.0.lock().unwrap();
-                    (*channel).send(result).unwrap();
+                    {
+                        let channel = FROM_WEB.0.lock().unwrap();
+                        (*channel).send(result).unwrap();
+                    }
                 }
-            }
+            })
+            .map_err(|e| {
+                eprintln!("error bringing up simulator thread: {e:?}");
+                std::process::exit(0);
+            })
         });
 
         println!("port 5800.  press return to exit gracefully...");
@@ -550,8 +533,23 @@ fn main() {
             }
         });
 
+        println!("doing actual service");
         Server::new(acceptor).serve(router).await;
-        s.join().unwrap();
+        let _ = s.join().unwrap();
         t.join().unwrap();
     })
+}
+
+#[pyfunction]
+pub fn service_main() {
+    if let Err(e) = std::panic::catch_unwind(|| {
+        Python::with_gil(|py| {
+            py.allow_threads(|| {
+                service_main_inner();
+            })
+        })
+    }) {
+        eprintln!("panic: {e:?}");
+        std::process::exit(1);
+    }
 }
