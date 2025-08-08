@@ -16,21 +16,11 @@ import OpponentSection from "./OpponentSection";
 import GameEndPlayer from "./GameEndPlayer";
 import GameLog from "./GameLog";
 import WaitingScreen from "./WaitingScreen";
-import LobbyScreen from "./LobbyScreen";
-import { useWalletConnect } from "../hooks/WalletConnectContext";
-import { useRpcUi } from "../hooks/useRpcUi";
-import useDebug from "../hooks/useDebug";
 import { useWasmBlob } from "../hooks/useWasmBlob";
-import Debug from "./Debug";
 import { getGameSelection } from '../util';
 
 const Game: React.FC = () => {
   const gameSelection = getGameSelection();
-  const { client, session, pairings, connect, disconnect } = useWalletConnect();
-  const [command, setCommand] = useState(0);
-  const { commands } = useRpcUi();
-  const commandEntries = Object.entries(commands);
-  const selectedCommandEntry = commandEntries[command];
   const {
     error,
     gameConnectionState,
@@ -48,20 +38,6 @@ const Game: React.FC = () => {
     stopPlaying
   } = useWasmBlob();
 
-  const handleConnectWallet = () => {
-    if (!client) throw new Error("WalletConnect is not initialized.");
-
-    if (pairings.length === 1) {
-      connect({ topic: pairings[0].topic });
-    } else if (pairings.length) {
-      console.log("The pairing modal is not implemented.", pairings);
-    } else {
-      connect();
-    }
-  };
-
-  const { wcInfo, setWcInfo } = useDebug();
-
   const setStateFromMessage = useCallback((evt: any) => {
     setState(evt.data);
   }, []);
@@ -75,12 +51,6 @@ const Game: React.FC = () => {
   });
 
   // All early returns need to be after all useEffect, etc.
-  if (gameSelection === undefined) {
-    return (
-      <LobbyScreen />
-    );
-  }
-
   if (error) {
     return (<div>{error}</div>);
   }
@@ -213,70 +183,6 @@ const Game: React.FC = () => {
       <Typography>{moveDescription}</Typography>
       <br/>
       <GameLog log={[]} />
-      <Debug connectString={wcInfo} setConnectString={setWcInfo} />
-      {session ? (
-        <>
-          <FormControl fullWidth sx={{ mt: 2 }}>
-            <InputLabel id="command-select-label">Command</InputLabel>
-            <Select
-              labelId="command-select-label"
-              id="command-select"
-              value={command}
-              label="Command"
-              onChange={(e) => setCommand(Number(e.target.value))}
-            >
-              {commandEntries.map(([name], i) => (
-                <MenuItem key={i} value={i}>
-                  {name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Divider sx={{ mt: 4 }} />
-          <Box mt={3}>
-            <Typography variant="h5" mb={2}>
-              <code>{selectedCommandEntry[0]}</code>
-            </Typography>
-            {selectedCommandEntry[1].map((element, i) =>
-              cloneElement(element, { key: i })
-            )}
-            <ButtonGroup variant="outlined" fullWidth>
-              <Button variant="outlined" color="error" onClick={() => disconnect()}>
-                Unlink Wallet
-              </Button>
-              <Button
-                variant="outlined"
-                color="error"
-                onClick={() => {
-                  localStorage.clear();
-                  window.location.href = "";
-                }}
-              >
-                Reset Storage
-              </Button>
-            </ButtonGroup>
-          </Box>
-          <Divider sx={{ mt: 4 }} />
-          <Box mt={3}>
-            <Typography variant="h5">Response</Typography>
-            <Button
-              fullWidth
-              variant="outlined"
-              color="error"
-              onClick={() => {
-                localStorage.clear();
-                window.location.href = "";
-              }}
-            >
-              Unlink Wallet
-            </Button>
-          </Box>
-        </>
-      ) : (
-        <Button variant="contained" onClick={handleConnectWallet} sx={{ mt: 3 }}>
-          Link Wallet
-        </Button>
-      )}
     </Box>
   );
 };

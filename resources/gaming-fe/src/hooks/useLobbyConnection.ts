@@ -6,17 +6,14 @@ import axios from 'axios';
 
 interface Player { id: string; alias: string, game: string; walletAddress?: string; parameters: any; }
 
-export function useLobbySocket(alias: string) {
+export function useLobbySocket(alias: string, walletConnect: boolean) {
   const LOBBY_URL = process.env.REACT_APP_LOBBY_URL || 'http://localhost:3000';
-  const BLOCKCHAIN_SERVICE_URL = process.env.REACT_APP_BLOCKCHAIN_SERVICE_URL || 'http://localhost:5800';
-
   const [uniqueId, setUniqueId] = useState<string>(generateOrRetrieveUniqueId());
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<ChatEnvelope[]>([]);
   const socketRef = useRef<Socket>(undefined);
   const [fragment, setFragment] = useState<FragmentData>(getFragmentParams());
-  const [walletToken, setWalletToken] = useState<string | undefined>(undefined);
   console.log('fragment retrieved', fragment);
 
   function tryJoinRoom() {
@@ -26,11 +23,11 @@ export function useLobbySocket(alias: string) {
       if (!room.host || !room.joiner) {
         continue;
       }
-      if (room.host === uniqueId || room.joiner === uniqueId && room.target && walletToken) {
+      if (room.host === uniqueId || room.joiner === uniqueId && room.target && walletConnect) {
         const iStarted = room.host === uniqueId;
         // This room is inhabited and contains us, redirect.
         console.log('take us to game', JSON.stringify(room));
-        window.location.href = `${room.target}&walletToken=${walletToken}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
+        window.location.href = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
         break;
       }
     }
@@ -66,17 +63,6 @@ export function useLobbySocket(alias: string) {
       socket.disconnect();
     };
   }, [uniqueId]);
-
-  useEffect(() => {
-    fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {
-      method: 'POST',
-      body: ''
-    }).then(result => result.json()).then(publicKey => {
-      console.log(`wallet token ${publicKey}`);
-      setWalletToken(publicKey);
-      tryJoinRoom();
-    });
-  });
 
   const sendMessage = useCallback((msg: string) => {
     socketRef.current?.emit('chat_message', { alias, content: { text: msg, sender: alias } });
@@ -115,5 +101,5 @@ export function useLobbySocket(alias: string) {
     console.error('implement leave room');
   }, [uniqueId]);
 
-  return { players, rooms, messages, sendMessage, generateRoom, joinRoom, leaveRoom, setLobbyAlias, uniqueId, fragment, walletToken };
+  return { players, rooms, messages, sendMessage, generateRoom, joinRoom, leaveRoom, setLobbyAlias, uniqueId, fragment };
 }

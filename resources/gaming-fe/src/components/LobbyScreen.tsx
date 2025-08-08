@@ -13,13 +13,16 @@ import {
   Typography,
 } from '@mui/material';
 import { useLobbySocket } from '../hooks/useLobbyConnection';
-import { generateOrRetrieveAlias, updateAlias } from "../util";
+import { generateOrRetrieveAlias, updateAlias, getSearchParams } from "../util";
 
-interface LobbyComponentProps { }
+interface LobbyComponentProps {
+  walletConnect: boolean
+}
 
-const LobbyScreen: React.FC<LobbyComponentProps> = () => {
+const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
+  const params = getSearchParams();
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
-  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment, walletToken } = useLobbySocket(myAlias);
+  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias, walletConnect);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
@@ -44,10 +47,8 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
   };
 
   useEffect(() => {
-    console.log('check fragment',fragment);
-    if (fragment.token) {
-      console.log('joining channel',fragment);
-      joinRoom(fragment.token);
+    if (params.join && rooms.length != 0) {
+      joinRoom(params.join);
     }
   });
 
@@ -143,7 +144,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
       </Box>
 
       <Box display="flex" justifyContent="space-between">
-        <Button disabled={!walletToken} variant="outlined" onClick={openDialog}>
+        <Button variant="outlined" onClick={openDialog}>
           Generate Room
         </Button>
       </Box>

@@ -85,6 +85,8 @@ impl ChannelHandlerGame {
                     my_contribution: contributions[id].clone(),
                     their_contribution: contributions[id ^ 1].clone(),
                     unroll_advance_timeout: unroll_advance_timeout.clone(),
+                    reward_puzzle_hash: referees[id ^ 1].1.clone(),
+                    their_reward_puzzle_hash: referees[id ^ 1].1.clone(),
                 };
 
                 ChannelHandlerParty::new(
