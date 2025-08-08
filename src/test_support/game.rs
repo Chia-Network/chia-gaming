@@ -11,8 +11,6 @@ use rand::prelude::*;
 
 use log::debug;
 
-use clvmr::NodePtr;
-
 lazy_static! {
     pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
 }
