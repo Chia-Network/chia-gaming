@@ -37,4 +37,4 @@ COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_d
 ADD clsp /app/clsp
 COPY resources/gaming-fe/package.json /app/package.json
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.sh
-CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001) && ./app/test/activate && python run_simulator.sh"
+CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 &) && ./app/test/activate && python run_simulator.sh"
