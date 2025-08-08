@@ -151,7 +151,7 @@ fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult>
     output
 }
 
-// TODO: Add a bit of infra: helper fnctions for testing move results, and GameRunOutcome
+// TODO: Add a bit of infra: helper functions for testing move results, and GameRunOutcome
 
 /// ----------------- Tests start here ------------------
 #[cfg(feature = "sim-tests")]

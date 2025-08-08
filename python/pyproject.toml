@@ -1,5 +1,5 @@
 [project]
-name = "chia_gaming"
+name = "chia_gaming_tests"
 version = "0.1.0"
 description = "A proof-of-concept and tutorial for writing games enforced by on-chain contracts, with faster-than-blocktime moves."
 authors = [

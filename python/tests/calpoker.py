@@ -5,7 +5,7 @@ from functools import total_ordering
 from pathlib import Path
 from typing import List
 
-from chia_gaming.clvm_types.program import Program
+from chia_gaming_tests.clvm_types.program import Program
 from util import dbg_assert_eq
 
 # src/games/calpoker.rs

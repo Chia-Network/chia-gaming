@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypeVar, Union
 
-from chia_gaming.clvm_types.program import Program
-from chia_gaming.util.sized_bytes import bytes32
+from chia_gaming_tests.clvm_types.program import Program
+from chia_gaming_tests.util.sized_bytes import bytes32
 
 
 class MoveCode(Enum):

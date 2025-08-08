@@ -1,6 +1,6 @@
 from hashlib import sha256
 
-from chia_gaming.clvm_types.program import Program
+from chia_gaming_tests.clvm_types.program import Program
 
 
 class GameSeed:
