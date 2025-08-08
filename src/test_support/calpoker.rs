@@ -273,12 +273,38 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let test2 = run_calpoker_play_test(&mut allocator, &on_chain_moves_1).expect("should work");
         debug!("play_result {test2:?}");
     }));
+    res.push(("test_play_calpoker_on_chain_after_1_move_p1", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        // Make a prototype go on chain scenario by starting with move 1.
+        // The second player receives the move, and then observes the first player
+        // going on chain.
+        let moves = prefix_test_moves(&mut allocator, true);
+        let mut on_chain_moves_1: Vec<GameAction> = moves.into_iter().take(1).collect();
+        on_chain_moves_1.push(GameAction::GoOnChain(true as usize));
+        let test2 = run_calpoker_play_test(&mut allocator, &on_chain_moves_1).expect("should work");
+        debug!("play_result {test2:?}");
+    }));
 
     res.push((
         "test_play_calpoker_on_chain_after_1_move_p0_lost_message_v0",
         &|| {
             let mut allocator = AllocEncoder::new();
             let moves = prefix_test_moves(&mut allocator, false);
+            let mut on_chain_moves_2: Vec<GameAction> =
+                moves.into_iter().take(1).map(|x| x.lose()).collect();
+            on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
+            let test3 =
+                run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
+            debug!("play_result {test3:?}");
+        },
+    ));
+
+    res.push((
+        "test_play_calpoker_on_chain_after_1_move_p0_lost_message",
+        &|| {
+            let mut allocator = AllocEncoder::new();
+            let moves = prefix_test_moves(&mut allocator, true);
             let mut on_chain_moves_2: Vec<GameAction> =
                 moves.into_iter().take(1).map(|x| x.lose()).collect();
             on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
@@ -297,9 +323,28 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         debug!("play_result {test3:?}");
     }));
 
+    res.push(("test_play_calpoker_on_chain_after_1_move_p0", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = prefix_test_moves(&mut allocator, true);
+        let mut on_chain_moves_2: Vec<GameAction> = moves.into_iter().take(1).collect();
+        on_chain_moves_2.push(GameAction::GoOnChain(true as usize));
+        let test3 = run_calpoker_play_test(&mut allocator, &on_chain_moves_2).expect("should work");
+        debug!("play_result {test3:?}");
+    }));
+
     res.push(("test_play_calpoker_on_chain_after_2_moves_p0_v0", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = prefix_test_moves(&mut allocator, false);
+        // Alice moves, then bob, then bob spends the channel coin.
+        let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
+        on_chain_moves_3.push(GameAction::GoOnChain(false as usize));
+        let test4 = run_calpoker_play_test(&mut allocator, &on_chain_moves_3).expect("should work");
+        debug!("play_result {test4:?}");
+    }));
+
+    res.push(("test_play_calpoker_on_chain_after_2_moves_p0", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = prefix_test_moves(&mut allocator, true);
         // Alice moves, then bob, then bob spends the channel coin.
         let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
         on_chain_moves_3.push(GameAction::GoOnChain(false as usize));
@@ -319,10 +364,34 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         debug!("play_result {test4:?}");
     }));
 
+    res.push(("test_play_calpoker_on_chain_after_2_moves_p1", &|| {
+        let mut allocator = AllocEncoder::new();
+        let moves = prefix_test_moves(&mut allocator, true);
+        // Alice moves, then bob, then bob spends the channel coin.
+        let mut on_chain_moves_3: Vec<GameAction> = moves.into_iter().take(2).collect();
+        on_chain_moves_3.push(GameAction::GoOnChain(true as usize));
+        let test4 = run_calpoker_play_test(&mut allocator, &on_chain_moves_3);
+        assert!(test4.is_err());
+        assert!(format!("{:?}", test4).contains("from the past"));
+        debug!("play_result {test4:?}");
+    }));
+
     res.push(("test_play_calpoker_end_game_reward_v0", &|| {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = prefix_test_moves(&mut allocator, false).to_vec();
+        moves.push(GameAction::Accept(1));
+        moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+
+        debug!("running moves {moves:?}");
+        let _game_action_results =
+            run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+    }));
+
+    res.push(("test_play_calpoker_end_game_reward", &|| {
+        let mut allocator = AllocEncoder::new();
+
+        let mut moves = prefix_test_moves(&mut allocator, true).to_vec();
         moves.push(GameAction::Accept(1));
         moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
 
