@@ -254,7 +254,9 @@ impl Simulator {
             .collect())
     }
 
-    fn mutate(&mut self) {self.i_have_changed += 1}
+    fn mutate(&mut self) {
+        self.i_have_changed += 1
+    }
     fn async_call<ArgT>(&mut self, py: Python<'_>, name: &str, args: ArgT) -> PyResult<PyObject>
     where
         ArgT: IntoPy<Py<PyTuple>>,
