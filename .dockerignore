@@ -1,4 +1,7 @@
 resources/gaming-fe/node_modules
+resources/fe-test
+resources/wc-stub
 target
 wasm/target
 node_modules
+.git

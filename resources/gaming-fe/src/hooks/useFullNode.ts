@@ -1,11 +1,45 @@
 import ReconnectingWebSocket from 'reconnecting-websocket';
-
+import { CoinOutput } from '../types/ChiaGaming';
+import { generateOrRetrieveUniqueId, empty } from '../util';
 function wsUrl(baseurl: string) {
   const url_with_new_method = baseurl.replace('http', 'ws');
   return `${url_with_new_method}/ws`;
 }
 
-export class BlockchainInterface {
+type blockNotifyType = (peak: number, block: any[], report: any) => void;
+let blockNotifyId = 0;
+let blockNotify: { [id: string]: blockNotifyType } = {};
+let simulatorIsActive = false;
+
+export function simulatorActive() { return simulatorIsActive; }
+
+export function registerBlockchainNotifier(notifier: blockNotifyType): number {
+  blockNotifyId += 1;
+  const currentNumber = blockNotifyId;
+  blockNotify[currentNumber.toString()] = notifier;
+  return currentNumber;
+}
+
+export function unregisterBlockchainNotifier(id: number) {
+  delete blockNotify[id.toString()];
+}
+
+function doBlockNotifications(peak: number, block: any[], block_report: any) {
+  const keys = Object.keys(blockNotify);
+  keys.forEach((k) => {
+    blockNotify[k](peak, block, block_report);
+  });
+}
+
+export interface InternalBlockchainInterface {
+  does_initial_spend(): undefined | ((target: string, amt: number) => Promise<string>);
+  select_coins(amount: number): Promise<any>;
+  sign_transaction(inputs: any[], outputs: CoinOutput[]): Promise<any>;
+  spend(spend: any): Promise<string>;
+  withdraw(): void;
+}
+
+export class RealBlockchainInterface implements InternalBlockchainInterface {
   baseUrl: string;
   fingerprint?: string;
   walletId: number;
@@ -17,9 +51,8 @@ export class BlockchainInterface {
   incomingEvents: any[];
   publicKey?: string;
   ws: any;
-  notify_block: (peak: number, block: any[]) => void;
 
-  constructor(notify_block: (peak: number, block: any[]) => void, baseUrl: string) {
+  constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
     this.walletId = 1;
     this.requestId = 1;
@@ -29,7 +62,6 @@ export class BlockchainInterface {
     this.at_block = 0;
     this.incomingEvents = [];
     this.ws = new ReconnectingWebSocket(wsUrl(this.baseUrl));
-    this.notify_block = notify_block;
 
     this.ws.addEventListener('message', (m: any) => {
       const json = JSON.parse(m.data);
@@ -58,6 +90,12 @@ export class BlockchainInterface {
     });
   }
 
+  does_initial_spend() { return undefined; }
+
+  withdraw() {
+    this.ws.close();
+  }
+
   async internalRetrieveBlock(height: number) {
     console.log('full node: retrieve block', height);
     const br_height = await fetch(`${this.baseUrl}/get_block_record_by_height`, {
@@ -82,7 +120,7 @@ export class BlockchainInterface {
       })
     }).then(r => r.json());
     console.log('br_spends', br_spends.block_spends);
-    this.notify_block(this.at_block, br_spends.block_spends);
+    doBlockNotifications(this.at_block, br_spends.block_spends, undefined);
   }
 
   async internalCheckPeak() {
@@ -160,12 +198,20 @@ export class BlockchainInterface {
     return p;
   }
 
-  async create_spendable(target: string, amt: number): Promise<any> {
+  async select_coins(amount: number): Promise<any> {
     return this.push_request({
       name: 'blockchain',
-      method: 'create_spendable',
-      target: target,
-      amt: amt
+      method: 'select_coins',
+      amount
+    });
+  }
+
+  async sign_transaction(inputs: any[], outputs: CoinOutput[]): Promise<any> {
+    return this.push_request({
+      name: 'blockchain',
+      method: 'sign_transaction',
+      inputs,
+      outputs
     });
   }
 
@@ -193,16 +239,162 @@ export class BlockchainInterface {
   }
 }
 
-let blockchainInterfaceSingleton: any = null;
-
-export function getBlockchainInterfaceSingleton(notify_block: (peak: number, block: any[]) => void) {
-  if (blockchainInterfaceSingleton) {
-    return blockchainInterfaceSingleton;
+function startSimulatorMonitoring(forWho: any): Promise<any> {
+  if (forWho.deleted) {
+    return empty();
   }
 
-  blockchainInterfaceSingleton = new BlockchainInterface(
-    notify_block,
+  console.log('startSimulatorMonitoring');
+  return fetch(`${forWho.baseUrl}/wait_block`, {
+    method: 'POST'
+  }).then((res) => res.json()).then((res) => {
+    console.log('wait_block returned', res);
+    forWho.setNewPeak(res);
+  });
+}
+
+function requestBlockData(forWho: any, block_number: number): Promise<any> {
+  console.log('requestBlockData', block_number);
+  return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
+    method: 'POST'
+  }).then((res) => res.json()).then((res) => {
+    console.log('requestBlockData, got', res);
+    forWho.deliverBlock(block_number, res);
+  });
+}
+
+export class FakeBlockchainInterface implements InternalBlockchainInterface {
+  baseUrl: string;
+  deleted: boolean;
+  at_block: number;
+  max_block: number;
+  handlingEvent: boolean;
+  incomingEvents: any[];
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl;
+    this.deleted = false;
+    this.max_block = 0;
+    this.at_block = 0;
+    this.handlingEvent = false;
+    this.incomingEvents = [];
+  }
+
+  does_initial_spend() {
+    return (target: string, amt: number) => {
+      return fetch(`${this.baseUrl}/create_spendable?who=${generateOrRetrieveUniqueId()}&target=${target}&amt=${amt}`, {
+        method: "POST"
+      }).then((res) => res.json()).then((res) => {
+        // Returns the coin string
+        return res;
+      });
+    };
+  }
+
+  async kickEvent() {
+    console.log('full node: kickEvent');
+    while (this.incomingEvents.length) {
+      console.log('incoming events', this.incomingEvents.length);
+      this.handlingEvent = true;
+      try {
+        const event = this.incomingEvents.shift();
+        console.log('full node: do event', event);
+        await this.handleEvent(event);
+      } catch (e) {
+        console.log('incoming event failed', e);
+      } finally {
+        this.handlingEvent = false;
+      }
+    }
+  }
+
+  async pushEvent(evt: any) {
+    this.incomingEvents.push(evt);
+    if (!this.handlingEvent) {
+      await this.kickEvent();
+    }
+  }
+
+  async handleEvent(event: any) {
+    if (event.setNewPeak) {
+      this.internalSetNewPeak(event.setNewPeak);
+    } else if (event.deliverBlock) {
+      this.internalDeliverBlock(event.deliverBlock.block_number, event.deliverBlock.block_data);
+    }
+  }
+
+  async internalNextBlock() {
+    if (this.at_block > this.max_block) {
+      return startSimulatorMonitoring(this);
+    } else {
+      return requestBlockData(this, this.at_block);
+    }
+  }
+
+  async internalSetNewPeak(peak: number) {
+    if (this.max_block === 0) {
+      this.max_block = peak;
+      this.at_block = peak;
+    } else if (peak > this.max_block) {
+      this.max_block = peak;
+    }
+
+    console.log('FakeBlockchainInterface, peaks', this.at_block, '/', this.max_block);
+
+    return this.internalNextBlock();
+  }
+
+  setNewPeak(peak: number) {
+    this.pushEvent({ setNewPeak: peak });
+  }
+
+  deliverBlock(block_number: number, block_data: any[]) {
+    this.pushEvent({ deliverBlock: { block_number, block_data } });
+  }
+
+  internalDeliverBlock(block_number: number, block_data: any[]) {
+    this.at_block += 1;
+    doBlockNotifications(block_number, [], block_data);
+
+    return this.internalNextBlock();
+  }
+
+  withdraw() {
+    this.deleted = true;
+  }
+
+  select_coins(amount: number): Promise<any> {
+    console.error('no-fake-select-coins', amount);
+    throw 'no-fake-select-coins';
+  }
+  sign_transaction(inputs: any[], outputs: CoinOutput[]): Promise<any> {
+    console.error('no-fake-sign-transaction', inputs, outputs);
+    throw 'no-fake-sign-transaction';
+  }
+  spend(spend: any): Promise<string> {
+    console.error('no-fake-spend', spend);
+    throw 'no-fake-spend';
+  }
+}
+
+let blockchainInterfaceSingleton: InternalBlockchainInterface | null = null;
+
+export function connectRealBlockchain() {
+  blockchainInterfaceSingleton = new RealBlockchainInterface(
     "https://api.coinset.org"
   );
+}
+
+export function getBlockchainInterfaceSingleton() {
+  console.warn("simulator active");
+  simulatorIsActive = true;
+
+  window.postMessage({ name: "walletconnect_up" }, "*");
+
+  blockchainInterfaceSingleton = new FakeBlockchainInterface(
+    "http://localhost:5800"
+  );
+  startSimulatorMonitoring(blockchainInterfaceSingleton);
+
   return blockchainInterfaceSingleton;
 }

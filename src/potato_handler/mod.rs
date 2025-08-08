@@ -20,8 +20,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
-    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, Timeout,
+    GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey, Program, Puzzle, PuzzleHash,
+    Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -182,8 +182,16 @@ impl PotatoHandler {
         self.my_contribution.clone() + self.their_contribution.clone()
     }
 
+    pub fn my_contribution(&self) -> Amount {
+        self.my_contribution.clone()
+    }
+
     pub fn is_on_chain(&self) -> bool {
         matches!(self.handshake_state, HandshakeState::OnChain(_))
+    }
+
+    pub fn referee_private_key(&self) -> &PrivateKey {
+        &self.private_keys.my_referee_private_key
     }
 
     pub fn handshake_done(&self) -> bool {

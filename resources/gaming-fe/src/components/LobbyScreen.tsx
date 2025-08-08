@@ -16,14 +16,15 @@ import { useLobbySocket } from '../hooks/useLobbyConnection';
 import { generateOrRetrieveAlias, updateAlias, getSearchParams } from "../util";
 
 interface LobbyComponentProps {
-  walletConnect: boolean
+  walletConnect: boolean,
+  simulatorActive: boolean
 }
 
-const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
+const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect, simulatorActive }) => {
   const params = getSearchParams();
   const [joined, setJoined] = useState(false);
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
-  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias, walletConnect);
+  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias, walletConnect || simulatorActive);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
