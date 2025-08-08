@@ -1,3 +1,5 @@
+#!/bin/bash
+set -x
 
 rm -rf ./resources/gaming-fe/node_modules
 rm -rf ./wasm/node_modules

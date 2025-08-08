@@ -1,4 +1,3 @@
-#[cfg(feature = "sim-tests")]
 use crate::common::types::Hash;
 use crate::common::types::Timeout;
 #[cfg(feature = "sim-tests")]
@@ -8,38 +7,28 @@ use std::rc::Rc;
 
 use lazy_static::lazy_static;
 
-#[cfg(feature = "sim-tests")]
 use rand::prelude::*;
 
-#[cfg(feature = "sim-tests")]
 use log::debug;
-
-#[cfg(feature = "sim-tests")]
-use clvmr::NodePtr;
 
 lazy_static! {
     pub static ref DEFAULT_UNROLL_TIME_LOCK: Timeout = Timeout::new(5);
 }
 
-#[cfg(feature = "sim-tests")]
 use crate::channel_handler::game::Game;
-#[cfg(feature = "sim-tests")]
 use crate::channel_handler::runner::ChannelHandlerGame;
-#[cfg(feature = "sim-tests")]
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::channel_handler::types::ReadableMove;
-#[cfg(feature = "sim-tests")]
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
 };
-#[cfg(feature = "sim-tests")]
 use crate::common::types::{Amount, CoinString, Error, IntoErr};
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::Simulator;
 
 #[derive(Clone)]
-#[cfg(test)]
+#[cfg(any(test, feature = "sim-tests"))]
 pub enum GameAction {
     /// Do a timeout
     #[allow(dead_code)]
@@ -97,7 +86,7 @@ impl GameAction {
 #[derive(Debug, Clone)]
 #[cfg(feature = "sim-tests")]
 pub enum GameActionResult {
-    MoveResult(NodePtr, Vec<u8>, Option<ReadableMove>, Hash),
+    MoveResult(ReadableMove, Vec<u8>, Option<ReadableMove>, Hash),
     BrokenMove,
     MoveToOnChain,
     Accepted,

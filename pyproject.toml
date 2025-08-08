@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin>=1.3.2"]
+build-backend = "maturin"
+
+[tool.maturin]
+bindings = "pyo3"
+features = ["sim-tests"]
+python-source = "python"
+
+[project]
+name = "chia_gaming"
+dynamic = ["version"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+chia-blockchain = "^2.5.4"
+
+# - Reenable these when we switch over from clvm_tools.
+# [project.scripts]
+# brun = "clvm_tools_rs.cmds:brun"
+# run = "clvm_tools_rs.cmds:run"
+# opc = "clvm_tools_rs.cmds:opc"
+# opd = "clvm_tools_rs.cmds:opd"
+# cldb = "clvm_tools_rs.cmds:cldb"
