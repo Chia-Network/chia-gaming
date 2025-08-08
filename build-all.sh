@@ -7,7 +7,7 @@ set -x
 (cd ./resources/gaming-fe && yarn install)
 
 . ./venv/bin/activate
-maturin build --features=simulator
+maturin build --features=sim-tests
 pip uninstall chia-gaming
 pip install `find ./target -name \*.whl`
 
