@@ -58,8 +58,8 @@ class WasmBlobWrapper {
 
     const blockchain = getBlockchainInterfaceSingleton();
 
-    this.blockNotificationId = registerBlockchainNotifier((peak, blocks) => {
-      this.blockNotification(peak, blocks, undefined);
+    this.blockNotificationId = registerBlockchainNotifier((peak, blocks, block_data) => {
+      this.blockNotification(peak, blocks, block_data);
     });
 
     this.stateChanger = stateChanger;
@@ -93,7 +93,7 @@ class WasmBlobWrapper {
   }
 
   blockNotification(peak: number, blocks: any[], block_report: any) {
-    console.log('useWasmBlob: block notification', peak, blocks);
+    console.log('useWasmBlob: block notification', peak, blocks, block_report);
     if (block_report === undefined) {
       block_report = {
         created_watched: [],
@@ -186,7 +186,15 @@ class WasmBlobWrapper {
     console.warn('internalPushSpend', tx);
     let blob = spend_bundle_to_clvm(tx);
     const blockchain = getBlockchainInterfaceSingleton();
-    return blockchain.spend(this.wc?.convert_spend_to_coinset_org(blob)).then((res: any) => {
+    const do_initial_spend = blockchain.does_initial_spend();
+    let spend_data = do_initial_spend ? blob : this.wc?.convert_spend_to_coinset_org(blob);
+    return blockchain.spend(spend_data).then((res: any) => {
+      if (!res.success && !res.error) {
+        res = {
+          success: res[0] == 1,
+          error: res[1]
+        };
+      }
       if (res.success) {
         console.log('successful spend', tx);
       } else {
@@ -417,8 +425,15 @@ class WasmBlobWrapper {
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
     const blockchain = getBlockchainInterfaceSingleton();
+    const do_initial_spend = blockchain.does_initial_spend();
+
+    if (do_initial_spend) {
+      console.log('got a request for funding for the simulator', totalAmount, outputs);
+    }
+
     return blockchain.
       select_coins(this.amount).then((result: any) => {
+        console.log("select coins result", result);
         this.fromPuzzleHash = result.fromPuzzleHash;
         let inputAmount = 0;
         result.inputs.forEach((c: any) => { inputAmount += c.amount; });

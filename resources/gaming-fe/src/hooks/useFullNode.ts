@@ -1,5 +1,5 @@
 import ReconnectingWebSocket from 'reconnecting-websocket';
-import { CoinOutput } from '../types/ChiaGaming';
+import { CoinOutput, WatchReport } from '../types/ChiaGaming';
 import { generateOrRetrieveUniqueId, empty } from '../util';
 function wsUrl(baseurl: string) {
   const url_with_new_method = baseurl.replace('http', 'ws');
@@ -32,6 +32,7 @@ function doBlockNotifications(peak: number, block: any[], block_report: any) {
 }
 
 export interface InternalBlockchainInterface {
+  set_puzzle_hash(puzzle_hash: string): void;
   does_initial_spend(): undefined | ((target: string, amt: number) => Promise<string>);
   select_coins(amount: number): Promise<any>;
   sign_transaction(inputs: any[], outputs: CoinOutput[]): Promise<any>;
@@ -77,6 +78,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const messageData = e[messageKey];
       console.warn('inner frame received message', messageData);
       const messageName = messageData.name;
+      if (messageName === 'walletconnect_up') {
+        this.set_puzzle_hash(messageData.fakeAddress);
+        return;
+      }
       if (messageName !== 'blockchain_reply') {
         return;
       }
@@ -91,6 +96,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   does_initial_spend() { return undefined; }
+
+  set_puzzle_hash(puzzleHash: string) { }
 
   withdraw() {
     this.ws.close();
@@ -259,7 +266,12 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
     method: 'POST'
   }).then((res) => res.json()).then((res) => {
     console.log('requestBlockData, got', res);
-    forWho.deliverBlock(block_number, res);
+    const converted_res: WatchReport = {
+      created_watched: res.created,
+      deleted_watched: res.deleted,
+      timed_out: res.timed_out
+    };
+    forWho.deliverBlock(block_number, converted_res);
   });
 }
 
@@ -268,6 +280,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   deleted: boolean;
   at_block: number;
   max_block: number;
+  puzzleHash: string;
+  openingCoin: string;
   handlingEvent: boolean;
   incomingEvents: any[];
 
@@ -276,16 +290,37 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.deleted = false;
     this.max_block = 0;
     this.at_block = 0;
+    this.puzzleHash = '';
+    this.openingCoin = '';
     this.handlingEvent = false;
     this.incomingEvents = [];
+
+    window.addEventListener('message', (e: any) => {
+      const messageKey = e.message ? 'message' : 'data';
+      const messageData = e[messageKey];
+      console.warn('fake inner frame received message', messageData);
+      const messageName = messageData.name;
+      if (messageName === 'fake walletconnect_up') {
+        if (messageData.fakeAddress) {
+          this.set_puzzle_hash(messageData.fakeAddress);
+        }
+        return;
+      }
+    });
+
+    window.parent.postMessage({
+      name: 'lobby',
+    }, '*');
   }
 
   does_initial_spend() {
     return (target: string, amt: number) => {
-      return fetch(`${this.baseUrl}/create_spendable?who=${generateOrRetrieveUniqueId()}&target=${target}&amt=${amt}`, {
+      return fetch(`${this.baseUrl}/create_spendable?who=${generateOrRetrieveUniqueId()}&target=${target}&amount=${amt}`, {
         method: "POST"
       }).then((res) => res.json()).then((res) => {
         // Returns the coin string
+        console.log('set opening coin', res);
+        this.openingCoin = res;
         return res;
       });
     };
@@ -353,6 +388,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   internalDeliverBlock(block_number: number, block_data: any[]) {
+    console.log('fake::internalDeliverBlock', block_number, block_data);
     this.at_block += 1;
     doBlockNotifications(block_number, [], block_data);
 
@@ -363,17 +399,30 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.deleted = true;
   }
 
-  select_coins(amount: number): Promise<any> {
-    console.error('no-fake-select-coins', amount);
-    throw 'no-fake-select-coins';
+  set_puzzle_hash(puzzleHash: string) {
+    console.log('user puzzle hash', puzzleHash);
+    this.puzzleHash = puzzleHash;
+  }
+
+  async select_coins(amount: number): Promise<any> {
+    const result = {
+      fromPuzzleHash: this.puzzleHash,
+      inputs: [this.openingCoin]
+    };
+    console.log('select coins result', amount, result);
+    return result;
   }
   sign_transaction(inputs: any[], outputs: CoinOutput[]): Promise<any> {
     console.error('no-fake-sign-transaction', inputs, outputs);
     throw 'no-fake-sign-transaction';
   }
   spend(spend: any): Promise<string> {
-    console.error('no-fake-spend', spend);
-    throw 'no-fake-spend';
+    return fetch(`${this.baseUrl}/spend?blob=${spend}`, {
+      method: "POST"
+    }).then((res) => res.json()).then((res) => {
+      console.log('fake spend returned', res);
+      return res;
+    });
   }
 }
 

@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
+use clvm_traits::ToClvm;
 use clvmr::run_program;
 use hex::FromHexError;
 use log::debug;
@@ -443,8 +444,49 @@ fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<JsCoinSetSpendBundl
 fn js_coinset_to_spend_bundle(
     allocator: &mut AllocEncoder,
     bundle: &JsValue
-) -> Result<SpendBundle, Error> {
-    Err(Error::StrErr(format!("js_coinset_to_spend_bundle: implement me {bundle:?}")))
+) -> Result<SpendBundle, JsValue> {
+    let js_coin_set_spend_bundle = serde_wasm_bindgen::from_value::<JsCoinSetSpendBundle>(bundle.clone()).into_js()?;
+    let mut spends: Vec<CoinSpend> = Vec::new();
+    let aggregated_signature_bytes = check_for_hex(&js_coin_set_spend_bundle.aggregated_signature)?;
+    let aggregated_signature = Aggsig::from_slice(&aggregated_signature_bytes).into_js()?;
+    for (i,c) in js_coin_set_spend_bundle.coin_spends.iter().enumerate() {
+        let coin_spend_parent_coin_info_bytes = check_for_hex(&c.coin.parent_coin_info)?;
+        let coin_spend_puzzle_hash_bytes = check_for_hex(&c.coin.puzzle_hash)?;
+        let coin_spend_puzzle_reveal_bytes = check_for_hex(&c.puzzle_reveal)?;
+        let coin_spend_solution_bytes = check_for_hex(&c.solution)?;
+
+        let coin_spend_parent_coin_info = Hash::from_slice(&coin_spend_parent_coin_info_bytes);
+        let coin_spend_puzzle_hash = Hash::from_slice(&coin_spend_puzzle_reveal_bytes);
+        let coin_spend_puzzle_reveal = Program::from_bytes(&coin_spend_puzzle_reveal_bytes);
+        let coin_spend_solution = Program::from_bytes(&coin_spend_solution_bytes);
+
+        let parent = CoinString::from_parts(
+            &CoinID::new(coin_spend_parent_coin_info),
+            &PuzzleHash::from_hash(coin_spend_puzzle_hash),
+            &Amount::new(c.coin.amount)
+        );
+
+        let signature =
+            if i == 0 {
+                aggregated_signature.clone()
+            } else {
+                Aggsig::default()
+            };
+
+        spends.push(CoinSpend {
+            coin: parent,
+            bundle: Spend {
+                puzzle: coin_spend_puzzle_reveal.into(),
+                solution: coin_spend_solution.into(),
+                signature,
+            }
+        });
+    }
+
+    Ok(SpendBundle {
+        name: None,
+        spends,
+    })
 }
 
 #[wasm_bindgen]
@@ -472,11 +514,12 @@ pub fn respond_to_unfunded_offer(
     cid: i32,
     spend_bundle: &JsValue
 ) -> Result<(), JsValue> {
+    let mut allocator = AllocEncoder::new();
+    let spend_bundle = js_coinset_to_spend_bundle(
+        &mut allocator,
+        spend_bundle
+    )?;
     with_game(cid, move |cradle: &mut JsCradle| {
-        let spend_bundle = js_coinset_to_spend_bundle(
-            &mut cradle.allocator,
-            spend_bundle
-        )?;
         cradle.cradle.respond_to_unfunded_offer(
             &mut cradle.allocator,
             &mut cradle.rng,
@@ -1005,6 +1048,23 @@ pub fn convert_coinset_to_coin_string(parent_coin_info: &str, puzzle_hash: &str,
 }
 
 #[wasm_bindgen]
+pub fn convert_coin_string_to_coinset(coin: &str) -> Result<JsValue, JsValue> {
+    let coin_bytes = check_for_hex(coin)?;
+    let coin_string = CoinString::from_bytes(&coin_bytes);
+    if let Some((parent, ph, amt)) = coin_string.to_parts() {
+        let parent_bytes = parent.bytes();
+        let ph_bytes = ph.bytes();
+        return Ok(serde_wasm_bindgen::to_value(&JsCoin {
+            parent_coin_info: hex::encode(&parent_bytes),
+            puzzle_hash: hex::encode(&ph_bytes),
+            amount: amt.to_u64(),
+        }).into_js()?);
+    }
+
+    Err(JsValue::from_str("conversion failed"))
+}
+
+#[wasm_bindgen]
 pub fn convert_chia_public_key_to_puzzle_hash(public_key: &str) -> Result<String, JsValue> {
     let mut allocator = AllocEncoder::new();
     debug!("decode public key {public_key:?}");
@@ -1016,6 +1076,19 @@ pub fn convert_chia_public_key_to_puzzle_hash(public_key: &str) -> Result<String
     debug!("use puzzle hash {puzzle_hash:?}");
     Ok(hex::encode(&puzzle_hash.bytes()))
 }
+
+#[wasm_bindgen]
+pub fn convert_js_coinset_to_spend_bundle_string(js_coinset: &JsValue) -> Result<String, JsValue> {
+    let mut allocator = AllocEncoder::new();
+    let decoded_js_coinset_spend = js_coinset_to_spend_bundle(
+        &mut allocator,
+        js_coinset
+    )?;
+    let serialized_spend = decoded_js_coinset_spend.to_clvm(&mut allocator).into_gen().into_js()?;
+    let serialized_spend_program = Program::from_nodeptr(&mut allocator, serialized_spend).into_js()?;
+    Ok(hex::encode(&serialized_spend_program.bytes()))
+}
+
 
 #[wasm_bindgen]
 pub fn test_string() -> JsValue {
