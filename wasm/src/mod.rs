@@ -20,15 +20,17 @@ use wasm_logger;
 use wasm_bindgen::prelude::*;
 
 use chia_gaming::channel_handler::types::ReadableMove;
+use chia_gaming::common::standard_coin::puzzle_hash_for_pk;
 use chia_gaming::common::standard_coin::{wasm_deposit_file, ChiaIdentity};
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, PrivateKey, Program,
-    PublicKey, PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, chia_dialect
+    chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString,
+    Error, GameID, Hash, IntoErr, PrivateKey, Program, PublicKey, PuzzleHash, Sha256Input, Spend,
+    SpendBundle, Timeout,
 };
-use chia_gaming::common::standard_coin::{puzzle_hash_for_pk};
 use chia_gaming::peer_container::{
-    FundingRequest, GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
+    FundingRequest, GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig,
+    WatchReport,
 };
 use chia_gaming::potato_handler::types::{GameFactory, GameStart, GameType, ToLocalUI};
 use chia_gaming::shutdown::BasicShutdownConditions;
@@ -38,7 +40,8 @@ use lol_alloc::{FreeListAllocator, LockedAllocator};
 
 #[cfg(target_arch = "wasm32")]
 #[global_allocator]
-static ALLOCATOR: LockedAllocator<FreeListAllocator> = LockedAllocator::new(FreeListAllocator::new());
+static ALLOCATOR: LockedAllocator<FreeListAllocator> =
+    LockedAllocator::new(FreeListAllocator::new());
 
 use crate::map_m::map_m;
 
@@ -303,13 +306,13 @@ pub fn config_scaffold() -> Result<JsValue, JsValue> {
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(typescript_type="ICreateGameCradle")]
+    #[wasm_bindgen(typescript_type = "ICreateGameCradle")]
     pub type ICreateGameCradle;
 }
 
 /// The name 'typescript_type' is part of the FFI
-#[allow(unused_variables)]  // 'typescript_type' MUST be named 'typescript_type'
-#[wasm_bindgen(typescript_type="ICreateGameCradle")]
+#[allow(unused_variables)] // 'typescript_type' MUST be named 'typescript_type'
+#[wasm_bindgen(typescript_type = "ICreateGameCradle")]
 //#[allow(unused_variables)]  // 'typescript_type' MUST be named 'typescript_type'
 pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     let new_id = get_next_id();
@@ -328,7 +331,8 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
 
     let random_private_key: PrivateKey = rng.gen();
     let mut identity = ChiaIdentity::new(&mut allocator, random_private_key).into_js()?;
-    let synchronous_game_cradle_config = get_game_config(&mut allocator, &mut identity, js_config.clone())?;
+    let synchronous_game_cradle_config =
+        get_game_config(&mut allocator, &mut identity, js_config.clone())?;
     let game_cradle = SynchronousGameCradle::new(&mut rng, synchronous_game_cradle_config);
     let cradle = JsCradle {
         allocator,
@@ -371,11 +375,9 @@ pub fn opening_coin(cid: i32, hex_coinstring: &str) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
         let coin_string = hex_to_coinstring(hex_coinstring)?;
         debug!("opening coin: decoded string {coin_string:?}");
-        cradle.cradle.opening_coin(
-            &mut cradle.allocator,
-            &mut cradle.rng,
-            coin_string
-        )
+        cradle
+            .cradle
+            .opening_coin(&mut cradle.allocator, &mut cradle.rng, coin_string)
     })
 }
 
@@ -407,9 +409,21 @@ fn coin_string_to_hex(cs: &CoinString) -> String {
 
 fn watch_report_to_js(watch_report: &WatchReport) -> JsWatchReport {
     JsWatchReport {
-        timed_out: watch_report.timed_out.iter().map(coin_string_to_hex).collect(),
-        created_watched: watch_report.created_watched.iter().map(coin_string_to_hex).collect(),
-        deleted_watched: watch_report.deleted_watched.iter().map(coin_string_to_hex).collect()
+        timed_out: watch_report
+            .timed_out
+            .iter()
+            .map(coin_string_to_hex)
+            .collect(),
+        created_watched: watch_report
+            .created_watched
+            .iter()
+            .map(coin_string_to_hex)
+            .collect(),
+        deleted_watched: watch_report
+            .deleted_watched
+            .iter()
+            .map(coin_string_to_hex)
+            .collect(),
     }
 }
 
@@ -425,10 +439,10 @@ fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<JsCoinSetSpendBundl
                 coin: JsCoin {
                     amount: amt.to_u64(),
                     parent_coin_info: format!("0x{}", hex::encode(&parent.bytes())),
-                    puzzle_hash: format!("0x{}", hex::encode(&pph.bytes()))
+                    puzzle_hash: format!("0x{}", hex::encode(&pph.bytes())),
                 },
                 puzzle_reveal: format!("0x{}", s.bundle.puzzle.to_program().to_hex()),
-                solution: format!("0x{}", s.bundle.solution.p().to_hex())
+                solution: format!("0x{}", s.bundle.solution.p().to_hex()),
             });
         } else {
             return Err(JsValue::from_str(&format!("bad coin string {s:?}")));
@@ -437,19 +451,20 @@ fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<JsCoinSetSpendBundl
 
     Ok(JsCoinSetSpendBundle {
         aggregated_signature: format!("0x{}", hex::encode(&aggsig.bytes())),
-        coin_spends
+        coin_spends,
     })
 }
 
 fn js_coinset_to_spend_bundle(
     allocator: &mut AllocEncoder,
-    bundle: &JsValue
+    bundle: &JsValue,
 ) -> Result<SpendBundle, JsValue> {
-    let js_coin_set_spend_bundle = serde_wasm_bindgen::from_value::<JsCoinSetSpendBundle>(bundle.clone()).into_js()?;
+    let js_coin_set_spend_bundle =
+        serde_wasm_bindgen::from_value::<JsCoinSetSpendBundle>(bundle.clone()).into_js()?;
     let mut spends: Vec<CoinSpend> = Vec::new();
     let aggregated_signature_bytes = check_for_hex(&js_coin_set_spend_bundle.aggregated_signature)?;
     let aggregated_signature = Aggsig::from_slice(&aggregated_signature_bytes).into_js()?;
-    for (i,c) in js_coin_set_spend_bundle.coin_spends.iter().enumerate() {
+    for (i, c) in js_coin_set_spend_bundle.coin_spends.iter().enumerate() {
         let coin_spend_parent_coin_info_bytes = check_for_hex(&c.coin.parent_coin_info)?;
         let coin_spend_puzzle_hash_bytes = check_for_hex(&c.coin.puzzle_hash)?;
         let coin_spend_puzzle_reveal_bytes = check_for_hex(&c.puzzle_reveal)?;
@@ -463,15 +478,14 @@ fn js_coinset_to_spend_bundle(
         let parent = CoinString::from_parts(
             &CoinID::new(coin_spend_parent_coin_info),
             &PuzzleHash::from_hash(coin_spend_puzzle_hash),
-            &Amount::new(c.coin.amount)
+            &Amount::new(c.coin.amount),
         );
 
-        let signature =
-            if i == 0 {
-                aggregated_signature.clone()
-            } else {
-                Aggsig::default()
-            };
+        let signature = if i == 0 {
+            aggregated_signature.clone()
+        } else {
+            Aggsig::default()
+        };
 
         spends.push(CoinSpend {
             coin: parent,
@@ -479,14 +493,11 @@ fn js_coinset_to_spend_bundle(
                 puzzle: coin_spend_puzzle_reveal.into(),
                 solution: coin_spend_solution.into(),
                 signature,
-            }
+            },
         });
     }
 
-    Ok(SpendBundle {
-        name: None,
-        spends,
-    })
+    Ok(SpendBundle { name: None, spends })
 }
 
 #[wasm_bindgen]
@@ -510,20 +521,14 @@ pub fn new_block(
 }
 
 #[wasm_bindgen]
-pub fn respond_to_unfunded_offer(
-    cid: i32,
-    spend_bundle: &JsValue
-) -> Result<(), JsValue> {
+pub fn respond_to_unfunded_offer(cid: i32, spend_bundle: &JsValue) -> Result<(), JsValue> {
     let mut allocator = AllocEncoder::new();
-    let spend_bundle = js_coinset_to_spend_bundle(
-        &mut allocator,
-        spend_bundle
-    )?;
+    let spend_bundle = js_coinset_to_spend_bundle(&mut allocator, spend_bundle)?;
     with_game(cid, move |cradle: &mut JsCradle| {
         cradle.cradle.respond_to_unfunded_offer(
             &mut cradle.allocator,
             &mut cradle.rng,
-            spend_bundle
+            spend_bundle,
         )?;
         Ok(())
     })
@@ -657,7 +662,9 @@ where
 {
     debug!("try to call {name} from {callbacks:?}");
     if let Some(js_value) = callbacks.get(name) {
-        let function = js_value.dyn_ref::<js_sys::Function>().expect("Not a js function");
+        let function = js_value
+            .dyn_ref::<js_sys::Function>()
+            .expect("Not a js function");
         let mut args_array = Array::new();
         debug!("call user's injected function in {name}");
         f(&mut args_array)?;
@@ -671,7 +678,12 @@ where
 }
 
 impl ToLocalUI for JsLocalUI {
-    fn self_move(&mut self, game_id: &GameID, state_number: usize, readable: &[u8]) -> Result<(), types::Error> {
+    fn self_move(
+        &mut self,
+        game_id: &GameID,
+        state_number: usize,
+        readable: &[u8],
+    ) -> Result<(), types::Error> {
         call_javascript_from_collection(&self.callbacks, "self_move", |args_array| {
             args_array.set(0, JsValue::from_str(&game_id_to_string(game_id)));
             args_array.set(1, JsValue::from_str(&hex::encode(readable)));
@@ -767,7 +779,11 @@ fn to_local_ui(callbacks: JsValue) -> Result<JsLocalUI, JsValue> {
         let entry = Array::from(&entries.at(i as i32));
         let js_name = &entry.at(0);
 
-        if let Some(name) = js_name.dyn_ref::<JsString>().expect("Not a js string").as_string() {
+        if let Some(name) = js_name
+            .dyn_ref::<JsString>()
+            .expect("Not a js string")
+            .as_string()
+        {
             let value = entry.at(1);
             jslocalui.callbacks.insert(name, value);
         }
@@ -845,14 +861,22 @@ fn spend_bundle_to_js(spend_bundle: &SpendBundle) -> JsSpendBundle {
 fn spend_target_to_js(pair: &(PuzzleHash, Amount)) -> JsSpendTarget {
     JsSpendTarget {
         puzzle_hash: hex::encode(&pair.0.bytes()),
-        amount: JsAmount { amt: pair.1.clone() }
+        amount: JsAmount {
+            amt: pair.1.clone(),
+        },
     }
 }
 
 fn funding_request_to_js(funding_request: &FundingRequest) -> JsFundingRequest {
     JsFundingRequest {
-        spend_targets: funding_request.spend_targets.iter().map(spend_target_to_js).collect(),
-        spend_total: JsAmount { amt: funding_request.spend_total.clone() }
+        spend_targets: funding_request
+            .spend_targets
+            .iter()
+            .map(spend_target_to_js)
+            .collect(),
+        spend_total: JsAmount {
+            amt: funding_request.spend_total.clone(),
+        },
     }
 }
 
@@ -922,7 +946,7 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
         handshake_done: idle_result.handshake_done,
         action_queue: idle_result.action_queue.clone(),
         incoming_messages: idle_result.incoming_messages.clone(),
-        receive_error: idle_result.receive_error.as_ref().map(|e| format!("{e:?}"))
+        receive_error: idle_result.receive_error.as_ref().map(|e| format!("{e:?}")),
     })
     .into_e()
 }
@@ -934,7 +958,8 @@ pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
         if let Some(idle_result) =
             cradle
                 .cradle
-                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui, 3)? // Give extras
+                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui, 3)?
+        // Give extras
         {
             idle_result_to_js(&idle_result)
         } else {
@@ -980,7 +1005,7 @@ pub fn convert_coinset_org_block_spend_to_watch_report(
     puzzle_hash: &str,
     amount: u64,
     puzzle_reveal: &str,
-    solution: &str
+    solution: &str,
 ) -> Result<JsValue, JsValue> {
     let mut allocator = AllocEncoder::new();
     let parent_coin_info_bytes = check_for_hex(parent_coin_info)?;
@@ -1001,21 +1026,16 @@ pub fn convert_coinset_org_block_spend_to_watch_report(
         &chia_dialect(),
         puzzle_reveal_node,
         solution_node,
-        0
-    ).into_gen().into_js()?;
-    let conditions = CoinCondition::from_nodeptr(
-        &mut allocator,
-        run_output.1
-    );
+        0,
+    )
+    .into_gen()
+    .into_js()?;
+    let conditions = CoinCondition::from_nodeptr(&mut allocator, run_output.1);
     let mut watch_result = WatchReport::default();
     watch_result.deleted_watched.insert(coin_string.clone());
     for condition in conditions.into_iter() {
         if let CoinCondition::CreateCoin(ph, amt) = condition {
-            let new_coin = CoinString::from_parts(
-                &parent_of_created,
-                &ph,
-                &amt
-            );
+            let new_coin = CoinString::from_parts(&parent_of_created, &ph, &amt);
             watch_result.created_watched.insert(new_coin);
         }
     }
@@ -1033,7 +1053,11 @@ pub fn convert_spend_to_coinset_org(spend: &str) -> Result<JsValue, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn convert_coinset_to_coin_string(parent_coin_info: &str, puzzle_hash: &str, amount: u64) -> Result<String, JsValue> {
+pub fn convert_coinset_to_coin_string(
+    parent_coin_info: &str,
+    puzzle_hash: &str,
+    amount: u64,
+) -> Result<String, JsValue> {
     let parent_coin_bytes = check_for_hex(parent_coin_info)?;
     let puzzle_hash_bytes = check_for_hex(puzzle_hash)?;
     let parent_coin_info_hash = Hash::from_slice(&parent_coin_bytes);
@@ -1041,7 +1065,7 @@ pub fn convert_coinset_to_coin_string(parent_coin_info: &str, puzzle_hash: &str,
     let coin_string = CoinString::from_parts(
         &CoinID::new(parent_coin_info_hash),
         &PuzzleHash::from_hash(puzzle_hash_hash),
-        &Amount::new(amount)
+        &Amount::new(amount),
     );
     let coin_string_bytes = coin_string.to_bytes();
     Ok(hex::encode(&coin_string_bytes))
@@ -1058,7 +1082,8 @@ pub fn convert_coin_string_to_coinset(coin: &str) -> Result<JsValue, JsValue> {
             parent_coin_info: hex::encode(&parent_bytes),
             puzzle_hash: hex::encode(&ph_bytes),
             amount: amt.to_u64(),
-        }).into_js()?);
+        })
+        .into_js()?);
     }
 
     Err(JsValue::from_str("conversion failed"))
@@ -1080,15 +1105,15 @@ pub fn convert_chia_public_key_to_puzzle_hash(public_key: &str) -> Result<String
 #[wasm_bindgen]
 pub fn convert_js_coinset_to_spend_bundle_string(js_coinset: &JsValue) -> Result<String, JsValue> {
     let mut allocator = AllocEncoder::new();
-    let decoded_js_coinset_spend = js_coinset_to_spend_bundle(
-        &mut allocator,
-        js_coinset
-    )?;
-    let serialized_spend = decoded_js_coinset_spend.to_clvm(&mut allocator).into_gen().into_js()?;
-    let serialized_spend_program = Program::from_nodeptr(&mut allocator, serialized_spend).into_js()?;
+    let decoded_js_coinset_spend = js_coinset_to_spend_bundle(&mut allocator, js_coinset)?;
+    let serialized_spend = decoded_js_coinset_spend
+        .to_clvm(&mut allocator)
+        .into_gen()
+        .into_js()?;
+    let serialized_spend_program =
+        Program::from_nodeptr(&mut allocator, serialized_spend).into_js()?;
     Ok(hex::encode(&serialized_spend_program.bytes()))
 }
-
 
 #[wasm_bindgen]
 pub fn test_string() -> JsValue {
