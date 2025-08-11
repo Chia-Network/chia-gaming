@@ -9,9 +9,9 @@ from enum import Enum
 from clvm_tools_rs import start_clvm_program
 
 from calpoker import Card
-from chia_gaming.clvm_types.program import Program
-from chia_gaming.util.sized_bytes import bytes32
-from chia_gaming.clvm_types.load_clvm_hex import load_clvm_hex
+from chia_gaming_tests.clvm_types.program import Program
+from chia_gaming_tests.util.sized_bytes import bytes32
+from chia_gaming_tests.clvm_types.load_clvm_hex import load_clvm_hex
 from seed import GameSeed
 from util import (
     TestCaseSequence,

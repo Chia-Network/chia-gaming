@@ -3,7 +3,7 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import Literal, SupportsBytes, Union, cast, overload
 
-from chia_gaming.util.sized_bytes import bytes32
+from chia_gaming_tests.util.sized_bytes import bytes32
 
 
 @overload

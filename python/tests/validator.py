@@ -4,9 +4,9 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from chia_gaming.clvm_types.program import Program
-from chia_gaming.util.sized_bytes import bytes32
-from chia_gaming.clvm_types.load_clvm_hex import load_clvm_hex
+from chia_gaming_tests.clvm_types.program import Program
+from chia_gaming_tests.util.sized_bytes import bytes32
+from chia_gaming_tests.clvm_types.load_clvm_hex import load_clvm_hex
 from util import ValidatorInfo, calpoker_onchain_clsp_dir, validator_program_filenames, dbg_assert_eq
 from validator_hashes import program_hashes_hex
 from validator_output import Move, MoveCode, Slash

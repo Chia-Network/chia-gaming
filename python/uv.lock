@@ -3,7 +3,7 @@ revision = 2
 requires-python = ">=3.9"
 
 [[package]]
-name = "chia-gaming"
+name = "chia-gaming-tests"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
