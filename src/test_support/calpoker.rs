@@ -21,7 +21,7 @@ use crate::test_support::game::GameActionResult;
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::tests::potato_handler_sim::{
-    run_calpoker_container_with_action_list, run_calpoker_test_with_action_list, GameRunOutcome,
+    run_calpoker_container_with_action_list, run_calpoker_test_with_action_list, GameRunOutcome, chad
 };
 #[cfg(feature = "sim-tests")]
 use crate::simulator::tests::simenv::SimulatorEnvironment;
@@ -434,18 +434,25 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             run_calpoker_play_test(&mut allocator, &moves).expect("should work");
     }));
 
-    res.push(("test_play_calpoker_end_game_reward", &|| {
+    res.push(("test_play_calpoker_end_game_reward_v1", &|| {
         let mut allocator = AllocEncoder::new();
 
         let mut moves = prefix_test_moves(&mut allocator, true).to_vec();
-        moves.push(GameAction::Accept(1));
-        moves.push(GameAction::Shutdown(0, Rc::new(BasicShutdownConditions)));
+        moves.push(GameAction::Accept(0));
+        moves.push(GameAction::Shutdown(1, Rc::new(BasicShutdownConditions)));
 
         debug!("running moves {moves:?}");
-        let game_action_results =
-            run_calpoker_play_test(&mut allocator, &moves);
-        debug!("{game_action_results:?}");
-        assert!(game_action_results.is_ok());
+        //let game_action_results =
+                    // run_calpoker_play_test(&mut allocator, &moves);
+        let game_outcome = run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+            .expect("should work");
+        let game_results = game_run_outcome_to_move_results(&game_outcome);
+        let bob_clvm_data = extract_info_from_game(&game_results);
+        debug!("bob_clvm_data: {bob_clvm_data:?}");
+        assert_ne!(bob_clvm_data.to_program().to_hex(), "80");
+        debug!("play_result {game_results:?}");
+        chad(&mut allocator, &game_outcome);
+        // assert!(game_results.is_ok());
     }));
 
     res

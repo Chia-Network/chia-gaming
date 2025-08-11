@@ -1168,6 +1168,22 @@ fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Err
     Ok((p1_balance, p2_balance))
 }
 
+pub fn chad(allocator: &mut AllocEncoder, outcome: &GameRunOutcome) {
+    let p0_view_of_cards = &outcome.local_uis[0].opponent_moves[0];
+    let p1_view_of_cards = &outcome.local_uis[1].opponent_moves[1];
+    let alice_outcome_move = &outcome.local_uis[0].opponent_moves[1];
+    let bob_outcome_move = &outcome.local_uis[1].opponent_moves[2];
+
+    check_calpoker_economic_result(
+        allocator,
+        p0_view_of_cards,
+        p1_view_of_cards,
+        alice_outcome_move,
+        bob_outcome_move,
+        &outcome,
+    );
+}
+
 fn check_calpoker_economic_result(
     allocator: &mut AllocEncoder,
     p0_view_of_cards: &(GameID, usize, ReadableMove, Amount),
