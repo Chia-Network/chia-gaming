@@ -2,7 +2,8 @@
 
 set -e
 
-yarn install --dev
+(cd test1 && yarn install --dev)
+(cd test2 && yarn install --dev)
 
 docker kill chia-gaming-test || true
 docker rm chia-gaming-test || true
@@ -17,7 +18,7 @@ echo 'waiting for service alive ...'
 
 echo 'running tests'
 STATUS=1
-if ./node_modules/.bin/jest ; then
+if (cd test1 && ./node_modules/.bin/jest --silent=false --useStderr) ; then
     STATUS=0
 else
     STATUS=1
