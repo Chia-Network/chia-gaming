@@ -285,9 +285,9 @@ impl Simulator {
         Ok(res)
     }
 
-    fn async_client(
+    fn async_client<'a>(
         &mut self,
-        py: Python<'_>,
+        py: Python<'a>,
         name: &str,
         args: Bound<'_, PyTuple>,
     ) -> PyResult<PyObject> {

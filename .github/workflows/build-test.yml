@@ -184,7 +184,11 @@ jobs:
           source venv/bin/activate
           pip install chia-blockchain==2.5.5-rc3
           python -m pip install maturin==1.9.2
+<<<<<<< HEAD
+          maturin build --features sim-tests,simulator
+=======
           maturin build --features sim-tests
+>>>>>>> 20250723-services
           pip install `find . -name \*.whl`
           python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
           grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
@@ -244,7 +248,11 @@ jobs:
         # "+stable" flag is not supported here yet
         cargo test
         python -m pip install maturin==1.9.2
+<<<<<<< HEAD
+        maturin build --features sim-tests,simulator
+=======
         maturin build --features sim-tests
+>>>>>>> 20250723-services
         pip install `find . -name \*.whl`
         python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
 

@@ -313,6 +313,7 @@ name = "chia_gaming_wasm"
 version = "0.1.0"
 dependencies = [
  "chia_gaming",
+ "clvm-traits",
  "clvmr",
  "hex",
  "indexmap 1.6.2",

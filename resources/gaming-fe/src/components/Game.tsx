@@ -144,7 +144,7 @@ const Game: React.FC = () => {
       <Typography variant="h4" align="center">
       {`Cal Poker - move ${moveNumber}`}
       </Typography>
-      <Button onClick={stopPlaying} disabled={moveNumber !== 0}>Stop</Button>
+      <Button aria-label="stop-playing" onClick={stopPlaying} disabled={moveNumber !== 0}>Stop</Button>
       <br />
       <Typography
         variant="h6"
