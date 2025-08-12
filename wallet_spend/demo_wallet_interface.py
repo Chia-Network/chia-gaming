@@ -15,7 +15,9 @@ wallet_rpc_port = 9256
 rpc_host = 'localhost'
 
 from flask import Flask, request
+from flask_cors import CORS
 app = Flask(__name__)
+CORS(app)
 
 async def get_rpc_conn():
     root_dir = os.environ['CHIA_ROOT'] if 'CHIA_ROOT' in os.environ \
@@ -69,15 +71,19 @@ async def select_wallet_send_transaction(
         print('exception', e)
         return {'error': str(e)}
 
-@app.route('/get_current_address', methods = ['POST'])
+@app.route('/get_current_address', methods = ['POST', 'OPTIONS'])
 async def get_address():
     rpc_client = await get_rpc_conn()
     get_address = await rpc_client.get_next_address(1, False)
     return json.dumps(get_address)
+
     
 
-@app.route('/send_transaction', methods = ['POST'])
+@app.route('/send_transaction', methods = ['POST', 'OPTIONS'])
 async def send_transaction_service():
+    if request.method == 'OPTIONS':
+        return ''
+
     rpc_client = await get_rpc_conn()
     who = request.args.get('who')
     target = request.args.get('target')
