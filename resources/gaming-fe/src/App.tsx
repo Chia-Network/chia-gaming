@@ -18,6 +18,8 @@ import {
   Typography,
 } from '@mui/material';
 import { getSearchParams } from './util';
+//import PlayingCard from "./PlayingCard";
+import ShowCard from "./components/ShowCard";
 
 const App: React.FC = () => {
   const params = getSearchParams();
@@ -57,7 +59,9 @@ const App: React.FC = () => {
     };
   });
 
-  if (params.lobby) {
+  if (params.one_card) {
+    return (<ShowCard card={[ 1, 1]} />)
+  } else if (params.lobby) {
     return (<LobbyScreen walletConnect={receivedWalletConnect} simulatorActive={simulatorActive()} />);
   } else if (params.game && !params.join) {
     return (<Game />);

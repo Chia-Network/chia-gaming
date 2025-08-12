@@ -53,9 +53,13 @@ app.use(cors({
 app.use(express.json());
 
 async function serveFile(file: string, contentType: string, res: any) {
-  const content = await readFile(file);
-  res.set('Content-Type', contentType);
-  res.send(content);
+  try {
+    const content = await readFile(file);
+    res.set('Content-Type', contentType);
+    res.send(content);
+  } catch (error) {
+    console.error("An error occurred:", error);
+  }
 }
 async function serveDirectory(dir: string, req: any, res: any) {
   let targetFile = dir + req.path;
