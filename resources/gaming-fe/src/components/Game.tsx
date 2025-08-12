@@ -20,6 +20,24 @@ import MovingCard from "./MovingCard";
 import { useWasmBlob } from "../hooks/useWasmBlob";
 import { getGameSelection } from '../util';
 
+interface CardData {
+  rank: string;
+  suit: string;
+  value: number;
+}
+
+interface SwappingCard extends CardData {
+  originalIndex: number;
+  id: string;
+}
+
+interface MovingCardData {
+  card: CardData & { id: string };
+  startPosition: { x: number; y: number };
+  endPosition: { x: number; y: number };
+  direction: string;
+}
+
 const Game: React.FC = () => {
   const gameSelection = getGameSelection();
   const {
@@ -40,10 +58,10 @@ const Game: React.FC = () => {
   } = useWasmBlob();
 
   // Add swap animation state
-  const [gameState, setGameState] = useState('playing'); // playing, swapping, final
+  const [gameState, setGameState] = useState<'playing' | 'swapping' | 'final'>('playing');
   const [showSwapAnimation, setShowSwapAnimation] = useState(false);
-  const [movingCards, setMovingCards] = useState([]);
-  const [swappingCards, setSwappingCards] = useState({ player: [], ai: [] });
+  const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
+  const [swappingCards, setSwappingCards] = useState<{ player: SwappingCard[], ai: SwappingCard[] }>({ player: [], ai: [] });
 
   const setStateFromMessage = useCallback((evt: any) => {
     setState(evt.data);
@@ -58,7 +76,7 @@ const Game: React.FC = () => {
   });
 
   // Function to convert card value array to display format
-  const formatCard = (cardValue: number[]) => {
+  const formatCard = (cardValue: number[]): CardData => {
     const suitSymbols = ['♠', '♥', '♦', '♠', '♣'];
     const rank = cardValue.slice(0, -1);
     const suitIndex = cardValue.slice(-1)[0] as number;
@@ -97,8 +115,8 @@ const Game: React.FC = () => {
     }
 
     // Cards to swap are the ones NOT selected
-    const playerSwapIndices = [];
-    const aiSwapIndices = [];
+    const playerSwapIndices: number[] = [];
+    const aiSwapIndices: number[] = [];
     for (let i = 0; i < Math.min(playerHand.length, opponentHand.length); i++) {
       if (!playerSelected.includes(i)) {
         playerSwapIndices.push(i);
@@ -121,7 +139,7 @@ const Game: React.FC = () => {
 
     // Start animation after brief delay to ensure DOM is ready
     setTimeout(() => {
-      const movingCardData = [];
+      const movingCardData: MovingCardData[] = [];
       
       // Calculate positions for each swapping card
       playerSwapIndices.forEach((playerCardIndex, swapIndex) => {

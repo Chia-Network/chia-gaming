@@ -2,10 +2,18 @@ import React from "react";
 import { useCallback } from "react";
 import PlayingCard from "./PlayingCard";
 
+interface SwappingCard {
+  rank: string;
+  suit: string;
+  value: number;
+  originalIndex: number;
+  id: string;
+}
+
 interface OpponentSectionProps {
   playerNumber: number;
   opponentHand: number[][];
-  swappingCards?: { player: any[], ai: any[] };
+  swappingCards?: { player: SwappingCard[], ai: SwappingCard[] };
   showSwapAnimation?: boolean;
 }
 

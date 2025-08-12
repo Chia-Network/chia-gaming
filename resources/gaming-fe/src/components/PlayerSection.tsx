@@ -3,6 +3,14 @@ import { useCallback, useState } from "react";
 import { popcount } from '../util';
 import PlayingCard from "./PlayingCard";
 
+interface SwappingCard {
+  rank: string;
+  suit: string;
+  value: number;
+  originalIndex: number;
+  id: string;
+}
+
 interface PlayerSectionProps {
   playerNumber: number;
   playerHand: number[][];
@@ -11,7 +19,7 @@ interface PlayerSectionProps {
   handleMakeMove: (move: any) => void;
   cardSelections: number,
   setCardSelections: (mask: number) => void;
-  swappingCards?: { player: any[], ai: any[] };
+  swappingCards?: { player: SwappingCard[], ai: SwappingCard[] };
   showSwapAnimation?: boolean;
 }
 
@@ -78,6 +86,14 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
     marginBottom: '8px',
   };
 
+  // Count selected cards
+  const playerSelected: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    if (cardSelections & (1 << i)) {
+      playerSelected.push(i);
+    }
+  }
+
   const buttonStyle: React.CSSProperties = {
     background: playerSelected.length === 4 ? '#2563eb' : '#9ca3af',
     color: playerSelected.length === 4 ? '#ffffff' : '#6b7280',
@@ -92,14 +108,6 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
     minWidth: '120px',
     whiteSpace: 'nowrap',
   };
-
-  // Count selected cards
-  const playerSelected = [];
-  for (let i = 0; i < 8; i++) {
-    if (cardSelections & (1 << i)) {
-      playerSelected.push(i);
-    }
-  }
 
   return (
     <div style={sectionStyle} data-area="player">
