@@ -94,15 +94,20 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
     }
   }
 
+  // Button should be enabled if:
+  // - It's the player's turn AND
+  // - Either it's not move 1 (card selection), OR it's move 1 and 4 cards are selected
+  const isButtonEnabled = isPlayerTurn && (moveNumber !== 1 || playerSelected.length === 4);
+
   const buttonStyle: React.CSSProperties = {
-    background: playerSelected.length === 4 ? '#2563eb' : '#9ca3af',
-    color: playerSelected.length === 4 ? '#ffffff' : '#6b7280',
+    background: isButtonEnabled ? '#2563eb' : '#9ca3af',
+    color: isButtonEnabled ? '#ffffff' : '#6b7280',
     border: 'none',
     borderRadius: '8px',
     padding: '12px 24px',
     fontSize: '16px',
     fontWeight: 'bold',
-    cursor: playerSelected.length === 4 ? 'pointer' : 'not-allowed',
+    cursor: isButtonEnabled ? 'pointer' : 'not-allowed',
     transition: 'background 0.2s',
     boxShadow: '0 1px 2px rgba(0,0,0,0.07)',
     minWidth: '120px',
@@ -136,15 +141,15 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
       <button
         aria-label="make-move"
         onClick={doHandleMakeMove}
-        disabled={!isPlayerTurn || (moveNumber === 1 && popcount(cardSelections) != 4)}
+        disabled={!isButtonEnabled}
         style={buttonStyle}
         onMouseEnter={(e) => {
-          if (isPlayerTurn && playerSelected.length === 4) {
+          if (isButtonEnabled) {
             e.currentTarget.style.background = '#1d4ed8';
           }
         }}
         onMouseLeave={(e) => {
-          if (isPlayerTurn && playerSelected.length === 4) {
+          if (isButtonEnabled) {
             e.currentTarget.style.background = '#2563eb';
           }
         }}
