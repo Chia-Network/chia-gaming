@@ -384,7 +384,7 @@ const Game: React.FC = () => {
             playerHand={playerHand}
             isPlayerTurn={isPlayerTurn}
             moveNumber={moveNumber}
-            handleMakeMove={triggerSwapAnimation}
+            handleMakeMove={moveNumber === 1 ? triggerSwapAnimation : handleMakeMove}
             cardSelections={cardSelections}
             setCardSelections={setCardSelections}
             swappingCards={swappingCards}
