@@ -9,6 +9,7 @@ interface PlayingCardProps {
   selected: boolean;
   selectionColor?: string;
   setSelection: (index: number, selected: boolean) => void;
+  isBeingSwapped?: boolean;
 }
 
 const PlayingCard: React.FC<PlayingCardProps> = ({
@@ -19,62 +20,60 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   setSelection,
   selectionColor,
   isFaceDown = false,
+  isBeingSwapped = false,
 }) => {
-  const suitNames = ['Q', '♥', '♦', '♤', '♧'];
+  // Match the exact suit colors from calpoker-remixed
+  const suitSymbols = ['♠', '♥', '♦', '♠', '♣'];
+  const suitColors = ['#000000', '#ef4444', '#3b82f6', '#000000', '#16a34a'];
+  
   const rank = cardValue.slice(0, -1);
-  const suit = suitNames[(cardValue.slice(-1)[0] as any)];
+  const suitIndex = cardValue.slice(-1)[0] as number;
+  const suit = suitSymbols[suitIndex] || suitSymbols[0];
+  const suitColor = suitColors[suitIndex] || suitColors[0];
+  
   const setSelectedCB = () => {
     const newSelected = !selected;
     setSelection(index, newSelected);
   };
 
-  const isRedSuit = suit === '♥' || suit === '♦';
-  const suitColor = isRedSuit ? '#d32f2f' : '#23272b';
-
   const cardStyle: React.CSSProperties = {
-    width: '40px',
-    height: '56px',
-    backgroundColor: '#e3eafc',
+    width: '64px',
+    height: '96px',
+    backgroundColor: selected ? '#dbeafe' : '#ffffff',
     color: suitColor,
-    borderRadius: '6px',
+    borderRadius: '8px',
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     fontSize: '14px',
     margin: '0 4px',
-    boxShadow: selected ? '0 0 0 2px #ff9800' : '0 1px 4px rgba(0,0,0,0.13)',
-    border: '1px solid #b3c6e6',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+    border: selected ? '2px solid #3b82f6' : '2px solid #d1d5db',
     cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    transform: selected ? 'translateY(-4px)' : 'translateY(0)',
     fontWeight: 'bold',
     position: 'relative' as 'relative',
+    userSelect: 'none' as 'none',
+    transition: 'all 0.2s',
+    opacity: isBeingSwapped ? 0.5 : 1,
+    transform: isBeingSwapped ? 'scale(0.95)' : 'scale(1)',
   };
 
   const cardBackStyle: React.CSSProperties = {
     ...cardStyle,
     background: `
-      repeating-linear-gradient(135deg, rgba(144,164,194,0.28) 0 8px, transparent 8px 16px),
-      repeating-linear-gradient(45deg, rgba(144,164,194,0.28) 0 8px, transparent 8px 16px),
-      #b3c6e6
+      repeating-linear-gradient(135deg, rgba(59, 130, 246, 0.3) 0 8px, transparent 8px 16px),
+      repeating-linear-gradient(45deg, rgba(59, 130, 246, 0.3) 0 8px, transparent 8px 16px),
+      #93c5fd
     `,
-    color: '#b3c6e6',
-    border: '1px solid #90a4c2',
-  };
-
-  const cardContentStyle: React.CSSProperties = {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    height: '100%',
+    color: '#93c5fd',
+    border: '2px solid #60a5fa',
   };
 
   const formatRank = (rankArr: number[]): string => {
     if (rankArr.length === 0) return '';
     const rankValue = rankArr[0];
-    if (rankValue === 10) return 'T';
+    if (rankValue === 10) return '10';
     if (rankValue === 11) return 'J';
     if (rankValue === 12) return 'Q';
     if (rankValue === 13) return 'K';
@@ -82,28 +81,24 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     return rankValue.toString();
   };
 
+  const formattedRank = formatRank(rank);
+
   return (
     <div 
-      id={id} 
+      id={id}
+      data-card-id={id}
       style={isFaceDown ? cardBackStyle : cardStyle} 
       onClick={setSelectedCB}
-      onMouseEnter={(e) => {
-        if (!selected && !isFaceDown) {
-          e.currentTarget.style.transform = 'translateY(-2px)';
-          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)';
-        }
-      }}
-      onMouseLeave={(e) => {
-        if (!selected && !isFaceDown) {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.13)';
-        }
-      }}
     >
       {!isFaceDown && (
-        <div style={cardContentStyle}>
-          <span>{formatRank(rank)}{suit}</span>
-        </div>
+        <>
+          <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+            {formattedRank}
+          </div>
+          <div style={{ fontSize: '24px' }}>
+            {suit}
+          </div>
+        </>
       )}
     </div>
   );

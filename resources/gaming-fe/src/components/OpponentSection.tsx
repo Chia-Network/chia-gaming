@@ -5,11 +5,15 @@ import PlayingCard from "./PlayingCard";
 interface OpponentSectionProps {
   playerNumber: number;
   opponentHand: number[][];
+  swappingCards?: { player: any[], ai: any[] };
+  showSwapAnimation?: boolean;
 }
 
 const OpponentSection: React.FC<OpponentSectionProps> = ({
   playerNumber,
   opponentHand,
+  swappingCards = { player: [], ai: [] },
+  showSwapAnimation = false,
 }) => {
   const setSelection = useCallback((index: number, selected: boolean) => {}, []);
 
@@ -19,11 +23,11 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    padding: '20px',
-    backgroundColor: '#fff',
-    borderRadius: '10px',
-    boxShadow: '0 2px 12px rgba(0,0,0,0.07)',
-    marginBottom: '16px',
+    padding: '24px',
+    backgroundColor: '#ffffff',
+    marginBottom: '32px',
+    borderRadius: '8px',
+    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
   };
 
   const titleStyle: React.CSSProperties = {
@@ -45,6 +49,8 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
     display: 'flex',
     justifyContent: 'center',
     marginBottom: '16px',
+    gap: '8px',
+    flexWrap: 'wrap',
   };
 
   const actionLineStyle: React.CSSProperties = {
@@ -56,21 +62,24 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
   };
 
   return (
-    <div style={sectionStyle}>
-      <div style={titleStyle}>Opponent</div>
-      <div style={handLabelStyle}>Opponent's Hand:</div>
+    <div style={sectionStyle} data-area="ai">
+      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>AI Hand</h3>
       <div style={cardRowStyle}>
-        {opponentHand.map((card, index) => (
-          <PlayingCard 
-            id={`card-${playerNumber}-${card}`} 
-            key={index} 
-            cardValue={card} 
-            isFaceDown={false} 
-            index={index} 
-            setSelection={setSelection} 
-            selected={false} 
-          />
-        ))}
+        {opponentHand.map((card, index) => {
+          const isBeingSwapped = showSwapAnimation && swappingCards.ai.some(c => c.originalIndex === index);
+          return (
+            <PlayingCard 
+              id={`ai-${index}`} 
+              key={index} 
+              cardValue={card} 
+              isFaceDown={false} 
+              index={index} 
+              setSelection={setSelection} 
+              selected={false}
+              isBeingSwapped={isBeingSwapped}
+            />
+          );
+        })}
       </div>
     </div>
   );
