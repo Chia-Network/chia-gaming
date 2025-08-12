@@ -1,6 +1,7 @@
 import asyncio
 import binascii
 import os
+import json
 from pathlib import Path
 
 from chia.rpc.wallet_rpc_client import WalletRpcClient
@@ -42,6 +43,15 @@ async def select_wallet_send_transaction(
     # Find the wallet id associated with the given public key
     wallet_id = await find_associated_wallet(public_key)
 
+    while True:
+        sync_status = await wallet_rpc_client.get_sync_status()
+        sync_status_json = eval(str(sync_status))
+        print('waiting for sync', sync_status_json)
+        if sync_status_json['synced']:
+            break
+
+        await asyncio.sleep(0.2)
+
     try:
         transaction_result = await wallet_rpc_client.send_transaction(
             wallet_id,
@@ -49,11 +59,22 @@ async def select_wallet_send_transaction(
             target,
             DEFAULT_TX_CONFIG
         )
-        transaction_result['success'] = True
-        return transaction_result
+        transaction_json = eval(str(transaction_result))
+        for a in transaction_json['transaction']['additions']:
+            a['parentCoinInfo'] = a['parent_coin_info']
+            a['puzzleHash'] = a['puzzle_hash']
+        transaction_json['success'] = True
+        return transaction_json
     except Exception as e:
         print('exception', e)
         return {'error': str(e)}
+
+@app.route('/get_current_address', methods = ['POST'])
+async def get_address():
+    rpc_client = await get_rpc_conn()
+    get_address = await rpc_client.get_next_address(1, False)
+    return json.dumps(get_address)
+    
 
 @app.route('/send_transaction', methods = ['POST'])
 async def send_transaction_service():
