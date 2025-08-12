@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "wallet-spend"
+version = "0.1.0"
+description = ""
+authors = ["arty <art.yerkes@gmail.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.9"
+chia-blockchain = "2.5.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -53,25 +53,31 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   }
 
   function getCurrentAddress() {
-    return rpc.getCurrentAddress({}).catch((e) => {
-      console.error('retry getCurrentAddress', e);
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          getCurrentAddress().catch(reject).then(resolve);
-        }, 1000);
-      });
-    });
+    // return rpc.getCurrentAddress({}).catch((e) => {
+    //   console.error('retry getCurrentAddress', e);
+    //   return new Promise((resolve, reject) => {
+    //     setTimeout(() => {
+    //       getCurrentAddress().catch(reject).then(resolve);
+    //     }, 1000);
+    //   });
+    // });
+    return fetch('http://localhost:3002/get_current_address', {
+      method: "POST"
+    }).then(res => res.json());
   }
 
   function sendTransaction(data: any) {
-    return rpc.sendTransaction(data).catch((e) => {
-      console.error('retry sendTransaction', e);
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          sendTransaction(data).catch(reject).then(resolve);
-        }, 5000);
-      });
-    })
+    // return rpc.sendTransaction(data).catch((e) => {
+    //   console.error('retry sendTransaction', e);
+    //   return new Promise((resolve, reject) => {
+    //     setTimeout(() => {
+    //       sendTransaction(data).catch(reject).then(resolve);
+    //     }, 5000);
+    //   });
+    // })
+    return fetch(`http://localhost:3002/send_transaction?who=${data.myAddress}&target=${data.address}&amount=${data.amount}`, {
+      method: "POST"
+    }).then(res => res.json());
   }
 
   function receivedWindowMessageData(data: any, origin: string) {
@@ -107,6 +113,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
         console.warn('about to send transaction');
         return sendTransaction({
           walletId,
+          myAddress: ca,
           amount: data.amt,
           fee: 0,
           address: targetXch,
