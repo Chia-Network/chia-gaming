@@ -15,6 +15,9 @@ interface OpponentSectionProps {
   opponentHand: number[][];
   swappingCards?: { player: SwappingCard[], ai: SwappingCard[] };
   showSwapAnimation?: boolean;
+  outcome?: any;
+  gameState?: string;
+  currentPlayerNumber?: number;
 }
 
 const OpponentSection: React.FC<OpponentSectionProps> = ({
@@ -22,6 +25,9 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
   opponentHand,
   swappingCards = { player: [], ai: [] },
   showSwapAnimation = false,
+  outcome,
+  gameState = 'playing',
+  currentPlayerNumber,
 }) => {
   const setSelection = useCallback((index: number, selected: boolean) => {}, []);
 
@@ -31,11 +37,11 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    padding: '24px',
+    padding: '16px',
     backgroundColor: '#ffffff',
-    marginBottom: '32px',
+    marginBottom: '8px',
     borderRadius: '8px',
-    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
   };
 
   const titleStyle: React.CSSProperties = {
@@ -56,8 +62,8 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
   const cardRowStyle: React.CSSProperties = {
     display: 'flex',
     justifyContent: 'center',
-    marginBottom: '16px',
-    gap: '8px',
+    marginBottom: '12px',
+    gap: '4px',
     flexWrap: 'wrap',
   };
 
@@ -69,9 +75,18 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
     marginBottom: '12px',
   };
 
+  // Get opponent outcome info
+  const myWinOutcome = outcome?.my_win_outcome;
+  const iAmAlice = currentPlayerNumber === 2;
+  const isOpponentAlice = playerNumber === 2;
+  const opponentHandValue = outcome && (isOpponentAlice ? outcome?.alice_hand_value : outcome?.bob_hand_value);
+  
+  // Opponent's win outcome is opposite of player's
+  const opponentWinOutcome = myWinOutcome === 'win' ? 'lose' : myWinOutcome === 'lose' ? 'win' : 'tie';
+
   return (
     <div style={sectionStyle} data-area="ai">
-      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>AI Hand</h3>
+      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px' }}>AI Hand</h3>
       <div style={cardRowStyle}>
         {opponentHand.map((card, index) => {
           const isBeingSwapped = showSwapAnimation && swappingCards.ai.some(c => c.originalIndex === index);
@@ -89,6 +104,27 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
           );
         })}
       </div>
+      
+      {/* Show outcome when game is final */}
+      {gameState === 'final' && outcome && (
+        <div style={{ marginTop: '16px', textAlign: 'center' }}>
+          <div style={{ 
+            fontSize: '18px', 
+            fontWeight: 'bold',
+            color: opponentWinOutcome === 'win' ? '#16a34a' : opponentWinOutcome === 'lose' ? '#dc2626' : '#f59e0b',
+            marginBottom: '8px'
+          }}>
+            {opponentWinOutcome === 'win' && '🎉 AI Wins!'}
+            {opponentWinOutcome === 'lose' && '😞 AI Loses'}
+            {opponentWinOutcome === 'tie' && '🤝 Tie!'}
+          </div>
+          {opponentHandValue && (
+            <div style={{ fontSize: '14px', color: '#666' }}>
+              AI hand: {opponentHandValue}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

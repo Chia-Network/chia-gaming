@@ -47,7 +47,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     alignItems: 'center',
     justifyContent: 'center',
     fontSize: '14px',
-    margin: '0 4px',
+    margin: '0 2px',
     boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
     border: selected ? '2px solid #3b82f6' : '2px solid #d1d5db',
     cursor: 'pointer',

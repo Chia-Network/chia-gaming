@@ -21,6 +21,8 @@ interface PlayerSectionProps {
   setCardSelections: (mask: number) => void;
   swappingCards?: { player: SwappingCard[], ai: SwappingCard[] };
   showSwapAnimation?: boolean;
+  outcome?: any;
+  gameState?: string;
 }
 
 const PlayerSection: React.FC<PlayerSectionProps> = ({
@@ -33,6 +35,8 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
   setCardSelections,
   swappingCards = { player: [], ai: [] },
   showSwapAnimation = false,
+  outcome,
+  gameState = 'playing',
 }) => {
   let doHandleMakeMove = () => {
     let moveData = "80";
@@ -55,11 +59,11 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    padding: '24px',
+    padding: '16px',
     backgroundColor: '#ffffff',
-    marginBottom: '32px',
+    marginBottom: '8px',
     borderRadius: '8px',
-    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
   };
 
   const titleStyle: React.CSSProperties = {
@@ -73,8 +77,8 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
   const cardRowStyle: React.CSSProperties = {
     display: 'flex',
     justifyContent: 'center',
-    marginBottom: '16px',
-    gap: '8px',
+    marginBottom: '12px',
+    gap: '4px',
     flexWrap: 'wrap',
   };
 
@@ -114,9 +118,14 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
     whiteSpace: 'nowrap',
   };
 
+  // Get outcome info for this player
+  const myWinOutcome = outcome?.my_win_outcome;
+  const iAmAlice = playerNumber === 2;
+  const myHandValue = outcome && (iAmAlice ? outcome?.alice_hand_value : outcome?.bob_hand_value);
+
   return (
     <div style={sectionStyle} data-area="player">
-      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>Your Hand</h3>
+      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px' }}>Your Hand</h3>
       <div style={cardRowStyle}>
         {playerHand.map((card: number[], index) => {
           const isBeingSwapped = showSwapAnimation && swappingCards.player.some(c => c.originalIndex === index);
@@ -133,29 +142,56 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
           );
         })}
       </div>
-      {moveNumber === 1 && (
+      
+      {/* Show outcome when game is final */}
+      {gameState === 'final' && outcome && (
+        <div style={{ marginTop: '16px', textAlign: 'center' }}>
+          <div style={{ 
+            fontSize: '18px', 
+            fontWeight: 'bold',
+            color: myWinOutcome === 'win' ? '#16a34a' : myWinOutcome === 'lose' ? '#dc2626' : '#f59e0b',
+            marginBottom: '8px'
+          }}>
+            {myWinOutcome === 'win' && '🎉 You Win!'}
+            {myWinOutcome === 'lose' && '😞 You Lose'}
+            {myWinOutcome === 'tie' && '🤝 It\'s a Tie!'}
+          </div>
+          {myHandValue && (
+            <div style={{ fontSize: '14px', color: '#666' }}>
+              Your hand: {myHandValue}
+            </div>
+          )}
+        </div>
+      )}
+      
+      {/* Show selection UI during card selection */}
+      {moveNumber === 1 && gameState === 'playing' && (
         <div style={{ marginBottom: '16px', textAlign: 'center', fontSize: '16px', fontWeight: 'bold' }}>
           Select 4 cards to KEEP ({playerSelected.length}/4 selected)
         </div>
       )}
-      <button
-        aria-label="make-move"
-        onClick={doHandleMakeMove}
-        disabled={!isButtonEnabled}
-        style={buttonStyle}
-        onMouseEnter={(e) => {
-          if (isButtonEnabled) {
-            e.currentTarget.style.background = '#1d4ed8';
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (isButtonEnabled) {
-            e.currentTarget.style.background = '#2563eb';
-          }
-        }}
-      >
-        {moveNumber === 1 ? 'Swap Cards' : 'Make Move'}
-      </button>
+      
+      {/* Show button only when not in final state */}
+      {gameState !== 'final' && (
+        <button
+          aria-label="make-move"
+          onClick={doHandleMakeMove}
+          disabled={!isButtonEnabled}
+          style={buttonStyle}
+          onMouseEnter={(e) => {
+            if (isButtonEnabled) {
+              e.currentTarget.style.background = '#1d4ed8';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (isButtonEnabled) {
+              e.currentTarget.style.background = '#2563eb';
+            }
+          }}
+        >
+          {moveNumber === 1 ? 'Swap Cards' : 'Make Move'}
+        </button>
+      )}
     </div>
   );
 };

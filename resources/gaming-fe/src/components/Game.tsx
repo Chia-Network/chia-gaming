@@ -13,7 +13,6 @@ import {
 import useGameSocket from "../hooks/useGameSocket";
 import PlayerSection from "./PlayerSection";
 import OpponentSection from "./OpponentSection";
-import GameEndPlayer from "./GameEndPlayer";
 import GameLog from "./GameLog";
 import WaitingScreen from "./WaitingScreen";
 import MovingCard from "./MovingCard";
@@ -100,10 +99,8 @@ const Game: React.FC = () => {
     };
   };
 
-  // Swap animation function
+  // Function to trigger swap animation (called when both players have made their choices)
   const triggerSwapAnimation = useCallback(() => {
-    if (moveNumber !== 1) return; // Only trigger on card selection move
-    
     setGameState('swapping');
     
     // Get selected cards indices (cards to KEEP)
@@ -199,16 +196,21 @@ const Game: React.FC = () => {
       setShowSwapAnimation(true);
     }, 100);
 
-    // Clean up animation and proceed with game after 2.5 seconds
+    // Clean up animation after 2.5 seconds
     setTimeout(() => {
       setShowSwapAnimation(false);
       setMovingCards([]);
       setGameState('final');
-      
-      // Proceed with the actual move
-      handleMakeMove("80");
     }, 2500);
-  }, [cardSelections, playerHand, opponentHand, moveNumber, handleMakeMove]);
+  }, [cardSelections, playerHand, opponentHand]);
+
+  // Check if we should trigger swap animation after hands change
+  useEffect(() => {
+    // Trigger animation when move number changes from 1 to 2 (meaning card swapping occurred)
+    if (moveNumber === 2 && gameState === 'playing') {
+      triggerSwapAnimation();
+    }
+  }, [moveNumber, gameState, triggerSwapAnimation]);
 
   // All early returns need to be after all useEffect, etc.
   if (error) {
@@ -255,49 +257,12 @@ const Game: React.FC = () => {
     "Finish game"
   ][moveNumber];
 
-  if (outcome) {
-    return (
-      <div id='total'>
-        <div id='overlay'> </div>
-        <Box p={4}>
-          <Typography variant="h4" align="center">
-          {`Cal Poker - move ${moveNumber}`}
-          </Typography>
-          <br />
-          <Typography
-            variant="h6"
-            align="center"
-            color={colors[color]}
-          >
-            {banner}
-          </Typography>
-          <br />
-          <Box
-            display="flex"
-            flexDirection={{ xs: "column", md: "row" }}
-            alignItems="stretch"
-            gap={2}
-            mb={4}
-          >
-            <Box flex={1} display="flex" flexDirection="column">
-              <GameEndPlayer
-                iStarted={iStarted}
-                playerNumber={iStarted ? 1 : 2}
-                outcome={outcome}
-              />
-            </Box>
-            <Box flex={1} display="flex" flexDirection="column">
-                <GameEndPlayer
-                    iStarted={iStarted}
-                    playerNumber={iStarted ? 2 : 1}
-                    outcome={outcome}
-                />
-            </Box>
-          </Box>
-        </Box>
-      </div>
-    );
-  }
+  // Set final state when outcome exists
+  useEffect(() => {
+    if (outcome && gameState !== 'final') {
+      setGameState('final');
+    }
+  }, [outcome, gameState]);
 
   return (
     <Box 
@@ -361,7 +326,7 @@ const Game: React.FC = () => {
           display="flex"
           flexDirection="column"
           alignItems="center"
-          gap={2}
+          gap={1}
           width="100%"
         >
           <OpponentSection
@@ -369,6 +334,9 @@ const Game: React.FC = () => {
               opponentHand={opponentHand}
               swappingCards={swappingCards}
               showSwapAnimation={showSwapAnimation}
+              outcome={outcome}
+              gameState={gameState}
+              currentPlayerNumber={playerNumber}
           />
           
           {showSwapAnimation && (
@@ -384,16 +352,48 @@ const Game: React.FC = () => {
             playerHand={playerHand}
             isPlayerTurn={isPlayerTurn}
             moveNumber={moveNumber}
-            handleMakeMove={moveNumber === 1 ? triggerSwapAnimation : handleMakeMove}
+            handleMakeMove={handleMakeMove}
             cardSelections={cardSelections}
             setCardSelections={setCardSelections}
             swappingCards={swappingCards}
             showSwapAnimation={showSwapAnimation}
+            outcome={outcome}
+            gameState={gameState}
           />
         </Box>
-        <Typography style={{ marginTop: '16px', fontSize: '14px', color: '#666' }}>
-          {moveDescription}
-        </Typography>
+        {gameState === 'final' && outcome && (
+          <div style={{ textAlign: 'center', marginTop: '24px' }}>
+            <button
+              onClick={() => window.location.reload()}
+              style={{
+                background: '#16a34a',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '12px 24px',
+                fontSize: '16px',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                transition: 'background 0.2s',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.07)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#15803d';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#16a34a';
+              }}
+            >
+              New Game
+            </button>
+          </div>
+        )}
+        
+        {gameState !== 'final' && (
+          <Typography style={{ marginTop: '16px', fontSize: '14px', color: '#666' }}>
+            {moveDescription}
+          </Typography>
+        )}
         <GameLog log={[]} />
       </Box>
     </Box>
