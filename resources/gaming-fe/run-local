@@ -1,6 +1,7 @@
 #1/bin/bash -x
 
 kill $(ports | grep 3000 | awk '{print $2}')
+kill $(ports | grep 3001 | awk '{print $2}')
 
 npm install
 npm run build

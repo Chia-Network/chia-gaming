@@ -20,6 +20,7 @@ import {
 import { getSearchParams } from './util';
 //import PlayingCard from "./PlayingCard";
 import ShowCard from "./components/ShowCard";
+import ShowCards from "./components/ShowCards";
 
 const App: React.FC = () => {
   const params = getSearchParams();
@@ -59,8 +60,17 @@ const App: React.FC = () => {
     };
   });
 
-  if (params.one_card) {
+  if (params.card) {
     return (<ShowCard card={[ 1, 1]} />)
+  } else if (params.cards) {
+    var cards = [];
+    for (let rank = 0; rank < 14 ; rank++) {
+      // cards[i] = []; // Initialize each row as an empty array
+      for (let suit = 0; suit < 4; suit++) {
+        cards[rank+suit] = [rank, suit];
+      }
+    }
+    return (<ShowCards cards={cards} />)
   } else if (params.lobby) {
     return (<LobbyScreen walletConnect={receivedWalletConnect} simulatorActive={simulatorActive()} />);
   } else if (params.game && !params.join) {
