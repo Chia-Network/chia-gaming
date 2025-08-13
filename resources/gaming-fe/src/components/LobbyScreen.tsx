@@ -90,7 +90,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
             borderRadius: '5px',
             padding: '8px 16px',
           }}
-        onClick={() => setEditingAlias(true)} >Your Alias: {myAlias}</span>
+        onClick={() => setEditingAlias(true)} >{myAlias}</span>
       );
   };
 
@@ -100,7 +100,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
       <Typography variant="h4" gutterBottom>
         Chia Gaming Lobby
       </Typography>
-      <Typography>{aliasDisplay}</Typography>
+      <Typography>Your Alias: {aliasDisplay}</Typography>
       </Box>
       <span style={{ width: '0px', height: '0px', overflow: 'hidden', position: 'relative' }} aria-label="partner-target-url">{gotoUrl}</span>
       <Box mb={3}>
