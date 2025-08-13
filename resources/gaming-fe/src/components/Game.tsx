@@ -192,7 +192,7 @@ const Game: React.FC = () => {
         >
           <GameEndPlayer
             iStarted={iStarted}
-            playerNumber={iStarted ? 1 : 2}
+            playerNumber={iStarted ? 2 : 1}
             outcome={outcome}
             showSwapAnimation={showSwapAnimation}
             swappingCards={swappingCards}
@@ -207,7 +207,7 @@ const Game: React.FC = () => {
           )}
           <GameEndPlayer
             iStarted={iStarted}
-            playerNumber={iStarted ? 2 : 1}
+            playerNumber={iStarted ? 1 : 2}
             outcome={outcome}
             showSwapAnimation={showSwapAnimation}
             swappingCards={swappingCards}

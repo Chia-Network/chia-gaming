@@ -58,7 +58,7 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
 
   return (
     <div style={sectionStyle} data-area="player">
-      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>${who} Hand</h3>
+      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>{who} Hand</h3>
       <div style={cardRowStyle}>
             {playerHand.map((card: number[], index) => {
             const isBeingSwapped = showSwapAnimation && swappingCards.player.some(c => c.originalIndex === index);
