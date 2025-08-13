@@ -420,6 +420,7 @@ export interface CardData {
 
 export interface SwappingCard extends CardData {
   originalIndex: number;
+  targetIndex: number;
   id: string;
 }
 
@@ -504,22 +505,22 @@ export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
   setGameState('swapping');
 
   // Get selected cards indices (cards to KEEP)
-  const playerSelected = [];
-  for (let i = 0; i < 8; i++) {
-    if (cardSelections & (1 << i)) {
-      playerSelected.push(i);
-    }
-  }
+  // const playerSelected = [];
+  // for (let i = 0; i < 8; i++) {
+  //   if (cardSelections & (1 << i)) {
+  //     playerSelected.push(i);
+  //   }
+  // }
 
   // Cards to swap are the ones NOT selected
-  const playerSwapIndices: number[] = [];
-  const aiSwapIndices: number[] = [];
-  for (let i = 0; i < Math.min(playerHand.length, opponentHand.length); i++) {
-    if (!playerSelected.includes(i)) {
-      playerSwapIndices.push(i);
-      aiSwapIndices.push(i); // AI swaps corresponding positions
-    }
-  }
+  // const playerSwapIndices: number[] = [];
+  // const aiSwapIndices: number[] = [];
+  // for (let i = 0; i < Math.min(playerHand.length, opponentHand.length); i++) {
+  //   if (!playerSelected.includes(i)) {
+  //     playerSwapIndices.push(i);
+  //     aiSwapIndices.push(i); // AI swaps corresponding positions
+  //   }
+  // }
 
   // const playerSwapCards = playerSwapIndices.map(i => ({
   //   ...formatCard(playerHand[i]),
@@ -537,58 +538,75 @@ export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
     const movingCardData: MovingCardData[] = [];
 
     // Calculate positions for each swapping card
-    playerSwapIndices.forEach((playerCardIndex, swapIndex) => {
-      const aiCardIndex = aiSwapIndices[swapIndex];
+    swappingCards.ai.forEach(card => {
+      const playerCardIndex = card.targetIndex;
+      const aiCardIndex = card.originalIndex;
 
       const playerSource = document.querySelector(`[data-card-id="player-${playerCardIndex}"]`);
       const aiTarget = document.querySelector(`[data-card-id="ai-${aiCardIndex}"]`);
       const aiSource = document.querySelector(`[data-card-id="ai-${aiCardIndex}"]`);
       const playerTarget = document.querySelector(`[data-card-id="player-${playerCardIndex}"]`);
 
-      if (playerSource && aiTarget) {
-        const playerRect = playerSource.getBoundingClientRect();
-        const aiRect = aiTarget.getBoundingClientRect();
-
-        // Player card moving to AI position
-        movingCardData.push({
-          card: {
-            ...formatCard(playerHand[playerCardIndex]),
-            id: `player-${playerCardIndex}`
-          },
-          startPosition: {
-            x: playerRect.left + playerRect.width / 2,
-            y: playerRect.top + playerRect.height / 2
-          },
-          endPosition: {
-            x: aiRect.left + aiRect.width / 2,
-            y: aiRect.top + aiRect.height / 2
-          },
-          direction: 'playerToAi'
-        });
+      if (!aiSource || !playerTarget) {
+        console.warn('missing cards of', playerSource, aiTarget);
+        return;
       }
 
-      if (aiSource && playerTarget) {
-        const aiRect = aiSource.getBoundingClientRect();
-        const playerRect = playerTarget.getBoundingClientRect();
+      const aiRect = aiSource.getBoundingClientRect();
+      const playerRect = playerTarget.getBoundingClientRect();
 
-        // AI card moving to player position
-        movingCardData.push({
-          card: {
-            ...formatCard(opponentHand[aiCardIndex]),
-              id: `ai-${aiCardIndex}`
-          },
-          startPosition: {
-            x: aiRect.left + aiRect.width / 2,
-            y: aiRect.top + aiRect.height / 2
-          },
-          endPosition: {
-            x: playerRect.left + playerRect.width / 2,
-            y: playerRect.top + playerRect.height / 2
-          },
-          direction: 'aiToPlayer'
-        });
-      }
+      // AI card moving to player position
+      movingCardData.push({
+        card: {
+          ...formatCard(opponentHand[aiCardIndex]),
+          id: `ai-${aiCardIndex}`
+        },
+        startPosition: {
+          x: aiRect.left + aiRect.width / 2,
+          y: aiRect.top + aiRect.height / 2
+        },
+        endPosition: {
+          x: playerRect.left + playerRect.width / 2,
+          y: playerRect.top + playerRect.height / 2
+        },
+        direction: 'aiToPlayer'
+      });
     });
+
+    // swappingCards.player.forEach(card => {
+    //   const playerCardIndex = card.originalId;
+    //   const aiCardIndex = card.targetId;
+
+    //   const playerSource = document.querySelector(`[data-card-id="player-${playerCardIndex}"]`);
+    //   const aiTarget = document.querySelector(`[data-card-id="ai-${aiCardIndex}"]`);
+    //   const aiSource = document.querySelector(`[data-card-id="ai-${aiCardIndex}"]`);
+    //   const playerTarget = document.querySelector(`[data-card-id="player-${playerCardIndex}"]`);
+
+    //   if (!aiSource || !playerTarget) {
+    //     console.warn('missing cards of', playerSource, aiTarget);
+    //     return;
+    //   }
+
+    //   const aiRect = aiSource.getBoundingClientRect();
+    //   const playerRect = playerTarget.getBoundingClientRect();
+
+    //   // AI card moving to player position
+    //   movingCardData.push({
+    //     card: {
+    //       ...formatCard(opponentHand[aiCardIndex]),
+    //       id: `ai-${aiCardIndex}`
+    //     },
+    //     startPosition: {
+    //       x: aiRect.left + aiRect.width / 2,
+    //       y: aiRect.top + aiRect.height / 2
+    //     },
+    //     endPosition: {
+    //       x: playerRect.left + playerRect.width / 2,
+    //       y: playerRect.top + playerRect.height / 2
+    //     },
+    //     direction: 'aiToPlayer'
+    //   });
+    // });
 
     setMovingCards(movingCardData);
     setShowSwapAnimation(true);

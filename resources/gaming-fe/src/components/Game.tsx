@@ -51,6 +51,10 @@ const Game: React.FC = () => {
     setState(evt.data);
   }, []);
 
+  const repeatAnimation = useCallback(() => {
+    setReceivedOutcome(false);
+  }, []);
+
   useEffect(function () {
     window.addEventListener("message", setStateFromMessage);
 
@@ -99,10 +103,24 @@ const Game: React.FC = () => {
       };
     });
     const useSwappingCards: PlayerSwappingCardLists = { final: true, player: [], ai: [] };
-    function processCard({ index, originallyMine, card, color }: ExplodedPostGameCard) {
+    function findTargetIndex(targetList: any[], want: string, idx: number) {
+      for (var i = 0; i < targetList.length; i++) {
+        const t = targetList[i];
+        if (t.color.startsWith(want)) {
+          if (idx == 0) {
+            return i;
+          }
+          idx--;
+        }
+      }
+
+      return 0;
+    }
+    function processCard({ index, originallyMine, card, color }: ExplodedPostGameCard, idx: number) {
       if (originallyMine && color.startsWith('their')) {
         useSwappingCards.player.push({
           originalIndex: index,
+          targetIndex: findTargetIndex(myCardsWithColors, 'my', index),
           id: `player-${index}`,
           rank: formatRank(card),
           suit: suitSymbols[card[1]],
@@ -112,6 +130,7 @@ const Game: React.FC = () => {
       if (!originallyMine && color.startsWith('my')) {
         useSwappingCards.ai.push({
           originalIndex: index,
+          targetIndex: findTargetIndex(theirCardsWithColors, 'their', index),
           id: `ai-${index}`,
           rank: formatRank(card),
           suit: suitSymbols[card[1]],
@@ -207,6 +226,7 @@ const Game: React.FC = () => {
         >
           Stop
         </Button>
+        <Button aria-label="repeat-anim" onClick={repeatAnimation}>Repeat Animation</Button>
         <Typography
           variant="h6"
           align="center"
