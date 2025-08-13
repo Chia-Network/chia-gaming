@@ -1,5 +1,6 @@
 import React from 'react';
 import { useState, useCallback } from 'react';
+import { suitSymbols, formatRank } from '../types/ChiaGaming';
 
 interface PlayingCardProps {
   id: string;
@@ -23,7 +24,6 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   isBeingSwapped = false,
 }) => {
   // Match the exact suit colors from calpoker-remixed
-  const suitSymbols = ['♠', '♥', '♦', '♠', '♣'];
   const suitColors = ['#000000', '#ef4444', '#3b82f6', '#000000', '#16a34a'];
   
   const rank = cardValue.slice(0, -1);
@@ -68,17 +68,6 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     `,
     color: '#93c5fd',
     border: '2px solid #60a5fa',
-  };
-
-  const formatRank = (rankArr: number[]): string => {
-    if (rankArr.length === 0) return '';
-    const rankValue = rankArr[0];
-    if (rankValue === 10) return '10';
-    if (rankValue === 11) return 'J';
-    if (rankValue === 12) return 'Q';
-    if (rankValue === 13) return 'K';
-    if (rankValue === 14) return 'A';
-    return rankValue.toString();
   };
 
   const formattedRank = formatRank(rank);

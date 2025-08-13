@@ -19,7 +19,7 @@ import WaitingScreen from "./WaitingScreen";
 import MovingCard from "./MovingCard";
 import { useWasmBlob } from "../hooks/useWasmBlob";
 import { getGameSelection } from '../util';
-import { CardData, SwappingCard, MovingCardData, formatCard, PlayerSwappingCardLists, triggerSwapAnimation } from "../types/ChiaGaming";
+import { CardData, SwappingCard, MovingCardData, PlayerSwappingCardLists, ExplodedPostGameCard, triggerSwapAnimation, card_color, suitSymbols, formatRank } from "../types/ChiaGaming";
 
 const Game: React.FC = () => {
   const gameSelection = getGameSelection();
@@ -44,7 +44,7 @@ const Game: React.FC = () => {
   const [gameState, setGameState] = useState<'playing' | 'swapping' | 'final'>('playing');
   const [showSwapAnimation, setShowSwapAnimation] = useState(false);
   const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
-  const [swappingCards, setSwappingCards] = useState<PlayerSwappingCardLists>({ player: [], ai: [] });
+  const [swappingCards, setSwappingCards] = useState<PlayerSwappingCardLists>({ final: false, player: [], ai: [] });
   const [receivedOutcome, setReceivedOutcome] = useState(false);
 
   const setStateFromMessage = useCallback((evt: any) => {
@@ -79,6 +79,52 @@ const Game: React.FC = () => {
   }
 
   console.log('game outcome', outcome);
+  const iAmAlice = playerNumber === 2;
+  if (outcome && !swappingCards.final) {
+    console.error('about to process outcome and compute swapping cards', outcome);
+    const myCardsWithColors = playerHand.map((c, i) => {
+      return {
+        index: i,
+        card: c,
+        originallyMine: true,
+        color: card_color(outcome, iAmAlice, c)
+      };
+    });
+    const theirCardsWithColors = opponentHand.map((c, i) => {
+      return {
+        index: i,
+        card: c,
+        originallyMine: false,
+        color: card_color(outcome, !iAmAlice, c)
+      };
+    });
+    const useSwappingCards: PlayerSwappingCardLists = { final: true, player: [], ai: [] };
+    function processCard({ index, originallyMine, card, color }: ExplodedPostGameCard) {
+      if (originallyMine && color.startsWith('their')) {
+        useSwappingCards.player.push({
+          originalIndex: index,
+          id: `player-${index}`,
+          rank: formatRank(card),
+          suit: suitSymbols[card[1]],
+          value: (card[1] - 1) + (4 * card[1]),
+        });
+      }
+      if (!originallyMine && color.startsWith('my')) {
+        useSwappingCards.ai.push({
+          originalIndex: index,
+          id: `ai-${index}`,
+          rank: formatRank(card),
+          suit: suitSymbols[card[1]],
+          value: (card[1] - 1) + (4 * card[1]),
+        });
+      }
+    }
+    myCardsWithColors.forEach(processCard);
+    theirCardsWithColors.forEach(processCard);
+    console.error('processed swapping cards', useSwappingCards);
+    setSwappingCards(useSwappingCards);
+  }
+
   let myWinOutcome = outcome?.my_win_outcome;
   let colors = {
     'win': 'green',
@@ -88,7 +134,6 @@ const Game: React.FC = () => {
     'warning': '#633',
   };
   let color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome ? myWinOutcome : isPlayerTurn ? "success" : "warning";
-  const iAmAlice = playerNumber === 2;
   const myHandValue = iAmAlice ? outcome?.alice_hand_value : outcome?.bob_hand_value;
   let banner = isPlayerTurn ? "Your turn" : "Opponent's turn";
   if (myWinOutcome === 'win') {
@@ -104,7 +149,7 @@ const Game: React.FC = () => {
     "Finish game"
   ][moveNumber];
 
-  if (outcome && !receivedOutcome) {
+  if (outcome && !receivedOutcome && swappingCards.final) {
     setReceivedOutcome(true);
 
     // Swap animation function
@@ -120,7 +165,6 @@ const Game: React.FC = () => {
       movingCards,
       setMovingCards,
       swappingCards,
-      setSwappingCards,
     });
   }
 
@@ -171,7 +215,7 @@ const Game: React.FC = () => {
             marginBottom: '16px',
           }}
         >
-          {banner}
+        {banner}
         </Typography>
         <div style={{ marginBottom: '32px' }}>
           <div style={{ textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>

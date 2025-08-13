@@ -400,6 +400,18 @@ export class CalpokerOutcome {
   }
 }
 
+export const suitSymbols = ['♠', '♥', '♦', '♠', '♣'];
+export const formatRank = (rankArr: number[]): string => {
+  if (rankArr.length === 0) return '';
+  const rankValue = rankArr[0];
+  if (rankValue === 10) return '10';
+  if (rankValue === 11) return 'J';
+  if (rankValue === 12) return 'Q';
+  if (rankValue === 13) return 'K';
+  if (rankValue === 14) return 'A';
+  return rankValue.toString();
+};
+
 export interface CardData {
   rank: string;
   suit: string;
@@ -411,6 +423,13 @@ export interface SwappingCard extends CardData {
   id: string;
 }
 
+export interface ExplodedPostGameCard {
+  index: number;
+  card: number[];
+  originallyMine: boolean;
+  color: string;
+}
+
 export interface MovingCardData {
   card: CardData & { id: string };
   startPosition: { x: number; y: number };
@@ -419,6 +438,7 @@ export interface MovingCardData {
 }
 
 export interface PlayerSwappingCardLists {
+  final: boolean;
   player: SwappingCard[];
   ai: SwappingCard[];
 };
@@ -463,7 +483,6 @@ interface PlayerSwapData {
   movingCards: MovingCardData[];
   setMovingCards: (cards: MovingCardData[]) => void;
   swappingCards: PlayerSwappingCardLists;
-  setSwappingCards: (lists: PlayerSwappingCardLists) => void;
 }
 
 export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
@@ -481,10 +500,7 @@ export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
   movingCards,
   setMovingCards,
   swappingCards,
-  setSwappingCards,
 }) => {
-  if (moveNumber !== 1) return; // Only trigger on card selection move
-
   setGameState('swapping');
 
   // Get selected cards indices (cards to KEEP)
@@ -505,18 +521,16 @@ export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
     }
   }
 
-  const playerSwapCards = playerSwapIndices.map(i => ({
-    ...formatCard(playerHand[i]),
-    originalIndex: i,
-    id: `player-${i}`
-  }));
-  const aiSwapCards = aiSwapIndices.map(i => ({
-    ...formatCard(opponentHand[i]),
-    originalIndex: i,
-    id: `ai-${i}`
-  }));
-
-  setSwappingCards({ player: playerSwapCards, ai: aiSwapCards });
+  // const playerSwapCards = playerSwapIndices.map(i => ({
+  //   ...formatCard(playerHand[i]),
+  //   originalIndex: i,
+  //   id: `player-${i}`
+  // }));
+  // const aiSwapCards = aiSwapIndices.map(i => ({
+  //   ...formatCard(opponentHand[i]),
+  //   originalIndex: i,
+  //   id: `ai-${i}`
+  // }));
 
   // Start animation after brief delay to ensure DOM is ready
   setTimeout(() => {
