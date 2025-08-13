@@ -11,10 +11,17 @@ python-source = "python"
 name = "chia_gaming"
 dynamic = ["version"]
 
-[tool.poetry.dependencies]
-python = "^3.9"
-chia-blockchain = "^2.5.4"
+[tool.poetry]
+package-mode = false
 
+[tool.poetry.dependencies]
+python = "^3.11"
+chia-blockchain = "^2.5.4"
+flask_cors = "^6.0.1"
+flask = "^3.1.1"
+
+[tool.poetry.extras]
+flask = ["async"]
 # - Reenable these when we switch over from clvm_tools.
 # [project.scripts]
 # brun = "clvm_tools_rs.cmds:brun"
