@@ -440,6 +440,8 @@ export interface MovingCardData {
 
 export interface PlayerSwappingCardLists {
   final: boolean;
+  originalMyCards: number[][];
+  originalTheirCards: number[][];
   player: SwappingCard[];
   ai: SwappingCard[];
 };
@@ -470,12 +472,6 @@ export const formatCard = (cardValue: number[]): CardData => {
 };
 
 interface PlayerSwapData {
-  // External wiring
-  moveNumber: number;
-  playerHand: number[][];
-  opponentHand: number[][];
-  cardSelections: number;
-
   // Internal animation state
   gameState: 'playing' | 'swapping' | 'final';
   setGameState: (state: 'playing' | 'swapping' | 'final') => void;
@@ -487,12 +483,6 @@ interface PlayerSwapData {
 }
 
 export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
-  // External wiring
-  moveNumber,
-  playerHand,
-  opponentHand,
-  cardSelections,
-
   // Internal animation state
   gameState,
   setGameState,
@@ -503,14 +493,6 @@ export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
   swappingCards,
 }) => {
   setGameState('swapping');
-
-  // Get selected cards indices (cards to KEEP)
-  // const playerSelected = [];
-  // for (let i = 0; i < 8; i++) {
-  //   if (cardSelections & (1 << i)) {
-  //     playerSelected.push(i);
-  //   }
-  // }
 
   // Cards to swap are the ones NOT selected
   // const playerSwapIndices: number[] = [];
@@ -558,7 +540,7 @@ export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
       // AI card moving to player position
       movingCardData.push({
         card: {
-          ...formatCard(opponentHand[aiCardIndex]),
+          ...formatCard(swappingCards.originalTheirCards[aiCardIndex]),
           id: `ai-${aiCardIndex}`
         },
         startPosition: {
@@ -614,8 +596,8 @@ export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
 
   // Clean up animation and proceed with game after 2.5 seconds
   setTimeout(() => {
-    setShowSwapAnimation(false);
+    // setShowSwapAnimation(false);
     setMovingCards([]);
-    setGameState('final');
+    // setGameState('final');
   }, 2500);
 }

@@ -21,7 +21,6 @@ interface MovingCardProps {
 
 const MovingCard: React.FC<MovingCardProps> = ({ cardData }) => {
   const { card, startPosition, endPosition } = cardData;
-  
   const getCardColor = () => {
     if (card.suit === '♥') return '#ef4444';
     if (card.suit === '♦') return '#3b82f6';
@@ -50,13 +49,13 @@ const MovingCard: React.FC<MovingCardProps> = ({ cardData }) => {
     zIndex: 9999,
     pointerEvents: 'none',
     color: getCardColor(),
-    animation: 'moveCard 2s ease-in-out forwards',
+    animation: `moveCard-${cardData.card.id} 2s ease-in-out forwards`,
   };
 
   return (
     <>
       <style>{`
-        @keyframes moveCard {
+        @keyframes moveCard-${cardData.card.id} {
           0% {
             left: ${startPosition.x - 32}px;
             top: ${startPosition.y - 48}px;

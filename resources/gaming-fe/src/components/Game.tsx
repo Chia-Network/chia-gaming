@@ -44,7 +44,13 @@ const Game: React.FC = () => {
   const [gameState, setGameState] = useState<'playing' | 'swapping' | 'final'>('playing');
   const [showSwapAnimation, setShowSwapAnimation] = useState(false);
   const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
-  const [swappingCards, setSwappingCards] = useState<PlayerSwappingCardLists>({ final: false, player: [], ai: [] });
+  const [swappingCards, setSwappingCards] = useState<PlayerSwappingCardLists>({
+    final: false,
+    originalMyCards: [],
+    originalTheirCards: [],
+    player: [],
+    ai: []
+  });
   const [receivedOutcome, setReceivedOutcome] = useState(false);
 
   const setStateFromMessage = useCallback((evt: any) => {
@@ -102,7 +108,13 @@ const Game: React.FC = () => {
         color: card_color(outcome, !iAmAlice, c)
       };
     });
-    const useSwappingCards: PlayerSwappingCardLists = { final: true, player: [], ai: [] };
+    const useSwappingCards: PlayerSwappingCardLists = {
+      final: true,
+      player: [],
+      ai: [],
+      originalMyCards: [...playerHand],
+      originalTheirCards: [...opponentHand],
+    };
     function findTargetIndex(targetList: any[], want: string, idx: number) {
       for (var i = 0; i < targetList.length; i++) {
         const t = targetList[i];
@@ -173,10 +185,6 @@ const Game: React.FC = () => {
 
     // Swap animation function
     triggerSwapAnimation({
-      moveNumber,
-      playerHand,
-      opponentHand,
-      cardSelections,
       gameState,
       setGameState,
       showSwapAnimation,
@@ -239,11 +247,11 @@ const Game: React.FC = () => {
         </Typography>
         <div style={{ marginBottom: '32px' }}>
           <div style={{ textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>
+            {moveNumber === 0 && 'Commit to random number'}
             {gameState === 'playing' && moveNumber === 1 && 'Select 4 cards to KEEP and swap the rest'}
+            {gameState === 'playing' && moveNumber === 2 && 'Finish game'}
             {gameState === 'swapping' && 'Cards are swapping...'}
             {gameState === 'final' && 'Final Results'}
-            {moveNumber === 0 && 'Commit to random number'}
-            {moveNumber === 2 && 'Finish game'}
           </div>
         </div>
 
