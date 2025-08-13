@@ -71,7 +71,7 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
 
   return (
     <div style={sectionStyle} data-area="ai">
-      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>AI Hand</h3>
+      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>Opponent Hand</h3>
       <div style={cardRowStyle}>
         {opponentHand.map((card, index) => {
           const isBeingSwapped = showSwapAnimation && swappingCards.ai.some(c => c.originalIndex === index);

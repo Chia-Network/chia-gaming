@@ -643,7 +643,7 @@ class WasmBlobWrapper {
       }
       this.moveNumber += 1;
       let entropy = this.generateEntropy();
-      const encoded = (this.cardSelections | 0x8100).toString(16);
+      const encoded = ((this.cardSelections ^ 0xff) | 0x8100).toString(16);
       this.cradle?.make_move_entropy(this.gameIds[0], encoded, entropy);
       return empty().then(() => {
         return {

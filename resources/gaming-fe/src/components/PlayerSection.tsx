@@ -121,12 +121,12 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
         {playerHand.map((card: number[], index) => {
           const isBeingSwapped = showSwapAnimation && swappingCards.player.some(c => c.originalIndex === index);
           return (
-            <PlayingCard 
-              id={`player-${index}`} 
-              key={index} 
-              index={index} 
-              selected={!!(cardSelections & (1 << index))} 
-              cardValue={card} 
+            <PlayingCard
+              id={`player-${index}`}
+              key={index}
+              index={index}
+              selected={!!(cardSelections & (1 << index))}
+              cardValue={card}
               setSelection={setSelection}
               isBeingSwapped={isBeingSwapped}
             />
