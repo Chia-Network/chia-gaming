@@ -23,10 +23,11 @@ const MovingCard: React.FC<MovingCardProps> = ({ cardData }) => {
   const { card, startPosition, endPosition } = cardData;
   
   const getCardColor = () => {
-    if (card.suit === '♥') return '#ef4444';
-    if (card.suit === '♦') return '#3b82f6';
-    if (card.suit === '♣') return '#16a34a';
-    return '#000000';
+    // Using OKLCH colors from new_calpoker.tsx
+    if (card.suit === '♥') return 'oklch(50% 0.3 25)';  // Red
+    if (card.suit === '♦') return 'oklch(50% 0.3 265)'; // Blue
+    if (card.suit === '♣') return 'oklch(50% 0.3 155)'; // Green
+    return 'oklch(0% 0 0)'; // Black for spades
   };
 
   if (!startPosition || !endPosition) return null;
@@ -43,11 +44,11 @@ const MovingCard: React.FC<MovingCardProps> = ({ cardData }) => {
     fontSize: '14px',
     fontWeight: 'bold',
     backgroundColor: '#ffffff',
-    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.15), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
     position: 'fixed',
     left: startPosition.x - 32, // Half of card width (64px / 2)
     top: startPosition.y - 48,  // Half of card height (96px / 2)
-    zIndex: 9999,
+    zIndex: 50,
     pointerEvents: 'none',
     color: getCardColor(),
     animation: 'moveCard 2s ease-in-out forwards',
@@ -68,10 +69,10 @@ const MovingCard: React.FC<MovingCardProps> = ({ cardData }) => {
         }
       `}</style>
       <div style={cardStyle}>
-        <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+        <div style={{ fontSize: '24px' }}>
           {card.rank}
         </div>
-        <div style={{ fontSize: '24px' }}>
+        <div style={{ fontSize: '24px', marginTop: '-8px' }}>
           {card.suit}
         </div>
       </div>

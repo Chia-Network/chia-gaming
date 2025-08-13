@@ -55,15 +55,18 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    padding: '24px',
-    backgroundColor: '#ffffff',
-    marginBottom: '32px',
+    padding: '8px',
     borderRadius: '8px',
-    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+    maxWidth: '100%',
+    margin: '0 auto',
   };
 
   const titleStyle: React.CSSProperties = {
-    display: 'none', // Hide title as it's not in the concept
+    fontSize: '14px',
+    fontWeight: 'bold',
+    marginTop: '4px',
+    textAlign: 'center',
+    color: '#4b5563',
   };
 
   const handLabelStyle: React.CSSProperties = {
@@ -73,7 +76,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
   const cardRowStyle: React.CSSProperties = {
     display: 'flex',
     justifyContent: 'center',
-    marginBottom: '16px',
+    marginBottom: '8px',
     gap: '8px',
     flexWrap: 'wrap',
   };
@@ -100,23 +103,21 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
   const isButtonEnabled = isPlayerTurn && (moveNumber !== 1 || playerSelected.length === 4);
 
   const buttonStyle: React.CSSProperties = {
-    background: isButtonEnabled ? '#2563eb' : '#9ca3af',
+    background: isButtonEnabled ? '#2563eb' : '#d1d5db',
     color: isButtonEnabled ? '#ffffff' : '#6b7280',
     border: 'none',
     borderRadius: '8px',
-    padding: '12px 24px',
+    padding: '8px 24px',
     fontSize: '16px',
     fontWeight: 'bold',
-    cursor: isButtonEnabled ? 'pointer' : 'not-allowed',
+    cursor: isButtonEnabled ? 'pointer' : 'default',
     transition: 'background 0.2s',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.07)',
-    minWidth: '120px',
+    minWidth: '256px',
     whiteSpace: 'nowrap',
   };
 
   return (
     <div style={sectionStyle} data-area="player">
-      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>Your Hand</h3>
       <div style={cardRowStyle}>
         {playerHand.map((card: number[], index) => {
           const isBeingSwapped = showSwapAnimation && swappingCards.player.some(c => c.originalIndex === index);
@@ -133,8 +134,9 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
           );
         })}
       </div>
+      <h3 style={titleStyle}>Your Hand</h3>
       {moveNumber === 1 && (
-        <div style={{ marginBottom: '16px', textAlign: 'center', fontSize: '16px', fontWeight: 'bold' }}>
+        <div style={{ marginBottom: '8px', textAlign: 'center', fontSize: '14px', fontWeight: 'bold' }}>
           Select 4 cards to KEEP ({playerSelected.length}/4 selected)
         </div>
       )}
@@ -145,7 +147,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
         style={buttonStyle}
         onMouseEnter={(e) => {
           if (isButtonEnabled) {
-            e.currentTarget.style.background = '#1d4ed8';
+            e.currentTarget.style.background = '#1e40af';
           }
         }}
         onMouseLeave={(e) => {

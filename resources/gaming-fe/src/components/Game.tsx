@@ -171,9 +171,9 @@ const Game: React.FC = () => {
   if (outcome) {
     return (
     <Box
-      p={4}
+      p={2}
       style={{
-        background: '#dcfce7',
+        background: '#f3f4f6',
         minHeight: '100vh',
       }}
     >
@@ -185,10 +185,10 @@ const Game: React.FC = () => {
         }}
       >
         <Typography variant="h4" align="center" style={{
-          marginBottom: '24px',
-          color: '#166534',
+          marginBottom: '4px',
+          color: '#9ca3af',
           fontWeight: 'bold',
-          fontSize: '2.5rem'
+          fontSize: '1.5rem'
         }}>
           California Poker
         </Typography>
@@ -217,8 +217,8 @@ const Game: React.FC = () => {
         >
         {banner}
         </Typography>
-        <div style={{ marginBottom: '32px' }}>
-          <div style={{ textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>
+        <div style={{ marginBottom: '8px' }}>
+          <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
             {gameState === 'playing' && moveNumber === 1 && 'Select 4 cards to KEEP and swap the rest'}
             {gameState === 'swapping' && 'Cards are swapping...'}
             {gameState === 'final' && 'Final Results'}
@@ -231,7 +231,7 @@ const Game: React.FC = () => {
           display="flex"
           flexDirection="column"
           alignItems="center"
-          gap={2}
+          gap={0}
           width="100%"
         >
           <GameEndPlayer
@@ -267,9 +267,9 @@ const Game: React.FC = () => {
 
   return (
     <Box
-      p={4}
+      p={2}
       style={{
-        background: '#dcfce7',
+        background: '#f3f4f6',
         minHeight: '100vh',
       }}
     >
@@ -281,10 +281,10 @@ const Game: React.FC = () => {
         }}
       >
         <Typography variant="h4" align="center" style={{
-          marginBottom: '24px',
-          color: '#166534',
+          marginBottom: '4px',
+          color: '#9ca3af',
           fontWeight: 'bold',
-          fontSize: '2.5rem'
+          fontSize: '1.5rem'
         }}>
         California Poker
         </Typography>
@@ -313,8 +313,8 @@ const Game: React.FC = () => {
         >
           {banner}
         </Typography>
-        <div style={{ marginBottom: '32px' }}>
-          <div style={{ textAlign: 'center', fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>
+        <div style={{ marginBottom: '8px' }}>
+          <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
             {gameState === 'playing' && moveNumber === 1 && 'Select 4 cards to KEEP and swap the rest'}
             {gameState === 'swapping' && 'Cards are swapping...'}
             {gameState === 'final' && 'Final Results'}
@@ -327,7 +327,7 @@ const Game: React.FC = () => {
           display="flex"
           flexDirection="column"
           alignItems="center"
-          gap={2}
+          gap={0}
           width="100%"
         >
           <OpponentSection

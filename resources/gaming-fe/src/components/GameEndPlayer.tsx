@@ -41,24 +41,22 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    padding: '24px',
-    backgroundColor: '#ffffff',
-    marginBottom: '32px',
+    padding: '8px',
     borderRadius: '8px',
-    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+    maxWidth: '100%',
+    margin: '0 auto',
   };
 
   const cardRowStyle: React.CSSProperties = {
     display: 'flex',
     justifyContent: 'center',
-    marginBottom: '16px',
     gap: '8px',
     flexWrap: 'wrap',
   };
 
   return (
     <div style={sectionStyle} data-area="player">
-      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>{who} Hand</h3>
+      <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '4px', color: '#4b5563' }}>{who} Hand</h3>
       <div style={cardRowStyle}>
             {playerHand.map((card: number[], index) => {
             const isBeingSwapped = showSwapAnimation && swappingCards.player.some(c => c.originalIndex === index);

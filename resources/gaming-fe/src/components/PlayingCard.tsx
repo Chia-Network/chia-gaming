@@ -23,8 +23,14 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   isFaceDown = false,
   isBeingSwapped = false,
 }) => {
-  // Match the exact suit colors from calpoker-remixed
-  const suitColors = ['#000000', '#ef4444', '#3b82f6', '#000000', '#16a34a'];
+  // OKLCH colors from new_calpoker.tsx
+  const suitColors = [
+    'oklch(0% 0 0)',      // Spades - Black
+    'oklch(50% 0.3 25)',  // Hearts - Red
+    'oklch(50% 0.3 265)', // Diamonds - Blue
+    'oklch(0% 0 0)',      // Unknown - Black
+    'oklch(50% 0.3 155)'  // Clubs - Green
+  ];
   
   const rank = cardValue.slice(0, -1);
   const suitIndex = cardValue.slice(-1)[0] as number;
@@ -38,8 +44,9 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
 
   const cardStyle: React.CSSProperties = {
     width: '64px',
+    minWidth: '48px',
     height: '96px',
-    backgroundColor: selected ? '#dbeafe' : '#ffffff',
+    backgroundColor: isBeingSwapped ? '#f9fafb' : (selected ? '#dbeafe' : '#ffffff'),
     color: suitColor,
     borderRadius: '8px',
     display: 'flex',
@@ -47,16 +54,15 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     alignItems: 'center',
     justifyContent: 'center',
     fontSize: '14px',
-    margin: '0 4px',
-    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-    border: selected ? '2px solid #3b82f6' : '2px solid #d1d5db',
+    margin: '0',
+    boxShadow: selected ? '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)' : '',
+    border: isBeingSwapped ? '2px solid #d1d5db' : (selected ? '2px solid #3b82f6' : '2px solid #d1d5db'),
     cursor: 'pointer',
     fontWeight: 'bold',
     position: 'relative' as 'relative',
     userSelect: 'none' as 'none',
     transition: 'all 0.2s',
     opacity: isBeingSwapped ? 0.5 : 1,
-    transform: isBeingSwapped ? 'scale(0.95)' : 'scale(1)',
   };
 
   const cardBackStyle: React.CSSProperties = {
@@ -81,10 +87,10 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     >
       {!isFaceDown && (
         <>
-          <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>
             {formattedRank}
           </div>
-          <div style={{ fontSize: '24px' }}>
+          <div style={{ fontSize: '24px', marginTop: '-8px' }}>
             {suit}
           </div>
         </>

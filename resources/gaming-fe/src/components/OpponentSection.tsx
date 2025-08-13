@@ -31,19 +31,18 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    padding: '24px',
-    backgroundColor: '#ffffff',
-    marginBottom: '32px',
+    padding: '8px',
     borderRadius: '8px',
-    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+    maxWidth: '100%',
+    margin: '0 auto',
   };
 
   const titleStyle: React.CSSProperties = {
-    fontSize: '18px',
+    fontSize: '14px',
     fontWeight: 'bold',
-    color: '#d81b60',
-    marginBottom: '12px',
+    marginBottom: '4px',
     textAlign: 'center',
+    color: '#4b5563',
   };
 
   const handLabelStyle: React.CSSProperties = {
@@ -56,7 +55,6 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
   const cardRowStyle: React.CSSProperties = {
     display: 'flex',
     justifyContent: 'center',
-    marginBottom: '16px',
     gap: '8px',
     flexWrap: 'wrap',
   };
@@ -71,7 +69,7 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
 
   return (
     <div style={sectionStyle} data-area="ai">
-      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>Opponent Hand</h3>
+      <h3 style={titleStyle}>Opponent Hand</h3>
       <div style={cardRowStyle}>
         {opponentHand.map((card, index) => {
           const isBeingSwapped = showSwapAnimation && swappingCards.ai.some(c => c.originalIndex === index);
