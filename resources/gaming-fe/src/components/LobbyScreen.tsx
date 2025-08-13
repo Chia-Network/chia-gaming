@@ -107,7 +107,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect, simulatorAc
       </Box>
 
       <Box mb={3}>
-        <Typography variant="h6">Active Rooms</Typography>
+        <Typography variant="h6">Open Games</Typography>
         <List>
           {rooms.map(r => (
             <ListItem key={r.token} dense secondaryAction={
@@ -125,7 +125,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect, simulatorAc
       </Box>
 
       <Box mb={3}>
-        <Typography variant="h6">Chat</Typography>
+        <Typography variant="h6">Lobby Chat (All Users)</Typography>
         <Box mb={1} height={200} overflow="auto" border="1px solid #ccc" p={1}>
           {messages.map((m, i) => (
             <Typography key={i} variant="body2">
@@ -149,12 +149,12 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect, simulatorAc
 
       <Box display="flex" justifyContent="space-between">
         <Button variant="outlined" onClick={openDialog} aria-label="generate-room">
-          Generate Room
+          Start Game Session
         </Button>
       </Box>
 
       <Dialog open={dialogOpen} onClose={closeDialog}>
-        <DialogTitle>Create a Room</DialogTitle>
+        <DialogTitle>Start Game Session</DialogTitle>
         <DialogContent>
           <TextField
             label="Game"
