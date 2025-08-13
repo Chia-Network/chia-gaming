@@ -29,6 +29,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
   const [gameChoice, setGameChoice] = useState('');
   const [wagerInput, setWagerInput] = useState('');
   const [editingAlias, setEditingAlias] = useState(false);
+  const [gotoUrl, setGotoUrl] = useState('');
 
   const handleSend = () => {
     if (chatInput.trim()) {

@@ -18,6 +18,7 @@ import GameLog from "./GameLog";
 import WaitingScreen from "./WaitingScreen";
 import { useWasmBlob } from "../hooks/useWasmBlob";
 import { getGameSelection } from '../util';
+import evaluateHand from '../types/evaluateHand';
 
 const Game: React.FC = () => {
   const gameSelection = getGameSelection();
@@ -96,6 +97,9 @@ const Game: React.FC = () => {
   ][moveNumber];
 
   if (outcome) {
+    const alice_hand_string = evaluateHand(outcome.alice_used_cards);
+    const bob_hand_string = evaluateHand(outcome.bob_used_cards);
+    const end_game_banner = "foo " + alice_hand_string + "over" + bob_hand_string;
     return (
       <div id='total'>
         <div id='overlay'> </div>
@@ -109,7 +113,7 @@ const Game: React.FC = () => {
             align="center"
             color={colors[color]}
           >
-            {banner}
+            {end_game_banner}
           </Typography>
           <br />
           <Box
