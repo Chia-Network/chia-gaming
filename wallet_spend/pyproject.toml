@@ -1,6 +1,9 @@
 [project]
 name = "wallet-spend"
 requires-python = "^3.11"
+dependencies = [
+    "Flask[async]",
+]
 
 [tool.poetry]
 name = "wallet-spend"
