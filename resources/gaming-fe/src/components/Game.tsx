@@ -170,190 +170,205 @@ const Game: React.FC = () => {
 
   if (outcome) {
     return (
-    <Box
-      p={2}
-      style={{
-        background: '#f3f4f6',
-        minHeight: '100vh',
-      }}
-    >
+    <>
       <Box
+        p={2}
         style={{
-          maxWidth: '1200px',
-          margin: '0 auto',
-          padding: '16px',
+          background: '#f3f4f6',
+          minHeight: '100vh',
         }}
       >
-        <Typography variant="h4" align="center" style={{
-          marginBottom: '4px',
-          color: '#9ca3af',
-          fontWeight: 'bold',
-          fontSize: '1.5rem'
-        }}>
-          California Poker
-        </Typography>
-        <Button
-          aria-label="stop-playing"
-          onClick={stopPlaying}
-          disabled={moveNumber !== 0}
-          style={{
-            marginBottom: '16px',
-            background: moveNumber === 0 ? '#1976d2' : '#b0bec5',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '5px',
-            padding: '8px 16px',
-          }}
-        >
-          Stop
-        </Button>
-        <Typography
-          variant="h6"
-          align="center"
-          style={{
-            color: colors[color],
-            marginBottom: '16px',
-          }}
-        >
-        {banner}
-        </Typography>
-        <div style={{ marginBottom: '8px' }}>
-          <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
-            {gameState === 'playing' && moveNumber === 1 && 'Select 4 cards to KEEP and swap the rest'}
-            {gameState === 'swapping' && 'Cards are swapping...'}
-            {gameState === 'final' && 'Final Results'}
-            {moveNumber === 0 && 'Commit to random number'}
-            {moveNumber === 2 && 'Finish game'}
-          </div>
-        </div>
-
         <Box
-          display="flex"
-          flexDirection="column"
-          alignItems="center"
-          gap={0}
-          width="100%"
+          style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            padding: '16px',
+            position: 'relative',
+          }}
         >
-          <GameEndPlayer
-            iStarted={iStarted}
-            playerNumber={iStarted ? 2 : 1}
-            outcome={outcome}
-            showSwapAnimation={showSwapAnimation}
-            swappingCards={swappingCards}
-            cardSelections={cardSelections}
-          />
-          {showSwapAnimation && (
-            <>
-              {movingCards.map((cardData, index) => (
-                <MovingCard key={`moving-${index}`} cardData={cardData} />
-              ))}
-            </>
-          )}
-          <GameEndPlayer
-            iStarted={iStarted}
-            playerNumber={iStarted ? 1 : 2}
-            outcome={outcome}
-            showSwapAnimation={showSwapAnimation}
-            swappingCards={swappingCards}
-            cardSelections={cardSelections}
-          />
-        </Box>
-        <Box flex={1} display="flex" flexDirection="column">
+          <Typography variant="h4" align="center" style={{
+            marginBottom: '4px',
+            color: '#9ca3af',
+            fontWeight: 'bold',
+            fontSize: '1.5rem'
+          }}>
+            California Poker
+          </Typography>
+          <Button
+            aria-label="stop-playing"
+            onClick={stopPlaying}
+            disabled={moveNumber !== 0}
+            style={{
+              marginBottom: '16px',
+              background: moveNumber === 0 ? '#1976d2' : '#b0bec5',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '5px',
+              padding: '8px 16px',
+            }}
+          >
+            Stop
+          </Button>
+          <Typography
+            variant="h6"
+            align="center"
+            style={{
+              color: colors[color],
+              marginBottom: '16px',
+            }}
+          >
+          {banner}
+          </Typography>
+          <div style={{ marginBottom: '8px' }}>
+            <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
+              {gameState === 'playing' && moveNumber === 1 && 'Select 4 cards to KEEP and swap the rest'}
+              {gameState === 'swapping' && 'Cards are swapping...'}
+              {gameState === 'final' && 'Final Results'}
+              {moveNumber === 0 && 'Commit to random number'}
+              {moveNumber === 2 && 'Finish game'}
+            </div>
+          </div>
+
+          <Box
+            display="flex"
+            flexDirection="column"
+            alignItems="center"
+            gap={0}
+            width="100%"
+          >
+            <GameEndPlayer
+              iStarted={iStarted}
+              playerNumber={iStarted ? 2 : 1}
+              outcome={outcome}
+              showSwapAnimation={showSwapAnimation}
+              swappingCards={swappingCards}
+              cardSelections={cardSelections}
+            />
+            <GameEndPlayer
+              iStarted={iStarted}
+              playerNumber={iStarted ? 1 : 2}
+              outcome={outcome}
+              showSwapAnimation={showSwapAnimation}
+              swappingCards={swappingCards}
+              cardSelections={cardSelections}
+            />
+          </Box>
+          <Box flex={1} display="flex" flexDirection="column">
+          </Box>
         </Box>
       </Box>
-    </Box>
+      {/* Moving Cards rendered outside main container */}
+      {showSwapAnimation && (
+        <>
+          {movingCards.map((cardData, index) => (
+            <MovingCard key={`moving-${index}`} cardData={cardData} />
+          ))}
+        </>
+      )}
+    </>
     );
   }
 
   return (
-    <Box
-      p={2}
-      style={{
-        background: '#f3f4f6',
-        minHeight: '100vh',
-      }}
-    >
+    <>
       <Box
+        p={2}
         style={{
-          maxWidth: '1200px',
-          margin: '0 auto',
-          padding: '16px',
+          background: '#f3f4f6',
+          minHeight: '100vh',
         }}
       >
-        <Typography variant="h4" align="center" style={{
-          marginBottom: '4px',
-          color: '#9ca3af',
-          fontWeight: 'bold',
-          fontSize: '1.5rem'
-        }}>
-        California Poker
-        </Typography>
-        <Button
-          aria-label="stop-playing"
-          onClick={stopPlaying}
-          disabled={moveNumber !== 0}
-          style={{
-            marginBottom: '16px',
-            background: moveNumber === 0 ? '#1976d2' : '#b0bec5',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '5px',
-            padding: '8px 16px',
-          }}
-        >
-          Stop
-        </Button>
-        <Typography
-          variant="h6"
-          align="center"
-          style={{
-            color: colors[color],
-            marginBottom: '16px',
-          }}
-        >
-          {banner}
-        </Typography>
-        <div style={{ marginBottom: '8px' }}>
-          <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
-            {gameState === 'playing' && moveNumber === 1 && 'Select 4 cards to KEEP and swap the rest'}
-            {gameState === 'swapping' && 'Cards are swapping...'}
-            {gameState === 'final' && 'Final Results'}
-            {moveNumber === 0 && 'Commit to random number'}
-            {moveNumber === 2 && 'Finish game'}
-          </div>
-        </div>
-
         <Box
-          display="flex"
-          flexDirection="column"
-          alignItems="center"
-          gap={0}
-          width="100%"
+          style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            padding: '16px',
+            position: 'relative',
+          }}
         >
-          <OpponentSection
-              playerNumber={(playerNumber == 1) ? 2 : 1}
-              opponentHand={opponentHand}
+          <Typography variant="h4" align="center" style={{
+            marginBottom: '4px',
+            color: '#9ca3af',
+            fontWeight: 'bold',
+            fontSize: '1.5rem'
+          }}>
+          California Poker
+          </Typography>
+          <Button
+            aria-label="stop-playing"
+            onClick={stopPlaying}
+            disabled={moveNumber !== 0}
+            style={{
+              marginBottom: '16px',
+              background: moveNumber === 0 ? '#1976d2' : '#b0bec5',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '5px',
+              padding: '8px 16px',
+            }}
+          >
+            Stop
+          </Button>
+          <Typography
+            variant="h6"
+            align="center"
+            style={{
+              color: colors[color],
+              marginBottom: '16px',
+            }}
+          >
+            {banner}
+          </Typography>
+          <div style={{ marginBottom: '8px' }}>
+            <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
+              {gameState === 'playing' && moveNumber === 1 && 'Select 4 cards to KEEP and swap the rest'}
+              {gameState === 'swapping' && 'Cards are swapping...'}
+              {gameState === 'final' && 'Final Results'}
+              {moveNumber === 0 && 'Commit to random number'}
+              {moveNumber === 2 && 'Finish game'}
+            </div>
+          </div>
+
+          <Box
+            display="flex"
+            flexDirection="column"
+            alignItems="center"
+            gap={0}
+            width="100%"
+          >
+            <OpponentSection
+                playerNumber={(playerNumber == 1) ? 2 : 1}
+                opponentHand={opponentHand}
+                swappingCards={swappingCards}
+                showSwapAnimation={showSwapAnimation}
+            />
+            <PlayerSection
+              playerNumber={playerNumber}
+              playerHand={playerHand}
+              isPlayerTurn={isPlayerTurn}
+              moveNumber={moveNumber}
+              handleMakeMove={handleMakeMove}
+              cardSelections={cardSelections}
+              setCardSelections={setCardSelections}
               swappingCards={swappingCards}
               showSwapAnimation={showSwapAnimation}
-          />
-          <PlayerSection
-            playerNumber={playerNumber}
-            playerHand={playerHand}
-            isPlayerTurn={isPlayerTurn}
-            moveNumber={moveNumber}
-            handleMakeMove={handleMakeMove}
-            cardSelections={cardSelections}
-            setCardSelections={setCardSelections}
-            swappingCards={swappingCards}
-            showSwapAnimation={showSwapAnimation}
-          />
+            />
+          </Box>
+          <Typography style={{ marginTop: '16px', fontSize: '14px', color: '#666' }}>
+            {moveDescription}
+          </Typography>
+          <GameLog log={[]} />
         </Box>
-        <Typography style={{ marginTop: '16px', fontSize: '14px', color: '#666' }}>
-          {moveDescription}
-        </Typography>
-        <GameLog log={[]} />
       </Box>
-    </Box>
+      {/* Moving Cards rendered outside main container */}
+      {showSwapAnimation && (
+        <>
+          {movingCards.map((cardData, index) => (
+            <MovingCard key={`moving-${index}`} cardData={cardData} />
+          ))}
+        </>
+      )}
+    </>
   );
 };
 

@@ -591,7 +591,13 @@ export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
     });
 
     setMovingCards(movingCardData);
-    setShowSwapAnimation(true);
+    
+    // Double requestAnimationFrame to ensure DOM is fully updated
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setShowSwapAnimation(true);
+      });
+    });
   }, 100);
 
   // Clean up animation and proceed with game after 2.5 seconds

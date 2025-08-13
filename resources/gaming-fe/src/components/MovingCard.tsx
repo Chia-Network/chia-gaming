@@ -32,6 +32,11 @@ const MovingCard: React.FC<MovingCardProps> = ({ cardData }) => {
 
   if (!startPosition || !endPosition) return null;
 
+  const startX = startPosition.x - 32; // Half of card width (64px / 2)
+  const startY = startPosition.y - 48; // Half of card height (96px / 2)
+  const endX = endPosition.x - 32;
+  const endY = endPosition.y - 48;
+
   const cardStyle: React.CSSProperties = {
     width: '64px',
     height: '96px',
@@ -46,25 +51,29 @@ const MovingCard: React.FC<MovingCardProps> = ({ cardData }) => {
     backgroundColor: '#ffffff',
     boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.15), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
     position: 'fixed',
-    left: startPosition.x - 32, // Half of card width (64px / 2)
-    top: startPosition.y - 48,  // Half of card height (96px / 2)
+    left: startX,
+    top: startY,
     zIndex: 50,
     pointerEvents: 'none',
     color: getCardColor(),
     animation: 'moveCard 2s ease-in-out forwards',
-  };
+    '--start-x': `${startX}px`,
+    '--start-y': `${startY}px`,
+    '--end-x': `${endX}px`,
+    '--end-y': `${endY}px`,
+  } as React.CSSProperties;
 
   return (
     <>
       <style>{`
         @keyframes moveCard {
-          0% {
-            left: ${startPosition.x - 32}px;
-            top: ${startPosition.y - 48}px;
+          from {
+            left: var(--start-x);
+            top: var(--start-y);
           }
-          100% {
-            left: ${endPosition.x - 32}px;
-            top: ${endPosition.y - 48}px;
+          to {
+            left: var(--end-x);
+            top: var(--end-y);
           }
         }
       `}</style>
