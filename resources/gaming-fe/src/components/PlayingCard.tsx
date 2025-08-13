@@ -11,6 +11,7 @@ interface PlayingCardProps {
   selectionColor?: string;
   setSelection: (index: number, selected: boolean) => void;
   isBeingSwapped?: boolean;
+  isInBestHand?: boolean;
 }
 
 const PlayingCard: React.FC<PlayingCardProps> = ({
@@ -22,6 +23,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   selectionColor,
   isFaceDown = false,
   isBeingSwapped = false,
+  isInBestHand = false,
 }) => {
   // OKLCH colors from new_calpoker.tsx
   const suitColors = [
@@ -46,7 +48,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     width: '64px',
     minWidth: '48px',
     height: '96px',
-    backgroundColor: isBeingSwapped ? '#f9fafb' : (selected ? '#dbeafe' : '#ffffff'),
+    backgroundColor: isBeingSwapped ? '#f9fafb' : isInBestHand ? '#fef3c7' : (selected ? '#dbeafe' : '#ffffff'),
     color: suitColor,
     borderRadius: '8px',
     display: 'flex',
@@ -55,8 +57,8 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     justifyContent: 'center',
     fontSize: '14px',
     margin: '0',
-    boxShadow: selected ? '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)' : '',
-    border: isBeingSwapped ? '2px solid #d1d5db' : (selected ? '2px solid #3b82f6' : '2px solid #d1d5db'),
+    boxShadow: isInBestHand ? '0 10px 15px -3px rgba(251, 191, 36, 0.3), 0 4px 6px -2px rgba(251, 191, 36, 0.2)' : selected ? '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)' : '',
+    border: isBeingSwapped ? '2px solid #d1d5db' : isInBestHand ? '2px solid #f59e0b' : (selected ? '2px solid #3b82f6' : '2px solid #d1d5db'),
     cursor: 'pointer',
     fontWeight: 'bold',
     position: 'relative' as 'relative',

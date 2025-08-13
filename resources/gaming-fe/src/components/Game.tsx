@@ -11,8 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import useGameSocket from "../hooks/useGameSocket";
-import PlayerSection from "./PlayerSection";
-import OpponentSection from "./OpponentSection";
+import HandDisplay from "./HandDisplay";
 import GameEndPlayer from "./GameEndPlayer";
 import GameLog from "./GameLog";
 import WaitingScreen from "./WaitingScreen";
@@ -186,14 +185,6 @@ const Game: React.FC = () => {
             position: 'relative',
           }}
         >
-          <Typography variant="h4" align="center" style={{
-            marginBottom: '4px',
-            color: '#9ca3af',
-            fontWeight: 'bold',
-            fontSize: '1.5rem'
-          }}>
-            California Poker
-          </Typography>
           <Button
             aria-label="stop-playing"
             onClick={stopPlaying}
@@ -236,21 +227,37 @@ const Game: React.FC = () => {
             gap={0}
             width="100%"
           >
-            <GameEndPlayer
-              iStarted={iStarted}
-              playerNumber={iStarted ? 2 : 1}
-              outcome={outcome}
+            <HandDisplay
+              title="Opponent Hand"
+              cards={opponentHand}
+              area="ai"
+              isPlayer={false}
+              swappingCards={swappingCards.ai}
               showSwapAnimation={showSwapAnimation}
-              swappingCards={swappingCards}
-              cardSelections={cardSelections}
+              gameState="final"
+              winner={myWinOutcome}
+              winnerType={myWinOutcome === 'lose' ? 'ai' : myWinOutcome === 'win' ? 'player' : undefined}
             />
-            <GameEndPlayer
-              iStarted={iStarted}
-              playerNumber={iStarted ? 1 : 2}
-              outcome={outcome}
+            
+            <Typography variant="h4" align="center" style={{
+              margin: '8px 0',
+              color: '#9ca3af',
+              fontWeight: 'bold',
+              fontSize: '1.5rem'
+            }}>
+              California Poker
+            </Typography>
+            
+            <HandDisplay
+              title="Your Hand"
+              cards={playerHand}
+              area="player"
+              isPlayer={true}
+              swappingCards={swappingCards.player}
               showSwapAnimation={showSwapAnimation}
-              swappingCards={swappingCards}
-              cardSelections={cardSelections}
+              gameState="final"
+              winner={myWinOutcome}
+              winnerType={myWinOutcome === 'win' ? 'player' : myWinOutcome === 'lose' ? 'ai' : undefined}
             />
           </Box>
           <Box flex={1} display="flex" flexDirection="column">
@@ -286,14 +293,6 @@ const Game: React.FC = () => {
             position: 'relative',
           }}
         >
-          <Typography variant="h4" align="center" style={{
-            marginBottom: '4px',
-            color: '#9ca3af',
-            fontWeight: 'bold',
-            fontSize: '1.5rem'
-          }}>
-          California Poker
-          </Typography>
           <Button
             aria-label="stop-playing"
             onClick={stopPlaying}
@@ -336,23 +335,110 @@ const Game: React.FC = () => {
             gap={0}
             width="100%"
           >
-            <OpponentSection
-                playerNumber={(playerNumber == 1) ? 2 : 1}
-                opponentHand={opponentHand}
-                swappingCards={swappingCards}
-                showSwapAnimation={showSwapAnimation}
-            />
-            <PlayerSection
-              playerNumber={playerNumber}
-              playerHand={playerHand}
-              isPlayerTurn={isPlayerTurn}
-              moveNumber={moveNumber}
-              handleMakeMove={handleMakeMove}
-              cardSelections={cardSelections}
-              setCardSelections={setCardSelections}
-              swappingCards={swappingCards}
+            <HandDisplay
+              title="Opponent Hand"
+              cards={opponentHand}
+              area="ai"
+              isPlayer={false}
+              swappingCards={swappingCards.ai}
               showSwapAnimation={showSwapAnimation}
+              gameState={gameState}
             />
+            
+            <Typography variant="h4" align="center" style={{
+              margin: '8px 0',
+              color: '#9ca3af',
+              fontWeight: 'bold',
+              fontSize: '1.5rem'
+            }}>
+              California Poker
+            </Typography>
+            
+            <HandDisplay
+              title="Your Hand"
+              cards={playerHand}
+              area="player"
+              isPlayer={true}
+              onCardClick={(index) => {
+                if (gameState !== 'playing' || moveNumber !== 1) return;
+                const currentSelections = cardSelections;
+                let newSelections;
+                if (currentSelections & (1 << index)) {
+                  newSelections = currentSelections & ~(1 << index);
+                } else {
+                  newSelections = currentSelections | (1 << index);
+                }
+                setCardSelections(newSelections);
+              }}
+              selectedCards={(() => {
+                const selected = [];
+                for (let i = 0; i < 8; i++) {
+                  if (cardSelections & (1 << i)) {
+                    selected.push(i);
+                  }
+                }
+                return selected;
+              })()}
+              swappingCards={swappingCards.player}
+              showSwapAnimation={showSwapAnimation}
+              gameState={gameState}
+            />
+            
+            <Box mt={1} textAlign="center">
+              {moveNumber === 1 && (
+                <div style={{ marginBottom: '8px', fontSize: '14px', fontWeight: 'bold' }}>
+                  Select 4 cards to KEEP ({(() => {
+                    let count = 0;
+                    for (let i = 0; i < 8; i++) {
+                      if (cardSelections & (1 << i)) count++;
+                    }
+                    return count;
+                  })()}/4 selected)
+                </div>
+              )}
+              <Button
+                aria-label="make-move"
+                onClick={() => handleMakeMove("80")}
+                disabled={!isPlayerTurn || (moveNumber === 1 && (() => {
+                  let count = 0;
+                  for (let i = 0; i < 8; i++) {
+                    if (cardSelections & (1 << i)) count++;
+                  }
+                  return count !== 4;
+                })())}
+                style={{
+                  background: isPlayerTurn && (moveNumber !== 1 || (() => {
+                    let count = 0;
+                    for (let i = 0; i < 8; i++) {
+                      if (cardSelections & (1 << i)) count++;
+                    }
+                    return count === 4;
+                  })()) ? '#2563eb' : '#d1d5db',
+                  color: isPlayerTurn && (moveNumber !== 1 || (() => {
+                    let count = 0;
+                    for (let i = 0; i < 8; i++) {
+                      if (cardSelections & (1 << i)) count++;
+                    }
+                    return count === 4;
+                  })()) ? '#ffffff' : '#6b7280',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '8px 24px',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  cursor: isPlayerTurn && (moveNumber !== 1 || (() => {
+                    let count = 0;
+                    for (let i = 0; i < 8; i++) {
+                      if (cardSelections & (1 << i)) count++;
+                    }
+                    return count === 4;
+                  })()) ? 'pointer' : 'default',
+                  minWidth: '256px',
+                }}
+              >
+                {moveNumber === 1 ? 'Swap Cards' : 'Make Move'}
+              </Button>
+            </Box>
           </Box>
           <Typography style={{ marginTop: '16px', fontSize: '14px', color: '#666' }}>
             {moveDescription}
