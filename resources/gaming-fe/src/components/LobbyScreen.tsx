@@ -81,16 +81,28 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
       );
   } else {
       aliasDisplay = (
-        <span onClick={() => setEditingAlias(true)} >{myAlias}</span>
+        <span
+            style={{
+            marginBottom: '16px',
+            background: '#1976d2', // : '#b0bec5',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '5px',
+            padding: '8px 16px',
+          }}
+        onClick={() => setEditingAlias(true)} >Your Alias: {myAlias}</span>
       );
   };
 
   return (
     <Box p={4} maxWidth={600} mx="auto">
+      <Box flex-direction="row" >
       <Typography variant="h4" gutterBottom>
-        Lobby — Alias: {aliasDisplay}
+        Chia Gaming Lobby
       </Typography>
-
+      <Typography>{aliasDisplay}</Typography>
+      </Box>
+      <span style={{ width: '0px', height: '0px', overflow: 'hidden', position: 'relative' }} aria-label="partner-target-url">{gotoUrl}</span>
       <Box mb={3}>
         <Typography variant="h6">Connected Players</Typography>
         <List>
