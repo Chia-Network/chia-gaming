@@ -81,16 +81,27 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
       );
   } else {
       aliasDisplay = (
-        <span onClick={() => setEditingAlias(true)} >{myAlias}</span>
+        <span
+            style={{
+            marginBottom: '16px',
+            background: '#1976d2', // : '#b0bec5',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '5px',
+            padding: '8px 16px',
+          }}
+        onClick={() => setEditingAlias(true)} >{myAlias}</span>
       );
   };
 
   return (
     <Box p={4} maxWidth={600} mx="auto">
+      <Box flex-direction="row" >
       <Typography variant="h4" gutterBottom>
-        Lobby — Alias: {aliasDisplay}
+        Chia Gaming Lobby
       </Typography>
-
+      <Typography>Your Alias: {aliasDisplay}</Typography>
+      </Box>
       <Box mb={3}>
         <Typography variant="h6">Connected Players</Typography>
         <List>
@@ -103,7 +114,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
       </Box>
 
       <Box mb={3}>
-        <Typography variant="h6">Active Rooms</Typography>
+        <Typography variant="h6">Open Games</Typography>
         <List>
           {rooms.map(r => (
             <ListItem key={r.token} dense secondaryAction={
@@ -121,7 +132,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
       </Box>
 
       <Box mb={3}>
-        <Typography variant="h6">Chat</Typography>
+        <Typography variant="h6">Lobby Chat (All Users)</Typography>
         <Box mb={1} height={200} overflow="auto" border="1px solid #ccc" p={1}>
           {messages.map((m, i) => (
             <Typography key={i} variant="body2">
@@ -144,13 +155,13 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
       </Box>
 
       <Box display="flex" justifyContent="space-between">
-        <Button variant="outlined" onClick={openDialog}>
-          Generate Room
+        <Button variant="outlined" onClick={openDialog} aria-label="generate-room">
+          Start Game Session
         </Button>
       </Box>
 
       <Dialog open={dialogOpen} onClose={closeDialog}>
-        <DialogTitle>Create a Room</DialogTitle>
+        <DialogTitle>Start Game Session</DialogTitle>
         <DialogContent>
           <TextField
             label="Game"

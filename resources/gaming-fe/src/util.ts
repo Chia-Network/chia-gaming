@@ -43,7 +43,9 @@ export function generateOrRetrieveAlias(): string {
     return previousName;
   }
 
-  previousName = `newUser${uuidv4()}`;
+  const long_uuid = uuidv4();
+  const short_uuid = long_uuid.split('-', 1);
+  previousName = short_uuid ? `newUser-${short_uuid}` : `newUser-${long_uuid}`;
   updateAlias(previousName);
   return previousName;
 }
