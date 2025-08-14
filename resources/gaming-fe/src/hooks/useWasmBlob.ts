@@ -469,9 +469,11 @@ class WasmBlobWrapper {
       opponent_moved: (game_id, readable_move_hex) => {
         console.error('got opponent move', game_id, readable_move_hex);
         this.messageQueue.push({ takeOpponentMove: { game_id, readable_move_hex, moveNumber: this.moveNumber } });
+        this.messageQueue.push({ takeOpponentMove: { game_id, readable_move_hex, moveNumber: this.moveNumber } });
       },
       game_message: (game_id, readable_hex) => {
         console.error('got opponent msg', game_id, readable_hex);
+        this.messageQueue.push({ takeGameMessage: { game_id, readable_hex, moveNumber: this.moveNumber } });
         this.messageQueue.push({ takeGameMessage: { game_id, readable_hex, moveNumber: this.moveNumber } });
       },
       game_finished: (game_id, amount) => {
