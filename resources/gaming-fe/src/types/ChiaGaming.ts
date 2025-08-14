@@ -382,3 +382,205 @@ export class CalpokerOutcome {
     console.log('bob selects', this.bob_selects.toString(16), this.bob_used_cards);
   }
 }
+
+export const suitSymbols = ['♠', '♥', '♦', '♠', '♣'];
+export const formatRank = (rankArr: number[]): string => {
+  if (rankArr.length === 0) return '';
+  const rankValue = rankArr[0];
+  if (rankValue === 10) return '10';
+  if (rankValue === 11) return 'J';
+  if (rankValue === 12) return 'Q';
+  if (rankValue === 13) return 'K';
+  if (rankValue === 14) return 'A';
+  return rankValue.toString();
+};
+
+export interface CardData {
+  rank: string;
+  suit: string;
+  value: number;
+}
+
+export interface SwappingCard extends CardData {
+  originalIndex: number;
+  targetIndex: number;
+  id: string;
+}
+
+export interface ExplodedPostGameCard {
+  index: number;
+  card: number[];
+  originallyMine: boolean;
+  color: string;
+}
+
+export interface MovingCardData {
+  card: CardData & { id: string };
+  startPosition: { x: number; y: number };
+  endPosition: { x: number; y: number };
+  direction: string;
+}
+
+export interface PlayerSwappingCardLists {
+  final: boolean;
+  originalMyCards: number[][];
+  originalTheirCards: number[][];
+  player: SwappingCard[];
+  ai: SwappingCard[];
+};
+
+// Function to convert card value array to display format
+export const formatCard = (cardValue: number[]): CardData => {
+  const suitSymbols = ['♠', '♥', '♦', '♠', '♣'];
+  const rank = cardValue.slice(0, -1);
+  const suitIndex = cardValue.slice(-1)[0] as number;
+  const suit = suitSymbols[suitIndex] || suitSymbols[0];
+
+  const formatRank = (rankArr: number[]): string => {
+    if (rankArr.length === 0) return '';
+    const rankValue = rankArr[0];
+    if (rankValue === 10) return '10';
+    if (rankValue === 11) return 'J';
+    if (rankValue === 12) return 'Q';
+    if (rankValue === 13) return 'K';
+    if (rankValue === 14) return 'A';
+    return rankValue.toString();
+  };
+
+  return {
+    rank: formatRank(rank),
+    suit: suit,
+    value: rank[0] || 0
+  };
+};
+
+interface PlayerSwapData {
+  // Internal animation state
+  gameState: 'playing' | 'swapping' | 'final';
+  setGameState: (state: 'playing' | 'swapping' | 'final') => void;
+  showSwapAnimation: boolean;
+  setShowSwapAnimation: (show: boolean) => void;
+  movingCards: MovingCardData[];
+  setMovingCards: (cards: MovingCardData[]) => void;
+  swappingCards: PlayerSwappingCardLists;
+}
+
+export const triggerSwapAnimation: (swap: PlayerSwapData) => void = ({
+  // Internal animation state
+  gameState,
+  setGameState,
+  showSwapAnimation,
+  setShowSwapAnimation,
+  movingCards,
+  setMovingCards,
+  swappingCards,
+}) => {
+  setGameState('swapping');
+
+  // Cards to swap are the ones NOT selected
+  // const playerSwapIndices: number[] = [];
+  // const aiSwapIndices: number[] = [];
+  // for (let i = 0; i < Math.min(playerHand.length, opponentHand.length); i++) {
+  //   if (!playerSelected.includes(i)) {
+  //     playerSwapIndices.push(i);
+  //     aiSwapIndices.push(i); // AI swaps corresponding positions
+  //   }
+  // }
+
+  // const playerSwapCards = playerSwapIndices.map(i => ({
+  //   ...formatCard(playerHand[i]),
+  //   originalIndex: i,
+  //   id: `player-${i}`
+  // }));
+  // const aiSwapCards = aiSwapIndices.map(i => ({
+  //   ...formatCard(opponentHand[i]),
+  //   originalIndex: i,
+  //   id: `ai-${i}`
+  // }));
+
+  // Start animation after brief delay to ensure DOM is ready
+  setTimeout(() => {
+    const movingCardData: MovingCardData[] = [];
+
+    // Calculate positions for each swapping card
+    swappingCards.ai.forEach(card => {
+      const playerCardIndex = card.targetIndex;
+      const aiCardIndex = card.originalIndex;
+
+      const playerSource = document.querySelector(`[data-card-id="player-${playerCardIndex}"]`);
+      const aiTarget = document.querySelector(`[data-card-id="ai-${aiCardIndex}"]`);
+      const aiSource = document.querySelector(`[data-card-id="ai-${aiCardIndex}"]`);
+      const playerTarget = document.querySelector(`[data-card-id="player-${playerCardIndex}"]`);
+
+      if (!aiSource || !playerTarget) {
+        console.warn('missing cards of', playerSource, aiTarget);
+        return;
+      }
+
+      const aiRect = aiSource.getBoundingClientRect();
+      const playerRect = playerTarget.getBoundingClientRect();
+
+      // AI card moving to player position
+      movingCardData.push({
+        card: {
+          ...formatCard(swappingCards.originalTheirCards[aiCardIndex]),
+          id: `ai-${aiCardIndex}`
+        },
+        startPosition: {
+          x: aiRect.left + aiRect.width / 2,
+          y: aiRect.top + aiRect.height / 2
+        },
+        endPosition: {
+          x: playerRect.left + playerRect.width / 2,
+          y: playerRect.top + playerRect.height / 2
+        },
+        direction: 'aiToPlayer'
+      });
+    });
+
+    // swappingCards.player.forEach(card => {
+    //   const playerCardIndex = card.originalId;
+    //   const aiCardIndex = card.targetId;
+
+    //   const playerSource = document.querySelector(`[data-card-id="player-${playerCardIndex}"]`);
+    //   const aiTarget = document.querySelector(`[data-card-id="ai-${aiCardIndex}"]`);
+    //   const aiSource = document.querySelector(`[data-card-id="ai-${aiCardIndex}"]`);
+    //   const playerTarget = document.querySelector(`[data-card-id="player-${playerCardIndex}"]`);
+
+    //   if (!aiSource || !playerTarget) {
+    //     console.warn('missing cards of', playerSource, aiTarget);
+    //     return;
+    //   }
+
+    //   const aiRect = aiSource.getBoundingClientRect();
+    //   const playerRect = playerTarget.getBoundingClientRect();
+
+    //   // AI card moving to player position
+    //   movingCardData.push({
+    //     card: {
+    //       ...formatCard(opponentHand[aiCardIndex]),
+    //       id: `ai-${aiCardIndex}`
+    //     },
+    //     startPosition: {
+    //       x: aiRect.left + aiRect.width / 2,
+    //       y: aiRect.top + aiRect.height / 2
+    //     },
+    //     endPosition: {
+    //       x: playerRect.left + playerRect.width / 2,
+    //       y: playerRect.top + playerRect.height / 2
+    //     },
+    //     direction: 'aiToPlayer'
+    //   });
+    // });
+
+    setMovingCards(movingCardData);
+    setShowSwapAnimation(true);
+  }, 100);
+
+  // Clean up animation and proceed with game after 2.5 seconds
+  setTimeout(() => {
+    // setShowSwapAnimation(false);
+    setMovingCards([]);
+    // setGameState('final');
+  }, 2500);
+}
