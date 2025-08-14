@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useCallback } from 'react';
-import { Paper, Typography } from '@mui/material';
+import { suitSymbols, formatRank } from '../types/ChiaGaming';
 
 interface PlayingCardProps {
   id: string;
@@ -10,6 +10,7 @@ interface PlayingCardProps {
   selected: boolean;
   selectionColor?: string;
   setSelection: (index: number, selected: boolean) => void;
+  isBeingSwapped?: boolean;
 }
 
 const PlayingCard: React.FC<PlayingCardProps> = ({
@@ -20,53 +21,75 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   setSelection,
   selectionColor,
   isFaceDown = false,
+  isBeingSwapped = false,
 }) => {
-  const suitNames = ['Q', '♥', '♦', '♤', '♧'];
+  // Match the exact suit colors from calpoker-remixed
+  const suitColors = ['#000000', '#ef4444', '#3b82f6', '#000000', '#16a34a'];
+  
   const rank = cardValue.slice(0, -1);
-  const suit = suitNames[(cardValue.slice(-1)[0] as any)];
+  const suitIndex = cardValue.slice(-1)[0] as number;
+  const suit = suitSymbols[suitIndex] || suitSymbols[0];
+  const suitColor = suitColors[suitIndex] || suitColors[0];
+  
   const setSelectedCB = () => {
     const newSelected = !selected;
     setSelection(index, newSelected);
   };
 
-  const isRedSuit = suit === '♥' || suit === '♦';
-  const suitColor = isRedSuit ? 'red' : 'black';
-
-  const cardStyle = {
-    width: '60px',
-    height: '90px',
-    marginRight: '8px',
+  const cardStyle: React.CSSProperties = {
+    width: '64px',
+    height: '96px',
+    backgroundColor: selected ? '#dbeafe' : '#ffffff',
+    color: suitColor,
     borderRadius: '8px',
-    border: '1px solid #000',
     display: 'flex',
-    flexDirection: 'column' as 'column',
-    justifyContent: 'space-between',
-    padding: '8px',
-    backgroundColor: selectionColor ? selectionColor : selected ? '#ddd' : (isFaceDown ? '#2E7D32' : '#FFFFFF'),
-    color: isFaceDown ? '#FFFFFF' : suitColor,
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '14px',
+    margin: '0 4px',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+    border: selected ? '2px solid #3b82f6' : '2px solid #d1d5db',
     cursor: 'pointer',
-    textAlign: 'center' as 'center',
-    boxSizing: 'border-box' as 'border-box',
+    fontWeight: 'bold',
+    position: 'relative' as 'relative',
+    userSelect: 'none' as 'none',
+    transition: 'all 0.2s',
+    opacity: isBeingSwapped ? 0.5 : 1,
+    transform: isBeingSwapped ? 'scale(0.95)' : 'scale(1)',
   };
 
+  const cardBackStyle: React.CSSProperties = {
+    ...cardStyle,
+    background: `
+      repeating-linear-gradient(135deg, rgba(59, 130, 246, 0.3) 0 8px, transparent 8px 16px),
+      repeating-linear-gradient(45deg, rgba(59, 130, 246, 0.3) 0 8px, transparent 8px 16px),
+      #93c5fd
+    `,
+    color: '#93c5fd',
+    border: '2px solid #60a5fa',
+  };
+
+  const formattedRank = formatRank(rank);
+
   return (
-    <Paper id={id} elevation={3} style={cardStyle} onClick={setSelectedCB}>
+    <div 
+      id={id}
+      data-card-id={id}
+      style={isFaceDown ? cardBackStyle : cardStyle} 
+      onClick={setSelectedCB}
+    >
       {!isFaceDown && (
         <>
-          <Typography variant="body2" style={{ fontWeight: 'bold' }}>
-            {rank}
+          <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+            {formattedRank}
+          </div>
+          <div style={{ fontSize: '24px' }}>
             {suit}
-          </Typography>
-          <Typography
-            variant="body2"
-            style={{ fontWeight: 'bold', transform: 'rotate(180deg)' }}
-          >
-            {rank}
-            {suit}
-          </Typography>
+          </div>
         </>
       )}
-    </Paper>
+    </div>
   );
 };
 
