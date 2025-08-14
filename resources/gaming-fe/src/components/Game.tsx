@@ -37,6 +37,8 @@ const Game: React.FC = () => {
     outcome,
     stopPlaying
   } = useWasmBlob();
+  const [mostRecentMove, setMostRecentMove] = useState(0);
+  const [gameLogData, setGameLogData] = useState<string[]>([]);
 
   const setStateFromMessage = useCallback((evt: any) => {
     setState(evt.data);
@@ -96,6 +98,12 @@ const Game: React.FC = () => {
   ][moveNumber];
 
   if (outcome) {
+    if (mostRecentMove !== moveNumber) {
+      setMostRecentMove(moveNumber);
+      const newGameLogData = [...gameLogData];
+      newGameLogData.unshift(banner);
+      setGameLogData(newGameLogData);
+    }
     return (
       <div id='total'>
         <div id='overlay'> </div>
@@ -137,6 +145,10 @@ const Game: React.FC = () => {
         </Box>
       </div>
     );
+  } else {
+    if (mostRecentMove !== 0) {
+      setMostRecentMove(0);
+    }
   }
 
   return (
@@ -182,7 +194,7 @@ const Game: React.FC = () => {
       <br/>
       <Typography>{moveDescription}</Typography>
       <br/>
-      <GameLog log={[]} />
+      <GameLog log={gameLogData} />
     </Box>
   );
 };
