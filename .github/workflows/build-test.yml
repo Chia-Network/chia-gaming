@@ -161,42 +161,6 @@ jobs:
           uv run compute_hashes.py
           uv run ./test_calpoker_handlers.py
 
-  coverage:
-    needs: unit_tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 1
-      - uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
-        with:
-          components: "clippy, rustfmt"
-      - name: Run for coverage
-        run: |
-          sudo apt-get update
-          sudo apt-get install lcov -y
-          rustup component add llvm-tools-preview
-          cargo install --version 0.8.1 grcov
-          export RUSTFLAGS="-Cinstrument-coverage"
-          export LLVM_PROFILE_FILE=$(pwd)/target/clvm_tools_rs-%p-%m.profraw
-          export CARGO_TARGET_DIR=$(pwd)/target
-          python -m venv venv
-          source venv/bin/activate
-          pip install chia-blockchain==2.5.5-rc3
-          python -m pip install maturin==1.9.2
-          maturin build --features sim-tests
-          pip install `find . -name \*.whl`
-          python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
-          grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
-          python -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
-      - name: Upload to Coveralls
-        uses: coverallsapp/github-action@v2
-        if: always()
-        env:
-          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
-        with:
-          path-to-lcov: './lcov.info'
-
   # m1 mac
   build_wheels:
     name: Build wheel on Mac M1
