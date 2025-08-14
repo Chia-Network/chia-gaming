@@ -1,8 +1,15 @@
 import React from "react";
 import { useCallback, useState } from "react";
-import { Box, Button, Typography, Paper } from "@mui/material";
 import { popcount } from '../util';
 import PlayingCard from "./PlayingCard";
+
+interface SwappingCard {
+  rank: string;
+  suit: string;
+  value: number;
+  originalIndex: number;
+  id: string;
+}
 
 interface PlayerSectionProps {
   playerNumber: number;
@@ -12,6 +19,8 @@ interface PlayerSectionProps {
   handleMakeMove: (move: any) => void;
   cardSelections: number,
   setCardSelections: (mask: number) => void;
+  swappingCards?: { player: SwappingCard[], ai: SwappingCard[] };
+  showSwapAnimation?: boolean;
 }
 
 const PlayerSection: React.FC<PlayerSectionProps> = ({
@@ -22,6 +31,8 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
   handleMakeMove,
   cardSelections,
   setCardSelections,
+  swappingCards = { player: [], ai: [] },
+  showSwapAnimation = false,
 }) => {
   let doHandleMakeMove = () => {
     let moveData = "80";
@@ -37,39 +48,115 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
     setCardSelections(selections);
     console.warn(isPlayerTurn, moveNumber, 'cardSelections', selections, selected);
   };
+
+  const sectionStyle: React.CSSProperties = {
+    width: '100%',
+    position: 'relative',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '24px',
+    backgroundColor: '#ffffff',
+    marginBottom: '32px',
+    borderRadius: '8px',
+    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+  };
+
+  const titleStyle: React.CSSProperties = {
+    display: 'none', // Hide title as it's not in the concept
+  };
+
+  const handLabelStyle: React.CSSProperties = {
+    display: 'none', // Hide label as it's not in the concept
+  };
+
+  const cardRowStyle: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'center',
+    marginBottom: '16px',
+    gap: '8px',
+    flexWrap: 'wrap',
+  };
+
+  const actionLineStyle: React.CSSProperties = {
+    textAlign: 'center',
+    fontSize: '14px',
+    color: '#1976d2',
+    minHeight: '20px',
+    marginBottom: '8px',
+  };
+
+  // Count selected cards
+  const playerSelected: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    if (cardSelections & (1 << i)) {
+      playerSelected.push(i);
+    }
+  }
+
+  // Button should be enabled if:
+  // - It's the player's turn AND
+  // - Either it's not move 1 (card selection), OR it's move 1 and 4 cards are selected
+  const isButtonEnabled = isPlayerTurn && (moveNumber !== 1 || playerSelected.length === 4);
+
+  const buttonStyle: React.CSSProperties = {
+    background: isButtonEnabled ? '#2563eb' : '#9ca3af',
+    color: isButtonEnabled ? '#ffffff' : '#6b7280',
+    border: 'none',
+    borderRadius: '8px',
+    padding: '12px 24px',
+    fontSize: '16px',
+    fontWeight: 'bold',
+    cursor: isButtonEnabled ? 'pointer' : 'not-allowed',
+    transition: 'background 0.2s',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.07)',
+    minWidth: '120px',
+    whiteSpace: 'nowrap',
+  };
+
   return (
-    <Paper
-      elevation={3}
-      style={{
-        padding: "16px",
-        flexGrow: 1,
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <Typography variant="h5">
-      {"You"}
-      </Typography>
-      <br />
-      <Typography variant="h6">Your Hand:</Typography>
-      <br />
-      <Box display="flex" flexDirection="row" mb={2}>
-        {playerHand.map((card: number[], index) => (
-          <PlayingCard id={`card-${playerNumber}-${card}`} key={index} index={index} selected={!!(cardSelections & (1 << index))} cardValue={card} setSelection={setSelection} />
-        ))}
-      </Box>
-      <Box mt="auto">
-        <Button
-          variant="contained"
-          color="secondary"
-          onClick={doHandleMakeMove}
-          disabled={!isPlayerTurn || (moveNumber === 1 && popcount(cardSelections) != 4)}
-          style={{ marginRight: "8px" }}
-        >
-          Make Move
-        </Button>
-      </Box>
-    </Paper>
+    <div style={sectionStyle} data-area="player">
+      <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' }}>Your Hand</h3>
+      <div style={cardRowStyle}>
+        {playerHand.map((card: number[], index) => {
+          const isBeingSwapped = showSwapAnimation && swappingCards.player.some(c => c.originalIndex === index);
+          return (
+            <PlayingCard
+              id={`player-${index}`}
+              key={index}
+              index={index}
+              selected={!!(cardSelections & (1 << index))}
+              cardValue={card}
+              setSelection={setSelection}
+              isBeingSwapped={isBeingSwapped}
+            />
+          );
+        })}
+      </div>
+      {moveNumber === 1 && (
+        <div style={{ marginBottom: '16px', textAlign: 'center', fontSize: '16px', fontWeight: 'bold' }}>
+          Select 4 cards to KEEP ({playerSelected.length}/4 selected)
+        </div>
+      )}
+      <button
+        aria-label="make-move"
+        onClick={doHandleMakeMove}
+        disabled={!isButtonEnabled}
+        style={buttonStyle}
+        onMouseEnter={(e) => {
+          if (isButtonEnabled) {
+            e.currentTarget.style.background = '#1d4ed8';
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (isButtonEnabled) {
+            e.currentTarget.style.background = '#2563eb';
+          }
+        }}
+      >
+        {moveNumber === 1 ? 'Swap Cards' : 'Make Move'}
+      </button>
+    </div>
   );
 };
 
