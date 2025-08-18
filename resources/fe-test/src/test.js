@@ -3,19 +3,48 @@ const jasmine = require('jasmine');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('node:child_process');
-const {Builder, Browser, By, Key, until} = require('selenium-webdriver');
+const {Builder, Browser, By, Key, WebDriver, until} = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
+const firefox = require('selenium-webdriver/firefox');
 const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitEnabled, selectSimulator} = require('./util.js');
 
+// Other browser
+const geckodriver = require('geckodriver');
+
+async function test2(baseUrl) {
+  const options1 = new firefox.Options();
+  options1.addArguments('-headless');
+  options1.setBinary('/snap/firefox/current/usr/lib/firefox/firefox');
+  const driver = new Builder()
+    .forBrowser(Browser.FIREFOX)
+    .setFirefoxOptions(options1)
+    .build();
+
+  await driver.get(baseUrl);
+
+  // Select simulator
+  console.log('select simulator');
+  selectSimulator(driver);
+
+  // focus the iframe
+  console.log('focus iframe');
+  const iframe = await driver.wait(until.elementLocated(byAttribute("id", "subframe")));
+  await driver.switchTo().frame(iframe);
+
+  console.log('waiting for game to start');
+  return driver;
+}
+
+// Main session
 const options1 = new chrome.Options();
 options1.addArguments('--remote-debugging-port=9222');
 
 // You can use a remote Selenium Hub, but we are not doing that here
 require('chromedriver');
 const driver = new Builder()
-      .forBrowser(Browser.CHROME)
-      .setChromeOptions(options1)
-      .build();
+  .forBrowser(Browser.CHROME)
+  .setChromeOptions(options1)
+  .build();
 
 // Define a category of tests using test framework, in this case Jasmine
 describe("Basic element tests", function() {
@@ -72,29 +101,21 @@ describe("Basic element tests", function() {
     console.log('partner url text', partnerUrl);
     expect(partnerUrl.substr(0, 4)).toBe('http');
 
-    console.log('spawn second browser');
-    fs.writeFileSync('../test2/base.url', partnerUrl);
-    const test2 = spawn('./node_modules/.bin/jest', ['--useStderr', '--silent=false'], {
-	cwd: '../test2'
-    });
-    test2.stdout.on('data', (data) => {
-        console.log('stdout data from test2', data.toString('utf8'));
-    });
-    test2.stderr.on('data', (data) => {
-        console.log('stderr data from test2', data.toString('utf8'));
-    });
-    test2.on('close', (exitcode) => {
-	console.log('test2 closed with code', exitcode);
+    // Spawn second browser.
+    await test2(partnerUrl).catch((e) => {
+      console.error('error executing browser 2', e);
+      driver.quit();
+    }).then(async (ffdriver) => {
+      console.log('wait for game to start');
+      await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
+
+      await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+      // Player1 and Player2 are in the game.
+
+      console.log('quit');
+      await driver.quit();
+      await ffdriver.quit();
     });
 
-    console.log('wait for game to start');
-    await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
-
-    await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
-
-    // Player1 and Player2 are in the game.
-
-    console.log('quit');
-    await driver.quit();
   }, 100000);
 });
