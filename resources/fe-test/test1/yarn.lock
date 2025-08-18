@@ -705,7 +705,7 @@ asynckit@^0.4.0:
 
 axios@^1.7.4:
   version "1.9.0"
-  resolved "https://registry.yarnpkg.com/axios/-/axios-1.9.0.tgz#25534e3b72b54540077d33046f77e3b8d7081901"
+  resolved "https://registry.npmjs.org/axios/-/axios-1.9.0.tgz"
   integrity sha512-re4CqKTJaURpzbLHtIi6XpDv20/CnpXOtjRY5/CU32L8gU8ek9UIivcfvSWvmKEngmVbrUtPpdDwWDWL7DNHvg==
   dependencies:
     follow-redirects "^1.15.6"
@@ -902,7 +902,7 @@ chokidar@^3.5.3:
 
 chromedriver@135.0.0:
   version "135.0.0"
-  resolved "https://registry.yarnpkg.com/chromedriver/-/chromedriver-135.0.0.tgz#9bdbd8363d2ad0dae8f848ec7241fd58f4b9e221"
+  resolved "https://registry.npmjs.org/chromedriver/-/chromedriver-135.0.0.tgz"
   integrity sha512-ilE3cIrIieiRU/a6MNpt0CL0UZs2tu0lQAes+el5SV03MB1zYIEXy+dDeueid/g8AmT1loy7TB2fjWwcHLY8lg==
   dependencies:
     "@testim/chrome-version" "^1.1.4"
@@ -1276,9 +1276,9 @@ flat@^5.0.2:
   integrity sha512-b6suED+5/3rTpUBdG1gupIl8MPFCAMA0QXwmljLhvCUKcUvdE4gWky9zpuGCcXHOsz4J9wPGNWq6OKpmIzz3hQ==
 
 follow-redirects@^1.15.6:
-  version "1.15.9"
-  resolved "https://registry.yarnpkg.com/follow-redirects/-/follow-redirects-1.15.9.tgz#a604fa10e443bf98ca94228d9eebcc2e8a2c8ee1"
-  integrity sha512-gew4GsXizNgdoRyqmyfMHyAmXsZDk6mHkSxZFCzW9gwlbtOW44CDtYavM+y+72qD/Vq2l550kMF52DT8fOLJqQ==
+  version "1.15.11"
+  resolved "https://registry.yarnpkg.com/follow-redirects/-/follow-redirects-1.15.11.tgz#777d73d72a92f8ec4d2e410eb47352a56b8e8340"
+  integrity sha512-deG2P0JfjrTxl50XGCDyfI97ZGVCxIpfKYmfyrQ54n5FO/0gfIES8C/Psl6kWVDolizcaaxZJnTS0QSMxvnsBQ==
 
 form-data@^4.0.0:
   version "4.0.3"
