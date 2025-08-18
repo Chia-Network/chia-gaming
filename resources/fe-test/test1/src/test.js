@@ -32,6 +32,12 @@ describe("Basic element tests", function() {
     const iframe = await driver.wait(until.elementLocated(byAttribute("id", "subframe")));
     await driver.switchTo().frame(iframe);
 
+    // Select the simulator
+    await selectSimulator(driver);
+
+    // End for now
+    process.exit(1);
+
     // Test chat loopback
     // let chatEntry = await driver.wait(until.elementLocated(byElementAndAttribute("input", "id", "«r0»")));
     // await chatEntry.sendKeys("test?");
@@ -47,7 +53,7 @@ describe("Basic element tests", function() {
     console.log('waiting for generate button');
     let generateRoomButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "generate-room")));
     console.log('wait for enabled');
-    await waitEnabled(driver, generateRoomButton); 
+    await waitEnabled(driver, generateRoomButton);
     console.log('press enter');
     await sendEnter(generateRoomButton);
 

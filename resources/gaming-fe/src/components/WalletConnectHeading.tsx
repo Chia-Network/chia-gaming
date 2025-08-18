@@ -255,7 +255,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
           Chia Gaming - WalletConnect {sessionConnected}
         </div>
         <div style={{ display: 'flex', flexGrow: 1 }}> </div>
-        <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, width: '3em', height: '3em', alignItems: 'center', justifyContent: 'center' }} onClick={toggleExpanded}>☰</div>
+        <div aria-label="control-menu" style={{ display: 'flex', flexGrow: 0, flexShrink: 0, width: '3em', height: '3em', alignItems: 'center', justifyContent: 'center' }} onClick={toggleExpanded}>☰</div>
       </div>
       {ifExpanded}
     </div>
