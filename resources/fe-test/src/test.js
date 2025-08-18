@@ -14,7 +14,9 @@ const geckodriver = require('geckodriver');
 async function test2(baseUrl) {
   const options1 = new firefox.Options();
   options1.addArguments('-headless');
-  options1.setBinary('/snap/firefox/current/usr/lib/firefox/firefox');
+  if (process.env.FIREFOX) {
+    options1.setBinary(process.env.FIREFOX);
+  }
   const driver = new Builder()
     .forBrowser(Browser.FIREFOX)
     .setFirefoxOptions(options1)
