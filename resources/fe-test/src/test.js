@@ -33,7 +33,9 @@ async function test2(baseUrl) {
   const iframe = await driver.wait(until.elementLocated(byAttribute("id", "subframe")));
   await driver.switchTo().frame(iframe);
 
-  console.log('waiting for game to start');
+  console.log('Wait for handshake on bob side');
+  await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
+
   return driver;
 }
 
@@ -55,6 +57,9 @@ describe("Basic element tests", function() {
   it("starts", async function() {
     // Load the login page
     await driver.get(baseUrl);
+
+    console.log('15 second wait to open dev tools');
+    await wait(driver, 15.0);
 
     // Select simulator
     selectSimulator(driver);
@@ -108,9 +113,10 @@ describe("Basic element tests", function() {
       console.error('error executing browser 2', e);
       driver.quit();
     }).then(async (ffdriver) => {
-      console.log('wait for game to start');
+      console.log('wait for game to start on alice side');
       await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
 
+      console.log('wait for alice make move button');
       await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
       // Player1 and Player2 are in the game.
 
@@ -119,5 +125,5 @@ describe("Basic element tests", function() {
       await ffdriver.quit();
     });
 
-  }, 100000);
+  }, 1 * 60 * 60 * 1000);
 });

@@ -282,7 +282,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   does_initial_spend() {
     return (target: string, amt: number) => {
-      return fetch(`${this.baseUrl}/create_spendable?who=${generateOrRetrieveUniqueId()}&target=${target}&amt=${amt}`, {
+      return fetch(`${this.baseUrl}/create_spendable?who=${generateOrRetrieveUniqueId()}&target=${target}&amount=${amt}`, {
         method: "POST"
       }).then((res) => res.json()).then((res) => {
         // Returns the coin string

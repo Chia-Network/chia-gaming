@@ -60,6 +60,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
       </Box>
       <Box mt="auto">
         <Button
+          aria-label="make-move"
           variant="contained"
           color="secondary"
           onClick={doHandleMakeMove}
@@ -74,4 +75,3 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
 };
 
 export default PlayerSection;
-

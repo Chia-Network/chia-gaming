@@ -16,7 +16,7 @@ const WaitingScreen: React.FC<WaitingScreenProps> = ({ stateName, messages }) =>
       justifyContent="center"
       height="100vh"
     >
-      <Typography variant="h4">{stateName}</Typography>
+      <Typography aria-label="waiting-state" variant="h4">{stateName}</Typography>
       <div>{messages.map((msg) => <div>{msg}</div>)}</div>
       <CircularProgress />
     </Box>
