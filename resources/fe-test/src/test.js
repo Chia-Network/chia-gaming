@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const {Builder, Browser, By, Key, WebDriver, until} = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
 const firefox = require('selenium-webdriver/firefox');
-const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, getPlayerCards} = require('./util.js');
+const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, getPlayerCards, waitForNonError} = require('./util.js');
 
 // Other browser
 const geckodriver = require('geckodriver');
@@ -57,7 +57,8 @@ async function firefox_wait_for_cards(driver) {
 }
 
 async function firefox_press_button_second_game(driver) {
-  const makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+  const makeMoveButton = await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("aria-label", "make-move"))), (elt) => waitAriaEnabled(driver, elt), 2.0)
+  console.log('makeMoveButton firefox', makeMoveButton);
   makeMoveButton.click();
 }
 
@@ -158,9 +159,6 @@ describe("Basic element tests", function() {
     console.log('first game complete');
     await firefox_press_button_second_game(ffdriver);
 
-    console.log('wait for end banner (1)');
-    let endBanner = await driver.wait(until.elementLocated(byAttribute("aria-label", "end-banner")));
-
     console.log('alice random number (2)');
     makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
     await waitAriaEnabled(driver, makeMoveButton);
@@ -179,21 +177,8 @@ describe("Basic element tests", function() {
     await waitAriaEnabled(driver, makeMoveButton);
     makeMoveButton.click();
 
-    console.log('wait for end banner (2)');
-    endBanner = await driver.wait(until.elementLocated(byAttribute("aria-label", "end-banner")));
-
     console.log('stop the game');
-    const stopButton = null;
-    for (var i = 0; i < 10; i++) {
-      try {
-        stopButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "stop-playing")));
-        await waitAriaEnabled(driver, stopButton);
-        break;
-      } catch (e) {
-        console.log('waiting for stop button got stale ref', i, e);
-      }
-      await wait(driver, 0.5);
-    }
+    let stopButton = await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("aria-label", "stop-playing"))), (elt) => waitAriaEnabled(driver, elt), 1.0);
     stopButton.click();
 
     console.log('awaiting shutdown');

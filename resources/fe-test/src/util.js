@@ -36,7 +36,6 @@ async function waitAriaEnabled(driver, element) {
     let i = 0;
     while (i < 10) {
         const shouldExit = await element.getAttribute("aria-disabled");
-        console.log("checking element for aria-disabled", shouldExit);
         if (shouldExit.toString() !== "true") {
             return;
         }
@@ -61,6 +60,21 @@ async function getPlayerCards(driver, iAmPlayer) {
     return firstEightCards;
 }
 
+async function waitForNonError(driver, select, extra, time) {
+    let stopButton = null;
+    for (var i = 0; i < 10; i++) {
+        try {
+            stopButton = await select();
+            await extra(stopButton);
+            break;
+        } catch (e) {
+            console.log('waiting for stop button got stale ref', i, e);
+        }
+        await wait(driver, time);
+    }
+    return stopButton;
+}
+
 module.exports = {
     wait,
     byExactText,
@@ -71,4 +85,5 @@ module.exports = {
     selectSimulator,
     waitAriaEnabled,
     getPlayerCards,
+    waitForNonError
 };

@@ -80,6 +80,8 @@ class WasmBlobWrapper {
     this.opponentHand = [];
     this.finished = false;
     this.qualifyingEvents = 0;
+
+    
   }
 
   kickSystem(flags: number) {
@@ -242,6 +244,9 @@ class WasmBlobWrapper {
       return this.internalTakeBlock(msg.takeBlockData.peak, msg.takeBlockData.block_report);
     } else if (msg.pushSpend) {
       return this.internalPushSpend(msg.pushSpend);
+    } else if (msg.error) {
+      let eres: any = { setError: msg.error };
+      return empty().then(() => eres);
     }
 
     console.error("Unknown event:", msg);
@@ -367,10 +372,11 @@ class WasmBlobWrapper {
     if (!do_initial_spend) {
       throw "Doesn't do initial spend (handle it)";
       return {
-        'setGameConnectionState': {
-          stateIdentifier: "starting",
-          stateDetail: ["doing handshake"]
-        }
+        setError: "starting and testing error"
+        // 'setGameConnectionState': {
+        //   stateIdentifier: "starting",
+        //   stateDetail: ["doing handshake"]
+        // }
       };
     }
 
@@ -382,7 +388,7 @@ class WasmBlobWrapper {
         'setGameConnectionState': {
           stateIdentifier: "starting",
           stateDetail: ["got simulator spend"]
-        }
+        },
       };
     });
   }
@@ -567,7 +573,8 @@ class WasmBlobWrapper {
     });
 
     if (!idle || this.finished) {
-      return { stop: true };
+      result.stop = true;
+      return result;
     }
 
     if (idle.finished && !this.finished) {
@@ -797,7 +804,7 @@ export function useWasmBlob() {
     }
     const keys = Object.keys(state.values);
     keys.forEach((k) => {
-      if (settable[k] && state.values[k] !== undefined) {
+      if (settable[k]) {
         console.warn(k, state.values[k]);
         settable[k](state.values[k]);
       }
