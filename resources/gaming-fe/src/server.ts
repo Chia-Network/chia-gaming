@@ -121,7 +121,9 @@ refreshLobby();
 
 io.on('connection', socket => {
   socket.on('game_message', ({ party, token, msg }) => {
-    console.log('game message', party, token, msg);
+    if (process.env.DEBUG) {
+      console.log('game message', party, token, msg);
+    }
     io.emit('game_message', { party, token, msg });
   });
 

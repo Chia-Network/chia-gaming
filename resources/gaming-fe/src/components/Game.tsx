@@ -105,6 +105,7 @@ const Game: React.FC = () => {
           </Typography>
           <br />
           <Typography
+            aria-label="end-banner"
             variant="h6"
             align="center"
             color={colors[color]}
@@ -144,7 +145,7 @@ const Game: React.FC = () => {
       <Typography variant="h4" align="center">
       {`Cal Poker - move ${moveNumber}`}
       </Typography>
-      <Button aria-label="stop-playing" onClick={stopPlaying} disabled={moveNumber !== 0}>Stop</Button>
+      <Button aria-label="stop-playing" aria-disabled={moveNumber !== 0} onClick={stopPlaying} disabled={moveNumber !== 0}>Stop</Button>
       <br />
       <Typography
         variant="h6"

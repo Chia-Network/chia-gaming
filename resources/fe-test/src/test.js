@@ -56,6 +56,15 @@ async function firefox_wait_for_cards(driver) {
   makeMoveButton.click();
 }
 
+async function firefox_press_button_second_game(driver) {
+  const makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+  makeMoveButton.click();
+}
+
+async function gotShutdown(driver) {
+  await driver.wait(until.elementLocated(byExactText("Cal Poker - shutdown succeeded")));
+}
+
 // Main session
 const options1 = new chrome.Options();
 options1.addArguments('--remote-debugging-port=9222');
@@ -137,7 +146,7 @@ describe("Basic element tests", function() {
     await firefox_wait_for_cards(ffdriver);
 
     console.log('selecting alice cards');
-    const myCards = await getPlayerCards(driver, true);
+    let myCards = await getPlayerCards(driver, true);
     for (var i = 0; i < 4; i++) {
       myCards[i].click();
     }
@@ -146,6 +155,52 @@ describe("Basic element tests", function() {
     await waitAriaEnabled(driver, makeMoveButton);
     makeMoveButton.click();
 
+    console.log('first game complete');
+    await firefox_press_button_second_game(ffdriver);
+
+    console.log('wait for end banner (1)');
+    let endBanner = await driver.wait(until.elementLocated(byAttribute("aria-label", "end-banner")));
+
+    console.log('alice random number (2)');
+    makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+    await waitAriaEnabled(driver, makeMoveButton);
+    makeMoveButton.click();
+
+    await firefox_wait_for_cards(ffdriver);
+
+    console.log('selecting alice cards (2)');
+    myCards = await getPlayerCards(driver, true);
+    for (var i = 0; i < 4; i++) {
+      myCards[i].click();
+    }
+
+    console.log('alice make move (2)');
+    makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+    await waitAriaEnabled(driver, makeMoveButton);
+    makeMoveButton.click();
+
+    console.log('wait for end banner (2)');
+    endBanner = await driver.wait(until.elementLocated(byAttribute("aria-label", "end-banner")));
+
+    console.log('stop the game');
+    const stopButton = null;
+    for (var i = 0; i < 10; i++) {
+      try {
+        stopButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "stop-playing")));
+        await waitAriaEnabled(driver, stopButton);
+        break;
+      } catch (e) {
+        console.log('waiting for stop button got stale ref', i, e);
+      }
+      await wait(driver, 0.5);
+    }
+    stopButton.click();
+
+    console.log('awaiting shutdown');
+    await gotShutdown(ffdriver);
+    await gotShutdown(driver);
+
+    console.log('terminating');
     await wait(driver, 10.0);
 
     console.log('quit');
