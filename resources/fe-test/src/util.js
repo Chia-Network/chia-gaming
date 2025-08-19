@@ -1,0 +1,49 @@
+const {Builder, Browser, By, Key, until} = require('selenium-webdriver');
+
+async function wait(driver, secs) {
+    const actions = driver.actions({async: true});
+    await actions.pause(secs * 1000).perform();
+}
+
+function byExactText(str) {
+    return By.xpath(`//*[text()='${str}']`);
+}
+
+function byAttribute(attr,val,sub) {
+    if (!sub) {
+        sub = '';
+    }
+    return By.xpath(`//*[@${attr}='${val}']${sub}`);
+}
+
+function byElementAndAttribute(element,attr,val) {
+    return By.xpath(`//${element}[@${attr}='${val}']`);
+}
+
+async function sendEnter(element) {
+    await element.sendKeys(Key.ENTER);
+}
+
+async function waitEnabled(driver, element) {
+    const actions = driver.actions({async: true});
+    for (var i = 0; i < 10 && !element.isEnabled(); i++) {
+        await actions.pause(500);
+    }
+}
+
+async function selectSimulator(driver) {
+    const controlMenu = await driver.wait(until.elementLocated(byAttribute("aria-label", "control-menu")));
+    controlMenu.click();
+    const simulatorButton = await driver.wait(until.elementLocated(byExactText("Simulator")));
+    simulatorButton.click();
+}
+
+module.exports = {
+    wait,
+    byExactText,
+    byAttribute,
+    byElementAndAttribute,
+    sendEnter,
+    waitEnabled,
+    selectSimulator
+};

@@ -36,11 +36,22 @@ export type GameConnectionState = {
 export type OpponentMove = [string, string];
 export type GameFinished = [string, number];
 
+export type JsSpendTarget = {
+  "puzzle_hash": string,
+  "amount": Amount
+};
+
+export type JsFundingRequest = {
+  "spend_targets": Array<JsSpendTarget>,
+  "spend_total": Amount
+};
+
 export type IdleResult = {
   "continue_on": boolean,
   "finished": boolean,
   "outbound_transactions": Array<SpendBundle>,
   "outbound_messages": Array<string>,
+  "funding_requests": Array<JsFundingRequest>,
   "opponent_move": OpponentMove | undefined,
   "game_finished": GameFinished | undefined,
   "handshake_done": boolean,
@@ -105,6 +116,11 @@ export interface WasmConnection {
   chia_identity: (seed: string) => any;
   sha256bytes: (hex: string) => string;
 };
+
+export interface CoinOutput {
+  puzzle_hash: string;
+  amount: number;
+}
 
 export class ChiaGame {
   wasm: WasmConnection;
@@ -196,7 +212,8 @@ export interface BlockchainConnection {
   wait_block: () => Promise<number>;
   get_puzzle_and_solution: (coin: string) => Promise<string[] | null>;
   spend: (clvm_hex_spend_blob: string) => Promise<(number | null)[]>;
-  create_spendable: (target_ph: string, amount: number) => Promise<string | null>;
+  select_coins: (amount: number) => Promise<string[] | null>;
+  sign_transaction: (inputs: any[], outputs: CoinOutput[]) => Promise<string | null>;
 };
 
 export class ExternalBlockchainInterface {
