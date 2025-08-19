@@ -58,7 +58,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
         {playerHand.map((card: number[], index) => (
-          <PlayingCard id={`card-${playerNumber}-${card}`} key={index} index={index} selected={!!(cardSelections & (1 << index))} cardValue={card} setSelection={setSelection} />
+          <PlayingCard id={`card-${playerNumber}-${card}`} iAmPlayer={true} key={index} index={index} selected={!!(cardSelections & (1 << index))} cardValue={card} setSelection={setSelection} />
         ))}
       </Box>
       <Box mt="auto">

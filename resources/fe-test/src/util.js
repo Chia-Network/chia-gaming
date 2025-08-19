@@ -51,6 +51,16 @@ async function selectSimulator(driver) {
     simulatorButton.click();
 }
 
+async function getPlayerCards(driver, iAmPlayer) {
+    const firstEightCards = [];
+    for (var i = 0; i < 8; i++) {
+        const card = await driver.wait(until.elementLocated(byAttribute("aria-label", `card-${iAmPlayer}-${i}`)));
+        firstEightCards.push(card);
+    }
+
+    return firstEightCards;
+}
+
 module.exports = {
     wait,
     byExactText,
@@ -59,5 +69,6 @@ module.exports = {
     sendEnter,
     waitEnabled,
     selectSimulator,
-    waitAriaEnabled
+    waitAriaEnabled,
+    getPlayerCards,
 };

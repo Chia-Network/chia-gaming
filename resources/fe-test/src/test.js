@@ -6,12 +6,12 @@ const { spawn } = require('node:child_process');
 const {Builder, Browser, By, Key, WebDriver, until} = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
 const firefox = require('selenium-webdriver/firefox');
-const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator} = require('./util.js');
+const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, getPlayerCards} = require('./util.js');
 
 // Other browser
 const geckodriver = require('geckodriver');
 
-async function test2(baseUrl) {
+async function firefox_start_and_first_move(baseUrl) {
   const options1 = new firefox.Options();
   options1.addArguments('-headless');
   if (process.env.FIREFOX) {
@@ -38,10 +38,22 @@ async function test2(baseUrl) {
 
   console.log('Wait for the make move button');
   const makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+  await waitAriaEnabled(driver, makeMoveButton);
   makeMoveButton.click();
 
   console.log('Bob passing back to alice');
   return driver;
+}
+
+async function firefox_wait_for_cards(driver) {
+  const myCards = await getPlayerCards(driver, true);
+  for (var i = 0; i < 4; i++) {
+    myCards[i].click();
+  }
+
+  console.log('make move (bob)');
+  const makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+  makeMoveButton.click();
 }
 
 // Main session
@@ -111,18 +123,30 @@ describe("Basic element tests", function() {
     expect(partnerUrl.substr(0, 4)).toBe('http');
 
     // Spawn second browser.
-    const ffdriver = await test2(partnerUrl).catch((e) => {
+    const ffdriver = await firefox_start_and_first_move(partnerUrl).catch((e) => {
       console.error('error executing browser 2', e);
       driver.quit();
-    }).then(async (ffdriver) => {
-      console.log('wait for alice make move button');
-      const makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
-      // Player1 and Player2 are in the game.
-      await waitAriaEnabled(driver, makeMoveButton);
-      makeMoveButton.click();
-
-      return ffdriver;
     });
+
+    console.log('wait for alice make move button');
+    let makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+    // Player1 and Player2 are in the game.
+    await waitAriaEnabled(driver, makeMoveButton);
+    makeMoveButton.click();
+
+    await firefox_wait_for_cards(ffdriver);
+
+    console.log('selecting alice cards');
+    const myCards = await getPlayerCards(driver, true);
+    for (var i = 0; i < 4; i++) {
+      myCards[i].click();
+    }
+
+    makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+    await waitAriaEnabled(driver, makeMoveButton);
+    makeMoveButton.click();
+
+    await wait(driver, 10.0);
 
     console.log('quit');
     await ffdriver.quit();

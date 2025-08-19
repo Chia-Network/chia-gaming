@@ -5,6 +5,7 @@ import { Paper, Typography } from '@mui/material';
 interface PlayingCardProps {
   id: string;
   index: number;
+  iAmPlayer: boolean;
   cardValue: number[];
   isFaceDown?: boolean;
   selected: boolean;
@@ -15,6 +16,7 @@ interface PlayingCardProps {
 const PlayingCard: React.FC<PlayingCardProps> = ({
   id,
   index,
+  iAmPlayer,
   cardValue,
   selected,
   setSelection,
@@ -50,7 +52,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   };
 
   return (
-    <Paper id={id} elevation={3} style={cardStyle} onClick={setSelectedCB}>
+    <Paper aria-label={`card-${iAmPlayer}-${index}`} id={id} elevation={3} style={cardStyle} onClick={setSelectedCB}>
       {!isFaceDown && (
         <>
           <Typography variant="body2" style={{ fontWeight: 'bold' }}>
