@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const {Builder, Browser, By, Key, WebDriver, until} = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
 const firefox = require('selenium-webdriver/firefox');
-const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitEnabled, selectSimulator} = require('./util.js');
+const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator} = require('./util.js');
 
 // Other browser
 const geckodriver = require('geckodriver');
@@ -36,6 +36,11 @@ async function test2(baseUrl) {
   console.log('Wait for handshake on bob side');
   await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
 
+  console.log('Wait for the make move button');
+  const makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+  makeMoveButton.click();
+
+  console.log('Bob passing back to alice');
   return driver;
 }
 
@@ -57,9 +62,6 @@ describe("Basic element tests", function() {
   it("starts", async function() {
     // Load the login page
     await driver.get(baseUrl);
-
-    console.log('15 second wait to open dev tools');
-    await wait(driver, 15.0);
 
     // Select simulator
     selectSimulator(driver);
@@ -109,21 +111,25 @@ describe("Basic element tests", function() {
     expect(partnerUrl.substr(0, 4)).toBe('http');
 
     // Spawn second browser.
-    await test2(partnerUrl).catch((e) => {
+    const ffdriver = await test2(partnerUrl).catch((e) => {
       console.error('error executing browser 2', e);
       driver.quit();
     }).then(async (ffdriver) => {
-      console.log('wait for game to start on alice side');
-      await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
-
       console.log('wait for alice make move button');
-      await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
+      const makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
       // Player1 and Player2 are in the game.
+      await waitAriaEnabled(driver, makeMoveButton);
+      makeMoveButton.click();
 
-      console.log('quit');
-      await driver.quit();
-      await ffdriver.quit();
+      return ffdriver;
     });
 
+    console.log('quit');
+    await ffdriver.quit();
+
+    await wait(driver, 5.0);
+
+    console.log('real quit');
+    await driver.quit();
   }, 1 * 60 * 60 * 1000);
 });

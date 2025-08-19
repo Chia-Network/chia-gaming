@@ -37,6 +37,9 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
     setCardSelections(selections);
     console.warn(isPlayerTurn, moveNumber, 'cardSelections', selections, selected);
   };
+
+  const moveDisabled = !isPlayerTurn || (moveNumber === 1 && popcount(cardSelections) != 4);
+
   return (
     <Paper
       elevation={3}
@@ -61,10 +64,11 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
       <Box mt="auto">
         <Button
           aria-label="make-move"
+          aria-disabled={moveDisabled}
           variant="contained"
           color="secondary"
           onClick={doHandleMakeMove}
-          disabled={!isPlayerTurn || (moveNumber === 1 && popcount(cardSelections) != 4)}
+          disabled={moveDisabled}
           style={{ marginRight: "8px" }}
         >
           Make Move

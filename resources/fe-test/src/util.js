@@ -31,6 +31,19 @@ async function waitEnabled(driver, element) {
     }
 }
 
+async function waitAriaEnabled(driver, element) {
+    const actions = driver.actions({async: true});
+    let i = 0;
+    while (i < 10) {
+        const shouldExit = await element.getAttribute("aria-disabled");
+        console.log("checking element for aria-disabled", shouldExit);
+        if (shouldExit.toString() !== "true") {
+            return;
+        }
+        await actions.pause(500);
+    }
+}
+
 async function selectSimulator(driver) {
     const controlMenu = await driver.wait(until.elementLocated(byAttribute("aria-label", "control-menu")));
     controlMenu.click();
@@ -45,5 +58,6 @@ module.exports = {
     byElementAndAttribute,
     sendEnter,
     waitEnabled,
-    selectSimulator
+    selectSimulator,
+    waitAriaEnabled
 };
