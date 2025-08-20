@@ -1,19 +1,19 @@
-import type Block from '../@types/Block';
-import type BlockHeader from '../@types/BlockHeader';
-import type BlockRecord from '../@types/BlockRecord';
-import type BlockchainState from '../@types/BlockchainState';
-import type Connection from '../@types/Connection';
-import type FeeEstimate from '../@types/FeeEstimate';
-import SpendBundle from '../@types/SpendBundle';
-import Client from '../Client';
-import type Message from '../Message';
+import type Block from '../types/Block';
+import type BlockHeader from '../types/BlockHeader';
+import type BlockRecord from '../types/BlockRecord';
+import type BlockchainState from '../types/BlockchainState';
+import type Connection from '../types/Connection';
+import type FeeEstimate from '../types/FeeEstimate';
+import SpendBundle from '../types/SpendBundle';
+// import Client from '../Client';
+import type Message from '../rpc/Message';
 import ServiceName from '../constants/ServiceName';
 
 import Service from './Service';
 import type { Options } from './Service';
 
 export default class FullNode extends Service {
-  constructor(client: Client, options?: Options) {
+  constructor(client: any/*Client*/, options?: Options) {
     super(ServiceName.FULL_NODE, client, options);
   }
 

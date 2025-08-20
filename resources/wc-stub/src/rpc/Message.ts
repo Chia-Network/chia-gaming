@@ -1,11 +1,12 @@
+// @ts-ignore
 import { randomBytes } from 'crypto-browserify';
 import JSONbig from 'json-bigint';
 
-import type MessageInterface from './@types/MessageInterface';
-import { type ServiceNameValue } from './constants/ServiceName';
-import toCamelCase from './utils/toCamelCase';
-import toSafeNumber from './utils/toSafeNumber';
-import toSnakeCase from './utils/toSnakeCase';
+import type MessageInterface from '../types/MessageInterface';
+import { type ServiceNameValue } from '../constants/ServiceName';
+import toCamelCase from '../util/toCamelCase';
+import toSafeNumber from '../util/toSafeNumber';
+import toSnakeCase from '../util/toSnakeCase';
 
 export default class Message implements MessageInterface {
   command: string;

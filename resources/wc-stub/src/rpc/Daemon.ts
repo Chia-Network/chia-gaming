@@ -1,15 +1,15 @@
 import debug from 'debug';
 
-import KeyData from '../@types/KeyData';
-import KeyringStatus from '../@types/KeyringStatus';
-import PlotQueueItem from '../@types/PlotQueueItem';
-import { PlottersApi } from '../@types/Plotter';
-import Response from '../@types/Response';
-import WalletAddress from '../@types/WalletAddress';
-import type Client from '../Client';
-import Message from '../Message';
+import KeyData from '../types/KeyData';
+import KeyringStatus from '../types/KeyringStatus';
+import PlotQueueItem from '../types/PlotQueueItem';
+import { PlottersApi } from '../types/Plotter';
+import Response from '../types/Response';
+import WalletAddress from '../types/WalletAddress';
+// import type Client from '../Client';
+import Message from '../rpc/Message';
 import ServiceName, { type ServiceNameValue } from '../constants/ServiceName';
-import sleep from '../utils/sleep';
+// import sleep from '../utils/sleep';
 
 import Service from './Service';
 import type { Options } from './Service';
@@ -34,7 +34,7 @@ export default class Daemon extends Service {
 
   private waitForKeyringUnlockedPromise: Promise<void> | null = null;
 
-  constructor(client: Client, options?: Options) {
+  constructor(client: any /*Client*/, options?: Options) {
     super(ServiceName.DAEMON, client, options);
   }
 
@@ -169,7 +169,7 @@ export default class Daemon extends Service {
       }
     }
 
-    await sleep(1000);
+    // await sleep(1000);
     await this.waitForService(service, waitForStart, maxRetries - 1);
   }
 

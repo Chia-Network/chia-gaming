@@ -8,7 +8,7 @@ import Daemon from './Daemon';
 import ErrorData from '../util/ErrorData';
 import sleep from '../util/sleep';
 
-const function log(...args: string[]) {
+export function log(...args: string[]) {
   console.log(args);
 }
 

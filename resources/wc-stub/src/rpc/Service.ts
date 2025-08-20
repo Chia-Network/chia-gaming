@@ -2,8 +2,8 @@ import EventEmitter from 'events';
 
 import { isUndefined, omitBy } from 'lodash';
 
-import type Client from '../Client';
-import Message from '../Message';
+// import type Client from '../Client';
+import Message from '../rpc/Message';
 import { type ServiceNameValue } from '../constants/ServiceName';
 
 export type Options = {
@@ -11,7 +11,7 @@ export type Options = {
 };
 
 export default abstract class Service extends EventEmitter {
-  readonly client: Client;
+  readonly client: any/*Client*/;
 
   readonly name: ServiceNameValue;
 
@@ -19,7 +19,7 @@ export default abstract class Service extends EventEmitter {
 
   #readyPromise: Promise<null> | undefined;
 
-  constructor(name: ServiceNameValue, client: Client, options: Options = {}, onInit?: () => Promise<void>) {
+  constructor(name: ServiceNameValue, client: any/*Client*/, options: Options = {}, onInit?: () => Promise<void>) {
     super();
 
     const { origin } = options;

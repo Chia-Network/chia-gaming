@@ -1,26 +1,26 @@
 import BigNumber from 'bignumber.js';
 
-import type AutoClaim from '../@types/AutoClaim';
-import type Connection from '../@types/Connection';
-import type FarmedAmount from '../@types/FarmedAmount';
-import type OfferSummaryRecord from '../@types/OfferSummaryRecord';
-import type PoolWalletStatus from '../@types/PoolWalletStatus';
-import type PrivateKey from '../@types/PrivateKey';
-import type PuzzleDecorator from '../@types/PuzzleDecorator';
-import type TradeRecord from '../@types/TradeRecord';
-import type Transaction from '../@types/Transaction';
-import type { WalletListItem } from '../@types/Wallet';
-import type WalletBalance from '../@types/WalletBalance';
-import type WalletCreate from '../@types/WalletCreate';
-import Client from '../Client';
-import type Message from '../Message';
+import type AutoClaim from '../types/AutoClaim';
+import type Connection from '../types/Connection';
+import type FarmedAmount from '../types/FarmedAmount';
+import type OfferSummaryRecord from '../types/OfferSummaryRecord';
+import type PoolWalletStatus from '../types/PoolWalletStatus';
+import type PrivateKey from '../types/PrivateKey';
+import type PuzzleDecorator from '../types/PuzzleDecorator';
+import type TradeRecord from '../types/TradeRecord';
+import type Transaction from '../types/Transaction';
+import type { WalletListItem } from '../types/Wallet';
+import type WalletBalance from '../types/WalletBalance';
+import type WalletCreate from '../types/WalletCreate';
+//import Client from '../Client';
+import type Message from './Message';
 import ServiceName from '../constants/ServiceName';
 
 import Service from './Service';
 import type { Options } from './Service';
 
 export default class Wallet extends Service {
-  constructor(client: Client, options?: Options) {
+  constructor(client: any /*Client*/, options?: Options) {
     super(ServiceName.WALLET, client, options);
   }
 
