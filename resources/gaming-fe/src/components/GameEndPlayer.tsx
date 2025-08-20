@@ -18,8 +18,9 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
 }) => {
   const iAmAlice = playerNumber === 2;
   const playerHand: number[][] = iAmAlice ? outcome.alice_cards : outcome.bob_cards;
-  const who = (iStarted !== iAmAlice) ? 'Your' : 'Opponent';
-  const whoTitle = (iStarted !== iAmAlice) ? 'You' : 'Opponent';
+  const iAmPlayer = iStarted !== iAmAlice;
+  const who = iAmPlayer ? 'Your' : 'Opponent';
+  const whoTitle = iAmPlayer ? 'You' : 'Opponent';
   const cardColors = {
     'my-used': '#4d4',
     'my-final': '#bfb',
@@ -51,6 +52,7 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
                 id={id}
                 key={index}
                 index={index}
+                iAmPlayer={iAmPlayer}
                 selected={false}
                 selectionColor={selectionColor}
                 cardValue={card}

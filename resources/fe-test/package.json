@@ -1,10 +1,11 @@
 {
-  "name":"gaming-test",
+  "name": "gaming-test",
   "overrides": {
     "follow-redirects": "1.15.6"
   },
   "dependencies": {
     "chromedriver": "135.0.0",
+    "geckodriver": "^5.0.0",
     "jasmine": "^4.5.0",
     "jest": "^29.7.0",
     "mocha": "^10.1.0",

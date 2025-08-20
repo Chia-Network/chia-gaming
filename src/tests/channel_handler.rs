@@ -18,7 +18,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, GameID, Hash, Program, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
-use crate::tests::game::DEFAULT_UNROLL_TIME_LOCK;
+use crate::test_support::game::DEFAULT_UNROLL_TIME_LOCK;
 
 #[test]
 fn test_smoke_can_initiate_channel_handler() {

@@ -1,15 +1,9 @@
 use exec::execvp;
 use std::ffi::OsString;
 
-pub mod calpoker;
 pub mod channel_handler;
 pub mod chialisp;
 pub mod constants;
-pub mod debug_game;
-pub mod game;
-pub mod peer;
-#[cfg(feature = "sim-tests")]
-pub mod simenv;
 pub mod standard_coin;
 
 fn detect_run_as_python(args: &[String]) -> bool {

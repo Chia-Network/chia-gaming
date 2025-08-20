@@ -19,14 +19,17 @@ use crate::channel_handler::v1::game::Game;
 use crate::channel_handler::v1::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
+#[cfg(test)]
+use crate::common::types::PrivateKey;
 use crate::common::types::{
     atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
-    PrivateKey, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
+    Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo};
 use crate::referee::v1::types::{
     InternalStateUpdateArgs, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
 };
+#[cfg(test)]
 use crate::utils::pair_of_array_mut;
 
 #[derive(Debug)]
@@ -67,7 +70,7 @@ where
                 self.self_hash.clone(),
                 (
                     self.self_prog.clone(),
-                    (self.mover0.clone(), ((self.waiter0.clone(), ()))),
+                    (self.mover0.clone(), (self.waiter0.clone(), ())),
                 ),
             ),
         )
@@ -86,6 +89,7 @@ pub struct DebugGameMoveInfo {
 
 /// A driver for the bare debug game, wrapped in a referee coin.
 pub struct BareDebugGameDriver {
+    #[cfg(test)]
     game: Game,
 
     pub alice_identity: ChiaIdentity,
@@ -196,6 +200,7 @@ impl BareDebugGameDriver {
                 last_validation_data: VecDeque::new(),
                 mod_hash: referee_coin_puzzle_hash.clone(),
                 nonce,
+                #[cfg(test)]
                 game: alice_game.clone(),
                 slash_detected: None,
                 rng: rng_sequence
@@ -409,11 +414,8 @@ impl BareDebugGameDriver {
             (false, self.validation_program_queue[0].clone())
         };
 
-        let validation_info = ValidationInfo::new_state_update(
-            allocator,
-            validation_program.clone().into(),
-            self.state.p(),
-        );
+        let validation_info =
+            ValidationInfo::new_state_update(allocator, validation_program.clone(), self.state.p());
 
         let emove = ExhaustiveMoveInputs {
             alice_puzzle_hash: self.alice_identity.puzzle_hash.clone(),
@@ -547,7 +549,7 @@ impl BareDebugGameDriver {
                 self.handler = new_handler.v1();
                 self.mover_share = tt_data.mover_share.clone();
                 self.last_validation_data
-                    .push_back((vprog.clone(), self.state.clone().into()));
+                    .push_back((vprog.clone(), self.state.clone()));
                 self.state = state.clone().into();
                 debug!("Accepted their turn");
             }

@@ -16,18 +16,21 @@ import { useLobbySocket } from '../hooks/useLobbyConnection';
 import { generateOrRetrieveAlias, updateAlias, getSearchParams } from "../util";
 
 interface LobbyComponentProps {
-  walletConnect: boolean
+  walletConnect: boolean,
+  simulatorActive: boolean
 }
 
-const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
+const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect, simulatorActive }) => {
   const params = getSearchParams();
+  const [joined, setJoined] = useState(false);
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
-  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias, walletConnect);
+  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias, walletConnect || simulatorActive);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
   const [wagerInput, setWagerInput] = useState('');
   const [editingAlias, setEditingAlias] = useState(false);
+  const [gotoUrl, setGotoUrl] = useState('');
 
   const handleSend = () => {
     if (chatInput.trim()) {
@@ -43,14 +46,14 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
     if (!gameChoice || !wagerInput) return;
     const { secureUrl, token } = await generateRoom(gameChoice, wagerInput);
     window.prompt('Share this room URL:', secureUrl);
+    setGotoUrl(secureUrl);
     closeDialog();
   };
 
-  useEffect(() => {
-    if (params.join && rooms.length != 0) {
-      joinRoom(params.join);
-    }
-  });
+  if (!joined && params.join && rooms.length != 0) {
+    setJoined(true);
+    joinRoom(params.join);
+  }
 
   function commitEdit(e: any) {
     console.log('commit edit', e.target.value);
@@ -90,6 +93,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
       <Typography variant="h4" gutterBottom>
         Lobby — Alias: {aliasDisplay}
       </Typography>
+      <span style={{ width: '0px', height: '0px', overflow: 'hidden', position: 'relative' }} aria-label="partner-target-url">{gotoUrl}</span>
 
       <Box mb={3}>
         <Typography variant="h6">Connected Players</Typography>
@@ -144,7 +148,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = ({ walletConnect }) => {
       </Box>
 
       <Box display="flex" justifyContent="space-between">
-        <Button variant="outlined" onClick={openDialog}>
+        <Button variant="outlined" onClick={openDialog} aria-label="generate-room">
           Generate Room
         </Button>
       </Box>
