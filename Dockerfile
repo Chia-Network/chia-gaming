@@ -16,7 +16,8 @@ RUN mkdir -p /app/rust/src
 COPY Cargo.toml /app/rust/Cargo.toml
 COPY Cargo.lock /app/rust/Cargo.lock
 ADD src /app/rust/src
-RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && cargo build --release --features=server,simulator && cp ./target/release/chia-gaming /app
+RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && pip install maturin==1.9.2
+RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests && pip install `find . -name \*.whl`
 ADD wasm /app/rust/wasm
 RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --release --target=web
 
@@ -35,4 +36,5 @@ RUN cd /app && npm run build
 COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 ADD clsp /app/clsp
 COPY resources/gaming-fe/package.json /app/package.json
-CMD /bin/sh -c "(. /app/test/bin/activate && ./chia-gaming &) && (node ./dist/lobby-rollup.cjs &) && npm run start"
+RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.sh
+CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; npm run start &) && . /app/test/bin/activate && python run_simulator.sh"
