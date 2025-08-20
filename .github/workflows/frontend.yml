@@ -33,7 +33,7 @@ jobs:
 
     - uses: actions/setup-node@v4
       with:
-        node-version: 20.0.0
+        node-version: 21.18.1
 
     - name: build
       run: |
@@ -57,7 +57,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 21.18.1
       - name: Install latest rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
