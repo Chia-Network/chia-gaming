@@ -157,8 +157,6 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const handleConnectWallet = () => {
     if (!client) throw new Error("WalletConnect is not initialized.");
 
-    connectRealBlockchain();
-
     if (pairings.length === 1) {
       connect({ topic: pairings[0].topic });
     } else if (pairings.length) {
@@ -187,6 +185,10 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   if (!alreadyConnected && (session || args.simulatorActive)) {
     setAlreadyConnected(true);
     setExpanded(false);
+    console.log('doing connect real blockchain');
+    if (session) {
+      connectRealBlockchain();
+    }
   }
 
   const sessionConnected = session ? "connected" : fakeAddress ? "simulator" : "disconnected";

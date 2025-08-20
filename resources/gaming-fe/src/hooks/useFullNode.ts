@@ -424,6 +424,10 @@ export function connectRealBlockchain() {
 }
 
 export function getBlockchainInterfaceSingleton() {
+  if (blockchainInterfaceSingleton) {
+    return blockchainInterfaceSingleton;
+  }
+
   console.warn("simulator active");
   simulatorIsActive = true;
 

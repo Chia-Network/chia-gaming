@@ -11,7 +11,7 @@ const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAri
 // Other browser
 const geckodriver = require('geckodriver');
 
-async function firefox_start_and_first_move(baseUrl) {
+function makeFirefox() {
   const options1 = new firefox.Options();
   options1.addArguments('-headless');
   if (process.env.FIREFOX) {
@@ -22,6 +22,25 @@ async function firefox_start_and_first_move(baseUrl) {
     .setFirefoxOptions(options1)
     .build();
 
+  return driver;
+}
+
+function makeChrome() {
+  const options1 = new chrome.Options();
+  options1.addArguments('--remote-debugging-port=9222');
+
+  // You can use a remote Selenium Hub, but we are not doing that here
+  require('chromedriver');
+  const driver = new Builder()
+    .forBrowser(Browser.CHROME)
+    .setChromeOptions(options1)
+    .build();
+
+  return driver;
+}
+
+async function firefox_start_and_first_move(baseUrl) {
+  const driver = makeFirefox();
   await driver.get(baseUrl);
 
   // Select simulator
@@ -57,7 +76,7 @@ async function firefox_wait_for_cards(driver) {
 }
 
 async function firefox_press_button_second_game(driver) {
-  const makeMoveButton = await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("aria-label", "make-move"))), (elt) => waitAriaEnabled(driver, elt), 2.0)
+  const makeMoveButton = await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("aria-label", "make-move"))), (elt) => waitAriaEnabled(driver, elt), 2.0);
   console.log('makeMoveButton firefox', makeMoveButton);
   makeMoveButton.click();
 }
@@ -67,15 +86,7 @@ async function gotShutdown(driver) {
 }
 
 // Main session
-const options1 = new chrome.Options();
-options1.addArguments('--remote-debugging-port=9222');
-
-// You can use a remote Selenium Hub, but we are not doing that here
-require('chromedriver');
-const driver = new Builder()
-  .forBrowser(Browser.CHROME)
-  .setChromeOptions(options1)
-  .build();
+const driver = makeChrome();
 
 // Define a category of tests using test framework, in this case Jasmine
 describe("Basic element tests", function() {
