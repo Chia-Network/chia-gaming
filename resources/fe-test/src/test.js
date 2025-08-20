@@ -18,12 +18,26 @@ function byExactText(str) {
   return By.xpath(`//*[text()='${str}']`);
 }
 
-function byAttribute(attr,val) {
-  return By.xpath(`//*[@${attr}='${val}']`);
+function byAttribute(attr,val,sub) {
+  if (!sub) {
+    sub = '';
+  }
+  return By.xpath(`//*[@${attr}='${val}']${sub}`);
 }
 
 function byElementAndAttribute(element,attr,val) {
   return By.xpath(`//${element}[@${attr}='${val}']`);
+}
+
+async function sendEnter(element) {
+  await element.sendKeys(Key.ENTER);
+}
+
+async function waitEnabled(element) {
+  const actions = driver.actions({async: true});
+  for (var i = 0; i < 10 && !element.isEnabled(); i++) {
+    await actions.pause(500);
+  }
 }
 
 // Define a category of tests using test framework, in this case Jasmine
@@ -49,10 +63,11 @@ describe("Basic element tests", function() {
 
     // Try generating a room.
     let generateRoomButton = await driver.wait(until.elementLocated(byExactText("Generate Room")));
-    await generateRoomButton.click();
+    await waitEnabled(generateRoomButton);
+    await sendEnter(generateRoomButton);
 
-    let gameId = await driver.wait(until.elementLocated(byAttribute("id", ":r5:")), 1000);
-    let wager = await driver.wait(until.elementLocated(byAttribute("id", ":r7:")), 1000);
+    let gameId = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-id", "//input")), 1000);
+    let wager = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-wager", "//input")), 1000);
 
     await gameId.sendKeys("calpoker");
     await wager.sendKeys("200");
