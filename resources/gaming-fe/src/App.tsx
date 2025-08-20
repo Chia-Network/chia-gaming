@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import Game from './components/Game';
 import LobbyScreen from "./components/LobbyScreen";
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { useWalletConnect } from "./hooks/WalletConnectContext";
+import { simulatorActive } from "./hooks/useFullNode";
 import {
   Box,
   Button,
@@ -23,11 +24,11 @@ const App: React.FC = () => {
   const [chatInput, setChatInput] = useState('');
   const { client, session, pairings, connect, disconnect } = useWalletConnect();
 
-  if (params.lobby) {
-    return (<LobbyScreen walletConnect={!!session}/>);
+  if (params.lobby || params.join) {
+    return (<LobbyScreen walletConnect={!!session} simulatorActive={simulatorActive()}/>);
   } else if (params.game) {
     return (<Game />);
-  } else if (!session) {
+  } else if (!session && !simulatorActive()) {
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>

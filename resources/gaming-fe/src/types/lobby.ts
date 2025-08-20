@@ -9,14 +9,6 @@ export type GameType = 'california_poker' | 'krunk' | 'exotic_poker'
 
 export type FragmentData = { [k: string]: string }
 
-export interface LobbyState {
-  players: Player[];
-  rooms: Room[];
-  currentRoom?: Room;
-  error?: string;
-  status?: string;
-}
-
 export interface Player {
   id: string;
   alias: string;
@@ -25,6 +17,12 @@ export interface Player {
   lastActive: number;
   status: string;
   parameters: any;
+}
+
+export interface GameDefinition {
+  game: string;
+  target: string;
+  expiration: number;
 }
 
 export interface ChatMessage {

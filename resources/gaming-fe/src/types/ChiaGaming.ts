@@ -36,11 +36,22 @@ export type GameConnectionState = {
 export type OpponentMove = [string, string];
 export type GameFinished = [string, number];
 
+export type JsSpendTarget = {
+  "puzzle_hash": string,
+  "amount": Amount
+};
+
+export type JsFundingRequest = {
+  "spend_targets": Array<JsSpendTarget>,
+  "spend_total": Amount
+};
+
 export type IdleResult = {
   "continue_on": boolean,
   "finished": boolean,
   "outbound_transactions": Array<SpendBundle>,
   "outbound_messages": Array<string>,
+  "funding_requests": Array<JsFundingRequest>,
   "opponent_move": OpponentMove | undefined,
   "game_finished": GameFinished | undefined,
   "handshake_done": boolean,
@@ -90,6 +101,7 @@ export interface WasmConnection {
   ) => any;
   convert_spend_to_coinset_org: (spend: string) => any;
   convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: number) => string;
+  convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
   start_games: (cid: number, initiator: boolean, game: any) => any;
@@ -105,6 +117,11 @@ export interface WasmConnection {
   sha256bytes: (hex: string) => string;
 };
 
+export interface CoinOutput {
+  puzzle_hash: string;
+  amount: number;
+}
+
 export class ChiaGame {
   wasm: WasmConnection;
   waiting_messages: Array<string>;
@@ -112,11 +129,13 @@ export class ChiaGame {
   cradle: number;
   have_potato: boolean;
 
-  constructor(wasm: WasmConnection, env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number) {
+  constructor(wasm: WasmConnection, env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number, reward_puzzle_hash?: string) {
     this.wasm = wasm;
     this.waiting_messages = [];
     this.private_key = identity.private_key;
     this.have_potato = have_potato;
+    let use_reward_puzzle_hash =
+      reward_puzzle_hash ? reward_puzzle_hash : identity.puzzle_hash;
     this.cradle = wasm.create_game_cradle({
       seed: seed,
       game_types: env.game_types,
@@ -126,7 +145,7 @@ export class ChiaGame {
       their_contribution: {amt: their_contribution},
       channel_timeout: env.timeout,
       unroll_timeout: env.unroll_timeout,
-      reward_puzzle_hash: identity.puzzle_hash,
+      reward_puzzle_hash: use_reward_puzzle_hash
     });
     console.log(`constructed ${have_potato} cradle ${this.cradle}`);
   }
@@ -193,7 +212,8 @@ export interface BlockchainConnection {
   wait_block: () => Promise<number>;
   get_puzzle_and_solution: (coin: string) => Promise<string[] | null>;
   spend: (clvm_hex_spend_blob: string) => Promise<(number | null)[]>;
-  create_spendable: (target_ph: string, amount: number) => Promise<string | null>;
+  select_coins: (amount: number) => Promise<string[] | null>;
+  sign_transaction: (inputs: any[], outputs: CoinOutput[]) => Promise<string | null>;
 };
 
 export class ExternalBlockchainInterface {
