@@ -100,6 +100,7 @@ impl MyTurnReferee {
         game_start_info: &GameStartInfo,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
+        reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
@@ -117,6 +118,7 @@ impl MyTurnReferee {
             referee_coin_puzzle,
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
+            reward_puzzle_hash: reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
             timeout: game_start_info.timeout.clone(),
             amount: game_start_info.amount.clone(),
@@ -517,11 +519,6 @@ impl MyTurnReferee {
         })
     }
 
-    // It me.
-    fn target_puzzle_hash_for_slash(&self) -> PuzzleHash {
-        self.fixed.my_identity.puzzle_hash.clone()
-    }
-
     fn slashing_coin_solution(
         &self,
         allocator: &mut AllocEncoder,
@@ -552,7 +549,7 @@ impl MyTurnReferee {
         [(
             CREATE_COIN,
             (
-                self.target_puzzle_hash_for_slash(),
+                self.fixed.reward_puzzle_hash.clone(),
                 (self.fixed.amount.clone(), ()),
             ),
         )]
