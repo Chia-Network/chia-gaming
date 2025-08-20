@@ -74,11 +74,13 @@ export async function processSessionProposal(
       throw new Error('Pairing topic not found');
     }
 
-    const requiredNamespace: any = requiredNamespaces.chia;
+    let requiredNamespace: any = requiredNamespaces.chia;
     if (!requiredNamespace) {
       console.warn('chia namespace was optional');
       event.params.requiredNamespaces.chia = event.params.optionalNamespaces.chia;
+      requiredNamespace = event.params.requiredNamespaces.chia;
     }
+    console.warn('requiredNamespace?', requiredNamespace);
     if (!requiredNamespace) {
       throw new Error('Missing required chia namespace');
     }

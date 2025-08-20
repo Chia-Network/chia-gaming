@@ -26,10 +26,17 @@ const parsed = parseWcLink(pair_data, fingerprints);
 const pairs: Pair[] = [];
 if (parsed) { pairs.push(parsed); }
 
+async function pause(n: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, n);
+  });
+}
+
 useWalletConnect({
   projectId: WalletConnectChiaProjectId,
   debug: true,
   metadata: defaultMetadata
 }, pairs).then(({ client, error, pair, pairs }) => {
-  console.log('useWalletConnectClient', client, error, pair, pairs);
+  console.log('snooze for an hour');
+  return pause(60 * 60 * 1000);
 });
