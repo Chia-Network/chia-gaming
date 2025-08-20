@@ -58,6 +58,14 @@ impl PublicKey {
         ))
     }
 
+    pub fn from_slice(slice: &[u8]) -> Result<PublicKey, Error> {
+        let mut bytes: [u8; 48] = [0; 48];
+        for (i, b) in slice.iter().enumerate() {
+            bytes[i % 48] = *b;
+        }
+        PublicKey::from_bytes(bytes)
+    }
+
     pub fn from_bls(pk: chia_bls::PublicKey) -> PublicKey {
         PublicKey(pk)
     }
