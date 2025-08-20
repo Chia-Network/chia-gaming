@@ -45,6 +45,7 @@ export async function processSessionProposal(
           icons?: string[];
         };
       };
+      optionalNamespaces: any;
       requiredNamespaces: {
         chia: {
           chains: string[];
@@ -73,19 +74,23 @@ export async function processSessionProposal(
       throw new Error('Pairing topic not found');
     }
 
-    const requiredNamespace = requiredNamespaces.chia;
+    const requiredNamespace: any = requiredNamespaces.chia;
+    if (!requiredNamespace) {
+      console.warn('chia namespace was optional');
+      event.params.requiredNamespaces.chia = event.params.optionalNamespaces.chia;
+    }
     if (!requiredNamespace) {
       throw new Error('Missing required chia namespace');
     }
 
     const { chains, methods } = requiredNamespace;
-    const chain = chains.find((item) => ['chia:testnet', 'chia:mainnet'].includes(item));
+    const chain = chains.find((item: any) => ['chia:testnet', 'chia:mainnet'].includes(item));
     if (!chain) {
       throw new Error('Chain not supported');
     }
 
     // find unsupported methods
-    const method = methods.find((item) => !availableCommands.includes(item));
+    const method = methods.find((item: any) => !availableCommands.includes(item));
     if (method) {
       log('dApp wants to use unsupported command', method);
       // throw new Error(`Method not supported: ${method}`);
