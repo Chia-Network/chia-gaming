@@ -4,9 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-sim-tests = ["dep:pyo3"]
-simulator = ["dep:pyo3"]
-server = ["dep:tokio","dep:salvo","dep:exec"]
+sim-tests = ["dep:pyo3","dep:tokio","dep:salvo","dep:exec"]
 used_linker = []
 
 [dependencies]
@@ -34,7 +32,7 @@ tracing = "0.1"
 ctor = "0.2.8"
 log = "0.4.22"
 exec = { version = "0.3.1", optional = true }
-pyo3 = { version = "0.20.0", features = ["auto-initialize"], optional = true }
+pyo3 = { version = "0.25.1", features = ["auto-initialize","extension-module"], optional = true }
 tracing-core = "0.1.34"
 tracing-subscriber = { version = "0.3", features = ["alloc"] }
 simplelog = "0.12.2"
@@ -53,8 +51,3 @@ colored = "3.0.0"
 [lib]
 name = "chia_gaming"
 crate-type = ["cdylib", "rlib"]
-
-[[bin]]
-name = "chia-gaming"
-path = "src/cmd/main.rs"
-required-features = ["simulator","server"]
