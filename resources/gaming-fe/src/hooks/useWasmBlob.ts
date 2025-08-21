@@ -90,6 +90,7 @@ class WasmBlobWrapper {
   }
 
   async internalHaveBlockchain() {
+    console.log('FIRST: bring up blockchain interface for wasm');
     const blockchain = getBlockchainInterfaceSingleton();
 
     const blockNotificationId = registerBlockchainNotifier((peak, blocks, block_data) => {
@@ -193,6 +194,7 @@ class WasmBlobWrapper {
     // Compose blob to spend
     console.warn('internalPushSpend', tx);
     let blob = spend_bundle_to_clvm(tx);
+    console.log('internalPushSpend: getBlockchainInterfaceSingleton');
     const blockchain = getBlockchainInterfaceSingleton();
     const do_initial_spend = blockchain.does_initial_spend();
     let spend_data = do_initial_spend ? blob : this.wc?.convert_spend_to_coinset_org(blob);
@@ -371,7 +373,7 @@ class WasmBlobWrapper {
       timeout: 100,
       unroll_timeout: 100
     };
-    console.log('create calpoker cradle', env);
+    console.log('create calpoker cradle (getBlockchainInterfaceSingleton)', env);
 
     this.cradle = new ChiaGame(this.wc, env, this.rngSeed, this.identity, this.iStarted, this.amount, this.amount, this.fromPuzzleHash);
     const blockchain = getBlockchainInterfaceSingleton();
@@ -432,7 +434,7 @@ class WasmBlobWrapper {
       return empty();
     }
 
-    console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
+    console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount} (getBlockchainInterfaceSingleton)`);
 
     const blockchain = getBlockchainInterfaceSingleton();
     const do_initial_spend = blockchain.does_initial_spend();
