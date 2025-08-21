@@ -42,7 +42,6 @@ class WasmBlobWrapper {
   playerHand: number[][];
   opponentHand: number[][];
   finished: boolean;
-  blockNotificationId: number;
   fromPuzzleHash: string | undefined;
   gameOutcome: CalpokerOutcome | undefined;
   stateChanger: (stateSettings: any) => void;
@@ -54,12 +53,6 @@ class WasmBlobWrapper {
 
     const { sendMessage } = useGameSocket(deliverMessage, () => {
       this.kickSystem(2);
-    });
-
-    const blockchain = getBlockchainInterfaceSingleton();
-
-    this.blockNotificationId = registerBlockchainNotifier((peak, blocks, block_data) => {
-      this.blockNotification(peak, blocks, block_data);
     });
 
     this.stateChanger = stateChanger;
@@ -97,6 +90,12 @@ class WasmBlobWrapper {
   }
 
   async internalHaveBlockchain() {
+    const blockchain = getBlockchainInterfaceSingleton();
+
+    const blockNotificationId = registerBlockchainNotifier((peak, blocks, block_data) => {
+      this.blockNotification(peak, blocks, block_data);
+    });
+
     this.kickSystem(8);
     return empty();
   }
