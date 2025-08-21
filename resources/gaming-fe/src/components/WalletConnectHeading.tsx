@@ -12,10 +12,6 @@ import {
 } from "@mui/material";
 import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
-import {
-  connectRealBlockchain,
-  getBlockchainInterfaceSingleton
-} from '../hooks/useFullNode';
 import Debug from "./Debug";
 // @ts-ignore
 import { bech32m } from 'bech32m-chia';
@@ -50,14 +46,6 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
 
   // Everything we do is ok to retry since none actually spend.
   // We use push_tx from coinset.org for everything.
-  function getWallets() {
-    return callRpcWithRetry('getWallets', {includeData: true}, 1000);
-  }
-
-  function getWalletAddresses() {
-    return callRpcWithRetry('getWalletAddresses', {}, 1000);
-  }
-
   function getCurrentAddress() {
     return callRpcWithRetry('getCurrentAddress', {}, 1000);
   }
@@ -178,7 +166,6 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       // Trigger fake connect if not connected.
       console.warn('fake address is', res);
       setFakeAddress(res);
-      getBlockchainInterfaceSingleton();
     });
   };
 
@@ -186,9 +173,6 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     setAlreadyConnected(true);
     setExpanded(false);
     console.log('doing connect real blockchain');
-    if (session) {
-      connectRealBlockchain();
-    }
   }
 
   const sessionConnected = session ? "connected" : fakeAddress ? "simulator" : "disconnected";

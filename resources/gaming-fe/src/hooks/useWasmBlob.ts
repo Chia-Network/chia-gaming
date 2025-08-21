@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CoinOutput, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, BlockchainConnection, ChiaGame, CalpokerOutcome, WatchReport } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
-import { getBlockchainInterfaceSingleton, InternalBlockchainInterface, registerBlockchainNotifier } from './useFullNode';
+import { getBlockchainInterfaceSingleton, InternalBlockchainInterface, registerBlockchainNotifier, connectRealBlockchain } from './useFullNode';
 import { getSearchParams, useInterval, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -80,18 +80,25 @@ class WasmBlobWrapper {
     this.opponentHand = [];
     this.finished = false;
     this.qualifyingEvents = 0;
-
-    
   }
 
   kickSystem(flags: number) {
     this.qualifyingEvents |= flags;
     console.warn("wasmBlob: kicksystem", flags, this.qualifyingEvents);
-    if (this.qualifyingEvents == 7) {
+    if (this.qualifyingEvents == 15) {
       console.warn("wasmBlob: kicksystem success");
-      this.qualifyingEvents |= 8;
+      this.qualifyingEvents |= 16;
       this.pushEvent(this.loadWasmEvent);
     }
+  }
+
+  haveBlockchain() {
+    this.pushEvent({ 'blockchain': true });
+  }
+
+  async internalHaveBlockchain() {
+    this.kickSystem(8);
+    return empty();
   }
 
   blockNotification(peak: number, blocks: any[], block_report: any) {
@@ -244,6 +251,8 @@ class WasmBlobWrapper {
       return this.internalTakeBlock(msg.takeBlockData.peak, msg.takeBlockData.block_report);
     } else if (msg.pushSpend) {
       return this.internalPushSpend(msg.pushSpend);
+    } else if (msg.blockchain) {
+      return this.internalHaveBlockchain();
     } else if (msg.error) {
       let eres: any = { setError: msg.error };
       return empty().then(() => eres);
@@ -764,6 +773,7 @@ export function useWasmBlob() {
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [gameIds, setGameIds] = useState<string[]>([]);
   const [moveNumber, setMoveNumber] = useState<number>(0);
+  const [haveBlockchain, setHaveBlockchain] = useState<boolean>(false);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
   const amount = parseInt(searchParams.amount);
@@ -819,6 +829,10 @@ export function useWasmBlob() {
       iStarted
     ) :
     null;
+  if (gameObject && !haveBlockchain) {
+    setHaveBlockchain(true);
+    gameObject.haveBlockchain();
+  }
 
   const handleMakeMove = useCallback((move: any) => {
     gameObject?.makeMove(move);
@@ -827,6 +841,17 @@ export function useWasmBlob() {
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
     console.log('start loading wasm', gameObject);
     gameObject?.loadWasm(chia_gaming_init, cg);
+  }, []);
+
+  const externalSetHaveBlockchain = useCallback((msg: any) => {
+    setHaveBlockchain(true);
+    if (!msg.fakeAddress) {
+      // Connect to the real blockchain
+      connectRealBlockchain();
+    } else {
+      connectSimulator();
+    }
+    gameObject?.haveBlockchain();
   }, []);
 
   return {
@@ -846,6 +871,7 @@ export function useWasmBlob() {
     cardSelections,
     setCardSelections,
     stopPlaying,
-    outcome
+    outcome,
+    setHaveBlockchain: externalSetHaveBlockchain
   };
 }

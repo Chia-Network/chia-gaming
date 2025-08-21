@@ -240,6 +240,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 }
 
 function startSimulatorMonitoring(forWho: any): Promise<any> {
+  throw 'should not be here';
   if (forWho.deleted) {
     return empty();
   }
@@ -418,6 +419,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 let blockchainInterfaceSingleton: InternalBlockchainInterface | null = null;
 
 export function connectRealBlockchain() {
+  console.log('connectRealBlockchain');
   blockchainInterfaceSingleton = new RealBlockchainInterface(
     "https://api.coinset.org"
   );

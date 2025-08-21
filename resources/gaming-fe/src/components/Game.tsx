@@ -35,10 +35,14 @@ const Game: React.FC = () => {
     cardSelections,
     setCardSelections,
     outcome,
-    stopPlaying
+    stopPlaying,
+    setHaveBlockchain,
   } = useWasmBlob();
 
   const setStateFromMessage = useCallback((evt: any) => {
+    if (evt.data && evt.data.name === 'walletconnect_up') {
+      setHaveBlockchain(evt.data);
+    }
     setState(evt.data);
   }, []);
 
