@@ -774,6 +774,7 @@ export function useWasmBlob() {
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [gameIds, setGameIds] = useState<string[]>([]);
   const [moveNumber, setMoveNumber] = useState<number>(0);
+  const [fakeAddress, setFakeAddress] = useState<string | undefined>(undefined);
   const [haveBlockchain, setHaveBlockchain] = useState<boolean>(false);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
@@ -830,9 +831,23 @@ export function useWasmBlob() {
       iStarted
     ) :
     null;
-  if (gameObject && !haveBlockchain) {
+
+  const doHaveBlockchainStuff = function(fakeAddress: string | undefined) {
+    console.log('doHaveBlockchainStuff', fakeAddress);
+    if (haveBlockchain) {
+      return;
+    }
+
     setHaveBlockchain(true);
-    gameObject.haveBlockchain();
+    if (fakeAddress) {
+      connectSimulator();
+    } else {
+      connectRealBlockchain();
+    }
+  }
+
+  if (gameObject && !haveBlockchain) {
+    doHaveBlockchainStuff(fakeAddress);
   }
 
   const handleMakeMove = useCallback((move: any) => {
@@ -845,14 +860,10 @@ export function useWasmBlob() {
   }, []);
 
   const externalSetHaveBlockchain = useCallback((msg: any) => {
-    setHaveBlockchain(true);
-    if (!msg.fakeAddress) {
-      // Connect to the real blockchain
-      connectRealBlockchain();
-    } else {
-      connectSimulator();
-    }
-    gameObject?.haveBlockchain();
+    console.log('externalSetHaveBlockchain', msg);
+    const fakeAddress = msg.fakeAddress;
+    setFakeAddress(fakeAddress);
+    doHaveBlockchainStuff(fakeAddress);
   }, []);
 
   return {
