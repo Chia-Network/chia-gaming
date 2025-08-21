@@ -212,13 +212,14 @@ export function JsonRpcProvider({ children }: PropsWithChildren) {
         if (!session) throw new Error('Session is not connected');
         if (!fingerprint) throw new Error('Fingerprint is not loaded.');
 
+        const request: any = {
+          method,
+          params: { fingerprint, ...data },
+        };
         const result = await client.request<{ data: T } | { error: any }>({
             topic: session.topic,
             chainId,
-            request: {
-                method,
-                params: { fingerprint, ...data },
-            },
+            request
         });
 
         if ('error' in result) throw new Error(JSON.stringify(result.error));

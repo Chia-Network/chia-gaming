@@ -31,21 +31,6 @@ export default async function useWalletConnect(config: UseWalletConnectConfig, i
     cleanupPairings(client, pairs);
   }
 
-  const process = (topic: string, command: string, params: any) => {
-    // XXX
-    console.log('process', topic, command, params);
-    if (command === 'chia_login') {
-      
-    } else if (command === 'chia_getWalletBalance') {
-      
-    }
-    return Promise.all([]);
-  }
-
-  if (client) {
-    bindEvents(client, pairs, () => process);
-  }
-
   const handlePair = async (uri: string, fingerprints: number[], mainnet = false) => {
     if (!client) {
       throw new Error('Client is not defined');

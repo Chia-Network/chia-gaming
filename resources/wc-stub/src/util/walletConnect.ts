@@ -126,6 +126,7 @@ export async function processSessionProposal(
 
     const result = await acknowledged();
     if (!('topic' in result) || !result.topic) {
+      console.error('no topic in result of acknowledged');
       return;
     }
 

@@ -25,6 +25,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const [walletIds, setWalletIds] = useState<any[]>([]);
   const [wantSpendable, setWantSpendable] = useState<any | undefined>(undefined);
   const [expanded, setExpanded] = useState(false);
+  const [addr, setAddr] = useState('');
   const toggleExpanded = useCallback(() => {
     setExpanded(!expanded);
   }, [expanded]);
@@ -52,32 +53,19 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     })
   }
 
-  function getCurrentAddress() {
-    // return rpc.getCurrentAddress({}).catch((e) => {
-    //   console.error('retry getCurrentAddress', e);
-    //   return new Promise((resolve, reject) => {
-    //     setTimeout(() => {
-    //       getCurrentAddress().catch(reject).then(resolve);
-    //     }, 1000);
-    //   });
-    // });
-    return fetch('http://localhost:3002/get_current_address', {
-      method: "POST"
-    }).then(res => res.json());
+  function getCurrentAddress(): Promise<string> {
+    console.error('try getCurrentAddress from rpc');
+    return rpc.getCurrentAddress({}).then((response: any) => {
+      console.warn('response from getCurrentAddress:', response);
+      return response;
+    }).catch((e: any) => {
+      console.error('error from getCurrentAddress:', e);
+      throw e;
+    });
   }
 
   function sendTransaction(data: any) {
-    // return rpc.sendTransaction(data).catch((e) => {
-    //   console.error('retry sendTransaction', e);
-    //   return new Promise((resolve, reject) => {
-    //     setTimeout(() => {
-    //       sendTransaction(data).catch(reject).then(resolve);
-    //     }, 5000);
-    //   });
-    // })
-    return fetch(`http://localhost:3002/send_transaction?who=${data.myAddress}&target=${data.address}&amount=${data.amount}`, {
-      method: "POST"
-    }).then(res => res.json());
+    return rpc.sendTransaction(data);
   }
 
   function receivedWindowMessageData(data: any, origin: string) {
@@ -106,7 +94,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
 
     if (data.method === 'create_spendable') {
       setWantSpendable(data);
-      getCurrentAddress().then((ca) => {
+      getCurrentAddress().then((ca: string) => {
         console.warn('currentAddress', JSON.stringify(ca));
         const targetXch = bech32m.encode(data.target, 'xch');
         const fromPuzzleHash = bech32m.decode(ca);
@@ -170,6 +158,10 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
 
   if (!alreadyConnected && session) {
     setAlreadyConnected(true);
+    setExpanded(false);
+    getCurrentAddress().then((a: string) => {
+      setAddr(a);
+    });
   }
 
   const sessionConnected = session ? "connected" : "disconnected";
@@ -233,7 +225,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     <div style={{ display: 'flex', flexDirection: 'column', height: useHeight, width: '100vw' }}>
       <div style={{ display: 'flex', flexDirection: 'row', height: '3em' }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '100%', padding: '1em' }}>
-          Chia Gaming - WalletConnect {sessionConnected}
+        Chia Gaming - WalletConnect {sessionConnected} {addr}
         </div>
         <div style={{ display: 'flex', flexGrow: 1 }}> </div>
         {spendable}

@@ -6,7 +6,7 @@ import { Web3Modal } from '@web3modal/standalone';
 import {
     createContext,
     PropsWithChildren,
-    useCallback, 
+    useCallback,
     useContext,
     useEffect,
     useMemo,

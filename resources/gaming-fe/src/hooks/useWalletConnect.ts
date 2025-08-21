@@ -27,6 +27,10 @@ export const useWalletConnect = () => {
         }
       });
 
+      signClient.events.addListener("session_connect", (e: any) => {
+        console.log('session_connect', e);
+      });
+
       setClient(signClient);
 
       const sessions = signClient.session.getAll();
@@ -54,7 +58,7 @@ export const useWalletConnect = () => {
       const { uri, approval } = await client.connect({
         requiredNamespaces: {
           chia: {
-            methods: ['chia_signMessage'],
+            methods: ['chia_getCurrentAddress', 'chia_sendTransaction'],
             chains: ['chia:mainnet'],
             events: []
           }
@@ -129,7 +133,7 @@ export const useWalletConnect = () => {
 
   useEffect(() => {
     init();
-  }, [init]);
+  }, []);
 
   return {
     ...state,
