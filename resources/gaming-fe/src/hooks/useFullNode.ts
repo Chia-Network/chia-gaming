@@ -425,11 +425,7 @@ export function connectRealBlockchain() {
   );
 }
 
-export function getBlockchainInterfaceSingleton() {
-  if (blockchainInterfaceSingleton) {
-    return blockchainInterfaceSingleton;
-  }
-
+export function connectSimulator() {
   console.warn("simulator active");
   simulatorIsActive = true;
 
@@ -439,6 +435,14 @@ export function getBlockchainInterfaceSingleton() {
     "http://localhost:5800"
   );
   startSimulatorMonitoring(blockchainInterfaceSingleton);
+
+  return blockchainInterfaceSingleton;
+}
+
+export function getBlockchainInterfaceSingleton() {
+  if (!blockchainInterfaceSingleton) {
+    throw 'no blockchain interface yet';
+  }
 
   return blockchainInterfaceSingleton;
 }

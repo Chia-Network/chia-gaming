@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CoinOutput, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, BlockchainConnection, ChiaGame, CalpokerOutcome, WatchReport } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
-import { getBlockchainInterfaceSingleton, InternalBlockchainInterface, registerBlockchainNotifier, connectRealBlockchain } from './useFullNode';
+import { getBlockchainInterfaceSingleton, InternalBlockchainInterface, registerBlockchainNotifier, connectRealBlockchain, connectSimulator } from './useFullNode';
 import { getSearchParams, useInterval, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { v4 as uuidv4 } from 'uuid';
 
