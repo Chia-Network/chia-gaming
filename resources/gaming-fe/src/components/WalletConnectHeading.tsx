@@ -81,7 +81,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     };
 
     const subframe = document.getElementById('subframe');
-    if (data.name === 'lobby' && subframe) {
+    if ((data.name === 'lobby' || data.name === 'Game Rendered') && subframe) {
       (subframe as any).contentWindow.postMessage({
         name: 'walletconnect_up',
         fakeAddress: fakeAddress

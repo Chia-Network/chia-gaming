@@ -47,9 +47,10 @@ class WasmBlobWrapper {
   stateChanger: (stateSettings: any) => void;
 
   constructor(stateChanger: (stateSettings: any) => void, uniqueId: string, amount: number, iStarted: boolean) {
-    const deliverMessage = useCallback((msg: string) => {
+
+    const deliverMessage = (msg: string) => {
       this.deliverMessage(msg);
-    }, []);
+    };
 
     const { sendMessage } = useGameSocket(deliverMessage, () => {
       this.kickSystem(2);
