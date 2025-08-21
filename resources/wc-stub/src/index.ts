@@ -71,28 +71,39 @@ useWalletConnect({
   console.log('bind events');
   const process = (topic: string, command: string, params: any) => {
     console.log('process', topic, command, params);
+    let time = new Date().getTime();
+    let result: any = {
+      endpointName: 'getCurrentAddress',
+      startedTimeStamp: time,
+      fulfilledTimeStamp: time,
+      isSuccess: true,
+      isError: false,
+      isLoading: false,
+      isUninitialized: false,
+      originalArgs: params,
+      requestId: `${time}-utc`,
+      status: 'fulfilled'
+    };
     if (command === 'chia_getCurrentAddress') {
       return fetch('http://localhost:3002/get_current_address', {
         "method": "POST"
       }).then((res: any) => res.json()).then((address: string) => {
-        let time = new Date().getTime();
-        let result: any = {
-          endpointName: 'getCurrentAddress',
-          startedTimeStamp: time,
-          fulfilledTimeStamp: time,
-          isSuccess: true,
-          isError: false,
-          isLoading: false,
-          isUninitialized: false,
-          originalArgs: params,
-          requestId: `${time}-utc`,
-          status: 'fulfilled'
-        };
         result.data = address;
         return result;
       });
+    } else if (command === 'chia_sendTransaction') {
+      return fetch('http://localhost:3002/get_current_address', {
+        "method": "POST"
+      }).then((res: any) => res.json()).then((address: string) => {
+        return fetch('http://localhost:3002/send_transaction?who=${address}&target=${params.address}&amount=${params.amount}', {
+          "method": "POST"
+        }).then((res: any) => res.json()).then((res: any) => {
+          result.data = address;
+          return result;
+        });
+      });
     }
-
+    
     console.log('unknown rpc', command, params);
     return Promise.all([]).then(() => {});
   }
