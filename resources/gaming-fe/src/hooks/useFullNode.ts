@@ -11,9 +11,7 @@ function wsUrl(baseurl: string) {
 type blockNotifyType = (peak: number, block: any[], report: any) => void;
 let blockNotifyId = 0;
 let blockNotify: { [id: string]: blockNotifyType } = {};
-let simulatorIsActive = false;
-
-export function simulatorActive() { return simulatorIsActive; }
+export let simulatorIsActive = false;
 
 export function registerBlockchainNotifier(notifier: blockNotifyType): number {
   blockNotifyId += 1;
@@ -34,13 +32,17 @@ function doBlockNotifications(peak: number, block: any[], block_report: any) {
 }
 
 export interface InternalBlockchainInterface {
-  set_puzzle_hash(puzzle_hash: string): void;
-  does_initial_spend(): undefined | ((target: string, amt: number) => Promise<string>);
-  spend(spend: any): Promise<string>;
+  do_initial_spend(target: string, amt: number): Promise<string>;
+  spend(convert: (blob: string) => any, spend: string): Promise<string>;
+}
+
+export interface WalletBlockchainInterface {
+  do_initial_spend(target: string, amt: number): Promise<any>;
+  spend(spendBlob: string, spend: any): Promise<any>;
   withdraw(): void;
 }
 
-export class RealBlockchainInterface implements InternalBlockchainInterface {
+export class RealBlockchainInterface implements WalletBlockchainInterface {
   baseUrl: string;
   fingerprint?: string;
   walletId: number;
@@ -52,8 +54,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   incomingEvents: any[];
   publicKey?: string;
   ws: any;
+  initialSpend: (target: string, amt: number) => Promise<any>;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, initialSpend: (target: string, amt: number) => Promise<any>) {
     this.baseUrl = baseUrl;
     this.walletId = 1;
     this.requestId = 1;
@@ -62,6 +65,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     this.peak = 0;
     this.at_block = 0;
     this.incomingEvents = [];
+    this.initialSpend = initialSpend;
     this.ws = new ReconnectingWebSocket(wsUrl(this.baseUrl));
 
     this.ws.addEventListener('message', (m: any) => {
@@ -72,42 +76,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         this.pushEvent({checkPeak: true});
       }
     });
-
-    window.addEventListener('message', (e: any) => {
-      const messageKey = e.message ? 'message' : 'data';
-      const messageData = e[messageKey];
-      // console.warn('inner frame received message', messageData);
-      const messageName = messageData.name;
-      if (messageName === 'walletconnect_up') {
-        this.set_puzzle_hash(messageData.fakeAddress);
-        return;
-      }
-      if (messageName !== 'blockchain_reply') {
-        return;
-      }
-      const requestId = messageData.requestId;
-      // console.log('blockchain_reply', messageData);
-      if (this.requests[requestId]) {
-        this.requests[requestId].complete(messageData.result);
-      } else {
-        console.error('no such request id', requestId);
-      }
-    });
   }
 
-  does_initial_spend() {
-    return (target: string, amt: number) => {
-      const targetXch = bech32m.encode(target, 'xch');
-      return this.push_request({
-        method: 'create_spendable',
-        target,
-        targetXch,
-        amt
-      })
-    };
+  do_initial_spend(target: string, amt: number) {
+    return this.initialSpend(target, amt);
   }
-
-  set_puzzle_hash(puzzleHash: string) { }
 
   withdraw() {
     this.ws.close();
@@ -185,23 +158,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  async getFingerprints(): Promise<string[]> {
-    throw 'no';
-  }
-
-  async setFingerprint(fp: string): Promise<never[]> {
-    throw 'no';
-  }
-
-  async getBalance(): Promise<string> {
-    throw 'no';
-  }
-
   async push_request(req: any): Promise<any> {
     // console.log('blockchain: push message to parent', req);
     let requestId = this.requestId++;
     req.requestId = requestId;
-    window.parent.postMessage(req, '*');
+    window.postMessage(req, '*');
     let promise_complete, promise_reject;
     let p = new Promise((comp, rej) => {
       promise_complete = comp;
@@ -215,8 +176,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     return p;
   }
 
-  async spend(spend: any): Promise<string> {
-    // console.log('push_tx', spend);
+  async spend(spendBlob: string, spend: string): Promise<string> {
+    console.log('push_tx', spend);
     return await fetch(`${this.baseUrl}/push_tx`, {
       method: 'POST',
       headers: {
@@ -229,7 +190,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         // console.log('unknown unspent, retry in 60 seconds');
         return new Promise((resolve, reject) => {
           setTimeout(() => {
-            this.spend(spend).then(r => resolve(r)).catch(reject);
+            this.spend(spendBlob, spend).then(r => resolve(r)).catch(reject);
           }, 60000);
         });
       }
@@ -240,16 +201,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 }
 
 function startSimulatorMonitoring(forWho: any): Promise<any> {
-  throw 'should not be here';
   if (forWho.deleted) {
     return empty();
   }
 
-  console.log('startSimulatorMonitoring');
+  // console.log('startSimulatorMonitoring');
   return fetch(`${forWho.baseUrl}/wait_block`, {
     method: 'POST'
   }).then((res) => res.json()).then((res) => {
-    console.log('wait_block returned', res);
+    // console.log('wait_block returned', res);
     forWho.setNewPeak(res);
   });
 }
@@ -259,7 +219,7 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
     method: 'POST'
   }).then((res) => res.json()).then((res) => {
-    console.log('requestBlockData, got', res);
+    // console.log('requestBlockData, got', res);
     const converted_res: WatchReport = {
       created_watched: res.created,
       deleted_watched: res.deleted,
@@ -269,7 +229,7 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
   });
 }
 
-export class FakeBlockchainInterface implements InternalBlockchainInterface {
+export class FakeBlockchainInterface implements WalletBlockchainInterface {
   baseUrl: string;
   deleted: boolean;
   at_block: number;
@@ -279,45 +239,33 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   handlingEvent: boolean;
   incomingEvents: any[];
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, myPuzzleHash: string) {
     this.baseUrl = baseUrl;
     this.deleted = false;
     this.max_block = 0;
     this.at_block = 0;
-    this.puzzleHash = '';
+    this.puzzleHash = myPuzzleHash;
     this.openingCoin = '';
     this.handlingEvent = false;
     this.incomingEvents = [];
 
-    window.addEventListener('message', (e: any) => {
-      const messageKey = e.message ? 'message' : 'data';
-      const messageData = e[messageKey];
-      // console.warn('fake inner frame received message', messageData);
-      const messageName = messageData.name;
-      if (messageName === 'fake walletconnect_up') {
-        if (messageData.fakeAddress) {
-          this.set_puzzle_hash(messageData.fakeAddress);
-        }
-        return;
-      }
-    });
-
-    window.parent.postMessage({
+    window.postMessage({
       name: 'lobby',
     }, '*');
   }
 
-  does_initial_spend() {
-    return (target: string, amt: number) => {
-      return fetch(`${this.baseUrl}/create_spendable?who=${generateOrRetrieveUniqueId()}&target=${target}&amount=${amt}`, {
-        method: "POST"
-      }).then((res) => res.json()).then((res) => {
-        // Returns the coin string
-        console.log('set opening coin', res);
-        this.openingCoin = res;
-        return res;
-      });
-    };
+  do_initial_spend(target: string, amt: number) {
+    return fetch(`${this.baseUrl}/create_spendable?who=${generateOrRetrieveUniqueId()}&target=${target}&amount=${amt}`, {
+      method: "POST"
+    }).then((res) => res.json()).then((res) => {
+      // Returns the coin string
+      console.log('set opening coin', res);
+      this.openingCoin = res;
+      return {
+        coin: res,
+        fromPuzzleHash: this.puzzleHash
+      };
+    });
   }
 
   async kickEvent() {
@@ -393,20 +341,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.deleted = true;
   }
 
-  set_puzzle_hash(puzzleHash: string) {
-    // console.log('user puzzle hash', puzzleHash);
-    this.puzzleHash = puzzleHash;
-  }
-
-  async select_coins(amount: number): Promise<any> {
-    const result = {
-      fromPuzzleHash: this.puzzleHash,
-      inputs: [this.openingCoin]
-    };
-    // console.log('select coins result', amount, result);
-    return result;
-  }
-  spend(spend: any): Promise<string> {
+  spend(spendBlob: string, spend: any): Promise<string> {
     return fetch(`${this.baseUrl}/spend?blob=${spend}`, {
       method: "POST"
     }).then((res) => res.json()).then((res) => {
@@ -416,33 +351,99 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 }
 
-let blockchainInterfaceSingleton: InternalBlockchainInterface | null = null;
-
-export function connectRealBlockchain() {
+export function connectRealBlockchain(initialSpend: (target: string, amt: number) => Promise<any>): WalletBlockchainInterface {
   console.log('connectRealBlockchain');
-  blockchainInterfaceSingleton = new RealBlockchainInterface(
-    "https://api.coinset.org"
+  return new RealBlockchainInterface(
+    "https://api.coinset.org",
+    initialSpend
   );
 }
 
-export function connectSimulator() {
-  // console.warn("simulator active");
-  simulatorIsActive = true;
+export function connectSimulator(myPuzzleHash: string): FakeBlockchainInterface {
+  console.warn("simulator active");
 
-  window.postMessage({ name: "walletconnect_up" }, "*");
-
-  blockchainInterfaceSingleton = new FakeBlockchainInterface(
-    "http://localhost:5800"
+  let result = new FakeBlockchainInterface(
+    "http://localhost:5800",
+    myPuzzleHash
   );
-  startSimulatorMonitoring(blockchainInterfaceSingleton);
+  startSimulatorMonitoring(result);
 
-  return blockchainInterfaceSingleton;
+  return result;
 }
 
-export function getBlockchainInterfaceSingleton() {
-  if (!blockchainInterfaceSingleton) {
-    throw 'no blockchain interface yet';
+const outboundRequests: Record<string, any> = {};
+let outboundRequestId = 1;
+let outboundRequestsInitialized = false;
+
+function nextOutboundRequestId() {
+  return outboundRequestId++;
+}
+
+export class ChildFrameBlockchainInterface implements InternalBlockchainInterface {
+  constructor() {
+    if (!outboundRequestsInitialized) {
+      outboundRequestsInitialized = true;
+      window.addEventListener("message", (evt: any) => {
+        let key = evt.data ? 'data' : 'message';
+        let evtData = evt[key];
+
+        if (evtData.name === 'blockchain_peak') {
+          doBlockNotifications(evtData.peak, evtData.block, evtData.block_report);
+          return;
+        }
+
+        if (evtData.name !== 'blockchain_reply' || !evtData.requestId) {
+          return;
+        }
+
+        let request = outboundRequests[evtData.requestId];
+        if (!request) {
+          return;
+        }
+
+        delete outboundRequests[evtData.requestId];
+        if (evtData.error) {
+          request.reject(evtData.error);
+          return;
+        }
+
+        request.resolve(evtData.result);
+      });
+    }
   }
 
-  return blockchainInterfaceSingleton;
+  do_initial_spend(target: string, amt: number): Promise<string> {
+    const requestId = nextOutboundRequestId();
+    console.log('requestId', requestId, 'do_initial_spend', target, amt);
+    return new Promise((resolve, reject) => {
+      let request: any = {
+        requestId: requestId,
+        method: 'create_spendable',
+        target,
+        amt
+      };
+      window.parent.postMessage(request, "*");
+      request.resolve = resolve;
+      request.reject = reject;
+      outboundRequests[requestId] = request;
+    });
+  }
+  spend(cvt: (blob: string) => any, spend: string): Promise<string> {
+    const requestId = nextOutboundRequestId();
+    return new Promise((resolve, reject) => {
+      let request: any = {
+        requestId: requestId,
+        method: 'spend',
+        spend,
+        convertedSpend: cvt(spend)
+      };
+      window.parent.postMessage(request, "*");
+      request.resolve = resolve;
+      request.reject = reject;
+      outboundRequests[requestId] = request;
+    });
+  }
+
+  withdraw(): void {
+  }
 }

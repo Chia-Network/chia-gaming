@@ -44,10 +44,9 @@ export interface UseGameSocketReturn {
 
 const SOCKET_URL = window.location.origin;
 
-const useGameSocket = (deliverMessage: (m: string) => void, setSocketEnabled: (e: boolean) => void): UseGameSocketReturn => {
+const useGameSocket = (iStarted: boolean, deliverMessage: (m: string) => void, setSocketEnabled: (e: boolean) => void): UseGameSocketReturn => {
   const searchParams = getSearchParams();
   const token = searchParams.token;
-  const iStarted = searchParams.iStarted !== 'false';
   const socketRef = useRef<Socket | null>(null);
   const playerNumberRef = useRef<number>(0);
 
@@ -84,6 +83,7 @@ const useGameSocket = (deliverMessage: (m: string) => void, setSocketEnabled: (e
 
     // When we receive a message from our peer, we know we're connected.
     socket?.on('peer', msg => {
+      console.log('got peer msg', iStarted, msg);
       if (msg.iStarted != iStarted && !fullyConnected) {
         // If they haven't seen our message yet, we know we're connected so
         // we can send a ping to them now.

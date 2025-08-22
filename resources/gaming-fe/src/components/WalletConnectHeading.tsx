@@ -17,6 +17,7 @@ import Debug from "./Debug";
 import { bech32m } from 'bech32m-chia';
 import { useWalletConnect } from "../hooks/WalletConnectContext";
 import { CoinOutput } from '../types/ChiaGaming';
+import { WalletBlockchainInterface, connectSimulator, connectRealBlockchain, registerBlockchainNotifier } from '../hooks/useFullNode';
 import { generateOrRetrieveUniqueId } from '../util';
 
 const WalletConnectHeading: React.FC<any> = (args: any) => {
@@ -27,11 +28,13 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const [walletIds, setWalletIds] = useState<any[]>([]);
   const [fakeAddress, setFakeAddress] = useState<string | undefined>();
   const [wantSpendable, setWantSpendable] = useState<any | undefined>(undefined);
+  const [peak, setPeak] = useState<number | undefined>(undefined);
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = useCallback(() => {
     setExpanded(!expanded);
   }, [expanded]);
   const { rpc } = useRpcUi();
+  const [blockchainInterface, setBlockchainInterface] = useState<WalletBlockchainInterface | undefined>(undefined);
 
   function callRpcWithRetry(functionKey: string, data: any, timeout: number) {
     return (rpc as any)[functionKey](data).catch((e: any) => {
@@ -88,36 +91,25 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       }, '*');
     }
 
-    if (data.name !== 'blockchain') {
-      return;
-    }
-
     if (data.method === 'create_spendable') {
       setWantSpendable(data);
-      getCurrentAddress().then((ca: any) => {
-        console.warn('about to send transaction');
-        const fromPuzzleHash = bech32m.decode(ca);
-        return sendTransaction({
-          walletId,
-          amount: data.amt,
-          fee: 0,
-          address: ca.targetXch,
-          waitForConfirmation: false
-        }).then((tx: any) => {
-          setWantSpendable(undefined);
-          console.warn('create_spendable result', tx);
-          if (!subframe) {
-            console.error('no element named subframe');
-            return;
-          }
-          (subframe as any).contentWindow.postMessage({
-            name: 'blockchain_reply',
-            requestId: data.requestId,
-            result: { tx, fromPuzzleHash }
-          }, '*');
-        });
+      return blockchainInterface?.do_initial_spend(data.target, data.amt).then((result: any) => {
+        setWantSpendable(undefined);
+        console.warn('create_spendable result', result);
+        (subframe as any).contentWindow.postMessage({
+          name: 'blockchain_reply',
+          requestId: data.requestId,
+          result: result
+        }, '*');
       });
-      return;
+    } else if (data.method === 'spend') {
+      blockchainInterface?.spend(data.spendBlob, data.spend).then((result: any) => {
+        (subframe as any).contentWindow.postMessage({
+          name: 'blockchain_reply',
+          requestId: data.requestId,
+          result,
+        }, '*');
+      });
     }
   }
 
@@ -142,6 +134,24 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   });
 
   const useHeight = expanded ? '3em' : '20em';
+
+  const registerBlockchainNotifications = () => {
+    registerBlockchainNotifier((peak, block, block_report) => {
+      setPeak(peak);
+      const subframe = document.getElementById('subframe');
+      if (!subframe) {
+        return;
+      }
+
+      (subframe as any).contentWindow.postMessage({
+        name: 'blockchain_peak',
+        peak,
+        block,
+        block_report
+      }, '*');
+    });
+  };
+
   const handleConnectWallet = () => {
     if (!client) throw new Error("WalletConnect is not initialized.");
 
@@ -152,6 +162,22 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     } else {
       connect();
     }
+
+    const initialSpend = (target: string, amt: number) => {
+      return getCurrentAddress().then((ca: any) => {
+        console.warn('about to send transaction from', ca);
+        return sendTransaction({
+          walletId,
+          amount: amt,
+          fee: 0,
+          address: target,
+          waitForConfirmation: false
+        });
+      });
+    };
+    setBlockchainInterface(connectRealBlockchain(initialSpend));
+    window.postMessage({ name: 'walletconnect_up' }, '*');
+    registerBlockchainNotifications();
   };
 
   const handleConnectSimulator = () => {
@@ -166,14 +192,14 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       // Trigger fake connect if not connected.
       console.warn('fake address is', res);
       setFakeAddress(res);
+      let sim = connectSimulator(res);
+      setBlockchainInterface(sim);
+      setExpanded(false);
+      registerBlockchainNotifications();
+      window.postMessage({ name: 'walletconnect_up', fakeAddress: res }, '*');
+      console.log('set up simulator');
     });
   };
-
-  if (!alreadyConnected && (session || args.simulatorActive)) {
-    setAlreadyConnected(true);
-    setExpanded(false);
-    console.log('doing connect real blockchain');
-  }
 
   const sessionConnected = session ? "connected" : fakeAddress ? "simulator" : "disconnected";
   const ifSession = session ? (
@@ -237,7 +263,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     <div style={{ display: 'flex', flexDirection: 'column', height: useHeight, width: '100vw' }}>
       <div style={{ display: 'flex', flexDirection: 'row', height: '3em' }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '100%', padding: '1em' }}>
-          Chia Gaming - WalletConnect {sessionConnected}
+          Chia Gaming - WalletConnect {sessionConnected} peak {peak}
         </div>
         <div style={{ display: 'flex', flexGrow: 1 }}> </div>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, width: '3em', height: '3em', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={toggleExpanded} aria-label='control-menu'>☰</div>

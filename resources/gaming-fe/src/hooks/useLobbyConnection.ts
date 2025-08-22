@@ -6,7 +6,7 @@ import axios from 'axios';
 
 interface Player { id: string; alias: string, game: string; walletAddress?: string; parameters: any; }
 
-export function useLobbySocket(alias: string, walletConnect: boolean) {
+export function useLobbySocket(alias: string) {
   const LOBBY_URL = window.location.origin;
   const params = getSearchParams();
   const [uniqueId, setUniqueId] = useState<string>(generateOrRetrieveUniqueId());
@@ -29,9 +29,10 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
         console.log('either host or joiner missing');
         continue;
       }
-      console.log('conditions to enter', room.host === uniqueId, room.joiner === uniqueId, room.target, walletConnect);
-      if ((room.host === uniqueId || room.joiner === uniqueId) && room.target && walletConnect) {
+      console.log('conditions to enter', room.host === uniqueId, room.joiner === uniqueId, room.target);
+      if ((room.host === uniqueId || room.joiner === uniqueId) && room.target) {
         const iStarted = room.host === uniqueId;
+        console.log('redirect', uniqueId, room.host);
         // This room is inhabited and contains us, redirect.
         console.log('take us to game', JSON.stringify(room));
         // This is gross but should work ok.
@@ -45,7 +46,9 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
             token: room.token
           })
         }).then(res => res.json()).then(() => {
-          window.location.href = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
+          const newUrl: string = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}&source=redirect`;
+          console.warn('navigate', newUrl);
+          window.location.href = newUrl;
         });
         break;
       }
