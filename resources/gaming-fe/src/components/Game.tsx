@@ -1,4 +1,4 @@
-import React, { cloneElement, useState, useEffect, useCallback } from "react";
+import React, { cloneElement, useEffect, useCallback, useState } from "react";
 import {
   Box,
   Button,
@@ -20,6 +20,7 @@ import { useWasmBlob } from "../hooks/useWasmBlob";
 import { getGameSelection } from '../util';
 
 const Game: React.FC = () => {
+  const [ redraw_latch, setRedrawLatch ] = useState(false);
   const gameSelection = getGameSelection();
   const {
     error,
@@ -140,6 +141,12 @@ const Game: React.FC = () => {
     );
   }
 
+  if (redraw_latch === false) {
+    setRedrawLatch(true);
+    window.parent.postMessage({"name": "Game Rendered"}, "*");
+  }
+
+  // --------------------------------
   return (
     <Box p={4}>
       <Typography variant="h4" align="center">
