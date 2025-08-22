@@ -164,6 +164,7 @@ const WalletConnectHeading: React.FC = () => {
   };
 
   const connectToWalletConnect = async () => {
+    console.log("connectToWalletConnect");
     setCalledCurrentAddress(true);
     const address = await getCurrentAddress();
     setExternalApiType("walletconnect");
@@ -196,9 +197,8 @@ const WalletConnectHeading: React.FC = () => {
       console.log("We have more than one WC pairing and don't know what to do", pairings);
       throw("We have more than one WC pairing and don't know what to do");
     } else {
-      console.log("We have Zero WC pairings!");
-      throw("We have Zero WC pairings!");
-      // connect();
+      console.log("We have Zero WC pairings - creating a new WC connection");
+      connect();
     }
   };
 
