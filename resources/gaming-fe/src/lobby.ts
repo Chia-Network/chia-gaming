@@ -126,7 +126,7 @@ app.post('/lobby/good', (req, res) => {
   }
   lobby.removeRoom(token);
   io.emit('room_update', lobby.getRooms());
-  res.json({ rooms: lobby.getRooms() });
+  return res.json({ rooms: lobby.getRooms() });
 });
 app.post('/lobby/join', (req, res) => {
   const { id, alias, parameters } = req.body;

@@ -76,7 +76,7 @@ app.get('/chia_gaming_wasm.js', async (req: any, res: any) => {
 app.get('/urls', async (req: any, res: any) => {
   res.set('Content-Type', 'application/json');
   res.send(JSON.stringify({
-    tracker: `${args.tracker}?lobby=true`
+    tracker: `${args.tracker}?lobby=true&source=urls`
   }));
 });
 app.get('/clsp*', async (req: any, res: any) => {
