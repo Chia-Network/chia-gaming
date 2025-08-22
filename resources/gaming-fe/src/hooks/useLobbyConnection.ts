@@ -6,7 +6,7 @@ import axios from 'axios';
 
 interface Player { id: string; alias: string, game: string; walletAddress?: string; parameters: any; }
 
-export function useLobbySocket(alias: string) {
+export function useLobbySocket(alias: string, receivedWalletConnect: boolean) {
   const LOBBY_URL = window.location.origin;
   const params = getSearchParams();
   const [uniqueId, setUniqueId] = useState<string>(generateOrRetrieveUniqueId());
@@ -18,7 +18,10 @@ export function useLobbySocket(alias: string) {
   console.log('fragment retrieved', fragment);
 
   function tryJoinRoom() {
-    //
+    if (!receivedWalletConnect) {
+      return;
+    }
+
     for (let i = 0; i < rooms.length; i++) {
       let room = rooms[i];
       console.log('we have: uniqueId', uniqueId, 'params', params);

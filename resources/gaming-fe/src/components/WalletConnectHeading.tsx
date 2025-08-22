@@ -20,13 +20,24 @@ import { CoinOutput } from '../types/ChiaGaming';
 import { WalletBlockchainInterface, connectSimulator, connectRealBlockchain, registerBlockchainNotifier } from '../hooks/useFullNode';
 import { generateOrRetrieveUniqueId } from '../util';
 
+type ExternalApiType = "simulator" | "walletconnect" | "unconnected";
+
 const WalletConnectHeading: React.FC = () => {
   const { client, session, pairings, connect, disconnect } = useWalletConnect();
   const { wcInfo, setWcInfo } = useDebug();
   const [alreadyConnected, setAlreadyConnected] = useState(false);
   const [walletId, setWalletId] = useState(1);
   const [walletIds, setWalletIds] = useState<any[]>([]);
+
+
   const [fakeAddress, setFakeAddress] = useState<string | undefined>();
+
+  const [externalApiType, setExternalApiType] = useState<ExternalApiType>();
+  const [currentAddress, setCurrentAddress] = useState<string | undefined>();
+  const [calledGetCurrentAddress, setCalledCurrentAddress] = useState<boolean>();
+  // attemptingWalletConnectConnectionLatch tracks whether the webpage is currently autonomously connecting to WC
+  const [attemptingWalletConnectConnectionLatch, setAttemptingWalletConnectConnectionLatch] = useState<boolean>(false);
+
   const [wantSpendable, setWantSpendable] = useState<any | undefined>(undefined);
   const [peak, setPeak] = useState<number | undefined>(undefined);
   const [expanded, setExpanded] = useState(false);
@@ -38,7 +49,7 @@ const WalletConnectHeading: React.FC = () => {
 
   function callRpcWithRetry(functionKey: string, data: any, timeout: number) {
     return (rpc as any)[functionKey](data).catch((e: any) => {
-      console.error('retry', functionKey, data);
+      console.error('retry', functionKey, data, timeout);
       return new Promise((resolve, reject) => {
         setTimeout(() => {
           callRpcWithRetry(functionKey, data, timeout).catch(reject).then(resolve);
@@ -152,32 +163,43 @@ const WalletConnectHeading: React.FC = () => {
     });
   };
 
-  const handleConnectWallet = () => {
-    if (!client) throw new Error("WalletConnect is not initialized.");
-
-    if (pairings.length === 1) {
-      connect({ topic: pairings[0].topic });
-    } else if (pairings.length) {
-      console.log("The pairing modal is not implemented.", pairings);
-    } else {
-      connect();
-    }
+  const connectToWalletConnect = async () => {
+    setCalledCurrentAddress(true);
+    const address = await getCurrentAddress();
+    setExternalApiType("walletconnect");
+    setCurrentAddress(address);
 
     const initialSpend = (target: string, amt: number) => {
-      return getCurrentAddress().then((ca: any) => {
-        console.warn('about to send transaction from', ca);
-        return sendTransaction({
-          walletId,
-          amount: amt,
-          fee: 0,
-          address: target,
-          waitForConfirmation: false
-        });
+      console.warn('about to send transaction from', address);
+      return sendTransaction({
+        walletId,
+        amount: amt,
+        fee: 0,
+        address: target,
+        waitForConfirmation: false
       });
     };
     setBlockchainInterface(connectRealBlockchain(initialSpend));
     window.postMessage({ name: 'walletconnect_up' }, '*');
     registerBlockchainNotifications();
+  }
+
+  const handleConnectWallet = () => {
+    if (!client) throw new Error("WalletConnect is not initialized.");
+
+    // We can use the list of pairings to select different wallet connections from a drop-down
+    if (pairings.length === 1) {
+      connect({ topic: pairings[0].topic }).then(() => {
+        return connectToWalletConnect();
+      });
+    } else if (pairings.length) {
+      console.log("We have more than one WC pairing and don't know what to do", pairings);
+      throw("We have more than one WC pairing and don't know what to do");
+    } else {
+      console.log("We have Zero WC pairings!");
+      throw("We have Zero WC pairings!");
+      // connect();
+    }
   };
 
   const handleConnectSimulator = () => {
@@ -192,16 +214,24 @@ const WalletConnectHeading: React.FC = () => {
       // Trigger fake connect if not connected.
       console.warn('fake address is', res);
       setFakeAddress(res);
+      setExternalApiType("simulator");
+      //setCurrentAddress( TODO
       let sim = connectSimulator(res);
       setBlockchainInterface(sim);
       setExpanded(false);
       registerBlockchainNotifications();
-      window.postMessage({ name: 'walletconnect_up', fakeAddress: res }, '*');
+      window.postMessage({ name: 'walletconnect_up', externalApiType: externalApiType, fakeAddress: res }, '*');
       console.log('set up simulator');
     });
   };
 
   const sessionConnected = session ? "connected" : fakeAddress ? "simulator" : "disconnected";
+
+  if (session && !attemptingWalletConnectConnectionLatch) {
+    setAttemptingWalletConnectConnectionLatch(true);
+    connectToWalletConnect();
+  }
+
   const ifSession = session ? (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Box>

@@ -18,11 +18,14 @@ import {
 } from '@mui/material';
 import { getSearchParams } from './util';
 
+type AppModeType = "disconnected" | "app_has_lobby_subframe" | "app_has_game_subframe" | "app_is_game_subframe" | "app_is_lobby_subframe";
+
 const App: React.FC = () => {
   const params = getSearchParams();
   const [chatInput, setChatInput] = useState('');
   const [receivedWalletConnect, setReceivedWalletConnect] = useState(false);
   const [lobbyUrl, setLobbyUrl] = useState('about:blank');
+  const [appMode, setAppMode] = useState<AppModeType>("disconnected");
 
   const listenForWalletConnect = useCallback((e: any) => {
     const messageKey = e.message ? 'message' : 'data';
@@ -50,11 +53,28 @@ const App: React.FC = () => {
     };
   });
 
+  //const maches//
+
+  let app_mode = "disconnected";
   if (params.lobby) {
-    return (<LobbyScreen receivedWalletConnect={receivedWalletConnect} />);
+    app_mode = "app_is_lobby_subframe";
   } else if (params.game && !params.join) {
-    return (<Game receivedWalletConnect={receivedWalletConnect} />);
+    app_mode = "app_is_game_subframe";
   } else if (!receivedWalletConnect) {
+    app_mode = "disconnected";
+  } else {
+    if (lobbyUrl.startsWith(window.location.origin)) {
+      app_mode =  "app_has_game_subframe";
+    } else {
+      app_mode = "app_has_lobby_subframe";
+    }
+  }
+
+  if (app_mode === "app_is_lobby_subframe") {
+    return (<LobbyScreen receivedWalletConnect={receivedWalletConnect} />);
+  } else if (app_mode === "app_is_game_subframe") {
+    return (<Game receivedWalletConnect={receivedWalletConnect} />);
+  } else if (app_mode = "disconnected") {
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
@@ -67,8 +87,9 @@ const App: React.FC = () => {
         </Box>
       </div>
     );
-  } else {
+  } else if (app_mode === "app_has_game_subframe" || app_mode === "app_has_lobby_subframe") {
     // Iframe host for the lobby first, then the game.
+    // TODO: Tell iframe what kind it is.
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
@@ -77,6 +98,15 @@ const App: React.FC = () => {
         <iframe id='subframe' style={{ display: 'flex', width: '100%', flexShrink: 1, flexGrow: 1, height: '100%' }} src={lobbyUrl}></iframe>
       </div>
     );
+  } else {
+      <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
+        <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
+          <WalletConnectHeading />
+        </div>
+              <Typography variant="h1" gutterBottom>
+                DAMN. {app_mode}
+              </Typography>
+      </div>
   }
 };
 
