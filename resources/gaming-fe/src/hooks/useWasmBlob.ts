@@ -605,7 +605,7 @@ class WasmBlobWrapper {
     result.stop = !idle.continue_on;
 
     result.setError = idle.receive_error;
-    console.log('idle1', idle.action_queue);
+    // console.log('idle1', idle.action_queue);
     if (idle.handshake_done && !this.handshakeDone) {
       console.warn("HANDSHAKE DONE");
       this.handshakeDone = true;
@@ -617,7 +617,7 @@ class WasmBlobWrapper {
       this.pushEvent({ startGame: true });
     }
 
-    console.log('idle2', idle.incoming_messages);
+    // console.log('idle2', idle.incoming_messages);
     idle.outbound_messages.forEach((m) => {
       console.log('send message to remote');
       this.sendMessage(m);
@@ -834,7 +834,7 @@ export function useWasmBlob() {
     null;
 
   const doHaveBlockchainStuff = function(fakeAddress: string | undefined) {
-    console.log('doHaveBlockchainStuff', fakeAddress);
+    console.log('useWasmBlob:837 doHaveBlockchainStuff', fakeAddress);
     if (haveBlockchain) {
       return;
     }
@@ -856,12 +856,12 @@ export function useWasmBlob() {
   }, []);
 
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
-    console.log('start loading wasm', gameObject);
+    console.log('useWasmBlob:859 start loading wasm', gameObject);
     gameObject?.loadWasm(chia_gaming_init, cg);
   }, []);
 
   const externalSetHaveBlockchain = useCallback((msg: any) => {
-    console.log('externalSetHaveBlockchain', msg);
+    console.log('useWasmBlob:864 externalSetHaveBlockchain', msg);
     const fakeAddress = msg.fakeAddress;
     setFakeAddress(fakeAddress);
     doHaveBlockchainStuff(fakeAddress);

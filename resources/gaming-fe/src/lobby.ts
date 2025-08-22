@@ -57,6 +57,9 @@ app.get('/', async (req: any, res: any) => {
 app.get('/index.js', async (req: any, res: any) => {
   serveFile("dist/index-rollup.js", "application/javascript", res);
 });
+app.get('/chia_gaming_wasm.js', async (req: any, res: any) => {
+  serveFile("dist/chia_gaming_wasm.js", "application/javascript", res);
+});
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;
   if (!id || !newAlias) return res.status(400).json({ error: 'Missing id or new_alias.' });

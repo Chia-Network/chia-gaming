@@ -66,7 +66,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
     this.ws.addEventListener('message', (m: any) => {
       const json = JSON.parse(m.data);
-      console.log('coinset json', json);
+      // console.log('coinset json', json);
       if (json.type === 'peak') {
         this.peak = json.data.height;
         this.pushEvent({checkPeak: true});
@@ -76,7 +76,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     window.addEventListener('message', (e: any) => {
       const messageKey = e.message ? 'message' : 'data';
       const messageData = e[messageKey];
-      console.warn('inner frame received message', messageData);
+      // console.warn('inner frame received message', messageData);
       const messageName = messageData.name;
       if (messageName === 'walletconnect_up') {
         this.set_puzzle_hash(messageData.fakeAddress);
@@ -86,7 +86,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         return;
       }
       const requestId = messageData.requestId;
-      console.log('blockchain_reply', messageData);
+      // console.log('blockchain_reply', messageData);
       if (this.requests[requestId]) {
         this.requests[requestId].complete(messageData.result);
       } else {
@@ -114,7 +114,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async internalRetrieveBlock(height: number) {
-    console.log('full node: retrieve block', height);
+    // console.log('full node: retrieve block', height);
     const br_height = await fetch(`${this.baseUrl}/get_block_record_by_height`, {
       method: 'POST',
       headers: {
@@ -123,7 +123,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       },
       body: JSON.stringify({ height })
     }).then(r => r.json());
-    console.log('br_height', br_height);
+    // console.log('br_height', br_height);
     this.at_block = br_height.block_record.height + 1;
     const header_hash = br_height.block_record.header_hash;
     const br_spends = await fetch(`${this.baseUrl}/get_block_spends`, {
@@ -136,7 +136,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         header_hash: header_hash
       })
     }).then(r => r.json());
-    console.log('br_spends', br_spends.block_spends);
+    // console.log('br_spends', br_spends.block_spends);
     doBlockNotifications(this.at_block, br_spends.block_spends, undefined);
   }
 
@@ -162,13 +162,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async kickEvent() {
-    console.log('full node: kickEvent');
+    // console.log('full node: kickEvent');
     while (this.incomingEvents.length) {
-      console.log('incoming events', this.incomingEvents.length);
+      // console.log('incoming events', this.incomingEvents.length);
       this.handlingEvent = true;
       try {
         const event = this.incomingEvents.shift();
-        console.log('full node: do event', event);
+        // console.log('full node: do event', event);
         await this.handleEvent(event);
       } catch (e) {
         console.log('incoming event failed', e);
@@ -198,7 +198,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async push_request(req: any): Promise<any> {
-    console.log('blockchain: push message to parent', req);
+    // console.log('blockchain: push message to parent', req);
     let requestId = this.requestId++;
     req.requestId = requestId;
     window.parent.postMessage(req, '*');
@@ -216,7 +216,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async spend(spend: any): Promise<string> {
-    console.log('push_tx', spend);
+    // console.log('push_tx', spend);
     return await fetch(`${this.baseUrl}/push_tx`, {
       method: 'POST',
       headers: {
@@ -226,7 +226,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       body: JSON.stringify({ spend_bundle: spend })
     }).then(r => r.json()).then(r => {
       if (r.error && r.error.indexOf("UNKNOWN_UNSPENT") != -1) {
-        console.log('unknown unspent, retry in 60 seconds');
+        // console.log('unknown unspent, retry in 60 seconds');
         return new Promise((resolve, reject) => {
           setTimeout(() => {
             this.spend(spend).then(r => resolve(r)).catch(reject);
@@ -255,7 +255,7 @@ function startSimulatorMonitoring(forWho: any): Promise<any> {
 }
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
-  console.log('requestBlockData', block_number);
+  // console.log('requestBlockData', block_number);
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
     method: 'POST'
   }).then((res) => res.json()).then((res) => {
@@ -292,7 +292,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     window.addEventListener('message', (e: any) => {
       const messageKey = e.message ? 'message' : 'data';
       const messageData = e[messageKey];
-      console.warn('fake inner frame received message', messageData);
+      // console.warn('fake inner frame received message', messageData);
       const messageName = messageData.name;
       if (messageName === 'fake walletconnect_up') {
         if (messageData.fakeAddress) {
@@ -321,16 +321,16 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async kickEvent() {
-    console.log('full node: kickEvent');
+    // console.log('full node: kickEvent');
     while (this.incomingEvents.length) {
-      console.log('incoming events', this.incomingEvents.length);
+      // console.log('incoming events', this.incomingEvents.length);
       this.handlingEvent = true;
       try {
         const event = this.incomingEvents.shift();
-        console.log('full node: do event', event);
+        // console.log('full node: do event', event);
         await this.handleEvent(event);
       } catch (e) {
-        console.log('incoming event failed', e);
+        // console.log('incoming event failed', e);
       } finally {
         this.handlingEvent = false;
       }
@@ -368,7 +368,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       this.max_block = peak;
     }
 
-    console.log('FakeBlockchainInterface, peaks', this.at_block, '/', this.max_block);
+    // console.log('FakeBlockchainInterface, peaks', this.at_block, '/', this.max_block);
 
     return this.internalNextBlock();
   }
@@ -382,7 +382,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   internalDeliverBlock(block_number: number, block_data: any[]) {
-    console.log('fake::internalDeliverBlock', block_number, block_data);
+    // console.log('fake::internalDeliverBlock', block_number, block_data);
     this.at_block += 1;
     doBlockNotifications(block_number, [], block_data);
 
@@ -394,7 +394,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   set_puzzle_hash(puzzleHash: string) {
-    console.log('user puzzle hash', puzzleHash);
+    // console.log('user puzzle hash', puzzleHash);
     this.puzzleHash = puzzleHash;
   }
 
@@ -403,14 +403,14 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       fromPuzzleHash: this.puzzleHash,
       inputs: [this.openingCoin]
     };
-    console.log('select coins result', amount, result);
+    // console.log('select coins result', amount, result);
     return result;
   }
   spend(spend: any): Promise<string> {
     return fetch(`${this.baseUrl}/spend?blob=${spend}`, {
       method: "POST"
     }).then((res) => res.json()).then((res) => {
-      console.log('fake spend returned', res);
+      // console.log('fake spend returned', res);
       return res;
     });
   }
@@ -426,7 +426,7 @@ export function connectRealBlockchain() {
 }
 
 export function connectSimulator() {
-  console.warn("simulator active");
+  // console.warn("simulator active");
   simulatorIsActive = true;
 
   window.postMessage({ name: "walletconnect_up" }, "*");
