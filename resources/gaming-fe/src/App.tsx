@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Game from './components/Game';
 import LobbyScreen from "./components/LobbyScreen";
 import WalletConnectHeading from './components/WalletConnectHeading';
-import { useWalletConnect } from "./hooks/WalletConnectContext";
 import {
   Box,
   Button,
@@ -17,8 +16,7 @@ import {
   Typography,
 } from '@mui/material';
 import { getSearchParams } from './util';
-
-type AppModeType = "disconnected" | "app_has_lobby_subframe" | "app_has_game_subframe" | "app_is_game_subframe" | "app_is_lobby_subframe";
+import { AppModeType, ExternalApiType } from './types/StateMachines';
 
 const App: React.FC = () => {
   const params = getSearchParams();
@@ -77,7 +75,7 @@ const App: React.FC = () => {
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
-          <WalletConnectHeading />
+          <WalletConnectHeading app_mode={app_mode}/>
         </div>
         <Box p={4} maxWidth={600} mx="auto">
           <Typography variant="h4" gutterBottom>
@@ -92,7 +90,7 @@ const App: React.FC = () => {
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
-          <WalletConnectHeading />
+          <WalletConnectHeading app_mode={app_mode} />
         </div>
         <iframe id='subframe' style={{ display: 'flex', width: '100%', flexShrink: 1, flexGrow: 1, height: '100%' }} src={lobbyUrl}></iframe>
       </div>
@@ -100,10 +98,10 @@ const App: React.FC = () => {
   } else {
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
-          <WalletConnectHeading />
+          <WalletConnectHeading app_mode={app_mode} />
         </div>
               <Typography variant="h1" gutterBottom>
-                DAMN. {app_mode}
+                Undefined state: {app_mode}
               </Typography>
       </div>
   }

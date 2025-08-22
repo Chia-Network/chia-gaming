@@ -17,12 +17,15 @@ import Debug from "./Debug";
 import { bech32m } from 'bech32m-chia';
 import { useWalletConnect } from "../hooks/WalletConnectContext";
 import { CoinOutput } from '../types/ChiaGaming';
+import { AppModeType, ExternalApiType } from '../types/StateMachines';
 import { WalletBlockchainInterface, connectSimulator, connectRealBlockchain, registerBlockchainNotifier } from '../hooks/useFullNode';
 import { generateOrRetrieveUniqueId } from '../util';
 
-type ExternalApiType = "simulator" | "walletconnect" | "unconnected";
+type WalletConnectHeadingProps = {
+  app_mode: AppModeType
+};
 
-const WalletConnectHeading: React.FC = () => {
+const WalletConnectHeading: React.FC<WalletConnectHeadingProps> = ({app_mode}) => {
   const { client, session, pairings, connect, disconnect } = useWalletConnect();
   const { wcInfo, setWcInfo } = useDebug();
   const [alreadyConnected, setAlreadyConnected] = useState(false);
@@ -225,13 +228,15 @@ const WalletConnectHeading: React.FC = () => {
     });
   };
 
+  const connected_to_wc_or_simulator = fakeAddress || currentAddress;
   const sessionConnected = session ? "connected" : fakeAddress ? "simulator" : "disconnected";
 
-  if (session && !attemptingWalletConnectConnectionLatch) {
+  if (connected_to_wc_or_simulator && !attemptingWalletConnectConnectionLatch) {
     setAttemptingWalletConnectConnectionLatch(true);
     connectToWalletConnect();
   }
 
+  // TODO: replace session with connected_to_wc_or_simulator ?? (Yes)
   const ifSession = session ? (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Box>
@@ -293,7 +298,7 @@ const WalletConnectHeading: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', height: useHeight, width: '100vw' }}>
       <div style={{ display: 'flex', flexDirection: 'row', height: '3em' }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '100%', padding: '1em' }}>
-          Chia Gaming - WalletConnect {sessionConnected} peak {peak}
+          Chia Gaming - WalletConnect {sessionConnected} peak {peak} app_mode {app_mode}
         </div>
         <div style={{ display: 'flex', flexGrow: 1 }}> </div>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, width: '3em', height: '3em', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={toggleExpanded} aria-label='control-menu'>☰</div>
