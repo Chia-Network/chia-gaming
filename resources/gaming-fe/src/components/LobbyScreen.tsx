@@ -15,9 +15,9 @@ import {
 import { useLobbySocket } from '../hooks/useLobbyConnection';
 import { generateOrRetrieveAlias, updateAlias, getSearchParams } from "../util";
 
-interface LobbyComponentProps { }
+interface LobbyComponentProps {receivedWalletConnect: boolean}
 
-const LobbyScreen: React.FC<LobbyComponentProps> = ({ }) => {
+const LobbyScreen: React.FC<LobbyComponentProps> = ({receivedWalletConnect}) => {
   const params = getSearchParams();
   const [joined, setJoined] = useState(false);
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());

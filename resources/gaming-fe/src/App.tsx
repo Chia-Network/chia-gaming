@@ -22,7 +22,6 @@ const App: React.FC = () => {
   const params = getSearchParams();
   const [chatInput, setChatInput] = useState('');
   const [receivedWalletConnect, setReceivedWalletConnect] = useState(false);
-  const { client, session, pairings, connect, disconnect } = useWalletConnect();
   const [lobbyUrl, setLobbyUrl] = useState('about:blank');
 
   const listenForWalletConnect = useCallback((e: any) => {
@@ -52,14 +51,14 @@ const App: React.FC = () => {
   });
 
   if (params.lobby) {
-    return (<LobbyScreen />);
+    return (<LobbyScreen receivedWalletConnect={receivedWalletConnect} />);
   } else if (params.game && !params.join) {
-    return (<Game />);
+    return (<Game receivedWalletConnect={receivedWalletConnect} />);
   } else if (!receivedWalletConnect) {
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
-          <WalletConnectHeading client={client} session={session} pairings={pairings} connect={connect} disconnect={disconnect} />
+          <WalletConnectHeading />
         </div>
         <Box p={4} maxWidth={600} mx="auto">
           <Typography variant="h4" gutterBottom>
@@ -73,7 +72,7 @@ const App: React.FC = () => {
     return (
       <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
         <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
-          <WalletConnectHeading client={client} session={session} pairings={pairings} connect={connect} disconnect={disconnect}/>
+          <WalletConnectHeading />
         </div>
         <iframe id='subframe' style={{ display: 'flex', width: '100%', flexShrink: 1, flexGrow: 1, height: '100%' }} src={lobbyUrl}></iframe>
       </div>

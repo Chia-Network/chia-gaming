@@ -18,6 +18,7 @@ export function useLobbySocket(alias: string) {
   console.log('fragment retrieved', fragment);
 
   function tryJoinRoom() {
+    //
     for (let i = 0; i < rooms.length; i++) {
       let room = rooms[i];
       console.log('we have: uniqueId', uniqueId, 'params', params);

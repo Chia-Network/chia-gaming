@@ -20,8 +20,8 @@ import { CoinOutput } from '../types/ChiaGaming';
 import { WalletBlockchainInterface, connectSimulator, connectRealBlockchain, registerBlockchainNotifier } from '../hooks/useFullNode';
 import { generateOrRetrieveUniqueId } from '../util';
 
-const WalletConnectHeading: React.FC<any> = (args: any) => {
-  const { client, session, pairings, connect, disconnect } = args;
+const WalletConnectHeading: React.FC = () => {
+  const { client, session, pairings, connect, disconnect } = useWalletConnect();
   const { wcInfo, setWcInfo } = useDebug();
   const [alreadyConnected, setAlreadyConnected] = useState(false);
   const [walletId, setWalletId] = useState(1);

@@ -19,7 +19,9 @@ import WaitingScreen from "./WaitingScreen";
 import { useWasmBlob } from "../hooks/useWasmBlob";
 import { getGameSelection } from '../util';
 
-const Game: React.FC = () => {
+interface GameProps {receivedWalletConnect: boolean};
+
+const Game: React.FC<GameProps> = ({receivedWalletConnect}) => {
   const [ redraw_latch, setRedrawLatch ] = useState(false);
   const gameSelection = getGameSelection();
   const {
