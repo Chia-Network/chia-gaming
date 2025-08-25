@@ -231,7 +231,7 @@ const WalletConnectHeading: React.FC<WalletConnectHeadingProps> = ({app_mode}) =
   const connected_to_wc_or_simulator = fakeAddress || currentAddress;
   const sessionConnected = session ? "connected" : fakeAddress ? "simulator" : "disconnected";
 
-  if (connected_to_wc_or_simulator && !attemptingWalletConnectConnectionLatch) {
+  if (connected_to_wc_or_simulator && !attemptingWalletConnectConnectionLatch && !fakeAddress) {
     setAttemptingWalletConnectConnectionLatch(true);
     connectToWalletConnect();
   }
