@@ -18,6 +18,9 @@ export function useLobbySocket(alias: string, receivedWalletConnect: boolean) {
   console.log('fragment retrieved', fragment);
 
   function tryJoinRoom() {
+    window.parent.postMessage({
+      name: 'lobby'
+    }, '*');
     if (!receivedWalletConnect) {
       return;
     }
@@ -25,9 +28,6 @@ export function useLobbySocket(alias: string, receivedWalletConnect: boolean) {
     for (let i = 0; i < rooms.length; i++) {
       let room = rooms[i];
       console.log('we have: uniqueId', uniqueId, 'params', params);
-      window.parent.postMessage({
-        name: 'lobby'
-      }, '*');
       console.log('checking room', room);
       if (!room.host || !room.joiner) {
         console.log('either host or joiner missing');
