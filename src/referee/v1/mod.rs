@@ -14,14 +14,14 @@ use crate::common::types::{
     Sha256Input, Sha256tree, Spend,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RefereeOnChainTransaction,
+    GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed, RefereeOnChainTransaction,
     TheirTurnCoinSpentResult, TheirTurnMoveResult,
 };
 use crate::referee::v1::my_turn::MyTurnReferee;
 use crate::referee::v1::their_turn::TheirTurnReferee;
 use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, OnChainRefereeMoveData,
-    OnChainRefereeSolution, RMFixed, RefereePuzzleArgs,
+    OnChainRefereeSolution, RefereePuzzleArgs,
 };
 use crate::referee::RewindResult;
 
@@ -47,6 +47,7 @@ impl RefereeByTurn {
         game_start_info: &GameStartInfo,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
+        reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
@@ -64,6 +65,7 @@ impl RefereeByTurn {
             referee_coin_puzzle: referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
+            reward_puzzle_hash: reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
             timeout: game_start_info.timeout.clone(),
             amount: game_start_info.amount.clone(),
@@ -124,6 +126,7 @@ impl RefereeByTurn {
                 game_start_info,
                 my_identity.clone(),
                 their_puzzle_hash,
+                reward_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data,
                 state_number,
@@ -137,6 +140,7 @@ impl RefereeByTurn {
                 game_start_info,
                 my_identity,
                 their_puzzle_hash,
+                reward_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data,
                 state_number,

@@ -20,13 +20,14 @@ use crate::common::types::{
     IntoErr, Program, ProgramRef, Puzzle, PuzzleHash, Sha256tree, Spend,
 };
 use crate::referee::types::{
-    GameMoveDetails, GameMoveStateInfo, SlashOutcome, TheirTurnCoinSpentResult, TheirTurnMoveResult,
+    GameMoveDetails, GameMoveStateInfo, RMFixed, SlashOutcome, TheirTurnCoinSpentResult,
+    TheirTurnMoveResult,
 };
 use crate::referee::v1::my_turn::{MyTurnReferee, MyTurnRefereeMakerGameState};
 use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, IdentityCoinAndSolution,
     InternalStateUpdateArgs, OnChainRefereeMoveData, OnChainRefereeSlash, OnChainRefereeSlashData,
-    OnChainRefereeSolution, RMFixed, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
+    OnChainRefereeSolution, RefereePuzzleArgs, StateUpdateMoveArgs, StateUpdateResult,
     REM_CONDITION_FIELDS,
 };
 use crate::referee::v1::RefereeByTurn;
@@ -124,6 +125,7 @@ impl TheirTurnReferee {
         game_start_info: &GameStartInfo,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
+        reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
@@ -141,6 +143,7 @@ impl TheirTurnReferee {
             referee_coin_puzzle,
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
+            reward_puzzle_hash: reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
             timeout: game_start_info.timeout.clone(),
             amount: game_start_info.amount.clone(),
@@ -764,14 +767,12 @@ impl TheirTurnReferee {
                     &args,
                 )?;
                 assert_eq!(new_puzzle_hash, to_spend_ph);
-                let target_puzzle_hash = self.target_puzzle_hash_for_slash();
                 let slash = self.make_slash_for_their_turn(
                     allocator,
                     slash_validation_program,
                     slash_state,
                     &coin_string_to_spend,
                     &puzzle,
-                    &target_puzzle_hash,
                     evidence.clone(),
                 )?;
                 Ok((None, slash))
@@ -779,11 +780,6 @@ impl TheirTurnReferee {
             TheirTurnResult::FinalMove(move_data) => finish_result(allocator, move_data),
             TheirTurnResult::MakeMove(_, _, move_data) => finish_result(allocator, move_data),
         }
-    }
-
-    // It me.
-    fn target_puzzle_hash_for_slash(&self) -> PuzzleHash {
-        self.fixed.my_identity.puzzle_hash.clone()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -794,13 +790,18 @@ impl TheirTurnReferee {
         state: Rc<Program>,
         coin_string: &CoinString,
         puzzle: &Puzzle,
-        new_puzzle_hash: &PuzzleHash,
         evidence: Evidence,
     ) -> Result<TheirTurnCoinSpentResult, Error> {
-        debug!("slash spend: parent coin is {coin_string:?} => {new_puzzle_hash:?}");
+        debug!(
+            "slash spend: parent coin is {coin_string:?} => {:?}",
+            self.fixed.reward_puzzle_hash
+        );
         let slash_conditions = [(
             CREATE_COIN,
-            (new_puzzle_hash, (self.fixed.amount.clone(), ())),
+            (
+                self.fixed.reward_puzzle_hash.clone(),
+                (self.fixed.amount.clone(), ()),
+            ),
         )]
         .to_clvm(allocator)
         .into_gen()?;
@@ -834,8 +835,11 @@ impl TheirTurnReferee {
         }));
         let slashing_coin_solution = solution.to_nodeptr(allocator, &self.fixed)?;
 
-        let coin_string_of_output_coin =
-            CoinString::from_parts(&coin_string.to_coin_id(), new_puzzle_hash, &reward_amount);
+        let coin_string_of_output_coin = CoinString::from_parts(
+            &coin_string.to_coin_id(),
+            &self.fixed.reward_puzzle_hash,
+            &reward_amount,
+        );
 
         Ok(TheirTurnCoinSpentResult::Slash(Box::new(
             SlashOutcome::Reward {

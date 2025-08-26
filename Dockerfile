@@ -17,6 +17,10 @@ RUN . $HOME/.cargo/env && rustup default stable && rustup target add wasm32-unkn
 # Start copying over source
 ADD clsp /app/clsp
 ADD src /app/rust/src
+
+RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && pip install maturin==1.9.2
+RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests && pip install `find . -name \*.whl`
+
 ADD wasm /app/rust/wasm
 COPY Cargo.toml /app/rust/Cargo.toml
 COPY Cargo.lock /app/rust/Cargo.lock
@@ -46,4 +50,5 @@ RUN cd /app && npm run build
 
 COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 COPY resources/gaming-fe/package.json /app/package.json
-CMD /bin/sh -c "(. /app/test/bin/activate && ./chia-gaming &) && (node ./dist/lobby-rollup.cjs &) && npm run start"
+RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.sh
+CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; npm run start &) && . /app/test/bin/activate && python run_simulator.sh"
