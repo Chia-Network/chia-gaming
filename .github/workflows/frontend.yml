@@ -66,14 +66,26 @@ jobs:
       - name: Install wasm-pack
         run: |
           cargo install --version 0.13.1 wasm-pack
+
+      - name: Smoke test docker image
+        run: |
+          set -e
+
+          docker build --platform linux/amd64 --progress=plain -t chia-gaming-test . # TODO: Replace this line with ./build-docker-images.sh
+          docker run --name chia-gaming-test --network=host -t chia-gaming-test
+          cd resource/fe-test
+          ./wait-for-it.sh localhost 5800
+          curl -d '' http://localhost:5800/wait_block | grep 2
+          docker kill chia-gaming-test
+
       - name: Run headless test
         env:
           DETECT_CHROMEDRIVER_VERSION: "true"
         run: |
+          (docker run --name chia-gaming-test --network=host -t chia-gaming-test && cd resource/fe-test && ./wait-for-it.sh localhost 5800 && curl -d '' http://localhost:5800/wait_block | grep 2 && docker kill chia-gaming-test)
           (cd resources/gaming-fe &&
               yarn install &&
               yarn run build) &&
-            docker build --platform linux/amd64 --progress=plain -t chia-gaming-test . # TODO: Replace this line with ./build-docker-images.sh
           sudo apt update
           sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
           (cd resources/fe-test && xvfb-run -a ./test.sh)
