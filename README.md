@@ -1,6 +1,6 @@
 ##  chia-gaming Traits and Structs
 
-Here's a breakdown of the key traits and structs used in the `chia-gaming` project, along with their purposes.
+Here's a breakdown of the key traits and structs used in the `chia-gaming` project, along with their purposes. (AI)
 
 **Common Types:**
 
@@ -84,4 +84,3 @@ Here's a breakdown of the key traits and structs used in the `chia-gaming` proje
 * **`CoinDataForReward`:** Data for a coin being used as a reward, containing the coin string.
 
 **Overall, the project is organized around the concept of state channels, where two players interact through a set of coins on the Chia blockchain.  The code uses a combination of CLVM programs and Rust code to manage the state channel, referee the games, and handle game logic.  The use of traits helps to abstract away dependencies and make the code more modular and reusable.**
-
