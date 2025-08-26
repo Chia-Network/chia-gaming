@@ -72,7 +72,7 @@ jobs:
           set -e
 
           docker build --platform linux/amd64 --progress=plain -t chia-gaming-test . # TODO: Replace this line with ./build-docker-images.sh
-          docker run --name chia-gaming-test --network=host -t chia-gaming-test
+          docker run --name chia-gaming-test --network=host -t chia-gaming-test &
           cd resource/fe-test
           ./wait-for-it.sh localhost 5800
           curl -d '' http://localhost:5800/wait_block | grep 2
