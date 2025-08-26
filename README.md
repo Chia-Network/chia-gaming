@@ -1,6 +1,6 @@
 ##  chia-gaming Traits and Structs
 
-Here's a breakdown of the key traits and structs used in the `chia-gaming` project, along with their purposes. (AI)
+Here's a breakdown of the key traits and structs used in the `chia-gaming` project, along with their purposes.
 
 **Common Types:**
 
