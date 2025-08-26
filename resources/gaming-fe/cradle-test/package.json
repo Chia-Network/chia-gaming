@@ -10,7 +10,7 @@
     "build:demo": "webpack --config webpack.config.demo.js",
     "test": "./node_modules/typescript/bin/tsc -p tstestconfig.json --noEmit && jest",
     "coverage": "npm run test -- --coverage",
-    "prepare": "npm run build",
+    "prepare": ":",
     "trypublish": "npm publish || true"
   },
   "repository": {
