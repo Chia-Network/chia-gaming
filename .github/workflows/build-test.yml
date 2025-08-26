@@ -274,6 +274,6 @@ jobs:
 
       - name: do wasm tests in frontend
         run: |
-         cd resources/gaming-fe/cradle-tests
+         cd resources/gaming-fe/cradle-test
          sh ./stage-for-test.sh
          docker run -t chia-host-test
