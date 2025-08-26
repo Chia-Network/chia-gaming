@@ -289,6 +289,10 @@ function compare_card(a: number[], b: number[]): number {
   return compare_card(a.slice(1), b.slice(1));
 }
 
+export interface PeerConnectionResult {
+  sendMessage: (input: string) => void;
+}
+
 export class CalpokerOutcome {
   alice_discards: number;
   bob_discards: number;

@@ -77,6 +77,9 @@
     ]
   },
   "dependencies": {
-    "bls-signatures": "^2.0.2"
+    "bls-signatures": "^2.0.2",
+    "clvm-lib": "^1.0.1",
+    "hex-to-uint8": "^1.0.1",
+    "uuid": "^11.1.0"
   }
 }

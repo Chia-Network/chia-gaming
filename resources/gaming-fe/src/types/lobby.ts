@@ -7,8 +7,6 @@ export const GameTypes = {
 }
 export type GameType = 'california_poker' | 'krunk' | 'exotic_poker'
 
-export type FragmentData = { [k: string]: string }
-
 export interface LobbyState {
   players: Player[];
   rooms: Room[];

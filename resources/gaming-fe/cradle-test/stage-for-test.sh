@@ -1,4 +1,7 @@
-#!/bin/sh
+#!/bin/sh -x
+
+# clean
+rm -rf $(ls -1 ./src | grep -v -e '^lib$')
 
 # Set up directories
 mkdir -p ./rust
@@ -12,6 +15,10 @@ cp -r ../../../resources/*.hex ./resources
 cp ../../../Cargo.lock ../../../Cargo.toml rust
 cp -r ../../../src rust
 mkdir -p rust/wasm
+mkdir -p ./src
+mkdir -p ./src/types
 cp -r ../../../wasm/Cargo.lock ../../../wasm/Cargo.toml ../../../wasm/src rust/wasm
+cp ../src/types/ChiaGaming.ts ./src/types
+cp ../src/util.ts ./src/
 
-docker build -t chia-host-test .
+docker build --platform linux/amd64 -t chia-host-test .

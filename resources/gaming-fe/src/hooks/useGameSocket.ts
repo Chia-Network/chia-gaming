@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getSearchParams } from '../util';
 import io, { Socket } from "socket.io-client";
+import { PeerConnectionResult } from '../types/ChiaGaming';
 
 export type GameState = "idle" | "searching" | "playing";
 
@@ -26,8 +27,7 @@ interface SendMessageInput {
   msg: string;
 };
 
-export interface UseGameSocketReturn {
-  sendMessage: (input: string) => void;
+export interface UseGameSocketReturn extends PeerConnectionResult {
   gameState: GameState;
   wagerAmount: string;
   setWagerAmount: (value: string) => void;

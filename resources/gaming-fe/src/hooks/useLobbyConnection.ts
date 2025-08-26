@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ChatMessage, ChatEnvelope, FragmentData, GenerateRoomResult, Room } from '../types/lobby';
+import { ChatMessage, ChatEnvelope, GenerateRoomResult, Room } from '../types/lobby';
+import { FragmentData } from '../util';
 import { getFragmentParams, generateOrRetrieveUniqueId } from '../util';
 import io, { Socket } from 'socket.io-client';
 import axios from 'axios';
