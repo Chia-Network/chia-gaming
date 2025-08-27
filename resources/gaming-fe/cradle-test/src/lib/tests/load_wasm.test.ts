@@ -114,7 +114,7 @@ async function action_with_messages(cradle1: WasmBlobWrapperAdapter, cradle2: Wa
         for (let c = 0; c < 2; c++) {
             let outbound = cradles[c].outbound_messages();
             for (let i = 0; i < outbound.length; i++) {
-                console.log(`delivering message from cradle ${i}: ${outbound[i]}`);
+                console.log(`delivering message from cradle ${c}: ${outbound[i]}`);
                 cradles[c ^ 1].deliver_message(outbound[i]);
             }
         }
