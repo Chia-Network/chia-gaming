@@ -109,10 +109,12 @@ function initWasmBlobWrapper() {
     const uniqueId = "alice";
     const amount = 100;
     const iStarted = true;
-    const doInternalLoadWasm = () => { throw(""); }; //ArrayBuffer;
+    const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
     let wbw = new WasmBlobWrapper(blockchain_interface, uniqueId, amount, iStarted, doInternalLoadWasm, (a: any) => {});
 
-    wbw.loadWasm(() => {}, WholeWasmObject);
+    let wwo = Object.assign({}, WholeWasmObject);
+    wwo.init = () => {};
+    wbw.loadWasm(() => {}, wwo);
     wbw.kickSystem(2);
 
     return wbw;

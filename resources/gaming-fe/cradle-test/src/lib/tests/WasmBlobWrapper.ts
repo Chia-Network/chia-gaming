@@ -19,7 +19,7 @@ export class WasmBlobWrapper {
     // deliverMessage:
     //currentBlock: number;
     messageQueue: any[];
-    doInternalLoadWasm: () => any;
+    doInternalLoadWasm: () => Promise<ArrayBuffer>;
     identity: IChiaIdentity | undefined;
     finished: boolean;
     qualifyingEvents: number;
@@ -28,7 +28,7 @@ export class WasmBlobWrapper {
     loadWasmEvent: any | undefined;
 
     constructor (blockchain:  ExternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean,
-        doInternalLoadWasm: () => ArrayBuffer, stateChanger: (state_info: any) => void
+        doInternalLoadWasm: () => Promise<ArrayBuffer>, stateChanger: (state_info: any) => void
     ) {
         this.amount = amount;
         // this.uniqueId = uniqueId; Needed yet?
@@ -41,15 +41,50 @@ export class WasmBlobWrapper {
         this.stateChanger = stateChanger;
         this.rngSeed = "";
     }
+
     internalLoadWasm(chia_gaming_init: any, cg: WasmConnection): any {
-        // const modData = doInternalLoadWasm();
+    const fetchUrl = process.env.REACT_APP_WASM_URL || 'http://localhost:3001/chia_gaming_wasm_bg.wasm';
+
+    console.log('wasm detected');
+
+    return this.doInternalLoadWasm().then(modData => {
+      chia_gaming_init(modData);
+      cg.init((msg: string) => console.warn('wasm', msg));
+      this.wc = cg;
+      const presetFiles = [
+        "resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex",
+        "clsp/unroll/unroll_meta_puzzle.hex",
+        "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
+        "clsp/referee/onchain/referee.hex",
+        "clsp/referee/onchain/referee-v1.hex"
+      ];
+      this.pushEvent({ loadPresets: presetFiles });
+      return {};
+    });
+  }
+
+  kickMessageHandling(): any {
+    if (this.messageQueue.length == 0 || this.handlingMessage) {
+      return empty();
     }
 
-    kickMessageHandling(): any {
-        if (this.messageQueue.length == 0 || this.handlingMessage) {
-            return empty();
-        }
-    }
+    const msg = this.messageQueue.shift();
+
+    this.handlingMessage = true;
+    let result = null;
+    return this.handleOneMessage(msg).then((result: any) => {
+      this.stateChanger(result);
+      this.handlingMessage = false;
+      if (this.messageQueue.length != 0) {
+        return this.kickMessageHandling();
+      }
+      return result;
+    }).catch((e: any) => {
+      console.error(e);
+      this.handlingMessage = false;
+      throw e;
+    });
+  }
 
     kickSystem(flags: number) {
         this.qualifyingEvents |= flags;
