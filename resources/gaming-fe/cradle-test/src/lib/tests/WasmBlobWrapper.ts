@@ -26,9 +26,11 @@ export class WasmBlobWrapper {
     stateChanger: (state_info: any) => void;
     rngSeed: string;
     loadWasmEvent: any | undefined;
+    fetchHex: (key: string) => Promise<string>;
 
     constructor (blockchain:  ExternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean,
-        doInternalLoadWasm: () => Promise<ArrayBuffer>, stateChanger: (state_info: any) => void
+        doInternalLoadWasm: () => Promise<ArrayBuffer>, stateChanger: (state_info: any) => void,
+        fetchHex: (key: string) => Promise<string>
     ) {
         this.amount = amount;
         // this.uniqueId = uniqueId; Needed yet?
@@ -40,6 +42,7 @@ export class WasmBlobWrapper {
         this.qualifyingEvents = 0;
         this.stateChanger = stateChanger;
         this.rngSeed = "";
+        this.fetchHex = fetchHex;
     }
 
     internalLoadWasm(chia_gaming_init: any, cg: WasmConnection): any {
@@ -123,10 +126,11 @@ export class WasmBlobWrapper {
 //   handleOneMessage(msg: any): any {
 //   }
 
+
   // load chia .hex files
   loadPresets(presetFiles: string[]) {
     const presetFetches = presetFiles.map((partialUrl) => {
-      return fetch(partialUrl).then((fetched) => fetched.text()).then((text) => {
+      return this.fetchHex(partialUrl).then((text) => {
         return {
           name: partialUrl,
           content: text
@@ -160,6 +164,9 @@ export class WasmBlobWrapper {
         );
         } else if (msg.loadPresets) {
         return this.loadPresets(msg.loadPresets);
+        } else {
+            console.error(JSON.stringify(msg));
+            throw new Error(JSON.stringify(msg));
         }
     }
 

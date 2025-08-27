@@ -104,13 +104,17 @@ function action_with_messages(cradle1: ChiaGame, cradle2: ChiaGame) {
     }
 }
 
+async function fetchHex(key: string): Promise<string> {
+    return fs.readFileSync(rooted(key), 'utf8');
+}
+
 function initWasmBlobWrapper() {
     const blockchain_interface = gimmie_blockchain_interface();
     const uniqueId = "alice";
     const amount = 100;
     const iStarted = true;
     const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
-    let wbw = new WasmBlobWrapper(blockchain_interface, uniqueId, amount, iStarted, doInternalLoadWasm, (a: any) => {});
+    let wbw = new WasmBlobWrapper(blockchain_interface, uniqueId, amount, iStarted, doInternalLoadWasm, (a: any) => {}, fetchHex);
 
     let wwo = Object.assign({}, WholeWasmObject);
     wwo.init = () => {};
