@@ -40,10 +40,6 @@ class WasmBlobWrapperAdapter {
         this.blob?.waitBlock(block);
     }
 
-    quiet(): boolean {
-        return this.waiting_messages.length === 0;
-    }
-
     handshaked(): boolean {
         return !!this.blob?.isHandshakeDone();
     }
@@ -57,21 +53,6 @@ class WasmBlobWrapperAdapter {
     add_outbound_message(msg: string) {
         this.waiting_messages.push(msg);
     }
-
-    idle(callbacks: IdleCallbacks) : any {
-        return {
-            "continue_on": false,
-            "finished": false,
-            "outbound_transactions": [],
-            "outbound_messages": [],
-            "opponent_move": undefined,
-            "game_finished": undefined,
-            "handshake_done": !!this.blob?.isHandshakeDone(),
-            "receive_error": undefined,
-            "action_queue": [],
-            "incoming_messages": []
-        };
-    }
 }
 
 function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
@@ -81,10 +62,6 @@ function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
         }
     }
     return true;
-}
-
-function empty_callbacks(): IdleCallbacks {
-    return <IdleCallbacks>{};
 }
 
 function wait(msec: number): Promise<void> {
@@ -99,12 +76,8 @@ async function action_with_messages(cradle1: WasmBlobWrapperAdapter, cradle2: Wa
 
     const walletObject = new ExternalBlockchainInterface("http://localhost:5800", "driver");
 
-    for (let c = 0; c < 2; c++) {
-        cradles[c].idle(empty_callbacks());
-    }
-
     while (!all_handshaked(cradles)) {
-        if (count % 5 === 0) {
+        if (count++ % 5 === 0 && count < 10000) {
             await walletObject.waitBlock().then(new_block_number => {
                 for (let c = 0; c < 2; c++) {
                     cradles[c].wait_block(new_block_number);
@@ -117,10 +90,6 @@ async function action_with_messages(cradle1: WasmBlobWrapperAdapter, cradle2: Wa
                 console.log(`delivering message from cradle ${i}: ${outbound[i]}`);
                 cradles[c ^ 1].deliver_message(outbound[i]);
             }
-        }
-
-        for (let c = 0; c < 2; c++) {
-            cradles[c].idle(empty_callbacks());
         }
 
         await wait(10);
