@@ -6,8 +6,8 @@ function toUint8(s: string) {
     throw 'Odd length hex string';
   }
   const result = new Uint8Array(s.length >> 1);
-  for (var i = 0; i < s.length; i += 2) {
-    let sub = s.substr(i, 2);
+  for (let i = 0; i < s.length; i += 2) {
+    let sub = s.slice(i, i+2);
     let val = parseInt(sub, 16);
     result[i >> 1] = val;
   }

@@ -148,28 +148,6 @@ async function initWasmBlobWrapper(uniqueId: string, iStarted: boolean, peer_con
 }
 
 it('loads', async () => {
-    init();
-    preset_file("resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex");
-    preset_file("clsp/unroll/unroll_meta_puzzle.hex");
-    preset_file("clsp/unroll/unroll_puzzle_state_channel_unrolling.hex");
-    preset_file("clsp/referee/onchain/referee.hex");
-    preset_file("clsp/referee/onchain/referee-v1.hex");
-    let identity1 = chia_identity('test1');
-    let identity2 = chia_identity('test2');
-    console.log(identity1, identity2);
-
-    let calpoker_hex = fs.readFileSync(rooted('clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex'),'utf8');
-    let env = {
-        game_types: {
-            "calpoker": {
-                version: 1,
-                hex: calpoker_hex
-            }
-        },
-        timeout: 100,
-        unroll_timeout: 100
-    };
-
     const cradle1 = new WasmBlobWrapperAdapter();
     let peer_conn1 = { sendMessage: (message: string) => {
         cradle1.add_outbound_message(message);
