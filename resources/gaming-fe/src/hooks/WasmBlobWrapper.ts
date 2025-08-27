@@ -7,7 +7,7 @@ async function empty() {
   return {};
 }
 
-class WasmBlobWrapper {
+export class WasmBlobWrapper {
   amount: number;
   walletToken: string;
   wc: WasmConnection | undefined;
