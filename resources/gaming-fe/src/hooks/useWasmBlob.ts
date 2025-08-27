@@ -13,13 +13,34 @@ function getBlobSingleton(stateChanger: (state: any) => void, blockchain: Extern
     return blobSingleton;
   }
 
+  const deliverMessage = (msg: string) => {
+    blobSingleton?.deliverMessage(msg);
+  };
+  const peercon = useGameSocket(deliverMessage, () => {
+    blobSingleton?.kickSystem(2);
+  });
+
+  const doInternalLoadWasm = async () => {
+    const fetchUrl ='http://localhost:3001/chia_gaming_wasm_bg.wasm';
+    return fetch(fetchUrl).then(wasm => wasm.blob()).then(blob => {
+      return blob.arrayBuffer();
+    });
+   };
+
+  async function fetchHex(fetchUrl: string): Promise<string> {
+    return fetch(fetchUrl).then(wasm => wasm.text());
+  }
+
   blobSingleton = new WasmBlobWrapper(
-    stateChanger,
     blockchain,
     walletToken,
     uniqueId,
     amount,
-    iStarted
+    iStarted,
+    doInternalLoadWasm,
+    stateChanger,
+    fetchHex,
+    peercon
   );
   return blobSingleton;
 }

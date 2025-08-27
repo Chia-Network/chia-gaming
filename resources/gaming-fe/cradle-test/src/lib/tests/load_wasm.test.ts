@@ -108,13 +108,14 @@ async function fetchHex(key: string): Promise<string> {
     return fs.readFileSync(rooted(key), 'utf8');
 }
 
-function initWasmBlobWrapper() {
+function initWasmBlobWrapper(peer_conn: PeerConnectionResult) {
     const blockchain_interface = gimmie_blockchain_interface();
     const uniqueId = "alice";
     const amount = 100;
     const iStarted = true;
     const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
-    let wbw = new WasmBlobWrapper(blockchain_interface, uniqueId, amount, iStarted, doInternalLoadWasm, (a: any) => {}, fetchHex);
+    let walletToken = "";
+    let wbw = new WasmBlobWrapper(blockchain_interface, walletToken, uniqueId, amount, iStarted, doInternalLoadWasm, (a: any) => {}, fetchHex, peer_conn);
 
     let wwo = Object.assign({}, WholeWasmObject);
     wwo.init = () => {};
@@ -157,6 +158,9 @@ it('loads', async () => {
     cradle2.opening_coin(fake_coin2);
 
     //action_with_messages(cradle1, cradle2);
-    let wasm_blob = initWasmBlobWrapper();
+    let peer_conn = { sendMessage: (message: string) => {
+        cradle1.deliver_message(message);
+    } };
+    let wasm_blob = initWasmBlobWrapper(peer_conn);
 
 });

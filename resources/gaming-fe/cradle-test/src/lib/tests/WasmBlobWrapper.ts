@@ -28,9 +28,9 @@ export class WasmBlobWrapper {
     loadWasmEvent: any | undefined;
     fetchHex: (key: string) => Promise<string>;
 
-    constructor (blockchain:  ExternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean,
+    constructor (blockchain:  ExternalBlockchainInterface, walletToken:string, uniqueId: string, amount: number, iStarted: boolean,
         doInternalLoadWasm: () => Promise<ArrayBuffer>, stateChanger: (state_info: any) => void,
-        fetchHex: (key: string) => Promise<string>
+        fetchHex: (key: string) => Promise<string>, peer_conn: PeerConnectionResult
     ) {
         this.amount = amount;
         // this.uniqueId = uniqueId; Needed yet?

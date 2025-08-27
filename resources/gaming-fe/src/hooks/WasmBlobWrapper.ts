@@ -1,6 +1,4 @@
-
-import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome } from '../types/ChiaGaming';
-import useGameSocket from './useGameSocket';
+import { PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome } from '../types/ChiaGaming';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
 
 async function empty() {
@@ -36,14 +34,15 @@ export class WasmBlobWrapper {
   gameOutcome: CalpokerOutcome | undefined;
   stateChanger: (stateSettings: any) => void;
 
-  constructor(stateChanger: (stateSettings: any) => void, blockchain: ExternalBlockchainInterface, walletToken: string, uniqueId: string, amount: number, iStarted: boolean) {
-    const deliverMessage = (msg: string) => {
+    constructor (blockchain:  ExternalBlockchainInterface, walletToken:string, uniqueId: string, amount: number, iStarted: boolean,
+        doInternalLoadWasm: () => Promise<ArrayBuffer>, stateChanger: (state_info: any) => void,
+        fetchHex: (key: string) => Promise<string>, peer_conn: PeerConnectionResult
+    ) {
+      const deliverMessage = (msg: string) => {
       this.deliverMessage(msg);
     };
 
-    const { sendMessage } = useGameSocket(deliverMessage, () => {
-      this.kickSystem(2);
-    });
+    const { sendMessage } = peer_conn;
 
     this.stateChanger = stateChanger;
     this.uniqueId = uniqueId;
