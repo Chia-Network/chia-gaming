@@ -1,9 +1,20 @@
-import { FragmentData } from './types/lobby';
-
-import { useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Program } from 'clvm-lib';
-import toUint8 from 'hex-to-uint8';
+
+function toUint8(s: string) {
+  if (s.length % 2 != 0) {
+    throw 'Odd length hex string';
+  }
+  const result = new Uint8Array(s.length >> 1);
+  for (let i = 0; i < s.length; i += 2) {
+    let sub = s.slice(i, i+2);
+    let val = parseInt(sub, 16);
+    result[i >> 1] = val;
+  }
+  return result;
+}
+
+export type FragmentData = { [k: string]: string }
 
 export function getParamsFromString(paramString: string): any {
   const fragmentParts = paramString.split('&');
@@ -56,29 +67,6 @@ export function generateOrRetrieveUniqueId(): string {
   existingId = uuidv4();
   localStorage.setItem("uniqueId", existingId);
   return existingId;
-}
-
-// https://overreacted.io/making-setinterval-declarative-with-react-hooks/
-export function useInterval(callback: () => void, delay: number) {
-  const savedCallback = useRef<() => void | undefined>(undefined);
-
-  // Remember the latest callback.
-  useEffect(() => {
-    savedCallback.current = callback;
-  }, [callback]);
-
-  // Set up the interval.
-  useEffect(() => {
-    function tick() {
-      if (savedCallback.current) {
-        savedCallback.current();
-      }
-    }
-    if (delay !== null) {
-      let id = setInterval(tick, delay);
-      return () => clearInterval(id);
-    }
-  }, [delay]);
 }
 
 interface GameSelection {
@@ -153,7 +141,6 @@ export function proper_list(p: any): any {
 
 export function decode_sexp_hex(h: string): any {
   let p = Program.deserialize(toUint8(h));
-  const result = null;
   return explode(p);
 }
 

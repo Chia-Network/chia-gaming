@@ -8,7 +8,7 @@
     "start": "webpack serve --config webpack.config.demo.js",
     "build": "webpack && ./node_modules/typescript/bin/tsc",
     "build:demo": "webpack --config webpack.config.demo.js",
-    "test": "./node_modules/typescript/bin/tsc -p tstestconfig.json --noEmit && jest",
+    "test": "./node_modules/typescript/bin/tsc -p tstestconfig.json --noEmit && jest --useStderr",
     "coverage": "npm run test -- --coverage",
     "trypublish": "npm publish || true"
   },
@@ -33,9 +33,12 @@
   "devDependencies": {
     "@babel/cli": "^7.22.9",
     "@babel/core": "^7.22.10",
+    "@babel/generator": "^7.28.3",
     "@babel/plugin-proposal-class-properties": "^7.16.0",
     "@babel/plugin-transform-typescript": "^7.22.10",
     "@babel/preset-env": "^7.22.10",
+    "@babel/preset-react": "^7.27.1",
+    "@babel/traverse": "^7.28.3",
     "@types/jest": "^29.5.3",
     "@typescript-eslint/eslint-plugin": "^4.33.0",
     "@typescript-eslint/parser": "^4.33.0",
@@ -52,6 +55,7 @@
     "mini-css-extract-plugin": "^2.7.6",
     "style-loader": "^3.3.2",
     "terser-webpack-plugin": "^5.3.9",
+    "ts-jest": "^29.4.1",
     "typescript": "^4.9.5",
     "url-loader": "^4.1.1",
     "webpack": "^5.88.2",
@@ -59,10 +63,35 @@
     "webpack-dev-server": "4.13.3"
   },
   "jest": {
+    "preset": "ts-jest",
+    "moduleDirectories": [
+      "node_modules",
+      "src"
+    ],
     "moduleNameMapper": {
       "\\.(jpg|jpeg|png|gif|eot|otf|webp|svg|ttf|woff|woff2|mp4|webm|wav|mp3|m4a|aac|oga)$": "<rootDir>/scripts/testMock.js",
       "\\.(css|less)$": "<rootDir>/scripts/testMock.js"
     },
+    "transform": {
+      "^.+\\.ts?$": [
+        "ts-jest",
+        {
+          "babelConfig": {
+            "presets": [
+              "@babel/react",
+              "@babel/env"
+            ],
+            "plugins": [
+              "@babel/plugin-transform-spread"
+            ]
+          }
+        }
+      ]
+    },
+    "transformIgnorePatterns": [
+      "node_modules",
+      "/app/node_modules"
+    ],
     "moduleFileExtensions": [
       "web.js",
       "js",
@@ -77,6 +106,8 @@
     ]
   },
   "dependencies": {
-    "bls-signatures": "^2.0.2"
+    "bls-signatures": "^2.0.2",
+    "clvm-lib": "^1.0.1",
+    "uuid": "^11.1.0"
   }
 }

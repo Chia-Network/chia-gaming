@@ -5,6 +5,6 @@
       "noEmitOnError": true,
       "strict": true
     },
-    "include": ["src/lib/**/tests"],
+    "include": ["src"],
     "exclude": []
 }

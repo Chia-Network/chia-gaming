@@ -1,4 +1,7 @@
-#!/bin/sh
+#!/bin/sh -x
+
+# clean
+rm -rf $(ls -1 ./src | grep -v -e '^lib$')
 
 # Set up directories
 mkdir -p ./rust
@@ -12,6 +15,20 @@ cp -r ../../../resources/*.hex ./resources
 cp ../../../Cargo.lock ../../../Cargo.toml rust
 cp -r ../../../src rust
 mkdir -p rust/wasm
-cp -r ../../../wasm/Cargo.lock ../../../wasm/Cargo.toml ../../../wasm/src rust/wasm
 
-docker build -t chia-host-test .
+# Copy necessary typescript
+mkdir -p ./src
+mkdir -p ./src/types
+mkdir -p ./src/hooks
+cp -r ../../../wasm/Cargo.lock ../../../wasm/Cargo.toml ../../../wasm/src rust/wasm
+cp ../src/types/ChiaGaming.ts ./src/types
+cp ../src/hooks/WasmBlobWrapper.ts ./src/hooks
+cp ../src/util.ts ./src/
+
+CMD="docker build -t chia-host-test"
+if /bin/test $(uname -s) == "Linux" ; then
+    :
+else
+    CMD="$CMD --platform linux/amd64"
+fi
+exec sh -c "$CMD ."
