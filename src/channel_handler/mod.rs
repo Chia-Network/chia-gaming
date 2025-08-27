@@ -37,7 +37,8 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID,
     CoinSpend, CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey,
-    Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendRewardResult, Timeout,
+    Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendBundle, SpendRewardResult,
+    Timeout,
 };
 use crate::potato_handler::types::GameAction;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
@@ -89,6 +90,8 @@ pub struct ChannelHandler {
     their_channel_coin_public_key: PublicKey,
     their_unroll_coin_public_key: PublicKey,
     their_referee_puzzle_hash: PuzzleHash,
+    their_reward_puzzle_hash: PuzzleHash,
+    reward_puzzle_hash: PuzzleHash,
 
     my_out_of_game_balance: Amount,
     their_out_of_game_balance: Amount,
@@ -161,6 +164,7 @@ pub trait MakeRefereeFromGameStart {
         env: &mut dyn EnvDataForReferee,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
+        reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         state_number: usize,
     ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error>;
@@ -172,6 +176,7 @@ impl MakeRefereeFromGameStart for GameStartInfo {
         env: &mut dyn EnvDataForReferee,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
+        reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         state_number: usize,
     ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error> {
@@ -185,6 +190,7 @@ impl MakeRefereeFromGameStart for GameStartInfo {
             self,
             my_identity,
             their_puzzle_hash,
+            reward_puzzle_hash,
             nonce,
             &agg_sig_me,
             state_number,
@@ -199,6 +205,7 @@ impl MakeRefereeFromGameStart for v1::game_start_info::GameStartInfo {
         env: &mut dyn EnvDataForReferee,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
+        reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         state_number: usize,
     ) -> Result<(Rc<dyn RefereeInterface>, PuzzleHash), Error> {
@@ -212,6 +219,7 @@ impl MakeRefereeFromGameStart for v1::game_start_info::GameStartInfo {
             self,
             my_identity,
             their_puzzle_hash,
+            reward_puzzle_hash,
             nonce,
             &agg_sig_me,
             state_number,
@@ -289,14 +297,13 @@ impl ChannelHandler {
 
     pub fn get_reward_puzzle_hash<R: Rng>(
         &self,
-        env: &mut ChannelHandlerEnv<R>,
+        _env: &mut ChannelHandlerEnv<R>,
     ) -> Result<PuzzleHash, Error> {
-        let referee_pk = private_to_public_key(&self.referee_private_key());
-        puzzle_hash_for_pk(env.allocator, &referee_pk)
+        Ok(self.reward_puzzle_hash.clone())
     }
 
     pub fn get_opponent_reward_puzzle_hash(&self) -> PuzzleHash {
-        self.their_referee_puzzle_hash.clone()
+        self.their_reward_puzzle_hash.clone()
     }
 
     pub fn get_finished_unroll_coin(&self) -> &ChannelHandlerUnrollSpendInfo {
@@ -435,9 +442,11 @@ impl ChannelHandler {
             their_channel_coin_public_key: initiation.their_channel_pubkey.clone(),
             their_unroll_coin_public_key: initiation.their_unroll_pubkey.clone(),
             their_referee_puzzle_hash: initiation.their_referee_puzzle_hash.clone(),
+            their_reward_puzzle_hash: initiation.their_reward_puzzle_hash.clone(),
             my_out_of_game_balance: initiation.my_contribution.clone(),
             their_out_of_game_balance: initiation.their_contribution.clone(),
             unroll_advance_timeout: initiation.unroll_advance_timeout.clone(),
+            reward_puzzle_hash: initiation.reward_puzzle_hash.clone(),
 
             my_allocated_balance: Amount::default(),
             their_allocated_balance: Amount::default(),
@@ -790,6 +799,7 @@ impl ChannelHandler {
                 env,
                 referee_identity,
                 &self.their_referee_puzzle_hash,
+                &self.reward_puzzle_hash,
                 new_game_nonce,
                 self.current_state_number,
             )?;
@@ -1825,7 +1835,6 @@ impl ChannelHandler {
             self.game_is_my_turn(game_id)
         );
 
-        let live_game_idx = self.get_game_by_id(game_id)?;
         let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
 
         let (ph, amt) = if let Some((ph, amt)) = conditions
@@ -1849,6 +1858,7 @@ impl ChannelHandler {
             return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
         }
 
+        let live_game_idx = self.get_game_by_id(game_id)?;
         let spent_result = self.live_games[live_game_idx].their_turn_coin_spent(
             env.allocator,
             coin_string,
@@ -2192,5 +2202,42 @@ impl ChannelHandler {
             my_amount: self.my_out_of_game_balance.clone(),
             their_amount: self.their_out_of_game_balance.clone(),
         })
+    }
+
+    pub fn handle_reward_spends<R: Rng>(
+        &mut self,
+        env: &mut ChannelHandlerEnv<R>,
+        coin_id: &CoinString,
+        conditions: &[CoinCondition],
+    ) -> Result<Option<SpendBundle>, Error> {
+        let referee_private_key = self.referee_private_key();
+        let referee_public_key = private_to_public_key(&referee_private_key);
+        let referee_puzzle_hash = puzzle_hash_for_pk(env.allocator, &referee_public_key)?;
+
+        let pay_to_me: Vec<CoinString> = conditions
+            .iter()
+            .filter_map(|c| {
+                if let CoinCondition::CreateCoin(ph, amt) = c {
+                    if ph == &referee_puzzle_hash && amt > &Amount::default() {
+                        return Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amt));
+                    }
+                }
+
+                None
+            })
+            .collect();
+
+        if !pay_to_me.is_empty() {
+            debug!("handle rewards {conditions:?} output {pay_to_me:?}");
+            // Check for conditions that pay us
+            let reward_puzzle_hash = self.get_reward_puzzle_hash(env)?;
+            let spend_rewards = self.spend_reward_coins(env, &pay_to_me, &reward_puzzle_hash)?;
+            return Ok(Some(SpendBundle {
+                name: Some("spend reward".to_string()),
+                spends: spend_rewards.coins_with_solutions,
+            }));
+        }
+
+        Ok(None)
     }
 }

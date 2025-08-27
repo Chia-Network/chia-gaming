@@ -124,9 +124,18 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         // A game coin was spent and we have the puzzle and solution.
         let (env, system_interface) = penv.env();
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
+
+        if let Some(spend_bundle) =
+            self.player_ch
+                .handle_reward_spends(env, coin_id, &conditions)?
+        {
+            system_interface.spend_transaction_and_add_fee(&spend_bundle)?;
+        }
+
         let result =
             self.player_ch
                 .game_coin_spent(env, &old_definition.game_id, coin_id, &conditions);
+
         let their_turn_result = if let Ok(result) = result {
             result
         } else {
@@ -348,12 +357,29 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 debug!("{initial_potato} accept tx {tx:?}");
                 self.have_potato = PotatoState::Present;
 
+                debug!("Spend reward coins downstream of the timeout");
+
+                let mut total_spends = vec![CoinSpend {
+                    coin: coin_id.clone(),
+                    bundle: tx.bundle.clone(),
+                }];
+
+                let conditions = CoinCondition::from_puzzle_and_solution(
+                    env.allocator,
+                    &tx.bundle.puzzle.to_program(),
+                    &tx.bundle.solution.p(),
+                )?;
+
+                if let Some(mut spend_bundle) =
+                    self.player_ch
+                        .handle_reward_spends(env, coin_id, &conditions)?
+                {
+                    total_spends.append(&mut spend_bundle.spends);
+                }
+
                 system_interface.spend_transaction_and_add_fee(&SpendBundle {
-                    name: Some("redo move".to_string()),
-                    spends: vec![CoinSpend {
-                        coin: coin_id.clone(),
-                        bundle: tx.bundle.clone(),
-                    }],
+                    name: Some("redo accept".to_string()),
+                    spends: total_spends,
                 })?;
             } else {
                 game_def.accept = AcceptTransactionState::Finished;
@@ -592,6 +618,9 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 let (_env, system_interface) = penv.env();
                 // Wait for timeout.
                 if let Some(def) = self.game_map.get_mut(&coin) {
+                    debug!("redoaccept: outcome coin is said to be {coin:?}");
+                    debug!("redoaccept: tx {tx:?}");
+
                     self.have_potato = PotatoState::Absent;
                     debug!("{initial_potato} redo accept: register for timeout {coin:?}");
                     let tx_borrow: &RefereeOnChainTransaction = tx.borrow();

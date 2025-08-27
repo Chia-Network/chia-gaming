@@ -1,6 +1,7 @@
 #!/bin/bash
+# See also script ./clean-all.sh
 
-set -x
+set -x -e
 ./clean-all.sh
 
 (cd wasm && cargo build)

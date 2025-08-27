@@ -14,7 +14,7 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
-    Sha256tree, Spend, SpendBundle, SpendRewardResult, Timeout, ToQuotedProgram,
+    Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, GameStart, GameType,
@@ -263,15 +263,6 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
     ) -> Result<PuzzleHash, Error>;
-
-    /// Return a transaction to spend a reward coin to a given target
-    fn spend_reward_coins<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        coin_string: &[CoinString],
-        target: &PuzzleHash,
-    ) -> Result<SpendRewardResult, Error>;
 }
 
 struct SynchronousGameCradleState {
@@ -760,21 +751,6 @@ impl GameCradle for SynchronousGameCradle {
             system_interface: &mut self.state,
         };
         self.peer.get_reward_puzzle_hash(&mut penv)
-    }
-
-    fn spend_reward_coins<R: Rng>(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        rng: &mut R,
-        coin_string: &[CoinString],
-        target: &PuzzleHash,
-    ) -> Result<SpendRewardResult, Error> {
-        let mut env = channel_handler_env(allocator, rng)?;
-        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
-            env: &mut env,
-            system_interface: &mut self.state,
-        };
-        self.peer.spend_reward_coins(&mut penv, coin_string, target)
     }
 
     fn opening_coin<R: Rng>(

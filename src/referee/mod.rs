@@ -153,6 +153,7 @@ impl RefereeByTurn {
         game_start_info: &GameStartInfo,
         my_identity: ChiaIdentity,
         their_puzzle_hash: &PuzzleHash,
+        reward_puzzle_hash: &PuzzleHash,
         nonce: usize,
         agg_sig_me_additional_data: &Hash,
         state_number: usize,
@@ -170,6 +171,7 @@ impl RefereeByTurn {
             referee_coin_puzzle: referee_coin_puzzle.clone(),
             referee_coin_puzzle_hash: referee_coin_puzzle_hash.clone(),
             their_referee_puzzle_hash: their_puzzle_hash.clone(),
+            reward_puzzle_hash: reward_puzzle_hash.clone(),
             my_identity: my_identity.clone(),
             timeout: game_start_info.timeout.clone(),
             amount: game_start_info.amount.clone(),
@@ -228,6 +230,7 @@ impl RefereeByTurn {
                 game_start_info,
                 my_identity.clone(),
                 their_puzzle_hash,
+                reward_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data,
                 state_number,
@@ -241,6 +244,7 @@ impl RefereeByTurn {
                 game_start_info,
                 my_identity,
                 their_puzzle_hash,
+                reward_puzzle_hash,
                 nonce,
                 agg_sig_me_additional_data,
                 state_number,
@@ -275,7 +279,7 @@ impl RefereeByTurn {
         [(
             CREATE_COIN,
             (
-                self.target_puzzle_hash_for_slash(),
+                self.fixed().reward_puzzle_hash.clone(),
                 (self.fixed().amount.clone(), ()),
             ),
         )]
@@ -358,11 +362,6 @@ impl RefereeByTurn {
         )))
     }
 
-    // It me.
-    fn target_puzzle_hash_for_slash(&self) -> PuzzleHash {
-        self.fixed().my_identity.puzzle_hash.clone()
-    }
-
     fn slashing_coin_solution(
         &self,
         allocator: &mut AllocEncoder,
@@ -421,10 +420,12 @@ impl RefereeByTurn {
                 solution: Program::from_nodeptr(allocator, transaction_solution)?.into(),
                 signature,
             };
+            // We want to watch for this coin to be deleted as it's invoked
+            // as a timeout.
             let output_coin_string = CoinString::from_parts(
                 &coin_string.to_coin_id(),
                 &puzzle.sha256tree(allocator),
-                &my_mover_share,
+                &self.fixed().amount.clone(),
             );
             return Ok(Some(RefereeOnChainTransaction {
                 bundle: transaction_bundle,

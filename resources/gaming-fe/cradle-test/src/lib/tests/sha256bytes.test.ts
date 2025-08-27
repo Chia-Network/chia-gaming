@@ -1,4 +1,4 @@
-import { init, sha256bytes } from '../../../../pkg/chia_gaming_wasm.js';
+import { init, sha256bytes } from '../../../rust/wasm/pkg/chia_gaming_wasm.js';
 import { to_hex_string } from './common';
 import * as assert from 'assert';
 
