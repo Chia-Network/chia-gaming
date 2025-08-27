@@ -15,44 +15,37 @@ function preset_file(name: string) {
   deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
 }
 
-function gimmie_blockchain_interface(): ExternalBlockchainInterface {
-    return new ExternalBlockchainInterface("http://localhost:5800", "my_name");
+function gimmie_blockchain_interface(uniqueId: string): ExternalBlockchainInterface {
+    return new ExternalBlockchainInterface("http://localhost:5800", uniqueId);
 }
 
-class ChiaGame {
+class WasmBlobWrapperAdapter {
+    blob: WasmBlobWrapper | undefined;
     waiting_messages: Array<string>;
-    private_key: string;
-    cradle: number;
-    have_potato: boolean;
 
-    constructor(env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number) {
+    constructor() {
         this.waiting_messages = [];
-        this.private_key = identity.private_key;
-        this.have_potato = have_potato;
-        this.cradle = create_game_cradle({
-            seed: seed,
-            game_types: env.game_types,
-            identity: identity.private_key,
-            have_potato: have_potato,
-            my_contribution: {amt: my_contribution},
-            their_contribution: {amt: their_contribution},
-            channel_timeout: env.timeout,
-            unroll_timeout: env.unroll_timeout,
-            reward_puzzle_hash: identity.puzzle_hash,
-        });
-        console.log(`constructed ${have_potato}`);
+    }
+
+    set_blob(blob: WasmBlobWrapper) {
+        this.blob = blob;
+        this.blob.kickSystem(2);
     }
 
     deliver_message(msg: string) {
-        deliver_message(this.cradle, msg);
+        this.blob?.deliverMessage(msg);
     }
 
-    opening_coin(coin_string: string) {
-        opening_coin(this.cradle, coin_string);
+    wait_block(block: number) {
+        this.blob?.waitBlock(block);
     }
 
     quiet(): boolean {
         return this.waiting_messages.length === 0;
+    }
+
+    handshaked(): boolean {
+        return !!this.blob?.isHandshakeDone();
     }
 
     outbound_messages(): Array<string> {
@@ -61,17 +54,29 @@ class ChiaGame {
         return w;
     }
 
-    idle(callbacks: IdleCallbacks) : IdleResult {
-        let result = idle(this.cradle, callbacks);
-        console.log('idle', result);
-        this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
-        return result;
+    add_outbound_message(msg: string) {
+        this.waiting_messages.push(msg);
+    }
+
+    idle(callbacks: IdleCallbacks) : any {
+        return {
+            "continue_on": false,
+            "finished": false,
+            "outbound_transactions": [],
+            "outbound_messages": [],
+            "opponent_move": undefined,
+            "game_finished": undefined,
+            "handshake_done": !!this.blob?.isHandshakeDone(),
+            "receive_error": undefined,
+            "action_queue": [],
+            "incoming_messages": []
+        };
     }
 }
 
-function all_quiet(cradles: Array<ChiaGame>) {
+function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
     for (let c = 0; c < 2; c++) {
-        if (!cradles[c].quiet()) {
+        if (!cradles[c].handshaked()) {
             return false;
         }
     }
@@ -82,14 +87,30 @@ function empty_callbacks(): IdleCallbacks {
     return <IdleCallbacks>{};
 }
 
-function action_with_messages(cradle1: ChiaGame, cradle2: ChiaGame) {
+function wait(msec: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+        setTimeout(resolve, msec);
+    });
+}
+
+async function action_with_messages(cradle1: WasmBlobWrapperAdapter, cradle2: WasmBlobWrapperAdapter) {
+    let count = 0;
     let cradles = [cradle1, cradle2];
+
+    const walletObject = new ExternalBlockchainInterface("http://localhost:5800", "driver");
 
     for (let c = 0; c < 2; c++) {
         cradles[c].idle(empty_callbacks());
     }
 
-    while (!all_quiet(cradles)) {
+    while (!all_handshaked(cradles)) {
+        if (count % 5 === 0) {
+            await walletObject.waitBlock().then(new_block_number => {
+                for (let c = 0; c < 2; c++) {
+                    cradles[c].wait_block(new_block_number);
+                }
+            });
+        }
         for (let c = 0; c < 2; c++) {
             let outbound = cradles[c].outbound_messages();
             for (let i = 0; i < outbound.length; i++) {
@@ -101,6 +122,8 @@ function action_with_messages(cradle1: ChiaGame, cradle2: ChiaGame) {
         for (let c = 0; c < 2; c++) {
             cradles[c].idle(empty_callbacks());
         }
+
+        await wait(10);
     }
 }
 
@@ -108,19 +131,18 @@ async function fetchHex(key: string): Promise<string> {
     return fs.readFileSync(rooted(key), 'utf8');
 }
 
-function initWasmBlobWrapper(peer_conn: PeerConnectionResult) {
-    const blockchain_interface = gimmie_blockchain_interface();
-    const uniqueId = "alice";
+async function initWasmBlobWrapper(uniqueId: string, iStarted: boolean, peer_conn: PeerConnectionResult) {
+    const walletToken = await fetch(`http://localhost:5800/register?name=${uniqueId}`, {
+        method: "POST"
+    }).then(res => res.json());
+    const blockchain_interface = gimmie_blockchain_interface(walletToken);
     const amount = 100;
-    const iStarted = true;
     const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
-    let walletToken = "";
     let wbw = new WasmBlobWrapper(blockchain_interface, walletToken, uniqueId, amount, iStarted, doInternalLoadWasm, (a: any) => {}, fetchHex, peer_conn);
 
     let wwo = Object.assign({}, WholeWasmObject);
     wwo.init = () => {};
     wbw.loadWasm(() => {}, wwo);
-    wbw.kickSystem(2);
 
     return wbw;
 }
@@ -136,31 +158,31 @@ it('loads', async () => {
     let identity2 = chia_identity('test2');
     console.log(identity1, identity2);
 
-    let calpoker_hex = fs.readFileSync(rooted('clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex'),'utf8');
+    let calpoker_hex = fs.readFileSync(rooted('clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex'),'utf8');
     let env = {
         game_types: {
             "calpoker": {
-                version: 0,
+                version: 1,
                 hex: calpoker_hex
             }
         },
-        timeout: 99,
-        unroll_timeout: 5
+        timeout: 100,
+        unroll_timeout: 100
     };
 
-    let fake_coin1 = identity1.puzzle_hash + identity1.puzzle_hash + '64';
-    let fake_coin2 = identity2.puzzle_hash + identity2.puzzle_hash + '64';
-
-    const cradle1 = new ChiaGame(env, "3579", identity1, true, 100, 100);
-    const cradle2 = new ChiaGame(env, "3589", identity2, false, 100, 100);
-
-    cradle1.opening_coin(fake_coin1);
-    cradle2.opening_coin(fake_coin2);
-
-    //action_with_messages(cradle1, cradle2);
-    let peer_conn = { sendMessage: (message: string) => {
-        cradle1.deliver_message(message);
+    const cradle1 = new WasmBlobWrapperAdapter();
+    let peer_conn1 = { sendMessage: (message: string) => {
+        cradle1.add_outbound_message(message);
     } };
-    let wasm_blob = initWasmBlobWrapper(peer_conn);
+    let wasm_blob1 = await initWasmBlobWrapper("a11ce000", true, peer_conn1);
+    cradle1.set_blob(wasm_blob1);
 
-});
+    const cradle2 = new WasmBlobWrapperAdapter();
+    let peer_conn2 = { sendMessage: (message: string) => {
+        cradle2.add_outbound_message(message);
+    } };
+    let wasm_blob2 = await initWasmBlobWrapper("b0b77777", false, peer_conn2);
+    cradle2.set_blob(wasm_blob2);
+
+    await action_with_messages(cradle1, cradle2);
+}, 15 * 1000);

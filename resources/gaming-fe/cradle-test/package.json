@@ -8,7 +8,7 @@
     "start": "webpack serve --config webpack.config.demo.js",
     "build": "webpack && ./node_modules/typescript/bin/tsc",
     "build:demo": "webpack --config webpack.config.demo.js",
-    "test": "./node_modules/typescript/bin/tsc -p tstestconfig.json --noEmit && jest",
+    "test": "./node_modules/typescript/bin/tsc -p tstestconfig.json --noEmit && jest --useStderr",
     "coverage": "npm run test -- --coverage",
     "trypublish": "npm publish || true"
   },

@@ -31,7 +31,7 @@ RUN cp /app/rust/wasm/pkg/chia_gaming_wasm_bg.wasm /app/dist/chia_gaming_wasm_bg
 RUN cp /app/rust/wasm/pkg/chia_gaming_wasm.js /app/dist/chia_gaming_wasm.js
 
 # Install front-end UI / UX packages into the container env
-COPY package.json /app/
+COPY package.json yarn.lock /app/
 
 RUN cd /app && yarn install
 
@@ -48,4 +48,4 @@ COPY ./resources/*.hex /resources/
 ADD clsp /clsp
 
 RUN cd /app && yarn run build
-CMD /bin/sh -c "(. /app/test/bin/activate && python run_simulator.sh &) && (cd /app && yarn run test)"
+CMD /bin/sh -c "(. /app/test/bin/activate && (sleep 1000 | python run_simulator.sh) &) && (cd /app && sleep 3 && yarn run test)"

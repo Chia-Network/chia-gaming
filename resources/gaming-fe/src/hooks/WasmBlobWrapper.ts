@@ -33,6 +33,8 @@ export class WasmBlobWrapper {
   finished: boolean;
   gameOutcome: CalpokerOutcome | undefined;
   stateChanger: (stateSettings: any) => void;
+  fetchHex: (path: string) => Promise<string>;
+  doInternalLoadWasm: () => Promise<ArrayBuffer>;
 
     constructor (blockchain:  ExternalBlockchainInterface, walletToken:string, uniqueId: string, amount: number, iStarted: boolean,
         doInternalLoadWasm: () => Promise<ArrayBuffer>, stateChanger: (state_info: any) => void,
@@ -65,6 +67,8 @@ export class WasmBlobWrapper {
     this.opponentHand = [];
     this.finished = false;
     this.qualifyingEvents = 0;
+    this.fetchHex = fetchHex;
+    this.doInternalLoadWasm = doInternalLoadWasm;
   }
 
   kickSystem(flags: number) {
@@ -77,7 +81,7 @@ export class WasmBlobWrapper {
 
   loadPresets(presetFiles: string[]) {
     const presetFetches = presetFiles.map((partialUrl) => {
-      return fetch(partialUrl).then((fetched) => fetched.text()).then((text) => {
+      return this.fetchHex(partialUrl).then((text) => {
         return {
           name: partialUrl,
           content: text
@@ -268,7 +272,7 @@ export class WasmBlobWrapper {
   }
 
   loadCalpoker(): any {
-    return fetch("clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex").then(calpoker => calpoker.text()).then(calpoker_hex => {
+    return this.fetchHex("clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex").then(calpoker_hex => {
       this.calpokerHex = calpoker_hex;
       this.pushEvent({ createStartCoin: true });
       return {
@@ -337,12 +341,8 @@ export class WasmBlobWrapper {
   }
 
   internalLoadWasm(chia_gaming_init: any, cg: WasmConnection): any {
-    const fetchUrl = process.env.REACT_APP_WASM_URL || 'http://localhost:3001/chia_gaming_wasm_bg.wasm';
-
     console.log('wasm detected');
-    return fetch(fetchUrl).then(wasm => wasm.blob()).then(blob => {
-      return blob.arrayBuffer();
-    }).then(modData => {
+    return this.doInternalLoadWasm().then(modData => {
       chia_gaming_init(modData);
       cg.init((msg: string) => console.warn('wasm', msg));
       this.wc = cg;
@@ -391,6 +391,7 @@ export class WasmBlobWrapper {
       this.storedMessages.push(msg);
       return empty();
     }
+    console.log('deliver message', msg);
     this.cradle?.deliver_message(msg);
     return empty();
   }
@@ -523,6 +524,7 @@ export class WasmBlobWrapper {
     return entropy;
   }
 
+  isHandshakeDone(): boolean { return this.handshakeDone; }
 
   internalMakeMove(move: any): any {
     if (!this.handshakeDone || !this.wc || !this.cradle) {

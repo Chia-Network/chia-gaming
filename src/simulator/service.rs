@@ -460,7 +460,7 @@ fn service_main_inner() {
             .push(Router::with_path("spend").post(spend))
             .push(Router::with_path("create_spendable").options(cors))
             .push(Router::with_path("create_spendable").post(create_spendable));
-        let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;
+        let acceptor = TcpListener::new("0.0.0.0:5800").bind().await;
 
         let s = std::thread::spawn(move || {
             std::panic::catch_unwind(move || {
