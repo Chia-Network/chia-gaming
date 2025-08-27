@@ -592,7 +592,7 @@ export class WasmBlobWrapper {
   }
 
   internalShutdown() {
-    const result = {
+    const result: any = {
       setGameConnectionState: {
         stateIdentifier: "shutdown",
         stateDetail: []

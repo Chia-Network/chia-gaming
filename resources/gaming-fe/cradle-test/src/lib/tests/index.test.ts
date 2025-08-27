@@ -1,11 +1,9 @@
 import { init, config_scaffold, create_game_cradle, deliver_message, deposit_file, opening_coin, idle, chia_identity, Spend, CoinSpend, SpendBundle, IChiaIdentity, IdleCallbacks, IdleResult } from '../../../rust/wasm/pkg/chia_gaming_wasm.js';
-import WholeWasmObject from '../../../rust/wasm/pkg/chia_gaming_wasm.js';
-import { ExternalBlockchainInterface, PeerConnectionResult } from '../../types/ChiaGaming';
 
-import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper'
 import * as fs from 'fs';
 import { resolve } from 'path';
 import * as assert from 'assert';
+import * as bls_loader from 'bls-signatures';
 
 function rooted(name: string) {
     return resolve(__dirname, '../../../../..', name);
@@ -13,10 +11,6 @@ function rooted(name: string) {
 
 function preset_file(name: string) {
   deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
-}
-
-function gimmie_blockchain_interface(): ExternalBlockchainInterface {
-    return new ExternalBlockchainInterface("http://localhost:5800", "my_name");
 }
 
 class ChiaGame {
@@ -104,27 +98,6 @@ function action_with_messages(cradle1: ChiaGame, cradle2: ChiaGame) {
     }
 }
 
-async function fetchHex(key: string): Promise<string> {
-    return fs.readFileSync(rooted(key), 'utf8');
-}
-
-function initWasmBlobWrapper(peer_conn: PeerConnectionResult) {
-    const blockchain_interface = gimmie_blockchain_interface();
-    const uniqueId = "alice";
-    const amount = 100;
-    const iStarted = true;
-    const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
-    let walletToken = "";
-    let wbw = new WasmBlobWrapper(blockchain_interface, walletToken, uniqueId, amount, iStarted, doInternalLoadWasm, (a: any) => {}, fetchHex, peer_conn);
-
-    let wwo = Object.assign({}, WholeWasmObject);
-    wwo.init = () => {};
-    wbw.loadWasm(() => {}, wwo);
-    wbw.kickSystem(2);
-
-    return wbw;
-}
-
 it('loads', async () => {
     init();
     preset_file("resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex");
@@ -157,10 +130,5 @@ it('loads', async () => {
     cradle1.opening_coin(fake_coin1);
     cradle2.opening_coin(fake_coin2);
 
-    //action_with_messages(cradle1, cradle2);
-    let peer_conn = { sendMessage: (message: string) => {
-        cradle1.deliver_message(message);
-    } };
-    let wasm_blob = initWasmBlobWrapper(peer_conn);
-
+    action_with_messages(cradle1, cradle2);
 });
