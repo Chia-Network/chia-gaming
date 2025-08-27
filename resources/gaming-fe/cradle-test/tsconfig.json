@@ -1,5 +1,11 @@
 {
     "compilerOptions": {
+      "strict": false,
+      "allowJs": true,
+      "skipLibCheck": true,
+      "esModuleInterop": true,
+      "allowSyntheticDefaultImports": true,
+      "forceConsistentCasingInFileNames": true,
       "noImplicitAny": true,
       "outDir": "build/types",
       "module": "esnext",
