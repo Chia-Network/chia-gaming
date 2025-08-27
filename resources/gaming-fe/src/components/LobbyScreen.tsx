@@ -25,6 +25,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
   const [gameChoice, setGameChoice] = useState('');
   const [wagerInput, setWagerInput] = useState('');
   const [editingAlias, setEditingAlias] = useState(false);
+  const [gotoUrl, setGotoUrl] = useState('');
 
   const handleSend = () => {
     if (chatInput.trim()) {
@@ -39,6 +40,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
   const handleCreate = async () => {
     if (!gameChoice || !wagerInput) return;
     const { secureUrl, token } = await generateRoom(gameChoice, wagerInput);
+    setGotoUrl(secureUrl);    
     window.prompt('Share this room URL:', secureUrl);
     closeDialog();
   };
@@ -89,6 +91,14 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
       <Typography variant="h4" gutterBottom>
         Lobby — Alias: {aliasDisplay}
       </Typography>
+      <div style={{position:"relative",
+      width: "0",
+      height: "0",
+      opacity: "0"
+      }}
+      aria-label="partner-target-url">
+      {gotoUrl}
+      </div>
 
       <Box mb={3}>
         <Typography variant="h6">Connected Players</Typography>
@@ -143,7 +153,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
       </Box>
 
       <Box display="flex" justifyContent="space-between">
-        <Button disabled={!walletToken} variant="outlined" onClick={openDialog}>
+        <Button disabled={!walletToken} variant="outlined" onClick={openDialog} aria-label="generate-room">
           Generate Room
         </Button>
       </Box>

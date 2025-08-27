@@ -55,6 +55,7 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
                 selectionColor={selectionColor}
                 cardValue={card}
                 setSelection={() => {}}
+                iAmPlayer={(iStarted !== iAmAlice)}
             />
           );
         })}
