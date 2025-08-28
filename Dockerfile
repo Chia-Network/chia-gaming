@@ -3,6 +3,8 @@ RUN apt-get update -y
 RUN apt-get install -y libc6
 RUN apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential
 RUN apt-get update
+RUN npm install -g corepack
+RUN yarn set version 1.22.22
 WORKDIR /app
 RUN python3 -m venv ./test
 RUN sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.5.5-rc3"
@@ -23,7 +25,7 @@ RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --release --targe
 
 #Stage front-end / UI / UX into the container
 COPY resources/gaming-fe/package.json /app
-RUN cd /app && npm install
+RUN cd /app && yarn install
 
 # Place wasm backend in docker container
 RUN mkdir -p /app/dist
@@ -32,7 +34,7 @@ RUN cp /app/rust/wasm/pkg/chia_gaming_wasm.js /app/dist/chia_gaming_wasm.js
 
 # Build the front-end / UI / UX within the container env
 COPY resources/gaming-fe /app
-RUN cd /app && npm run build
+RUN cd /app && yarn run build
 
 COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 ADD clsp /app/clsp
