@@ -104,7 +104,7 @@ describe("Basic element tests", function() {
     // Try generating a room.
     console.log('waiting for generate button');
     let generateRoomButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "generate-room")));
-    generateRoomButton.click();
+    await generateRoomButton.click();
 
     let gameId = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-id", "//input")), 1000);
     let wager = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-wager", "//input")), 1000);
@@ -114,8 +114,8 @@ describe("Basic element tests", function() {
 
     let createButton = await driver.wait(until.elementLocated(byExactText("Create")), 1000);
     await createButton.click();
-
-    await wait(driver, 2.0);
+      console.log("BEFORE WAIT 20 sec ...");
+    await wait(driver, 20.0);
 
     let alert = await driver.switchTo().alert();
     let alertText = await alert.getText();
@@ -140,7 +140,7 @@ describe("Basic element tests", function() {
     let makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
     // Player1 and Player2 are in the game.
     await waitAriaEnabled(driver, makeMoveButton);
-    makeMoveButton.click();
+    await makeMoveButton.click();
 
     await firefox_wait_for_cards(ffdriver);
 
@@ -152,7 +152,7 @@ describe("Basic element tests", function() {
 
     makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
     await waitAriaEnabled(driver, makeMoveButton);
-    makeMoveButton.click();
+    await makeMoveButton.click();
 
     console.log('first game complete');
     await firefox_press_button_second_game(ffdriver);
@@ -160,7 +160,7 @@ describe("Basic element tests", function() {
     console.log('alice random number (2)');
     makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
     await waitAriaEnabled(driver, makeMoveButton);
-    makeMoveButton.click();
+    await makeMoveButton.click();
 
     await firefox_wait_for_cards(ffdriver);
 
@@ -173,11 +173,12 @@ describe("Basic element tests", function() {
     console.log('alice make move (2)');
     makeMoveButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "make-move")));
     await waitAriaEnabled(driver, makeMoveButton);
-    makeMoveButton.click();
+    await makeMoveButton.click();
 
     console.log('stop the game');
     let stopButton = await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("aria-label", "stop-playing"))), (elt) => waitAriaEnabled(driver, elt), 1.0);
-    stopButton.click();
+
+    await stopButton.click();
 
     console.log('awaiting shutdown');
     await gotShutdown(ffdriver);

@@ -1,141 +1,119 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Player, Room, GameType, GameTypes, GameSession, MatchmakingPreferences } from '../types/lobby';
+import { Player, Room, GameType, GameTypes, GameDefinition, MatchmakingPreferences } from '../types/lobby';
 
 const ROOM_TTL = 10 * 60 * 1000;
+const GAME_TTL = 10 * 60 * 1000;
 const CLEANUP_INTERVAL = 60 * 1000;
 
-const players = new Map<string, Player>();
-const rooms = new Map<string, Room>();
-const gameSessions = new Map<string, GameSession>();
+function listOfObject<T>(object: Record<string, T>): T[] {
+  const result: T[] = [];
+  Object.keys(object).forEach((k) => {
+    result.push(object[k]);
+  });
+  return result;
+}
 
-let cleanupInterval: NodeJS.Timeout;
+export class Lobby {
+  players: Record<string, Player> = {};
+  rooms: Record<string, Room> = {};
+  games: Record<string, GameDefinition> = {};
 
-export const initLobby = () => {
-  cleanupInterval = setInterval(cleanup, CLEANUP_INTERVAL);
-};
+  sweep(time: number) {
+    let playersInRooms: Record<string, boolean> = {};
+    Object.keys(this.games).forEach((k) => {
+      const game = this.games[k];
+      if (time > game.expiration) {
+        delete this.games[k];
+      }
+    });
 
-export const shutdownLobby = () => {
-  clearInterval(cleanupInterval);
-  rooms.clear();
-  gameSessions.clear();
-};
+    Object.keys(this.rooms).forEach((k) => {
+      const room: Room = this.rooms[k];
+      if (time > room.expiresAt) {
+        delete this.rooms[k];
+        return;
+      }
 
-export const addPlayer = (player: Omit<Player, 'lastSeen' | 'status'>): Player => {
-  const newPlayer: Player = {
-    ...player,
-    lastActive: Date.now(),
-    status: 'waiting'
-  };
-  return newPlayer;
-};
+      if (room.host) {
+        playersInRooms[room.host] = true;
+      }
+      if (room.joiner) {
+        playersInRooms[room.joiner] = true;
+      }
+    });
 
-export const removePlayer = (playerId: string): boolean => {
-  return true;
-};
-
-export const updatePlayerStatus = (playerId: string, status: Player['status']): boolean => {
-  return true;
-};
-
-export const createRoom = (host: string, preferences: MatchmakingPreferences): Room => {
-  const room: Room = {
-    token: uuidv4(),
-    minPlayers: 0,
-    game: preferences.game,
-    parameters: preferences.parameters,
-    host,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + ROOM_TTL,
-    status: 'waiting',
-    maxPlayers: getMaxPlayers(preferences.game, preferences.parameters),
-    chat: []
-  };
-  rooms.set(room.token, room);
-  return room;
-};
-
-export const joinRoom = (roomId: string, player: Player): Room | null => {
-  const room = rooms.get(roomId);
-  if (!room || room.status !== 'waiting') {
-    return null;
+    Object.keys(this.players).forEach((k) => {
+      const player = this.players[k];
+      if (!playersInRooms[player.id] && time > player.lastActive + ROOM_TTL) {
+        delete this.players[k];
+      }
+    });
   }
 
-  return room;
-};
-
-export const leaveRoom = (roomId: string, playerId: string): boolean => {
-  const room = rooms.get(roomId);
-  if (!room) return false;
-
-  // Close room if the host or joiner leaves.
-
-  return true;
-};
-
-export const findMatch = (player: Player, preferences: MatchmakingPreferences): Room | null => {
-  const availableRooms = Array.from(rooms.values())
-    .filter(room =>
-      room.game === preferences.game &&
-      room.status === 'waiting' &&
-      areParametersCompatible(room.parameters, preferences.parameters)
-    );
-
-  if (availableRooms.length === 0) {
-    return null;
+  addPlayer(player: Player) {
+    this.players[player.id] = player;
   }
 
-  return availableRooms[0];
-};
-
-const startGameSession = (room: Room): GameSession => {
-  const session: GameSession = {
-    id: uuidv4(),
-    roomId: room.token,
-    gameType: room.game,
-    host: room.host,
-    joiner: (room.joiner as string),
-    parameters: room.parameters,
-    startedAt: Date.now(),
-    status: 'active'
-  };
-  gameSessions.set(session.id, session);
-  return session;
-};
-
-export const endGameSession = (sessionId: string, winnerId?: string): GameSession | null => {
-  const session = gameSessions.get(sessionId);
-  if (!session) return null;
-
-  session.status = 'completed';
-  if (winnerId) session.winner = winnerId;
-
-  const room = rooms.get(session.roomId);
-  if (room) {
-    room.status = 'completed';
+  removePlayer(playerId: string) {
+    let existing = !!this.players[playerId];
+    delete this.players[playerId];
+    return existing;
   }
 
-  return session;
-};
-
-const getMaxPlayers = (gameType: GameType, parameters: any): number => {
-  return 2;
-};
-
-const areParametersCompatible = (roomParams: any, playerParams: any): boolean => {
-  return JSON.stringify(roomParams) === JSON.stringify(playerParams);
-};
-
-const cleanup = () => {
-  const now = Date.now();
-
-  for (const [roomId, room] of rooms.entries()) {
-    if (now > room.expiresAt) {
-      // Remove players corresponding to .host and .joiner
-      rooms.delete(roomId);
+  addGame(time: number, game: string, target: string) {
+    if (this.games[game]) {
+      return;
     }
-  }
-};
 
-export const getPlayers = (): Player[] => Array.from(players.values());
-export const getRooms = (): Room[] => Array.from(rooms.values());
-export const getGameSessions = (): GameSession[] => Array.from(gameSessions.values());
+    this.games[game] = {
+      expiration: time + GAME_TTL,
+      game: game,
+      target: target,
+    };
+  }
+
+  createRoom(host: string, preferences: MatchmakingPreferences) {
+    const room: Room = {
+      token: uuidv4(),
+      minPlayers: 0,
+      game: preferences.game,
+      parameters: preferences.parameters,
+      host,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + ROOM_TTL,
+      status: 'waiting',
+      maxPlayers: 2,
+      chat: []
+    };
+    this.rooms[room.token] = room;
+    return room;
+  }
+
+  joinRoom(roomId: string, player: Player) {
+    const room = this.rooms[roomId];
+    if (!room || room.status !== 'waiting') {
+      return null;
+    }
+
+    return room;
+  }
+
+  leaveRoom(roomId: string, playerId: string) {
+    const room = this.rooms[roomId];
+    if (!room) return false;
+
+    return true;
+  }
+
+  removeRoom(roomId: string) {
+    delete this.rooms[roomId];
+  }
+
+  getPlayers(): Player[] {
+    return listOfObject(this.players);
+  }
+
+  getRooms(): Room[] {
+    return listOfObject(this.rooms);
+  }
+}
