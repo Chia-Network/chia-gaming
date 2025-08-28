@@ -19,7 +19,7 @@ interface LobbyComponentProps { }
 
 const LobbyScreen: React.FC<LobbyComponentProps> = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
-  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment, walletToken } = useLobbySocket(myAlias);
+  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias, true);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
@@ -40,7 +40,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
   const handleCreate = async () => {
     if (!gameChoice || !wagerInput) return;
     const { secureUrl, token } = await generateRoom(gameChoice, wagerInput);
-    setGotoUrl(secureUrl);    
+    setGotoUrl(secureUrl);
     window.prompt('Share this room URL:', secureUrl);
     closeDialog();
   };
@@ -153,7 +153,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
       </Box>
 
       <Box display="flex" justifyContent="space-between">
-        <Button disabled={!walletToken} variant="outlined" onClick={openDialog} aria-label="generate-room">
+        <Button variant="outlined" onClick={openDialog} aria-label="generate-room">
           Generate Room
         </Button>
       </Box>

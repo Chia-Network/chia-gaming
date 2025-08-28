@@ -485,7 +485,7 @@ export function useRpcUi() {
         ],
     };
 
-    return { commands, responseData };
+    return { commands, responseData, rpc };
 }
 
 function stringOption(

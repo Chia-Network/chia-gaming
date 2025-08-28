@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome } from '../types/ChiaGaming';
+import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, BLOCKCHAIN_SERVICE_URL } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
 import { useInterval } from '../useInterval';
@@ -21,7 +21,7 @@ function getBlobSingleton(stateChanger: (state: any) => void, blockchain: Extern
   });
 
   const doInternalLoadWasm = async () => {
-    const fetchUrl ='http://localhost:3001/chia_gaming_wasm_bg.wasm';
+    const fetchUrl ='http://localhost:3000/chia_gaming_wasm_bg.wasm';
     return fetch(fetchUrl).then(wasm => wasm.blob()).then(blob => {
       return blob.arrayBuffer();
     });
@@ -46,8 +46,6 @@ function getBlobSingleton(stateChanger: (state: any) => void, blockchain: Extern
 }
 
 export function useWasmBlob() {
-  const BLOCKCHAIN_SERVICE_URL = process.env.REACT_APP_BLOCKCHAIN_SERVICE_URL || 'http://localhost:5800';
-
   const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
   const [uniqueWalletConnectionId, setUniqueWalletConnectionId] = useState(uuidv4());

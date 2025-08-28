@@ -56,9 +56,6 @@ async function clickMakeMove(driver, who) {
 async function firefox_start_and_first_move(driver, baseUrl) {
   await driver.get(baseUrl);
 
-  let join_button = await driver.wait(until.elementLocated(byExactText("Join")));
-  await join_button.click();
-
   console.log('Wait for handshake on bob side');
   await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
 
@@ -116,6 +113,8 @@ describe("Basic element tests", function() {
     // expect(!!chatFound).toBe(true);
 
     // Try generating a room.
+    await wait(driver, 5.0);
+
     console.log('waiting for generate button');
     let generateRoomButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "generate-room")));
     await generateRoomButton.click();
