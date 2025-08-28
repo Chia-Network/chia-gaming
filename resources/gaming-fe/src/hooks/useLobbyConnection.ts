@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ChatMessage, ChatEnvelope, FragmentData, GenerateRoomResult, Room } from '../types/lobby';
+import { ExternalBlockchainInterface, BLOCKCHAIN_SERVICE_URL } from '../types/ChiaGaming';
 import { getSearchParams, getFragmentParams, generateOrRetrieveUniqueId } from '../util';
 import io, { Socket } from 'socket.io-client';
 import axios from 'axios';
@@ -13,9 +14,22 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<ChatEnvelope[]>([]);
+  const [didJoin, setDidJoin] = useState(false);
   const socketRef = useRef<Socket>(undefined);
   const [fragment, setFragment] = useState<FragmentData>(getFragmentParams());
   console.log('fragment retrieved', fragment);
+
+  const joinRoom = useCallback(async (token: string) => {
+    const { data } = await axios.post(`${LOBBY_URL}/lobby/join-room`, {
+      token,
+      id: uniqueId,
+      alias,
+      game: 'lobby',
+      parameters: {},
+    });
+
+    return data.room as Room;
+  }, [uniqueId]);
 
   function tryJoinRoom() {
     for (let i = 0; i < rooms.length; i++) {
@@ -25,10 +39,23 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
         name: 'lobby'
       }, '*');
       console.log('checking room', room);
-      if (!room.host || !room.joiner) {
+      if (!room.host) {
         console.log('either host or joiner missing');
         continue;
       }
+      if (params.token && room.token != params.token) {
+        console.log('room with wrong token wanted', params.token);
+        continue;
+      }
+
+      if (params.token && room.host != uniqueId && !room.joiner && !didJoin) {
+        // We know this is the room we want and we're the joiner.  Join it.
+        // We'll get an update and ungate the rest.
+        setDidJoin(true);
+        joinRoom(params.token);
+        continue;
+      }
+
       console.log('conditions to enter', room.host === uniqueId, room.joiner === uniqueId, room.target, walletConnect);
       if ((room.host === uniqueId || room.joiner === uniqueId) && room.target && walletConnect) {
         const iStarted = room.host === uniqueId;
@@ -45,7 +72,15 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
             token: room.token
           })
         }).then(res => res.json()).then(() => {
-          window.location.href = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}` as string;
+          let blockchain = new ExternalBlockchainInterface(
+            BLOCKCHAIN_SERVICE_URL,
+            params.uniqueId
+          );
+          return blockchain.getOrRequestToken(params.uniqueId);
+        }).then(walletToken => {
+          const newUrl = `${room.target}&uniqueId=${uniqueId}&iStarted=${iStarted}&walletToken=${walletToken}` as string;
+          console.warn(`from tryJoinRoom, navigate ${newUrl}`);
+          window.location.href = newUrl;
         });
         break;
       }
@@ -95,18 +130,6 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
       parameters: { wagerAmount: wager },
     });
     return data;
-  }, [uniqueId]);
-
-  const joinRoom = useCallback(async (token: string) => {
-    const { data } = await axios.post(`${LOBBY_URL}/lobby/join-room`, {
-      token,
-      id: uniqueId,
-      alias,
-      game: 'lobby',
-      parameters: {},
-    });
-
-    return data.room as Room;
   }, [uniqueId]);
 
   const setLobbyAlias = useCallback(async (id: string, alias: string) => {

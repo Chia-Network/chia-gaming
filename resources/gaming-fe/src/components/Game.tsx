@@ -75,14 +75,20 @@ const Game: React.FC = () => {
   });
 
   // All early returns need to be after all useEffect, etc.
-  if (gameSelection === undefined) {
-    //params: join, game   if (!game && !lobby)
-    const params = getSearchParams();
-    if (!params.lobby) {
-      fetch("/urls").then((res) => {return res.json();}).then((urls) => {
-        window.location.href = (urls.tracker);
-      });
-    }
+  const params = getSearchParams();
+  if (!params.lobby && !params.iStarted) {
+    fetch("/urls").then((res) => {return res.json();}).then((urls) => {
+      console.log('navigate to lobby', urls);
+      if (gameSelection) {
+        window.location.href = `${urls.tracker}&token=${gameSelection.token}`;
+      } else {
+        window.location.href = urls.tracker;
+      }
+    });
+    return (<div/>);
+  }
+
+  if (!params.iStarted) {
     return (
       <LobbyScreen />
     );
