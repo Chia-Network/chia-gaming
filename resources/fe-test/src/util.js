@@ -35,12 +35,12 @@ async function waitEnabled(driver, element) {
 
 async function waitAriaEnabled(driver, element) {
     const actions = driver.actions({async: true});
-    let i = 0;
-    while (i++ < WAIT_ITERATIONS) {
+    for (let i = 0; i < WAIT_ITERATIONS; i++) {
         const shouldExit = await element.getAttribute("aria-disabled");
         if (shouldExit.toString() !== "true") {
             return;
         }
+
         await actions.pause(HALF_SECOND).perform();
     }
 
@@ -54,19 +54,9 @@ async function selectSimulator(driver) {
     simulatorButton.click();
 }
 
-async function getPlayerCards(driver, iAmPlayer) {
-    const firstEightCards = [];
-    for (var i = 0; i < 8; i++) {
-        const card = await driver.wait(until.elementLocated(byAttribute("aria-label", `card-${iAmPlayer}-${i}`)));
-        firstEightCards.push(card);
-    }
-
-    return firstEightCards;
-}
-
 async function waitForNonError(driver, select, extra, time) {
     let stopButton = null;
-    for (var i = 0; i < 10; i++) {
+    for (var i = 0; i < WAIT_ITERATIONS; i++) {
         try {
             stopButton = await select();
             await extra(stopButton);
@@ -75,6 +65,9 @@ async function waitForNonError(driver, select, extra, time) {
             console.log('waiting for stop button got stale ref', i, e);
         }
         await wait(driver, time);
+    }
+    if (!stopButton) {
+        throw new Error(`could not select an element in ${WAIT_ITERATIONS}`);
     }
     return stopButton;
 }
@@ -88,6 +81,5 @@ module.exports = {
     waitEnabled,
     selectSimulator,
     waitAriaEnabled,
-    getPlayerCards,
     waitForNonError
 };
