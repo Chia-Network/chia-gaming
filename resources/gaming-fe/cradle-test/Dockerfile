@@ -3,6 +3,8 @@ RUN apt-get update -y
 RUN apt-get install -y libc6
 RUN apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential
 RUN apt-get update
+RUN npm install -g corepack
+RUN yarn set version 1.22.22
 WORKDIR /app
 RUN python3 -m venv ./test
 RUN sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.5.5-rc3"
