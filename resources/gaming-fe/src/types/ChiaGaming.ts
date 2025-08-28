@@ -187,6 +187,7 @@ export interface BlockchainConnection {
   create_spendable: (target_ph: string, amount: number) => Promise<string | null>;
 };
 
+export const BLOCKCHAIN_SERVICE_URL = 'http://localhost:5800';
 export class ExternalBlockchainInterface {
   baseUrl: string;
   token: string;
@@ -194,6 +195,19 @@ export class ExternalBlockchainInterface {
   constructor(baseUrl: string, token: string) {
     this.baseUrl = baseUrl;
     this.token = token;
+  }
+
+  getOrRequestToken(uniqueId: string): Promise<string> {
+    if (this.token) {
+      return new Promise((resolve, reject) => resolve(this.token));
+    }
+
+    return fetch(`${this.baseUrl}/register?name=${uniqueId}`, {
+      body: '', method: 'POST'
+    }).then(f => f.json()).then(token => {
+      this.token = token;
+      return token;
+    });
   }
 
   getToken(): string {

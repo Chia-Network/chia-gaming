@@ -22,7 +22,7 @@ import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
 import { useWasmBlob } from "../hooks/useWasmBlob";
 import Debug from "./Debug";
-import { getGameSelection } from '../util';
+import { getGameSelection, getSearchParams } from '../util';
 
 const Game: React.FC = () => {
   const gameSelection = getGameSelection();
@@ -75,7 +75,20 @@ const Game: React.FC = () => {
   });
 
   // All early returns need to be after all useEffect, etc.
-  if (gameSelection === undefined) {
+  const params = getSearchParams();
+  if (!params.lobby && !params.iStarted) {
+    fetch("/urls").then((res) => {return res.json();}).then((urls) => {
+      console.log('navigate to lobby', urls);
+      if (gameSelection) {
+        window.location.href = `${urls.tracker}&token=${gameSelection.token}`;
+      } else {
+        window.location.href = urls.tracker;
+      }
+    });
+    return (<div/>);
+  }
+
+  if (!params.iStarted) {
     return (
       <LobbyScreen />
     );
