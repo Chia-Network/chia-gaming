@@ -8,7 +8,7 @@ import { WasmBlobWrapper } from './WasmBlobWrapper';
 
 let blobSingleton: any = null;
 
-function getBlobSingleton(stateChanger: (state: any) => void, blockchain: ExternalBlockchainInterface, walletToken: string, uniqueId: string, amount: number, iStarted: boolean) {
+function getBlobSingleton(blockchain: ExternalBlockchainInterface, walletToken: string, uniqueId: string, amount: number, iStarted: boolean) {
   if (blobSingleton) {
     return blobSingleton;
   }
@@ -38,12 +38,28 @@ function getBlobSingleton(stateChanger: (state: any) => void, blockchain: Extern
     amount,
     iStarted,
     doInternalLoadWasm,
-    stateChanger,
     fetchHex,
     peercon
   );
   return blobSingleton;
 }
+
+
+/*
+  const setState = useCallback((state: any) => {
+    if (state.name != 'game_state') {
+      console.error(state);
+      return;
+    }
+    const keys = Object.keys(state.values);
+    keys.forEach((k) => {
+      if (settable[k]) {
+        console.warn(k, state.values[k]);
+        settable[k](state.values[k]);
+      }
+    });
+  }, []);
+*/
 
 export function useWasmBlob() {
   const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
@@ -84,6 +100,21 @@ export function useWasmBlob() {
     'setOutcome': setOutcome
   };
 
+  useEffect(() => {
+    let x = blobSingleton.getObservable().subscribe({next: (state: any) => {
+    const keys = Object.keys(state.values);
+    keys.forEach((k) => {
+      if (settable[k]) {
+        console.warn(k, state.values[k]);
+        settable[k](state.values[k]);
+      }
+    });
+    }});
+    return(() => {
+      x.unsubscribe();
+     })
+  });
+
   let setCardSelections = useCallback((mask: number) => {
     gameObject?.setCardSelections(mask);
   }, []);
@@ -94,24 +125,6 @@ export function useWasmBlob() {
     gameObject?.shutDown();
   }, []);
 
-  const stateChanger = useCallback((state: any) => {
-    window.postMessage({ name: 'game_state', values: state });
-  }, []);
-
-  const setState = useCallback((state: any) => {
-    if (state.name != 'game_state') {
-      console.error(state);
-      return;
-    }
-    const keys = Object.keys(state.values);
-    keys.forEach((k) => {
-      if (settable[k]) {
-        console.warn(k, state.values[k]);
-        settable[k](state.values[k]);
-      }
-    });
-  }, []);
-
   const walletObject = new ExternalBlockchainInterface(
     BLOCKCHAIN_SERVICE_URL,
     searchParams.walletToken
@@ -119,7 +132,6 @@ export function useWasmBlob() {
 
   const gameObject = uniqueId ?
     getBlobSingleton(
-      stateChanger,
       walletObject,
       searchParams.walletToken,
       uniqueId,
@@ -144,7 +156,6 @@ export function useWasmBlob() {
 
   return {
     error,
-    setState,
     gameIdentity,
     gameConnectionState,
     uniqueWalletConnectionId,

@@ -1,4 +1,5 @@
 import React, { cloneElement, useState, useEffect, useCallback } from "react";
+import { fromEvent } from 'rxjs';
 import {
   Box,
   Button,
@@ -34,7 +35,6 @@ const Game: React.FC = () => {
   const {
     error,
     gameConnectionState,
-    setState,
     isPlayerTurn,
     iStarted,
     moveNumber,
@@ -61,18 +61,6 @@ const Game: React.FC = () => {
   };
 
   const { wcInfo, setWcInfo } = useDebug();
-
-  const setStateFromMessage = useCallback((evt: any) => {
-    setState(evt.data);
-  }, []);
-
-  useEffect(function () {
-    window.addEventListener("message", setStateFromMessage);
-
-    return function () {
-      window.removeEventListener("message", setStateFromMessage);
-    };
-  });
 
   // All early returns need to be after all useEffect, etc.
   const params = getSearchParams();

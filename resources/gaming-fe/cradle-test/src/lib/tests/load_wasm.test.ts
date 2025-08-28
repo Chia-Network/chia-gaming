@@ -107,8 +107,12 @@ async function initWasmBlobWrapper(uniqueId: string, iStarted: boolean, peer_con
     const blockchain_interface = gimmie_blockchain_interface(walletToken);
     const amount = 100;
     const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
-    let wbw = new WasmBlobWrapper(blockchain_interface, walletToken, uniqueId, amount, iStarted, doInternalLoadWasm, (a: any) => {}, fetchHex, peer_conn);
-
+    let wbw = new WasmBlobWrapper(blockchain_interface, walletToken, uniqueId, amount, iStarted, doInternalLoadWasm, fetchHex, peer_conn);
+    let ob = wbw.getObservable();
+    console.log("WasmBlobWrapper Observable: ", ob);
+    ob.subscribe({next: (evt) => {
+        console.log("WasmBlobWrapper Event: ", evt);
+    }});
     let wwo = Object.assign({}, WholeWasmObject);
     wwo.init = () => {};
     wbw.loadWasm(() => {}, wwo);
