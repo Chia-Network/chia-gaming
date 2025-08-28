@@ -3416,21 +3416,6 @@ helmet@^7.1.0:
   resolved "https://registry.npmjs.org/helmet/-/helmet-7.2.0.tgz"
   integrity sha512-ZRiwvN089JfMXokizgqEPXsl2Guk094yExfoDXR0cBYWxtBbaSww/w+vT4WEJsBW2iTUi1GgZ6swmoug3Oy4Xw==
 
-hex-encoding@^2.0.3:
-  version "2.0.3"
-  resolved "https://registry.npmjs.org/hex-encoding/-/hex-encoding-2.0.3.tgz"
-  integrity sha512-sSmMo4ij2Vejht+5UkzuzNGiYgIWTSUw0GQqxHIQXsuuXB1ozYnjCZJZ/nwWNYRoU8+92Dp736wqxmiAN6/fcw==
-  dependencies:
-    node-buffer-encoding "^1.0.3"
-    uint8-encoding "^2.0.1"
-
-hex-to-uint8@^1.0.1:
-  version "1.0.1"
-  resolved "https://registry.npmjs.org/hex-to-uint8/-/hex-to-uint8-1.0.1.tgz"
-  integrity sha512-eAUTUGARS64pXeTcQr9jtqv5tCZVNEXVC3Mk1emLJ1IqWP3ONlV75PH4x1b7aGaAYP9HBIJfRi6w7rwh3IPMcA==
-  dependencies:
-    hex-encoding "^2.0.3"
-
 hey-listen@^1.0.8:
   version "1.0.8"
   resolved "https://registry.npmjs.org/hey-listen/-/hey-listen-1.0.8.tgz"
@@ -4528,11 +4513,6 @@ node-addon-api@^7.0.0:
   resolved "https://registry.npmjs.org/node-addon-api/-/node-addon-api-7.1.1.tgz"
   integrity sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ==
 
-node-buffer-encoding@^1.0.3:
-  version "1.0.3"
-  resolved "https://registry.npmjs.org/node-buffer-encoding/-/node-buffer-encoding-1.0.3.tgz"
-  integrity sha512-9hJZNChhQoCN1rCFScJiEwtzvWEJw2wSnu2nhDLD/YOYl1Ce8GbtnorsnjwwjpSk4sWE7zSp2etX6j7+bO7fVA==
-
 node-fetch-native@^1.6.4, node-fetch-native@^1.6.6:
   version "1.6.6"
   resolved "https://registry.npmjs.org/node-fetch-native/-/node-fetch-native-1.6.6.tgz"
@@ -5161,9 +5141,9 @@ run-parallel@^1.1.9:
   dependencies:
     queue-microtask "^1.2.2"
 
-rxjs@*:
+rxjs@^7.5.2:
   version "7.8.2"
-  resolved "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz"
+  resolved "https://registry.yarnpkg.com/rxjs/-/rxjs-7.8.2.tgz#955bc473ed8af11a002a2be52071bf475638607b"
   integrity sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==
   dependencies:
     tslib "^2.1.0"
@@ -5751,11 +5731,6 @@ ufo@^1.5.4:
   version "1.5.4"
   resolved "https://registry.npmjs.org/ufo/-/ufo-1.5.4.tgz"
   integrity sha512-UsUk3byDzKd04EyoZ7U4DOlxQaD14JUKQl6/P7wiX4FNvUfm3XL246n9W5AmqwW5RSFJ27NAuM0iLscAOYUiGQ==
-
-uint8-encoding@^2.0.1:
-  version "2.0.1"
-  resolved "https://registry.npmjs.org/uint8-encoding/-/uint8-encoding-2.0.1.tgz"
-  integrity sha512-xZAjZ+3OvrDtjFLLgojrLmG6T0YwZEo0OTyqCBxFjlFimIKnLtFqyYk6z/jDOUlJFJE52Srtrv4W4x7t4Cn/dA==
 
 uint8arrays@3.1.0, uint8arrays@^3.0.0:
   version "3.1.0"

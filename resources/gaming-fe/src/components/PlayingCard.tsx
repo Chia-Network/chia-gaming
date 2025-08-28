@@ -10,6 +10,7 @@ interface PlayingCardProps {
   selected: boolean;
   selectionColor?: string;
   setSelection: (index: number, selected: boolean) => void;
+  iAmPlayer: boolean;
 }
 
 const PlayingCard: React.FC<PlayingCardProps> = ({
@@ -20,6 +21,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   setSelection,
   selectionColor,
   isFaceDown = false,
+  iAmPlayer,
 }) => {
   const suitNames = ['Q', '♥', '♦', '♤', '♧'];
   const rank = cardValue.slice(0, -1);
@@ -50,7 +52,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   };
 
   return (
-    <Paper id={id} elevation={3} style={cardStyle} onClick={setSelectedCB}>
+    <Paper id={id} elevation={3} aria-label={`card-${iAmPlayer}-${index}`} style={cardStyle} onClick={setSelectedCB}>
       {!isFaceDown && (
         <>
           <Typography variant="body2" style={{ fontWeight: 'bold' }}>
