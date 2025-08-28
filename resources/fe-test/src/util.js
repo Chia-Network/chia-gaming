@@ -1,4 +1,6 @@
 const {Builder, Browser, By, Key, until} = require('selenium-webdriver');
+const HALF_SECOND = 500;
+const WAIT_ITERATIONS = 100;
 
 async function wait(driver, secs) {
     const actions = driver.actions({async: true});
@@ -26,21 +28,23 @@ async function sendEnter(element) {
 
 async function waitEnabled(driver, element) {
     const actions = driver.actions({async: true});
-    for (var i = 0; i < 10 && !element.isEnabled(); i++) {
-        await actions.pause(500);
+    for (var i = 0; i < WAIT_ITERATIONS && !element.isEnabled(); i++) {
+        await actions.pause(HALF_SECOND).perform();
     }
 }
 
 async function waitAriaEnabled(driver, element) {
     const actions = driver.actions({async: true});
     let i = 0;
-    while (i < 10) {
+    while (i++ < WAIT_ITERATIONS) {
         const shouldExit = await element.getAttribute("aria-disabled");
         if (shouldExit.toString() !== "true") {
             return;
         }
-        await actions.pause(500);
+        await actions.pause(HALF_SECOND).perform();
     }
+
+    throw new Error("failed to wait for enabled element");
 }
 
 async function selectSimulator(driver) {
