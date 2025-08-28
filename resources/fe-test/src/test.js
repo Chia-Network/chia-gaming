@@ -72,10 +72,10 @@ async function firefox_start_and_first_move(driver, baseUrl) {
 async function clickFourCards(driver, who) {
   await driver.wait(until.elementLocated(byAttribute("aria-label", `card-true-0`)));
   for (let i = 0; i < 4; i++) {
+    await wait(driver, 1.0);
     console.log(`click card ${who} ${i}`);
     const card = await driver.wait(until.elementLocated(byAttribute("aria-label", `card-true-${i}`)));
     await card.click();
-    await wait(driver, 0.5);
   }
 
   console.log(`make move (${who})`);
