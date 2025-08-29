@@ -89,31 +89,6 @@ export function useWasmBlob() {
       setRealError(e);
     }
   };
-  const settable: any = {
-    'setGameConnectionState': setGameConnectionState,
-    'setPlayerHand': setPlayerHand,
-    'setOpponentHand': setOpponentHand,
-    'setMyTurn': setMyTurn,
-    'setMoveNumber': setMoveNumber,
-    'setError': setError,
-    'setCardSelections': setOurCardSelections,
-    'setOutcome': setOutcome
-  };
-
-  useEffect(() => {
-    let x = blobSingleton.getObservable().subscribe({next: (state: any) => {
-    const keys = Object.keys(state.values);
-    keys.forEach((k) => {
-      if (settable[k]) {
-        console.warn(k, state.values[k]);
-        settable[k](state.values[k]);
-      }
-    });
-    }});
-    return(() => {
-      x.unsubscribe();
-     })
-  });
 
   let setCardSelections = useCallback((mask: number) => {
     gameObject?.setCardSelections(mask);
@@ -153,6 +128,36 @@ export function useWasmBlob() {
     console.log('start loading wasm', gameObject);
     gameObject?.loadWasm(chia_gaming_init, cg);
   }, []);
+
+  const settable: any = {
+    'setGameConnectionState': setGameConnectionState,
+    'setPlayerHand': setPlayerHand,
+    'setOpponentHand': setOpponentHand,
+    'setMyTurn': setMyTurn,
+    'setMoveNumber': setMoveNumber,
+    'setError': setError,
+    'setCardSelections': setOurCardSelections,
+    'setOutcome': setOutcome
+  };
+
+  useEffect(() => {
+    if (!gameObject) {
+      return;
+    }
+
+    let subscription = gameObject.getObservable().subscribe({next: (state: any) => {
+      const keys = Object.keys(state);
+      keys.forEach((k) => {
+        if (settable[k]) {
+          console.warn(k, state[k]);
+          settable[k](state[k]);
+        }
+      });
+    }});
+    return(() => {
+      subscription.unsubscribe();
+    });
+  });
 
   return {
     error,

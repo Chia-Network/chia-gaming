@@ -83,12 +83,12 @@ async function action_with_messages(cradle1: WasmBlobWrapperAdapter, cradle2: Wa
 
     const walletObject = new ExternalBlockchainInterface("http://localhost:5800", "driver");
 
-    let evt_results: Array<boolean> = [];
+    let evt_results: Array<boolean> = [false, false];
     cradles.forEach((cradle, index) => {
         cradle.getObservable().subscribe({
             next: (evt) => {
                 console.log("WasmBlobWrapper Event: ", evt);
-                if( evt.setState === "running") {
+                if( evt.setGameConnectionState && evt.setGameConnectionState.stateIdentifier === "running") {
                     evt_results[index] = true;
                 }
             }
@@ -115,6 +115,7 @@ async function action_with_messages(cradle1: WasmBlobWrapperAdapter, cradle2: Wa
 
     // If any evt_results are false, that means we did not get a setState msg from that cradle
     if (!evt_results.every((x) => x)) {
+	console.log('got running:', evt_results);
         throw("we expected");
     }
 }
