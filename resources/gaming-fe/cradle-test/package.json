@@ -106,8 +106,10 @@
     ]
   },
   "dependencies": {
+    "@types/rx": "^4.1.4",
     "bls-signatures": "^2.0.2",
     "clvm-lib": "^1.0.1",
+    "rxjs": "^7.8.2",
     "uuid": "^11.1.0"
   }
 }

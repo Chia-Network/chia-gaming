@@ -35,9 +35,6 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
     for (let i = 0; i < rooms.length; i++) {
       let room = rooms[i];
       console.log('we have: uniqueId', uniqueId, 'params', params);
-      window.parent.postMessage({
-        name: 'lobby'
-      }, '*');
       console.log('checking room', room);
       if (!room.host) {
         console.log('either host or joiner missing');

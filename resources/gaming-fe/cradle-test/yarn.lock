@@ -1550,6 +1550,107 @@
   resolved "https://registry.npmjs.org/@types/retry/-/retry-0.12.0.tgz#2b35eccfcee7d38cd72ad99232fbd58bffb3c84d"
   integrity sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==
 
+"@types/rx-core-binding@*":
+  version "4.0.7"
+  resolved "https://registry.yarnpkg.com/@types/rx-core-binding/-/rx-core-binding-4.0.7.tgz#2174fbda5a329b4622f6d852aa602492c061ef8b"
+  integrity sha512-Lj4YEEGLaQndB2CQ0s7rNJGud8fzg/S2WL1XU3RwJjk7mwLQd8CzU+Suvzsh4NyjlU9eTb4Zj4I0QZ3sfmGS7g==
+  dependencies:
+    "@types/rx-core" "*"
+
+"@types/rx-core@*":
+  version "4.0.6"
+  resolved "https://registry.yarnpkg.com/@types/rx-core/-/rx-core-4.0.6.tgz#9c26b805d01551cb203ab386a3884058d1f1c040"
+  integrity sha512-x4VqenExHPSDWLQLl0G8YE/KQWNzK3aXf2Twg7hoEjlFXUbOprX3aMl2jPdoLoOKl/gGEo0PLZ2K9Te5rN2lWw==
+
+"@types/rx-lite-aggregates@*":
+  version "4.0.6"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite-aggregates/-/rx-lite-aggregates-4.0.6.tgz#12d7403aacb84b97305e4f70a5a0876b627fa222"
+  integrity sha512-JaJpAxKNGhzFqgpeVfhjrd9/ig2FSJmJUnptsSXDxNELSoufnv4b3h43TjBeiC7coi0Xr/stT/Qk1R70FTUgog==
+  dependencies:
+    "@types/rx-lite" "*"
+
+"@types/rx-lite-async@*":
+  version "4.0.5"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite-async/-/rx-lite-async-4.0.5.tgz#481fa123771e34e642b412fa340b602823aa79fe"
+  integrity sha512-OjSFuusAEZYX04g5xx85yIxXuE4Ray2mM7Riww2oZ25Kg9FtfieocrxIMWHgOR555QlLQySV0949HRdou02Lvw==
+  dependencies:
+    "@types/rx-lite" "*"
+
+"@types/rx-lite-backpressure@*":
+  version "4.0.5"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite-backpressure/-/rx-lite-backpressure-4.0.5.tgz#d03f9d46281805a4ac73cd48df56b6ba74ac9292"
+  integrity sha512-jIXkD5io4LqkXYxg01ldqWgSlS9qRi6fFZOUaLSA/Id0higxiwEZqFjxA2KTofCgENv5IJvyGK4RiAH5o/phsQ==
+  dependencies:
+    "@types/rx-lite" "*"
+
+"@types/rx-lite-coincidence@*":
+  version "4.0.6"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite-coincidence/-/rx-lite-coincidence-4.0.6.tgz#74571929fc1c2404163a4d7d00fc6baa9820b81c"
+  integrity sha512-GLSu07SnRI2cZkgNFMO/adu3zFR9A0bTb3uP//66XrSlrygH91hVot5NQrFsmwxixfJ6pFU9WcWAEVCK6Sdi1A==
+  dependencies:
+    "@types/rx-lite" "*"
+
+"@types/rx-lite-experimental@*":
+  version "4.0.4"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite-experimental/-/rx-lite-experimental-4.0.4.tgz#9b38d6f789b54adce45ff92def8b5e6f367c9196"
+  integrity sha512-7I99UJN8PtiiUDAXiuYPHtEKLEPw2KzUouf+b4xpN73hMa2uqpDUCCI4uuPzJH0M/g+ULJSTzb1V7Tmqy0oDVg==
+  dependencies:
+    "@types/rx-lite" "*"
+
+"@types/rx-lite-joinpatterns@*":
+  version "4.0.4"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite-joinpatterns/-/rx-lite-joinpatterns-4.0.4.tgz#9b9d1e4ea573333ee7096a1c2424ba5217b1fda8"
+  integrity sha512-9GHyCl/IROLg4BscYf8N/b0TiRmkXcQOefXCcsdXz1sJ0oWK5VZaoGlSaeC2uCZSU2cSq2HvGA5jv32d0HS+DQ==
+  dependencies:
+    "@types/rx-lite" "*"
+
+"@types/rx-lite-testing@*":
+  version "4.0.4"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite-testing/-/rx-lite-testing-4.0.4.tgz#94440e6482ad0ae0ba01fff4366abfb36d5e8281"
+  integrity sha512-zT9QpeNHQhekh0CTOurnH692ADSn7koCVYZoFqOL4RPuvJcG/M8DBAF2VTzOpQuDyLiu6sQafRw2oop10xKJRw==
+  dependencies:
+    "@types/rx-lite-virtualtime" "*"
+
+"@types/rx-lite-time@*":
+  version "4.0.6"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite-time/-/rx-lite-time-4.0.6.tgz#c48c5762e97075538cc49dc75f955e4ee96357d1"
+  integrity sha512-bEDm22LwRlW4RtMKn+ALz79Esc6Bur5nj8hVOf7PLd9xCZLu1xEbcgY9692luhDKry9r7A8GUecfYwm1U9FW1A==
+  dependencies:
+    "@types/rx-lite" "*"
+
+"@types/rx-lite-virtualtime@*":
+  version "4.0.6"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite-virtualtime/-/rx-lite-virtualtime-4.0.6.tgz#afa7f26e3e5c0c7868c8e0ee896761654724b0eb"
+  integrity sha512-AAsV20sdLpusZN0SdN8tJld4iUQUGUrBWX99qIh6Gh7ke9EkbNaCo2O+8+fpYtHSN6THG2M6Zc+x2a9TMVvlhg==
+  dependencies:
+    "@types/rx-lite" "*"
+
+"@types/rx-lite@*":
+  version "4.0.10"
+  resolved "https://registry.yarnpkg.com/@types/rx-lite/-/rx-lite-4.0.10.tgz#2a38aa6754eb1f0fb000b58c94925c3a722b927d"
+  integrity sha512-KAUn8LFfEMGwI8vSet+L0PyHT1gacz4/Pz1a3gmL7FtTKW+f12WJH1OocjAGJAos9cQ7SgVFV0E//RzZAkakYQ==
+  dependencies:
+    "@types/rx-core" "*"
+    "@types/rx-core-binding" "*"
+
+"@types/rx@^4.1.4":
+  version "4.1.4"
+  resolved "https://registry.yarnpkg.com/@types/rx/-/rx-4.1.4.tgz#187b2a2ec15fd9fb6d4d38788cd931ec55e6d7f2"
+  integrity sha512-lCvPzEJKD5MJsOvCRk0RciRmER+BLmk9Z/EKgpYBkj6imocWPTDQ9WRM988icVmbXzsJ3Ffw3fnyIz+6geogAg==
+  dependencies:
+    "@types/rx-core" "*"
+    "@types/rx-core-binding" "*"
+    "@types/rx-lite" "*"
+    "@types/rx-lite-aggregates" "*"
+    "@types/rx-lite-async" "*"
+    "@types/rx-lite-backpressure" "*"
+    "@types/rx-lite-coincidence" "*"
+    "@types/rx-lite-experimental" "*"
+    "@types/rx-lite-joinpatterns" "*"
+    "@types/rx-lite-testing" "*"
+    "@types/rx-lite-time" "*"
+    "@types/rx-lite-virtualtime" "*"
+
 "@types/send@*":
   version "0.17.5"
   resolved "https://registry.npmjs.org/@types/send/-/send-0.17.5.tgz#d991d4f2b16f2b1ef497131f00a9114290791e74"
@@ -5515,6 +5616,13 @@ run-parallel@^1.1.9:
   dependencies:
     queue-microtask "^1.2.2"
 
+rxjs@^7.8.2:
+  version "7.8.2"
+  resolved "https://registry.yarnpkg.com/rxjs/-/rxjs-7.8.2.tgz#955bc473ed8af11a002a2be52071bf475638607b"
+  integrity sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==
+  dependencies:
+    tslib "^2.1.0"
+
 safe-buffer@5.2.1, safe-buffer@>=5.1.0, safe-buffer@^5.1.0, safe-buffer@~5.2.0:
   version "5.2.1"
   resolved "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz#1eaf9fa9bdb1fdd4ec75f58f9cdb4e6b7827eec6"
@@ -6007,7 +6115,7 @@ tslib@^1.8.1:
   resolved "https://registry.npmjs.org/tslib/-/tslib-1.14.1.tgz#cf2d38bdc34a134bcaf1091c41f6619e2f672d00"
   integrity sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg==
 
-tslib@^2.0.3:
+tslib@^2.0.3, tslib@^2.1.0:
   version "2.8.1"
   resolved "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz#612efe4ed235d567e8aba5f2a5fab70280ade83f"
   integrity sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==
