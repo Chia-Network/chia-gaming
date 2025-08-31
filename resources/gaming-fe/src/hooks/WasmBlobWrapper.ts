@@ -1,5 +1,6 @@
 import { PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome } from '../types/ChiaGaming';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
+import { Observable, NextObserver } from 'rxjs';
 
 async function empty() {
   return {};
@@ -32,12 +33,13 @@ export class WasmBlobWrapper {
   opponentHand: number[][];
   finished: boolean;
   gameOutcome: CalpokerOutcome | undefined;
-  stateChanger: (stateSettings: any) => void;
   fetchHex: (path: string) => Promise<string>;
   doInternalLoadWasm: () => Promise<ArrayBuffer>;
+  rxjsMessageSingleon: Observable<any>;
+  rxjsEmitter: NextObserver<any> | undefined;
 
     constructor (blockchain:  ExternalBlockchainInterface, walletToken:string, uniqueId: string, amount: number, iStarted: boolean,
-        doInternalLoadWasm: () => Promise<ArrayBuffer>, stateChanger: (state_info: any) => void,
+        doInternalLoadWasm: () => Promise<ArrayBuffer>,
         fetchHex: (key: string) => Promise<string>, peer_conn: PeerConnectionResult
     ) {
       const deliverMessage = (msg: string) => {
@@ -46,7 +48,6 @@ export class WasmBlobWrapper {
 
     const { sendMessage } = peer_conn;
 
-    this.stateChanger = stateChanger;
     this.uniqueId = uniqueId;
     this.rngSeed = this.uniqueId.substr(0, 8);
     this.sendMessage = sendMessage;
@@ -69,6 +70,13 @@ export class WasmBlobWrapper {
     this.qualifyingEvents = 0;
     this.fetchHex = fetchHex;
     this.doInternalLoadWasm = doInternalLoadWasm;
+    this.rxjsMessageSingleon = new Observable<any>((emitter) => {
+        this.rxjsEmitter = emitter;
+    });
+  }
+
+  getObservable() {
+    return this.rxjsMessageSingleon;
   }
 
   kickSystem(flags: number) {
@@ -125,7 +133,7 @@ export class WasmBlobWrapper {
         if (!idle_info) {
           return res;
         }
-        this.stateChanger(idle_info);
+        this.rxjsEmitter?.next(idle_info);
       } while (!idle_info.stop);
       return res;
     });
@@ -258,7 +266,7 @@ export class WasmBlobWrapper {
     this.handlingMessage = true;
     let result = null;
     return this.handleOneMessage(msg).then((result: any) => {
-      this.stateChanger(result);
+      this.rxjsEmitter?.next(result);
       this.handlingMessage = false;
       if (this.messageQueue.length != 0) {
         return this.kickMessageHandling();
@@ -462,7 +470,7 @@ export class WasmBlobWrapper {
     if (idle.finished && !this.finished) {
       console.error('we shut down');
       this.finished = true;
-      this.stateChanger({
+      this.rxjsEmitter?.next({
         setGameConnectionState: {
           stateIdentifier: "shutdown",
           stateDetail: []

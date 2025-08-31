@@ -27,6 +27,13 @@ class WasmBlobWrapperAdapter {
         this.waiting_messages = [];
     }
 
+    getObservable() {
+        if (!this.blob) {
+            throw("WasmBlobWrapperAdapter.getObservable() called before set_blob");
+        }
+        return this.blob.getObservable();
+    }
+
     set_blob(blob: WasmBlobWrapper) {
         this.blob = blob;
         this.blob.kickSystem(2);
@@ -76,6 +83,18 @@ async function action_with_messages(cradle1: WasmBlobWrapperAdapter, cradle2: Wa
 
     const walletObject = new ExternalBlockchainInterface("http://localhost:5800", "driver");
 
+    let evt_results: Array<boolean> = [false, false];
+    cradles.forEach((cradle, index) => {
+        cradle.getObservable().subscribe({
+            next: (evt) => {
+                console.log("WasmBlobWrapper Event: ", evt);
+                if( evt.setGameConnectionState && evt.setGameConnectionState.stateIdentifier === "running") {
+                    evt_results[index] = true;
+                }
+            }
+        })
+    });
+
     while (!all_handshaked(cradles)) {
         if (count++ % 5 === 0 && count < 10000) {
             await walletObject.waitBlock().then(new_block_number => {
@@ -91,8 +110,13 @@ async function action_with_messages(cradle1: WasmBlobWrapperAdapter, cradle2: Wa
                 cradles[c ^ 1].deliver_message(outbound[i]);
             }
         }
-
         await wait(10);
+    }
+
+    // If any evt_results are false, that means we did not get a setState msg from that cradle
+    if (!evt_results.every((x) => x)) {
+	console.log('got running:', evt_results);
+        throw("we expected");
     }
 }
 
@@ -107,8 +131,9 @@ async function initWasmBlobWrapper(uniqueId: string, iStarted: boolean, peer_con
     const blockchain_interface = gimmie_blockchain_interface(walletToken);
     const amount = 100;
     const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
-    let wbw = new WasmBlobWrapper(blockchain_interface, walletToken, uniqueId, amount, iStarted, doInternalLoadWasm, (a: any) => {}, fetchHex, peer_conn);
-
+    let wbw = new WasmBlobWrapper(blockchain_interface, walletToken, uniqueId, amount, iStarted, doInternalLoadWasm, fetchHex, peer_conn);
+    let ob = wbw.getObservable();
+    console.log("WasmBlobWrapper Observable: ", ob);
     let wwo = Object.assign({}, WholeWasmObject);
     wwo.init = () => {};
     wbw.loadWasm(() => {}, wwo);
