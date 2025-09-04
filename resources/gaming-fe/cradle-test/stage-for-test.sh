@@ -24,6 +24,7 @@ cp -r ../../../wasm/Cargo.lock ../../../wasm/Cargo.toml ../../../wasm/src rust/w
 cp ../src/types/ChiaGaming.ts ./src/types
 cp ../src/hooks/WasmBlobWrapper.ts ../src/hooks/useFullNode.ts ./src/hooks
 cp ../src/util.ts ./src/
+cp ../src/settings.ts ./src/
 
 CMD="docker build -t chia-host-test"
 if /bin/test $(uname -s) == "Linux" ; then

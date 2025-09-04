@@ -6,6 +6,7 @@ import { useInterval } from '../useInterval';
 import { v4 as uuidv4 } from 'uuid';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { ChildFrameBlockchainInterface, blockchainDataEmitter } from './useFullNode';
+import { GAME_SERVICE_URL } from '../settings';
 
 let blobSingleton: any = null;
 
@@ -22,7 +23,8 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
   });
 
   const doInternalLoadWasm = async () => {
-    const fetchUrl ='http://localhost:3000/chia_gaming_wasm_bg.wasm';
+
+    const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
     return fetch(fetchUrl).then(wasm => wasm.blob()).then(blob => {
       return blob.arrayBuffer();
     });
