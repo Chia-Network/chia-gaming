@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ChatMessage, ChatEnvelope, FragmentData, GenerateRoomResult, Room } from '../types/lobby';
-import { ExternalBlockchainInterface, BLOCKCHAIN_SERVICE_URL } from '../types/ChiaGaming';
+import { ExternalBlockchainInterface } from '../types/ChiaGaming';
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import { getSearchParams, getFragmentParams, generateOrRetrieveUniqueId } from '../util';
 import io, { Socket } from 'socket.io-client';
 import axios from 'axios';

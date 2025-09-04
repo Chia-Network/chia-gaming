@@ -1,0 +1,10 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+      "emitDeclarationOnly": false,
+      "noEmitOnError": true,
+      "strict": true
+    },
+    "include": ["src"],
+    "exclude": []
+}

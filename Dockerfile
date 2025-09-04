@@ -1,4 +1,4 @@
-FROM node:20.0.0
+FROM node:20.18.1
 RUN apt-get update -y
 RUN apt-get install -y libc6
 RUN apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential
@@ -21,7 +21,9 @@ ADD src /app/rust/src
 RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && pip install maturin==1.9.2
 RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests && pip install `find . -name \*.whl`
 ADD wasm /app/rust/wasm
-RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --release --target=web
+RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/rust/wasm/node-pkg --release --target=nodejs
+RUN mv /app/rust/wasm/node-pkg /app
+RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/rust/wasm/pkg --release --target=web
 
 #Stage front-end / UI / UX into the container
 COPY resources/gaming-fe/package.json /app
@@ -39,5 +41,5 @@ RUN cd /app && yarn run build
 COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 ADD clsp /app/clsp
 COPY resources/gaming-fe/package.json /app/package.json
-RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.sh
-CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 &) && . /app/test/bin/activate && python run_simulator.sh"
+RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.py
+CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 &) && . /app/test/bin/activate && python run_simulator.py"
