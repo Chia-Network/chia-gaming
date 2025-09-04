@@ -5,10 +5,11 @@ import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, po
 import { useInterval } from '../useInterval';
 import { v4 as uuidv4 } from 'uuid';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
+import { ChildFrameBlockchainInterface, InternalBlockchainInterface, BlockchainReport, blockchainDataEmitter } from './useFullNode';
 
 let blobSingleton: any = null;
 
-function getBlobSingleton(blockchain: ExternalBlockchainInterface, walletToken: string, uniqueId: string, amount: number, iStarted: boolean) {
+function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean) {
   if (blobSingleton) {
     return blobSingleton;
   }
@@ -33,7 +34,6 @@ function getBlobSingleton(blockchain: ExternalBlockchainInterface, walletToken: 
 
   blobSingleton = new WasmBlobWrapper(
     blockchain,
-    walletToken,
     uniqueId,
     amount,
     iStarted,
@@ -41,6 +41,7 @@ function getBlobSingleton(blockchain: ExternalBlockchainInterface, walletToken: 
     fetchHex,
     peercon
   );
+
   return blobSingleton;
 }
 
@@ -100,30 +101,33 @@ export function useWasmBlob() {
     gameObject?.shutDown();
   }, []);
 
-  const walletObject = new ExternalBlockchainInterface(
-    BLOCKCHAIN_SERVICE_URL,
-    searchParams.walletToken
-  );
+  const blockchain = new ChildFrameBlockchainInterface();
 
   const gameObject = uniqueId ?
     getBlobSingleton(
-      walletObject,
-      searchParams.walletToken,
+      blockchain,
       uniqueId,
       amount,
       iStarted
     ) :
     null;
 
+  useEffect(() => {
+    let subscription = blockchain.getObservable().subscribe({
+      next: (e: BlockchainReport) => {
+        gameObject?.blockNotification(e.peak, e.block, e.report);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    }
+  });
+
   const handleMakeMove = useCallback((move: any) => {
     gameObject?.makeMove(move);
   }, []);
 
-  useInterval(() => {
-    walletObject.waitBlock().then(new_block_number => {
-      gameObject?.waitBlock(new_block_number);
-    });
-  }, 5000);
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
     console.log('start loading wasm', gameObject);
     gameObject?.loadWasm(chia_gaming_init, cg);

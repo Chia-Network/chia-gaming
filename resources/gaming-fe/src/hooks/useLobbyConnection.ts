@@ -70,8 +70,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
           })
         }).then(res => res.json()).then(() => {
           let blockchain = new ExternalBlockchainInterface(
-            BLOCKCHAIN_SERVICE_URL,
-            params.uniqueId
+            BLOCKCHAIN_SERVICE_URL
           );
           return blockchain.getOrRequestToken(params.uniqueId);
         }).then(walletToken => {
