@@ -22,7 +22,7 @@ mkdir -p ./src/types
 mkdir -p ./src/hooks
 cp -r ../../../wasm/Cargo.lock ../../../wasm/Cargo.toml ../../../wasm/src rust/wasm
 cp ../src/types/ChiaGaming.ts ./src/types
-cp ../src/hooks/WasmBlobWrapper.ts ./src/hooks
+cp ../src/hooks/WasmBlobWrapper.ts ../src/hooks/useFullNode.ts ./src/hooks
 cp ../src/util.ts ./src/
 
 CMD="docker build -t chia-host-test"

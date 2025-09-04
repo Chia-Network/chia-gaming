@@ -1,3 +1,4 @@
+import { Observable, Subscription } from 'rxjs';
 import { proper_list } from '../util';
 
 export type Amount = {
@@ -81,6 +82,16 @@ export interface WasmConnection {
   // Blockchain
   opening_coin: (cid: number, coinstring: string) => any;
   new_block: (cid: number, height: number, additions: string[], removals: string[], timed_out: string[]) => any;
+  convert_coinset_org_block_spend_to_watch_report: (
+    parent_coin_info: string,
+    puzzle_hash: string,
+    amount: any,
+    puzzle_reveal: string,
+    solution: string
+  ) => any;
+  convert_spend_to_coinset_org: (spend: string) => any;
+  convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: any) => string;
+  convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
   start_games: (cid: number, initiator: boolean, game: any) => any;
@@ -164,14 +175,14 @@ export class ChiaGame {
     return result;
   }
 
-  block_data(block_number: number, block_data: any) {
-    this.wasm.new_block(this.cradle, block_number, block_data.created, block_data.deleted, block_data.timed_out);
+  block_data(block_number: number, block_data: WatchReport) {
+    this.wasm.new_block(this.cradle, block_number, block_data.created_watched, block_data.deleted_watched, block_data.timed_out);
   }
 }
 
 export interface WatchReport {
-  created: string[];
-  deleted: string[];
+  created_watched: string[];
+  deleted_watched: string[];
   timed_out: string[];
 }
 
@@ -192,9 +203,9 @@ export class ExternalBlockchainInterface {
   baseUrl: string;
   token: string;
 
-  constructor(baseUrl: string, token: string) {
+  constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    this.token = token;
+    this.token = '';
   }
 
   getOrRequestToken(uniqueId: string): Promise<string> {
@@ -387,4 +398,70 @@ export class CalpokerOutcome {
     this.bob_used_cards = select_cards_using_bits(this.bob_final_hand, this.bob_selects)[1];
     console.log('bob selects', this.bob_selects.toString(16), this.bob_used_cards);
   }
+}
+
+export interface SelectionMessage {
+  selection: number;
+  uniqueId: string;
+}
+
+// An object which presents a single observable downstream of a number of other
+// observables.  It does not pass on events until one of the upstream slots is
+// selected.
+export class ToggleEmitter<T> {
+  upstream: Observable<T>[];
+  subscriptions: Subscription[];
+  downstream: Observable<T>;
+  upstreamSelect: (s: SelectionMessage) => void;
+  upstreamSelection: Observable<SelectionMessage>;
+  selection: number;
+
+  select(s: SelectionMessage) {
+    this.selection = s.selection;
+    this.upstreamSelect(s);
+    this.upstreamSelect = (s: SelectionMessage) => {};
+  }
+
+  getObservable() { return this.downstream; }
+
+  getSelectionObservable() { return this.upstreamSelection; }
+
+  close() {
+    this.subscriptions.forEach((s) => s.unsubscribe());
+  }
+
+  constructor(upstream: Observable<T>[]) {
+    this.upstream = upstream;
+    this.upstreamSelect = (s) => {};
+    this.selection = -1;
+    this.subscriptions = [];
+    this.downstream = new Observable<T>((emitter) => {
+      this.subscriptions = this.upstream.map((o, i) => {
+        return o.subscribe((e) => {
+          if (this.selection === i) {
+            emitter.next(e);
+          }
+        });
+      });
+    });
+    this.upstreamSelection = new Observable<SelectionMessage>((emitter) => {
+      this.upstreamSelect = (s: SelectionMessage) => { emitter.next(s); };
+    });
+  }
+}
+
+export interface BlockchainReport {
+  peak: number;
+  block: any[] | undefined;
+  report: any | undefined;
+}
+
+export interface DoInitialSpendResult {
+  fromPuzzleHash: string;
+  coin: string;
+}
+
+export interface InternalBlockchainInterface {
+  do_initial_spend(uniqueId: string, target: string, amt: number): Promise<DoInitialSpendResult>;
+  spend(convert: (blob: string) => any, spend: string): Promise<string>;
 }

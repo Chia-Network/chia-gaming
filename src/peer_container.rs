@@ -46,7 +46,7 @@ pub struct WatchEntry {
     pub name: Option<&'static str>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct WatchReport {
     pub created_watched: HashSet<CoinString>,
     pub deleted_watched: HashSet<CoinString>,
