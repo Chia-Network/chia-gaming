@@ -1,29 +1,20 @@
 import { Observable } from 'rxjs';
-import { WatchReport, ExternalBlockchainInterface, ToggleEmitter } from '../types/ChiaGaming';
+import { WatchReport, ExternalBlockchainInterface, ToggleEmitter, BlockchainReport, InternalBlockchainInterface, DoInitialSpendResult, SelectionMessage } from '../types/ChiaGaming';
 import { generateOrRetrieveUniqueId } from '../util';
 
-interface DoInitialSpendResult {
-  fromPuzzleHash: string;
-  coin: string;
-}
-
-export interface InternalBlockchainInterface {
-  do_initial_spend(target: string, amt: number): Promise<DoInitialSpendResult>;
-  spend(convert: (blob: string) => any, spend: string): Promise<string>;
-}
-
-export interface BlockchainReport {
-  peak: number;
-  block: any[] | undefined;
-  report: any | undefined;
-}
-
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
-  // console.log('requestBlockData', block_number);
+  console.log('requestBlockData', block_number);
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
     method: 'POST'
   }).then((res) => res.json()).then((res) => {
-    // console.log('requestBlockData, got', res);
+    if (res === null) {
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          requestBlockData(forWho, block_number);
+        }, 100);
+      });
+    }
+    console.log('requestBlockData, got', res);
     const converted_res: WatchReport = {
       created_watched: res.created,
       deleted_watched: res.deleted,
@@ -58,16 +49,17 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     });
   }
 
-  startMonitoring() {
-    fetch(`${this.baseUrl}/get_peak`, {method: "POST"}).then(res => res.json()).then(peak => {
-      this.setNewPeak(peak);
+  startMonitoring(uniqueId: string) {
+    this.upstream.getOrRequestToken(uniqueId).then(() => {
+      fetch(`${this.baseUrl}/get_peak`, {method: "POST"}).then(res => res.json()).then(peak => {
+        this.setNewPeak(peak);
+      });
     });
   }
 
   getObservable() { return this.observable; }
 
-  do_initial_spend(target: string, amt: number) {
-    let uniqueId = generateOrRetrieveUniqueId();
+  do_initial_spend(uniqueId: string, target: string, amt: number) {
     return this.upstream.getOrRequestToken(uniqueId).then((fromPuzzleHash) => {
       return this.upstream.createSpendable(target, amt).then((coin) => {
         if (!coin) {
@@ -134,8 +126,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       this.max_block = peak;
     }
 
-    // console.log('FakeBlockchainInterface, peaks', this.at_block, '/', this.max_block);
-
+    console.log('FakeBlockchainInterface, peaks', this.at_block, '/', this.max_block);
     return this.internalNextBlock();
   }
 
@@ -189,8 +180,8 @@ export class ChildFrameBlockchainInterface {
     this.externalBlockchainInterface = new FakeBlockchainInterface("http://localhost:5800");
   }
 
-  do_initial_spend(target: string, amt: number): Promise<DoInitialSpendResult> {
-    return this.externalBlockchainInterface.do_initial_spend(target, amt);
+  do_initial_spend(uniqueId: string, target: string, amt: number): Promise<DoInitialSpendResult> {
+    return this.externalBlockchainInterface.do_initial_spend(uniqueId, target, amt);
   }
 
   spend(cvt: (blob: string) => any, spend: string): Promise<string> {
@@ -205,13 +196,11 @@ export class ChildFrameBlockchainInterface {
 // The signal from the blockchainDataEmitter will let the downstream system
 // choose and also inform us here of the choice.
 blockchainDataEmitter.getSelectionObservable().subscribe({
-  next: (e: number) => {
-    if (e == 0) {
+  next: (e: SelectionMessage) => {
+    if (e.selection == 0) {
       // Simulator selected
-      fakeBlockchainInfo.startMonitoring();
+      console.log("simulator blockchain selected");
+      fakeBlockchainInfo.startMonitoring(e.uniqueId);
     }
   }
 });
-
-// XXX This should move to the parent frame
-blockchainDataEmitter.select(0);

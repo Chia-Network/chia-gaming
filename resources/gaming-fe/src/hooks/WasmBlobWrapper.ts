@@ -1,6 +1,5 @@
-import { PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, WatchReport } from '../types/ChiaGaming';
+import { PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, WatchReport, BlockchainReport, InternalBlockchainInterface } from '../types/ChiaGaming';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
-import { BlockchainReport, InternalBlockchainInterface } from './useFullNode';
 import { Observable, NextObserver } from 'rxjs';
 
 async function empty() {
@@ -320,7 +319,7 @@ export class WasmBlobWrapper {
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
     return this.blockchain.
-      do_initial_spend(identity.puzzle_hash, this.amount).then(result => {
+      do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount).then(result => {
         let coin = result.coin;
         if (!coin) {
           console.error('tried to create spendable but failed');

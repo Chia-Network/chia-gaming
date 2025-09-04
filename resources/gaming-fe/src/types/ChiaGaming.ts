@@ -85,12 +85,12 @@ export interface WasmConnection {
   convert_coinset_org_block_spend_to_watch_report: (
     parent_coin_info: string,
     puzzle_hash: string,
-    amount: number,
+    amount: any,
     puzzle_reveal: string,
     solution: string
   ) => any;
   convert_spend_to_coinset_org: (spend: string) => any;
-  convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: number) => string;
+  convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: any) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
@@ -400,6 +400,11 @@ export class CalpokerOutcome {
   }
 }
 
+export interface SelectionMessage {
+  selection: number;
+  uniqueId: string;
+}
+
 // An object which presents a single observable downstream of a number of other
 // observables.  It does not pass on events until one of the upstream slots is
 // selected.
@@ -407,14 +412,14 @@ export class ToggleEmitter<T> {
   upstream: Observable<T>[];
   subscriptions: Subscription[];
   downstream: Observable<T>;
-  upstreamSelect: (s: number) => void;
-  upstreamSelection: Observable<number>;
+  upstreamSelect: (s: SelectionMessage) => void;
+  upstreamSelection: Observable<SelectionMessage>;
   selection: number;
 
-  select(s: number) {
-    this.selection = s;
+  select(s: SelectionMessage) {
+    this.selection = s.selection;
     this.upstreamSelect(s);
-    this.upstreamSelect = (s: number) => {};
+    this.upstreamSelect = (s: SelectionMessage) => {};
   }
 
   getObservable() { return this.downstream; }
@@ -439,8 +444,24 @@ export class ToggleEmitter<T> {
         });
       });
     });
-    this.upstreamSelection = new Observable<number>((emitter) => {
-      this.upstreamSelect = (s: number) => { emitter.next(s); };
+    this.upstreamSelection = new Observable<SelectionMessage>((emitter) => {
+      this.upstreamSelect = (s: SelectionMessage) => { emitter.next(s); };
     });
   }
+}
+
+export interface BlockchainReport {
+  peak: number;
+  block: any[] | undefined;
+  report: any | undefined;
+}
+
+export interface DoInitialSpendResult {
+  fromPuzzleHash: string;
+  coin: string;
+}
+
+export interface InternalBlockchainInterface {
+  do_initial_spend(uniqueId: string, target: string, amt: number): Promise<DoInitialSpendResult>;
+  spend(convert: (blob: string) => any, spend: string): Promise<string>;
 }
