@@ -1,4 +1,4 @@
-FROM node:20.0.0
+FROM node:20.18.1
 RUN apt-get update -y
 RUN apt-get install -y libc6
 RUN apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential
