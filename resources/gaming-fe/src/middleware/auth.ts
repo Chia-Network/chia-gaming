@@ -7,7 +7,7 @@ import { SignClient } from '@walletconnect/sign-client';
 import { SessionTypes, ISignClient } from '@walletconnect/types';
 // @ts-ignore
 import { verifyMessage } from 'chia-utils';
-import { GAME_SERVICE_URL } from '../../settings'
+import { GAME_SERVICE_URL } from '../settings'
 
 declare global {
   namespace Express {
