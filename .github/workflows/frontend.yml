@@ -20,27 +20,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-      with:
-        fetch-depth: 1
-
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 20.18.1
-
-    - name: build
-      run: |
-        cd resources/gaming-fe
-        yarn install
-        yarn run build
-
+  # All steps that were previously in 'build' now happen inside the docker container in build-test.
   test:
     runs-on: ubuntu-latest
     strategy:
