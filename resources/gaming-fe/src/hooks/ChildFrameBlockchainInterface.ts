@@ -1,4 +1,4 @@
-import { Observable } from 'rxjs';
+import { Observable, Subject } from 'rxjs';
 import { BlockchainReport, DoInitialSpendResult } from '../types/ChiaGaming';
 import { FakeBlockchainInterface, fakeBlockchainInfo, blockchainDataEmitter } from './FakeBlockchainInterface';
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
@@ -28,31 +28,19 @@ export interface BlockchainInboundReply {
 }
 
 class BlockchainRequestConnector {
-  outbound: Observable<BlockchainOutboundRequest>;
-  inbound: Observable<BlockchainInboundReply>;
-  requestEmitter: (outbound: BlockchainOutboundRequest) => void;
-  replyEmitter: (inbound: BlockchainInboundReply) => void;
+  outbound: Subject<BlockchainOutboundRequest>;
+  inbound: Subject<BlockchainInboundReply>;
 
   constructor() {
-    this.requestEmitter = (o: BlockchainOutboundRequest) => {
-      throw "Bad outbound emitter";
-    };
-    this.replyEmitter = (i: BlockchainInboundReply) => {
-      throw "Bad inbound emitter";
-    };
-    this.outbound = new Observable<BlockchainOutboundRequest>((emitter) => {
-      this.requestEmitter = (o: BlockchainOutboundRequest) => emitter.next(o);
-    });
-    this.inbound = new Observable<BlockchainInboundReply>((emitter) => {
-      this.replyEmitter = (i: BlockchainInboundReply) => emitter.next(i);
-    });
+    this.outbound = new Subject<BlockchainOutboundRequest>();
+    this.inbound = new Subject<BlockchainInboundReply>();
   }
 
   getOutbound() { return this.outbound; }
   getInbound() { return this.inbound; }
 
-  getRequestEmitter() { return this.requestEmitter; }
-  getReplyEmitter() { return this.replyEmitter; }
+  requestEmitter(r: BlockchainOutboundRequest) { this.outbound.next(r); }
+  replyEmitter(r: BlockchainInboundReply) { this.inbound.next(r); }
 }
 
 let requestNumber = 1;
@@ -67,12 +55,14 @@ function performTransaction(
     let subscription = blockchainConnector.getInbound().subscribe({
       next: (e: BlockchainInboundReply) => {
         if (e.responseId !== requestId) {
-          console.log('got reply to other request', e);
           return;
         }
 
-        console.log('child frame rpc reply', e);
-        subscription.unsubscribe();
+        try {
+            subscription.unsubscribe();
+        } catch (err) {
+            console.error('child rpc error unsubscribing', e, err);
+        }
 
         if (e.error) {
           console.error('returning error in transaction', e);
@@ -81,26 +71,22 @@ function performTransaction(
         }
 
         const replyObject = checkReply(e);
-        if (!replyObject) {
-          console.error('no reply in transaction', request);
-          reject(`no reply data in reply for request ${JSON.stringify(request)}`);
+        if (replyObject === undefined || replyObject === null) {
+          console.error('no reply in transaction', e);
+          reject(`no reply data in reply for request ${JSON.stringify(e)}`);
           return;
         }
 
         resolve(replyObject);
       }
     });
-    console.log('rpc emit request', request);
-    blockchainConnector.getRequestEmitter()(request);
-  }).then((r: any) => {
-    blockchainConnector.getReplyEmitter()(r);
-    return r;
+
+    blockchainConnector.requestEmitter(request);
   });
 }
 
 export class ChildFrameBlockchainInterface {
   do_initial_spend(uniqueId: string, target: string, amount: number): Promise<DoInitialSpendResult> {
-    console.log('ChildFrameBlockchainInterface::do_initial_spend', uniqueId, target, amount);
     let requestId = requestNumber++;
     let request = {
       requestId,
@@ -134,4 +120,45 @@ export class ChildFrameBlockchainInterface {
   getObservable() {
     return blockchainDataEmitter.getObservable();
   }
+}
+
+export function connectSimulatorBlockchain() {
+  blockchainConnector.getOutbound().subscribe({
+    next: (evt: BlockchainOutboundRequest) => {
+      let initialSpend = evt.initialSpend;
+      let transaction = evt.transaction;
+      if (initialSpend) {
+        return fakeBlockchainInfo.do_initial_spend(
+          initialSpend.uniqueId,
+          initialSpend.target,
+          initialSpend.amount
+        ).then((result: any) => {
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+            initialSpend: result
+          });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
+        });
+      } else if (transaction) {
+        fakeBlockchainInfo.spend(
+          (blob: string) => transaction.spendObject,
+          transaction.blob
+        ).then((response: any) => {
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+            transaction: response
+          });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
+        });
+      } else {
+        console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
+        blockchainConnector.replyEmitter({
+          responseId: evt.requestId,
+          error: `unknown blockchain request type ${JSON.stringify(evt)}`
+        });
+      }
+    }
+  });
 }

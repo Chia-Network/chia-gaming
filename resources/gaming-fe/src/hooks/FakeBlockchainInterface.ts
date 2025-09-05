@@ -3,7 +3,6 @@ import { ToggleEmitter, ExternalBlockchainInterface, InternalBlockchainInterface
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
-  console.log('requestBlockData', block_number);
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
     method: 'POST'
   }).then((res) => res.json()).then((res) => {
@@ -14,7 +13,6 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
         }, 100);
       });
     }
-    console.log('requestBlockData, got', res);
     const converted_res: WatchReport = {
       created_watched: res.created,
       deleted_watched: res.deleted,
@@ -127,7 +125,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       this.max_block = peak;
     }
 
-    console.log('FakeBlockchainInterface, peaks', this.at_block, '/', this.max_block);
     return this.internalNextBlock();
   }
 

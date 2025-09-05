@@ -2,7 +2,8 @@ import { init, config_scaffold, create_game_cradle, deliver_message, deposit_fil
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { InternalBlockchainInterface, PeerConnectionResult, BlockchainReport } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
-import { ChildFrameBlockchainInterface, blockchainDataEmitter } from '../../hooks/useFullNode';
+import { blockchainDataEmitter, fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
+import { ChildFrameBlockchainInterface, blockchainConnector, BlockchainOutboundRequest, connectSimulatorBlockchain } from '../../hooks/ChildFrameBlockchainInterface';
 
 import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper'
 import * as fs from 'fs';
@@ -78,6 +79,8 @@ function wait(msec: number): Promise<void> {
 async function action_with_messages(blockchainInterface: ChildFrameBlockchainInterface, cradle1: WasmBlobWrapperAdapter, cradle2: WasmBlobWrapperAdapter) {
     let count = 0;
     let cradles = [cradle1, cradle2];
+
+    connectSimulatorBlockchain();
 
     blockchainInterface.getObservable().subscribe({
         next: (evt: BlockchainReport) => {

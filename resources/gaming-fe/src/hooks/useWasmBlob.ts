@@ -5,7 +5,7 @@ import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, po
 import { useInterval } from '../useInterval';
 import { v4 as uuidv4 } from 'uuid';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { ChildFrameBlockchainInterface, BlockchainOutboundRequest, blockchainConnector } from './ChildFrameBlockchainInterface';
+import { ChildFrameBlockchainInterface, BlockchainOutboundRequest, blockchainConnector, connectSimulatorBlockchain } from './ChildFrameBlockchainInterface';
 import { blockchainDataEmitter, fakeBlockchainInfo } from './FakeBlockchainInterface';
 import { BLOCKCHAIN_SERVICE_URL, GAME_SERVICE_URL } from '../settings';
 
@@ -43,44 +43,7 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
   });
 
   // XXX This will move to the parent frame when it exists.
-  blockchainConnector.getOutbound().subscribe({
-    next: (evt: BlockchainOutboundRequest) => {
-      console.log('externalBlockchainInterface processing', evt);
-      let initialSpend = evt.initialSpend;
-      let transaction = evt.transaction;
-      if (initialSpend) {
-        return fakeBlockchainInfo.do_initial_spend(
-          initialSpend.uniqueId,
-          initialSpend.target,
-          initialSpend.amount
-        ).then((result) => {
-          blockchainConnector.getReplyEmitter()({
-            responseId: evt.requestId,
-            initialSpend: result
-          });
-        }).catch((e) => {
-          blockchainConnector.getReplyEmitter()({ responseId: evt.requestId, error: e.toString() });
-        });
-      } else if (transaction) {
-        fakeBlockchainInfo.spend(
-          (blob: string) => transaction.spendObject,
-          transaction.blob
-        ).then((response) => {
-          blockchainConnector.getReplyEmitter()({
-            responseId: evt.requestId,
-            transaction: response
-          });
-        }).catch((e) => {
-          blockchainConnector.getReplyEmitter()({ responseId: evt.requestId, error: e.toString() });
-        });
-      } else {
-        blockchainConnector.getReplyEmitter()({
-          responseId: evt.requestId,
-          error: `unknown blockchain request type ${JSON.stringify(evt)}`
-        });
-      }
-    }
-  });
+  connectSimulatorBlockchain();
 
   blobSingleton = new WasmBlobWrapper(
     blockchain,
