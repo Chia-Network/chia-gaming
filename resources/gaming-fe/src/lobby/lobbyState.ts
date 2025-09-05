@@ -62,12 +62,9 @@ export class Lobby {
 
   addGame(time: number, game: string, target: string) {
     if (this.games[game]) {
-      console.log('updated game time', game);
-      this.games[game].expiration = time + GAME_TTL;
       return;
     }
 
-    console.log('created game', game);
     this.games[game] = {
       expiration: time + GAME_TTL,
       game: game,
