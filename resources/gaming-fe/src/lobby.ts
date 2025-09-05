@@ -70,6 +70,7 @@ app.post('/lobby/change-alias', (req, res) => {
 });
 app.post('/lobby/generate-room', (req, res) => {
   const { id, game, parameters } = req.body;
+  console.log('generate room', id, game, parameters);
   if (!id || !game) return res.status(400).json({ error: 'Missing id or game.' });
   const token = crypto.randomBytes(16).toString('hex');
   const now = Date.now();
