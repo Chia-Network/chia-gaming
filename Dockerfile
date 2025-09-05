@@ -27,6 +27,7 @@ RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/ru
 
 #Stage front-end / UI / UX into the container
 COPY resources/gaming-fe/package.json /app
+COPY resources/gaming-fe/yarn.lock /app
 RUN cd /app && yarn install
 
 # Place wasm backend in docker container
@@ -39,7 +40,9 @@ COPY resources/gaming-fe /app
 RUN cd /app && yarn run build
 
 COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
+RUN ln -s /app/resources /resources
 ADD clsp /app/clsp
+RUN ln -s /app/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.py
-CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 &) && . /app/test/bin/activate && python run_simulator.py"
+CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 &) && . /app/test/bin/activate && python3 run_simulator.py"

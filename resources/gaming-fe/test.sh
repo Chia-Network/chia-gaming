@@ -1,7 +1,7 @@
 #!/bin/sh -x
 
 cd /app
-(python ./simulator.py) &
+(. /app/test/bin/activate && python3 ./run_simulator.py) &
 sleep 5
 yarn test
 
