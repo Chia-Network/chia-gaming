@@ -7,6 +7,7 @@ import { SignClient } from '@walletconnect/sign-client';
 import { SessionTypes, ISignClient } from '@walletconnect/types';
 // @ts-ignore
 import { verifyMessage } from 'chia-utils';
+import { GAME_SERVICE_URL } from '../settings'
 
 declare global {
   namespace Express {
@@ -34,7 +35,7 @@ export const initWalletConnect = async () => {
     metadata: {
       name: 'Chia Gaming',
       description: 'Chia Gaming Platform',
-      url: process.env.CLIENT_URL || 'http://localhost:3000',
+      url: process.env.CLIENT_URL || GAME_SERVICE_URL,
       icons: [`${process.env.CLIENT_URL}/logo.png`]
     }
   });
@@ -142,7 +143,7 @@ export const createSession = async (
       metadata: {
         name: 'Chia Gaming',
         description: 'Chia Gaming Platform',
-        url: process.env.CLIENT_URL || 'http://localhost:3000',
+        url: process.env.CLIENT_URL || GAME_SERVICE_URL,
         icons: [`${process.env.CLIENT_URL}/logo.png`]
       }
     });
@@ -190,7 +191,7 @@ export const refreshSession = async (topic: string): Promise<void> => {
       metadata: {
         name: 'Chia Gaming',
         description: 'Chia Gaming Platform',
-        url: process.env.CLIENT_URL || 'http://localhost:3000',
+        url: process.env.CLIENT_URL || GAME_SERVICE_URL,
         icons: [`${process.env.CLIENT_URL}/logo.png`]
       }
     } as any);

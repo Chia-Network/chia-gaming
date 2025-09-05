@@ -198,7 +198,6 @@ export interface BlockchainConnection {
   create_spendable: (target_ph: string, amount: number) => Promise<string | null>;
 };
 
-export const BLOCKCHAIN_SERVICE_URL = 'http://localhost:5800';
 export class ExternalBlockchainInterface {
   baseUrl: string;
   token: string;

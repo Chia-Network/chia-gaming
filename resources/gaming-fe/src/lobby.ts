@@ -11,7 +11,7 @@ const lobby = new Lobby();
 const app = express();
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
-  // cors: { origin: process.env.LOBBY_PUBLIC_URL || 'http://localhost:3000', methods: ['GET','POST'] }
+  // cors: { origin: process.env.LOBBY_URL || GAME_SERVICE_URL, methods: ['GET','POST'] }
 });
 
 app.use(express.json());
