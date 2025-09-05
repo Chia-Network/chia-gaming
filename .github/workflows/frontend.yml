@@ -25,7 +25,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-    needs: [build]
 
     steps:
       - name: Checkout
