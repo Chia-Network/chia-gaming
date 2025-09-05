@@ -271,4 +271,4 @@ jobs:
       - name: do wasm tests in frontend
         run: |
          docker build -t chia-gaming-test .
-         docker run -it chia-gaming-test /app/test.sh
+         docker run -t chia-gaming-test /app/test.sh
