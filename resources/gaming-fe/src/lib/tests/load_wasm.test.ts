@@ -1,6 +1,7 @@
-import { init, config_scaffold, create_game_cradle, deliver_message, deposit_file, opening_coin, idle, chia_identity, Spend, CoinSpend, SpendBundle, IChiaIdentity, IdleCallbacks, IdleResult } from '../../../rust/wasm/pkg/chia_gaming_wasm.js';
-import WholeWasmObject from '../../../rust/wasm/pkg/chia_gaming_wasm.js';
-import { InternalBlockchainInterface, PeerConnectionResult, BlockchainReport, BLOCKCHAIN_SERVICE_URL } from '../../types/ChiaGaming';
+import { init, config_scaffold, create_game_cradle, deliver_message, deposit_file, opening_coin, idle, chia_identity, Spend, CoinSpend, SpendBundle, IChiaIdentity, IdleCallbacks, IdleResult } from '../../../node-pkg/chia_gaming_wasm.js';
+import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
+import { InternalBlockchainInterface, PeerConnectionResult, BlockchainReport } from '../../types/ChiaGaming';
+import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import { ChildFrameBlockchainInterface, blockchainDataEmitter } from '../../hooks/useFullNode';
 
 import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper'

@@ -83,10 +83,6 @@ jobs:
           cargo +stable clippy --version
           cargo +stable clippy --all --features=sim-tests -- -D warnings
           cargo +stable check --features=sim-tests --tests
-      - uses: giraffate/clippy-action@v1
-        with:
-          reporter: 'github-pr-review'
-          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   unit_tests:
     runs-on: ubuntu-22.04
@@ -133,11 +129,11 @@ jobs:
         name: Install Python 3.9
         with:
           python-version: 3.9
+
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          # Install a specific version of uv.
-          version: "0.7.9"
+        run: |
+          pip install uv==0.7.9
+
       - name: install chia_gaming into .venv
         run: |
           cd python
@@ -274,6 +270,5 @@ jobs:
 
       - name: do wasm tests in frontend
         run: |
-         cd resources/gaming-fe/cradle-test
-         sh ./stage-for-test.sh
-         docker run -t chia-host-test
+         docker build -t chia-gaming-test .
+         docker run -t chia-gaming-test /app/test.sh
