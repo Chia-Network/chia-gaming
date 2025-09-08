@@ -1,7 +1,6 @@
-import { Observable, Subject } from 'rxjs';
-import { BlockchainReport, DoInitialSpendResult } from '../types/ChiaGaming';
-import { FakeBlockchainInterface, fakeBlockchainInfo, blockchainDataEmitter } from './FakeBlockchainInterface';
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { Subject } from 'rxjs';
+import { DoInitialSpendResult } from '../types/ChiaGaming';
+import { fakeBlockchainInfo, blockchainDataEmitter } from './FakeBlockchainInterface';
 
 export interface BlockchainOutboundInitialSpendRequest {
   uniqueId: string;
