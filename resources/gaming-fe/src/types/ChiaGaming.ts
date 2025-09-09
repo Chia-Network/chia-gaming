@@ -1,4 +1,4 @@
-import { Observable, Subscription } from 'rxjs';
+import { Subject, Observable, Subscription } from 'rxjs';
 import { proper_list } from '../util';
 
 export type Amount = {
@@ -106,6 +106,11 @@ export interface WasmConnection {
   chia_identity: (seed: string) => any;
   sha256bytes: (hex: string) => string;
 };
+
+export interface CoinOutput {
+  puzzle_hash: string;
+  amount: number;
+}
 
 export class ChiaGame {
   wasm: WasmConnection;
@@ -408,12 +413,24 @@ export interface SelectionMessage {
 // observables.  It does not pass on events until one of the upstream slots is
 // selected.
 export class ToggleEmitter<T> {
-  upstream: Observable<T>[];
+  upstream: Subject<T>[];
   subscriptions: Subscription[];
-  downstream: Observable<T>;
+  downstream: Subject<T>;
   upstreamSelect: (s: SelectionMessage) => void;
-  upstreamSelection: Observable<SelectionMessage>;
+  upstreamSelection: Subject<SelectionMessage>;
   selection: number;
+
+  addUpstream(upstream: Subject<T>): number {
+    const i = this.subscriptions.length;
+    this.subscriptions.push(upstream.subscribe({
+      next: (elt: T) => {
+        if (this.selection === i) {
+          this.downstream.next(elt);
+        }
+      }
+    }));
+    return i;
+  }
 
   select(s: SelectionMessage) {
     this.selection = s.selection;
@@ -429,23 +446,15 @@ export class ToggleEmitter<T> {
     this.subscriptions.forEach((s) => s.unsubscribe());
   }
 
-  constructor(upstream: Observable<T>[]) {
-    this.upstream = upstream;
+  constructor() {
+    this.upstream = [];
     this.upstreamSelect = (s) => {};
     this.selection = -1;
     this.subscriptions = [];
-    this.downstream = new Observable<T>((emitter) => {
-      this.subscriptions = this.upstream.map((o, i) => {
-        return o.subscribe((e) => {
-          if (this.selection === i) {
-            emitter.next(e);
-          }
-        });
-      });
-    });
-    this.upstreamSelection = new Observable<SelectionMessage>((emitter) => {
-      this.upstreamSelect = (s: SelectionMessage) => { emitter.next(s); };
-    });
+    this.downstream = new Subject<T>();
+    this.subscriptions = [];
+    this.upstreamSelection = new Subject<SelectionMessage>();
+    this.upstreamSelect = (s: SelectionMessage) => this.upstreamSelection.next(s);
   }
 }
 

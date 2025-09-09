@@ -158,3 +158,6 @@ export function popcount(n: number): number {
   return r;
 }
 
+export async function empty() {
+  return {};
+}

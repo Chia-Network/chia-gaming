@@ -6,7 +6,7 @@ import { Web3Modal } from '@web3modal/standalone';
 import {
     createContext,
     PropsWithChildren,
-    useCallback, 
+    useCallback,
     useContext,
     useEffect,
     useMemo,
@@ -146,36 +146,6 @@ export function WalletConnectProvider({
         },
         [session, onSessionConnected]
     );
-
-    const createClient = useCallback(async () => {
-        try {
-            setIsInitializing(true);
-
-            const client = await Client.init({
-                relayUrl: relayUrl,
-                projectId: projectId,
-                metadata: METADATA,
-            });
-
-            const web3Modal = new Web3Modal({
-                projectId,
-                standaloneChains: [chainId],
-                walletConnectVersion: 2,
-            });
-
-            setClient(client);
-            setWeb3Modal(web3Modal);
-
-            await subscribeToEvents(client);
-            await checkPersistedState(client);
-        } finally {
-            setIsInitializing(false);
-        }
-    }, [checkPersistedState, subscribeToEvents, chainId, projectId, relayUrl]);
-
-    useEffect(() => {
-        if (!client) createClient();
-    }, [client, createClient]);
 
     const value = useMemo(
         () => ({
