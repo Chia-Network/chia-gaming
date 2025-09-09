@@ -180,7 +180,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     <Typography variant="h5" style={{ background: '#aa2' }}>Simulator {fakeAddress}</Typography>
   ) : (
     <div style={{ display: 'flex', flexDirection: 'row', width: '100%', height: '3em' }}>
-      <Button variant="contained" onClick={handleConnectSimulator} sx={{ mt: 3 }} style={{ background: '#aa2' }}>
+      <Button variant="contained" onClick={handleConnectSimulator} sx={{ mt: 3 }} style={{ background: '#aa2' }} aria-label="select-simulator">
         Simulator
       </Button>
       <Button variant="contained" onClick={handleConnectWallet} sx={{ mt: 3 }}>
