@@ -6,6 +6,8 @@ import { CoinOutput, WatchReport, BlockchainReport, SelectionMessage } from '../
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
 import { generateOrRetrieveUniqueId, empty } from '../util';
+import { rpc } from '../hooks/JsonRpcContext';
+
 function wsUrl(baseurl: string) {
   const url_with_new_method = baseurl.replace('http', 'ws');
   return `${url_with_new_method}/ws`;
@@ -206,7 +208,7 @@ export const realBlockchainInfo: RealBlockchainInterface = new RealBlockchainInt
 
 export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(realBlockchainInfo.getObservable());
 
-export function connectRealBlockchain(baseUrl: string, rpc: any) {
+export function connectRealBlockchain(baseUrl: string) {
   blockchainConnector.getOutbound().subscribe({
     next: async (evt: BlockchainOutboundRequest) => {
       let initialSpend = evt.initialSpend;
@@ -214,22 +216,38 @@ export function connectRealBlockchain(baseUrl: string, rpc: any) {
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({});
-          const fromPuzzleHash = bech32m.decode(currentAddress.targetXch);
+          const fromPuzzleHash = bech32m.decode(currentAddress);
           const result = await rpc.sendTransaction({
             walletId: 1, // XXX
             amount: initialSpend.amount,
             fee: 0,
-            address: currentAddress.targetXch,
+            address: initialSpend.target,
             waitForConfirmation: false
           });
+          let resultCoin = undefined;
+          result.transaction.additions.forEach((c) => {
+            console.log('look at coin', initialSpend.target, c);
+            if (c.puzzleHash == initialSpend.target && c.amount.toString() == initialSpend.amount.toString()) {
+              resultCoin = c;
+            }
+          });
+
+          if (!resultCoin) {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: `no corresponding coin created in ${JSON.stringify(result)}`
+            });
+            return;
+          }
+
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
-            initialSpend: { coin: result, fromPuzzleHash }
+            initialSpend: { coin: resultCoin as any, fromPuzzleHash }
           });
         } catch (e: any) {
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
-            error: e.toString()
+            error: JSON.stringify(e)
           });
         }
       } else if (transaction) {

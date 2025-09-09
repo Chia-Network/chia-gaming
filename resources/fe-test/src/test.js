@@ -62,6 +62,10 @@ async function firefox_start_and_first_move(driver, baseUrl) {
 
   await driver.switchTo().frame('subframe');
 
+  await selectSimulator(driver);
+
+  await selectSimulator(driver);
+
   console.log('Wait for handshake on bob side');
   await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
 
@@ -106,6 +110,10 @@ describe("Basic element tests", function() {
 
     // Load the login page
     await driver.get(baseUrl);
+
+    await selectSimulator(driver);
+
+    await selectSimulator(driver);
 
     await selectSimulator(driver);
 

@@ -343,6 +343,10 @@ export class WasmBlobWrapper {
             stateDetail: ["doing handshake"]
           }
         };
+      }).catch((e) => {
+        return {
+          'setError': e.toString()
+        };
       });
   }
 

@@ -17,16 +17,11 @@ import OpponentSection from "./OpponentSection";
 import GameEndPlayer from "./GameEndPlayer";
 import GameLog from "./GameLog";
 import WaitingScreen from "./WaitingScreen";
-import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
 import { useWasmBlob } from "../hooks/useWasmBlob";
 import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 
 const Game: React.FC = () => {
-  const [command, setCommand] = useState(0);
-  const { commands } = useRpcUi();
-  const commandEntries = Object.entries(commands);
-  const selectedCommandEntry = commandEntries[command];
   const uniqueId = generateOrRetrieveUniqueId();
   const {
     error,

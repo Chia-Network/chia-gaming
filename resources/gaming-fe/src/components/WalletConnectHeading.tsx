@@ -10,44 +10,91 @@ import {
   Select,
   Typography,
 } from "@mui/material";
-import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
 import Debug from "./Debug";
 // @ts-ignore
 import { bech32m } from 'bech32m-chia';
-import { useWalletConnect } from "../hooks/useWalletConnect";
+import { walletConnectState } from "../hooks/useWalletConnect";
 import { blockchainConnector } from "../hooks/BlockchainConnector";
 import { CoinOutput } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
+import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
 import { FAKE_BLOCKCHAIN_ID, connectSimulatorBlockchain } from '../hooks/FakeBlockchainInterface';
 import { REAL_BLOCKCHAIN_ID, connectRealBlockchain } from '../hooks/RealBlockchainInterface';
 import { generateOrRetrieveUniqueId } from '../util';
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 
 const WalletConnectHeading: React.FC<any> = (args: any) => {
-  const { client, session, connect, disconnect } = useWalletConnect();
   const { wcInfo, setWcInfo } = useDebug();
   const [alreadyConnected, setAlreadyConnected] = useState(false);
-  const [walletId, setWalletId] = useState(1);
-  const [walletIds, setWalletIds] = useState<any[]>([]);
+  const [walletConnectError, setWalletConnectError] = useState<string | undefined>();
   const [fakeAddress, setFakeAddress] = useState<string | undefined>();
-  const [wantSpendable, setWantSpendable] = useState<any | undefined>(undefined);
   const [expanded, setExpanded] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [connectionUri, setConnectionUri] = useState<string | undefined>();
+
+  // Wallet connect state.
+  const [stateName, setStateName] = useState("empty");
+  const [initializing, setInitializing] = useState(false);
+  const [initialized, setInitialized] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [waitingApproval, setWaitingApproval] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [haveClient, setHaveClient] = useState(false);
+  const [haveSession, setHaveSession] = useState(false);
+  const [sessions, setSessions] = useState(0);
+  const [address, setAddress] = useState();
+
+  const walletConnectStates: any = {
+    "stateName": setStateName,
+    "initializing": setInitializing,
+    "initialized": setInitialized,
+    "connecting": setConnecting,
+    "waitingApproval": setWaitingApproval,
+    "connected": setConnected,
+    "haveClient": setHaveClient,
+    "haveSession": setHaveSession,
+    "sessions": setSessions,
+    "address": setAddress
+  };
+  useEffect(() => {
+    const subscription = walletConnectState.getObservable().subscribe({
+      next: (evt: any) => {
+        console.log('observe walletconnect', evt);
+        if (evt.stateName === 'connected') {
+          setExpanded(false);
+          setAlreadyConnected(true);
+          console.log('doing connect real blockchain');
+          blockchainDataEmitter.select({
+            selection: REAL_BLOCKCHAIN_ID,
+            uniqueId
+          });
+          connectRealBlockchain("https://api.coinset.org");
+        }
+
+        const keys = Object.keys(evt);
+        keys.forEach((k: string) => {
+          if (walletConnectStates[k]) {
+            walletConnectStates[k](evt[k]);
+          }
+        });
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  });
+
   const toggleExpanded = useCallback(() => {
     setExpanded(!expanded);
   }, [expanded]);
-  const { rpc } = useRpcUi();
 
-  function callRpcWithRetry(functionKey: string, data: any, timeout: number) {
-    return (rpc as any)[functionKey](data).catch((e: any) => {
-      console.error('retry', functionKey, data);
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          callRpcWithRetry(functionKey, data, timeout).catch(reject).then(resolve);
-        }, timeout);
-      });
-    });
-  }
+  useEffect(() => {
+    if (!initializing) {
+      console.log('initialzing wallet connect if needed', initializing, initialized);
+      walletConnectState.init();
+      setInitializing(true);
+    }
+  });
 
   useEffect(() => {
     function receivedWindowMessage(evt: any) {
@@ -100,15 +147,9 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     };
   });
 
-  const useHeight = expanded ? '3em' : '20em';
-  const handleConnectWallet = () => {
-    if (!client) throw new Error("WalletConnect is not initialized.");
-
-    connect();
-  };
-
+  const useHeight = expanded ? '3em' : '50em';
   const uniqueId = generateOrRetrieveUniqueId();
-  const handleConnectSimulator = () => {
+  const handleConnectSimulator = useCallback(() => {
     const baseUrl = BLOCKCHAIN_SERVICE_URL;
 
     setExpanded(false);
@@ -125,27 +166,30 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
         uniqueId
       });
     });
-  };
+  }, []);
 
-  if (!alreadyConnected && session && !fakeAddress) {
-    setAlreadyConnected(true);
+  const onDoWalletConnect = useCallback(() => {
+    doConnectWallet(
+      setShowQRModal,
+      setConnectionUri,
+      () => walletConnectState.startConnect(),
+      () => {
+        console.warn('walletconnect should now be connected');
+      },
+      (e) => setWalletConnectError(e)
+    )
+  }, []);
+
+  const onWalletDismiss = useCallback(() => {
     setExpanded(false);
-    if (session) {
-      console.log('doing connect real blockchain');
-      blockchainDataEmitter.select({
-        selection: REAL_BLOCKCHAIN_ID,
-        uniqueId
-      });
-      connectRealBlockchain("https://api.coinset.org", rpc);
-    }
-  }
+  }, []);
 
-  const sessionConnected = session ? "connected" : fakeAddress ? "simulator" : "disconnected";
-  const ifSession = session ? (
+  const sessionConnected = connected ? "connected" : fakeAddress ? "simulator" : "disconnected";
+  const ifSession = walletConnectState.getSession() ? (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Box>
         <ButtonGroup variant="outlined" fullWidth>
-          <Button variant="outlined" color="error" onClick={() => disconnect()}>
+          <Button variant="outlined" color="error" onClick={() => walletConnectState.disconnect()}>
             Unlink Wallet
           </Button>
           <Button
@@ -179,13 +223,20 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   ) : fakeAddress ? (
     <Typography variant="h5" style={{ background: '#aa2' }}>Simulator {fakeAddress}</Typography>
   ) : (
-    <div style={{ display: 'flex', flexDirection: 'row', width: '100%', height: '3em' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
       <Button variant="contained" onClick={handleConnectSimulator} sx={{ mt: 3 }} style={{ background: '#aa2' }} aria-label="select-simulator">
         Simulator
       </Button>
-      <Button variant="contained" onClick={handleConnectWallet} sx={{ mt: 3 }}>
-        Link Wallet
-      </Button>
+      <WalletConnectDialog
+        initialized={initialized}
+        haveClient={haveClient}
+        haveSession={haveSession}
+        sessions={sessions}
+        showQRModal={showQRModal}
+        connectionUri={connectionUri}
+        onConnect={onDoWalletConnect}
+        dismiss={onWalletDismiss}
+      ></WalletConnectDialog>
     </div>
   );
 

@@ -1,5 +1,6 @@
 import { createContext, PropsWithChildren, useContext } from 'react';
 import { ChiaMethod } from '../constants/wallet-connect';
+import { walletConnectState } from './useWalletConnect';
 import {
     AddCatTokenRequest,
     AddCatTokenResponse,
@@ -202,308 +203,283 @@ interface JsonRpc {
     ) => Promise<GetNftWalletsWithDidsResponse>;
 }
 
-export const JsonRpcContext = createContext<JsonRpc>({} as JsonRpc);
+async function request<T>(method: ChiaMethod, data: any): Promise<T> {
+  if (!walletConnectState.getClient()) throw new Error('WalletConnect is not initialized');
+  if (!walletConnectState.getSession()) throw new Error('Session is not connected');
 
-export function JsonRpcProvider({ children }: PropsWithChildren) {
-    const { client, session, chainId, fingerprint } = useWalletConnect();
+  const result = await walletConnectState.getClient()!.request({
+    topic: walletConnectState.getSession()!.topic,
+    chainId: walletConnectState.getChainId(),
+    request: {
+      method,
+      params: { ...data },
+    },
+  });
 
-    async function request<T>(method: ChiaMethod, data: any): Promise<T> {
-        if (!client) throw new Error('WalletConnect is not initialized');
-        if (!session) throw new Error('Session is not connected');
-        if (!fingerprint) throw new Error('Fingerprint is not loaded.');
+  if ('error' in result) throw new Error(JSON.stringify(result.error));
 
-        const result = await client.request<{ data: T } | { error: any }>({
-            topic: session.topic,
-            chainId,
-            request: {
-                method,
-                params: { fingerprint, ...data },
-            },
-        });
+  return result.data;
+}
 
-        if ('error' in result) throw new Error(JSON.stringify(result.error));
+async function logIn(data: LogInRequest) {
+  return await request<LogInResponse>(ChiaMethod.LogIn, data);
+}
 
-        return result.data;
-    }
+async function getWallets(data: GetWalletsRequest) {
+  return await request<GetWalletsResponse>(ChiaMethod.GetWallets, data);
+}
 
+async function getTransaction(data: GetTransactionRequest) {
+  return await request<GetTransactionResponse>(
+    ChiaMethod.GetTransaction,
+    data
+  );
+}
+
+async function getWalletBalance(data: GetWalletBalanceRequest) {
+  return await request<GetWalletBalanceResponse>(
+    ChiaMethod.GetWalletBalance,
+    data
+  );
+}
+
+async function getCurrentAddress(data: GetCurrentAddressRequest) {
+  return await request<GetCurrentAddressResponse>(
+    ChiaMethod.GetCurrentAddress,
+    data
+  );
+}
+
+async function sendTransaction(data: SendTransactionRequest) {
+  return await request<SendTransactionResponse>(
+    ChiaMethod.SendTransaction,
+    data
+  );
+}
+
+async function signMessageById(data: SignMessageByIdRequest) {
+  return await request<SignMessageByIdResponse>(
+    ChiaMethod.SignMessageById,
+    data
+  );
+}
+
+async function signMessageByAddress(data: SignMessageByAddressRequest) {
+  return await request<SignMessageByAddressResponse>(
+    ChiaMethod.SignMessageByAddress,
+    data
+  );
+}
+
+async function verifySignature(data: VerifySignatureRequest) {
+  return await request<VerifySignatureResponse>(
+    ChiaMethod.VerifySignature,
+    data
+  );
+}
+
+async function getNextAddress(data: GetNextAddressRequest) {
+  return await request<GetNextAddressResponse>(
+    ChiaMethod.GetNextAddress,
+    data
+  );
+}
+
+async function getSyncStatus(data: GetSyncStatusRequest) {
+  return await request<GetSyncStatusResponse>(
+    ChiaMethod.GetSyncStatus,
+    data
+  );
+}
+
+async function getWalletAddresses(data: GetWalletAddressesRequest) {
+  return await request<GetWalletAddressesResponse>(
+    ChiaMethod.GetWalletAddresses,
+    data
+  );
+}
+
+// Offers
+
+async function getAllOffers(data: GetAllOffersRequest) {
+  return await request<GetAllOffersResponse>(
+    ChiaMethod.GetAllOffers,
+    data
+  );
+}
+
+async function getOffersCount(data: GetOffersCountRequest) {
+  return await request<GetOffersCountResponse>(
+    ChiaMethod.GetOffersCount,
+    data
+  );
+}
+
+async function createOfferForIds(data: CreateOfferForIdsRequest) {
+  return await request<CreateOfferForIdsResponse>(
+    ChiaMethod.CreateOfferForIds,
+    data
+  );
+}
+
+async function cancelOffer(data: CancelOfferRequest) {
+  return await request<CancelOfferResponse>(ChiaMethod.CancelOffer, data);
+}
+
+async function checkOfferValidity(data: CheckOfferValidityRequest) {
+  return await request<CheckOfferValidityResponse>(
+    ChiaMethod.CheckOfferValidity,
+    data
+  );
+}
+
+async function takeOffer(data: TakeOfferRequest) {
+  return await request<TakeOfferResponse>(ChiaMethod.TakeOffer, data);
+}
+
+async function getOfferSummary(data: GetOfferSummaryRequest) {
+  return await request<GetOfferSummaryResponse>(
+    ChiaMethod.GetOfferSummary,
+    data
+  );
+}
+
+async function getOfferData(data: GetOfferDataRequest) {
+  return await request<GetOfferDataResponse>(
+    ChiaMethod.GetOfferData,
+    data
+  );
+}
+
+async function getOfferRecord(data: GetOfferRecordRequest) {
+  return await request<GetOfferRecordResponse>(
+    ChiaMethod.GetOfferRecord,
+    data
+  );
+}
+
+// CATs
+
+async function createNewCatWallet(data: CreateNewCatWalletRequest) {
+  return await request<CreateNewCatWalletResponse>(
+    ChiaMethod.CreateNewCatWallet,
+    data
+  );
+}
+
+async function getCatWalletInfo(data: GetCatWalletInfoRequest) {
+  return await request<GetCatWalletInfoResponse>(
+    ChiaMethod.GetCatWalletInfo,
+    data
+  );
+}
+
+async function getCatAssetId(data: GetCatAssetIdRequest) {
+  return await request<GetCatAssetIdResponse>(
+    ChiaMethod.GetCatAssetId,
+    data
+  );
+}
+
+async function spendCat(data: SpendCatRequest) {
+  return await request<SpendCatResponse>(ChiaMethod.SpendCat, data);
+}
+
+async function addCatToken(data: AddCatTokenRequest) {
+  return await request<AddCatTokenResponse>(ChiaMethod.AddCatToken, data);
+}
+
+// NFTs
+async function getNfts(data: GetNftsRequest) {
+  return await request<GetNftsResponse>(ChiaMethod.GetNfts, data);
+}
+
+async function getNftInfo(data: GetNftInfoRequest) {
+  return await request<GetNftInfoResponse>(ChiaMethod.GetNftInfo, data);
+}
+
+async function mintNft(data: MintNftRequest) {
+  return await request<MintNftResponse>(ChiaMethod.MintNft, data);
+}
+
+async function transferNft(data: TransferNftRequest) {
+  return await request<TransferNftResponse>(ChiaMethod.TransferNft, data);
+}
+
+async function getNftsCount(data: GetNftsCountRequest) {
+  return await request<GetNftsCountResponse>(
+    ChiaMethod.GetNftsCount,
+    data
+  );
+}
+
+// DIDs
+
+async function createNewDidWallet(data: CreateNewDidWalletRequest) {
+  return await request<CreateNewDidWalletResponse>(
+    ChiaMethod.CreateNewDidWallet,
+    data
+  );
+}
+
+async function setDidName(data: SetDidNameRequest) {
+  return await request<SetDidNameResponse>(ChiaMethod.SetDidName, data);
+}
+
+async function setNftDid(data: SetNftDidRequest) {
+  return await request<SetNftDidResponse>(ChiaMethod.SetNftDid, data);
+}
+
+async function getNftWalletsWithDids(data: GetNftWalletsWithDidsRequest) {
+  return await request<GetNftWalletsWithDidsResponse>(
+    ChiaMethod.GetNftWalletsWithDids,
+    data
+  );
+}
+
+export const rpc = {
     // Wallet
-    async function logIn(data: LogInRequest) {
-        return await request<LogInResponse>(ChiaMethod.LogIn, data);
-    }
-
-    async function getWallets(data: GetWalletsRequest) {
-        return await request<GetWalletsResponse>(ChiaMethod.GetWallets, data);
-    }
-
-    async function getTransaction(data: GetTransactionRequest) {
-        return await request<GetTransactionResponse>(
-            ChiaMethod.GetTransaction,
-            data
-        );
-    }
-
-    async function getWalletBalance(data: GetWalletBalanceRequest) {
-        return await request<GetWalletBalanceResponse>(
-            ChiaMethod.GetWalletBalance,
-            data
-        );
-    }
-
-    async function getCurrentAddress(data: GetCurrentAddressRequest) {
-        return await request<GetCurrentAddressResponse>(
-            ChiaMethod.GetCurrentAddress,
-            data
-        );
-    }
-
-    async function sendTransaction(data: SendTransactionRequest) {
-        return await request<SendTransactionResponse>(
-            ChiaMethod.SendTransaction,
-            data
-        );
-    }
-
-    async function signMessageById(data: SignMessageByIdRequest) {
-        return await request<SignMessageByIdResponse>(
-            ChiaMethod.SignMessageById,
-            data
-        );
-    }
-
-    async function signMessageByAddress(data: SignMessageByAddressRequest) {
-        return await request<SignMessageByAddressResponse>(
-            ChiaMethod.SignMessageByAddress,
-            data
-        );
-    }
-
-    async function verifySignature(data: VerifySignatureRequest) {
-        return await request<VerifySignatureResponse>(
-            ChiaMethod.VerifySignature,
-            data
-        );
-    }
-
-    async function getNextAddress(data: GetNextAddressRequest) {
-        return await request<GetNextAddressResponse>(
-            ChiaMethod.GetNextAddress,
-            data
-        );
-    }
-
-    async function getSyncStatus(data: GetSyncStatusRequest) {
-        return await request<GetSyncStatusResponse>(
-            ChiaMethod.GetSyncStatus,
-            data
-        );
-    }
-
-    async function getWalletAddresses(data: GetWalletAddressesRequest) {
-        return await request<GetWalletAddressesResponse>(
-            ChiaMethod.GetWalletAddresses,
-            data
-        );
-    }
+    logIn,
+    getWallets,
+    getTransaction,
+    getWalletBalance,
+    getCurrentAddress,
+    sendTransaction,
+    signMessageById,
+    signMessageByAddress,
+    verifySignature,
+    getNextAddress,
+    getSyncStatus,
+    getWalletAddresses,
 
     // Offers
-
-    async function getAllOffers(data: GetAllOffersRequest) {
-        return await request<GetAllOffersResponse>(
-            ChiaMethod.GetAllOffers,
-            data
-        );
-    }
-
-    async function getOffersCount(data: GetOffersCountRequest) {
-        return await request<GetOffersCountResponse>(
-            ChiaMethod.GetOffersCount,
-            data
-        );
-    }
-
-    async function createOfferForIds(data: CreateOfferForIdsRequest) {
-        return await request<CreateOfferForIdsResponse>(
-            ChiaMethod.CreateOfferForIds,
-            data
-        );
-    }
-
-    async function cancelOffer(data: CancelOfferRequest) {
-        return await request<CancelOfferResponse>(ChiaMethod.CancelOffer, data);
-    }
-
-    async function checkOfferValidity(data: CheckOfferValidityRequest) {
-        return await request<CheckOfferValidityResponse>(
-            ChiaMethod.CheckOfferValidity,
-            data
-        );
-    }
-
-    async function takeOffer(data: TakeOfferRequest) {
-        return await request<TakeOfferResponse>(ChiaMethod.TakeOffer, data);
-    }
-
-    async function getOfferSummary(data: GetOfferSummaryRequest) {
-        return await request<GetOfferSummaryResponse>(
-            ChiaMethod.GetOfferSummary,
-            data
-        );
-    }
-
-    async function getOfferData(data: GetOfferDataRequest) {
-        return await request<GetOfferDataResponse>(
-            ChiaMethod.GetOfferData,
-            data
-        );
-    }
-
-    async function getOfferRecord(data: GetOfferRecordRequest) {
-        return await request<GetOfferRecordResponse>(
-            ChiaMethod.GetOfferRecord,
-            data
-        );
-    }
+    getAllOffers,
+    getOffersCount,
+    createOfferForIds,
+    cancelOffer,
+    checkOfferValidity,
+    takeOffer,
+    getOfferSummary,
+    getOfferData,
+    getOfferRecord,
 
     // CATs
-
-    async function createNewCatWallet(data: CreateNewCatWalletRequest) {
-        return await request<CreateNewCatWalletResponse>(
-            ChiaMethod.CreateNewCatWallet,
-            data
-        );
-    }
-
-    async function getCatWalletInfo(data: GetCatWalletInfoRequest) {
-        return await request<GetCatWalletInfoResponse>(
-            ChiaMethod.GetCatWalletInfo,
-            data
-        );
-    }
-
-    async function getCatAssetId(data: GetCatAssetIdRequest) {
-        return await request<GetCatAssetIdResponse>(
-            ChiaMethod.GetCatAssetId,
-            data
-        );
-    }
-
-    async function spendCat(data: SpendCatRequest) {
-        return await request<SpendCatResponse>(ChiaMethod.SpendCat, data);
-    }
-
-    async function addCatToken(data: AddCatTokenRequest) {
-        return await request<AddCatTokenResponse>(ChiaMethod.AddCatToken, data);
-    }
+    createNewCatWallet,
+    getCatWalletInfo,
+    getCatAssetId,
+    spendCat,
+    addCatToken,
 
     // NFTs
-    async function getNfts(data: GetNftsRequest) {
-        return await request<GetNftsResponse>(ChiaMethod.GetNfts, data);
-    }
-
-    async function getNftInfo(data: GetNftInfoRequest) {
-        return await request<GetNftInfoResponse>(ChiaMethod.GetNftInfo, data);
-    }
-
-    async function mintNft(data: MintNftRequest) {
-        return await request<MintNftResponse>(ChiaMethod.MintNft, data);
-    }
-
-    async function transferNft(data: TransferNftRequest) {
-        return await request<TransferNftResponse>(ChiaMethod.TransferNft, data);
-    }
-
-    async function getNftsCount(data: GetNftsCountRequest) {
-        return await request<GetNftsCountResponse>(
-            ChiaMethod.GetNftsCount,
-            data
-        );
-    }
+    getNfts,
+    getNftInfo,
+    mintNft,
+    transferNft,
+    getNftsCount,
 
     // DIDs
-
-    async function createNewDidWallet(data: CreateNewDidWalletRequest) {
-        return await request<CreateNewDidWalletResponse>(
-            ChiaMethod.CreateNewDidWallet,
-            data
-        );
-    }
-
-    async function setDidName(data: SetDidNameRequest) {
-        return await request<SetDidNameResponse>(ChiaMethod.SetDidName, data);
-    }
-
-    async function setNftDid(data: SetNftDidRequest) {
-        return await request<SetNftDidResponse>(ChiaMethod.SetNftDid, data);
-    }
-
-    async function getNftWalletsWithDids(data: GetNftWalletsWithDidsRequest) {
-        return await request<GetNftWalletsWithDidsResponse>(
-            ChiaMethod.GetNftWalletsWithDids,
-            data
-        );
-    }
-
-    return (
-        <JsonRpcContext.Provider
-            value={{
-                // Wallet
-                logIn,
-                getWallets,
-                getTransaction,
-                getWalletBalance,
-                getCurrentAddress,
-                sendTransaction,
-                signMessageById,
-                signMessageByAddress,
-                verifySignature,
-                getNextAddress,
-                getSyncStatus,
-                getWalletAddresses,
-
-                // Offers
-                getAllOffers,
-                getOffersCount,
-                createOfferForIds,
-                cancelOffer,
-                checkOfferValidity,
-                takeOffer,
-                getOfferSummary,
-                getOfferData,
-                getOfferRecord,
-
-                // CATs
-                createNewCatWallet,
-                getCatWalletInfo,
-                getCatAssetId,
-                spendCat,
-                addCatToken,
-
-                // NFTs
-                getNfts,
-                getNftInfo,
-                mintNft,
-                transferNft,
-                getNftsCount,
-
-                // DIDs
-                createNewDidWallet,
-                setDidName,
-                setNftDid,
-                getNftWalletsWithDids,
-            }}
-        >
-            {children}
-        </JsonRpcContext.Provider>
-    );
-}
-
-export function useJsonRpc() {
-    const context = useContext(JsonRpcContext);
-
-    if (!context)
-        throw new Error(
-            'Calls to `useJsonRpc` must be used within a `JsonRpcProvider`.'
-        );
-
-    return context;
-}
+    createNewDidWallet,
+    setDidName,
+    setNftDid,
+    getNftWalletsWithDids,
+};
