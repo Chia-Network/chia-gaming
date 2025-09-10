@@ -1,4 +1,5 @@
 use std::ops::{Add, AddAssign};
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
 
 use serde::de::Visitor;
 
@@ -76,5 +77,33 @@ impl PrivateKey {
 
     pub fn bytes(&self) -> [u8; 32] {
         self.0.to_bytes()
+    }
+}
+
+impl Serialize for PrivateKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let bytes = self.bytes();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for PrivateKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let b = SerdeByteConsumer;
+        let bytes = deserializer.deserialize_bytes(b);
+        let mut fixed_bytes: [u8; 32] = [0; 32];
+        for v in bytes.into_iter().take(1) {
+            for (i, b) in v.into_iter().enumerate() {
+                fixed_bytes[i] = b;
+            }
+        }
+        PrivateKey::from_bytes(&fixed_bytes)
+            .map_err(|e| serde::de::Error::custom(format!("couldn't make pubkey: {e:?}")))
     }
 }
