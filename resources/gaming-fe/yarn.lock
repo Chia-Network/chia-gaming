@@ -3790,10 +3790,10 @@ batch@0.6.1:
   resolved "https://registry.yarnpkg.com/batch/-/batch-0.6.1.tgz#dc34314f4e679318093fc760272525f94bf25c16"
   integrity sha512-x+VAiMRL6UPkx+kudNvxTl6hB2XNNCG2r+7wixVfIYwu/2HKRXimwQyaumLjMveWvT2Hkd/cAJw+QBMfJ/EKVw==
 
-bech32m-chia@^1.0.2:
-  version "1.0.2"
-  resolved "https://registry.npmjs.org/bech32m-chia/-/bech32m-chia-1.0.2.tgz#a8cde0f8e8124c124c081d8d0e7456cf62cace51"
-  integrity sha512-oCxcdumOWJGR19GU+d7liX9rArIDKCNH6p658wV64VkO9XmhupCu/g1Wc+0qLUpL7z5NGNteINjmsthhrmCo3Q==
+bech32-buffer@^0.2.1:
+  version "0.2.1"
+  resolved "https://registry.npmjs.org/bech32-buffer/-/bech32-buffer-0.2.1.tgz#8106f2f51bcb2ba1d9fb7718905c3042c5be2fcd"
+  integrity sha512-fCG1TyZuCN48Sdw97p/IR39fvqpFlWDVpG7qnuU1Uc3+Xtc/0uqAp8U7bMW/bGuVF5CcNVIXwxQsWwUr6un6FQ==
 
 big.js@^5.2.2:
   version "5.2.2"

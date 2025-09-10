@@ -207,13 +207,20 @@ async function request<T>(method: ChiaMethod, data: any): Promise<T> {
   if (!walletConnectState.getClient()) throw new Error('WalletConnect is not initialized');
   if (!walletConnectState.getSession()) throw new Error('Session is not connected');
 
+  console.warn('walletconnect send request:', method, data, walletConnectState.getSession()!.topic, walletConnectState.getChainId());
+
+  const address = walletConnectState.getAddress();
+  if (!address) {
+    throw new Error("no fingerprint set in walletconnect");
+  }
+
+  const params = { ...data };
+  params.fingerprint = parseInt(address);
+
   const result = await walletConnectState.getClient()!.request({
     topic: walletConnectState.getSession()!.topic,
     chainId: walletConnectState.getChainId(),
-    request: {
-      method,
-      params: { ...data },
-    },
+    request: { method, params }
   });
 
   if ('error' in result) throw new Error(JSON.stringify(result.error));

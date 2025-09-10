@@ -45,6 +45,8 @@ class WalletState {
 
   getChainId() { return CHAIN_ID; }
 
+  getAddress() { return this.address; }
+
   async init() {
     if (this.isInitialized) {
       return;

@@ -298,19 +298,16 @@ export class WasmBlobWrapper {
   createStartCoin(): any {
     const identity = this.identity;
     if (!identity) {
-      console.error('create start coin with no identity');
-      return empty();
+      throw new Error('create start coin with no identity');
     }
     const calpokerHex = this.calpokerHex;
     if (!calpokerHex) {
-      console.error('create start coin with no calpoker loaded');
-      return empty();
+      throw new Error('create start coin with no calpoker loaded');
     }
 
     const wc = this.wc;
     if (!wc) {
-      console.error('create start coin with no wasm obj?');
-      return empty();
+      throw new Error('create start coin with no wasm obj?');
     }
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
@@ -318,8 +315,18 @@ export class WasmBlobWrapper {
       do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount).then(result => {
         let coin = result.coin;
         if (!coin) {
-          console.error('tried to create spendable but failed');
-          return empty();
+          throw new Error('tried to create spendable but failed');
+        }
+
+        // Handle data conversion back when Coin object was received.
+        if (typeof coin !== 'string') {
+          const coinset_coin = coin as any;
+          const new_coin_string = this.wc?.convert_coinset_to_coin_string(coinset_coin.parentCoinInfo, coinset_coin.puzzleHash, coinset_coin.amount.toString());
+          if (!new_coin_string) {
+            throw new Error(`Coin could not be converted to coinstring: ${JSON.stringify(coinset_coin)}`);
+          }
+
+          coin = new_coin_string;
         }
 
         const env = {
