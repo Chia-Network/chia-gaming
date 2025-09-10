@@ -62,10 +62,6 @@ async function firefox_start_and_first_move(driver, baseUrl) {
 
   await driver.switchTo().frame('subframe');
 
-  await selectSimulator(driver);
-
-  await selectSimulator(driver);
-
   console.log('Wait for handshake on bob side');
   await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
 
@@ -113,9 +109,7 @@ describe("Basic element tests", function() {
 
     await selectSimulator(driver);
 
-    await selectSimulator(driver);
-
-    await selectSimulator(driver);
+    await wait(driver, 5.0);
 
     // Test chat loopback
     // let chatEntry = await driver.wait(until.elementLocated(byElementAndAttribute("input", "id", "«r0»")));
@@ -129,7 +123,6 @@ describe("Basic element tests", function() {
     // expect(!!chatFound).toBe(true);
 
     // Try generating a room.
-    await wait(driver, 5.0);
 
     await driver.switchTo().frame('subframe');
 

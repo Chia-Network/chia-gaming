@@ -152,7 +152,6 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const handleConnectSimulator = useCallback(() => {
     const baseUrl = BLOCKCHAIN_SERVICE_URL;
 
-    setExpanded(false);
     fetch(`${baseUrl}/register?name=${uniqueId}`, {
       method: "POST"
     }).then(res => {
@@ -161,6 +160,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       // Trigger fake connect if not connected.
       console.warn('fake address is', res);
       setFakeAddress(res);
+      setExpanded(false);
       blockchainDataEmitter.select({
         selection: FAKE_BLOCKCHAIN_ID,
         uniqueId
