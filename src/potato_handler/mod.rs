@@ -9,6 +9,8 @@ use clvmr::{run_program, Allocator, NodePtr};
 use log::debug;
 use rand::Rng;
 
+use serde::{Serialize, Deserialize};
+
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
     GameStartInfoInterface, PotatoSignatures, ReadableMove,
@@ -32,8 +34,8 @@ use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, ConditionWaitKind, FromLocalUI, GameAction,
     GameFactory, GameStart, GameStartQueueEntry, GameType, HandshakeA, HandshakeB, HandshakeState,
     HandshakeStepInfo, HandshakeStepWithSpend, MyGameStartQueueEntry, PacketSender, PeerEnv,
-    PeerMessage, PotatoHandlerImpl, PotatoHandlerInit, PotatoState, SpendWalletReceiver, ToLocalUI,
-    WalletSpendInterface, GSI,
+    PeerMessage, PotatoHandlerImpl, PotatoHandlerInit, PotatoState, ShutdownActionHolder,
+    SpendWalletReceiver, ToLocalUI, WalletSpendInterface, GSI,
 };
 
 pub mod on_chain;
@@ -71,6 +73,7 @@ pub type GameStartInfoPair = (
 /// the one we receive in the channel handler game start.  If we receive that, we allow
 /// the message through to the channel handler.
 #[allow(dead_code)]
+#[derive(Serialize, Deserialize)]
 pub struct PotatoHandler {
     initiator: bool,
     have_potato: PotatoState,
@@ -607,12 +610,13 @@ impl PotatoHandler {
                 let (env, _) = penv.env();
                 for game in desc.their_games.iter() {
                     debug!("their game {:?}", game);
-                    dehydrated_games.push(GSI(game.clone()));
+                    dehydrated_games.push(game.clone());
                 }
                 for game in desc.my_games.iter() {
                     debug!("using game {:?}", game);
                 }
-                ch.send_potato_start_game(env, &desc.my_games)?
+                let unwrapped_games: Vec<Rc<dyn GameStartInfoInterface>> = desc.my_games.iter().map(|g| g.0.clone()).collect();
+                ch.send_potato_start_game(env, &unwrapped_games)?
             };
 
             debug!("dehydrated_games {dehydrated_games:?}");
@@ -731,7 +735,7 @@ impl PotatoHandler {
                 let real_conditions = {
                     let ch = self.channel_handler_mut()?;
                     let (env, _) = penv.env();
-                    get_conditions_with_channel_handler(env, ch, conditions.borrow())?
+                    get_conditions_with_channel_handler(env, ch, conditions.0.borrow())?
                 };
                 let (state_channel_coin, spend, want_puzzle_hash, want_amount) = {
                     let ch = self.channel_handler_mut()?;
@@ -1558,7 +1562,7 @@ impl PotatoHandler {
         let unroll_puzzle_solution = finished_unroll_coin
             .coin
             .get_internal_conditions_for_unroll_coin_spend()?;
-        let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
+        let unroll_puzzle_solution_hash = unroll_puzzle_solution.sha256tree(env.allocator);
         let aggregate_unroll_signature = finished_unroll_coin.coin.get_unroll_coin_signature()?
             + finished_unroll_coin
                 .signatures
@@ -1597,7 +1601,7 @@ impl PotatoHandler {
         let unroll_puzzle_solution = finished_unroll_coin
             .coin
             .get_internal_conditions_for_unroll_coin_spend()?;
-        let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
+        let unroll_puzzle_solution_hash = unroll_puzzle_solution.sha256tree(env.allocator);
         let aggregate_unroll_signature = finished_unroll_coin
             .signatures
             .my_unroll_half_signature_peer
@@ -1900,8 +1904,8 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         // we know what we're receiving from the remote end.
         if i_initiated {
             self.my_start_queue.push_back(MyGameStartQueueEntry {
-                my_games,
-                their_games,
+                my_games: my_games.into_iter().map(GSI).collect(),
+                their_games: their_games.into_iter().map(GSI).collect()
             });
 
             self.push_action(GameAction::LocalStartGame);
@@ -1983,7 +1987,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
             )));
         }
 
-        self.do_game_action(penv, GameAction::Shutdown(conditions))?;
+        self.do_game_action(penv, GameAction::Shutdown(ShutdownActionHolder(conditions)))?;
 
         Ok(())
     }

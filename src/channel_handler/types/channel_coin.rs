@@ -6,6 +6,8 @@ use log::debug;
 
 use rand::prelude::*;
 
+use serde::{Serialize, Deserialize};
+
 use crate::channel_handler::types::{prepend_rem_conditions, ChannelHandlerEnv, UnrollCoin};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::standard_solution_partial;
@@ -17,6 +19,7 @@ use crate::common::types::{
 /// Describes all aspects of the channel coin spend.
 /// Allows the user to get the solution, conditions, quoted condition program
 /// and signature for the channel coin spend.
+#[derive(Serialize, Deserialize)]
 pub struct ChannelCoin {
     state_channel_coin: CoinString,
 }
@@ -105,6 +108,7 @@ pub struct ChannelCoinSpendInfo {
     pub aggsig: Aggsig,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct ChannelCoinInfo {
     pub coin: ChannelCoin,
     pub amount: Amount,

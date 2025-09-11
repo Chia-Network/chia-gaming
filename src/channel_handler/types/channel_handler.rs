@@ -2,13 +2,15 @@ use rand::prelude::*;
 
 use rand::distributions::Standard;
 
+use serde::{Serialize, Deserialize};
+
 use crate::channel_handler::types::{PotatoSignatures, UnrollCoin};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, Hash, PrivateKey, PublicKey, Puzzle, PuzzleHash,
     Sha256tree, Timeout,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ChannelHandlerPrivateKeys {
     pub my_channel_coin_private_key: PrivateKey,
     pub my_unroll_coin_private_key: PrivateKey,
@@ -45,7 +47,7 @@ pub struct ChannelHandlerInitiationResult {
 }
 
 /// The channel handler can use these two items to produce a spend on chain.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct ChannelHandlerUnrollSpendInfo {
     /// Contains the half signature, puzzle and conditions needed to spend.
     pub coin: UnrollCoin,

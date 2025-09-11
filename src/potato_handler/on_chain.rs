@@ -7,6 +7,8 @@ use rand::Rng;
 
 use log::debug;
 
+use serde::{Serialize, Deserialize};
+
 use crate::channel_handler::types::{
     AcceptTransactionState, CoinSpentInformation, OnChainGameState, ReadableMove,
 };
@@ -17,11 +19,12 @@ use crate::common::types::{
 };
 use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
-    ToLocalUI, WalletSpendInterface,
+    ShutdownActionHolder, ToLocalUI, WalletSpendInterface,
 };
 use crate::referee::types::{RefereeOnChainTransaction, SlashOutcome, TheirTurnCoinSpentResult};
 use crate::shutdown::ShutdownConditions;
 
+#[derive(Serialize, Deserialize)]
 pub struct OnChainPotatoHandler {
     have_potato: PotatoState,
     channel_timeout: Timeout,
@@ -675,7 +678,7 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
                 self.player_ch.is_initial_potato()
             );
             self.game_action_queue
-                .push_back(GameAction::Shutdown(conditions));
+                .push_back(GameAction::Shutdown(ShutdownActionHolder(conditions)));
             return Ok(false);
         }
 
