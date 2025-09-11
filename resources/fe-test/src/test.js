@@ -109,6 +109,8 @@ describe("Basic element tests", function() {
 
     await selectSimulator(driver);
 
+    await wait(driver, 5.0);
+
     // Test chat loopback
     // let chatEntry = await driver.wait(until.elementLocated(byElementAndAttribute("input", "id", "«r0»")));
     // await chatEntry.sendKeys("test?");
@@ -121,7 +123,6 @@ describe("Basic element tests", function() {
     // expect(!!chatFound).toBe(true);
 
     // Try generating a room.
-    await wait(driver, 5.0);
 
     await driver.switchTo().frame('subframe');
 

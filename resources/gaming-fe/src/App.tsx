@@ -5,7 +5,6 @@ import LobbyScreen from "./components/LobbyScreen";
 import WalletConnectHeading from "./components/WalletConnectHeading";
 import { getGameSelection, getSearchParams } from './util';
 import { CHAIN_ID, PROJECT_ID, RELAY_URL } from './constants/env';
-import { JsonRpcProvider } from './hooks/JsonRpcContext';
 import { WalletConnectProvider } from './hooks/WalletConnectContext';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
 
@@ -57,15 +56,7 @@ const App: React.FC = () => {
 
   const wcHeading = (
     <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
-      <WalletConnectProvider
-        projectId={PROJECT_ID}
-        relayUrl={RELAY_URL}
-        chainId={CHAIN_ID}
-      >
-        <JsonRpcProvider>
-          <WalletConnectHeading></WalletConnectHeading>
-        </JsonRpcProvider>
-      </WalletConnectProvider>
+      <WalletConnectHeading/>
     </div>
   );
 

@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Program } from 'clvm-lib';
 
-function toUint8(s: string) {
+export function toUint8(s: string) {
   if (s.length % 2 != 0) {
     throw 'Odd length hex string';
   }
@@ -12,6 +12,13 @@ function toUint8(s: string) {
     result[i >> 1] = val;
   }
   return result;
+}
+
+// Thanks: https://stackoverflow.com/questions/34309988/byte-array-to-hex-string-conversion-in-javascript
+export function toHexString(byteArray: number[]) {
+  return Array.from(byteArray, function(byte) {
+    return ('0' + (byte & 0xFF).toString(16)).slice(-2);
+  }).join('');
 }
 
 export type FragmentData = { [k: string]: string }
