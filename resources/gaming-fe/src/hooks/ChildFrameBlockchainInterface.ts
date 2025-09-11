@@ -1,4 +1,4 @@
-import { Subject } from 'rxjs';
+import { Subject, filter, take } from 'rxjs';
 import { DoInitialSpendResult } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector, BlockchainInboundReply, BlockchainOutboundRequest } from './BlockchainConnector';
@@ -12,18 +12,12 @@ function performTransaction(
   request: any
 ): Promise<any> {
   return new Promise((resolve, reject) => {
-    let subscription = blockchainConnector.getInbound().subscribe({
+    let thisRequestChannel = blockchainConnector.getInbound().pipe(
+      filter((e: BlockchainInboundReply) => e.responseId === requestId),
+      take(1)
+    );
+    let subscription = thisRequestChannel.subscribe({
       next: (e: BlockchainInboundReply) => {
-        if (e.responseId !== requestId) {
-          return;
-        }
-
-        try {
-            subscription.unsubscribe();
-        } catch (err) {
-            console.error('child rpc error unsubscribing', e, err);
-        }
-
         if (e.error) {
           console.error('returning error in transaction', e);
           reject(e.error);
