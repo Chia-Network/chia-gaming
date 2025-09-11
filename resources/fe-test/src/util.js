@@ -49,9 +49,10 @@ async function waitAriaEnabled(driver, element) {
 
 async function selectSimulator(driver) {
     const controlMenu = await driver.wait(until.elementLocated(byAttribute("aria-label", "control-menu")));
-    controlMenu.click();
-    const simulatorButton = await driver.wait(until.elementLocated(byExactText("Simulator")));
-    simulatorButton.click();
+    await controlMenu.click();
+
+    const simulatorButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "select-simulator")));
+    await simulatorButton.click();
 }
 
 async function waitForNonError(driver, select, extra, time) {

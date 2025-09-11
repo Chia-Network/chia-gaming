@@ -2,8 +2,10 @@ import { init, config_scaffold, create_game_cradle, deliver_message, deposit_fil
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { InternalBlockchainInterface, PeerConnectionResult, BlockchainReport } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
-import { blockchainDataEmitter, fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import { ChildFrameBlockchainInterface, blockchainConnector, BlockchainOutboundRequest, connectSimulatorBlockchain } from '../../hooks/ChildFrameBlockchainInterface';
+import { FAKE_BLOCKCHAIN_ID, fakeBlockchainInfo, connectSimulatorBlockchain } from '../../hooks/FakeBlockchainInterface';
+import { blockchainDataEmitter } from '../../hooks/BlockchainInfo';
+import { blockchainConnector, BlockchainOutboundRequest } from '../../hooks/BlockchainConnector';
+import { ChildFrameBlockchainInterface } from '../../hooks/ChildFrameBlockchainInterface';
 
 import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper'
 import * as fs from 'fs';
@@ -80,8 +82,6 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
     let count = 0;
     let cradles = [cradle1, cradle2];
 
-    connectSimulatorBlockchain();
-
     blockchainInterface.getObservable().subscribe({
         next: (evt: BlockchainReport) => {
             cradles.forEach((c, i) => {
@@ -148,7 +148,7 @@ it('loads', async () => {
     const blockchainInterface = new ChildFrameBlockchainInterface();
     // The blockchain service does separate monitoring now.
     blockchainDataEmitter.select({
-      selection: 0,
+      selection: FAKE_BLOCKCHAIN_ID,
       uniqueId: 'block-producer'
     });
 

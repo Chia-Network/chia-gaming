@@ -1,12 +1,30 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Box, Typography } from "@mui/material";
 import Game from './components/Game';
 import LobbyScreen from "./components/LobbyScreen";
+import WalletConnectHeading from "./components/WalletConnectHeading";
 import { getGameSelection, getSearchParams } from './util';
+import { CHAIN_ID, PROJECT_ID, RELAY_URL } from './constants/env';
+import { JsonRpcProvider } from './hooks/JsonRpcContext';
+import { WalletConnectProvider } from './hooks/WalletConnectContext';
+import { blockchainDataEmitter } from './hooks/BlockchainInfo';
 
 const App: React.FC = () => {
   const gameSelection = getGameSelection();
   const params = getSearchParams();
   const shouldRedirectToLobby = !params.lobby && !params.iStarted;
+  const [havePeak, setHavePeak] = useState(false);
+  const [iframeUrl, setIframeUrl] = useState("about:blank");
+
+  useEffect(() => {
+    const subscription = blockchainDataEmitter.getObservable().subscribe({
+      next: (peak: any) => {
+        setHavePeak(true);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  });
 
   // Redirect to the lobby if we haven't been given enough information to render
   // the game yet.
@@ -19,26 +37,57 @@ const App: React.FC = () => {
       fetch("/urls").then((res) => res.json()).then((urls) => {
         console.log('navigate to lobby', urls);
         if (gameSelection) {
-          window.location.replace(`${urls.tracker}&token=${gameSelection.token}`);
+          setIframeUrl(`${urls.tracker}&token=${gameSelection.token}&view=game`);
         } else {
-          window.location.replace(urls.tracker);
+          setIframeUrl(`${urls.tracker}&view=game`);
         }
       });
     }
   }, [params]);
 
-  // Dummy render for the redirect.
-  if (shouldRedirectToLobby) {
-    return (<div/>);
-  }
-
-  if (!params.iStarted) {
+  if (params.lobby) {
     return (
       <LobbyScreen />
     );
   }
 
-  return <Game />;
+  if (params.game && !params.join) {
+    return <Game />;
+  }
+
+  const wcHeading = (
+    <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
+      <WalletConnectProvider
+        projectId={PROJECT_ID}
+        relayUrl={RELAY_URL}
+        chainId={CHAIN_ID}
+      >
+        <JsonRpcProvider>
+          <WalletConnectHeading></WalletConnectHeading>
+        </JsonRpcProvider>
+      </WalletConnectProvider>
+    </div>
+  );
+
+  if (!havePeak) {
+    return (
+      <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
+        {wcHeading}
+        <Box p={4} maxWidth={600} mx="auto">
+          <Typography variant="h4" gutterBottom>
+            Waiting for wallet connect connection (use the menu).
+          </Typography>
+        </Box>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', position: 'relative', left: 0, top: 0, width: '100vw', height: '100vh', flexDirection: "column" }}>
+      {wcHeading}
+      <iframe id='subframe' style={{ display: 'flex', width: '100%', flexShrink: 1, flexGrow: 1, height: '100%' }} src={iframeUrl}></iframe>
+    </div>
+  );
 };
 
 export default App;

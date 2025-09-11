@@ -1,5 +1,7 @@
-import { Observable } from 'rxjs';
+import { Subject, Observable } from 'rxjs';
 import { ToggleEmitter, ExternalBlockchainInterface, InternalBlockchainInterface, BlockchainReport, WatchReport, SelectionMessage } from '../types/ChiaGaming';
+import { blockchainDataEmitter } from './BlockchainInfo';
+import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
@@ -30,7 +32,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   handlingEvent: boolean;
   incomingEvents: any[];
   blockEmitter: (b: BlockchainReport) => void;
-  observable: Observable<BlockchainReport>;
+  observable: Subject<BlockchainReport>;
   upstream: ExternalBlockchainInterface;
 
   constructor(baseUrl: string) {
@@ -41,10 +43,8 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.handlingEvent = false;
     this.incomingEvents = [];
     this.upstream = new ExternalBlockchainInterface(baseUrl);
-    this.blockEmitter = (b) => {};
-    this.observable = new Observable((emitter) => {
-      this.blockEmitter = (b) => emitter.next(b);
-    });
+    this.observable = new Subject();
+    this.blockEmitter = (b) => this.observable.next(b);
   }
 
   startMonitoring(uniqueId: string) {
@@ -169,17 +169,59 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 }
 
 export const fakeBlockchainInfo = new FakeBlockchainInterface(BLOCKCHAIN_SERVICE_URL);
-export const blockchainDataEmitter = new ToggleEmitter<BlockchainReport>([fakeBlockchainInfo.getObservable()]);
+export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(fakeBlockchainInfo.getObservable());
+
+export function connectSimulatorBlockchain() {
+  blockchainConnector.getOutbound().subscribe({
+    next: (evt: BlockchainOutboundRequest) => {
+      let initialSpend = evt.initialSpend;
+      let transaction = evt.transaction;
+      if (initialSpend) {
+        return fakeBlockchainInfo.do_initial_spend(
+          initialSpend.uniqueId,
+          initialSpend.target,
+          initialSpend.amount
+        ).then((result: any) => {
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+            initialSpend: result
+          });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
+        });
+      } else if (transaction) {
+        fakeBlockchainInfo.spend(
+          (blob: string) => transaction.spendObject,
+          transaction.blob
+        ).then((response: any) => {
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+            transaction: response
+          });
+        }).catch((e: any) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
+        });
+      } else {
+        console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
+        blockchainConnector.replyEmitter({
+          responseId: evt.requestId,
+          error: `unknown blockchain request type ${JSON.stringify(evt)}`
+        });
+      }
+    }
+  });
+}
 
 // Set up to receive information about which blockchain system to use.
 // The signal from the blockchainDataEmitter will let the downstream system
 // choose and also inform us heore of the choice.
 blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
-    if (e.selection == 0) {
+    if (e.selection == FAKE_BLOCKCHAIN_ID) {
       // Simulator selected
       console.log("simulator blockchain selected");
       fakeBlockchainInfo.startMonitoring(e.uniqueId);
+      connectSimulatorBlockchain();
     }
   }
 });

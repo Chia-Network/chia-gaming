@@ -1,10 +1,6 @@
 import { PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, WatchReport, BlockchainReport, InternalBlockchainInterface } from '../types/ChiaGaming';
-import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
+import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { Observable, NextObserver } from 'rxjs';
-
-async function empty() {
-  return {};
-}
 
 function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   for (var i = 0; i < new_report.created_watched.length; i++) {
