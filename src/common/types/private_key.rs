@@ -67,6 +67,14 @@ impl PrivateKey {
         ))
     }
 
+    pub fn from_slice(slice: &[u8]) -> Result<PrivateKey, Error> {
+        let mut bytes: [u8; 32] = [0; 32];
+        for (i, b) in slice.iter().enumerate() {
+            bytes[i % 32] = *b;
+        }
+        PrivateKey::from_bytes(&bytes)
+    }
+
     pub fn to_bls(&self) -> &chia_bls::SecretKey {
         &self.0
     }
@@ -85,8 +93,7 @@ impl Serialize for PrivateKey {
     where
         S: Serializer,
     {
-        let bytes = self.bytes();
-        serializer.serialize_bytes(&bytes)
+        hex::encode(&self.bytes()).serialize(serializer)
     }
 }
 
@@ -95,15 +102,8 @@ impl<'de> Deserialize<'de> for PrivateKey {
     where
         D: Deserializer<'de>,
     {
-        let b = SerdeByteConsumer;
-        let bytes = deserializer.deserialize_bytes(b);
-        let mut fixed_bytes: [u8; 32] = [0; 32];
-        for v in bytes.into_iter().take(1) {
-            for (i, b) in v.into_iter().enumerate() {
-                fixed_bytes[i] = b;
-            }
-        }
-        PrivateKey::from_bytes(&fixed_bytes)
-            .map_err(|e| serde::de::Error::custom(format!("couldn't make pubkey: {e:?}")))
+        let st = String::deserialize(deserializer)?;
+        let slice = hex::decode(&st).unwrap();
+        Ok(PrivateKey::from_slice(&slice).unwrap())
     }
 }

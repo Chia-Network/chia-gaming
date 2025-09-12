@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, GameStartInfoInterface,
@@ -234,7 +235,7 @@ pub trait WalletSpendInterface {
     fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error>;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
@@ -539,9 +540,11 @@ pub struct GameFactory {
     pub program: Rc<Program>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PotatoHandlerInit {
     pub have_potato: bool,
     pub private_keys: ChannelHandlerPrivateKeys,
+    #[serde(with = "any_key_map")]
     pub game_types: BTreeMap<GameType, GameFactory>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,

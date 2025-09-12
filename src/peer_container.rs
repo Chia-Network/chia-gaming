@@ -6,6 +6,9 @@ use clvm_traits::ToClvm;
 use log::debug;
 use rand::Rng;
 
+use serde::{Serialize, Deserialize};
+use serde_json_any_key::*;
+
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
@@ -39,11 +42,11 @@ pub trait MessagePeerQueue {
     fn get_unfunded_offer(&self) -> Option<SpendBundle>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct WatchEntry {
     pub timeout_blocks: Timeout,
     pub timeout_at: Option<u64>,
-    pub name: Option<&'static str>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -265,8 +268,10 @@ pub trait GameCradle {
     ) -> Result<PuzzleHash, Error>;
 }
 
+#[derive(Serialize, Deserialize)]
 struct SynchronousGameCradleState {
     current_height: u64,
+    #[serde(with = "any_key_map")]
     watching_coins: HashMap<CoinString, WatchEntry>,
 
     is_initiator: bool,
@@ -317,7 +322,7 @@ impl WalletSpendInterface for SynchronousGameCradleState {
             WatchEntry {
                 timeout_at: Some(timeout.to_u64() + self.current_height),
                 timeout_blocks: timeout.clone(),
-                name,
+                name: name.map(|s| s.to_string()),
             },
         );
 
@@ -333,6 +338,7 @@ impl WalletSpendInterface for SynchronousGameCradleState {
 
 /// A game cradle that operates synchronously.  It can be composed with a game cradle that
 /// operates message pipes to become asynchronous.
+#[derive(Serialize, Deserialize)]
 pub struct SynchronousGameCradle {
     state: SynchronousGameCradleState,
     peer: PotatoHandler,

@@ -9,7 +9,8 @@ use clvmr::{run_program, Allocator, NodePtr};
 use log::debug;
 use rand::Rng;
 
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Serializer, Deserialize, Deserializer};
+use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
@@ -23,7 +24,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
     GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, Timeout,
+    Sha256tree, Spend, SpendBundle, Timeout
 };
 use crate::utils::proper_list;
 
@@ -93,6 +94,7 @@ pub struct PotatoHandler {
     channel_initiation_transaction: Option<SpendBundle>,
     channel_finished_transaction: Option<SpendBundle>,
 
+    #[serde(with = "any_key_map")]
     game_types: BTreeMap<GameType, GameFactory>,
 
     private_keys: ChannelHandlerPrivateKeys,

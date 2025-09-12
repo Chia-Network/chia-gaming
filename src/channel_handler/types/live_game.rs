@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use log::debug;
 
-use serde::{Serialize, Serializer, Deserialize, Deserializer};
+use serde::{Serialize, Deserialize};
 
 use crate::channel_handler::types::Evidence;
 use crate::channel_handler::ReadableMove;

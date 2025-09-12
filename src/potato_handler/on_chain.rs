@@ -7,7 +7,8 @@ use rand::Rng;
 
 use log::debug;
 
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Serializer, Deserialize, Deserializer};
+use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
     AcceptTransactionState, CoinSpentInformation, OnChainGameState, ReadableMove,
@@ -15,7 +16,7 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
-    SpendBundle, Timeout,
+    SpendBundle, Timeout
 };
 use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
@@ -30,6 +31,7 @@ pub struct OnChainPotatoHandler {
     channel_timeout: Timeout,
     player_ch: ChannelHandler,
     game_action_queue: VecDeque<GameAction>,
+    #[serde(with = "any_key_map")]
     game_map: HashMap<CoinString, OnChainGameState>,
 }
 

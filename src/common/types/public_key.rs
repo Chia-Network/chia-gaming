@@ -20,8 +20,7 @@ impl Serialize for PublicKey {
     where
         S: Serializer,
     {
-        let bytes = self.bytes();
-        serializer.serialize_bytes(&bytes)
+        hex::encode(&self.bytes()).serialize(serializer)
     }
 }
 
@@ -30,16 +29,9 @@ impl<'de> Deserialize<'de> for PublicKey {
     where
         D: Deserializer<'de>,
     {
-        let b = SerdeByteConsumer;
-        let bytes = deserializer.deserialize_bytes(b);
-        let mut fixed_bytes: [u8; 48] = [0; 48];
-        for v in bytes.into_iter().take(1) {
-            for (i, b) in v.into_iter().enumerate() {
-                fixed_bytes[i] = b;
-            }
-        }
-        PublicKey::from_bytes(fixed_bytes)
-            .map_err(|e| serde::de::Error::custom(format!("couldn't make pubkey: {e:?}")))
+        let st = String::deserialize(deserializer)?;
+        let slice = hex::decode(&st).unwrap();
+        Ok(PublicKey::from_slice(&slice).unwrap())
     }
 }
 
