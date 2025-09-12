@@ -134,7 +134,15 @@ async function initWasmBlobWrapper(blockchainInterface: InternalBlockchainInterf
     const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
     // Ensure that each user has a wallet.
     await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {method: "POST"});
-    let wbw = new WasmBlobWrapper(blockchainInterface, uniqueId, amount, iStarted, doInternalLoadWasm, fetchHex, peer_conn);
+    let wbw = new WasmBlobWrapper({
+        blockchain: blockchainInterface,
+        uniqueId,
+        amount,
+        iStarted,
+        doInternalLoadWasm,
+        fetchHex,
+        peer_conn
+    });
     let ob = wbw.getObservable();
     console.log("WasmBlobWrapper Observable: ", ob);
     let wwo = Object.assign({}, WholeWasmObject);
