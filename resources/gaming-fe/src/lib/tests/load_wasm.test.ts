@@ -44,6 +44,10 @@ class WasmBlobWrapperAdapter {
         this.blob.kickSystem(2);
     }
 
+    make_move(move: any) {
+        this.blob?.makeMove(move);
+    }
+
     deliver_message(msg: string) {
         this.blob?.deliverMessage(msg);
     }
@@ -80,6 +84,9 @@ function wait(msec: number): Promise<void> {
 
 async function action_with_messages(blockchainInterface: ChildFrameBlockchainInterface, cradle1: WasmBlobWrapperAdapter, cradle2: WasmBlobWrapperAdapter) {
     let count = 0;
+    let gids = [[], []];
+    let move = [0, 0];
+    let myTurn = [false, false];
     let cradles = [cradle1, cradle2];
 
     blockchainInterface.getObservable().subscribe({
@@ -100,14 +107,24 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
         cradle.getObservable().subscribe({
             next: (evt) => {
                 console.log("WasmBlobWrapper Event: ", evt);
-                if( evt.setGameConnectionState && evt.setGameConnectionState.stateIdentifier === "running") {
+                if (evt.setGameConnectionState && evt.setGameConnectionState.stateIdentifier === "running") {
                     evt_results[index] = true;
+                }
+
+                if (evt.setGids) {
+                    gids[index] = evt.setGids;
+                }
+                if (evt.setMove) {
+                    move[index] = evt.setMove;
+                }
+                if (evt.setMyTurn) {
+                    myTurn[index] = evt.setMyTurn;
                 }
             }
         })
     });
 
-    while (!all_handshaked(cradles)) {
+    async function process() {
         for (let c = 0; c < 2; c++) {
             let outbound = cradles[c].outbound_messages();
             for (let i = 0; i < outbound.length; i++) {
@@ -118,11 +135,39 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
         await wait(10);
     }
 
+    while (!all_handshaked(cradles) && count++ < 500) {
+        await process();
+    }
+
     // If any evt_results are false, that means we did not get a setState msg from that cradle
     if (!evt_results.every((x) => x)) {
         console.log('got running:', evt_results);
         throw("we expected running state in both cradles");
     }
+
+    while (!gids.every((x) => x.length == 0) && count++ < 1000) {
+        await process();
+    }
+
+    if (!gids.every((x) => x.length > 0)) {
+        throw "we expected to have games started";
+    }
+
+    async function makeMove(i: number, hex: string) {
+        cradles[i].make_move(hex);
+        const newCount = count + 500;
+        const expectedMove = move[i] + 1;
+        while (move[i] < expectedMove && !myTurn[i ^ 1] && count++ < newCount) {
+            await process();
+        }
+
+        if (count >= newCount) {
+            throw `time expired making move ${i} expecting to receive move ${expectedMove}`;
+        }
+    }
+
+    await makeMove(1, '80');
+    await makeMove(0, '80');
 }
 
 async function fetchHex(key: string): Promise<string> {

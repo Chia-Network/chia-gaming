@@ -68,6 +68,7 @@ export class WasmBlobWrapper {
   constructor (config: WasmBlobConfig) {
     const { sendMessage } = config.peer_conn;
 
+    this.serialized = config.serialized;
     this.uniqueId = config.uniqueId;
     this.rngSeed = this.uniqueId.substr(0, 8);
     this.sendMessage = sendMessage;
@@ -92,7 +93,6 @@ export class WasmBlobWrapper {
     this.rxjsMessageSingleon = new Observable<any>((emitter) => {
         this.rxjsEmitter = emitter;
     });
-    this.serialized = config.serialized;
   }
 
   getObservable() {
@@ -439,6 +439,7 @@ export class WasmBlobWrapper {
       result.setGameIds = this.gameIds;
     }
     result.setMyTurn = !this.iStarted;
+    result.setGids = this.gameIds;
     return empty().then(() => result);
   }
 
