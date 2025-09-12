@@ -77,6 +77,7 @@ export interface WasmConnection {
   // System
   init: (print: any) => any;
   create_game_cradle: (config: any) => number;
+  create_serialized_game: (json: any, new_seed: string) => number;
   deposit_file: (name: string, data: string) => any;
 
   // Blockchain
@@ -101,6 +102,7 @@ export interface WasmConnection {
   shut_down: (cid: number) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
   idle: (cid: number, callbacks: any) => any;
+  serialize_cradle: (cid: number) => any;
 
   // Misc
   chia_identity: (seed: string) => any;
@@ -112,6 +114,18 @@ export interface CoinOutput {
   amount: number;
 }
 
+export interface ChiaGameConfig {
+  cradle_id?: number;
+
+  wasm: WasmConnection;
+  env: any;
+  seed: string;
+  identity: IChiaIdentity;
+  have_potato: boolean;
+  my_contribution: number;
+  their_contribution: number;
+}
+
 export class ChiaGame {
   wasm: WasmConnection;
   waiting_messages: Array<string>;
@@ -119,23 +133,29 @@ export class ChiaGame {
   cradle: number;
   have_potato: boolean;
 
-  constructor(wasm: WasmConnection, env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number) {
-    this.wasm = wasm;
+  constructor(config: ChiaGameConfig) {
+    this.wasm = config.wasm;
     this.waiting_messages = [];
-    this.private_key = identity.private_key;
-    this.have_potato = have_potato;
-    this.cradle = wasm.create_game_cradle({
-      seed: seed,
-      game_types: env.game_types,
-      identity: identity.private_key,
-      have_potato: have_potato,
-      my_contribution: {amt: my_contribution},
-      their_contribution: {amt: their_contribution},
-      channel_timeout: env.timeout,
-      unroll_timeout: env.unroll_timeout,
-      reward_puzzle_hash: identity.puzzle_hash,
+    this.private_key = config.identity.private_key;
+    this.have_potato = config.have_potato;
+
+    if (config.cradle_id) {
+      this.cradle = config.cradle_id;
+      return;
+    }
+
+    this.cradle = this.wasm.create_game_cradle({
+      seed: config.seed,
+      game_types: config.env.game_types,
+      identity: config.identity.private_key,
+      have_potato: config.have_potato,
+      my_contribution: {amt: config.my_contribution},
+      their_contribution: {amt: config.their_contribution},
+      channel_timeout: config.env.timeout,
+      unroll_timeout: config.env.unroll_timeout,
+      reward_puzzle_hash: config.identity.puzzle_hash,
     });
-    console.log(`constructed ${have_potato} cradle ${this.cradle}`);
+    console.log(`constructed ${config.have_potato} cradle ${this.cradle}`);
   }
 
   start_games(initiator: boolean, game: any): string[] {

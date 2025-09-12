@@ -1,4 +1,4 @@
-import { PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, WatchReport, BlockchainReport, InternalBlockchainInterface } from '../types/ChiaGaming';
+import { PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, WatchReport, BlockchainReport, InternalBlockchainInterface, ChiaGameConfig } from '../types/ChiaGaming';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { Observable, NextObserver } from 'rxjs';
 
@@ -14,7 +14,27 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   }
 }
 
+export interface WasmBlobSerializedConfig {
+  cradle: any;
+
+  uniqueId: string;
+  amount: number;
+  iStarted: boolean;
+}
+
+export interface WasmBlobConfig {
+  serialized?: WasmBlobSerializedConfig;
+  blockchain: InternalBlockchainInterface;
+  uniqueId: string;
+  amount: number;
+  iStarted: boolean;
+  doInternalLoadWasm: () => Promise<ArrayBuffer>;
+  fetchHex: (key: string) => Promise<string>;
+  peer_conn: PeerConnectionResult;
+}
+
 export class WasmBlobWrapper {
+  serialized: any | undefined;
   amount: number;
   wc: WasmConnection | undefined;
   rngSeed: string;
@@ -45,24 +65,17 @@ export class WasmBlobWrapper {
   rxjsEmitter: NextObserver<any> | undefined;
   blockchain: InternalBlockchainInterface;
 
-  constructor (blockchain: InternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean,
-        doInternalLoadWasm: () => Promise<ArrayBuffer>,
-        fetchHex: (key: string) => Promise<string>, peer_conn: PeerConnectionResult
-    ) {
-      const deliverMessage = (msg: string) => {
-      this.deliverMessage(msg);
-    };
+  constructor (config: WasmBlobConfig) {
+    const { sendMessage } = config.peer_conn;
 
-    const { sendMessage } = peer_conn;
-
-    this.uniqueId = uniqueId;
+    this.uniqueId = config.uniqueId;
     this.rngSeed = this.uniqueId.substr(0, 8);
     this.sendMessage = sendMessage;
-    this.amount = amount;
+    this.amount = config.amount;
     this.currentBlock = 0;
     this.handlingMessage = false;
     this.handshakeDone = false;
-    this.iStarted = iStarted;
+    this.iStarted = config.iStarted;
     this.gameIds = [];
     this.myTurn = false;
     this.storedMessages = [];
@@ -73,12 +86,13 @@ export class WasmBlobWrapper {
     this.opponentHand = [];
     this.finished = false;
     this.qualifyingEvents = 0;
-    this.fetchHex = fetchHex;
-    this.doInternalLoadWasm = doInternalLoadWasm;
-    this.blockchain = blockchain;
+    this.fetchHex = config.fetchHex;
+    this.doInternalLoadWasm = config.doInternalLoadWasm;
+    this.blockchain = config.blockchain;
     this.rxjsMessageSingleon = new Observable<any>((emitter) => {
         this.rxjsEmitter = emitter;
     });
+    this.serialized = config.serialized;
   }
 
   getObservable() {
@@ -339,7 +353,25 @@ export class WasmBlobWrapper {
           timeout: 100,
           unroll_timeout: 100
         };
-        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount);
+
+        let gameConfig: ChiaGameConfig = {
+          wasm: wc,
+          env,
+          seed: this.rngSeed,
+          identity,
+          have_potato: this.iStarted,
+          my_contribution: this.amount,
+          their_contribution: this.amount
+        };
+
+        if (this.serialized) {
+          gameConfig.cradle_id = wc?.create_serialized_game(
+            this.serialized,
+            this.rngSeed
+          );
+        }
+
+        this.cradle = new ChiaGame(gameConfig);
         this.storedMessages.forEach((m) => {
           this.cradle?.deliver_message(m);
         });
