@@ -21,6 +21,7 @@ function preset_file(name: string) {
 }
 
 class WasmBlobWrapperAdapter {
+    config: any | undefined;
     blob: WasmBlobWrapper | undefined;
     waiting_messages: Array<string>;
 
@@ -39,7 +40,8 @@ class WasmBlobWrapperAdapter {
         return this.blob.getObservable();
     }
 
-    set_blob(blob: WasmBlobWrapper) {
+    set_blob(config: any, blob: WasmBlobWrapper) {
+        this.config = config;
         this.blob = blob;
         this.blob.kickSystem(2);
     }
@@ -50,6 +52,15 @@ class WasmBlobWrapperAdapter {
 
     deliver_message(msg: string) {
         this.blob?.deliverMessage(msg);
+    }
+
+    serialize(): any {
+      this.blob?.serialize();
+    }
+
+    create_from_serialized(serialized: any): any {
+        this.config.serialized = serialized;
+        this.blob = new WasmBlobWrapper(this.config);
     }
 
     handshaked(): boolean {
@@ -168,18 +179,25 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
 
     await makeMove(1, '80');
     await makeMove(0, '80');
+
+    const saved = cradles[0].serialize();
+    console.log(saved);
+    cradles[0].create_from_serialized(saved);
+
+    await makeMove(1, '55');
+    await makeMove(0, '81aa');
 }
 
 async function fetchHex(key: string): Promise<string> {
     return fs.readFileSync(rooted(key), 'utf8');
 }
 
-async function initWasmBlobWrapper(blockchainInterface: InternalBlockchainInterface, uniqueId: string, iStarted: boolean, peer_conn: PeerConnectionResult) {
+async function initWasmBlobWrapper(blockchainInterface: InternalBlockchainInterface, uniqueId: string, iStarted: boolean, peer_conn: PeerConnectionResult): Promise<WasmBlobWrapperAdapter> {
     const amount = 100;
     const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
     // Ensure that each user has a wallet.
     await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {method: "POST"});
-    let wbw = new WasmBlobWrapper({
+    let config = {
         blockchain: blockchainInterface,
         uniqueId,
         amount,
@@ -187,14 +205,17 @@ async function initWasmBlobWrapper(blockchainInterface: InternalBlockchainInterf
         doInternalLoadWasm,
         fetchHex,
         peer_conn
-    });
+    };
+    let wbw = new WasmBlobWrapper(config);
     let ob = wbw.getObservable();
     console.log("WasmBlobWrapper Observable: ", ob);
     let wwo = Object.assign({}, WholeWasmObject);
     wwo.init = () => {};
     wbw.loadWasm(() => {}, wwo);
 
-    return wbw;
+    const cradle1 = new WasmBlobWrapperAdapter();
+    cradle1.set_blob(config, wbw);
+    return cradle1;
 }
 
 it('loads', async () => {
@@ -205,19 +226,15 @@ it('loads', async () => {
       uniqueId: 'block-producer'
     });
 
-    const cradle1 = new WasmBlobWrapperAdapter();
     let peer_conn1 = { sendMessage: (message: string) => {
         cradle1.add_outbound_message(message);
     } };
-    let wasm_blob1 = await initWasmBlobWrapper(blockchainInterface, "a11ce000", true, peer_conn1);
-    cradle1.set_blob(wasm_blob1);
+    let cradle1 = await initWasmBlobWrapper(blockchainInterface, "a11ce000", true, peer_conn1);
 
-    const cradle2 = new WasmBlobWrapperAdapter();
     let peer_conn2 = { sendMessage: (message: string) => {
         cradle2.add_outbound_message(message);
     } };
-    let wasm_blob2 = await initWasmBlobWrapper(blockchainInterface, "b0b77777", false, peer_conn2);
-    cradle2.set_blob(wasm_blob2);
+    let cradle2 = await initWasmBlobWrapper(blockchainInterface, "b0b77777", false, peer_conn2);
 
     await action_with_messages(blockchainInterface, cradle1, cradle2);
 }, 15 * 1000);

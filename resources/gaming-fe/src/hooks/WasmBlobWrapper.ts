@@ -95,6 +95,10 @@ export class WasmBlobWrapper {
     });
   }
 
+  serialize(): any {
+    return this.cradle?.serialize();
+  }
+
   getObservable() {
     return this.rxjsMessageSingleon;
   }

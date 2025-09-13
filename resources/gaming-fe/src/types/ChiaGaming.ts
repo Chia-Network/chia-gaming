@@ -203,6 +203,10 @@ export class ChiaGame {
   block_data(block_number: number, block_data: WatchReport) {
     this.wasm.new_block(this.cradle, block_number, block_data.created_watched, block_data.deleted_watched, block_data.timed_out);
   }
+
+  serialize(): any {
+    return this.wasm.serialize_cradle(this.cradle);
+  }
 }
 
 export interface WatchReport {
