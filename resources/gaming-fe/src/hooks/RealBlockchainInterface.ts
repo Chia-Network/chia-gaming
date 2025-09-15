@@ -13,6 +13,8 @@ function wsUrl(baseurl: string) {
   return `${url_with_new_method}/ws`;
 }
 
+const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
+
 export class RealBlockchainInterface {
   baseUrl: string;
   fingerprint?: string;
@@ -280,7 +282,10 @@ export function connectRealBlockchain(baseUrl: string) {
 
           // Wait a while to try the request again.
           await new Promise((resolve, reject) => {
-            setTimeout(resolve, 30000);
+            setTimeout(
+              resolve,
+              PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED
+            );
           });
         }
       } else {
