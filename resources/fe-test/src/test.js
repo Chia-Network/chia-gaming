@@ -56,6 +56,12 @@ async function clickMakeMove(driver, who) {
 async function firefox_start_and_first_move(driver, baseUrl) {
   await driver.get(baseUrl);
 
+  await selectSimulator(driver);
+
+  await driver.wait(until.elementLocated(byAttribute("id", "subframe")));
+
+  await driver.switchTo().frame('subframe');
+
   console.log('Wait for handshake on bob side');
   await driver.wait(until.elementLocated(byAttribute("aria-label", "waiting-state")));
 
@@ -101,6 +107,8 @@ describe("Basic element tests", function() {
     // Load the login page
     await driver.get(baseUrl);
 
+    await selectSimulator(driver);
+
     // Test chat loopback
     // let chatEntry = await driver.wait(until.elementLocated(byElementAndAttribute("input", "id", "«r0»")));
     // await chatEntry.sendKeys("test?");
@@ -114,6 +122,8 @@ describe("Basic element tests", function() {
 
     // Try generating a room.
     await wait(driver, 5.0);
+
+    await driver.switchTo().frame('subframe');
 
     console.log('waiting for generate button');
     let generateRoomButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "generate-room")));

@@ -29,6 +29,7 @@
     "@walletconnect/types": "^2.20.2",
     "@web3modal/standalone": "^2.4.3",
     "axios": "^1.9.0",
+    "bech32m-chia": "^1.0.2",
     "chia-utils": "^1.0.10",
     "clvm-lib": "^1.0.1",
     "cors": "^2.8.5",
@@ -41,6 +42,7 @@
     "node-fetch": "^3.3.2",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
+    "reconnecting-websocket": "^4.4.0",
     "rxjs": "^7.8.2",
     "socket.io": "^4.7.2",
     "socket.io-client": "^4.8.1",
@@ -91,7 +93,9 @@
   },
   "jest": {
     "preset": "ts-jest",
-    "testMatch": ["<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"],
+    "testMatch": [
+      "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"
+    ],
     "moduleDirectories": [
       "node_modules",
       "node-pkg",
