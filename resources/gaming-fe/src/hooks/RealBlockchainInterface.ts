@@ -1,11 +1,13 @@
 import { Subject } from 'rxjs';
 // @ts-ignore
-import { bech32m } from 'bech32m-chia';
+import bech32 from 'bech32-buffer';
 import ReconnectingWebSocket from 'reconnecting-websocket';
 import { CoinOutput, WatchReport, BlockchainReport, SelectionMessage } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
-import { generateOrRetrieveUniqueId, empty } from '../util';
+import { generateOrRetrieveUniqueId, empty, toHexString, toUint8 } from '../util';
+import { rpc } from '../hooks/JsonRpcContext';
+
 function wsUrl(baseurl: string) {
   const url_with_new_method = baseurl.replace('http', 'ws');
   return `${url_with_new_method}/ws`;
@@ -59,7 +61,7 @@ export class RealBlockchainInterface {
 
   does_initial_spend() {
     return (target: string, amt: number) => {
-      const targetXch = bech32m.encode(target, 'xch');
+      const targetXch = bech32.encode('xch', toUint8(target), 'bech32m');
       return this.push_request({
         method: 'create_spendable',
         target,
@@ -208,30 +210,51 @@ export const realBlockchainInfo: RealBlockchainInterface = new RealBlockchainInt
 
 export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(realBlockchainInfo.getObservable());
 
-export function connectRealBlockchain(baseUrl: string, rpc: any) {
+export function connectRealBlockchain(baseUrl: string) {
   blockchainConnector.getOutbound().subscribe({
     next: async (evt: BlockchainOutboundRequest) => {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
       if (initialSpend) {
         try {
-          const currentAddress = await rpc.getCurrentAddress({});
-          const fromPuzzleHash = bech32m.decode(currentAddress.targetXch);
+          const currentAddress = await rpc.getCurrentAddress({
+            walletId: 1
+          });
+          console.log('currentAddress', currentAddress);
+          const fromPuzzleHash = toHexString(bech32.decode(currentAddress).data as any);
           const result = await rpc.sendTransaction({
             walletId: 1, // XXX
             amount: initialSpend.amount,
             fee: 0,
-            address: currentAddress.targetXch,
+            address: bech32.encode('xch', toUint8(initialSpend.target), 'bech32m'),
             waitForConfirmation: false
           });
+
+          let resultCoin = undefined;
+          result.transaction.additions.forEach((c) => {
+            console.log('look at coin', initialSpend.target, c);
+            if (c.puzzleHash == '0x' + initialSpend.target && c.amount.toString() == initialSpend.amount.toString()) {
+              resultCoin = c;
+            }
+          });
+
+          if (!resultCoin) {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: `no corresponding coin created in ${JSON.stringify(result)}`
+            });
+            return;
+          }
+
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
-            initialSpend: { coin: result, fromPuzzleHash }
+            initialSpend: { coin: resultCoin as any, fromPuzzleHash }
           });
         } catch (e: any) {
+          console.log('catch from rpc', evt, ':', e);
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
-            error: e.toString()
+            error: JSON.stringify(e)
           });
         }
       } else if (transaction) {
@@ -249,8 +272,10 @@ export function connectRealBlockchain(baseUrl: string, rpc: any) {
           // Return if the result was not unknown unspent, in which case we
           // retry.
           if (!j.error || j.error.indexOf("UNKNOWN_UNSPENT") === -1) {
-            let result = Object.assign({}, j);
-            result.responseId = evt.requestId;
+            let result = {
+              responseId: evt.requestId,
+              transaction: Object.assign({}, j)
+            };
             blockchainConnector.replyEmitter(result);
             return;
           }
