@@ -5,8 +5,9 @@ import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, po
 import { useInterval } from '../useInterval';
 import { v4 as uuidv4 } from 'uuid';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { ChildFrameBlockchainInterface, blockchainDataEmitter } from './useFullNode';
-import { GAME_SERVICE_URL } from '../settings';
+import { ChildFrameBlockchainInterface, BlockchainOutboundRequest, blockchainConnector, connectSimulatorBlockchain } from './ChildFrameBlockchainInterface';
+import { blockchainDataEmitter, fakeBlockchainInfo } from './FakeBlockchainInterface';
+import { BLOCKCHAIN_SERVICE_URL, GAME_SERVICE_URL } from '../settings';
 
 let blobSingleton: any = null;
 
@@ -35,10 +36,14 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
   }
 
   // XXX This should move to the parent frame
+  console.log('set up blockchain data emitter');
   blockchainDataEmitter.select({
     selection: 0,
     uniqueId
   });
+
+  // XXX This will move to the parent frame when it exists.
+  connectSimulatorBlockchain();
 
   blobSingleton = new WasmBlobWrapper(
     blockchain,
@@ -70,7 +75,7 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
   }, []);
 */
 
-export function useWasmBlob() {
+export function useWasmBlob(uniqueId: string) {
   const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
   const [uniqueWalletConnectionId, setUniqueWalletConnectionId] = useState(uuidv4());
@@ -80,7 +85,6 @@ export function useWasmBlob() {
 
   const searchParams = getSearchParams();
   const token = searchParams.token;
-  const uniqueId = searchParams.uniqueId;
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
   const [playerHand, setPlayerHand] = useState<number[][]>([]);

@@ -1,9 +1,8 @@
 import { Observable } from 'rxjs';
-import { WatchReport, ExternalBlockchainInterface, ToggleEmitter, BlockchainReport, InternalBlockchainInterface, DoInitialSpendResult, SelectionMessage } from '../types/ChiaGaming';
-import { generateOrRetrieveUniqueId } from '../util';
+import { ToggleEmitter, ExternalBlockchainInterface, InternalBlockchainInterface, BlockchainReport, WatchReport, SelectionMessage } from '../types/ChiaGaming';
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
-  console.log('requestBlockData', block_number);
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
     method: 'POST'
   }).then((res) => res.json()).then((res) => {
@@ -14,7 +13,6 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
         }, 100);
       });
     }
-    console.log('requestBlockData, got', res);
     const converted_res: WatchReport = {
       created_watched: res.created,
       deleted_watched: res.deleted,
@@ -50,6 +48,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   startMonitoring(uniqueId: string) {
+    console.log('startMonitoring', uniqueId);
     this.upstream.getOrRequestToken(uniqueId).then(() => {
       fetch(`${this.baseUrl}/get_peak`, {method: "POST"}).then(res => res.json()).then(peak => {
         this.setNewPeak(peak);
@@ -126,7 +125,6 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       this.max_block = peak;
     }
 
-    console.log('FakeBlockchainInterface, peaks', this.at_block, '/', this.max_block);
     return this.internalNextBlock();
   }
 
@@ -170,31 +168,12 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 }
 
-const fakeBlockchainInfo = new FakeBlockchainInterface("http://localhost:5800");
+export const fakeBlockchainInfo = new FakeBlockchainInterface(BLOCKCHAIN_SERVICE_URL);
 export const blockchainDataEmitter = new ToggleEmitter<BlockchainReport>([fakeBlockchainInfo.getObservable()]);
 
-export class ChildFrameBlockchainInterface {
-  externalBlockchainInterface: FakeBlockchainInterface;
-
-  constructor() {
-    this.externalBlockchainInterface = new FakeBlockchainInterface("http://localhost:5800");
-  }
-
-  do_initial_spend(uniqueId: string, target: string, amt: number): Promise<DoInitialSpendResult> {
-    return this.externalBlockchainInterface.do_initial_spend(uniqueId, target, amt);
-  }
-
-  spend(cvt: (blob: string) => any, spend: string): Promise<string> {
-    return this.externalBlockchainInterface.spend(cvt, spend);
-  }
-
-  getObservable() {
-    return blockchainDataEmitter.getObservable();
-  }
-}
 // Set up to receive information about which blockchain system to use.
 // The signal from the blockchainDataEmitter will let the downstream system
-// choose and also inform us here of the choice.
+// choose and also inform us heore of the choice.
 blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == 0) {

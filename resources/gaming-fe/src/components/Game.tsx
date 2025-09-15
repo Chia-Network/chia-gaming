@@ -17,21 +17,20 @@ import OpponentSection from "./OpponentSection";
 import GameEndPlayer from "./GameEndPlayer";
 import GameLog from "./GameLog";
 import WaitingScreen from "./WaitingScreen";
-import LobbyScreen from "./LobbyScreen";
 import { useWalletConnect } from "../hooks/WalletConnectContext";
 import { useRpcUi } from "../hooks/useRpcUi";
 import useDebug from "../hooks/useDebug";
 import { useWasmBlob } from "../hooks/useWasmBlob";
 import Debug from "./Debug";
-import { getGameSelection, getSearchParams } from '../util';
+import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 
 const Game: React.FC = () => {
-  const gameSelection = getGameSelection();
   const { client, session, pairings, connect, disconnect } = useWalletConnect();
   const [command, setCommand] = useState(0);
   const { commands } = useRpcUi();
   const commandEntries = Object.entries(commands);
   const selectedCommandEntry = commandEntries[command];
+  const uniqueId = generateOrRetrieveUniqueId();
   const {
     error,
     gameConnectionState,
@@ -46,7 +45,7 @@ const Game: React.FC = () => {
     setCardSelections,
     outcome,
     stopPlaying
-  } = useWasmBlob();
+  } = useWasmBlob(uniqueId);
 
   const handleConnectWallet = () => {
     if (!client) throw new Error("WalletConnect is not initialized.");
@@ -63,25 +62,6 @@ const Game: React.FC = () => {
   const { wcInfo, setWcInfo } = useDebug();
 
   // All early returns need to be after all useEffect, etc.
-  const params = getSearchParams();
-  if (!params.lobby && !params.iStarted) {
-    fetch("/urls").then((res) => {return res.json();}).then((urls) => {
-      console.log('navigate to lobby', urls);
-      if (gameSelection) {
-        window.location.href = `${urls.tracker}&token=${gameSelection.token}`;
-      } else {
-        window.location.href = urls.tracker;
-      }
-    });
-    return (<div/>);
-  }
-
-  if (!params.iStarted) {
-    return (
-      <LobbyScreen />
-    );
-  }
-
   if (error) {
     return (<div>{error}</div>);
   }
