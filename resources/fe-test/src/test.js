@@ -58,6 +58,8 @@ async function firefox_start_and_first_move(driver, baseUrl) {
 
   await selectSimulator(driver);
 
+  await driver.wait(until.elementLocated(byAttribute("id", "subframe")));
+
   await driver.switchTo().frame('subframe');
 
   console.log('Wait for handshake on bob side');
