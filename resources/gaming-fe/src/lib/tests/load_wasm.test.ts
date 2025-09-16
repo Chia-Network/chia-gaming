@@ -50,12 +50,16 @@ class WasmBlobWrapperAdapter {
         this.blob?.makeMove(move);
     }
 
+    set_card_selections(mask: number) {
+        this.blob?.setCardSelections(mask);
+    }
+
     deliver_message(msg: string) {
         this.blob?.deliverMessage(msg);
     }
 
     serialize(): any {
-      this.blob?.serialize();
+        return this.blob?.serialize();
     }
 
     create_from_serialized(serialized: any): any {
@@ -98,6 +102,10 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
     let gids = [[], []];
     let move = [0, 0];
     let myTurn = [false, false];
+    let serializationWorked: () => void = () => { };
+    let serialized = new Promise((resolve) => {
+      serializationWorked = () => resolve(null);
+    });
     let cradles = [cradle1, cradle2];
 
     blockchainInterface.getObservable().subscribe({
@@ -117,19 +125,23 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
     cradles.forEach((cradle, index) => {
         cradle.getObservable().subscribe({
             next: (evt) => {
-                console.log("WasmBlobWrapper Event: ", evt);
+                console.log("WasmBlobWrapper Event:", index, evt);
                 if (evt.setGameConnectionState && evt.setGameConnectionState.stateIdentifier === "running") {
                     evt_results[index] = true;
                 }
-
                 if (evt.setGids) {
                     gids[index] = evt.setGids;
                 }
-                if (evt.setMove) {
-                    move[index] = evt.setMove;
+                if (evt.setMoveNumber !== undefined) {
+                    move[index] = evt.setMoveNumber;
                 }
-                if (evt.setMyTurn) {
+                if (evt.setMyTurn !== undefined) {
                     myTurn[index] = evt.setMyTurn;
+                }
+                if (evt.serialized) {
+                    console.log('saved cradle 0', evt.serialized);
+                    cradles[0].create_from_serialized(evt.serialized);
+                    serializationWorked();
                 }
             }
         })
@@ -165,24 +177,41 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
     }
 
     async function makeMove(i: number, hex: string) {
+        if (!myTurn[i]) {
+            throw 'Should be my turn when making a move';
+        }
+
+        console.log('make move', i, hex);
+
+      const nextMove = move[i] + 1;
+
         cradles[i].make_move(hex);
-        const newCount = count + 500;
-        const expectedMove = move[i] + 1;
-        while (move[i] < expectedMove && !myTurn[i ^ 1] && count++ < newCount) {
+
+        const originalCount = count;
+        const newCount = count + 1000;
+
+        function doneMove() {
+            console.log('makeMove', i, hex, 'have', move, myTurn, count, newCount);
+            return (!myTurn[i] && myTurn[i^1]) || (count++ > newCount);
+        }
+
+        while (!doneMove()) {
             await process();
         }
 
         if (count >= newCount) {
-            throw `time expired making move ${i} expecting to receive move ${expectedMove}`;
+            throw `time expired making move ${i} ${hex}`;
         }
     }
 
     await makeMove(1, '80');
     await makeMove(0, '80');
 
-    const saved = cradles[0].serialize();
-    console.log(saved);
-    cradles[0].create_from_serialized(saved);
+    cradles[0].set_card_selections(0x55);
+    cradles[1].set_card_selections(0xaa);
+
+    cradles[0].serialize();
+    await serialized;
 
     await makeMove(1, '55');
     await makeMove(0, '81aa');
@@ -237,4 +266,4 @@ it('loads', async () => {
     let cradle2 = await initWasmBlobWrapper(blockchainInterface, "b0b77777", false, peer_conn2);
 
     await action_with_messages(blockchainInterface, cradle1, cradle2);
-}, 15 * 1000);
+}, 30 * 1000);
