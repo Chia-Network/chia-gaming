@@ -3,6 +3,8 @@ use clvmr::NodePtr;
 use log::debug;
 use rand::Rng;
 
+use serde::{Serialize, Deserialize};
+
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::channel_handler::ChannelHandler;
 use crate::common::constants::CREATE_COIN;
@@ -19,6 +21,7 @@ pub trait ShutdownConditions {
     ) -> Result<NodePtr, Error>;
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct BasicShutdownConditions;
 
 impl ShutdownConditions for BasicShutdownConditions {

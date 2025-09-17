@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
@@ -6,13 +8,15 @@ use log::debug;
 
 use rand::prelude::*;
 
+use serde::{Serialize, Deserialize};
+
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::common::constants::{CREATE_COIN, REM};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_pk, unsafe_sign_partial,
 };
 use crate::common::types::{
-    Aggsig, Amount, Error, IntoErr, Node, PrivateKey, PublicKey, PuzzleHash, Sha256tree,
+    Aggsig, Amount, Error, IntoErr, Node, PrivateKey, Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree,
 };
 
 /// Represents the unroll coin which will come to exist if the channel coin
@@ -42,7 +46,7 @@ use crate::common::types::{
 /// produces new conditions that match the parity criteria.
 ///
 /// XXX TODO: Add time lock
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct UnrollCoin {
     pub started_with_potato: bool,
     // State number for unroll.
@@ -74,9 +78,9 @@ pub fn prepend_rem_conditions<R: Rng>(
 }
 
 impl UnrollCoin {
-    pub fn get_internal_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
+    pub fn get_internal_conditions_for_unroll_coin_spend(&self) -> Result<ProgramRef, Error> {
         if let Some(r) = self.outcome.as_ref() {
-            Ok(r.conditions_without_hash)
+            Ok(r.conditions_without_hash.clone())
         } else {
             Err(Error::StrErr("no default setup".to_string()))
         }
@@ -90,9 +94,9 @@ impl UnrollCoin {
         }
     }
 
-    pub fn get_conditions_for_unroll_coin_spend(&self) -> Result<NodePtr, Error> {
+    pub fn get_conditions_for_unroll_coin_spend(&self) -> Result<ProgramRef, Error> {
         if let Some(r) = self.outcome.as_ref() {
-            Ok(r.conditions)
+            Ok(r.conditions.clone())
         } else {
             Err(Error::StrErr("no default setup".to_string()))
         }
@@ -158,7 +162,7 @@ impl UnrollCoin {
 
         let unroll_puzzle_solution = (
             Node(unroll_inner_puzzle),
-            (Node(self.get_conditions_for_unroll_coin_spend()?), ()),
+            (self.get_conditions_for_unroll_coin_spend()?, ()),
         )
             .to_clvm(env.allocator)
             .into_gen()?;
@@ -175,7 +179,7 @@ impl UnrollCoin {
         &self,
         env: &mut ChannelHandlerEnv<R>,
         inputs: &UnrollCoinConditionInputs,
-    ) -> Result<NodePtr, Error> {
+    ) -> Result<ProgramRef, Error> {
         let their_first_coin = (
             CREATE_COIN,
             (
@@ -213,7 +217,8 @@ impl UnrollCoin {
         }
 
         let result_coins_node = result_coins.to_clvm(env.allocator).into_gen()?;
-        prepend_rem_conditions(env, self.state_number, result_coins_node)
+        let result_node = prepend_rem_conditions(env, self.state_number, result_coins_node)?;
+        Ok(ProgramRef::new(Rc::new(Program::from_nodeptr(env.allocator, result_node)?)))
     }
 
     /// Given new inputs, recompute the state of the unroll coin and store the
@@ -226,7 +231,7 @@ impl UnrollCoin {
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<Aggsig, Error> {
         let unroll_conditions = self.compute_unroll_coin_conditions(env, inputs)?;
-        let conditions_hash = Node(unroll_conditions).sha256tree(env.allocator);
+        let conditions_hash = unroll_conditions.sha256tree(env.allocator);
         let unroll_public_key = private_to_public_key(unroll_private_key);
         let unroll_aggregate_key = unroll_public_key.clone() + their_unroll_coin_public_key.clone();
         debug!("conditions_hash {conditions_hash:?}");
@@ -236,7 +241,7 @@ impl UnrollCoin {
             conditions_hash.bytes(),
         );
         self.outcome = Some(UnrollCoinOutcome {
-            conditions: unroll_conditions,
+            conditions: unroll_conditions.clone(),
             conditions_without_hash: unroll_conditions,
             state_number: inputs.rem_condition_state,
             hash: conditions_hash,
@@ -260,7 +265,7 @@ impl UnrollCoin {
     ) -> Result<bool, Error> {
         // Check the signature of the unroll coin spend.
         let unroll_puzzle_solution = self.get_internal_conditions_for_unroll_coin_spend()?;
-        let unroll_puzzle_solution_hash = Node(unroll_puzzle_solution).sha256tree(env.allocator);
+        let unroll_puzzle_solution_hash = unroll_puzzle_solution.sha256tree(env.allocator);
 
         let aggregate_unroll_signature = signature.clone() + self.get_unroll_coin_signature()?;
         debug!("{} VERIFY: AGGREGATE UNROLL hash {unroll_puzzle_solution_hash:?} {aggregate_unroll_signature:?}", self.started_with_potato);
@@ -282,10 +287,10 @@ pub struct UnrollCoinConditionInputs {
     pub rem_condition_state: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnrollCoinOutcome {
-    pub conditions: NodePtr,
-    pub conditions_without_hash: NodePtr,
+    pub conditions: ProgramRef,
+    pub conditions_without_hash: ProgramRef,
     pub state_number: usize,
     pub hash: PuzzleHash,
     pub signature: Aggsig,

@@ -16,6 +16,8 @@ use rand::prelude::*;
 use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
 
+use serde::{Serialize, Deserialize};
+
 use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo,
@@ -84,6 +86,7 @@ use crate::referee::{RefereeInterface, RefereeMaker};
 /// onto the chain is the most recent 'their move'.  We preserve the ability to
 /// recall and sign this move via timeout_unroll and timeout_stored_signatures
 /// which are updated when we send a move.
+#[derive(Serialize, Deserialize)]
 pub struct ChannelHandler {
     private_keys: ChannelHandlerPrivateKeys,
 

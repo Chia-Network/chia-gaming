@@ -12,8 +12,12 @@ import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector } from './BlockchainConnector';
 import { PARENT_FRAME_BLOCKCHAIN_ID, parentFrameBlockchainInfo } from './ParentFrameBlockchainInfo';
 import { BLOCKCHAIN_SERVICE_URL, GAME_SERVICE_URL } from '../settings';
-
+import { getGameStateInit } from './GameStateInit';
 let blobSingleton: any = null;
+
+async function assignWasmBlob() {
+
+}
 
 function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean) {
   if (blobSingleton) {
@@ -24,7 +28,7 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
     blobSingleton?.deliverMessage(msg);
   };
   const peercon = useGameSocket(deliverMessage, () => {
-    blobSingleton?.kickSystem(2);
+    blobSingleton?.kickSystem(1);
   });
 
   const doInternalLoadWasm = async () => {
@@ -38,15 +42,18 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
     return fetch(fetchUrl).then(wasm => wasm.text());
   }
 
-  blobSingleton = new WasmBlobWrapper(
-    blockchain,
-    uniqueId,
-    amount,
-    iStarted,
-    doInternalLoadWasm,
-    fetchHex,
-    peercon
-  );
+  let gameStateInit = getGameStateInit();
+
+  // let blobSingleton = new WasmBlobWrapper(
+  //   blockchain,
+  //   uniqueId,
+  //   amount,
+  //   iStarted,
+  //   wasmConnection,
+  //   fetchHex,
+  //   peercon,
+  //   identity
+  // );
 
   // This lives in the child frame.
   // We'll connect the required signals.

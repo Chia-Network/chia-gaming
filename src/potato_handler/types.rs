@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use rand::Rng;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, GameStartInfoInterface,
@@ -16,7 +17,7 @@ use crate::common::types::{
 };
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use crate::referee::types::RefereeOnChainTransaction;
-use crate::shutdown::ShutdownConditions;
+use crate::shutdown::{BasicShutdownConditions, ShutdownConditions};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStart {
@@ -35,13 +36,13 @@ pub struct WireGameStart {
     pub start: GameStart,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameStartQueueEntry(pub Vec<GameID>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MyGameStartQueueEntry {
-    pub my_games: Vec<Rc<dyn GameStartInfoInterface>>,
-    pub their_games: Vec<Rc<dyn GameStartInfoInterface>>,
+    pub my_games: Vec<GSI>,
+    pub their_games: Vec<GSI>,
 }
 
 // Internal: decide what kind of condition wait we're in.
@@ -234,7 +235,7 @@ pub trait WalletSpendInterface {
     fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error>;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct GameType(pub Vec<u8>);
 
 pub trait ToLocalUI {
@@ -405,21 +406,21 @@ impl PeerMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeStepInfo {
     pub first_player_hs_info: HandshakeA,
     #[allow(dead_code)]
     pub second_player_hs_info: HandshakeB,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeStepWithSpend {
     pub info: HandshakeStepInfo,
     #[allow(dead_code)]
     pub spend: SpendBundle,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum HandshakeState {
     StepA,
     StepB,
@@ -454,13 +455,37 @@ where
     fn env(&mut self) -> (&mut ChannelHandlerEnv<'inputs, R>, &mut G);
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum PotatoState {
     Absent,
     Requested,
     Present,
 }
 
+/// For now, just pay to the reward puzzle hash if we come back from serialization.
+/// This gives the coins to the user and ensures we're not permanaently deadlocked.
+pub struct ShutdownActionHolder(pub Rc<dyn ShutdownConditions>);
+
+impl Serialize for ShutdownActionHolder {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        BasicShutdownConditions.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ShutdownActionHolder {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let deserialized = BasicShutdownConditions::deserialize(deserializer)?;
+        Ok(ShutdownActionHolder(Rc::new(deserialized)))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub enum GameAction {
     Move(GameID, ReadableMove, Hash),
     RedoMoveV0(
@@ -483,7 +508,7 @@ pub enum GameAction {
         Box<RefereeOnChainTransaction>,
     ),
     Accept(GameID),
-    Shutdown(Rc<dyn ShutdownConditions>),
+    Shutdown(ShutdownActionHolder),
     LocalStartGame,
     SendPotato,
 }
@@ -509,15 +534,17 @@ impl std::fmt::Debug for GameAction {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameFactory {
     pub version: usize,
     pub program: Rc<Program>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PotatoHandlerInit {
     pub have_potato: bool,
     pub private_keys: ChannelHandlerPrivateKeys,
+    #[serde(with = "any_key_map")]
     pub game_types: BTreeMap<GameType, GameFactory>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
