@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::read_to_string;
 
+use serde::{Serialize, Deserialize};
+
 use chia_bls;
 use hex::FromHex;
 use log::debug;
@@ -532,7 +534,7 @@ pub fn standard_solution_partial(
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChiaIdentity {
     pub private_key: PrivateKey,
     pub synthetic_public_key: PublicKey,

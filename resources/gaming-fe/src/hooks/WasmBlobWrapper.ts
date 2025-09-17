@@ -1,6 +1,6 @@
-import { PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, WatchReport, BlockchainReport, InternalBlockchainInterface } from '../types/ChiaGaming';
-import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
-import { Observable, NextObserver } from 'rxjs';
+import { PeerConnectionResult, WasmConnection, IChiaIdentity, ChiaGame, CalpokerOutcome, WatchReport, InternalBlockchainInterface } from '../types/ChiaGaming';
+import { spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
+import { Subject, NextObserver } from 'rxjs';
 
 function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   for (var i = 0; i < new_report.created_watched.length; i++) {
@@ -16,8 +16,7 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 
 export class WasmBlobWrapper {
   amount: number;
-  wc: WasmConnection | undefined;
-  rngSeed: string;
+  wc: WasmConnection;
   sendMessage: (msg: string) => void;
   identity: IChiaIdentity | undefined;
   cradle: ChiaGame | undefined;
@@ -33,21 +32,19 @@ export class WasmBlobWrapper {
   myTurn: boolean;
   moveNumber: number;
   qualifyingEvents: number;
-  loadWasmEvent: any | undefined;
   cardSelections: number;
   playerHand: number[][];
   opponentHand: number[][];
   finished: boolean;
   gameOutcome: CalpokerOutcome | undefined;
   fetchHex: (path: string) => Promise<string>;
-  doInternalLoadWasm: () => Promise<ArrayBuffer>;
-  rxjsMessageSingleon: Observable<any>;
-  rxjsEmitter: NextObserver<any> | undefined;
+  rxjsMessageSingleon: Subject<any>;
+  rxjsEmitter: NextObserver<any>;
   blockchain: InternalBlockchainInterface;
 
   constructor (blockchain: InternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean,
-        doInternalLoadWasm: () => Promise<ArrayBuffer>,
-        fetchHex: (key: string) => Promise<string>, peer_conn: PeerConnectionResult
+        wc: WasmConnection, fetchHex: (key: string) => Promise<string>, peer_conn: PeerConnectionResult,
+        chiaIdentity: IChiaIdentity
     ) {
       const deliverMessage = (msg: string) => {
       this.deliverMessage(msg);
@@ -55,8 +52,8 @@ export class WasmBlobWrapper {
 
     const { sendMessage } = peer_conn;
 
+    this.wc = wc;
     this.uniqueId = uniqueId;
-    this.rngSeed = this.uniqueId.substr(0, 8);
     this.sendMessage = sendMessage;
     this.amount = amount;
     this.currentBlock = 0;
@@ -74,11 +71,10 @@ export class WasmBlobWrapper {
     this.finished = false;
     this.qualifyingEvents = 0;
     this.fetchHex = fetchHex;
-    this.doInternalLoadWasm = doInternalLoadWasm;
     this.blockchain = blockchain;
-    this.rxjsMessageSingleon = new Observable<any>((emitter) => {
-        this.rxjsEmitter = emitter;
-    });
+    this.rxjsMessageSingleon = new Subject<any>();
+    this.rxjsEmitter = this.rxjsMessageSingleon;
+    this.identity = chiaIdentity;
   }
 
   getObservable() {
@@ -87,38 +83,11 @@ export class WasmBlobWrapper {
 
   kickSystem(flags: number) {
     this.qualifyingEvents |= flags;
-    if (this.qualifyingEvents == 7) {
-      this.qualifyingEvents |= 8;
-      this.pushEvent(this.loadWasmEvent);
+    if (this.qualifyingEvents == 3) {
+      this.qualifyingEvents |= 4;
+      this.rxjsEmitter.next({name: "ready"});
     }
   }
-
-  loadPresets(presetFiles: string[]) {
-    const presetFetches = presetFiles.map((partialUrl) => {
-      return this.fetchHex(partialUrl).then((text) => {
-        return {
-          name: partialUrl,
-          content: text
-        };
-      });
-    });
-    return Promise.all(presetFetches).then(presets => {
-      presets.forEach((nameAndContent) => {
-        console.log(`preset load ${nameAndContent.name} ${nameAndContent.content.length}`);
-        this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
-      });
-      let newGameIdentity = this.wc?.chia_identity(this.rngSeed);
-      this.identity = newGameIdentity;
-      this.pushEvent({ loadCalpoker: true });
-      return {
-        'setGameConnectionState': {
-          stateIdentifier: "starting",
-          stateDetail: ["loaded preset files"]
-        },
-        'setGameIdentity': newGameIdentity
-      };
-    });
-  };
 
   haveEvents(): boolean {
     return this.messageQueue.length > 0;
@@ -132,7 +101,7 @@ export class WasmBlobWrapper {
         if (!idle_info) {
           return res;
         }
-        this.rxjsEmitter?.next(idle_info);
+        this.rxjsEmitter.next(idle_info);
       } while (!idle_info.stop);
       return res;
     });
@@ -148,14 +117,7 @@ export class WasmBlobWrapper {
 
   handleOneMessage(msg: any): any {
     console.log('handleOneMessage', Object.keys(msg));
-    if (msg.loadWasmEvent) {
-      return this.internalLoadWasm(
-        msg.loadWasmEvent.chia_gaming_init,
-        msg.loadWasmEvent.cg
-      );
-    } else if (msg.loadPresets) {
-      return this.loadPresets(msg.loadPresets);
-    } else if (msg.createStartCoin) {
+    if (msg.createStartCoin) {
       return this.createStartCoin();
     } else if (msg.loadCalpoker) {
       return this.loadCalpoker();
@@ -263,7 +225,7 @@ export class WasmBlobWrapper {
     this.handlingMessage = true;
     let result = null;
     return this.handleOneMessage(msg).then((result: any) => {
-      this.rxjsEmitter?.next(result);
+      this.rxjsEmitter.next(result);
       this.handlingMessage = false;
       if (this.messageQueue.length != 0) {
         return this.kickMessageHandling();
@@ -287,12 +249,6 @@ export class WasmBlobWrapper {
         }
       };
     });
-  }
-
-  loadWasm(chia_gaming_init: any, cg: WasmConnection): any {
-    this.loadWasmEvent = { loadWasmEvent: { chia_gaming_init, cg } };
-    this.kickSystem(1);
-    return empty();
   }
 
   createStartCoin(): any {
@@ -339,7 +295,7 @@ export class WasmBlobWrapper {
           timeout: 100,
           unroll_timeout: 100
         };
-        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount);
+
         this.storedMessages.forEach((m) => {
           this.cradle?.deliver_message(m);
         });
@@ -355,24 +311,6 @@ export class WasmBlobWrapper {
           'setError': e.toString()
         };
       });
-  }
-
-  internalLoadWasm(chia_gaming_init: any, cg: WasmConnection): any {
-    console.log('wasm detected');
-    return this.doInternalLoadWasm().then(modData => {
-      chia_gaming_init(modData);
-      cg.init((msg: string) => console.warn('wasm', msg));
-      this.wc = cg;
-      const presetFiles = [
-        "resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex",
-        "clsp/unroll/unroll_meta_puzzle.hex",
-        "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
-        "clsp/referee/onchain/referee.hex",
-        "clsp/referee/onchain/referee-v1.hex"
-      ];
-      this.pushEvent({ loadPresets: presetFiles });
-      return {};
-    });
   }
 
   deliverMessage(msg: string) {
@@ -455,7 +393,7 @@ export class WasmBlobWrapper {
     if (idle.finished && !this.finished) {
       console.error('we shut down');
       this.finished = true;
-      this.rxjsEmitter?.next({
+      this.rxjsEmitter.next({
         setGameConnectionState: {
           stateIdentifier: "shutdown",
           stateDetail: []
@@ -641,7 +579,7 @@ export class WasmBlobWrapper {
         }
       }
     }
-    this.kickSystem(4);
+    this.kickSystem(2);
     this.pushEvent({ takeBlockData: {
       peak: peak,
       block_report: block_report

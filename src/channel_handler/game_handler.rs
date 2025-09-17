@@ -55,7 +55,7 @@ pub struct MyTurnInputs<'a> {
     pub entropy: Hash,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MyTurnResult {
     // Next player's turn game handler.
     pub waiting_driver: GameHandler,
@@ -407,7 +407,7 @@ pub struct MessageInputs {
     pub mover_share: Amount,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageHandler(pub Program);
 
 impl MessageHandler {

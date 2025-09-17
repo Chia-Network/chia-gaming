@@ -41,7 +41,7 @@ class WasmBlobWrapperAdapter {
 
     set_blob(blob: WasmBlobWrapper) {
         this.blob = blob;
-        this.blob.kickSystem(2);
+        this.blob.kickSystem(1);
     }
 
     deliver_message(msg: string) {

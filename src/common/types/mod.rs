@@ -31,7 +31,7 @@ pub use self::error::{ErrToError, Error, IntoErr};
 pub use self::game_id::GameID;
 pub use self::int_utils::{i64_from_atom, u64_from_atom, usize_from_atom};
 pub use self::node::Node;
-pub use self::private_key::{PrivateKey, SerdeByteConsumer};
+pub use self::private_key::{PrivateKey};
 pub use self::program::{Program, Sha256tree, ToQuotedProgram};
 pub use self::program_ref::ProgramRef;
 pub use self::public_key::PublicKey;

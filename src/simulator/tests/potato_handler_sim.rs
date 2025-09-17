@@ -6,6 +6,8 @@ use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
+use serde_json;
+
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
@@ -133,7 +135,7 @@ impl SimulatedWalletSpend {
             WatchEntry {
                 timeout_blocks: timeout.clone(),
                 timeout_at: Some(timeout.to_u64() + self.current_height),
-                name,
+                name: name.map(|n| n.to_string()),
             },
         );
         Ok(())
@@ -858,6 +860,18 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
 
         for i in 0..=1 {
+            for i in 0..=1 {
+                let serialized_err = serde_json::to_value(&cradles[i]);
+                if let Err(e) = &serialized_err {
+                    debug!("serialization error {e:?}");
+                }
+                let replaced_cradle = serde_json::from_value(serialized_err.unwrap());
+                if let Err(e) = &replaced_cradle {
+                    debug!("deserialization error {e:?}");
+                }
+                cradles[i] = replaced_cradle.unwrap();
+            }
+
             if local_uis[i].go_on_chain {
                 // Perform on chain move.
                 // Turn off the flag to go on chain.

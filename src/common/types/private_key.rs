@@ -1,4 +1,5 @@
 use std::ops::{Add, AddAssign};
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
 
 use serde::de::Visitor;
 
@@ -14,18 +15,6 @@ impl Distribution<PrivateKey> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PrivateKey {
         let hash: Hash = rng.gen();
         PrivateKey(chia_bls::SecretKey::from_seed(hash.bytes()))
-    }
-}
-
-pub struct SerdeByteConsumer;
-
-impl Visitor<'_> for SerdeByteConsumer {
-    type Value = Vec<u8>;
-    fn expecting(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        fmt.write_str("expected bytes")
-    }
-    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E> {
-        Ok(v.to_vec())
     }
 }
 
@@ -66,6 +55,14 @@ impl PrivateKey {
         ))
     }
 
+    pub fn from_slice(slice: &[u8]) -> Result<PrivateKey, Error> {
+        let mut bytes: [u8; 32] = [0; 32];
+        for (i, b) in slice.iter().enumerate() {
+            bytes[i % 32] = *b;
+        }
+        PrivateKey::from_bytes(&bytes)
+    }
+
     pub fn to_bls(&self) -> &chia_bls::SecretKey {
         &self.0
     }
@@ -76,5 +73,25 @@ impl PrivateKey {
 
     pub fn bytes(&self) -> [u8; 32] {
         self.0.to_bytes()
+    }
+}
+
+impl Serialize for PrivateKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        hex::encode(&self.bytes()).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PrivateKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let st = String::deserialize(deserializer)?;
+        let slice = hex::decode(&st).unwrap();
+        Ok(PrivateKey::from_slice(&slice).unwrap())
     }
 }
