@@ -19,6 +19,7 @@ pub struct MoveResult {
     pub game_move: GameMoveDetails,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PotatoAcceptCachedData {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
@@ -33,7 +34,7 @@ impl std::fmt::Debug for PotatoAcceptCachedData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PotatoMoveCachedData {
     pub state_number: usize,
     pub game_id: GameID,
@@ -44,7 +45,7 @@ pub struct PotatoMoveCachedData {
     pub amount: Amount,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum CachedPotatoRegenerateLastHop {
     PotatoCreatedGame(Vec<GameID>, Amount, Amount),
     PotatoAccept(Box<PotatoAcceptCachedData>),

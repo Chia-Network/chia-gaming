@@ -3,9 +3,11 @@ use std::rc::Rc;
 use clvm_traits::{ToClvm, ToClvmError};
 use clvmr::allocator::NodePtr;
 
+use serde::{Serialize, Deserialize};
+
 use crate::common::types::{AllocEncoder, Error, Program};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadableMove(Rc<Program>);
 
 impl ReadableMove {

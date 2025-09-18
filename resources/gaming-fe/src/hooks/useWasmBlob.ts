@@ -23,7 +23,7 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
   const deliverMessage = (msg: string) => {
     blobSingleton?.deliverMessage(msg);
   };
-  const peercon = useGameSocket(deliverMessage, () => {
+  const peer_conn = useGameSocket(deliverMessage, () => {
     blobSingleton?.kickSystem(2);
   });
 
@@ -38,15 +38,15 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
     return fetch(fetchUrl).then(wasm => wasm.text());
   }
 
-  blobSingleton = new WasmBlobWrapper(
+  blobSingleton = new WasmBlobWrapper({
     blockchain,
     uniqueId,
     amount,
     iStarted,
     doInternalLoadWasm,
     fetchHex,
-    peercon
-  );
+    peer_conn
+  });
 
   // This lives in the child frame.
   // We'll connect the required signals.

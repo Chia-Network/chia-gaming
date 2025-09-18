@@ -340,6 +340,20 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     Ok(new_id)
 }
 
+#[wasm_bindgen]
+pub fn create_serialized_game(json: JsValue, new_seed: String) -> Result<i32, JsValue> {
+    let inner_cradle = serde_wasm_bindgen::from_value::<SynchronousGameCradle>(json.clone()).into_js()?;
+    let mut use_seed: [u8; 32] = *Hash::new(new_seed.as_bytes()).bytes();
+    let cradle = JsCradle {
+        allocator: AllocEncoder::new(),
+        rng: ChaCha8Rng::from_seed(use_seed),
+        cradle: inner_cradle
+    };
+    let new_id = get_next_id();
+    insert_cradle(new_id, cradle);
+    return Ok(new_id);
+}
+
 fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
 where
     F: FnOnce(&mut JsCradle) -> Result<T, types::Error>,
@@ -353,6 +367,13 @@ where
         Err(JsValue::from_str(&format!(
             "could not find game instance {cid}"
         )))
+    })
+}
+
+#[wasm_bindgen]
+pub fn serialize_cradle(cid: i32) -> Result<JsValue, JsValue> {
+    with_game(cid, move |cradle: &mut JsCradle| {
+        serde_wasm_bindgen::to_value(&cradle.cradle).map_err(|e| types::Error::StrErr(e.to_string()))
     })
 }
 

@@ -1,6 +1,8 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
+use serde::{Serialize, Deserialize};
+
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
@@ -121,7 +123,7 @@ impl StateUpdateResult {
 ///  solution
 ///  evidence
 ///  )
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct RefereePuzzleArgs {
     pub mover_puzzle_hash: PuzzleHash,
     pub waiter_puzzle_hash: PuzzleHash,
@@ -376,7 +378,7 @@ pub enum Validation {
     ValidationByStateHash(Hash),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OnChainRefereeMoveData {
     pub state: Rc<Program>,
     pub validation_program: StateUpdateProgram,
@@ -439,7 +441,7 @@ impl OnChainRefereeMoveData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OnChainRefereeSlashData {
     #[allow(dead_code)]
     pub state: Rc<Program>,
