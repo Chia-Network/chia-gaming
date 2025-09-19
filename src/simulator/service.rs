@@ -17,12 +17,14 @@ use rand_chacha::ChaCha8Rng;
 use salvo::http::ResBody;
 use salvo::hyper::body::Bytes;
 use salvo::prelude::*;
+use serde::Serialize;
+use serde_json;
 use serde_json::{Map, Value};
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    AllocEncoder, Amount, CoinID, CoinString, Error, Hash, IntoErr, PrivateKey, Program,
-    PuzzleHash, SpendBundle,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, Hash, IntoErr, PrivateKey, Program,
+    PuzzleHash, SpendBundle, CoinsetCoin, CoinsetSpendRecord, CoinsetSpendBundle, check_for_hex, map_m, convert_coinset_org_spend_to_spend,
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
@@ -72,6 +74,8 @@ enum WebRequest {
     CreateSpendable(String, String, u64), // Use the named wallet to give n mojo to a target puzzle hash
     Spend(String),                        // Perform this spend on the blockchain
     WaitBlock,                            // Return when a new block arrives
+    BlockSpends(u64),                     // Get block spends in coinset.org style
+    PushTx(String),                       // Spend with a coinset.org spend
 }
 
 type StringWithError = Result<String, Error>;
@@ -94,6 +98,11 @@ lazy_static! {
 
 fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
     hex::decode(hexstr).map_err(|_e| Error::StrErr("not hex".to_string()))
+}
+
+#[derive(Serialize)]
+struct CoinsetBlockSpends {
+    block_spends: Vec<CoinsetSpendRecord>
 }
 
 impl GameRunner {
@@ -257,20 +266,71 @@ impl GameRunner {
         Ok("null\n".to_string())
     }
 
-    fn spend(&mut self, blob: &str) -> StringWithError {
-        let spend_program = Program::from_hex(blob)?;
-        let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
-        let spend_bundle = SpendBundle::from_clvm(&mut self.allocator, spend_node)?;
-        debug!("spend with bundle {spend_bundle:?}");
+    fn spend_list_of_spends(&mut self, spends: &[CoinSpend]) -> StringWithError {
         let result = self
             .simulator
-            .push_tx(&mut self.allocator, &spend_bundle.spends)
+            .push_tx(&mut self.allocator, spends)
             .into_gen()?;
         let e_res = result
             .e
             .map(|e| format!("{e}"))
             .unwrap_or_else(|| "null".to_string());
         Ok(format!("[{},{e_res}]\n", result.code))
+    }
+
+    fn spend(&mut self, blob: &str) -> StringWithError {
+        let spend_program = Program::from_hex(blob)?;
+        let spend_node = spend_program.to_nodeptr(&mut self.allocator)?;
+        let spend_bundle = SpendBundle::from_clvm(&mut self.allocator, spend_node)?;
+        debug!("spend with bundle {spend_bundle:?}");
+        self.spend_list_of_spends(&spend_bundle.spends)
+    }
+
+    fn push_tx(&mut self, spend_data: &str) -> StringWithError {
+        let value = serde_json::from_str(spend_data).into_gen()?;
+        let spend_decoded: CoinsetSpendBundle = serde_json::from_value(value).into_gen()?;
+        let aggsig_bytes = check_for_hex(&spend_decoded.aggregated_signature)?;
+        let aggsig = Aggsig::from_slice(&aggsig_bytes)?;
+        let mut spends: Vec<CoinSpend> = map_m(|spend_data| {
+            convert_coinset_org_spend_to_spend(
+                &spend_data.coin.parent_coin_info,
+                &spend_data.coin.puzzle_hash,
+                spend_data.coin.amount,
+                &spend_data.puzzle_reveal,
+                &spend_data.solution,
+            )
+        }, &spend_decoded.coin_spends)?;
+        if !spends.is_empty() {
+            spends[0].bundle.signature = aggsig;
+        }
+        self.spend_list_of_spends(&spends)
+    }
+
+    fn block_spends(&mut self, height: u64) -> StringWithError {
+        let spends =
+            self.sim_record.get(&height).map(|report| {
+                let block_spend_data: Vec<CoinsetSpendRecord> = report.deleted_watched.iter().filter_map(|c| {
+                    c.to_parts().and_then(|(parent, ph, amt)| {
+                        self.simulator.get_puzzle_and_solution(
+                            &c.to_coin_id()
+                        ).ok().unwrap_or_default().map(|(puzzle, solution)| {
+                            CoinsetSpendRecord {
+                                coin: CoinsetCoin {
+                                    parent_coin_info: format!("0x{}", hex::encode(&parent.bytes())),
+                                    puzzle_hash: format!("0x{}", hex::encode(&ph.bytes())),
+                                    amount: amt.into()
+                                },
+                                puzzle_reveal: format!("0x{}", hex::encode(&puzzle.bytes())),
+                                solution: format!("0x{}", hex::encode(&solution.bytes()))
+                            }
+                        })
+                    })
+                }).collect();
+                CoinsetBlockSpends { block_spends: block_spend_data }
+            });
+        let value = serde_json::to_value(&spends).into_gen()?;
+        let serialized = serde_json::to_string(&value).into_gen()?;
+        Ok(serialized)
     }
 }
 
@@ -417,6 +477,18 @@ async fn spend(req: &mut Request, response: &mut Response) -> Result<(), String>
     pass_on_request(req, response, WebRequest::Spend(blob))
 }
 
+#[handler]
+async fn block_spends(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let header_hash = get_arg_integer(req, "header_hash").report_err()?;
+    pass_on_request(req, response, WebRequest::BlockSpends(header_hash))
+}
+
+#[handler]
+async fn push_tx(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let spend_data: String = get_arg_string(req, "spend").report_err()?;
+    pass_on_request(req, response, WebRequest::PushTx(spend_data))
+}
+
 fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {
     let origin_header: Option<String> = req.header("Origin");
     if let Some(origin) = origin_header {
@@ -459,7 +531,9 @@ fn service_main_inner() {
             .push(Router::with_path("spend").options(cors))
             .push(Router::with_path("spend").post(spend))
             .push(Router::with_path("create_spendable").options(cors))
-            .push(Router::with_path("create_spendable").post(create_spendable));
+            .push(Router::with_path("create_spendable").post(create_spendable))
+            .push(Router::with_path("block_spends").post(block_spends))
+            .push(Router::with_path("push_tx").post(push_tx));
         let acceptor = TcpListener::new("0.0.0.0:5800").bind().await;
 
         let s = std::thread::spawn(move || {
@@ -508,7 +582,9 @@ fn service_main_inner() {
                                 game_runner.create_spendable(&who, &target, amt)
                             }
                             WebRequest::Spend(blob) => game_runner.spend(&blob),
-                            WebRequest::Reset => game_runner.reset_sim(),
+                            WebRequest::BlockSpends(height) => game_runner.block_spends(height),
+                            WebRequest::PushTx(spend_data) => game_runner.push_tx(&spend_data),
+                            WebRequest::Reset => game_runner.reset_sim()
                         }
                     };
 

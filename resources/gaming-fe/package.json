@@ -31,6 +31,7 @@
     "@walletconnect/utils": "^2.10.0",
     "axios": "^1.9.0",
     "bech32-buffer": "^0.2.1",
+    "buffer-replace": "^2.0.0",
     "chia-utils": "^1.0.10",
     "clvm-lib": "^1.0.1",
     "cors": "^2.8.5",
