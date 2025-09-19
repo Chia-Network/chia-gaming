@@ -47,8 +47,8 @@ ADD wasm/src /app/rust/wasm/src
 RUN touch /app/rust/wasm/src/mod.rs
 
 # Build
-RUN sh -c "rm -rf `find /app/rust/wasm -name \*.whl`"
-RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests && pip install `find . -name \*2_34_x86_64.whl`
+RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests
+RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && rm -rf `find . -name \*manylinux1_x86_64.whl` && pip install `find . -name \*.whl`
 
 RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/rust/wasm/node-pkg --release --target=nodejs
 RUN rm -rf /app/node-pkg
