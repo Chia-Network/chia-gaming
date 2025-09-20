@@ -7,6 +7,7 @@ RUN npm install -g corepack
 RUN yarn set version 1.22.22
 WORKDIR /app
 RUN python3 -m venv ./test
+RUN . /app/test/bin/activate && pip install maturin==1.9.2
 RUN sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.5.5-rc3"
 # Gross, check the hash at least.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && sh ./rustup.sh -y
@@ -28,12 +29,16 @@ COPY wasm/Cargo.lock /app/rust/wasm/Cargo.lock
 RUN sh -c "echo > /app/rust/wasm/src/mod.rs"
 
 # Pre-build
-RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && pip install maturin==1.9.2
-RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests
-
-RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/rust/wasm/node-pkg --release --target=nodejs
-RUN mv /app/rust/wasm/node-pkg /app
-RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/rust/wasm/pkg --release --target=web
+RUN --mount=type=tmpfs,dst=/tmp/rust \
+	cp -r /app/rust/* /tmp/rust && \
+	cd /tmp/rust && \
+	. $HOME/.cargo/env && \
+	. /app/test/bin/activate && \
+	maturin build --release --features sim-tests && \
+	cd /tmp/rust/wasm && \
+	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
+	wasm-pack build --out-dir=/tmp/rust/wasm/pkg --release --target=web && \
+	cp -r /tmp/rust/target /app/rust
 
 #Stage front-end / UI / UX into the container
 COPY resources/gaming-fe/package.json /app
@@ -47,13 +52,20 @@ ADD wasm/src /app/rust/wasm/src
 RUN touch /app/rust/wasm/src/mod.rs
 
 # Build
-RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests
-RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && rm -rf `find . -name \*manylinux1_x86_64.whl` && pip install `find . -name \*.whl`
-
-RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/rust/wasm/node-pkg --release --target=nodejs
-RUN rm -rf /app/node-pkg
-RUN mv /app/rust/wasm/node-pkg /app
-RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/rust/wasm/pkg --release --target=web
+RUN --mount=type=tmpfs,dst=/tmp/rust \
+	cp -r /app/rust/* /tmp/rust && \
+	cd /tmp/rust && \
+	. $HOME/.cargo/env && \
+	. /app/test/bin/activate && \
+	maturin build --release --features sim-tests && \
+	rm -rf `find . -name \*manylinux1_x86_64.whl` && \
+	pip install `find . -name \*.whl` && \
+	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
+	cd /tmp/rust/wasm && \
+	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
+	rm -rf /app/node-pkg && \
+	mv /tmp/rust/wasm/node-pkg /app && \
+	wasm-pack build --out-dir=/app/rust/wasm/pkg --release --target=web
 
 # Place wasm backend in docker container
 RUN mkdir -p /app/dist
