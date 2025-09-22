@@ -31,16 +31,15 @@ RUN sh -c "echo > /app/rust/wasm/src/mod.rs"
 # Pre-build
 RUN --mount=type=tmpfs,dst=/tmp/rust \
 	(cd /app/rust && tar cf - .) | (cd /tmp/rust && tar xvf -) && \
-	mkdir -p /tmp/rust/wasm-node && (cd /app/rust/wasm && tar cf - .) | (cd /tmp/rust/wasm-node && tar xf -) && \
 	mkdir -p /tmp/rust/wasm && (cd /app/rust/wasm && tar cf - .) | (cd /tmp/rust/wasm && tar xf -) && \
 	cd /tmp/rust && \
 	. $HOME/.cargo/env && \
 	. /app/test/bin/activate && \
 	maturin build --release --features sim-tests && \
-	cd /tmp/rust/wasm-node && \
-	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
 	cd /tmp/rust/wasm && \
+	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
 	wasm-pack build --out-dir=/tmp/rust/wasm/pkg --release --target=web && \
+  rm -rf /tmp/rust/wasm/node-pkg /tmp/rust/wasm/pkg && \
 	(cd /tmp/rust && tar cvf - .) | (cd /app/rust && tar xf -)
 
 #Stage front-end / UI / UX into the container
@@ -64,17 +63,13 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	rm -rf `find . -name \*manylinux1_x86_64.whl` && \
 	pip install `find . -name \*.whl` && \
 	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
-	cd /tmp/rust/wasm-node && \
-	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
-	rm -rf /app/node-pkg && \
-	mv /tmp/rust/wasm/node-pkg /app && \
 	cd /tmp/rust/wasm && \
-	wasm-pack build --out-dir=/app/rust/wasm/pkg --release --target=web
+	cargo clean -p chia_gaming_wasm && \
+	wasm-pack build --out-dir=/app/node-pkg --release --target=nodejs && \
+	wasm-pack build --out-dir=/app/dist --release --target=web
 
 # Place wasm backend in docker container
 RUN mkdir -p /app/dist
-RUN cp /app/rust/wasm/pkg/chia_gaming_wasm_bg.wasm /app/dist/chia_gaming_wasm_bg.wasm
-RUN cp /app/rust/wasm/pkg/chia_gaming_wasm.js /app/dist/chia_gaming_wasm.js
 
 # Build the front-end / UI / UX within the container env
 COPY resources/gaming-fe /app
