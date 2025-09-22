@@ -19,6 +19,7 @@ mod rc_node;
 mod sha256input;
 mod spend;
 mod timeout;
+mod serializable_chacha8;
 
 pub use self::aggsig::Aggsig;
 pub use self::alloc_encoder::AllocEncoder;
@@ -41,3 +42,4 @@ pub use self::rc_node::RcNode;
 pub use self::sha256input::{atom_from_clvm, Hash, Sha256Input};
 pub use self::spend::{BrokenOutCoinSpendInfo, CoinSpend, Spend, SpendBundle, SpendRewardResult};
 pub use self::timeout::Timeout;
+pub use self::serializable_chacha8::ChaCha8SerializationWrapper;

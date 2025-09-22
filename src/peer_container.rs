@@ -344,6 +344,7 @@ pub struct SynchronousGameCradle {
     peer: PotatoHandler,
 }
 
+#[derive(Debug, Clone)]
 pub struct SynchronousGameCradleConfig {
     pub game_types: BTreeMap<GameType, GameFactory>,
     pub have_potato: bool,

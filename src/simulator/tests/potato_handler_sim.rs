@@ -782,7 +782,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         SynchronousGameCradleConfig {
             game_types: game_type_map.clone(),
             have_potato: true,
-            identity: &identities[0],
+            identity: identities[0].clone(),
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
@@ -795,7 +795,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         SynchronousGameCradleConfig {
             game_types: game_type_map.clone(),
             have_potato: false,
-            identity: &identities[1],
+            identity: identities[1].clone(),
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
