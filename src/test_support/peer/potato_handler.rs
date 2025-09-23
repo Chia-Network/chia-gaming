@@ -593,7 +593,7 @@ fn test_peer_smoke() {
             system_interface: &mut pipe_sender[have_potato],
         };
         peers[have_potato]
-            .accept(&mut penv, &game_ids[0])
+            .accept_game_outcome(&mut penv, &game_ids[0])
             .expect("should work");
     }
 

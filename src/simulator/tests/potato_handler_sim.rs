@@ -485,7 +485,7 @@ pub fn handshake<'a, R: Rng + 'a>(
     Ok(())
 }
 
-pub fn run_calpoker_test_with_action_list(
+pub fn run_calpoker_test_with_action_list( //sim
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
     moves: &[GameAction],
@@ -616,6 +616,7 @@ pub fn run_calpoker_test_with_action_list(
     assert!(peers[0].message_pipe.queue.is_empty());
     assert!(peers[1].message_pipe.queue.is_empty());
 
+    // Game move execution starts here
     for this_move in moves.iter() {
         let (who, what) = if let GameAction::Move(who, what, _) = this_move {
             (who, what)
@@ -1064,7 +1065,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameAction::Accept(who) | GameAction::Timeout(who) => {
                         debug!("{who} doing ACCEPT");
                         can_move = true;
-                        cradles[*who].accept(allocator, rng, &game_ids[0])?;
+                        cradles[*who].accept_game_outcome(allocator, rng, &game_ids[0])?;
                     }
                     GameAction::Shutdown(who, conditions) => {
                         can_move = true;

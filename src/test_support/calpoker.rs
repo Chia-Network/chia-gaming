@@ -187,11 +187,11 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, true);
     }));
 
-    res.push(("test_verify_endgame_data_v0", &|| {
+    res.push(("test_verify_endgame_data_v1", &|| {
         let mut allocator = AllocEncoder::new();
-        let moves = prefix_test_moves(&mut allocator, false);
+        let moves = prefix_test_moves(&mut allocator, true);
         let game_action_results =
-            run_calpoker_play_test(&mut allocator, &moves).expect("should work");
+            run_calpoker_test_with_action_list(&mut allocator, &moves).expect("should work");
         debug!("play_result {game_action_results:?}");
         if let GameActionResult::MoveResult(penultimate_game_data, _, _, _) =
             game_action_results[game_action_results.len() - 1].clone()
