@@ -13,6 +13,7 @@ pub struct PotatoSignatures {
     pub my_unroll_half_signature_peer: Aggsig,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MoveResult {
     pub signatures: PotatoSignatures,

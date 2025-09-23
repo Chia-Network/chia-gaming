@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WasmBlobParams, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, InternalBlockchainInterface, BlockchainReport } from '../types/ChiaGaming';
+import { WasmBlobParams, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, InternalBlockchainInterface, BlockchainReport, RngId } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
 import { useInterval } from '../useInterval';
@@ -12,71 +12,28 @@ import { blockchainConnector } from './BlockchainConnector';
 import { PARENT_FRAME_BLOCKCHAIN_ID, parentFrameBlockchainInfo } from './ParentFrameBlockchainInfo';
 import { WasmStateInit, doInternalLoadWasm, fetchHex, storeInitArgs, waitForReadyToInit } from './WasmStateInit';
 import { WasmBlobWrapper, getNewChiaGameCradle } from './WasmBlobWrapper';
+import { Subject } from 'rxjs';
 
-// TODO: remove singleton-ness. Rename to "theBlob"
-let blobSingleton: any = null;
-
-// TODO: remove singleton-ness
-async function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean) {
-  if (blobSingleton) {
-    return blobSingleton;
-  }
-
-  const deliverMessage = (msg: string) => {
-    blobSingleton?.deliverMessage(msg);
-  };
-
-
-  // let blobSingleton = new WasmBlobWrapper(
-  //   blockchain,
-  //   uniqueId,
-  //   amount,
-  //   iStarted,
-  //   wasmConnection,
-  //   fetchHex,
-  //   peercon,
-  //   identity
-  // );
-
-  // This lives in the child frame.
-  // We'll connect the required signals.
-  window.addEventListener('message', (evt: any) => {
-    const key = evt.message ? 'message' : 'data';
-    let data = evt[key];
-    if (data.blockchain_reply) {
-      if (evt.origin != window.location.origin) {
-        throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
-      }
-      blockchainConnector.getInbound().next(data.blockchain_reply);
-    }
-
-    if (data.blockchain_info) {
-      if (evt.origin != window.location.origin) {
-        throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
-      }
-      parentFrameBlockchainInfo.next(data.blockchain_info);
-    }
-  });
-
-  blockchainConnector.getOutbound().subscribe({
-    next: (evt: any) => {
-      window.parent.postMessage({
-        blockchain_request: evt
-      }, window.location.origin);
-    }
-  });
-  blockchainDataEmitter.select({
-    selection: PARENT_FRAME_BLOCKCHAIN_ID,
-    uniqueId
-  });
-
-  return blobSingleton;
-} // getBlobSingleton
+export interface DeliverMessage {
+  deliverMessage: string;
+}
+export interface SocketEnabled {
+  socketEnabled: boolean;
+}
+export interface WasmMove {
+  wasmMove: string;
+}
+export interface SetCardSelections {
+  setCardSelections: number;
+}
+export interface Shutdown {
+  shutdown: boolean;
+}
+export type WasmCommand = DeliverMessage | SocketEnabled | WasmMove | SetCardSelections | Shutdown;
 
 export function useWasmBlob(uniqueId: string) {
   const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
-  const [uniqueWalletConnectionId, setUniqueWalletConnectionId] = useState(uuidv4());
   const [gameStartCoin, setGameStartCoin] = useState<string | undefined>(undefined);
   const [gameConnectionState, setGameConnectionState] = useState<GameConnectionState>({ stateIdentifier: "starting", stateDetail: ["before handshake"] });
   const [handshakeDone, setHandshakeDone] = useState<boolean>(false);
@@ -103,79 +60,7 @@ export function useWasmBlob(uniqueId: string) {
     }
   };
 
-  let liveGame: undefined | WasmBlobWrapper = undefined;
-
-  if (!gotWasmStateInit) {
-    setGotWasmStateInit(true);
-  }
-
-  let setCardSelections = useCallback((mask: number) => {
-    liveGame?.setCardSelections(mask);
-  }, []);
-  let messageSender = useCallback((msg: string) => {
-    console.error('send message with no sender defined', msg);
-  }, []);
-  let stopPlaying = useCallback(() => {
-    liveGame?.shutDown();
-  }, []);
-
   const blockchain = new ChildFrameBlockchainInterface();
-
-  // const gameObject = uniqueId ?
-  //   getBlobSingleton(
-  //     blockchain,
-  //     uniqueId,
-  //     amount,
-  //     iStarted
-  //   ) :
-  //   null;
-
-  const peerconn = useGameSocket(deliverMessage, () => {
-    blobSingleton?.kickSystem(1);
-  });
-  useEffect(() => {
-    wasmStateInit.getWasmConnection().then((wasmConnection) => {
-      let cradle = getNewChiaGameCradle();
-      let wasmParams : WasmBlobParams = {
-        blockchain: blockchain,
-        peerconn: peerconn,
-        cradle: cradle,
-        uniqueId: uniqueId,
-        iStarted: iStarted,
-        fetchHex: fetchHex,
-      };
-
-      // TODO: Move all 'liveGame' code here.
-
-      // Make calls from here into wasm into Signals
-      // e.g. liveGame?.blockNotification(e.peak, e.block, e.report);
-      // call these when the signals are fired.
-    });
-  });
-
-  useEffect(() => {
-    let subscription = blockchain.getObservable().subscribe({
-      next: (e: BlockchainReport) => {
-        liveGame?.blockNotification(e.peak, e.block, e.report);
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    }
-  });
-
-  const handleMakeMove = useCallback((move: any) => {
-    liveGame?.makeMove(move);
-  }, []);
-
-  // .then(() => {});
-
-  // Called once at an arbitrary time.
-  (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
-    storeInitArgs(chia_gaming_init, cg);
-    readyToInit.next(true);
-  }, []);
 
   const settable: any = {
     'setGameConnectionState': setGameConnectionState,
@@ -188,39 +73,208 @@ export function useWasmBlob(uniqueId: string) {
     'setOutcome': setOutcome
   };
 
-  // useEffect(() => {
-  //   if (!gameObject) {
-  //     return;
-  //   }
+  function setState(state: any): void {
+    const keys = Object.keys(state);
+    keys.forEach((k) => {
+      if (settable[k]) {
+        console.warn(k, state[k]);
+        settable[k](state[k]);
+      }
+    });
+  }
 
-  //   let subscription = gameObject.getObservable().subscribe({next: (state: any) => {
-  //     const keys = Object.keys(state);
-  //     keys.forEach((k) => {
-  //       if (settable[k]) {
-  //         console.warn(k, state[k]);
-  //         settable[k](state[k]);
-  //       }
-  //     });
-  //   }});
-  //   return(() => {
-  //     subscription.unsubscribe();
-  //   });
-  // });
+  const wasmCommandChannel = new Subject<WasmCommand>();
+
+  const peerconn = useGameSocket(
+    (msg) => { wasmCommandChannel.next({ msg }); },
+    () => { wasmCommandChannel.next({ socketEnabled: true }); }
+  );
+  //SocketEnabled
+  const loadCalpoker: () => Promise<any> = () => {
+    const calpokerFactory = fetchHex(
+      "clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex"
+    );
+    // continue here xxx
+    // use a signal to push this data outward from wasm
+    // TODO: resolve 'undefined' on liveGame
+    // outbound signal
+    setState({
+      'setGameConnectionState': {
+        stateIdentifier: "starting",
+        stateDetail: ["loaded calpoker"]
+      }
+    });
+    return calpokerFactory;
+  }
+
+  useEffect(() => {
+    if (!gotWasmStateInit) {
+      setGotWasmStateInit(true);
+    } else {
+      return;
+    }
+
+    window.addEventListener('message', (evt: any) => {
+      const key = evt.message ? 'message' : 'data';
+      let data = evt[key];
+      if (data.blockchain_reply) {
+        if (evt.origin != window.location.origin) {
+          throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
+        }
+        blockchainConnector.getInbound().next(data.blockchain_reply);
+      }
+
+      if (data.blockchain_info) {
+        if (evt.origin != window.location.origin) {
+          throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
+        }
+        parentFrameBlockchainInfo.next(data.blockchain_info);
+      }
+    });
+
+    blockchainConnector.getOutbound().subscribe({
+      next: (evt: any) => {
+        window.parent.postMessage({
+          blockchain_request: evt
+        }, window.location.origin);
+      }
+    });
+    blockchainDataEmitter.select({
+      selection: PARENT_FRAME_BLOCKCHAIN_ID,
+      uniqueId
+    });
+
+    loadCalpoker().then((calpokerHex) => {
+      return wasmStateInit.getWasmConnection().then((wasmConnection) => {
+        return {
+          calpokerHex, wasmConnection
+        };
+      });
+    }).then(({ calpokerHex, wasmConnection }) => {
+      const env = {
+        game_types: {
+          "calpoker": {
+            version: 1,
+            hex: calpokerHex
+          }
+        },
+        timeout: 100,
+        unroll_timeout: 100
+      };
+
+      const uuid = uuidv4();
+      const hexString = uuid.replaceAll("-", "");
+      const rngId = wasmConnection.create_rng(hexString);
+
+      const gameInitParams = {
+        wasmConnection,
+        env,
+        rng: new RngId(rngId),
+        chiaIdentity: wasmConnection.chia_identity(rngId),
+        iStarted, // iStarted, aka have_potato
+        // TODO: IEEE float ('number') is a slightly smaller range than MAX_NUM_MOJOS
+        // TODO: CalPoker has both players contribute equal amounts. Change this code before Krunk
+        myContribution: searchParams.amount,
+        theirContribution: searchParams.amount,
+      }
+      let cradle = getNewChiaGameCradle(wasmConnection, gameInitParams);
+
+      let wasmParams: WasmBlobParams = {
+        blockchain: blockchain,
+        peerconn: peerconn,
+        cradle: cradle,
+        uniqueId: uniqueId,
+        iStarted: iStarted,
+        fetchHex: fetchHex,
+      };
+
+      const liveGame = new WasmBlobWrapper(wasmParams, wasmConnection)
+      wasmCommandChannel.subscribe({next: (wasmCommand: WasmCommand) => {
+        const msg: WasmCommand = wasmCommand;
+        console.log('Sending wasm command:', Object.keys(msg));
+        // makeMoveImmediate, internalSetCardSelections, internalShutdown, internalTakeBlock
+        // wasmCommandChannel.pushEvent(msg);
+        if (wasmCommand.wasmMove) {
+          //wasmCommandChannel.next({move});
+          liveGame.makeMoveImmediate(msg);
+        } else if (wasmCommand.setCardSelections !== undefined) {
+          liveGame.setCardSelections(msg.setCardSelections);
+        } else if (wasmCommand.shutDown) {
+          liveGame.internalShutdown();
+        }
+      }});
+      let blockSubscription = blockchain.getObservable().subscribe({
+        next: (e: BlockchainReport) => {
+          liveGame.blockNotification(e.peak, e.block, e.report);
+        }
+      });
+
+      let stateSubscription = liveGame.getObservable().subscribe({
+        next: (state: any) => {
+          setState(state);
+          if (state.shutdown) {
+            stateSubscription.unsubscribe();
+            blockSubscription.unsubscribe();
+          }
+        }
+      });
+
+
+
+      //   return(() => {
+      //     subscription.unsubscribe();
+      //   });
+      // });
+
+      // TODO: Check the (now 2) kick states
+      // blobSingleton?.kickSystem(1);
+
+      // ----------------
+
+      // Make calls from here into wasm into Signals
+      // e.g. liveGame?.blockNotification(e.peak, e.block, e.report);
+      // call these when the signals are fired.
+
+    });
+}); // useEffect end
+
+
+
+
+  // .then(() => {});
+
+  // Called once at an arbitrary time.
+  (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
+    storeInitArgs(chia_gaming_init, cg);
+  }, []);
+
+  const handleMakeMove = (move: string) => {
+    wasmCommandChannel.next({wasmMove: move});
+  }
+
+  const setCardSelections = (selected: number) => {
+    wasmCommandChannel.next({setCardSelections: selected});
+  }
+  const stopPlaying = () => {
+    wasmCommandChannel.next({shutdown: true});
+  }
 
   return {
     error,
     gameIdentity,
     gameConnectionState,
-    uniqueWalletConnectionId,
     realPublicKey,
     isPlayerTurn,
     iStarted,
     playerNumber,
-    handleMakeMove,
+
     playerHand,
     opponentHand,
     moveNumber,
     cardSelections,
+
+    // push wasmCommand
+    handleMakeMove,
     setCardSelections,
     stopPlaying,
     outcome

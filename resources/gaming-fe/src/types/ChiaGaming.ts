@@ -142,7 +142,7 @@ export interface WasmConnection {
   get_amount: (cid: number) => number;
 
   // Misc
-  chia_identity: (seed: string) => any;
+  chia_identity: (rng_id: number) => any;
   sha256bytes: (hex: string) => string;
 };
 

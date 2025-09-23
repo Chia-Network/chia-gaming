@@ -28,7 +28,7 @@ class WasmBlobWrapperAdapter {
         this.waiting_messages = [];
     }
 
-    take_block(peak: number, blocks: any[], block_report: any) {
+    take_block(peak: number, blocks: xxx[], block_report: any) {
       this.blob?.blockNotification(peak, blocks, block_report);
     }
 

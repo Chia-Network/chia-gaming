@@ -1,4 +1,4 @@
-import { PeerConnectionResult, WasmConnection, IChiaIdentity, ChiaGame, CalpokerOutcome, WatchReport, InternalBlockchainInterface, WasmBlobParams, GameInitParams } from '../types/ChiaGaming';
+import { PeerConnectionResult, WasmConnection, IChiaIdentity, ChiaGame, CalpokerOutcome, WatchReport, InternalBlockchainInterface, WasmBlobParams, GameInitParams, BlockReport } from '../types/ChiaGaming';
 import { spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { Subject, NextObserver } from 'rxjs';
 
@@ -14,18 +14,26 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   }
 }
 
+export function getNewChiaGameCradle(wasmConnection: WasmConnection, params: GameInitParams) : ChiaGame {
+    let cradleId = wasmConnection.create_game_cradle({
+        // This is a GameCradleConfig
+        rngId: params.rng.getId(),
+        game_types: params.env.game_types,
+        identity: params.chiaIdentity.private_key,
+        have_potato: params.iStarted,
+        my_contribution: {amt: params.myContribution},
+        their_contribution: {amt: params.theirContribution},
+        channel_timeout: params.env.timeout,
+        unroll_timeout: params.env.unroll_timeout,
+        reward_puzzle_hash: params.chiaIdentity.puzzle_hash,
+    });
+    let cradle = new ChiaGame(wasmConnection, cradleId);
+    return cradle;
+}
+
 /*
 
-      const env = {
-        game_types: {
-          "calpoker": {
-            version: 1,
-            hex: calpokerHex
-          }
-        },
-        timeout: 100,
-        unroll_timeout: 100
-      };
+
 
       this.storedMessages.forEach((m) => {
         this.cradle.deliver_message(m);
@@ -44,22 +52,6 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
     });
 
 */
-export function getNewChiaGameCradle(wasmConnection: WasmConnection, params: GameInitParams) : ChiaGame {
-    let cradleId = wasmConnection.create_game_cradle({
-        // This is a GameCradleConfig
-        rngId: params.rng.getId(),
-        game_types: params.env.game_types,
-        identity: params.chiaIdentity.private_key,
-        have_potato: params.iStarted,
-        my_contribution: {amt: params.myContribution},
-        their_contribution: {amt: params.theirContribution},
-        channel_timeout: params.env.timeout,
-        unroll_timeout: params.env.unroll_timeout,
-        reward_puzzle_hash: params.chiaIdentity.puzzle_hash,
-    });
-    let cradle = new ChiaGame(wasmConnection, cradleId);
-    return cradle;
-}
 
 export class WasmBlobWrapper {
   wasmConnection: WasmConnection;
@@ -130,7 +122,7 @@ export class WasmBlobWrapper {
     this.qualifyingEvents |= flags;
     if (this.qualifyingEvents == 3) {
       this.qualifyingEvents |= 4;
-      this.rxjsEmitter.next({name: "ready"});
+      this.rxjsEmitter.next({name: "ready"}); // TODO: type for this msg?
     }
   }
 
@@ -165,7 +157,7 @@ export class WasmBlobWrapper {
     if (msg.deliverMessage) {
       return this.internalDeliverMessage(msg.deliverMessage);
     } else if (msg.move) {
-      return this.internalMakeMove(msg.move);
+      return this.makeMoveImmediate(msg.move);
     } else if (msg.takeOpponentMove) {
       let data = msg.takeOpponentMove;
       return this.takeOpponentMove(data.moveNumber, data.game_id, data.readable_move_hex);
@@ -235,7 +227,7 @@ export class WasmBlobWrapper {
     } else if (!this.iStarted && moveNumber === 2) {
       console.warn('finalOutcome:', this.iStarted, moveNumber);
       this.finalOutcome(p, result);
-      this.makeMove('80');
+      this.makeMoveImmediate('80');
     } else if (moveNumber > 1) {
       console.warn('finalOutcome:', this.iStarted, moveNumber);
       this.finalOutcome(p, result);
@@ -280,19 +272,7 @@ export class WasmBlobWrapper {
     });
   }
 
-  loadCalpoker(): Promise<any> {
-    return this.fetchHex("clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex").then(calpoker_hex => {
-      this.calpokerHex = calpoker_hex;
-      return {
-        'setGameConnectionState': {
-          stateIdentifier: "starting",
-          stateDetail: ["loaded calpoker"]
-        }
-      };
-    });
-  }
-
-  createStartCoin(): Promise<string> {
+  createStartCoin(): Promise<string | undefined> {
     const amount = this.cradle.getAmount();
     const identity = this.cradle.getIdentity();
     if (!identity) {
@@ -309,8 +289,10 @@ export class WasmBlobWrapper {
     }
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${amount}`);
-    return this.blockchain.
-      do_initial_spend(this.uniqueId, identity.puzzle_hash, amount).then(result =>
+    return this
+      .blockchain
+      .do_initial_spend(this.uniqueId, identity.puzzle_hash, amount)
+      .then(result =>
     {
         let coin = result.coin;
         if (!coin) {
@@ -410,7 +392,7 @@ export class WasmBlobWrapper {
     });
 
     if (!idle || this.finished) {
-      return { stop: true };
+      return { stop: true }; // TODO msg type (if possible)
     }
 
     if (idle.finished && !this.finished) {
@@ -423,7 +405,7 @@ export class WasmBlobWrapper {
         },
         outcome: undefined
       });
-      this.messageQueue.push({ receivedShutdown: true });
+      this.messageQueue.push({ receivedShutdown: true });  // TODO msg type (if possible)
       return result;
     }
 
@@ -483,8 +465,9 @@ export class WasmBlobWrapper {
 
   isHandshakeDone(): boolean { return this.handshakeDone; }
 
-  internalMakeMove(move: any): any {
+  makeMoveImmediate(move: any): any {
     if (!this.handshakeDone || !this.wasmConnection || !this.cradle) {
+      // TODO: Let's return more status info here
       return empty();
     }
 
@@ -532,7 +515,8 @@ export class WasmBlobWrapper {
     throw `Don't yet know what to do for move ${this.moveNumber}`;
   }
 
-  makeMove(move: any) {
+  //makeMoveImmediate
+  internalMakeMove(move: any) {
     this.pushEvent({ move });
   }
 
@@ -581,7 +565,7 @@ export class WasmBlobWrapper {
     return empty().then(() => result);
   }
 
-  blockNotification(peak: number, blocks: any[] | undefined, block_report: any) {
+  blockNotification(peak: number, blocks: BlockReport[] | undefined, block_report: any) {
     if (block_report === undefined) {
       block_report = {
         created_watched: [],
@@ -589,8 +573,8 @@ export class WasmBlobWrapper {
         timed_out: []
       };
       // TODO: fix !blocks case
-      for (var b = 0; b < (blocks?blocks.length:0); b++) {
-        const block = blocks?blocks[b]:;
+      for (var b = 0; b < (blocks ? blocks.length : 0); b++) {
+        const block = blocks ? blocks[b] :;
         const one_report = this.wasmConnection.convert_coinset_org_block_spend_to_watch_report(
           block.coin.parent_coin_info,
           block.coin.puzzle_hash,
