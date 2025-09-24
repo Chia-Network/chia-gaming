@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use log::debug;
 

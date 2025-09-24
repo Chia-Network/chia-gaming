@@ -1,7 +1,7 @@
 use super::accept_transaction_state::AcceptTransactionState;
 use crate::common::types::{GameID, PuzzleHash};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OnChainGameState {

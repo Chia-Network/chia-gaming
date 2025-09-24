@@ -6,7 +6,7 @@ use log::debug;
 
 use rand::prelude::*;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{prepend_rem_conditions, ChannelHandlerEnv, UnrollCoin};
 use crate::common::constants::CREATE_COIN;

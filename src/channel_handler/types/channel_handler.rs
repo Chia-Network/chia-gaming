@@ -2,7 +2,7 @@ use rand::prelude::*;
 
 use rand::distributions::Standard;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{PotatoSignatures, UnrollCoin};
 use crate::common::types::{

@@ -7,7 +7,7 @@ use clvmr::run_program;
 
 use log::debug;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::{
     GameHandler, MessageHandler, MessageInputs, MyTurnInputs, MyTurnResult, TheirTurnMoveData,

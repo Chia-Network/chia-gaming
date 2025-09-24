@@ -3,7 +3,7 @@ use clvmr::NodePtr;
 use log::debug;
 use rand::Rng;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::channel_handler::ChannelHandler;

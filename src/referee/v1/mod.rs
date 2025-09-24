@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use log::debug;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::{Evidence, ReadableMove};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
@@ -15,7 +15,6 @@ use crate::common::types::{
     AllocEncoder, Amount, CoinCondition, CoinString, Error, Hash, Program, Puzzle, PuzzleHash,
     Sha256Input, Sha256tree, Spend,
 };
-use crate::referee::RefereeSerializeContainer;
 use crate::referee::types::{
     GameMoveDetails, GameMoveStateInfo, GameMoveWireData, RMFixed, RefereeOnChainTransaction,
     TheirTurnCoinSpentResult, TheirTurnMoveResult,
@@ -26,6 +25,7 @@ use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, OnChainRefereeMoveData,
     OnChainRefereeSolution, RefereePuzzleArgs,
 };
+use crate::referee::RefereeSerializeContainer;
 use crate::referee::RewindResult;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

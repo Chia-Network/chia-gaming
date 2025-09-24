@@ -1,10 +1,8 @@
-use rand::{SeedableRng};
+use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use serde::{Deserialize, Serialize,Serializer,Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-pub struct ChaCha8SerializationWrapper (
-    pub ChaCha8Rng
-);
+pub struct ChaCha8SerializationWrapper(pub ChaCha8Rng);
 
 impl Serialize for ChaCha8SerializationWrapper {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

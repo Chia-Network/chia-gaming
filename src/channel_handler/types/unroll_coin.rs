@@ -8,7 +8,7 @@ use log::debug;
 
 use rand::prelude::*;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::ChannelHandlerEnv;
 use crate::common::constants::{CREATE_COIN, REM};
@@ -16,7 +16,8 @@ use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_pk, unsafe_sign_partial,
 };
 use crate::common::types::{
-    Aggsig, Amount, Error, IntoErr, Node, PrivateKey, Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree,
+    Aggsig, Amount, Error, IntoErr, Node, PrivateKey, Program, ProgramRef, PublicKey, PuzzleHash,
+    Sha256tree,
 };
 
 /// Represents the unroll coin which will come to exist if the channel coin
@@ -218,7 +219,10 @@ impl UnrollCoin {
 
         let result_coins_node = result_coins.to_clvm(env.allocator).into_gen()?;
         let result_node = prepend_rem_conditions(env, self.state_number, result_coins_node)?;
-        Ok(ProgramRef::new(Rc::new(Program::from_nodeptr(env.allocator, result_node)?)))
+        Ok(ProgramRef::new(Rc::new(Program::from_nodeptr(
+            env.allocator,
+            result_node,
+        )?)))
     }
 
     /// Given new inputs, recompute the state of the unroll coin and store the

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use log::debug;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::Evidence;
 use crate::channel_handler::ReadableMove;
@@ -13,14 +13,17 @@ use crate::referee::types::{
     GameMoveDetails, GameMoveWireData, RefereeOnChainTransaction, TheirTurnCoinSpentResult,
     TheirTurnMoveResult,
 };
-use crate::referee::{RefereeInterface, RewindResult, serialize_referee, deserialize_referee};
+use crate::referee::{deserialize_referee, serialize_referee, RefereeInterface, RewindResult};
 
 #[derive(Serialize, Deserialize)]
 pub struct LiveGame {
     pub game_id: GameID,
     pub rewind_outcome: Option<RewindResult>,
     pub last_referee_puzzle_hash: PuzzleHash,
-    #[serde(serialize_with = "serialize_referee", deserialize_with = "deserialize_referee")]
+    #[serde(
+        serialize_with = "serialize_referee",
+        deserialize_with = "deserialize_referee"
+    )]
     referee_maker: Rc<dyn RefereeInterface>,
     pub my_contribution: Amount,
     pub their_contribution: Amount,

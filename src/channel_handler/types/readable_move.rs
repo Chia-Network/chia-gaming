@@ -3,7 +3,7 @@ use std::rc::Rc;
 use clvm_traits::{ToClvm, ToClvmError};
 use clvmr::allocator::NodePtr;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::common::types::{AllocEncoder, Error, Program};
 

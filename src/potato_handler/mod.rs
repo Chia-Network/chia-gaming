@@ -9,7 +9,7 @@ use clvmr::{run_program, Allocator, NodePtr};
 use log::debug;
 use rand::Rng;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
@@ -24,7 +24,7 @@ use crate::common::standard_coin::{
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
     GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, Timeout
+    Sha256tree, Spend, SpendBundle, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -617,7 +617,8 @@ impl PotatoHandler {
                 for game in desc.my_games.iter() {
                     debug!("using game {:?}", game);
                 }
-                let unwrapped_games: Vec<Rc<dyn GameStartInfoInterface>> = desc.my_games.iter().map(|g| g.0.clone()).collect();
+                let unwrapped_games: Vec<Rc<dyn GameStartInfoInterface>> =
+                    desc.my_games.iter().map(|g| g.0.clone()).collect();
                 ch.send_potato_start_game(env, &unwrapped_games)?
             };
 
@@ -1907,7 +1908,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         if i_initiated {
             self.my_start_queue.push_back(MyGameStartQueueEntry {
                 my_games: my_games.into_iter().map(GSI).collect(),
-                their_games: their_games.into_iter().map(GSI).collect()
+                their_games: their_games.into_iter().map(GSI).collect(),
             });
 
             self.push_action(GameAction::LocalStartGame);

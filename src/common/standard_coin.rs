@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::read_to_string;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use chia_bls;
 use hex::FromHex;

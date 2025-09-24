@@ -6,7 +6,7 @@ use clvm_traits::ToClvm;
 use log::debug;
 use rand::Rng;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
 use crate::channel_handler::runner::channel_handler_env;

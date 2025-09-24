@@ -1,5 +1,5 @@
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, AddAssign};
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
 
 use rand::distributions::Standard;
 use rand::prelude::*;

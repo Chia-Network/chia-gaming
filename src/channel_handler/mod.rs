@@ -16,7 +16,7 @@ use rand::prelude::*;
 use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{

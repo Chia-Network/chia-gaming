@@ -7,7 +7,7 @@ use rand::Rng;
 
 use log::debug;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json_any_key::*;
 
 use crate::channel_handler::types::{
@@ -16,7 +16,7 @@ use crate::channel_handler::types::{
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program,
-    SpendBundle, Timeout
+    SpendBundle, Timeout,
 };
 use crate::potato_handler::types::{
     BootstrapTowardWallet, GameAction, PacketSender, PeerEnv, PotatoHandlerImpl, PotatoState,
