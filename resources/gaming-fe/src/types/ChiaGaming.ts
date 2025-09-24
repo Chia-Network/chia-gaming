@@ -1,4 +1,4 @@
-import { Subject, Observable, Subscription } from 'rxjs';
+import { Subject, Subscription } from 'rxjs';
 import { proper_list } from '../util';
 
 export type Amount = {

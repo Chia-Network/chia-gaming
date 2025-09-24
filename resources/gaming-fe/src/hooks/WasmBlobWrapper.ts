@@ -1,4 +1,4 @@
-import { PeerConnectionResult, WasmConnection, IChiaIdentity, ChiaGame, CalpokerOutcome, WatchReport, InternalBlockchainInterface, WasmBlobParams, GameInitParams, JsCoinSetSpend } from '../types/ChiaGaming';
+import { WasmConnection, ChiaGame, CalpokerOutcome, WatchReport, InternalBlockchainInterface, WasmBlobParams, GameInitParams, JsCoinSetSpend } from '../types/ChiaGaming';
 import { spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { Subject, NextObserver } from 'rxjs';
 

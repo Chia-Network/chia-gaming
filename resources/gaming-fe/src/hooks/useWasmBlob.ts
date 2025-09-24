@@ -1,16 +1,13 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { WasmBlobParams, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, InternalBlockchainInterface, BlockchainReport, RngId } from '../types/ChiaGaming';
+import { useState, useEffect, useCallback } from 'react';
+import { WasmBlobParams, GameConnectionState, CalpokerOutcome, BlockchainReport, RngId } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
-import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
-import { useInterval } from '../useInterval';
+import { getSearchParams } from '../util';
 import { v4 as uuidv4 } from 'uuid';
-import { BlockchainOutboundRequest } from './BlockchainConnector';
-import { connectSimulatorBlockchain } from './FakeBlockchainInterface';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector } from './BlockchainConnector';
 import { PARENT_FRAME_BLOCKCHAIN_ID, parentFrameBlockchainInfo } from './ParentFrameBlockchainInfo';
-import { WasmStateInit, doInternalLoadWasm, fetchHex, storeInitArgs, waitForReadyToInit } from './WasmStateInit';
+import { WasmStateInit, doInternalLoadWasm, fetchHex, storeInitArgs } from './WasmStateInit';
 import { WasmBlobWrapper, getNewChiaGameCradle } from './WasmBlobWrapper';
 import { Subject } from 'rxjs';
 
@@ -92,15 +89,11 @@ export function useWasmBlob(uniqueId: string) {
     },
     () => { wasmCommandChannel.next({ socketEnabled: true }); }
   );
-  //SocketEnabled
+
   const loadCalpoker: () => Promise<any> = () => {
     const calpokerFactory = fetchHex(
       "clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex"
     );
-    // continue here xxx
-    // use a signal to push this data outward from wasm
-    // TODO: resolve 'undefined' on liveGame
-    // outbound signal
     setState({
       'setGameConnectionState': {
         stateIdentifier: "starting",
@@ -224,29 +217,10 @@ export function useWasmBlob(uniqueId: string) {
         }
       });
 
-
-
-      //   return(() => {
-      //     subscription.unsubscribe();
-      //   });
-      // });
-
-      // TODO: Check the (now 2) kick states
-      // blobSingleton?.kickSystem(1);
-
-      // ----------------
-
-      // Make calls from here into wasm into Signals
-      // e.g. liveGame?.blockNotification(e.peak, e.block, e.report);
-      // call these when the signals are fired.
-
+      return liveGame.createStartCoin().then();
     });
+    console.log('Wasm Initialization Complete.');
 }); // useEffect end
-
-
-
-
-  // .then(() => {});
 
   // Called once at an arbitrary time.
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
@@ -285,53 +259,3 @@ export function useWasmBlob(uniqueId: string) {
     outcome
   };
 }
-
-/*
-          console.log('Wasm Initialization starts.');
-          // env: any, identity: IChiaIdentity, iStarted: boolean, myContribution:number, theirContribution: number
-          let rngSeed = "alicebobalicebobalicebobalicebob";
-          let rng_id = this.createRng(rngSeed);
-          if (!rng_id) { throw("Nah."); }
-          let gcParams: ChiaGameParams = {
-              rng: rng_id, //rng_id.getId(),
-              //game_types: env.game_types,
-              identity: identity,
-              iStarted: iStarted,
-              myContribution: myContribution,
-              theirContribution: theirContribution,
-              channel_timeout: env.timeout,
-              unroll_timeout: env.unroll_timeout,
-              reward_puzzle_hash: identity.puzzle_hash,
-          };
-          liveGame = wasmStateInit.start(gcParams);
-          console.log('Wasm Initialization Complete.');
-
-*/
-
-/*
-    waitForReadyToInit.subscribe({
-      next(_ok_to_start) {
-        if (gotWasmStateInit)
-
-        wasmStateInit.internalLoadWasm()
-      },
-      error(err) {
-          console.error('Wasm Initialization error: ' + err);
-      },
-      complete() {
-          console.log('Wasm Initialization Channel closed.');
-      },
-    });
-    //   () => {
-    //   //gameStateInit.getNewWasmBlobWrapper().then(() => {
-    //     //get a wasm
-    //     //gameStateInit.getNewWasmBlobWrapper({})
-    //     gameObject = gameStateInit.start().then((v) =>
-
-    //     //});
-    //   //console.log('start loading wasm', gameObject);
-    //   //gameObject?.loadWasm(chia_gaming_init, cg);
-    //   })
-    // });
-
-*/

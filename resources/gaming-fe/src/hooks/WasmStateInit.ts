@@ -1,22 +1,7 @@
-import { GameInitParams, PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity,
-    GameConnectionState,
-    ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, WatchReport, BlockchainReport,
-    InternalBlockchainInterface, RngId, WasmBlobParams } from '../types/ChiaGaming';
-import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list,
-    popcount, empty } from '../util';
-import { Observable, NextObserver, Subject } from 'rxjs';
-import { BLOCKCHAIN_SERVICE_URL, GAME_SERVICE_URL } from '../settings';
+import { WasmConnection, ChiaGame, RngId, WasmBlobParams } from '../types/ChiaGaming';
+import { Observable, Subject } from 'rxjs';
+import { GAME_SERVICE_URL } from '../settings';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-
-
-/*
-    1. Detect presence of Wasm Loader
-    2. Call Wasm Loader to yield a WasmConnection
-
-    WasmBlobWrapper
-
-    serialize_cradle: (cid: number) => any;
-*/
 
 var chia_gaming_init: any = undefined;
 var cg: any = undefined;
