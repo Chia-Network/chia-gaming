@@ -47,7 +47,7 @@ jobs:
 
     - name: Set up rust
       # See also rust-toolchain.toml
-      uses: dtolnay/rust-toolchain@1.89.0  # ${{ RUST_VERSION }}
+      uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
       with:
         components: "clippy, rustfmt"
   fmt:
