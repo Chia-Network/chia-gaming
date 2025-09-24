@@ -1,4 +1,4 @@
-import { PeerConnectionResult, WasmConnection, IChiaIdentity, ChiaGame, CalpokerOutcome, WatchReport, InternalBlockchainInterface, WasmBlobParams, GameInitParams, BlockReport } from '../types/ChiaGaming';
+import { PeerConnectionResult, WasmConnection, IChiaIdentity, ChiaGame, CalpokerOutcome, WatchReport, InternalBlockchainInterface, WasmBlobParams, GameInitParams, JsCoinSetSpend } from '../types/ChiaGaming';
 import { spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { Subject, NextObserver } from 'rxjs';
 
@@ -565,25 +565,27 @@ export class WasmBlobWrapper {
     return empty().then(() => result);
   }
 
-  blockNotification(peak: number, blocks: BlockReport[] | undefined, block_report: any) {
+  blockNotification(peak: number, blocks: JsCoinSetSpend[] | undefined, block_report: any) {
     if (block_report === undefined) {
       block_report = {
         created_watched: [],
         deleted_watched: [],
         timed_out: []
       };
-      // TODO: fix !blocks case
-      for (var b = 0; b < (blocks ? blocks.length : 0); b++) {
-        const block = blocks ? blocks[b] :;
-        const one_report = this.wasmConnection.convert_coinset_org_block_spend_to_watch_report(
-          block.coin.parent_coin_info,
-          block.coin.puzzle_hash,
-          block.coin.amount.toString(),
-          block.puzzle_reveal,
-          block.solution
-        );
-        if (one_report) {
-          combine_reports(block_report, one_report);
+
+      if (blocks) {
+        for (var b = 0; b < blocks.length; b++) {
+          const block = blocks[b];
+          const one_report: WatchReport = this.wasmConnection.convert_coinset_org_block_spend_to_watch_report(
+            block.coin.parent_coin_info,
+            block.coin.puzzle_hash,
+            block.coin.amount.toString(),
+            block.puzzle_reveal,
+            block.solution
+          );
+          if (one_report) {
+            combine_reports(block_report, one_report);
+          }
         }
       }
     }

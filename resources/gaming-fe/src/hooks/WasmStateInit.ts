@@ -20,7 +20,6 @@ import { WasmBlobWrapper } from './WasmBlobWrapper';
 
 var chia_gaming_init: any = undefined;
 var cg: any = undefined;
-var readyToReceiveInitialization = false;
 
 export const readyToInit = new Subject<boolean>();
 export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
@@ -30,6 +29,7 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
         subscriber.complete();
         return;
     }
+    readyToInit.subscribe(subscriber);
 });
 
 export const doInternalLoadWasm = async () => {
@@ -111,10 +111,6 @@ observable.subscribe({
     }
 
     getWasmBlobWrapper(wasmConnection: WasmConnection, wasmParams: WasmBlobParams) : WasmBlobWrapper {
-        if (!readyToReceiveInitialization) {
-            readyToInit.subscribe(waitForReadyToInit);
-            readyToReceiveInitialization = true;
-        }
         return new WasmBlobWrapper(wasmParams, wasmConnection);
     }
 

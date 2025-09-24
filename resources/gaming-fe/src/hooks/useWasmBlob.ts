@@ -86,7 +86,10 @@ export function useWasmBlob(uniqueId: string) {
   const wasmCommandChannel = new Subject<WasmCommand>();
 
   const peerconn = useGameSocket(
-    (msg) => { wasmCommandChannel.next({ msg }); },
+    (msg) => {
+      const x: DeliverMessage = {deliverMessage: msg};
+      wasmCommandChannel.next(x);
+    },
     () => { wasmCommandChannel.next({ socketEnabled: true }); }
   );
   //SocketEnabled
@@ -194,13 +197,15 @@ export function useWasmBlob(uniqueId: string) {
         console.log('Sending wasm command:', Object.keys(msg));
         // makeMoveImmediate, internalSetCardSelections, internalShutdown, internalTakeBlock
         // wasmCommandChannel.pushEvent(msg);
-        if (wasmCommand.wasmMove) {
+        if ("wasmMove" in wasmCommand) {
           //wasmCommandChannel.next({move});
           liveGame.makeMoveImmediate(msg);
-        } else if (wasmCommand.setCardSelections !== undefined) {
-          liveGame.setCardSelections(msg.setCardSelections);
-        } else if (wasmCommand.shutDown) {
-          liveGame.internalShutdown();
+        } else if ("setCardSelections" in wasmCommand) {
+          liveGame.setCardSelections((msg as SetCardSelections).setCardSelections);
+        } else if ("shutDown" in wasmCommand) {
+          liveGame.shutDown();
+        } else if ("deliverMessage" in wasmCommand) {
+          liveGame.deliverMessage(wasmCommand.deliverMessage);
         }
       }});
       let blockSubscription = blockchain.getObservable().subscribe({

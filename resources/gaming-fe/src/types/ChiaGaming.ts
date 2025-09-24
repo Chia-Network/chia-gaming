@@ -105,6 +105,18 @@ export type IdleCallbacks = {
   going_on_chain?: (() => void) | undefined
 };
 
+export type JsCoin = {
+    amount: number | string,
+    parent_coin_info: string,
+    puzzle_hash: string,
+}
+
+export type JsCoinSetSpend = {
+    coin: JsCoin,
+    puzzle_reveal: string,
+    solution: string,
+}
+
 export interface WasmConnection {
   // System
   init: (print: any) => any;
@@ -125,7 +137,7 @@ export interface WasmConnection {
     amount: any,
     puzzle_reveal: string,
     solution: string
-  ) => any;
+  ) => WatchReport;
   convert_spend_to_coinset_org: (spend: string) => any;
   convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: any) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
