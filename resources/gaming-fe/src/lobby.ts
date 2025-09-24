@@ -4,6 +4,9 @@ import { readFile } from 'node:fs/promises';
 import { Server as SocketIOServer } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+import cors from 'cors';
+import helmet from 'helmet';
+import minimist from 'minimist';
 import { GenerateRoomResult, Room, Player } from './types/lobby';
 import { Lobby } from './lobby/lobbyState';
 
@@ -11,8 +14,39 @@ const lobby = new Lobby();
 const app = express();
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
-  // cors: { origin: process.env.LOBBY_URL || GAME_SERVICE_URL, methods: ['GET','POST'] }
+  cors: { origin: '*', methods: ['GET','POST'] }
 });
+
+// Parse args
+function parseArgs() {
+  const args = minimist(process.argv.slice(2));
+
+  if (!args.self) {
+    console.warn('usage: lobby --self [own-url]');
+    process.exit(1);
+  }
+
+  return args;
+}
+
+const args = parseArgs();
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'", "https://explorer-api.walletconnect.com"],
+      scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'"],
+      connectSrc: ["'self'", "https://explorer-api.walletconnect.com", "wss://relay.walletconnect.com", "https://verify.walletconnect.org", "https://verify.walletconnect.org", "https://api.coinset.org", "wss://api.coinset.org", "http://localhost:5800", "wss://relay.walletconnect.org", args.tracker],
+      frameSrc: ["'self'",  'https://verify.walletconnect.org', args.tracker],
+      frameAncestors: ["'self'", '*'],
+    }
+  }
+}));
+
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'HEAD', 'OPTIONS']
+}));
 
 app.use(express.json());
 
@@ -151,6 +185,7 @@ io.on('connection', socket => {
   socket.emit('lobby_update', lobby.getPlayers());
   socket.emit('room_update', Object.values(lobby.rooms));
 
+  // Lobby socket messages.
   socket.on('join', ({ id, alias }) => {
     if (!lobby.players[id]) {
       joinLobby(id, alias, {});
@@ -166,6 +201,19 @@ io.on('connection', socket => {
   socket.on('chat_message', ({ alias, content }) => {
     io.emit('chat_message', { alias, content });
   });
+
+  // Game socket messages.
+  socket.on('game_message', ({ party, token, msg }) => {
+    if (process.env.DEBUG) {
+      console.log('game message', party, token, msg);
+    }
+    io.emit('game_message', { party, token, msg });
+  });
+
+  socket.on('peer', ({ iStarted }) => {
+    console.log('peer', iStarted);
+    io.emit('peer', { iStarted });
+  });
 });
 
 setInterval(() => {
@@ -176,5 +224,5 @@ setInterval(() => {
 
 const port = process.env.PORT || 3001;
 httpServer.listen(port, () => {
-  console.log(`Lobby server listening on port ${port}`)
+  console.log(`Server running on port ${port}`);
 });
