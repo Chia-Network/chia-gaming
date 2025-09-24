@@ -84,7 +84,7 @@ export function useWasmBlob(uniqueId: string) {
 
   const peerconn = useGameSocket(
     (msg) => {
-      const x: DeliverMessage = {deliverMessage: msg};
+      const x: DeliverMessage = { deliverMessage: msg };
       wasmCommandChannel.next(x);
     },
     () => { wasmCommandChannel.next({ socketEnabled: true }); }
@@ -185,22 +185,21 @@ export function useWasmBlob(uniqueId: string) {
       };
 
       const liveGame = new WasmBlobWrapper(wasmParams, wasmConnection)
-      wasmCommandChannel.subscribe({next: (wasmCommand: WasmCommand) => {
-        const msg: WasmCommand = wasmCommand;
-        console.log('Sending wasm command:', Object.keys(msg));
-        // makeMoveImmediate, internalSetCardSelections, internalShutdown, internalTakeBlock
-        // wasmCommandChannel.pushEvent(msg);
-        if ("wasmMove" in wasmCommand) {
-          //wasmCommandChannel.next({move});
-          liveGame.makeMoveImmediate(msg);
-        } else if ("setCardSelections" in wasmCommand) {
-          liveGame.setCardSelections((msg as SetCardSelections).setCardSelections);
-        } else if ("shutDown" in wasmCommand) {
-          liveGame.shutDown();
-        } else if ("deliverMessage" in wasmCommand) {
-          liveGame.deliverMessage(wasmCommand.deliverMessage);
+      wasmCommandChannel.subscribe({
+        next: (wasmCommand: WasmCommand) => {
+          const msg: WasmCommand = wasmCommand;
+          console.log('Sending wasm command:', Object.keys(msg));
+          if ("wasmMove" in wasmCommand) {
+            liveGame.makeMove(msg);
+          } else if ("setCardSelections" in wasmCommand) {
+            liveGame.setCardSelections((msg as SetCardSelections).setCardSelections);
+          } else if ("shutDown" in wasmCommand) {
+            liveGame.shutDown();
+          } else if ("deliverMessage" in wasmCommand) {
+            liveGame.deliverMessage(wasmCommand.deliverMessage);
+          }
         }
-      }});
+      });
       let blockSubscription = blockchain.getObservable().subscribe({
         next: (e: BlockchainReport) => {
           liveGame.blockNotification(e.peak, e.block, e.report);
@@ -220,7 +219,7 @@ export function useWasmBlob(uniqueId: string) {
       return liveGame.createStartCoin().then();
     });
     console.log('Wasm Initialization Complete.');
-}); // useEffect end
+  }); // useEffect end
 
   // Called once at an arbitrary time.
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
@@ -228,14 +227,14 @@ export function useWasmBlob(uniqueId: string) {
   }, []);
 
   const handleMakeMove = (move: string) => {
-    wasmCommandChannel.next({wasmMove: move});
+    wasmCommandChannel.next({ wasmMove: move });
   }
 
   const setCardSelections = (selected: number) => {
-    wasmCommandChannel.next({setCardSelections: selected});
+    wasmCommandChannel.next({ setCardSelections: selected });
   }
   const stopPlaying = () => {
-    wasmCommandChannel.next({shutdown: true});
+    wasmCommandChannel.next({ shutdown: true });
   }
 
   return {

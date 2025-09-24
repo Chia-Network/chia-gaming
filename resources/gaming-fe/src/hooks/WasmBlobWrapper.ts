@@ -157,7 +157,7 @@ export class WasmBlobWrapper {
     if (msg.deliverMessage) {
       return this.internalDeliverMessage(msg.deliverMessage);
     } else if (msg.move) {
-      return this.makeMoveImmediate(msg.move);
+      return this.makeMove(msg.move);
     } else if (msg.takeOpponentMove) {
       let data = msg.takeOpponentMove;
       return this.takeOpponentMove(data.moveNumber, data.game_id, data.readable_move_hex);
@@ -227,7 +227,7 @@ export class WasmBlobWrapper {
     } else if (!this.iStarted && moveNumber === 2) {
       console.warn('finalOutcome:', this.iStarted, moveNumber);
       this.finalOutcome(p, result);
-      this.makeMoveImmediate('80');
+      this.makeMove('80');
     } else if (moveNumber > 1) {
       console.warn('finalOutcome:', this.iStarted, moveNumber);
       this.finalOutcome(p, result);
@@ -465,7 +465,7 @@ export class WasmBlobWrapper {
 
   isHandshakeDone(): boolean { return this.handshakeDone; }
 
-  makeMoveImmediate(move: any): any {
+  makeMove(move: any): any {
     if (!this.handshakeDone || !this.wasmConnection || !this.cradle) {
       // TODO: Let's return more status info here
       return empty();

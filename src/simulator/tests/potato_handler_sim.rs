@@ -6,8 +6,6 @@ use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use serde_json;
-
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
@@ -135,7 +133,7 @@ impl SimulatedWalletSpend {
             WatchEntry {
                 timeout_blocks: timeout.clone(),
                 timeout_at: Some(timeout.to_u64() + self.current_height),
-                name: name.map(|n| n.to_string()),
+                name,
             },
         );
         Ok(())
@@ -618,6 +616,25 @@ pub fn run_calpoker_test_with_action_list(
     assert!(peers[0].message_pipe.queue.is_empty());
     assert!(peers[1].message_pipe.queue.is_empty());
 
+    // Game move execution starts here
+    run_move_list(
+        allocator,
+        moves,
+        &mut handlers,
+        &mut peers,
+        game_ids[0].clone(),
+        rng,
+    );
+}
+
+fn run_move_list(
+    allocator: &mut AllocEncoder,
+    moves: &[GameAction],
+    handlers: &mut [PotatoHandler; 2],
+    peers: &mut [SimulatedPeer; 2],
+    game_id: GameID,
+    rng: &mut ChaCha8Rng,
+) {
     for this_move in moves.iter() {
         let (who, what) = if let GameAction::Move(who, what, _) = this_move {
             (who, what)
@@ -631,11 +648,11 @@ pub fn run_calpoker_test_with_action_list(
             let move_readable = what.clone();
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
             handlers[who ^ 1]
-                .make_move(&mut penv, &game_ids[0], &move_readable, entropy)
+                .make_move(&mut penv, &game_id, &move_readable, entropy)
                 .expect("should work");
         }
 
-        quiesce(rng, allocator, Amount::new(200), &mut handlers, &mut peers).expect("should work");
+        quiesce(rng, allocator, Amount::new(200), handlers, peers).expect("should work");
     }
 }
 
@@ -782,7 +799,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         SynchronousGameCradleConfig {
             game_types: game_type_map.clone(),
             have_potato: true,
-            identity: identities[0].clone(),
+            identity: &identities[0],
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
@@ -795,7 +812,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         SynchronousGameCradleConfig {
             game_types: game_type_map.clone(),
             have_potato: false,
-            identity: identities[1].clone(),
+            identity: &identities[1],
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
@@ -860,18 +877,6 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
 
         for i in 0..=1 {
-            for i in 0..=1 {
-                let serialized_err = serde_json::to_value(&cradles[i]);
-                if let Err(e) = &serialized_err {
-                    debug!("serialization error {e:?}");
-                }
-                let replaced_cradle = serde_json::from_value(serialized_err.unwrap());
-                if let Err(e) = &replaced_cradle {
-                    debug!("deserialization error {e:?}");
-                }
-                cradles[i] = replaced_cradle.unwrap();
-            }
-
             if local_uis[i].go_on_chain {
                 // Perform on chain move.
                 // Turn off the flag to go on chain.
@@ -988,6 +993,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
             can_move = true;
         } else if let Some((wb, _)) = &mut wait_blocks {
+            #[allow(clippy::needless_range_loop)]
             for i in 0..=1 {
                 for (current_height, watch_report) in report_backlogs[i].iter() {
                     cradles[i].new_block(allocator, rng, *current_height, watch_report)?;

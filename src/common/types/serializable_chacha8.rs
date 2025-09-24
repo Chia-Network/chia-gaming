@@ -9,7 +9,7 @@ impl Serialize for ChaCha8SerializationWrapper {
     where
         S: Serializer,
     {
-        hex::encode(&self.0.get_seed()).serialize(serializer)
+        hex::encode(self.0.get_seed()).serialize(serializer)
     }
 }
 

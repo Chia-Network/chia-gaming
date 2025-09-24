@@ -19,7 +19,7 @@ impl Serialize for Aggsig {
     where
         S: Serializer,
     {
-        hex::encode(&self.bytes()).serialize(serializer)
+        hex::encode(self.bytes()).serialize(serializer)
     }
 }
 

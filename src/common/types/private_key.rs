@@ -79,7 +79,7 @@ impl Serialize for PrivateKey {
     where
         S: Serializer,
     {
-        hex::encode(&self.bytes()).serialize(serializer)
+        hex::encode(self.bytes()).serialize(serializer)
     }
 }
 
