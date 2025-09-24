@@ -616,6 +616,25 @@ pub fn run_calpoker_test_with_action_list(
     assert!(peers[0].message_pipe.queue.is_empty());
     assert!(peers[1].message_pipe.queue.is_empty());
 
+    // Game move execution starts here
+    run_move_list(
+        allocator,
+        moves,
+        &mut handlers,
+        &mut peers,
+        game_ids[0].clone(),
+        rng,
+    );
+}
+
+fn run_move_list(
+    allocator: &mut AllocEncoder,
+    moves: &[GameAction],
+    handlers: &mut [PotatoHandler; 2],
+    peers: &mut [SimulatedPeer; 2],
+    game_id: GameID,
+    rng: &mut ChaCha8Rng,
+) {
     for this_move in moves.iter() {
         let (who, what) = if let GameAction::Move(who, what, _) = this_move {
             (who, what)
@@ -629,11 +648,11 @@ pub fn run_calpoker_test_with_action_list(
             let move_readable = what.clone();
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
             handlers[who ^ 1]
-                .make_move(&mut penv, &game_ids[0], &move_readable, entropy)
+                .make_move(&mut penv, &game_id, &move_readable, entropy)
                 .expect("should work");
         }
 
-        quiesce(rng, allocator, Amount::new(200), &mut handlers, &mut peers).expect("should work");
+        quiesce(rng, allocator, Amount::new(200), handlers, peers).expect("should work");
     }
 }
 
