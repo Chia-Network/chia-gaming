@@ -1662,7 +1662,7 @@ impl PotatoHandler {
     // AK_MH We would like to return the result of the move from here,
     // up the call chain, and be able to retreive it in e.g. run_calpoker_container_with_action_list
     // However, it looks like this call enqueues the move, and it is executed later
-    fn do_game_action<'a, G, R: Rng + 'a>(
+    pub fn do_game_action<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         action: GameAction,
@@ -1943,7 +1943,11 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         Ok(())
     }
 
-    fn accept_game_outcome<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
+    fn accept_game_outcome<'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+        id: &GameID,
+    ) -> Result<(), Error>
     where
         G: 'a,
         R: 'a,
