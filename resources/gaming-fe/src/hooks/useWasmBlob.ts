@@ -216,9 +216,17 @@ export function useWasmBlob(uniqueId: string) {
         }
       });
 
+      console.log('Wasm Initialization Complete.');
       return liveGame.createStartCoin().then();
+
+    }).then((coin) => {
+      console.log('Initial coin creation complete. Got: ', coin);
+      if (coin === undefined) {
+        throw("Failed to create initial game coin");
+      }
+      setGameStartCoin(coin);
     });
-    console.log('Wasm Initialization Complete.');
+    console.log('Chia Gaming infrastructure Initialization Complete.');
   }); // useEffect end
 
   // Called once at an arbitrary time.
