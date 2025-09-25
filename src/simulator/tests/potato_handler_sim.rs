@@ -127,14 +127,14 @@ impl SimulatedWalletSpend {
         timeout: &Timeout,
         opt_name: Option<&'static str>,
     ) -> Result<(), Error> {
-        let name : Option<String> = opt_name.map(str::to_string);
+        let name: Option<String> = opt_name.map(str::to_string);
         debug!("register coin {name:?}");
         self.watching_coins.insert(
             coin_id.clone(),
             WatchEntry {
                 timeout_blocks: timeout.clone(),
                 timeout_at: Some(timeout.to_u64() + self.current_height),
-                name
+                name,
             },
         );
         Ok(())
