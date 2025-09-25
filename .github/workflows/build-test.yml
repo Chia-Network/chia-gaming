@@ -64,8 +64,8 @@ jobs:
           components: "clippy, rustfmt"
       - name: fmt
         run: |
-          cargo +stable fmt --version
-          cargo +stable fmt -- --files-with-diff --check
+          cargo fmt --version
+          cargo fmt -- --files-with-diff --check
 
   clippy:
     runs-on: ubuntu-22.04
