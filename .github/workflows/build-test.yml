@@ -80,9 +80,9 @@ jobs:
       - name: clippy
         run: |
           set -x
-          cargo +stable clippy --version
-          cargo +stable clippy --all --features=sim-tests -- -D warnings
-          cargo +stable check --features=sim-tests --tests
+          cargo clippy --version
+          cargo clippy --all --features=sim-tests -- -D warnings
+          cargo check --features=sim-tests --tests
 
   unit_tests:
     runs-on: ubuntu-22.04
