@@ -188,6 +188,13 @@ impl ToLocalUI for Pipe {
         self.opponent_messages.push((id.clone(), readable));
         Ok(())
     }
+    fn game_start(
+        &mut self,
+        _id: &[GameID],
+        _failed: Option<GameStartFailed>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
         Ok(())
     }
