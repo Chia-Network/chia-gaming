@@ -12,7 +12,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::ChannelHandlerEnv;
+use crate::channel_handler::types::{ChannelHandlerEnv, GameStartFailed};
 #[cfg(test)]
 use crate::channel_handler::types::ChannelHandlerPrivateKeys;
 #[cfg(test)]
