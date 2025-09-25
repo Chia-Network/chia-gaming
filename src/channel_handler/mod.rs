@@ -849,6 +849,12 @@ impl ChannelHandler {
             "send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
+        if my_full_contribution > self.my_out_of_game_balance
+            || their_full_contribution > self.their_out_of_game_balance
+        {
+            return Ok(StartGameResult::Failure(GameStartFailed::OutOfMoney));
+        }
+
         self.clear_cached_game_id_for_send();
         let live_game_ids: Vec<&GameID> = self.live_games.iter().map(|l| &l.game_id).collect();
         debug!("current game ids: {live_game_ids:?}");
@@ -873,17 +879,11 @@ impl ChannelHandler {
         self.live_games.append(&mut new_games);
         debug!("after adding games: {} games", self.live_games.len());
 
-        if my_full_contribution > self.my_out_of_game_balance
-            || their_full_contribution > self.their_out_of_game_balance
-        {
-            return Ok(StartGameResult::Failure(GameStartFailed::OutOfMoney));
-        }
-
         self.my_allocated_balance += my_full_contribution;
         self.their_allocated_balance += their_full_contribution;
 
         Ok(StartGameResult::Success(
-            self.update_cached_unroll_state(env)?,
+            Box::new(self.update_cached_unroll_state(env)?)
         ))
     }
 

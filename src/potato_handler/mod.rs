@@ -604,7 +604,7 @@ impl PotatoHandler {
 
             let sigs = {
                 let ch = self.channel_handler_mut()?;
-                let (env, _) = penv.env();
+                let (env, system_interface) = penv.env();
                 for game in desc.their_games.iter() {
                     debug!("their game {:?}", game);
                     dehydrated_games.push(GSI(game.clone()));
@@ -612,22 +612,25 @@ impl PotatoHandler {
                 for game in desc.my_games.iter() {
                     debug!("using game {:?}", game);
                 }
+                let game_ids: Vec<GameID> =
+                    desc.my_games.iter().map(|d| d.game_id().clone()).collect();
+
                 match ch.send_potato_start_game(env, &desc.my_games)? {
                     StartGameResult::Failure(reason) => {
-                        let game_ids: Vec<GameID> =
-                            desc.my_games.iter().map(|d| d.game_id().clone()).collect();
-                        let (_, system_interface) = penv.env();
                         system_interface.game_start(&game_ids, Some(reason.clone()))?;
                         return Ok(true);
                     }
-                    StartGameResult::Success(sigs) => sigs,
+                    StartGameResult::Success(sigs) => {
+                        system_interface.game_start(&game_ids, None)?;
+                        sigs
+                    }
                 }
             };
 
             debug!("dehydrated_games {dehydrated_games:?}");
             self.have_potato = PotatoState::Absent;
             let (_, system_interface) = penv.env();
-            system_interface.send_message(&PeerMessage::StartGames(sigs, dehydrated_games))?;
+            system_interface.send_message(&PeerMessage::StartGames(*sigs, dehydrated_games))?;
             return Ok(true);
         }
 
@@ -1033,7 +1036,7 @@ impl PotatoHandler {
 
         let ch = self.channel_handler_mut()?;
         let spend_info = {
-            let (env, _system_interface) = penv.env();
+            let (env, system_interface) = penv.env();
             let mut rehydrated_games = Vec::new();
             for game in games.iter() {
                 debug!("their game {:?} {:?}", game.0.game_id(), game);
@@ -1041,6 +1044,7 @@ impl PotatoHandler {
             }
             let (game_ids, spend_info) =
                 ch.received_potato_start_game(env, sigs, &rehydrated_games)?;
+
             debug!("game_ids from channel handler {game_ids:?}");
 
             if game_ids.len() != our_game_ids.len() {
@@ -1054,6 +1058,8 @@ impl PotatoHandler {
                     return Err(Error::StrErr(format!("channel handler got a game id that didn't match one of the game ids we predicted {:?}", g)));
                 }
             }
+
+            system_interface.game_start(&game_ids, None)?;
 
             spend_info
         };

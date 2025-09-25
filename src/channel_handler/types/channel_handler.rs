@@ -60,7 +60,7 @@ pub enum GameStartFailed {
 
 pub enum StartGameResult {
     Failure(GameStartFailed),
-    Success(PotatoSignatures),
+    Success(Box<PotatoSignatures>),
 }
 
 pub struct ChannelHandlerEnv<'a, R: Rng> {
