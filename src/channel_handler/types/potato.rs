@@ -1,7 +1,6 @@
 use crate::channel_handler::types::{LiveGame, ReadableMove};
 use crate::channel_handler::ChannelCoinSpendInfo;
 use crate::common::types::{Aggsig, Amount, GameID, Hash, Program, PuzzleHash};
-use crate::referee::types::GameMoveDetails;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
