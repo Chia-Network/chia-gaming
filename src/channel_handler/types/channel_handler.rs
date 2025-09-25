@@ -58,6 +58,7 @@ pub enum GameStartFailed {
     OutOfMoney,
 }
 
+#[derive(Clone, Debug)]
 pub enum StartGameResult {
     Failure(GameStartFailed),
     Success(Box<PotatoSignatures>),

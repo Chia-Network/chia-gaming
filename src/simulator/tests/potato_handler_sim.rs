@@ -1710,6 +1710,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         add_debug_test_accept_shutdown(&mut sim_setup, 20);
         let game_type: &[u8] = b"debug";
+        let mut game_starts: [Option<GameStartFailed>; 2] = [None, None];
+
         let mut outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
             &mut rng,
@@ -1762,6 +1764,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                     .idle(&mut allocator, &mut rng, &mut outcome.local_uis[c], 0)
                     .unwrap()
                 {
+                    if let Some(gs) = &result.game_started {
+                        game_starts[c] = gs.failed.clone();
+                    }
+
                     for msg in result.outbound_messages.iter() {
                         outcome.cradles[i ^ 1].deliver_message(msg).unwrap();
                     }
@@ -1774,6 +1780,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         }
 
         assert!(result2.is_ok());
+        assert!(matches!(game_starts[0], Some(GameStartFailed::OutOfMoney)));
+        assert!(matches!(game_starts[1], None));
     }));
 
     res.push(("test_calpoker_v1_smoke", &|| {
