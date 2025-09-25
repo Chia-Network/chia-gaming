@@ -1759,13 +1759,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         );
 
         for i in 0..100 {
-            for c in 0..=1 {
+            for (c, game_start) in game_starts.iter_mut().enumerate() {
                 while let Some(result) = outcome.cradles[c]
                     .idle(&mut allocator, &mut rng, &mut outcome.local_uis[c], 0)
                     .unwrap()
                 {
                     if let Some(gs) = &result.game_started {
-                        game_starts[c] = gs.failed.clone();
+                        *game_start = gs.failed.clone();
                     }
 
                     for msg in result.outbound_messages.iter() {
@@ -1781,7 +1781,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         assert!(result2.is_ok());
         assert!(matches!(game_starts[0], Some(GameStartFailed::OutOfMoney)));
-        assert!(matches!(game_starts[1], None));
+        assert!(game_starts[1].is_none());
     }));
 
     res.push(("test_calpoker_v1_smoke", &|| {
