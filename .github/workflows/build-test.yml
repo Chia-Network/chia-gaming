@@ -59,7 +59,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install rust
-        uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@1.89.0  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
       - name: fmt

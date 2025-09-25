@@ -11,7 +11,6 @@ import {
   Select,
   Typography,
 } from "@mui/material";
-import useGameSocket from "../hooks/useGameSocket";
 import PlayerSection from "./PlayerSection";
 import OpponentSection from "./OpponentSection";
 import GameEndPlayer from "./GameEndPlayer";
@@ -23,6 +22,7 @@ import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 
 const Game: React.FC = () => {
   const uniqueId = generateOrRetrieveUniqueId();
+  const params = getSearchParams();
   const {
     error,
     gameConnectionState,
@@ -37,7 +37,7 @@ const Game: React.FC = () => {
     setCardSelections,
     outcome,
     stopPlaying
-  } = useWasmBlob(uniqueId);
+  } = useWasmBlob(params.lobbyUrl, uniqueId);
 
   // All early returns need to be after all useEffect, etc.
   if (error) {
