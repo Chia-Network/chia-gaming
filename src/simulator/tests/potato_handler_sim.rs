@@ -222,7 +222,7 @@ impl ToLocalUI for SimulatedPeer {
         _ids: &[GameID],
         _failed: Option<GameStartFailed>,
     ) -> Result<(), Error> {
-        todo!();
+        Ok(())
     }
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
         todo!();
