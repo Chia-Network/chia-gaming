@@ -12,11 +12,11 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{ChannelHandlerEnv, GameStartFailed};
 #[cfg(test)]
 use crate::channel_handler::types::ChannelHandlerPrivateKeys;
 #[cfg(test)]
 use crate::channel_handler::types::ReadableMove;
+use crate::channel_handler::types::{ChannelHandlerEnv, GameStartFailed};
 use crate::common::standard_coin::private_to_public_key;
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
