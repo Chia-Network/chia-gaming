@@ -64,6 +64,7 @@ jobs:
           components: "clippy, rustfmt"
       - name: fmt
         run: |
+          rustup component add --toolchain stable-x86_64-unknown-linux-gnu clippy rustfmt
           cargo +stable fmt --version
           cargo +stable fmt -- --files-with-diff --check
 
@@ -80,6 +81,7 @@ jobs:
       - name: clippy
         run: |
           set -x
+          rustup component add --toolchain stable-x86_64-unknown-linux-gnu clippy rustfmt
           cargo +stable clippy --version
           cargo +stable clippy --all --features=sim-tests -- -D warnings
           cargo +stable check --features=sim-tests --tests
@@ -221,11 +223,12 @@ jobs:
         cat checksum.txt
         shasum -a 256 -c checksum.txt
 
-    - name: Install rust
+    - name: Install rust on mac
       run: |
         chmod +x rustup-init
         ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
         rm rustup-init checksum.txt
+        echo 'export PATH=$HOME/.cargo/bin:$PATH' >> $HOME/.profile
 
     - name: Set up a venv for chia-blockchain
       run: |
