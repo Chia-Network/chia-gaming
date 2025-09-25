@@ -223,11 +223,12 @@ jobs:
         cat checksum.txt
         shasum -a 256 -c checksum.txt
 
-    - name: Install rust
+    - name: Install rust on mac
       run: |
         chmod +x rustup-init
         ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
         rm rustup-init checksum.txt
+        echo 'export PATH=$HOME/.cargo/bin:$PATH' >> $HOME/.profile
 
     - name: Set up a venv for chia-blockchain
       run: |
