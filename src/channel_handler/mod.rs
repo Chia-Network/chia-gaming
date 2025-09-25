@@ -882,9 +882,9 @@ impl ChannelHandler {
         self.my_allocated_balance += my_full_contribution;
         self.their_allocated_balance += their_full_contribution;
 
-        Ok(StartGameResult::Success(
-            Box::new(self.update_cached_unroll_state(env)?)
-        ))
+        Ok(StartGameResult::Success(Box::new(
+            self.update_cached_unroll_state(env)?,
+        )))
     }
 
     pub fn received_potato_start_game<R: Rng>(
