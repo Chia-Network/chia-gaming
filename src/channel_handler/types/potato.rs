@@ -13,12 +13,6 @@ pub struct PotatoSignatures {
     pub my_unroll_half_signature_peer: Aggsig,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MoveResult {
-    pub signatures: PotatoSignatures,
-    pub game_move: GameMoveDetails,
-}
-
 pub struct PotatoAcceptCachedData {
     pub game_id: GameID,
     pub puzzle_hash: PuzzleHash,
