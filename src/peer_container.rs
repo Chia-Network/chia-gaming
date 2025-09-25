@@ -7,7 +7,9 @@ use log::debug;
 use rand::Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
+use crate::channel_handler::types::{
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, ReadableMove,
+};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
@@ -146,6 +148,12 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
     }
 }
 
+#[derive(Debug)]
+pub struct GameStartRecord {
+    pub game_ids: Vec<GameID>,
+    pub failed: Option<GameStartFailed>,
+}
+
 #[derive(Default)]
 pub struct IdleResult {
     pub continue_on: bool,
@@ -155,6 +163,7 @@ pub struct IdleResult {
     pub coin_solution_requests: VecDeque<CoinString>,
     pub outbound_messages: VecDeque<Vec<u8>>,
     pub opponent_move: Option<(GameID, usize, ReadableMove)>,
+    pub game_started: Option<GameStartRecord>,
     pub game_finished: Option<(GameID, Amount)>,
     pub receive_error: Option<Error>,
     pub action_queue: Vec<String>,
@@ -282,6 +291,7 @@ struct SynchronousGameCradleState {
     opponent_moves: VecDeque<(GameID, usize, ReadableMove, Amount)>,
     raw_game_messages: VecDeque<(GameID, Vec<u8>)>,
     game_messages: VecDeque<(GameID, ReadableMove)>,
+    game_started: Option<GameStartRecord>,
     game_finished: VecDeque<(GameID, Amount)>,
     finished: bool,
     shutdown: Option<CoinString>,
@@ -368,6 +378,7 @@ impl SynchronousGameCradle {
                 opponent_moves: VecDeque::default(),
                 game_messages: VecDeque::default(),
                 raw_game_messages: VecDeque::default(),
+                game_started: None,
                 game_finished: VecDeque::default(),
                 channel_puzzle_hash: None,
                 funding_coin: None,
@@ -460,6 +471,13 @@ impl ToLocalUI for SynchronousGameCradleState {
         readable: ReadableMove,
     ) -> Result<(), Error> {
         self.game_messages.push_back((id.clone(), readable.clone()));
+        Ok(())
+    }
+    fn game_start(&mut self, ids: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error> {
+        self.game_started = Some(GameStartRecord {
+            game_ids: ids.to_vec(),
+            failed: failed.clone(),
+        });
         Ok(())
     }
     fn game_finished(&mut self, id: &GameID, my_share: Amount) -> Result<(), Error> {

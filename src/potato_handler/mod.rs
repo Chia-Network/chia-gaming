@@ -11,7 +11,7 @@ use rand::Rng;
 
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
-    GameStartInfoInterface, PotatoSignatures, ReadableMove,
+    GameStartInfoInterface, PotatoSignatures, ReadableMove, StartGameResult,
 };
 use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
@@ -612,7 +612,16 @@ impl PotatoHandler {
                 for game in desc.my_games.iter() {
                     debug!("using game {:?}", game);
                 }
-                ch.send_potato_start_game(env, &desc.my_games)?
+                match ch.send_potato_start_game(env, &desc.my_games)? {
+                    StartGameResult::Failure(reason) => {
+                        let game_ids: Vec<GameID> =
+                            desc.my_games.iter().map(|d| d.game_id().clone()).collect();
+                        let (_, system_interface) = penv.env();
+                        system_interface.game_start(&game_ids, Some(reason.clone()))?;
+                        return Ok(true);
+                    }
+                    StartGameResult::Success(sigs) => sigs,
+                }
             };
 
             debug!("dehydrated_games {dehydrated_games:?}");
