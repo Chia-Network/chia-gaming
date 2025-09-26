@@ -36,9 +36,6 @@ jobs:
       alternate-latest-mode: true
       dockerfile: "./Dockerfile.web"
       image_subpath: "chia-gaming-web"
-    secrets:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_PAT: ${{ secrets.DOCKERHUB_PAT }}
   build_sim_image:
     needs: build_web_image
     uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
