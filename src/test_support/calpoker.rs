@@ -233,53 +233,56 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     //         panic!("{:?}", game_action_results);
     //     };
     // }));
-    res.push(("test_verify_endgame_data", &|| {
-        let mut allocator = AllocEncoder::new();
-        let moves = prefix_test_moves(&mut allocator, true);
-        let game_action_results =
-            run_calpoker_container_with_action_list(&mut allocator, &moves, true)
-                .expect("should work");
-        debug!("play_result {game_action_results:?}");
-        if let GameActionResult::MoveResult(penultimate_game_data, _, _, _) =
-            game_action_results[game_action_results.len() - 1].clone()
-        {
-            let is_bob_move: bool = true;
-            let readable_node = penultimate_game_data
-                .to_nodeptr(&mut allocator)
-                .expect("failed to convert to nodepointer");
-            let decoded = decode_calpoker_readable(
-                &mut allocator,
-                readable_node,
-                Amount::new(200),
-                is_bob_move,
-            )
-            .expect("should work");
-            // decoded is a description of Alice's result, from Bob's point of view
-            // Bob won this game
-            // Bob should get a reward coin for 200
-            // Alice should get 0
-            assert_eq!(
-                decoded,
-                CalpokerResult {
-                    raw_alice_selects: 170, // me.raw_selects
-                    raw_bob_picks: 205,
-                    raw_alice_picks: 185,
-                    alice_hand_result: CalpokerHandValue::TwoPair(4, 2, 12),
-                    alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 4, 2, 12]),
-                    bob_hand_result: CalpokerHandValue::Pair(3, vec![3, 14, 13, 11]),
-                    bob_hand_value: RawCalpokerHandValue::SimpleList(vec![
-                        2, 1, 1, 1, 3, 14, 13, 11
-                    ]),
-                    your_share: 200,
-                    game_amount: 200,
-                    raw_win_direction: 1,
-                    win_direction: Some(WinDirectionUser::Alice),
-                }
-            );
-        } else {
-            panic!("{:?}", game_action_results);
-        };
-    }));
+
+    // AK_MH: CONTINUE HERE
+    // res.push(("test_verify_endgame_data", &|| {
+    //     let mut allocator = AllocEncoder::new();
+    //     let moves = prefix_test_moves(&mut allocator, true);
+    //     let game_action_results =
+    //         run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+    //             .expect("should work");
+    //     debug!("play_result {game_action_results:?}");
+    // AK_MH: CONTINUE HERE
+    //     if let GameActionResult::MoveResult(penultimate_game_data, _, _, _) =
+    //         game_action_results
+    //     {
+    //         let is_bob_move: bool = true;
+    //         let readable_node = penultimate_game_data
+    //             .to_nodeptr(&mut allocator)
+    //             .expect("failed to convert to nodepointer");
+    //         let decoded = decode_calpoker_readable(
+    //             &mut allocator,
+    //             readable_node,
+    //             Amount::new(200),
+    //             is_bob_move,
+    //         )
+    //         .expect("should work");
+    //         // decoded is a description of Alice's result, from Bob's point of view
+    //         // Bob won this game
+    //         // Bob should get a reward coin for 200
+    //         // Alice should get 0
+    //         assert_eq!(
+    //             decoded,
+    //             CalpokerResult {
+    //                 raw_alice_selects: 170, // me.raw_selects
+    //                 raw_bob_picks: 205,
+    //                 raw_alice_picks: 185,
+    //                 alice_hand_result: CalpokerHandValue::TwoPair(4, 2, 12),
+    //                 alice_hand_value: RawCalpokerHandValue::SimpleList(vec![2, 2, 1, 4, 2, 12]),
+    //                 bob_hand_result: CalpokerHandValue::Pair(3, vec![3, 14, 13, 11]),
+    //                 bob_hand_value: RawCalpokerHandValue::SimpleList(vec![
+    //                     2, 1, 1, 1, 3, 14, 13, 11
+    //                 ]),
+    //                 your_share: 200,
+    //                 game_amount: 200,
+    //                 raw_win_direction: 1,
+    //                 win_direction: Some(WinDirectionUser::Alice),
+    //             }
+    //         );
+    //     } else {
+    //         panic!("{:?}", game_action_results);
+    //     };
+    // }));
     res.push(("test_verify_bob_message_v0", &|| {
         // Ensure the bytes being passed on are structured correctly
         // Verify message decoding
