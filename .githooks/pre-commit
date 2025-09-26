@@ -50,7 +50,7 @@ fi
 # exec git diff-index --check --cached $against --
 
 cargo fmt
-cargo clippy --check
+cargo clippy
 (cd resources/gaming-fe && yarn test)
 
 # Run the fast tests before commit
