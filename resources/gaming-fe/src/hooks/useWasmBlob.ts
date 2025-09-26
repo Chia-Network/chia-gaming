@@ -109,7 +109,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     } else {
       return;
     }
-
+    console.log('Wasm init starting: ');
     window.addEventListener('message', (evt: any) => {
       const key = evt.message ? 'message' : 'data';
       let data = evt[key];
@@ -126,6 +126,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         }
         parentFrameBlockchainInfo.next(data.blockchain_info);
       }
+      console.log('window.addEventListener done');
     });
 
     blockchainConnector.getOutbound().subscribe({
@@ -139,9 +140,11 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       selection: PARENT_FRAME_BLOCKCHAIN_ID,
       uniqueId
     });
-
+    console.log('Subscribed to blockchain connection.');
     loadCalpoker().then((calpokerHex) => {
+      console.log('Calpoker ChiaLisp loaded');
       return wasmStateInit.getWasmConnection().then((wasmConnection) => {
+        console.log('Wasm connection active');
         return {
           calpokerHex, wasmConnection
         };
@@ -157,7 +160,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         timeout: 100,
         unroll_timeout: 100
       };
-
+      console.log('Configuring known game types: ', env);
       const uuid = uuidv4();
       const hexString = uuid.replaceAll("-", "");
       const rngId = wasmConnection.create_rng(hexString);
@@ -174,7 +177,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         theirContribution: searchParams.amount,
       }
       let cradle = getNewChiaGameCradle(wasmConnection, gameInitParams);
-
+      console.log('Chia Gaming Cradle created. Session ID:', hexString);
+      console.log('I am ', iStarted ? 'Alice' : 'Bob');
       let wasmParams: WasmBlobParams = {
         blockchain: blockchain,
         peerconn: peerconn,
@@ -185,6 +189,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       };
 
       const liveGame = new WasmBlobWrapper(wasmParams, wasmConnection)
+      console.log('WasmBlobWrapper game object created.');
+
       wasmCommandChannel.subscribe({
         next: (wasmCommand: WasmCommand) => {
           const msg: WasmCommand = wasmCommand;
@@ -202,6 +208,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       });
       let blockSubscription = blockchain.getObservable().subscribe({
         next: (e: BlockchainReport) => {
+          console.log('Received Chia block ', e.peak);
           liveGame.blockNotification(e.peak, e.block, e.report);
         }
       });
@@ -210,6 +217,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         next: (state: any) => {
           setState(state);
           if (state.shutdown) {
+            console.log('Chia Gaming shutting down.');
             stateSubscription.unsubscribe();
             blockSubscription.unsubscribe();
           }
@@ -225,8 +233,9 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         throw("Failed to create initial game coin");
       }
       setGameStartCoin(coin);
+      console.log('Chia Gaming infrastructure Initialization Complete.');
     });
-    console.log('Chia Gaming infrastructure Initialization Complete.');
+    console.log('Chia Gaming infrastructure Initialization threaded and ready to be configured.');
   }); // useEffect end
 
   // Called once at an arbitrary time.
