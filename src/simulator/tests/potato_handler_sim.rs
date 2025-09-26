@@ -1094,7 +1094,7 @@ fn run_game_container_with_action_list_with_success_predicate(
                     GameAction::Accept(who) | GameAction::Timeout(who) => {
                         debug!("{who} doing ACCEPT");
                         can_move = true;
-                        cradles[*who].accept_game_outcome(allocator, rng, &game_ids[0])?;
+                        cradles[*who].accept(allocator, rng, &game_ids[0])?;
                     }
                     GameAction::Shutdown(who, conditions) => {
                         can_move = true;

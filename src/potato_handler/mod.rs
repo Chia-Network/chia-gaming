@@ -1943,7 +1943,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         Ok(())
     }
 
-    fn accept_game_outcome<'a>(
+    fn accept<'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
         id: &GameID,

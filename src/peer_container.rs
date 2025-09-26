@@ -198,7 +198,7 @@ pub trait GameCradle {
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
     /// Perhaps we should consider reporting the rewards.
-    fn accept_game_outcome<R: Rng>(
+    fn accept<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -816,7 +816,7 @@ impl GameCradle for SynchronousGameCradle {
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
     /// Perhaps we should consider reporting the rewards.
-    fn accept_game_outcome<R: Rng>(
+    fn accept<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
         rng: &mut R,
@@ -827,7 +827,7 @@ impl GameCradle for SynchronousGameCradle {
             env: &mut env,
             system_interface: &mut self.state,
         };
-        self.peer.accept_game_outcome(&mut penv, id)
+        self.peer.accept(&mut penv, id)
     }
 
     /// Signal shutdown.  Forwards to FromLocalUI::shut_down.
