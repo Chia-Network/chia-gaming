@@ -1102,27 +1102,6 @@ fn run_game_container_with_action_list_with_success_predicate(
     })
 }
 
-fn run_game_container_with_action_list(
-    allocator: &mut AllocEncoder,
-    rng: &mut ChaCha8Rng,
-    private_keys: [ChannelHandlerPrivateKeys; 2],
-    identities: &[ChiaIdentity],
-    game_type: &[u8],
-    extras: Rc<Program>,
-    moves: &[GameAction],
-) -> Result<GameRunOutcome, Error> {
-    run_game_container_with_action_list_with_success_predicate(
-        allocator,
-        rng,
-        private_keys,
-        identities,
-        game_type,
-        &extras,
-        moves,
-        None,
-    )
-}
-
 pub fn run_calpoker_container_with_action_list(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
@@ -1565,7 +1544,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         add_debug_test_slash_shutdown(&mut sim_setup, 5);
-        let outcome = run_game_container_with_action_list(
+        let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
             &mut rng,
             sim_setup.private_keys.clone(),
@@ -1573,6 +1552,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             b"debug",
             sim_setup.args_program.clone(),
             &sim_setup.game_actions,
+            None,
         )
         .expect("should finish");
 
@@ -1595,7 +1575,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         add_debug_test_slash_shutdown(&mut sim_setup, 5);
-        let outcome = run_game_container_with_action_list(
+        let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
             &mut rng,
             sim_setup.private_keys.clone(),
@@ -1603,6 +1583,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             b"debug",
             sim_setup.args_program.clone(),
             &sim_setup.game_actions,
+            None,
         )
         .expect("should finish");
 
@@ -1625,7 +1606,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         add_debug_test_accept_shutdown(&mut sim_setup, 20);
-        let outcome = run_game_container_with_action_list(
+        let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
             &mut rng,
             sim_setup.private_keys.clone(),
@@ -1633,6 +1614,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             b"debug",
             sim_setup.args_program.clone(),
             &sim_setup.game_actions,
+            None,
         )
         .expect("should finish");
 
@@ -1658,7 +1640,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
         add_debug_test_accept_shutdown(&mut sim_setup, 20);
-        let outcome = run_game_container_with_action_list(
+        let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
             &mut rng,
             sim_setup.private_keys.clone(),
@@ -1666,6 +1648,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             b"debug",
             sim_setup.args_program.clone(),
             &sim_setup.game_actions,
+            None,
         )
         .expect("should finish");
 
