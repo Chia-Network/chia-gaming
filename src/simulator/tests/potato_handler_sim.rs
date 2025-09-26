@@ -1408,7 +1408,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
             b"debug",
-            sim_setup.args_program.clone(),
+            &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
         )
@@ -1439,7 +1439,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
             b"debug",
-            sim_setup.args_program.clone(),
+            &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
         )
@@ -1470,7 +1470,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
             b"debug",
-            sim_setup.args_program.clone(),
+            &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
         )
@@ -1504,7 +1504,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             sim_setup.private_keys.clone(),
             &sim_setup.identities,
             b"debug",
-            sim_setup.args_program.clone(),
+            &sim_setup.args_program.clone(),
             &sim_setup.game_actions,
             None,
         )
