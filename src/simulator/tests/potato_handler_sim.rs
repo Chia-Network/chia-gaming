@@ -649,7 +649,7 @@ fn run_move_list(
             let mut env = channel_handler_env(allocator, rng).expect("should work");
             let move_readable = what.clone();
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
-            handlers[who ^ 1].do_game_action(
+            let _ = handlers[who ^ 1].do_game_action(
                 &mut penv,
                 crate::potato_handler::types::GameAction::Move(
                     game_id.clone(),
