@@ -52,7 +52,7 @@ jobs:
         components: "clippy, rustfmt"
   fmt:
     runs-on: ubuntu-22.04
-    name: cargo +stable fmt
+    name: cargo fmt
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -65,8 +65,8 @@ jobs:
       - name: fmt
         run: |
           rustup component add --toolchain stable-x86_64-unknown-linux-gnu clippy rustfmt
-          cargo +stable fmt --version
-          cargo +stable fmt -- --files-with-diff --check
+          cargo fmt --version
+          cargo fmt -- --files-with-diff --check
 
   clippy:
     runs-on: ubuntu-22.04
@@ -82,9 +82,9 @@ jobs:
         run: |
           set -x
           rustup component add --toolchain stable-x86_64-unknown-linux-gnu clippy rustfmt
-          cargo +stable clippy --version
-          cargo +stable clippy --all --features=sim-tests -- -D warnings
-          cargo +stable check --features=sim-tests --tests
+          cargo clippy --version
+          cargo clippy --all --features=sim-tests -- -D warnings
+          cargo check --features=sim-tests --tests
 
   unit_tests:
     runs-on: ubuntu-22.04
@@ -115,7 +115,7 @@ jobs:
           python -m pip install chia-blockchain==2.5.5-rc3
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
-          cargo +stable test
+          cargo test
           python -m pip install maturin==1.9.2
           maturin build --features sim-tests
           pip install `find . -name \*.whl`
