@@ -22,10 +22,10 @@ use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelCoinSpentResult, ChannelHandlerEnv, ChannelHandlerInitiationData,
     ChannelHandlerInitiationResult, ChannelHandlerMoveResult, ChannelHandlerPrivateKeys,
     ChannelHandlerUnrollSpendInfo, CoinDataForReward, CoinSpentAccept, CoinSpentDisposition,
-    CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartInfo,
-    GameStartInfoInterface, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
+    CoinSpentInformation, CoinSpentMoveUp, CoinSpentResult, DispositionResult, GameStartFailed,
+    GameStartInfo, GameStartInfoInterface, HandshakeResult, LiveGame, MoveResult, OnChainGameCoin,
     OnChainGameState, PotatoAcceptCachedData, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
-    UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
+    StartGameResult, UnrollCoin, UnrollCoinConditionInputs, UnrollTarget,
 };
 
 use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
@@ -628,6 +628,12 @@ impl ChannelHandler {
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
             self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
+        if self.my_allocated_balance > self.my_out_of_game_balance
+            || self.their_allocated_balance > self.their_out_of_game_balance
+        {
+            return Err(Error::StrErr("not enough money".to_string()));
+        }
+
         let unroll_inputs = self.unroll_coin_condition_inputs(
             self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
             self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
@@ -834,7 +840,7 @@ impl ChannelHandler {
         &mut self,
         env: &mut ChannelHandlerEnv<R>,
         start_info_list: &[Rc<dyn GameStartInfoInterface>],
-    ) -> Result<PotatoSignatures, Error> {
+    ) -> Result<StartGameResult, Error> {
         debug!("{} SEND POTATO START GAME", self.is_initial_potato());
         let (my_full_contribution, their_full_contribution) =
             self.start_game_contributions(start_info_list);
@@ -842,6 +848,12 @@ impl ChannelHandler {
         debug!(
             "send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
+
+        if my_full_contribution > self.my_out_of_game_balance
+            || their_full_contribution > self.their_out_of_game_balance
+        {
+            return Ok(StartGameResult::Failure(GameStartFailed::OutOfMoney));
+        }
 
         self.clear_cached_game_id_for_send();
         let live_game_ids: Vec<&GameID> = self.live_games.iter().map(|l| &l.game_id).collect();
@@ -870,7 +882,9 @@ impl ChannelHandler {
         self.my_allocated_balance += my_full_contribution;
         self.their_allocated_balance += their_full_contribution;
 
-        self.update_cached_unroll_state(env)
+        Ok(StartGameResult::Success(Box::new(
+            self.update_cached_unroll_state(env)?,
+        )))
     }
 
     pub fn received_potato_start_game<R: Rng>(

@@ -204,9 +204,6 @@ io.on('connection', socket => {
 
   // Game socket messages.
   socket.on('game_message', ({ party, token, msg }) => {
-    if (process.env.DEBUG) {
-      console.log('game message', party, token, msg);
-    }
     io.emit('game_message', { party, token, msg });
   });
 
