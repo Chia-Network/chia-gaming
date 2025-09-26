@@ -193,6 +193,7 @@ jobs:
         env:
           COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
         with:
+          coverage-reporter-version: v0.6.15
           path-to-lcov: './lcov.info'
 
   # m1 mac
