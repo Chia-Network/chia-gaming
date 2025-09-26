@@ -27,7 +27,6 @@ jobs:
       runs-on: ubuntu-22.04
       alternate-latest-mode: true
       dockerfile: "./Dockerfile.rust"
-      dockerhub_imagename: "chianetwork/chia-gaming-rust"
       image_subpath: "chia-gaming-rust"
   build_web_image:
     needs: build_rust_image
