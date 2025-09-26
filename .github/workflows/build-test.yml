@@ -120,6 +120,7 @@ jobs:
           maturin build --features sim-tests
           pip install `find . -name \*.whl`
           python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
+          python3 ./run-sim-tests.py
 
   calpoker_onchain_tests:
     runs-on: ubuntu-22.04 # ${{ matrix.os }}
