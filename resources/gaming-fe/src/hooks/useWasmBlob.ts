@@ -83,7 +83,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const wasmCommandChannel = new Subject<WasmCommand>();
 
   const peerconn = useGameSocket(
-    (msg) => {
+    lobbyUrl,
+    (msg: string) => {
       const x: DeliverMessage = { deliverMessage: msg };
       wasmCommandChannel.next(x);
     },
