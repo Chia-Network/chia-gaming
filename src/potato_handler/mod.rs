@@ -1943,11 +1943,7 @@ impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender,
         Ok(())
     }
 
-    fn accept<'a>(
-        &mut self,
-        penv: &mut dyn PeerEnv<'a, G, R>,
-        id: &GameID,
-    ) -> Result<(), Error>
+    fn accept<'a>(&mut self, penv: &mut dyn PeerEnv<'a, G, R>, id: &GameID) -> Result<(), Error>
     where
         G: 'a,
         R: 'a,
