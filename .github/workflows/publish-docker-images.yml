@@ -29,9 +29,6 @@ jobs:
       dockerfile: "./Dockerfile.rust"
       dockerhub_imagename: "chianetwork/chia-gaming-rust"
       image_subpath: "chia-gaming-rust"
-    secrets:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_PAT: ${{ secrets.DOCKERHUB_PAT }}
   build_web_image:
     needs: build_rust_image
     uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
