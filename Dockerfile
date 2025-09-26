@@ -16,8 +16,9 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 RUN . $HOME/.cargo/env && rustup default stable && rustup target add wasm32-unknown-unknown --toolchain stable && cargo +stable install --version 0.13.1 wasm-pack
 ADD clsp /app/clsp
 
-# Setup pre-build the dependencies
+# Setup to pre-build the dependencies
 RUN mkdir -p /app/rust/src
+COPY rust-toolchain.toml /app/rust/rust-toolchain.toml
 COPY Cargo.toml /app/rust/Cargo.toml
 COPY Cargo.lock /app/rust/Cargo.lock
 RUN sh -c "echo > /app/rust/src/lib.rs"
