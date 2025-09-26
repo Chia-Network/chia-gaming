@@ -9,7 +9,7 @@
     "build": "./node_modules/.bin/tsc --project . && ./node_modules/.bin/esbuild dist/index.js --bundle --outfile=dist/index-rollup.js && ./node_modules/.bin/esbuild dist/server.js --platform=node --bundle --outfile=dist/server-rollup.cjs && ./node_modules/.bin/esbuild dist/lobby.js --platform=node --bundle --outfile=dist/lobby-rollup.cjs",
     "start": "node dist/server-rollup.cjs",
     "dev": "ts-node-dev --respawn src/server.ts",
-    "test": "./node_modules/typescript/bin/tsc -p tstestconfig.json --noEmit && node --experimental-require-module node_modules/.bin/jest --useStderr",
+    "test": "./node_modules/typescript/bin/tsc -p tstestconfig.json --noEmit && node node_modules/.bin/jest --useStderr",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"src/**/*.ts\""
   },
