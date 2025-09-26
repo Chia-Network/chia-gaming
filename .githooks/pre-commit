@@ -51,6 +51,7 @@ fi
 
 cargo fmt
 cargo clippy --check
+(cd resources/gaming-fe && yarn test)
 
 # Run the fast tests before commit
 python_test_dir="./python/tests/"
