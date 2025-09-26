@@ -1,0 +1,70 @@
+name: Build Chia Gaming Images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - './Dockerfile*'
+      - '.github/workflows/publish-docker-images.yml'
+  pull_request:
+    paths:
+      - './Dockerfile*'
+      - '.github/workflows/publish-docker-images.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '30 12 * * 5'
+
+concurrency:
+  # SHA is added to the end of `group` if we are on `main` to let all main workflows run
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: true
+
+jobs:
+  build_rust_image:
+    uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
+    with:
+      runs-on: ubuntu-22.04
+      alternate-latest-mode: true
+      dockerfile: "./Dockerfile.rust"
+      dockerhub_imagename: "chianetwork/chia-gaming-rust"
+      image_subpath: "chia-gaming-rust"
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_PAT: ${{ secrets.DOCKERHUB_PAT }}
+  build_web_image:
+    needs: build_rust_image
+    uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
+    with:
+      runs-on: ubuntu-22.04
+      alternate-latest-mode: true
+      dockerfile: "./Dockerfile.web"
+      dockerhub_imagename: "chianetwork/chia-gaming-web"
+      image_subpath: "chia-gaming-web"
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_PAT: ${{ secrets.DOCKERHUB_PAT }}
+  build_sim_image:
+    needs: build_web_image
+    uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
+    with:
+      runs-on: ubuntu-22.04
+      alternate-latest-mode: true
+      dockerfile: "./Dockerfile.sim"
+      dockerhub_imagename: "chianetwork/chia-gaming-sim"
+      image_subpath: "chia-gaming-sim"
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_PAT: ${{ secrets.DOCKERHUB_PAT }}
+  build_testnet_image:
+    needs: build_web_image
+    uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
+    with:
+      runs-on: ubuntu-22.04
+      alternate-latest-mode: true
+      dockerfile: "Dockerfile"
+      dockerhub_imagename: "chianetwork/chia-gaming-simnet"
+      image_subpath: "chia-gaming-simnet"
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_PAT: ${{ secrets.DOCKERHUB_PAT }}

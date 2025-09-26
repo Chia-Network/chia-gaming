@@ -1,0 +1,44 @@
+FROM node:20.18.1
+RUN apt-get update -y
+RUN apt-get install -y libc6
+RUN apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential
+RUN apt-get update
+RUN npm install -g corepack
+RUN yarn set version 1.22.22
+WORKDIR /app
+RUN python3 -m venv ./test
+RUN . /app/test/bin/activate && pip install maturin==1.9.2
+RUN sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.5.5-rc3"
+# Gross, check the hash at least.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && sh ./rustup.sh -y
+RUN echo 'source $HOME/.cargo/env' >> $HOME/.profile
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN . $HOME/.cargo/env && rustup default stable && rustup target add wasm32-unknown-unknown --toolchain stable && cargo +stable install --version 0.13.1 wasm-pack
+ADD clsp /app/clsp
+
+# Setup pre-build the dependencies
+RUN mkdir -p /app/rust/src
+COPY Cargo.toml /app/rust/Cargo.toml
+COPY Cargo.lock /app/rust/Cargo.lock
+RUN sh -c "echo > /app/rust/src/lib.rs"
+
+# Setup pre-build wasm
+RUN mkdir -p /app/rust/wasm/src
+COPY wasm/Cargo.toml /app/rust/wasm/Cargo.toml
+COPY wasm/Cargo.lock /app/rust/wasm/Cargo.lock
+RUN sh -c "echo > /app/rust/wasm/src/mod.rs"
+
+# Pre-build
+RUN --mount=type=tmpfs,dst=/tmp/rust \
+	(cd /app/rust && tar cf - .) | (cd /tmp/rust && tar xvf -) && \
+	mkdir -p /tmp/rust/wasm && (cd /app/rust/wasm && tar cf - .) | (cd /tmp/rust/wasm && tar xf -) && \
+	cd /tmp/rust && \
+	. $HOME/.cargo/env && \
+	. /app/test/bin/activate && \
+	maturin build --release --features sim-tests && \
+	cd /tmp/rust/wasm && \
+	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
+	wasm-pack build --out-dir=/tmp/rust/wasm/pkg --release --target=web && \
+  rm -rf /tmp/rust/wasm/node-pkg /tmp/rust/wasm/pkg && \
+	(cd /tmp/rust && tar cvf - .) | (cd /app/rust && tar xf -)
+

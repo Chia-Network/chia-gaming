@@ -4,9 +4,9 @@ set -e
 
 yarn install --dev
 
-docker kill chia-gaming-test || true
-docker rm chia-gaming-test || true
-docker run --name chia-gaming-test --network=host -t chia-gaming-test &
+docker kill chia-gaming-sim || true
+docker rm chia-gaming-sim || true
+docker run --name chia-gaming-sim --network=host -t chia-gaming-test &
 
 echo 'waiting for service alive .'
 /bin/bash ./wait-for-it.sh -t 90 -h localhost -p 3000
@@ -24,7 +24,7 @@ else
 fi
 
 echo 'cleaning up'
-docker kill chia-gaming-test
-docker rm chia-gaming-test
+docker kill chia-gaming-sim
+docker rm chia-gaming-sim
 
 exit ${STATUS}
