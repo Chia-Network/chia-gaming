@@ -709,7 +709,8 @@ impl ExhaustiveMoveInputs {
     }
 
     pub fn to_linear_move(&self, allocator: &mut AllocEncoder) -> Result<Vec<u8>, Error> {
-        let alice_mover = self.count.is_multiple_of(2);
+        let bit_0_set: bool = ((self.count & 1) << 4) == 0;
+        let alice_mover = bit_0_set;
         let mover_ph_ref = if alice_mover {
             &self.bob_puzzle_hash
         } else {

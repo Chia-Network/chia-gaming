@@ -28,7 +28,7 @@ export interface Shutdown {
 }
 export type WasmCommand = DeliverMessage | SocketEnabled | WasmMove | SetCardSelections | Shutdown;
 
-export function useWasmBlob(uniqueId: string) {
+export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
   const [gameStartCoin, setGameStartCoin] = useState<string | undefined>(undefined);
