@@ -52,20 +52,21 @@ jobs:
         components: "clippy, rustfmt"
   fmt:
     runs-on: ubuntu-22.04
-    name: cargo +stable fmt
+    name: cargo fmt
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 1
       - name: Install rust
-        uses: dtolnay/rust-toolchain@stable  # ${{ RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@1.89.0  # ${{ RUST_VERSION }}
         with:
           components: "clippy, rustfmt"
       - name: fmt
         run: |
-          cargo +stable fmt --version
-          cargo +stable fmt -- --files-with-diff --check
+          rustup component add --toolchain stable-x86_64-unknown-linux-gnu clippy rustfmt
+          cargo fmt --version
+          cargo fmt -- --files-with-diff --check
 
   clippy:
     runs-on: ubuntu-22.04
@@ -80,9 +81,10 @@ jobs:
       - name: clippy
         run: |
           set -x
-          cargo +stable clippy --version
-          cargo +stable clippy --all --features=sim-tests -- -D warnings
-          cargo +stable check --features=sim-tests --tests
+          rustup component add --toolchain stable-x86_64-unknown-linux-gnu clippy rustfmt
+          cargo clippy --version
+          cargo clippy --all --features=sim-tests -- -D warnings
+          cargo check --features=sim-tests --tests
 
   unit_tests:
     runs-on: ubuntu-22.04
@@ -113,7 +115,7 @@ jobs:
           python -m pip install chia-blockchain==2.5.5-rc3
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
-          cargo +stable test
+          cargo test
           python -m pip install maturin==1.9.2
           maturin build --features sim-tests
           pip install `find . -name \*.whl`
@@ -221,11 +223,12 @@ jobs:
         cat checksum.txt
         shasum -a 256 -c checksum.txt
 
-    - name: Install rust
+    - name: Install rust on mac
       run: |
         chmod +x rustup-init
         ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
         rm rustup-init checksum.txt
+        echo 'export PATH=$HOME/.cargo/bin:$PATH' >> $HOME/.profile
 
     - name: Set up a venv for chia-blockchain
       run: |

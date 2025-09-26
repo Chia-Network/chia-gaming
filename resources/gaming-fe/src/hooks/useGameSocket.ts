@@ -42,9 +42,7 @@ export interface UseGameSocketReturn {
   playerNumber: number;
 }
 
-const SOCKET_URL = window.location.origin;
-
-const useGameSocket = (deliverMessage: (m: string) => void, setSocketEnabled: (e: boolean) => void): UseGameSocketReturn => {
+const useGameSocket = (lobbyUrl: string, deliverMessage: (m: string) => void, setSocketEnabled: (e: boolean) => void): UseGameSocketReturn => {
   const searchParams = getSearchParams();
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
@@ -66,7 +64,7 @@ const useGameSocket = (deliverMessage: (m: string) => void, setSocketEnabled: (e
   const eff = () => {
     let fullyConnected = false;
     if (!socketRef.current) {
-      const socketResult: any = io(SOCKET_URL);
+      const socketResult: any = io(lobbyUrl);
       socketRef.current = socketResult;
     }
     const socket = socketRef.current;

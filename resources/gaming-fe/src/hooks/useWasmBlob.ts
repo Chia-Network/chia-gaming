@@ -15,7 +15,7 @@ import { BLOCKCHAIN_SERVICE_URL, GAME_SERVICE_URL } from '../settings';
 
 let blobSingleton: any = null;
 
-function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean) {
+function getBlobSingleton(blockchain: InternalBlockchainInterface, lobbyUrl: string, uniqueId: string, amount: number, iStarted: boolean) {
   if (blobSingleton) {
     return blobSingleton;
   }
@@ -23,7 +23,7 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
   const deliverMessage = (msg: string) => {
     blobSingleton?.deliverMessage(msg);
   };
-  const peercon = useGameSocket(deliverMessage, () => {
+  const peercon = useGameSocket(lobbyUrl, deliverMessage, () => {
     blobSingleton?.kickSystem(2);
   });
 
@@ -83,7 +83,7 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, uniqueId: str
   return blobSingleton;
 }
 
-export function useWasmBlob(uniqueId: string) {
+export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
   const [uniqueWalletConnectionId, setUniqueWalletConnectionId] = useState(uuidv4());
@@ -126,6 +126,7 @@ export function useWasmBlob(uniqueId: string) {
   const gameObject = uniqueId ?
     getBlobSingleton(
       blockchain,
+      lobbyUrl,
       uniqueId,
       amount,
       iStarted
