@@ -36,7 +36,6 @@ jobs:
       runs-on: ubuntu-22.04
       alternate-latest-mode: true
       dockerfile: "./Dockerfile.web"
-      dockerhub_imagename: "chianetwork/chia-gaming-web"
       image_subpath: "chia-gaming-web"
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
