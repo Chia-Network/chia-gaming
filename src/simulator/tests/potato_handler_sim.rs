@@ -10,7 +10,7 @@ use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_hash_for_pk, sign_agg_sig_me, solution_for_conditions,
+    sign_agg_sig_me, solution_for_conditions,
     standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
@@ -26,8 +26,8 @@ use crate::peer_container::{
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, PotatoHandlerInit, ToLocalUI, WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, GameStart, GameType, PacketSender,
+    PeerEnv, PeerMessage, ToLocalUI, WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
 
@@ -38,7 +38,7 @@ use crate::test_support::debug_game::{
     make_debug_games, BareDebugGameDriver, DebugGameCurry, DebugGameMoveInfo,
 };
 use crate::test_support::game::GameAction;
-use crate::test_support::peer::potato_handler::{quiesce, run_move};
+use crate::test_support::peer::potato_handler::run_move;
 use crate::utils::pair_of_array_mut;
 
 // potato handler tests with simulator.
@@ -297,91 +297,6 @@ impl<'a, 'b: 'a, R: Rng> SimulatedPeerSystem<'a, 'b, R> {
     }
 }
 
-fn do_first_game_start<'a, 'b: 'a>(
-    env: &'b mut ChannelHandlerEnv<'a, ChaCha8Rng>,
-    peer: &'b mut SimulatedPeer,
-    handler: &'b mut PotatoHandler,
-    v1: bool,
-) -> Vec<GameID> {
-    let mut penv = SimulatedPeerSystem::new(env, peer);
-    let nil = Program::from_hex("80").unwrap();
-    let type_id = if v1 { b"ca1poker" } else { b"calpoker" };
-
-    let game_id = handler.next_game_id().unwrap();
-    let game_ids: Vec<GameID> = handler
-        .start_games(
-            &mut penv,
-            true,
-            &GameStart {
-                game_id,
-                amount: Amount::new(200),
-                my_contribution: Amount::new(100),
-                game_type: GameType(type_id.to_vec()),
-                timeout: Timeout::new(25),
-                my_turn: true,
-                parameters: nil.clone(),
-            },
-        )
-        .expect("should run");
-
-    game_ids
-}
-
-fn do_second_game_start<'a, 'b: 'a>(
-    env: &'b mut ChannelHandlerEnv<'a, ChaCha8Rng>,
-    peer: &'b mut SimulatedPeer,
-    handler: &'b mut PotatoHandler,
-    v1: bool,
-) {
-    let mut penv = SimulatedPeerSystem::new(env, peer);
-    let nil = Program::from_hex("80").unwrap();
-    let type_id = if v1 { b"ca1poker" } else { b"calpoker" };
-
-    let game_id = handler.next_game_id().unwrap();
-    handler
-        .start_games(
-            &mut penv,
-            false,
-            &GameStart {
-                game_id,
-                amount: Amount::new(200),
-                my_contribution: Amount::new(100),
-                game_type: GameType(type_id.to_vec()),
-                timeout: Timeout::new(25),
-                my_turn: false,
-                parameters: nil.clone(),
-            },
-        )
-        .expect("should run");
-}
-
-fn check_watch_report<'a, 'b: 'a, R: Rng>(
-    allocator: &mut AllocEncoder,
-    rng: &mut R,
-    identities: &'b [ChiaIdentity; 2],
-    coinset_adapter: &mut FullCoinSetAdapter,
-    peers: &'b mut [PotatoHandler; 2],
-    pipes: &'b mut [SimulatedPeer; 2],
-    simulator: &'b mut Simulator,
-) {
-    let mut env = channel_handler_env(allocator, rng).expect("should work");
-    let mut _simenv0 = SimulatedPeerSystem::new(&mut env, &mut pipes[0]);
-    simulator.farm_block(&identities[0].puzzle_hash);
-
-    let watch_report =
-        update_and_report_coins(allocator, rng, coinset_adapter, peers, pipes, simulator)
-            .expect("should work");
-
-    debug!("{watch_report:?}");
-    let wanted_coin: Vec<CoinString> = watch_report
-        .created_watched
-        .iter()
-        .filter(|a| a.to_parts().unwrap().2 == Amount::new(100))
-        .cloned()
-        .collect();
-    assert_eq!(wanted_coin.len(), 2);
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn handshake<'a, R: Rng + 'a>(
     rng: &'a mut R,
@@ -483,35 +398,6 @@ pub fn handshake<'a, R: Rng + 'a>(
     }
 
     Ok(())
-}
-
-fn run_move_list(
-    allocator: &mut AllocEncoder,
-    moves: &[GameAction],
-    handlers: &mut [PotatoHandler; 2],
-    peers: &mut [SimulatedPeer; 2],
-    game_id: GameID,
-    rng: &mut ChaCha8Rng,
-) {
-    for this_move in moves.iter() {
-        let (who, what) = if let GameAction::Move(who, what, _) = this_move {
-            (who, what)
-        } else {
-            panic!();
-        };
-
-        {
-            let entropy = rng.gen();
-            let mut env = channel_handler_env(allocator, rng).expect("should work");
-            let move_readable = what.clone();
-            let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
-            handlers[who ^ 1]
-                .make_move(&mut penv, &game_id, &move_readable, entropy)
-                .expect("should work");
-        }
-
-        quiesce(rng, allocator, Amount::new(200), handlers, peers).expect("should work");
-    }
 }
 
 #[derive(Debug)]
@@ -1184,11 +1070,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     let mut res: Vec<(&'static str, &'static dyn Fn())> = Vec::new();
     res.push(("test_peer_in_sim", &|| {
         let mut allocator = AllocEncoder::new();
-        let mut rng = ChaCha8Rng::from_seed([0; 32]);
 
         // Play moves
         let moves = prefix_test_moves(&mut allocator, false);
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false);
+        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("this is a test");
     }));
     res.push((
         "sim_test_with_peer_container_piss_off_peer_basic_on_chain",
