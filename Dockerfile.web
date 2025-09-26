@@ -1,0 +1,40 @@
+FROM chia-gaming-rust
+
+#Stage front-end / UI / UX into the container
+COPY resources/gaming-fe/package.json /app
+COPY resources/gaming-fe/yarn.lock /app
+RUN cd /app && yarn install
+
+ADD src /app/rust/src
+RUN touch /app/rust/src/lib.rs
+
+ADD wasm/src /app/rust/wasm/src
+RUN touch /app/rust/wasm/src/mod.rs
+
+# Build front-end
+RUN --mount=type=tmpfs,dst=/tmp/rust \
+	(cd /app/rust/ && tar cvf - .) | (cd /tmp/rust && tar xf -) && \
+	cd /tmp/rust && \
+	. $HOME/.cargo/env && \
+	. /app/test/bin/activate && \
+	maturin build --release --features sim-tests && \
+	rm -rf `find . -name \*manylinux1_x86_64.whl` && \
+	pip install `find . -name \*.whl` && \
+	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
+	cd /tmp/rust/wasm && \
+	cargo clean -p chia_gaming_wasm && \
+	wasm-pack build --out-dir=/app/node-pkg --release --target=nodejs && \
+	wasm-pack build --out-dir=/app/dist --release --target=web
+
+# Place wasm backend in docker container
+RUN mkdir -p /app/dist
+
+# Build the front-end / UI / UX within the container env
+COPY resources/gaming-fe /app
+RUN cd /app && yarn run build
+
+COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
+RUN ln -s /app/resources /resources
+ADD clsp /app/clsp
+RUN ln -s /app/clsp /clsp
+COPY resources/gaming-fe/package.json /app/package.json
