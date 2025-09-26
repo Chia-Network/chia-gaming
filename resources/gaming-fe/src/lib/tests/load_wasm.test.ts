@@ -1,16 +1,17 @@
-import { init, config_scaffold, create_game_cradle, deliver_message, deposit_file, opening_coin, idle, chia_identity, Spend, CoinSpend, SpendBundle, IChiaIdentity, IdleCallbacks, IdleResult } from '../../../node-pkg/chia_gaming_wasm.js';
+import { deposit_file } from '../../../node-pkg/chia_gaming_wasm.js';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
-import { InternalBlockchainInterface, PeerConnectionResult, BlockchainReport } from '../../types/ChiaGaming';
+import { InternalBlockchainInterface, PeerConnectionResult, RngId, BlockchainReport, WasmBlobParams } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
-import { FAKE_BLOCKCHAIN_ID, fakeBlockchainInfo, connectSimulatorBlockchain } from '../../hooks/FakeBlockchainInterface';
+import { FAKE_BLOCKCHAIN_ID } from '../../hooks/FakeBlockchainInterface';
 import { blockchainDataEmitter } from '../../hooks/BlockchainInfo';
-import { blockchainConnector, BlockchainOutboundRequest } from '../../hooks/BlockchainConnector';
 import { ChildFrameBlockchainInterface } from '../../hooks/ChildFrameBlockchainInterface';
-
-import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper'
+import { WasmBlobWrapper, getNewChiaGameCradle } from '../../hooks/WasmBlobWrapper'
+import { WasmStateInit, doInternalLoadWasm, storeInitArgs } from '../../hooks/WasmStateInit';
+//import {loadCalpoker} from '../../hooks/useWasmBlob';
+// --
 import * as fs from 'fs';
 import { resolve } from 'path';
-import * as assert from 'assert';
+// import * as assert from 'assert';
 
 function rooted(name: string) {
     return resolve(__dirname, '../../../../..', name);
@@ -18,6 +19,13 @@ function rooted(name: string) {
 
 function preset_file(name: string) {
     deposit_file(name, fs.readFileSync(rooted(name), 'utf8'));
+}
+
+const loadCalpoker: () => Promise<any> = () => {
+    const calpokerFactory = fetchHex(
+        "clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex"
+    );
+    return calpokerFactory;
 }
 
 class WasmBlobWrapperAdapter {
@@ -28,7 +36,7 @@ class WasmBlobWrapperAdapter {
         this.waiting_messages = [];
     }
 
-    take_block(peak: number, blocks: xxx[], block_report: any) {
+    take_block(peak: number, blocks: any[], block_report: any) {
       this.blob?.blockNotification(peak, blocks, block_report);
     }
 
@@ -85,7 +93,7 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
     blockchainInterface.getObservable().subscribe({
         next: (evt: BlockchainReport) => {
             cradles.forEach((c, i) => {
-                let block_array = [];
+                let block_array: any[] = [];
                 if (evt.block) {
                     block_array = evt.block;
                 }
@@ -129,17 +137,52 @@ async function fetchHex(key: string): Promise<string> {
     return fs.readFileSync(rooted(key), 'utf8');
 }
 
-async function initWasmBlobWrapper(blockchainInterface: InternalBlockchainInterface, uniqueId: string, iStarted: boolean, peer_conn: PeerConnectionResult) {
+async function initWasmBlobWrapper(blockchain: InternalBlockchainInterface, uniqueId: string, iStarted: boolean, peer_conn: PeerConnectionResult) {
     const amount = 100;
-    const doInternalLoadWasm = async () => { return new ArrayBuffer(0); }; // Promise<ArrayBuffer>;
+    const doInternalLoadWasm = async () => { return new ArrayBuffer(0); };
     // Ensure that each user has a wallet.
     await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {method: "POST"});
-    let wbw = new WasmBlobWrapper(blockchainInterface, uniqueId, amount, iStarted, doInternalLoadWasm, fetchHex, peer_conn);
+    // blockchainInterface, uniqueId, amount, iStarted, doInternalLoadWasm, fetchHex, peer_conn
+    let wasmStateInit: WasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
+    const calpokerHex = loadCalpoker();
+    const wasmConnection = await wasmStateInit.getWasmConnection();
+    const env = {
+        game_types: {
+            "calpoker": {
+            version: 1,
+            hex: calpokerHex
+            }
+        }
+    };
+    const rngId = wasmConnection.create_rng("0");
+    const gameInitParams = {
+        wasmConnection,
+        env,
+        rng: new RngId(rngId),
+        chiaIdentity: wasmConnection.chia_identity(rngId),
+        iStarted, // iStarted, aka have_potato
+        // TODO: IEEE float ('number') is a slightly smaller range than MAX_NUM_MOJOS
+        // TODO: CalPoker has both players contribute equal amounts. Change this code before Krunk
+        myContribution: amount,
+        theirContribution: amount,
+    }
+    let cradle = getNewChiaGameCradle(wasmConnection, gameInitParams);
+    let wasmParams: WasmBlobParams = {
+        blockchain: blockchain,
+        peerconn: peer_conn,
+        cradle: cradle,
+        uniqueId: uniqueId,
+        iStarted: iStarted,
+        fetchHex: fetchHex,
+      };
+
+    let wbw = new WasmBlobWrapper(wasmParams, wasmConnection);
     let ob = wbw.getObservable();
     console.log("WasmBlobWrapper Observable: ", ob);
     let wwo = Object.assign({}, WholeWasmObject);
     wwo.init = () => {};
-    wbw.loadWasm(() => {}, wwo);
+    // gameObject?.loadWasm(chia_gaming_init, cg);
+    // wbw.internalLoadWasm(() => {}, wwo);
 
     return wbw;
 }

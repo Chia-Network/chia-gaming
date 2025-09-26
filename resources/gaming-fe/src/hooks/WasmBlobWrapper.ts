@@ -122,7 +122,7 @@ export class WasmBlobWrapper {
     this.qualifyingEvents |= flags;
     if (this.qualifyingEvents == 3) {
       this.qualifyingEvents |= 4;
-      this.rxjsEmitter.next({name: "ready"}); // TODO: type for this msg?
+      this.rxjsEmitter.next({name: "ready"});
     }
   }
 
