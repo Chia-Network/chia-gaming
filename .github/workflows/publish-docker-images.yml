@@ -58,7 +58,6 @@ jobs:
       runs-on: ubuntu-22.04
       alternate-latest-mode: true
       dockerfile: "Dockerfile"
-      dockerhub_imagename: "chianetwork/chia-gaming-simnet"
       image_subpath: "chia-gaming-simnet"
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
