@@ -10,8 +10,7 @@ use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
-    sign_agg_sig_me, solution_for_conditions,
-    standard_solution_partial, ChiaIdentity,
+    sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, IntoErr, Node, PrivateKey, Program,
@@ -26,8 +25,8 @@ use crate::peer_container::{
     SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, GameStart, GameType, PacketSender,
-    PeerEnv, PeerMessage, ToLocalUI, WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, GameStart, GameType, PacketSender, PeerEnv,
+    PeerMessage, ToLocalUI, WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
 
@@ -1073,7 +1072,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         // Play moves
         let moves = prefix_test_moves(&mut allocator, false);
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("this is a test");
+        run_calpoker_container_with_action_list(&mut allocator, &moves, false)
+            .expect("this is a test");
     }));
     res.push((
         "sim_test_with_peer_container_piss_off_peer_basic_on_chain",

@@ -180,7 +180,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     res.push(("test_play_calpoker_happy_path", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = prefix_test_moves(&mut allocator, true);
-        run_calpoker_container_with_action_list(&mut allocator, &moves, true).expect("this is a test");
+        run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+            .expect("this is a test");
     }));
 
     res.push(("test_verify_endgame_data_v0", &|| {
