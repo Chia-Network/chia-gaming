@@ -35,6 +35,7 @@ pub enum GameAction {
     Timeout(usize),
     /// Move (player, clvm readable move, was received)
     #[allow(dead_code)]
+    // Move (player, binary_move, "received") received is used for off-chain play
     Move(usize, ReadableMove, bool),
     /// Fake move, just calls receive on the indicated side.
     #[cfg(feature = "sim-tests")]

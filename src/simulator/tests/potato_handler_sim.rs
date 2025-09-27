@@ -486,6 +486,7 @@ pub fn handshake<'a, R: Rng + 'a>(
 }
 
 pub fn run_calpoker_test_with_action_list(
+    //sim
     allocator: &mut AllocEncoder,
     rng: &mut ChaCha8Rng,
     moves: &[GameAction],
@@ -617,6 +618,7 @@ pub fn run_calpoker_test_with_action_list(
     assert!(peers[1].message_pipe.queue.is_empty());
 
     // Game move execution starts here
+
     run_move_list(
         allocator,
         moves,
@@ -647,9 +649,17 @@ fn run_move_list(
             let mut env = channel_handler_env(allocator, rng).expect("should work");
             let move_readable = what.clone();
             let mut penv = SimulatedPeerSystem::new(&mut env, &mut peers[who ^ 1]);
-            handlers[who ^ 1]
-                .make_move(&mut penv, &game_id, &move_readable, entropy)
-                .expect("should work");
+            let _ = handlers[who ^ 1].do_game_action(
+                &mut penv,
+                crate::potato_handler::types::GameAction::Move(
+                    game_id.clone(),
+                    move_readable.clone(),
+                    entropy,
+                ),
+            );
+            // TODO: delete below when no longer releavant
+            // .make_move(&mut penv, &game_id, &move_readable, entropy)
+            // .expect("should work");
         }
 
         quiesce(rng, allocator, Amount::new(200), handlers, peers).expect("should work");
