@@ -376,7 +376,8 @@ export class WasmBlobWrapper {
   }
 
   deliverMessage(msg: string) {
-    this.pushEvent({ deliverMessage: msg });
+    this.internalDeliverMessage(msg);
+    return this.internalKickIdle();
   }
 
   internalDeliverMessage(msg: string): any {
