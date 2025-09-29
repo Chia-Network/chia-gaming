@@ -849,7 +849,8 @@ impl ChannelHandler {
             "send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
-        if my_full_contribution.clone() + self.my_allocated_balance.clone() > self.my_out_of_game_balance
+        if my_full_contribution.clone() + self.my_allocated_balance.clone()
+            > self.my_out_of_game_balance
             || their_full_contribution.clone() + self.their_allocated_balance.clone()
                 > self.their_out_of_game_balance
         {
@@ -910,7 +911,8 @@ impl ChannelHandler {
             "recv potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
-        if my_full_contribution.clone() + self.my_allocated_balance.clone() > self.my_out_of_game_balance
+        if my_full_contribution.clone() + self.my_allocated_balance.clone()
+            > self.my_out_of_game_balance
             || their_full_contribution.clone() + self.their_allocated_balance.clone()
                 > self.their_out_of_game_balance
         {
