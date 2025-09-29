@@ -911,8 +911,8 @@ impl ChannelHandler {
             "recv potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
-        if my_full_contribution > self.my_out_of_game_balance ||
-            their_full_contribution > self.their_out_of_game_balance
+        if my_full_contribution > self.my_out_of_game_balance
+            || their_full_contribution > self.their_out_of_game_balance
         {
             return Err(Error::StrErr("out of money".to_string()));
         }
