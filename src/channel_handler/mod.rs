@@ -879,8 +879,10 @@ impl ChannelHandler {
         self.live_games.append(&mut new_games);
         debug!("after adding games: {} games", self.live_games.len());
 
-        self.my_allocated_balance += my_full_contribution;
-        self.their_allocated_balance += their_full_contribution;
+        self.my_allocated_balance += my_full_contribution.clone();
+        self.their_allocated_balance += their_full_contribution.clone();
+        self.my_out_of_game_balance -= my_full_contribution;
+        self.their_out_of_game_balance -= their_full_contribution;
 
         Ok(StartGameResult::Success(Box::new(
             self.update_cached_unroll_state(env)?,
@@ -909,8 +911,16 @@ impl ChannelHandler {
             "recv potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
-        self.my_allocated_balance += my_full_contribution;
-        self.their_allocated_balance += their_full_contribution;
+        if my_full_contribution > self.my_out_of_game_balance ||
+            their_full_contribution > self.their_out_of_game_balance
+        {
+            return Err(Error::StrErr("out of money".to_string()));
+        }
+
+        self.my_allocated_balance += my_full_contribution.clone();
+        self.their_allocated_balance += their_full_contribution.clone();
+        self.my_out_of_game_balance -= my_full_contribution;
+        self.their_out_of_game_balance -= their_full_contribution;
 
         // Make a list of all game outputs in order.
         let cached_game_ids = self
