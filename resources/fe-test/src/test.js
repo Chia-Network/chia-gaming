@@ -215,7 +215,7 @@ describe("Out of money test", function() {
 
     await driver.switchTo().frame('subframe');
 
-    const partnerUrl = await initiateGame(driver, 200, 200);
+    const partnerUrl = await initiateGame(driver, 200, 300);
 
     // Spawn second browser.
     console.log('second browser start');
