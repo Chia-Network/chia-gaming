@@ -119,12 +119,12 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
     socketRef.current?.emit('chat_message', { alias, content: { text: msg, sender: alias } });
   }, [uniqueId]);
 
-  const generateRoom = useCallback(async (game: string, wager: string): Promise<GenerateRoomResult> => {
+  const generateRoom = useCallback(async (game: string, amount: string, perGame: string): Promise<GenerateRoomResult> => {
     const { data } = await axios.post(`${LOBBY_URL}/lobby/generate-room`, {
       id: uniqueId,
       alias,
       game,
-      parameters: { wagerAmount: wager },
+      parameters: { amount, perGame },
     });
     return data;
   }, [uniqueId]);

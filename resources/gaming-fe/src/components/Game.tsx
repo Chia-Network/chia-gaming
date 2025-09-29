@@ -51,9 +51,12 @@ const Game: React.FC = () => {
   if (gameConnectionState.stateIdentifier === 'shutdown') {
     return (
       <Box p={4}>
-          <Typography variant="h4" align="center">
+          <Typography variant="h4" align="center" aria-label="shutdown">
               {`Cal Poker - shutdown succeeded`}
           </Typography>
+          <Box>
+            {gameConnectionState.stateDetail.map((c) => (<Typography variant="h5" align="center">{c}</Typography>))}
+          </Box>
       </Box>
     );
   }

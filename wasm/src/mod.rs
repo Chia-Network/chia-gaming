@@ -670,7 +670,9 @@ impl ToLocalUI for JsLocalUI {
                 game_ids_array.set(i as u32, JsValue::from_str(&game_id_to_string(game_id)));
             }
             args_array.set(0, game_ids_array.into());
-            args_array.set(1, JsValue::from_str(&format!("{:?}", finished)));
+            if let Some(f) = finished {
+                args_array.set(1, JsValue::from_str(&format!("{:?}", f)));
+            }
             Ok(())
         })
     }
