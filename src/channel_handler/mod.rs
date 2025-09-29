@@ -500,8 +500,8 @@ impl ChannelHandler {
         // The seq number is zero.
         // There are no game coins and a balance for both sides.
         let inputs = myself.unroll_coin_condition_inputs(
-            myself.my_out_of_game_balance.clone() - myself.my_allocated_balance.clone(),
-            myself.their_out_of_game_balance.clone() - myself.their_allocated_balance.clone(),
+            myself.my_out_of_game_balance.clone(),
+            myself.their_out_of_game_balance.clone(),
             &[],
         );
         myself.unroll.coin.update(
@@ -628,15 +628,9 @@ impl ChannelHandler {
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
             self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
 
-        if self.my_allocated_balance > self.my_out_of_game_balance
-            || self.their_allocated_balance > self.their_out_of_game_balance
-        {
-            return Err(Error::StrErr("not enough money".to_string()));
-        }
-
         let unroll_inputs = self.unroll_coin_condition_inputs(
-            self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
-            self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
+            self.my_out_of_game_balance.clone(),
+            self.their_out_of_game_balance.clone(),
             &new_game_coins_on_chain,
         );
 
@@ -771,8 +765,8 @@ impl ChannelHandler {
             env,
             signatures,
             &self.unroll_coin_condition_inputs(
-                self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
-                self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
+                self.my_out_of_game_balance.clone(),
+                self.their_out_of_game_balance.clone(),
                 &unroll_data,
             ),
         )?;
@@ -849,10 +843,8 @@ impl ChannelHandler {
             "send potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
-        if my_full_contribution.clone() + self.my_allocated_balance.clone()
-            > self.my_out_of_game_balance
-            || their_full_contribution.clone() + self.their_allocated_balance.clone()
-                > self.their_out_of_game_balance
+        if my_full_contribution.clone() > self.my_out_of_game_balance
+            || their_full_contribution.clone() > self.their_out_of_game_balance
         {
             return Ok(StartGameResult::Failure(GameStartFailed::OutOfMoney));
         }
@@ -861,14 +853,27 @@ impl ChannelHandler {
         let live_game_ids: Vec<&GameID> = self.live_games.iter().map(|l| &l.game_id).collect();
         debug!("current game ids: {live_game_ids:?}");
 
+        self.my_allocated_balance += my_full_contribution.clone();
+        self.their_allocated_balance += their_full_contribution.clone();
+        self.my_out_of_game_balance -= my_full_contribution.clone();
+        self.their_out_of_game_balance -= their_full_contribution.clone();
+
+        debug!(
+            "start: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}",
+            self.my_allocated_balance,
+            self.their_allocated_balance,
+            self.my_out_of_game_balance,
+            self.their_out_of_game_balance
+        );
+
         // We let them spend a state number 1 higher but nothing else changes.
         self.update_cache_for_potato_send(Some(CachedPotatoRegenerateLastHop::PotatoCreatedGame(
             start_info_list
                 .iter()
                 .map(|g| g.game_id().clone())
                 .collect(),
-            my_full_contribution.clone(),
-            their_full_contribution.clone(),
+            my_full_contribution,
+            their_full_contribution,
         )));
 
         debug!(
@@ -880,9 +885,6 @@ impl ChannelHandler {
         let mut new_games = self.add_games(env, start_info_list)?;
         self.live_games.append(&mut new_games);
         debug!("after adding games: {} games", self.live_games.len());
-
-        self.my_allocated_balance += my_full_contribution.clone();
-        self.their_allocated_balance += their_full_contribution.clone();
 
         Ok(StartGameResult::Success(Box::new(
             self.update_cached_unroll_state(env)?,
@@ -911,17 +913,24 @@ impl ChannelHandler {
             "recv potato start game: me {my_full_contribution:?} then {their_full_contribution:?}"
         );
 
-        if my_full_contribution.clone() + self.my_allocated_balance.clone()
-            > self.my_out_of_game_balance
-            || their_full_contribution.clone() + self.their_allocated_balance.clone()
-                > self.their_out_of_game_balance
+        if my_full_contribution.clone() > self.my_out_of_game_balance
+            || their_full_contribution.clone() > self.their_out_of_game_balance
         {
             return Err(Error::StrErr("out of money".to_string()));
         }
 
         self.my_allocated_balance += my_full_contribution.clone();
         self.their_allocated_balance += their_full_contribution.clone();
+        self.my_out_of_game_balance -= my_full_contribution.clone();
+        self.their_out_of_game_balance -= their_full_contribution.clone();
 
+        debug!(
+            "start: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}",
+            self.my_allocated_balance,
+            self.their_allocated_balance,
+            self.my_out_of_game_balance,
+            self.their_out_of_game_balance
+        );
         // Make a list of all game outputs in order.
         let cached_game_ids = self
             .get_cached_game_id()
@@ -956,8 +965,8 @@ impl ChannelHandler {
             env,
             signatures,
             &self.unroll_coin_condition_inputs(
-                self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
-                self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
+                self.my_out_of_game_balance.clone(),
+                self.their_out_of_game_balance.clone(),
                 &unroll_data_for_all_games,
             ),
         )?;
@@ -1107,8 +1116,8 @@ impl ChannelHandler {
             env,
             &move_result.signatures,
             &self.unroll_coin_condition_inputs(
-                self.my_out_of_game_balance.clone() - self.my_allocated_balance.clone(),
-                self.their_out_of_game_balance.clone() - self.their_allocated_balance.clone(),
+                self.my_out_of_game_balance.clone(),
+                self.their_out_of_game_balance.clone(),
                 &unroll_data,
             ),
         )?;
@@ -1163,9 +1172,7 @@ impl ChannelHandler {
         let amount = live_game.get_our_current_share();
         let at_stake = live_game.get_amount();
 
-        self.my_out_of_game_balance -= live_game.my_contribution.clone();
         self.my_out_of_game_balance += amount.clone();
-        self.their_out_of_game_balance -= live_game.their_contribution.clone();
         self.their_out_of_game_balance += at_stake.clone() - amount.clone();
 
         debug!(
@@ -1220,12 +1227,8 @@ impl ChannelHandler {
             self.my_allocated_balance.clone() - self.live_games[game_idx].my_contribution.clone();
         let new_their_allocated = self.their_allocated_balance.clone()
             - self.live_games[game_idx].their_contribution.clone();
-        let my_balance = self.my_out_of_game_balance.clone()
-            - self.live_games[game_idx].my_contribution.clone()
-            + game_amount_for_me;
-        let their_balance = self.their_out_of_game_balance.clone()
-            - self.live_games[game_idx].their_contribution.clone()
-            + game_amount_for_them;
+        let my_balance = self.my_out_of_game_balance.clone() + game_amount_for_me;
+        let their_balance = self.their_out_of_game_balance.clone() + game_amount_for_them;
 
         debug!(
             "accept: my_allocated {:?} their_allocated {:?} my_balance {:?} their_balance {:?}",
