@@ -8,7 +8,7 @@ use crate::common::types::{
     Sha256tree, Timeout,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChannelHandlerPrivateKeys {
     pub my_channel_coin_private_key: PrivateKey,
     pub my_unroll_coin_private_key: PrivateKey,
