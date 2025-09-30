@@ -740,6 +740,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
             can_move = true;
         } else if let Some((wb, _)) = &mut wait_blocks {
+            #[allow(clippy::needless_range_loop)]
             for i in 0..=1 {
                 for (current_height, watch_report) in report_backlogs[i].iter() {
                     cradles[i].new_block(allocator, rng, *current_height, watch_report)?;
