@@ -58,10 +58,10 @@ RUN touch /app/rust/wasm/src/mod.rs
 RUN --mount=type=tmpfs,dst=/tmp/rust \
 	(cd /app/rust/ && tar cvf - .) | (cd /tmp/rust && tar xf -) && \
 	cd /tmp/rust && \
+	rm -rf `find . -name \*.whl` && \
 	. $HOME/.cargo/env && \
 	. /app/test/bin/activate && \
 	maturin build --release --features sim-tests && \
-	rm -rf `find . -name \*manylinux1_x86_64.whl` && \
 	pip install `find . -name \*.whl` && \
 	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
 	cd /tmp/rust/wasm && \
