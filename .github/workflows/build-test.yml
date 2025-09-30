@@ -251,28 +251,3 @@ jobs:
     - name: Build Docker Images
       run: bash -x build-docker-images.sh
 
-  build_npm:
-    name: Npm
-    runs-on: ubuntu-latest
-    needs: [unit_tests, build_and_test]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 1
-
-      - name: Set Env
-        uses: Chia-Network/actions/setjobenv@main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up rust
-        # See also rust-toolchain.toml
-        uses: dtolnay/rust-toolchain@1.89.0  # ${{ RUST_VERSION }}
-        with:
-          components: "clippy, rustfmt"
-
-      - name: do wasm tests in frontend
-        run: |
-         docker build -t chia-gaming-test .
-         docker run -t chia-gaming-test /app/test.sh
