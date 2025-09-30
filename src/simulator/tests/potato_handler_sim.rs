@@ -5,6 +5,7 @@ use clvm_traits::ToClvm;
 use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
+use salvo::rt::Read;
 
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
@@ -592,6 +593,9 @@ fn run_game_container_with_action_list_with_success_predicate(
             "{num_steps} can move {can_move} {move_number} {:?}",
             &moves_input[move_number..]
         );
+        if let GameAction::Move(_, rm, _) = &moves_input[move_number] {
+            debug!("ReadableMove is {:?}", rm);
+        }
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
         debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
 
