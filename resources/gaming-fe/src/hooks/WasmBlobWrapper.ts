@@ -125,7 +125,8 @@ export class WasmBlobWrapper {
   }
 
   internalKickIdle(): any {
-    this.kickMessageHandling().then((res: any) => {
+    // Fix: Return the promise chain and handle it properly
+    return this.kickMessageHandling().then((res: any) => {
       let idle_info;
       do {
         idle_info = this.idle();
@@ -135,6 +136,9 @@ export class WasmBlobWrapper {
         this.rxjsEmitter?.next(idle_info);
       } while (!idle_info.stop);
       return res;
+    }).catch((error: any) => {
+      console.error('Error in internalKickIdle:', error);
+      throw error;
     });
   }
 
