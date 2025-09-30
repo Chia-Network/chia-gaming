@@ -125,7 +125,6 @@ export class WasmBlobWrapper {
   }
 
   internalKickIdle(): any {
-    // Fix: Return the promise chain and handle it properly
     return this.kickMessageHandling().then((res: any) => {
       let idle_info;
       do {
