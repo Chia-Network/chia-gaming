@@ -5,7 +5,6 @@ use clvm_traits::ToClvm;
 use log::debug;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
-use salvo::rt::Read;
 
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
