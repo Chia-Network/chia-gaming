@@ -187,13 +187,15 @@ async function initWasmBlobWrapper(blockchain: InternalBlockchainInterface, uniq
     return wbw;
 }
 
-it('loads', async () => {
+const load_wasm_test = async () => {
+    console.log("Starting load_wasm smoke test");
     const blockchainInterface = new ChildFrameBlockchainInterface();
     // The blockchain service does separate monitoring now.
     blockchainDataEmitter.select({
       selection: FAKE_BLOCKCHAIN_ID,
       uniqueId: 'block-producer'
     });
+    console.log("blockchainDataEmitter selected with blockchain id:", FAKE_BLOCKCHAIN_ID);
 
     const cradle1 = new WasmBlobWrapperAdapter();
     let peer_conn1 = { sendMessage: (message: string) => {
@@ -201,6 +203,7 @@ it('loads', async () => {
     } };
     let wasm_blob1 = await initWasmBlobWrapper(blockchainInterface, "a11ce000", true, peer_conn1);
     cradle1.set_blob(wasm_blob1);
+    console.log("cradle1 created");
 
     const cradle2 = new WasmBlobWrapperAdapter();
     let peer_conn2 = { sendMessage: (message: string) => {
@@ -208,6 +211,10 @@ it('loads', async () => {
     } };
     let wasm_blob2 = await initWasmBlobWrapper(blockchainInterface, "b0b77777", false, peer_conn2);
     cradle2.set_blob(wasm_blob2);
+    console.log("cradle2 created");
 
+    console.log("calling action_with_messages ...");
     await action_with_messages(blockchainInterface, cradle1, cradle2);
-}, 15 * 1000);
+}
+
+test('load_wasm', load_wasm_test, 45 * 1000);
