@@ -16,8 +16,9 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 RUN . $HOME/.cargo/env && rustup default stable && rustup target add wasm32-unknown-unknown --toolchain stable && cargo +stable install --version 0.13.1 wasm-pack
 ADD clsp /app/clsp
 
-# Setup pre-build the dependencies
+# Setup to pre-build the dependencies
 RUN mkdir -p /app/rust/src
+COPY rust-toolchain.toml /app/rust/rust-toolchain.toml
 COPY Cargo.toml /app/rust/Cargo.toml
 COPY Cargo.lock /app/rust/Cargo.lock
 RUN sh -c "echo > /app/rust/src/lib.rs"
@@ -57,10 +58,10 @@ RUN touch /app/rust/wasm/src/mod.rs
 RUN --mount=type=tmpfs,dst=/tmp/rust \
 	(cd /app/rust/ && tar cvf - .) | (cd /tmp/rust && tar xf -) && \
 	cd /tmp/rust && \
+	rm -rf `find . -name \*.whl` && \
 	. $HOME/.cargo/env && \
 	. /app/test/bin/activate && \
 	maturin build --release --features sim-tests && \
-	rm -rf `find . -name \*manylinux1_x86_64.whl` && \
 	pip install `find . -name \*.whl` && \
 	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
 	cd /tmp/rust/wasm && \
