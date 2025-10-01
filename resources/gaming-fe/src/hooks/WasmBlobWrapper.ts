@@ -121,17 +121,15 @@ export class WasmBlobWrapper {
   };
 
   internalKickIdle(): any {
-    this.kickMessageHandling().then((res: any) => {
-      let idle_info;
-      do {
-        idle_info = this.idle();
-        if (!idle_info) {
-          return res;
-        }
-        this.rxjsEmitter?.next(idle_info);
-      } while (!idle_info.stop);
-      return res;
-    });
+    let idle_info;
+    do {
+      idle_info = this.idle();
+      if (!idle_info) {
+        return idle_info;
+      }
+      this.rxjsEmitter?.next(idle_info);
+    } while (!idle_info.stop);
+    return idle_info;
   }
 
   pushEvent(msg: any): any {
