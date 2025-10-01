@@ -139,7 +139,6 @@ export class WasmBlobWrapper {
       return;
     }
     this.messageQueue.push(msg);
-    console.log('pushEvent', msg);
     return this.kickMessageHandling();
   }
 
