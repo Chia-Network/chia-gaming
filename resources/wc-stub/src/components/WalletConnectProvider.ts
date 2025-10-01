@@ -1,6 +1,6 @@
 import type { Pair } from '../util/Pair';
 import useNotifications from '../hooks/useNotifications';
-import useWalletConnect from '../hooks/useWalletConnect';
+import { useWalletConnect } from '../hooks/useWalletConnect';
 
 export interface WalletConnectContext {
   enabled: boolean;

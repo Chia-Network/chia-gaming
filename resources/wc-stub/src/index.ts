@@ -8,9 +8,9 @@ import Client from '@walletconnect/sign-client';
 import { Pair } from './util/Pair';
 import useWalletConnectPreferences from './hooks/useWalletConnectPreferences';
 import { defaultMetadata, WalletConnectChiaProjectId, UseWalletConnectConfig, useWalletConnectClient } from './hooks/useWalletConnectClient';
-import useWalletConnect from './hooks/useWalletConnect';
-import { parseWcLink } from './hooks/useWalletConnectPairs';
-import { bindEvents } from './util/walletConnect';
+import { UseWalletConnectResult, useWalletConnect } from './hooks/useWalletConnect';
+import { Pairs, parseWcLink, useWalletConnectPairs } from './hooks/useWalletConnectPairs';
+import { disconnectPair, bindEvents } from './util/walletConnect';
 import Daemon from './rpc/Daemon';
 import express, { Application } from "express";
 import { blockchainUpdate, bindBlockchain } from './coinset';
@@ -23,6 +23,9 @@ app.use(express.json());
 
 const PORT: number = process.env.PORT ? parseInt(process.env.PORT, 10) : 3002;
 let client_id = 1;
+const pairs = useWalletConnectPairs();
+let wc_client: UseWalletConnectResult | undefined = undefined;
+let cleanupBindings: any | undefined = undefined;
 
 // Thanks: https://stackoverflow.com/questions/34309988/byte-array-to-hex-string-conversion-in-javascript
 export function toHexString(byteArray: number[]) {
@@ -64,33 +67,60 @@ function processRequest(id: number, address: string, topic: string, command: str
   return Promise.all([]).then(() => {});
 }
 
-function doWalletConnect(pairs: Pair[]) {
+const handlePair = async (client: Client, uri: string, fingerprints: number[], mainnet: boolean = false) => {
+  const { topic } = await (client as any).core.pairing.pair({ uri });
+  if (!topic) {
+    throw new Error('Pairing failed');
+  }
+
+  return topic;
+};
+
+const handleDisconnect = (client: Client, topic: string) => {
+  if (!client) {
+    throw new Error('Client is not defined');
+  }
+
+  return disconnectPair(client, pairs, topic);
+};
+
+async function doWalletConnect(in_pairs: Pair[]) {
   let this_client_id = client_id++;
 
-  fetch(`http://localhost:5800/register?name=${this_client_id}`, {
+  console.log('doWalletConnect', pairs);
+  const address = await fetch(`http://localhost:5800/register?name=${this_client_id}`, {
     method: "POST"
-  }).then((res: any) => res.json()).then((address: any) => {
-    return useWalletConnect({
+  }).then((res: any) => res.json());
+  if (!wc_client) {
+    let the_wc_client = await useWalletConnect({
       projectId: WalletConnectChiaProjectId,
       debug: true,
       metadata: defaultMetadata
-    }, pairs).then(({ client, error, pair, pairs }) => {
-      if (client) {
-        bindEvents(client, pairs, () => {
-          return (topic, command, params) => processRequest(
-            this_client_id,
-            address,
-            topic,
-            command,
-            params
-          );
-        });
-      } else {
-        console.log('skipped bind events?');
-      }
-      return pair;
     });
-  });
+    wc_client = the_wc_client;
+  }
+
+  let client = wc_client?.client;
+  if (client) {
+    if (cleanupBindings) {
+      cleanupBindings();
+    }
+
+    for (var p = 0; p < in_pairs.length; p++) {
+      pairs.addPair(in_pairs[p]);
+      await handlePair(client, (in_pairs[p] as any).uri, in_pairs[p].fingerprints, in_pairs[p].mainnet);
+    }
+
+    cleanupBindings = bindEvents(client, pairs, () => {
+      return (topic, command, params) => processRequest(
+        this_client_id,
+        address,
+        topic,
+        command,
+        params
+      );
+    });
+  }
 }
 
 /*
