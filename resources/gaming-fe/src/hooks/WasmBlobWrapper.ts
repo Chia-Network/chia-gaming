@@ -16,8 +16,8 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 
 export function getNewChiaGameCradle(wasmConnection: WasmConnection, params: GameInitParams) : ChiaGame {
     let cradleId = wasmConnection.create_game_cradle({
-        // This is a GameCradleConfig
-        rngId: params.rng.getId(),
+        // This is a JsGameCradleConfig
+        rng_id: params.rng.getId(),
         game_types: params.env.game_types,
         identity: params.chiaIdentity.private_key,
         have_potato: params.iStarted,

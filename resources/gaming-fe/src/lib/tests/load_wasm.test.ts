@@ -7,13 +7,18 @@ import { blockchainDataEmitter } from '../../hooks/BlockchainInfo';
 import { ChildFrameBlockchainInterface } from '../../hooks/ChildFrameBlockchainInterface';
 import { WasmBlobWrapper, getNewChiaGameCradle } from '../../hooks/WasmBlobWrapper'
 import { WasmStateInit, doInternalLoadWasm, storeInitArgs } from '../../hooks/WasmStateInit';
-//import {loadCalpoker} from '../../hooks/useWasmBlob';
-// --
+import { WasmCommand } from '../../hooks/useWasmBlob';
+import { Subject } from 'rxjs';
+
+// @ts-ignore
 import * as fs from 'fs';
+// @ts-ignore
 import { resolve } from 'path';
-// import * as assert from 'assert';
+// @ts-ignore
+import * as assert from 'assert';
 
 function rooted(name: string) {
+    // @ts-ignore
     return resolve(__dirname, '../../../../..', name);
 }
 
@@ -32,17 +37,17 @@ class WasmBlobWrapperAdapter {
     blob: WasmBlobWrapper | undefined;
     waiting_messages: Array<string>;
 
-    constructor() {
+    constructor(wasmCommandChannel: Subject<WasmCommand>) {
         this.waiting_messages = [];
     }
 
     take_block(peak: number, blocks: any[], block_report: any) {
-      this.blob?.blockNotification(peak, blocks, block_report);
+        this.blob?.blockNotification(peak, blocks, block_report);
     }
 
     getObservable() {
         if (!this.blob) {
-            throw("WasmBlobWrapperAdapter.getObservable() called before set_blob");
+            throw ("WasmBlobWrapperAdapter.getObservable() called before set_blob");
         }
         return this.blob.getObservable();
     }
@@ -108,7 +113,7 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
         cradle.getObservable().subscribe({
             next: (evt) => {
                 console.log("WasmBlobWrapper Event: ", evt);
-                if( evt.setGameConnectionState && evt.setGameConnectionState.stateIdentifier === "running") {
+                if (evt.setGameConnectionState && evt.setGameConnectionState.stateIdentifier === "running") {
                     evt_results[index] = true;
                 }
             }
@@ -129,7 +134,7 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
     // If any evt_results are false, that means we did not get a setState msg from that cradle
     if (!evt_results.every((x) => x)) {
         console.log('got running:', evt_results);
-        throw("we expected running state in both cradles");
+        throw ("we expected running state in both cradles");
     }
 }
 
@@ -137,15 +142,121 @@ async function fetchHex(key: string): Promise<string> {
     return fs.readFileSync(rooted(key), 'utf8');
 }
 
-async function initWasmBlobWrapper(blockchain: InternalBlockchainInterface, uniqueId: string, iStarted: boolean, peer_conn: PeerConnectionResult) {
+async function initWasmBlobWrapper(wasmCommandChannel: Subject<WasmCommand>, blockchain: InternalBlockchainInterface, uniqueId: string, iStarted: boolean, peer_conn: PeerConnectionResult): Promise<WasmBlobWrapper> {
     const amount = 100;
     const doInternalLoadWasm = async () => { return new ArrayBuffer(0); };
     // Ensure that each user has a wallet.
-    await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {method: "POST"});
+    console.log('calling fetch(POST,', BLOCKCHAIN_SERVICE_URL, '/register?name=', uniqueId, ')');
+    await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {
+        method: "POST"
+    }).then(res => {
+        return res.json();
+    }).then(token => {
+        // token is the address of the created wallet
+        console.log('Got token from', BLOCKCHAIN_SERVICE_URL, 'token=', token);
+        return token;
+    });
+
+    await storeInitArgs(() => { }, WholeWasmObject);
+
     // blockchainInterface, uniqueId, amount, iStarted, doInternalLoadWasm, fetchHex, peer_conn
     let wasmStateInit: WasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
-    const calpokerHex = loadCalpoker();
-    const wasmConnection = await wasmStateInit.getWasmConnection();
+    //const calpokerHex = loadCalpoker();
+    //const wasmConnection = await wasmStateInit.getWasmConnection()
+    return loadCalpoker().then((calpokerHex) => {
+        console.log('Calpoker ChiaLisp loaded');
+        return wasmStateInit.getWasmConnection().then((wasmConnection) => {
+            console.log('Wasm connection active');
+            return {
+                calpokerHex, wasmConnection
+            };
+        });
+    }).then(({ calpokerHex, wasmConnection }) => {
+        const env = {
+            game_types: {
+                "calpoker": {
+                    version: 1,
+                    hex: calpokerHex
+                }
+            },
+            timeout: 100,
+            unroll_timeout: 100
+        };
+        console.log('Configuring known game types: ', env);
+        const hexString = "4444";
+        const rngId = wasmConnection.create_rng(hexString);
+
+        const gameInitParams = {
+            wasmConnection,
+            env,
+            rng: new RngId(rngId),
+            chiaIdentity: wasmConnection.chia_identity(rngId),
+            iStarted, // iStarted, aka have_potato
+            // TODO: IEEE float ('number') is a slightly smaller range than MAX_NUM_MOJOS
+            // TODO: CalPoker has both players contribute equal amounts. Change this code before Krunk
+            myContribution: 100,
+            theirContribution: 100,
+        }
+        let cradle = getNewChiaGameCradle(wasmConnection, gameInitParams);
+        console.log('Chia Gaming Cradle created. Session ID:', hexString);
+        console.log('I am ', iStarted ? 'Alice' : 'Bob');
+        let wasmParams: WasmBlobParams = {
+            blockchain: blockchain,
+            peerconn: peer_conn,
+            cradle: cradle,
+            uniqueId: uniqueId,
+            iStarted: iStarted,
+            fetchHex: fetchHex,
+        };
+
+        const liveGame = new WasmBlobWrapper(wasmParams, wasmConnection)
+        console.log('WasmBlobWrapper game object created.');
+
+        console.log("About to subscribe to wasmCommandChannel");
+        wasmCommandChannel.subscribe({
+            next: (wasmCommand: WasmCommand) => {
+                const msg: WasmCommand = wasmCommand;
+                console.log('Sending wasm command:', Object.keys(msg));
+            }
+        });
+        console.log("About to subscribe to blockchain service");
+        let blockSubscription = blockchain.getObservable().subscribe({
+            next: (e: BlockchainReport) => {
+                console.log('Received Chia block ', e.peak);
+                liveGame.blockNotification(e.peak, e.block, e.report);
+            }
+        });
+        console.log("About to subscribe to game service");
+        let stateSubscription = liveGame.getObservable().subscribe({
+            next: (state: any) => {
+                console.log("wasm blob recvd update:", state);
+                if (state.shutdown) {
+                    console.log('Chia Gaming shutting down.');
+                    stateSubscription.unsubscribe();
+                    blockSubscription.unsubscribe();
+                }
+            }
+        });
+
+        console.log('Wasm Initialization Complete.');
+        console.log("About to create start coin");
+        return liveGame.createStartCoin().then((coin) => {
+            console.log('Initial coin creation complete. Got: ', coin);
+            if (coin === undefined) {
+                throw ("Failed to create initial game coin");
+            }
+            liveGame.setStartCoin(coin);
+            console.log('Chia Gaming infrastructure Initialization Complete.');
+            return liveGame;
+        });
+    });
+    console.log('Chia Gaming infrastructure Initialization threaded and ready to be configured.');
+}
+
+
+
+//--------------------------------
+/*
     const env = {
         game_types: {
             "calpoker": {
@@ -186,30 +297,41 @@ async function initWasmBlobWrapper(blockchain: InternalBlockchainInterface, uniq
 
     return wbw;
 }
+*/
 
 const load_wasm_test = async () => {
     console.log("Starting load_wasm smoke test");
     const blockchainInterface = new ChildFrameBlockchainInterface();
     // The blockchain service does separate monitoring now.
     blockchainDataEmitter.select({
-      selection: FAKE_BLOCKCHAIN_ID,
-      uniqueId: 'block-producer'
+        selection: FAKE_BLOCKCHAIN_ID,
+        uniqueId: 'block-producer'
     });
     console.log("blockchainDataEmitter selected with blockchain id:", FAKE_BLOCKCHAIN_ID);
 
-    const cradle1 = new WasmBlobWrapperAdapter();
-    let peer_conn1 = { sendMessage: (message: string) => {
-        cradle1.add_outbound_message(message);
-    } };
-    let wasm_blob1 = await initWasmBlobWrapper(blockchainInterface, "a11ce000", true, peer_conn1);
+    // function get_wasm_connection(): Subject<WasmCommand> {
+
+    // }
+    let wcc1 = new Subject<WasmCommand>();
+    const cradle1 = new WasmBlobWrapperAdapter(wcc1);
+    let peer_conn1 = {
+        sendMessage: (message: string) => {
+            cradle1.add_outbound_message(message);
+        }
+    };
+
+    let wasm_blob1 = await initWasmBlobWrapper(wcc1, blockchainInterface, "a11ce000", true, peer_conn1);
     cradle1.set_blob(wasm_blob1);
     console.log("cradle1 created");
 
-    const cradle2 = new WasmBlobWrapperAdapter();
-    let peer_conn2 = { sendMessage: (message: string) => {
-        cradle2.add_outbound_message(message);
-    } };
-    let wasm_blob2 = await initWasmBlobWrapper(blockchainInterface, "b0b77777", false, peer_conn2);
+    let wcc2 = new Subject<WasmCommand>();
+    const cradle2 = new WasmBlobWrapperAdapter(wcc2);
+    let peer_conn2 = {
+        sendMessage: (message: string) => {
+            cradle2.add_outbound_message(message);
+        }
+    };
+    let wasm_blob2 = await initWasmBlobWrapper(wcc2, blockchainInterface, "b0b77777", false, peer_conn2);
     cradle2.set_blob(wasm_blob2);
     console.log("cradle2 created");
 
@@ -217,4 +339,5 @@ const load_wasm_test = async () => {
     await action_with_messages(blockchainInterface, cradle1, cradle2);
 }
 
-test('load_wasm', load_wasm_test, 45 * 1000);
+// @ts-ignore
+test('load_wasm', load_wasm_test, 5 * 1000);

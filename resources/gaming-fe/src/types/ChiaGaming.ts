@@ -528,4 +528,5 @@ export interface DoInitialSpendResult {
 export interface InternalBlockchainInterface {
   do_initial_spend(uniqueId: string, target: string, amt: number): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
+  getObservable(): Subject<any>;
 }

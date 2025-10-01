@@ -8,8 +8,9 @@ var cg: any = undefined;
 
 export const readyToInit = new Subject<boolean>();
 export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
+    console.log("subscriber added to waitForReadyToInit");
+    console.log("chia_gaming_init={chia_gaming_init} cg={cg}");
     if (chia_gaming_init && cg) {
-        readyToInit.unsubscribe();
         subscriber.next(true);
         subscriber.complete();
         return;
@@ -77,14 +78,19 @@ observable.subscribe({
             "clsp/referee/onchain/referee.hex",
             "clsp/referee/onchain/referee-v1.hex"
         ];
-        await this.loadPresets(presetFiles);
         this.wasmConnection = cg;
+        await this.loadPresets(presetFiles);
+
         this.deferredWasmConnection.next(cg);
         this.deferredWasmConnection.complete();
         return cg;
     }
 
     getWasmConnection() : Promise<WasmConnection> {
+        let sub = waitForReadyToInit.subscribe({next: () => {
+            this.internalLoadWasm(chia_gaming_init, cg);
+        }});
+
         return new Promise<WasmConnection>((resolve, reject) => {
             let wcSub = this.deferredWasmConnection.subscribe({
                 next: (wasmConnection) => {
@@ -111,6 +117,7 @@ observable.subscribe({
         return Promise.all(presetFetches).then(presets => {
             presets.forEach((nameAndContent) => {
                 console.log(`preset load ${nameAndContent.name} ${nameAndContent.content.length}`);
+                if (!this.wasmConnection) { throw("this.wasmConnection undefined in loadPresets"); }
                 this.wasmConnection?.deposit_file(nameAndContent.name, nameAndContent.content);
             });
 

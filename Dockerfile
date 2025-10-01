@@ -36,7 +36,7 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	cd /tmp/rust && \
 	. $HOME/.cargo/env && \
 	. /app/test/bin/activate && \
-	maturin build --release --features sim-tests && \
+	maturin build --features sim-tests && \
 	cd /tmp/rust/wasm && \
 	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
 	wasm-pack build --out-dir=/tmp/rust/wasm/pkg --release --target=web && \
@@ -61,7 +61,7 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	rm -rf `find . -name \*.whl` && \
 	. $HOME/.cargo/env && \
 	. /app/test/bin/activate && \
-	maturin build --release --features sim-tests && \
+	maturin build --features sim-tests && \
 	pip install `find . -name \*.whl` && \
 	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
 	cd /tmp/rust/wasm && \

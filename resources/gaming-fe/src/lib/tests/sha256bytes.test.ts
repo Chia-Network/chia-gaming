@@ -1,10 +1,11 @@
 import { init, sha256bytes } from '../../../node-pkg/chia_gaming_wasm.js';
-import { to_hex_string } from './common';
+// @ts-ignore
 import * as assert from 'assert';
 
 let utf8Encode = new TextEncoder();
 let b = utf8Encode.encode("abc");
 
+// @ts-ignore
 it('hashes', async () => {
     init();
     let msg = 'hello.there.my.dear.friend';
