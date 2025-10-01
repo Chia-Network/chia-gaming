@@ -120,10 +120,6 @@ export class WasmBlobWrapper {
     });
   };
 
-  haveEvents(): boolean {
-    return this.messageQueue.length > 0;
-  }
-
   internalKickIdle(): any {
     this.kickMessageHandling().then((res: any) => {
       let idle_info;
@@ -143,7 +139,8 @@ export class WasmBlobWrapper {
       return;
     }
     this.messageQueue.push(msg);
-    return this.internalKickIdle();
+    console.log('pushEvent', msg);
+    return this.kickMessageHandling();
   }
 
   handleOneMessage(msg: any): any {
@@ -169,8 +166,6 @@ export class WasmBlobWrapper {
     } else if (msg.takeGameMessage) {
       let data = msg.takeGameMessage;
       return this.takeGameMessage(data.moveNumber, data.game_id, data.readable_hex);
-    } else if (msg.kickIdle) {
-      return this.internalKickIdle();
     } else if (msg.setCardSelections !== undefined) {
       return this.internalSetCardSelections(msg.setCardSelections);
     } else if (msg.startGame) {
@@ -255,6 +250,7 @@ export class WasmBlobWrapper {
 
   kickMessageHandling(): any {
     if (this.messageQueue.length == 0 || this.handlingMessage) {
+      console.log('messageQueue:', this.messageQueue.length, this.handlingMessage);
       return empty();
     }
 
@@ -264,11 +260,13 @@ export class WasmBlobWrapper {
     let result = null;
     return this.handleOneMessage(msg).then((result: any) => {
       this.rxjsEmitter?.next(result);
+
+      console.log('internalKickIdle');
+      this.internalKickIdle();
+
       this.handlingMessage = false;
-      if (this.messageQueue.length != 0) {
-        return this.kickMessageHandling();
-      }
-      return result;
+
+      return this.kickMessageHandling();
     }).catch((e: any) => {
       console.error(e);
       this.handlingMessage = false;
@@ -501,11 +499,6 @@ export class WasmBlobWrapper {
     }
 
     return result;
-  }
-
-  kickIdle() {
-    this.pushEvent({ kickIdle: true });
-    return empty();
   }
 
   generateEntropy() {
