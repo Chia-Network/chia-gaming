@@ -250,7 +250,6 @@ export class WasmBlobWrapper {
 
   kickMessageHandling(): any {
     if (this.messageQueue.length == 0 || this.handlingMessage) {
-      console.log('messageQueue:', this.messageQueue.length, this.handlingMessage);
       return empty();
     }
 
@@ -261,7 +260,6 @@ export class WasmBlobWrapper {
     return this.handleOneMessage(msg).then((result: any) => {
       this.rxjsEmitter?.next(result);
 
-      console.log('internalKickIdle');
       this.internalKickIdle();
 
       this.handlingMessage = false;
