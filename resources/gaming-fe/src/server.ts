@@ -4,7 +4,6 @@ import fetch from 'node-fetch';
 import bufferReplace from 'buffer-replace';
 import minimist from 'minimist';
 import { createServer } from 'http';
-import { setupWebSocket } from './lobby/websocket';
 import { readFile } from 'node:fs/promises';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -98,8 +97,6 @@ app.get('/resources*', async (req: any, res: any) => {
   serveDirectory("./", req, res);
 });
 
-const io = setupWebSocket(httpServer);
-
 process.on('SIGTERM', () => {
   process.exit(0);
 });
@@ -116,7 +113,7 @@ function refreshLobby() {
     },
     body: JSON.stringify({
       game: 'calpoker',
-      target: `${args.self}?game=calpoker`
+      target: `${args.self}?game=calpoker&lobbyUrl=${args.tracker}`,
     })
   }).then(res => res.json()).then(res => {
     console.log('tracker:', res);
@@ -131,21 +128,7 @@ setInterval(() => {
 
 refreshLobby();
 
-io.on('connection', socket => {
-  socket.on('game_message', ({ party, token, msg }) => {
-    if (process.env.DEBUG) {
-      console.log('game message', party, token, msg);
-    }
-    io.emit('game_message', { party, token, msg });
-  });
-
-  socket.on('peer', ({ iStarted }) => {
-    console.log('peer', iStarted);
-    io.emit('peer', { iStarted });
-  });
-});
-
 const port = process.env.PORT || 3000;
 httpServer.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Game server listening on port ${port}`)
 });

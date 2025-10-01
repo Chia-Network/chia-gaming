@@ -7,6 +7,7 @@ RUN npm install -g corepack
 RUN yarn set version 1.22.22
 WORKDIR /app
 RUN python3 -m venv ./test
+RUN . /app/test/bin/activate && pip install maturin==1.9.2
 RUN sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.5.5-rc3"
 # Gross, check the hash at least.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && sh ./rustup.sh -y
@@ -14,16 +15,33 @@ RUN echo 'source $HOME/.cargo/env' >> $HOME/.profile
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN . $HOME/.cargo/env && rustup default stable && rustup target add wasm32-unknown-unknown --toolchain stable && cargo +stable install --version 0.13.1 wasm-pack
 ADD clsp /app/clsp
+
+# Setup to pre-build the dependencies
 RUN mkdir -p /app/rust/src
+COPY rust-toolchain.toml /app/rust/rust-toolchain.toml
 COPY Cargo.toml /app/rust/Cargo.toml
 COPY Cargo.lock /app/rust/Cargo.lock
-ADD src /app/rust/src
-RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && pip install maturin==1.9.2
-RUN cd /app/rust && . $HOME/.cargo/env && . /app/test/bin/activate && maturin build --release --features sim-tests && pip install `find . -name \*.whl`
-ADD wasm /app/rust/wasm
-RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/rust/wasm/node-pkg --release --target=nodejs
-RUN mv /app/rust/wasm/node-pkg /app
-RUN . $HOME/.cargo/env && cd /app/rust/wasm && wasm-pack build --out-dir=/app/rust/wasm/pkg --release --target=web
+RUN sh -c "echo > /app/rust/src/lib.rs"
+
+# Setup pre-build wasm
+RUN mkdir -p /app/rust/wasm/src
+COPY wasm/Cargo.toml /app/rust/wasm/Cargo.toml
+COPY wasm/Cargo.lock /app/rust/wasm/Cargo.lock
+RUN sh -c "echo > /app/rust/wasm/src/mod.rs"
+
+# Pre-build
+RUN --mount=type=tmpfs,dst=/tmp/rust \
+	(cd /app/rust && tar cf - .) | (cd /tmp/rust && tar xvf -) && \
+	mkdir -p /tmp/rust/wasm && (cd /app/rust/wasm && tar cf - .) | (cd /tmp/rust/wasm && tar xf -) && \
+	cd /tmp/rust && \
+	. $HOME/.cargo/env && \
+	. /app/test/bin/activate && \
+	maturin build --release --features sim-tests && \
+	cd /tmp/rust/wasm && \
+	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
+	wasm-pack build --out-dir=/tmp/rust/wasm/pkg --release --target=web && \
+  rm -rf /tmp/rust/wasm/node-pkg /tmp/rust/wasm/pkg && \
+	(cd /tmp/rust && tar cvf - .) | (cd /app/rust && tar xf -)
 
 #Stage front-end / UI / UX into the container
 COPY resources/gaming-fe/package.json /app/
@@ -35,10 +53,29 @@ COPY resources/wc-stub/package.json /app/wc/
 COPY resources/wc-stub/yarn.lock /app/wc/
 RUN cd /app/wc && yarn install
 
+ADD src /app/rust/src
+RUN touch /app/rust/src/lib.rs
+
+ADD wasm/src /app/rust/wasm/src
+RUN touch /app/rust/wasm/src/mod.rs
+
+# Build
+RUN --mount=type=tmpfs,dst=/tmp/rust \
+	(cd /app/rust/ && tar cvf - .) | (cd /tmp/rust && tar xf -) && \
+	cd /tmp/rust && \
+	rm -rf `find . -name \*.whl` && \
+	. $HOME/.cargo/env && \
+	. /app/test/bin/activate && \
+	maturin build --release --features sim-tests && \
+	pip install `find . -name \*.whl` && \
+	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
+	cd /tmp/rust/wasm && \
+	cargo clean -p chia_gaming_wasm && \
+	wasm-pack build --out-dir=/app/node-pkg --release --target=nodejs && \
+	wasm-pack build --out-dir=/app/dist --release --target=web
+
 # Place wasm backend in docker container
 RUN mkdir -p /app/dist
-RUN cp /app/rust/wasm/pkg/chia_gaming_wasm_bg.wasm /app/dist/chia_gaming_wasm_bg.wasm
-RUN cp /app/rust/wasm/pkg/chia_gaming_wasm.js /app/dist/chia_gaming_wasm.js
 
 # Build the front-end / UI / UX within the container env
 COPY resources/gaming-fe /app
@@ -55,4 +92,4 @@ ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.py
-CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 --coinset 'http://localhost:3002' &) && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && python3 run_simulator.py"
+CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 --coinset 'http://localhost:3002' &) && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && python3 run_simulator.py"
