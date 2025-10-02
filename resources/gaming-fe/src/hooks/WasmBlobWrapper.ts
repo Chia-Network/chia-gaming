@@ -138,10 +138,9 @@ export class WasmBlobWrapper {
     return Promise.all(presetFetches).then(presets => {
       presets.forEach((nameAndContent) => {
         console.log(`preset load ${nameAndContent.name} ${nameAndContent.content.length}`);
-        this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
+        this.wasmConnection.deposit_file(nameAndContent.name, nameAndContent.content);
       });
-      let newGameIdentity = this.wc?.chia_identity(this.rngSeed);
-      this.identity = newGameIdentity;
+      let newGameIdentity = this.cradle.getIdentity();
       this.pushEvent({ loadCalpoker: true });
       return {
         'setGameConnectionState': {
@@ -295,25 +294,14 @@ export class WasmBlobWrapper {
   createStartCoin(): Promise<string | undefined> {
     const amount = this.cradle.getAmount();
     const identity = this.cradle.getIdentity();
-    if (!identity) {
-      throw new Error('create start coin with no identity');
-    }
-    const calpokerHex = this.calpokerHex;
-    if (!calpokerHex) {
-      throw new Error('create start coin with no calpoker loaded');
-    }
 
-    const wc = this.wasmConnection;
-    if (!wc) {
-      throw new Error('create start coin with no wasm obj?');
-    }
-
-    console.log(`create coin spendable by ${identity.puzzle_hash} for ${amount}`);
+    console.log(`create coin spendable by puzzle hash ${identity.puzzle_hash} for ${amount}`);
     return this
       .blockchain
       .do_initial_spend(this.uniqueId, identity.puzzle_hash, amount)
       .then(result =>
     {
+        console.log("createStartCoin: result: ", result);
         let coin = result.coin;
         if (!coin) {
           throw new Error('tried to create spendable but failed');
@@ -322,14 +310,17 @@ export class WasmBlobWrapper {
         // Handle data conversion back when Coin object was received.
         if (typeof coin !== 'string') {
           const coinset_coin = coin as any;
-          const new_coin_string = this.wasmConnection.convert_coinset_to_coin_string(coinset_coin.parentCoinInfo, coinset_coin.puzzleHash, coinset_coin.amount.toString());
+          console.log("createStartCoin coin: ", coin);
+          console.log("createStartCoin coinset_coin: ", coinset_coin);
+          const new_coin_string = this.wasmConnection.
+            convert_coinset_to_coin_string(coinset_coin.parentCoinInfo, coinset_coin.puzzleHash, coinset_coin.amount.toString());
           if (!new_coin_string) {
             throw new Error(`Coin could not be converted to coinstring: ${JSON.stringify(coinset_coin)}`);
           }
 
           coin = new_coin_string;
-          return coin;
         }
+        return coin;
     });
   }
 

@@ -199,6 +199,8 @@ pub trait GameCradle {
         new_entropy: Hash,
     ) -> Result<(), Error>;
 
+    fn identity(&self) -> ChiaIdentity;
+
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
     /// Perhaps we should consider reporting the rewards.
     fn accept<R: Rng>(
@@ -800,6 +802,10 @@ impl GameCradle for SynchronousGameCradle {
             system_interface: &mut self.state,
         };
         self.peer.start_games(&mut penv, i_initiated, game)
+    }
+
+    fn identity(&self) -> ChiaIdentity {
+        self.state.identity.clone()
     }
 
     /// Signal making a move.  Forwards to FromLocalUI::make_move.

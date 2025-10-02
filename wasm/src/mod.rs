@@ -196,7 +196,8 @@ struct JsGameFactory {
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
-struct JsGameCradleConfig { // GameInitParams?
+struct JsGameCradleConfig {
+    // GameInitParams?
     // name vs hex string for program
     game_types: BTreeMap<String, JsGameFactory>,
     // hex string for private key
@@ -314,7 +315,6 @@ extern "C" {
     pub type ICreateGameCradle;
 }
 
-
 #[wasm_bindgen]
 pub fn create_rng(seed: String) -> Result<i32, JsValue> {
     let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
@@ -323,7 +323,6 @@ pub fn create_rng(seed: String) -> Result<i32, JsValue> {
     insert_rng(id, rng);
     return Ok(id);
 }
-
 
 pub fn with_rng<F, T>(cid: i32, f: F) -> Result<T, JsValue>
 where
@@ -604,21 +603,19 @@ pub fn make_move(cid: i32, id: &str, readable: &str) -> Result<(), JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn get_identity(cid: i32) -> Result<(), JsValue> {
-    with_game(cid, move |cradle: &mut JsCradle| {
-        cradle
-            .cradle
-            .amount()
-    })
+pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(Into::<JsChiaIdentity>::into(cradle.cradle.identity()))
+    })?)
+    .into_js()
 }
 
+// TODO: Resolve Amount(js+rs), (js)number, i32, u64
 #[wasm_bindgen]
-pub fn get_amount(cid: i32) -> Result<(), JsValue> {
-    with_game(cid, move |cradle: &mut JsCradle| {
-        cradle
-            .cradle
-            .amount()
-    })
+pub fn get_amount(cid: i32) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(JsAmount{ amt: cradle.cradle.amount() })
+    })?).into_js()
 }
 
 #[wasm_bindgen]

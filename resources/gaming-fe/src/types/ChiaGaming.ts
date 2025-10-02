@@ -1,12 +1,11 @@
 import { Subject, Subscription } from 'rxjs';
 import { proper_list } from '../util';
 
+// TODO: rename "amount"
+// TODO: visit 53-bit limit
 export type Amount = {
   "amt": number,
 };
-
-// TODO: rename "amount"
-// TODO: create Amount type
 
 export type Spend = {
   "puzzle": string,
@@ -151,7 +150,7 @@ export interface WasmConnection {
   deliver_message: (cid: number, inbound_message: string) => any;
   idle: (cid: number, callbacks: any) => any;
   get_identity: (cid: number) => IChiaIdentity;
-  get_amount: (cid: number) => number;
+  get_amount: (cid: number) => Amount;
 
   // Misc
   chia_identity: (rng_id: number) => any;
@@ -190,8 +189,8 @@ export class ChiaGame {
     return this.wasmConnection.get_identity(this.cradleId);
   }
 
-  getAmount() : number {
-    return this.wasmConnection.get_amount(this.cradleId);
+  getAmount() : number{
+    return this.wasmConnection.get_amount(this.cradleId).amt;
   }
 
   start_games(initiator: boolean, game: any): string[] {
