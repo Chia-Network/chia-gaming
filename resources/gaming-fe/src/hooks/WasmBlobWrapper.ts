@@ -126,22 +126,43 @@ export class WasmBlobWrapper {
     }
   }
 
-  haveEvents(): boolean {
-    return this.messageQueue.length > 0;
-  }
+  loadPresets(presetFiles: string[]) {
+    const presetFetches = presetFiles.map((partialUrl) => {
+      return this.fetchHex(partialUrl).then((text) => {
+        return {
+          name: partialUrl,
+          content: text
+        };
+      });
+    });
+    return Promise.all(presetFetches).then(presets => {
+      presets.forEach((nameAndContent) => {
+        console.log(`preset load ${nameAndContent.name} ${nameAndContent.content.length}`);
+        this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
+      });
+      let newGameIdentity = this.wc?.chia_identity(this.rngSeed);
+      this.identity = newGameIdentity;
+      this.pushEvent({ loadCalpoker: true });
+      return {
+        'setGameConnectionState': {
+          stateIdentifier: "starting",
+          stateDetail: ["loaded preset files"]
+        },
+        'setGameIdentity': newGameIdentity
+      };
+    });
+  };
 
   internalKickIdle(): any {
-    this.kickMessageHandling().then((res: any) => {
-      let idle_info;
-      do {
-        idle_info = this.idle();
-        if (!idle_info) {
-          return res;
-        }
-        this.rxjsEmitter.next(idle_info);
-      } while (!idle_info.stop);
-      return res;
-    });
+    let idle_info;
+    do {
+      idle_info = this.idle();
+      if (!idle_info) {
+        return idle_info;
+      }
+      this.rxjsEmitter?.next(idle_info);
+    } while (!idle_info.stop);
+    return idle_info;
   }
 
   pushEvent(msg: any): any {
@@ -149,7 +170,7 @@ export class WasmBlobWrapper {
       return;
     }
     this.messageQueue.push(msg);
-    return this.internalKickIdle();
+    return this.kickMessageHandling();
   }
 
   handleOneMessage(msg: any): any {
@@ -164,8 +185,6 @@ export class WasmBlobWrapper {
     } else if (msg.takeGameMessage) {
       let data = msg.takeGameMessage;
       return this.takeGameMessage(data.moveNumber, data.game_id, data.readable_hex);
-    } else if (msg.kickIdle) {
-      return this.internalKickIdle();
     } else if (msg.setCardSelections !== undefined) {
       return this.internalSetCardSelections(msg.setCardSelections);
     } else if (msg.startGame) {
@@ -259,12 +278,13 @@ export class WasmBlobWrapper {
     this.handlingMessage = true;
     let result = null;
     return this.handleOneMessage(msg).then((result: any) => {
-      this.rxjsEmitter.next(result);
+      this.rxjsEmitter?.next(result);
+
+      this.internalKickIdle();
+
       this.handlingMessage = false;
-      if (this.messageQueue.length != 0) {
-        return this.kickMessageHandling();
-      }
-      return result;
+
+      return this.kickMessageHandling();
     }).catch((e: any) => {
       console.error(e);
       this.handlingMessage = false;
@@ -444,11 +464,6 @@ export class WasmBlobWrapper {
     }
 
     return result;
-  }
-
-  kickIdle() {
-    this.pushEvent({ kickIdle: true });
-    return empty();
   }
 
   generateEntropy() {
