@@ -588,14 +588,30 @@ fn run_game_container_with_action_list_with_success_predicate(
             )
     };
 
-    while !matches!(ending, Some(0)) {
+    while (move_number < moves_input.len()) && !matches!(ending, Some(0)) {
         num_steps += 1;
         debug!(
             "{num_steps} can move {can_move} {move_number} {:?}",
             &moves_input[move_number..]
         );
-        if let GameAction::Move(_, rm, _) = &moves_input[move_number] {
+        let move_input = moves_input.get(move_number);
+
+        if let Some(GameAction::Shutdown(_, _)) = &move_input {
+            println!("Shutting down");
+            break;
+        }
+
+        if let Some(GameAction::Move(_, rm, _)) = &move_input {
             debug!("ReadableMove is {:?}", rm);
+        } else {
+            let length = moves_input.len();
+            if move_number < length {
+                debug!("Got move_input {move_input:?} but could not construct ReadableMove!!");
+                todo!();
+            } else {
+                debug!("HEY! tried to access moves_input[{move_number}] but array len is {length}");
+                todo!();
+            }
         }
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
         debug!("local_uis[1].finished {:?}", local_uis[0].game_finished);
