@@ -14,11 +14,18 @@ import { disconnectPair, bindEvents } from './util/walletConnect';
 import Daemon from './rpc/Daemon';
 import express, { Application } from "express";
 import { blockchainUpdate, bindBlockchain } from './coinset';
+import cors from 'cors';
 
 import 'fake-indexeddb/auto';
 
 const app: Application = express();
 var expressWs = require('express-ws')(app);
+app.use(express.json());
+
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'HEAD', 'OPTIONS']
+}));
 app.use(express.json());
 
 const PORT: number = process.env.PORT ? parseInt(process.env.PORT, 10) : 3002;

@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const {Builder, Browser, By, Key, WebDriver, until} = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
 const firefox = require('selenium-webdriver/firefox');
-const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, waitForNonError} = require('./util.js');
+const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, selectWalletConnect, waitForNonError} = require('./util.js');
 
 // Other browser
 const geckodriver = require('geckodriver');
@@ -53,10 +53,10 @@ async function clickMakeMove(driver, who) {
     await makeMoveButton.click();
 }
 
-async function firefox_start_and_first_move(driver, baseUrl) {
+async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
   await driver.get(baseUrl);
 
-  await selectSimulator(driver);
+  await selectWallet(driver);
 
   await driver.wait(until.elementLocated(byAttribute("id", "subframe")));
 
@@ -99,6 +99,7 @@ describe("Basic element tests", function() {
   const baseUrl = "http://localhost:3000";
   const driver = driver1;
   const ffdriver = driver2;
+  const selectWallet = selectWalletConnect;
 
   it("starts", async function() {
     // Terminate early if we didn't get the browsers we wanted.
@@ -107,7 +108,7 @@ describe("Basic element tests", function() {
     // Load the login page
     await driver.get(baseUrl);
 
-    await selectSimulator(driver);
+    await selectWallet(driver);
 
     await wait(driver, 5.0);
 
@@ -156,7 +157,7 @@ describe("Basic element tests", function() {
 
     // Spawn second browser.
     console.log('second browser start');
-    await firefox_start_and_first_move(ffdriver, partnerUrl);
+      await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
 
     console.log('wait for alice make move button');
     await clickMakeMove(driver, 'alice');
