@@ -13,7 +13,6 @@ if [ -z "$FIREFOX" ]; then
   case $(uname) in
   Darwin)
     export FIREFOX=/Applications/Firefox.app/Contents/MacOS
-    sleep 13
     ;;
   *)
     echo "Please set env var 'FIREFOX'";;
@@ -22,12 +21,19 @@ else
   echo "Using env var FIREFOX=${FIREFOX}"
 fi
 
-echo 'waiting for service alive .'
-/bin/bash ./wait-for-it.sh -t 90 -h localhost -p 3000
-echo 'waiting for service alive ..'
-/bin/bash ./wait-for-it.sh -t 90 -h localhost -p 3001
-echo 'waiting for service alive ...'
-/bin/bash ./wait-for-it.sh -t 90 -h localhost -p 5800
+wait_for_port() {
+  url="$1"
+  curl --connect-timeout 5 \
+    --max-time 10 \
+    --retry 10 \
+    --retry-delay 0 \
+    --retry-max-time 40 \
+    --retry-all-errors \
+    ${url}
+}
+
+wait_for_port http://localhost:3000
+wait_for_port http://localhost:3001
 
 echo 'running tests'
 STATUS=1
