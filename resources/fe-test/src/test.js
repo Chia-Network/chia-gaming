@@ -13,7 +13,9 @@ const geckodriver = require('geckodriver');
 
 function makeFirefox() {
   const options1 = new firefox.Options();
-  options1.addArguments('-headless');
+  if (process.env.FIREFOX_HEADLESS) {
+    options1.addArguments('-headless');
+  }
   if (process.env.FIREFOX) {
     options1.setBinary(process.env.FIREFOX);
   }

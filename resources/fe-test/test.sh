@@ -1,19 +1,39 @@
 #!/bin/bash
 
+set -x
 set -e
 
 yarn install --dev
 
 docker kill chia-gaming-test || true
 docker rm chia-gaming-test || true
-docker run --name chia-gaming-test --network=host -t chia-gaming-test &
+docker run --name chia-gaming-test -p 127.0.0.1:3000:3000 -p 127.0.0.1:3001:3001 -p 127.0.0.1:5800:5800  -t chia-gaming-test &
 
-echo 'waiting for service alive .'
-/bin/bash ./wait-for-it.sh -t 90 -h localhost -p 3000
-echo 'waiting for service alive ..'
-/bin/bash ./wait-for-it.sh -t 90 -h localhost -p 3001
-echo 'waiting for service alive ...'
-/bin/bash ./wait-for-it.sh -t 90 -h localhost -p 5800
+if [ -z "$FIREFOX" ]; then
+  case $(uname) in
+  Darwin)
+    export FIREFOX=/Applications/Firefox.app/Contents/MacOS
+    ;;
+  *)
+    echo "Please set env var 'FIREFOX'";;
+  esac
+else
+  echo "Using env var FIREFOX=${FIREFOX}"
+fi
+
+wait_for_port() {
+  url="$1"
+  curl --connect-timeout 5 \
+    --max-time 10 \
+    --retry 10 \
+    --retry-delay 0 \
+    --retry-max-time 40 \
+    --retry-all-errors \
+    ${url}
+}
+
+wait_for_port http://localhost:3000
+wait_for_port http://localhost:3001
 
 echo 'running tests'
 STATUS=1
