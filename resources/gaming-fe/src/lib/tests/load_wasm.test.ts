@@ -344,6 +344,9 @@ class Timer {
 
 const load_wasm_test = async () => {
     console.log("Starting load_wasm smoke test");
+    let timer = new Timer();
+    timer.start(7000);
+
     const blockchainInterface = new ChildFrameBlockchainInterface();
     // The blockchain service does separate monitoring now.
     blockchainDataEmitter.select({
@@ -383,8 +386,6 @@ const load_wasm_test = async () => {
         shutdown2();
     }
 
-    let timer = new Timer();
-    timer.start(7000);
     console.log("calling action_with_messages ...");
     await action_with_messages(timer, shutdown, blockchainInterface, cradle1, cradle2);
 }
