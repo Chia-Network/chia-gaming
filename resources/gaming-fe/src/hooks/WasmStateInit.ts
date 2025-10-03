@@ -5,6 +5,7 @@ import { WasmBlobWrapper } from './WasmBlobWrapper';
 
 var chia_gaming_init: any = undefined;
 var cg: any = undefined;
+var logInitialized = false;
 
 export const readyToInit = new Subject<boolean>();
 export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
@@ -70,7 +71,10 @@ observable.subscribe({
         console.log('wasm detected');
         const modData = await this.doInternalLoadWasm();
         chia_gaming_init(modData);
-        cg.init((msg: string) => console.warn('wasm', msg));
+        if (!logInitialized) {
+            logInitialized = true;
+            cg.init((msg: string) => console.warn('wasm', msg));
+        }
         const presetFiles = [
             "resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex",
             "clsp/unroll/unroll_meta_puzzle.hex",

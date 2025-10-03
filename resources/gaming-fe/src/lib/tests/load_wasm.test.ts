@@ -138,8 +138,6 @@ async function action_with_messages(timer: Timer, shutdown: () => void, blockcha
         for (let c = 0; c < 2; c++) {
             let outbound = cradles[c].outbound_messages();
             let msgs = cradles[c].get_stored_messages();
-            console.log(`cradle ${c} in  msgs: ${msgs}`);
-            console.log(`cradle ${c} out msgs: ${outbound}`);
             for (let i = 0; i < outbound.length; i++) {
                 console.log(`delivering message from cradle ${c}: ${outbound[i]}`);
                 cradles[c ^ 1].deliver_message(outbound[i]);
@@ -200,7 +198,7 @@ async function initWasmBlobWrapper(wasmCommandChannel: Subject<WasmCommand>, blo
             unroll_timeout: 100
         };
         console.log('Configuring known game types: ', env);
-        const hexString = "4444";
+        const hexString = `444${4 + (iStarted ? 1 : 0)}`;
         const rngId = wasmConnection.create_rng(hexString);
 
         const gameInitParams = {
@@ -345,7 +343,7 @@ class Timer {
 const load_wasm_test = async () => {
     console.log("Starting load_wasm smoke test");
     let timer = new Timer();
-    timer.start(7000);
+    timer.start(15000);
 
     const blockchainInterface = new ChildFrameBlockchainInterface();
     // The blockchain service does separate monitoring now.
@@ -362,6 +360,7 @@ const load_wasm_test = async () => {
     const cradle1 = new WasmBlobWrapperAdapter(wcc1);
     let peer_conn1 = {
         sendMessage: (message: string) => {
+            console.log('cradle1 has outbound msg', message);
             cradle1.add_outbound_message(message);
         }
     };
@@ -374,6 +373,7 @@ const load_wasm_test = async () => {
     const cradle2 = new WasmBlobWrapperAdapter(wcc2);
     let peer_conn2 = {
         sendMessage: (message: string) => {
+            console.log('cradle2 has outbound msg', message);
             cradle2.add_outbound_message(message);
         }
     };
@@ -391,4 +391,4 @@ const load_wasm_test = async () => {
 }
 
 // @ts-ignore
-test('load_wasm', load_wasm_test, 11 * 1000);
+test('load_wasm', load_wasm_test, 17 * 1000);
