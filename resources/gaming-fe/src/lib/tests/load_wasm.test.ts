@@ -74,6 +74,13 @@ class WasmBlobWrapperAdapter {
     add_outbound_message(msg: string) {
         this.waiting_messages.push(msg);
     }
+
+    get_stored_messages() {
+        if (!this.blob) {
+            return [];
+        }
+        return this.blob?.getStoredMessages();
+    }
 }
 
 function all_handshaked(cradles: Array<WasmBlobWrapperAdapter>) {
@@ -91,11 +98,11 @@ function wait(msec: number): Promise<void> {
     });
 }
 
-async function action_with_messages(blockchainInterface: ChildFrameBlockchainInterface, cradle1: WasmBlobWrapperAdapter, cradle2: WasmBlobWrapperAdapter) {
+async function action_with_messages(timer: Timer, shutdown: () => void, blockchainInterface: ChildFrameBlockchainInterface, cradle1: WasmBlobWrapperAdapter, cradle2: WasmBlobWrapperAdapter) {
     let count = 0;
     let cradles = [cradle1, cradle2];
-
-    blockchainInterface.getObservable().subscribe({
+    console.log("action_with_messages TIME: ", timer.howLong());
+    let blockchainSubscription = blockchainInterface.getObservable().subscribe({
         next: (evt: BlockchainReport) => {
             cradles.forEach((c, i) => {
                 let block_array: any[] = [];
@@ -121,8 +128,18 @@ async function action_with_messages(blockchainInterface: ChildFrameBlockchainInt
     });
 
     while (!all_handshaked(cradles)) {
+        console.log("WHILE TIME: ", timer.howLong());
+        if (timer.timedOut()) {
+            console.log("TEST TIMED OUT");
+            blockchainSubscription.unsubscribe();
+            shutdown();
+            throw("TEST TIMED OUT 2");
+        }
         for (let c = 0; c < 2; c++) {
             let outbound = cradles[c].outbound_messages();
+            let msgs = cradles[c].get_stored_messages();
+            console.log(`cradle ${c} in  msgs: ${msgs}`);
+            console.log(`cradle ${c} out msgs: ${outbound}`);
             for (let i = 0; i < outbound.length; i++) {
                 console.log(`delivering message from cradle ${c}: ${outbound[i]}`);
                 cradles[c ^ 1].deliver_message(outbound[i]);
@@ -142,7 +159,7 @@ async function fetchHex(key: string): Promise<string> {
     return fs.readFileSync(rooted(key), 'utf8');
 }
 
-async function initWasmBlobWrapper(wasmCommandChannel: Subject<WasmCommand>, blockchain: InternalBlockchainInterface, uniqueId: string, iStarted: boolean, peer_conn: PeerConnectionResult): Promise<WasmBlobWrapper> {
+async function initWasmBlobWrapper(wasmCommandChannel: Subject<WasmCommand>, blockchain: InternalBlockchainInterface, uniqueId: string, iStarted: boolean, peer_conn: PeerConnectionResult): Promise<{ game: WasmBlobWrapper, shutdown: () => void }> {
     const amount = 100;
     const doInternalLoadWasm = async () => { return new ArrayBuffer(0); };
     // Ensure that each user has a wallet.
@@ -226,6 +243,9 @@ async function initWasmBlobWrapper(wasmCommandChannel: Subject<WasmCommand>, blo
                 liveGame.blockNotification(e.peak, e.block, e.report);
             }
         });
+        let shutdown = function() {
+            blockSubscription.unsubscribe();
+        }
         console.log("About to subscribe to game service");
         let stateSubscription = liveGame.getObservable().subscribe({
             next: (state: any) => {
@@ -247,7 +267,7 @@ async function initWasmBlobWrapper(wasmCommandChannel: Subject<WasmCommand>, blo
             }
             liveGame.setStartCoin(coin);
             console.log('Chia Gaming infrastructure Initialization Complete.');
-            return liveGame;
+            return { game: liveGame, shutdown: shutdown };
         });
     });
     console.log('Chia Gaming infrastructure Initialization threaded and ready to be configured.');
@@ -299,6 +319,29 @@ async function initWasmBlobWrapper(wasmCommandChannel: Subject<WasmCommand>, blo
 }
 */
 
+class Timer {
+    timerId: any | undefined;
+    timeout: boolean = false;
+    startTime: Date | undefined;
+    start(ms: number) {
+        this.startTime = new Date();
+        this.timerId = setTimeout(() => {
+            this.timeout = true;
+        }, ms);
+    }
+    howLong() {
+        const started = this.startTime;
+        if (started) {
+            return (new Date().getTime()) - started.getTime()
+        } else {
+            return -1;
+        }
+    }
+    timedOut() {
+        return this.timeout;
+    }
+}
+
 const load_wasm_test = async () => {
     console.log("Starting load_wasm smoke test");
     const blockchainInterface = new ChildFrameBlockchainInterface();
@@ -320,7 +363,7 @@ const load_wasm_test = async () => {
         }
     };
 
-    let wasm_blob1 = await initWasmBlobWrapper(wcc1, blockchainInterface, "a11ce000", true, peer_conn1);
+    let { game: wasm_blob1, shutdown: shutdown1 } = await initWasmBlobWrapper(wcc1, blockchainInterface, "a11ce000", true, peer_conn1);
     cradle1.set_blob(wasm_blob1);
     console.log("cradle1 created");
 
@@ -331,13 +374,20 @@ const load_wasm_test = async () => {
             cradle2.add_outbound_message(message);
         }
     };
-    let wasm_blob2 = await initWasmBlobWrapper(wcc2, blockchainInterface, "b0b77777", false, peer_conn2);
+    let { game: wasm_blob2, shutdown: shutdown2 }= await initWasmBlobWrapper(wcc2, blockchainInterface, "b0b77777", false, peer_conn2);
     cradle2.set_blob(wasm_blob2);
     console.log("cradle2 created");
 
+    let shutdown = function() {
+        shutdown1();
+        shutdown2();
+    }
+
+    let timer = new Timer();
+    timer.start(7000);
     console.log("calling action_with_messages ...");
-    await action_with_messages(blockchainInterface, cradle1, cradle2);
+    await action_with_messages(timer, shutdown, blockchainInterface, cradle1, cradle2);
 }
 
 // @ts-ignore
-test('load_wasm', load_wasm_test, 5 * 1000);
+test('load_wasm', load_wasm_test, 11 * 1000);

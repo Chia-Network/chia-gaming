@@ -332,6 +332,10 @@ export class WasmBlobWrapper {
     this.pushEvent({ deliverMessage: msg });
   }
 
+  getStoredMessages() {
+    return this.storedMessages;
+  }
+
   internalDeliverMessage(msg: string): any {
     if (!this.cradle) {
       this.storedMessages.push(msg);
