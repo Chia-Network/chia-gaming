@@ -1,3 +1,4 @@
+const os = require('os');
 const {Builder, Browser, By, Key, until} = require('selenium-webdriver');
 const HALF_SECOND = 500;
 const WAIT_ITERATIONS = 100;
@@ -73,6 +74,17 @@ async function waitForNonError(driver, select, extra, time) {
     return stopButton;
 }
 
+async function sendControlChar(driver, char) {
+    const actions = driver.actions({async: true});
+    if (os.platform() === 'darwin') {
+        await actions.pause(2000).keyDown(Key.COMMAND).sendKeys(char).keyUp(Key.COMMAND).pause(500).perform();
+    } else {
+        await actions.pause(2000).keyDown(Key.CONTROL).sendKeys(char).keyUp(Key.CONTROL).pause(500).perform();
+    }
+}
+
+async function sendControlA(driver) { await sendControlChar(driver, 'a'); }
+
 module.exports = {
     wait,
     byExactText,
@@ -82,5 +94,7 @@ module.exports = {
     waitEnabled,
     selectSimulator,
     waitAriaEnabled,
-    waitForNonError
+    waitForNonError,
+    sendControlChar,
+    sendControlA,
 };

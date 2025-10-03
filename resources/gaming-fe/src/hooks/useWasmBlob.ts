@@ -15,7 +15,7 @@ import { BLOCKCHAIN_SERVICE_URL, GAME_SERVICE_URL } from '../settings';
 
 let blobSingleton: any = null;
 
-function getBlobSingleton(blockchain: InternalBlockchainInterface, lobbyUrl: string, uniqueId: string, amount: number, iStarted: boolean) {
+function getBlobSingleton(blockchain: InternalBlockchainInterface, lobbyUrl: string, uniqueId: string, amount: number, perGameAmount: number, iStarted: boolean) {
   if (blobSingleton) {
     return blobSingleton;
   }
@@ -42,6 +42,7 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, lobbyUrl: str
     blockchain,
     uniqueId,
     amount,
+    perGameAmount,
     iStarted,
     doInternalLoadWasm,
     fetchHex,
@@ -105,6 +106,15 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
   const amount = parseInt(searchParams.amount);
+  let perGameAmount = amount / 10;
+  try {
+    perGameAmount = parseInt(searchParams.perGame);
+  } catch (e) {
+    // not ok if perGame wasn't empty.
+    if (searchParams.perGame) {
+      throw e;
+    }
+  }
   const setError = (e: any) => {
     if (e !== undefined && error === undefined) {
       setRealError(e);
@@ -129,6 +139,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       lobbyUrl,
       uniqueId,
       amount,
+      perGameAmount,
       iStarted
     ) :
     null;

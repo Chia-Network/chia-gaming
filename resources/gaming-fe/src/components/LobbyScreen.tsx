@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -23,9 +23,23 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
-  const [wagerInput, setWagerInput] = useState('');
+  const [wagerInput, setWagerInputPrimitive] = useState('');
+  const [wagerValidationError, setWagerValidationError] = useState('');
+  const [perHandInput, setPerHandInput] = useState('');
   const [editingAlias, setEditingAlias] = useState(false);
   const [gotoUrl, setGotoUrl] = useState('');
+
+  const setWagerInput = useCallback((newWagerInput: string) => {
+    setWagerInputPrimitive(newWagerInput);
+    try {
+      const newWagerInputInteger = parseInt(newWagerInput);
+      setWagerValidationError('');
+      const newPerHand = Math.max(1, Math.floor(newWagerInputInteger / 10));
+      setPerHandInput(newPerHand.toString());
+    } catch (e: any) {
+      setWagerValidationError(`${e.toString()}`);
+    }
+  }, []);
 
   const handleSend = () => {
     if (chatInput.trim()) {
@@ -39,7 +53,11 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
 
   const handleCreate = async () => {
     if (!gameChoice || !wagerInput) return;
-    const { secureUrl, token } = await generateRoom(gameChoice, wagerInput);
+    const { secureUrl, token } = await generateRoom(
+      gameChoice,
+      wagerInput,
+      perHandInput
+    );
     setGotoUrl(secureUrl);
     window.prompt('Share this room URL:', secureUrl);
     closeDialog();
@@ -169,14 +187,24 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
             value={gameChoice}
             onChange={e => setGameChoice(e.target.value)}
           />
+          {wagerValidationError ? <Box mb={1}>{wagerValidationError}</Box> : <div></div>}
           <TextField
-            label="Wager (XCH)"
+            label="Wager (mojo)"
             aria-label="game-wager"
             fullWidth
             type="number"
             margin="normal"
             value={wagerInput}
             onChange={e => setWagerInput(e.target.value)}
+          />
+          <TextField
+            label="Each hand (mojo)"
+            aria-label="per-hand"
+            fullWidth
+            type="number"
+            margin="normal"
+            value={perHandInput}
+            onChange={e => setPerHandInput(e.target.value)}
           />
         </DialogContent>
         <DialogActions>

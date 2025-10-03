@@ -143,7 +143,10 @@ app.post('/lobby/join-room', (req, res) => {
   }
   room.joiner = id;
   console.log('games', lobby.games);
-  const fullTargetUrl = `${lobby.games[room.game].target}&token=${token}&amount=${room.parameters.wagerAmount}`;
+  let fullTargetUrl = `${lobby.games[room.game].target}&token=${token}`;
+  Object.keys(room.parameters).forEach((p) => {
+    fullTargetUrl = `${fullTargetUrl}&${p}=${room.parameters[p]}`;
+  });
   room.target = fullTargetUrl;
 
   io.emit('room_update', room);
