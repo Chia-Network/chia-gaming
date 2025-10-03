@@ -55,6 +55,17 @@ pub struct ChannelHandlerUnrollSpendInfo {
     pub signatures: PotatoSignatures,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum GameStartFailed {
+    OutOfMoney,
+}
+
+#[derive(Clone, Debug)]
+pub enum StartGameResult {
+    Failure(GameStartFailed),
+    Success(Box<PotatoSignatures>),
+}
+
 pub struct ChannelHandlerEnv<'a, R: Rng> {
     pub allocator: &'a mut AllocEncoder,
     pub rng: &'a mut R,
