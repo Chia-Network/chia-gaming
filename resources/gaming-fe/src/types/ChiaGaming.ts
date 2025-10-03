@@ -1,6 +1,8 @@
-import { Subject, Observable, Subscription } from 'rxjs';
+import { Subject, Subscription } from 'rxjs';
 import { proper_list } from '../util';
 
+// TODO: rename "amount"
+// TODO: visit 53-bit limit
 export type Amount = {
   "amt": number,
 };
@@ -50,6 +52,8 @@ export type IdleResult = {
   "incoming_messages": Array<string>
 };
 
+// --------------------------------------------------------------
+
 export type GameCradleConfig = {
   "seed": string | undefined,
   "game_types": Map<string, string>,
@@ -62,6 +66,33 @@ export type GameCradleConfig = {
   "receive_error": string | undefined
 };
 
+// TODO: overlapping data in ChiaGameParams & WasmBlobParams:
+//     chiaIdentity, wasmConnection, iStarted, amount?
+export interface GameInitParams {
+  wasmConnection: WasmConnection;
+  env: any;
+  rng: RngId;
+  chiaIdentity: IChiaIdentity;
+  iStarted: boolean; // iStarted, aka have_potato
+  // TODO: IEEE float ('number') is a slightly smaller range than MAX_NUM_MOJOS
+  myContribution: number;
+  theirContribution: number;
+}
+
+// TODO: Should we keep peerconn & blockchain outside WasmBlobParams?
+// XXX Why is wasmConnection an argument to WasmBlobWrapper() ?
+// WasmBlobWrapper adapts the FFI calls to The Chia Gaming framework
+export type WasmBlobParams = {
+  blockchain: InternalBlockchainInterface,
+  peerconn: PeerConnectionResult,
+  cradle: ChiaGame,
+  uniqueId: string,
+  iStarted: boolean,
+  fetchHex: (key: string) => Promise<string>,
+};
+
+// --------------------------------------------------------------
+
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
 export type IdleCallbacks = {
@@ -73,11 +104,28 @@ export type IdleCallbacks = {
   going_on_chain?: (() => void) | undefined
 };
 
+export type JsCoin = {
+    amount: number | string,
+    parent_coin_info: string,
+    puzzle_hash: string,
+}
+
+export type JsCoinSetSpend = {
+    coin: JsCoin,
+    puzzle_reveal: string,
+    solution: string,
+}
+
 export interface WasmConnection {
   // System
   init: (print: any) => any;
+  create_serialized_game: (json: any) => number;
   create_game_cradle: (config: any) => number;
   deposit_file: (name: string, data: string) => any;
+
+  // RNG init
+  deserialize_rng: (serializedGame: any) => number;
+  create_rng: (seed: string) => number;
 
   // Blockchain
   opening_coin: (cid: number, coinstring: string) => any;
@@ -88,7 +136,7 @@ export interface WasmConnection {
     amount: any,
     puzzle_reveal: string,
     solution: string
-  ) => any;
+  ) => WatchReport;
   convert_spend_to_coinset_org: (spend: string) => any;
   convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: any) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
@@ -101,11 +149,23 @@ export interface WasmConnection {
   shut_down: (cid: number) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
   idle: (cid: number, callbacks: any) => any;
+  get_identity: (cid: number) => IChiaIdentity;
+  get_amount: (cid: number) => Amount;
 
   // Misc
-  chia_identity: (seed: string) => any;
+  chia_identity: (rng_id: number) => any;
   sha256bytes: (hex: string) => string;
 };
+
+export class RngId {
+    rngId: number;
+    constructor(rngId: number) {
+        this.rngId = rngId;
+    }
+    getId() {
+      return this.rngId;
+    }
+}
 
 export interface CoinOutput {
   puzzle_hash: string;
@@ -113,53 +173,48 @@ export interface CoinOutput {
 }
 
 export class ChiaGame {
-  wasm: WasmConnection;
+  wasmConnection: WasmConnection;
   waiting_messages: Array<string>;
-  private_key: string;
-  cradle: number;
-  have_potato: boolean;
+  cradleId: number;
 
-  constructor(wasm: WasmConnection, env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number) {
-    this.wasm = wasm;
+  constructor(wasm: WasmConnection, cradleId: number) {
+    this.wasmConnection = wasm;
     this.waiting_messages = [];
-    this.private_key = identity.private_key;
-    this.have_potato = have_potato;
-    this.cradle = wasm.create_game_cradle({
-      seed: seed,
-      game_types: env.game_types,
-      identity: identity.private_key,
-      have_potato: have_potato,
-      my_contribution: {amt: my_contribution},
-      their_contribution: {amt: their_contribution},
-      channel_timeout: env.timeout,
-      unroll_timeout: env.unroll_timeout,
-      reward_puzzle_hash: identity.puzzle_hash,
-    });
-    console.log(`constructed ${have_potato} cradle ${this.cradle}`);
+    this.cradleId = cradleId;
+
+    console.log(`constructed cradle ${this.cradleId}`);
+  }
+
+  getIdentity() : IChiaIdentity {
+    return this.wasmConnection.get_identity(this.cradleId);
+  }
+
+  getAmount() : number{
+    return this.wasmConnection.get_amount(this.cradleId).amt;
   }
 
   start_games(initiator: boolean, game: any): string[] {
-    return this.wasm.start_games(this.cradle, initiator, game);
+    return this.wasmConnection.start_games(this.cradleId, initiator, game);
   }
 
   accept(id: string) {
-    return this.wasm.accept(this.cradle, id);
+    return this.wasmConnection.accept(this.cradleId, id);
   }
 
   shut_down() {
-    return this.wasm.shut_down(this.cradle);
+    return this.wasmConnection.shut_down(this.cradleId);
   }
 
   make_move_entropy(id: string, readable: string, new_entropy: string): any {
-    return this.wasm.make_move_entropy(this.cradle, id, readable, new_entropy);
+    return this.wasmConnection.make_move_entropy(this.cradleId, id, readable, new_entropy);
   }
 
   deliver_message(msg: string) {
-    this.wasm.deliver_message(this.cradle, msg);
+    this.wasmConnection.deliver_message(this.cradleId, msg);
   }
 
   opening_coin(coin_string: string) {
-    this.wasm.opening_coin(this.cradle, coin_string);
+    this.wasmConnection.opening_coin(this.cradleId, coin_string);
   }
 
   quiet(): boolean {
@@ -173,7 +228,7 @@ export class ChiaGame {
   }
 
   idle(callbacks: IdleCallbacks) : IdleResult {
-    let result = this.wasm.idle(this.cradle, callbacks);
+    let result = this.wasmConnection.idle(this.cradleId, callbacks);
     if (result) {
       this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
     }
@@ -181,7 +236,7 @@ export class ChiaGame {
   }
 
   block_data(block_number: number, block_data: WatchReport) {
-    this.wasm.new_block(this.cradle, block_number, block_data.created_watched, block_data.deleted_watched, block_data.timed_out);
+    this.wasmConnection.new_block(this.cradleId, block_number, block_data.created_watched, block_data.deleted_watched, block_data.timed_out);
   }
 }
 
@@ -472,4 +527,5 @@ export interface DoInitialSpendResult {
 export interface InternalBlockchainInterface {
   do_initial_spend(uniqueId: string, target: string, amt: number): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
+  getObservable(): Subject<any>;
 }
