@@ -21,7 +21,7 @@ use crate::test_support::game::GameActionResult;
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::tests::potato_handler_sim::{
-    run_calpoker_container_with_action_list, run_calpoker_test_with_action_list, GameRunOutcome,
+    run_calpoker_container_with_action_list, GameRunOutcome,
 };
 #[cfg(feature = "sim-tests")]
 use crate::simulator::tests::simenv::SimulatorEnvironment;
@@ -173,18 +173,15 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
     res.push(("test_play_calpoker_happy_path_v0", &|| {
         let mut allocator = AllocEncoder::new();
-        let seed: [u8; 32] = [0; 32];
-        let mut rng = ChaCha8Rng::from_seed(seed);
-        let moves = prefix_test_moves(&mut allocator, false);
-        run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, false);
+        let moves = prefix_test_moves(&mut allocator, false).to_vec();
+        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("test");
     }));
 
     res.push(("test_play_calpoker_happy_path", &|| {
         let mut allocator = AllocEncoder::new();
-        let seed: [u8; 32] = [0; 32];
-        let mut rng = ChaCha8Rng::from_seed(seed);
-        let moves = prefix_test_moves(&mut allocator, true);
-        run_calpoker_test_with_action_list(&mut allocator, &mut rng, &moves, true);
+        let moves = prefix_test_moves(&mut allocator, true).to_vec();
+        run_calpoker_container_with_action_list(&mut allocator, &moves, true)
+            .expect("this is a test");
     }));
 
     res.push(("test_verify_endgame_data_v0", &|| {
