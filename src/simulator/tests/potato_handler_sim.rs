@@ -603,11 +603,13 @@ fn run_game_container_with_action_list_with_success_predicate(
 
         if let Some(GameAction::Move(_, rm, _)) = &move_input {
             debug!("ReadableMove is {:?}", rm);
+        } else if let Some(GameAction::FakeMove(_, rm, _)) = &move_input {
+            debug!("ReadableMove is {:?}", rm);
         } else {
             let length = moves_input.len();
             if move_number < length {
                 debug!("Got move_input {move_input:?} but could not construct ReadableMove!!");
-                todo!();
+                // todo!();
             } else {
                 debug!("HEY! tried to access moves_input[{move_number}] but array len is {length}");
                 todo!();
