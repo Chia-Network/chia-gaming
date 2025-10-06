@@ -36,6 +36,7 @@ const Game: React.FC = () => {
     cardSelections,
     setCardSelections,
     outcome,
+    gameLog,
     stopPlaying
   } = useWasmBlob(params.lobbyUrl, uniqueId);
 
@@ -177,7 +178,7 @@ const Game: React.FC = () => {
       <br/>
       <Typography>{moveDescription}</Typography>
       <br/>
-      <GameLog log={[]} />
+      <GameLog log={gameLog} />
     </Box>
   );
 };

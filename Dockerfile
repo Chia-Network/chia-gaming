@@ -44,14 +44,28 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	(cd /tmp/rust && tar cvf - .) | (cd /app/rust && tar xf -)
 
 #Stage front-end / UI / UX into the container
-COPY resources/gaming-fe/package.json /app/
-COPY resources/gaming-fe/yarn.lock /app/
-RUN cd /app && yarn install
+COPY resources/gaming-fe/package.json /preinst/
+COPY resources/gaming-fe/yarn.lock /preinst/
 
 # walletconnect automation
-COPY resources/wc-stub/package.json /app/wc/
-COPY resources/wc-stub/yarn.lock /app/wc/
-RUN cd /app/wc && yarn install
+COPY resources/wc-stub/package.json /preinst/wc/
+COPY resources/wc-stub/yarn.lock /preinst/wc/
+
+RUN --mount=type=tmpfs,dst=/app \
+  mkdir -p /app/wc/ && \
+  cp -r /preinst/* /app && \
+  cd /app && yarn install && \
+  cd /app/wc && yarn install && \
+  mv /app/node_modules /preinst/ && \
+  mv /app/package.json /preinst/ && \
+  mv /app/wc/node_modules /preinst/wc && \
+  mv /app/wc/package.json /preinst/wc
+
+RUN mkdir -p /app/wc/ && \
+  ln -s /preinst/node_modules /app && \
+  ln -s /preinst/package.json /app && \
+  ln -s /preinst/wc/node_modules /app/wc && \
+  ln -s /preinst/wc/package.json /app/wc
 
 ADD src /app/rust/src
 RUN touch /app/rust/src/lib.rs

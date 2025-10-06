@@ -105,6 +105,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
+  const [gameLog, setGameLog] = useState<string[]>([]);
   const amount = parseInt(searchParams.amount);
   let perGameAmount = amount / 10;
   try {
@@ -165,6 +166,11 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     gameObject?.loadWasm(chia_gaming_init, cg);
   }, []);
 
+  const setLogAndOutcome = useCallback((outcome: any) => {
+    setOutcome(outcome);
+    setGameLog([JSON.stringify(outcome), ...gameLog]);
+  }, [gameLog]);
+
   const settable: any = {
     'setGameConnectionState': setGameConnectionState,
     'setPlayerHand': setPlayerHand,
@@ -173,7 +179,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     'setMoveNumber': setMoveNumber,
     'setError': setError,
     'setCardSelections': setOurCardSelections,
-    'setOutcome': setOutcome
+    'setOutcome': setLogAndOutcome
   };
 
   useEffect(() => {
@@ -211,6 +217,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     cardSelections,
     setCardSelections,
     stopPlaying,
+    gameLog,
     outcome
   };
 }
