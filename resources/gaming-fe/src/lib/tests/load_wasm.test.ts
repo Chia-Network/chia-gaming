@@ -305,6 +305,8 @@ async function initWasmBlobWrapper(wasmCommandChannel: Subject<WasmCommand>, blo
         fetchHex: fetchHex,
       };
 
+    await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {method: "POST"});
+    //let wbw = new WasmBlobWrapper(blockchainInterface, uniqueId, amount, amount / 10, iStarted, doInternalLoadWasm, fetchHex, peer_conn);
     let wbw = new WasmBlobWrapper(wasmParams, wasmConnection);
     let ob = wbw.getObservable();
     console.log("WasmBlobWrapper Observable: ", ob);

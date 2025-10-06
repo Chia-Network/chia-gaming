@@ -11,8 +11,80 @@ import { WasmStateInit, doInternalLoadWasm, fetchHex, storeInitArgs } from './Wa
 import { WasmBlobWrapper, getNewChiaGameCradle } from './WasmBlobWrapper';
 import { Subject } from 'rxjs';
 
+<<<<<<< HEAD
 export interface DeliverMessage {
   deliverMessage: string;
+=======
+let blobSingleton: any = null;
+
+function getBlobSingleton(blockchain: InternalBlockchainInterface, lobbyUrl: string, uniqueId: string, amount: number, perGameAmount: number, iStarted: boolean) {
+  if (blobSingleton) {
+    return blobSingleton;
+  }
+
+  const deliverMessage = (msg: string) => {
+    blobSingleton?.deliverMessage(msg);
+  };
+  const peercon = useGameSocket(lobbyUrl, deliverMessage, () => {
+    blobSingleton?.kickSystem(2);
+  });
+
+  const doInternalLoadWasm = async () => {
+    const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
+    return fetch(fetchUrl).then(wasm => wasm.blob()).then(blob => {
+      return blob.arrayBuffer();
+    });
+  };
+
+  async function fetchHex(fetchUrl: string): Promise<string> {
+    return fetch(fetchUrl).then(wasm => wasm.text());
+  }
+
+  blobSingleton = new WasmBlobWrapper(
+    blockchain,
+    uniqueId,
+    amount,
+    perGameAmount,
+    iStarted,
+    doInternalLoadWasm,
+    fetchHex,
+    peercon
+  );
+
+  // This lives in the child frame.
+  // We'll connect the required signals.
+  window.addEventListener('message', (evt: any) => {
+    const key = evt.message ? 'message' : 'data';
+    let data = evt[key];
+    if (data.blockchain_reply) {
+      if (evt.origin != window.location.origin) {
+        throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
+      }
+      blockchainConnector.getInbound().next(data.blockchain_reply);
+    }
+
+    if (data.blockchain_info) {
+      if (evt.origin != window.location.origin) {
+        throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
+      }
+      parentFrameBlockchainInfo.next(data.blockchain_info);
+    }
+  });
+
+  blockchainConnector.getOutbound().subscribe({
+    next: (evt: any) => {
+      window.parent.postMessage({
+        blockchain_request: evt
+      }, window.location.origin);
+    }
+  });
+  blockchainDataEmitter.select({
+    selection: PARENT_FRAME_BLOCKCHAIN_ID,
+    uniqueId
+  });
+
+  return blobSingleton;
+>>>>>>> origin/main
 }
 export interface SocketEnabled {
   socketEnabled: boolean;
@@ -51,6 +123,15 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [gotWasmStateInit, setGotWasmStateInit] = useState<boolean>(false);
 
   const amount = parseInt(searchParams.amount);
+  let perGameAmount = amount / 10;
+  try {
+    perGameAmount = parseInt(searchParams.perGame);
+  } catch (e) {
+    // not ok if perGame wasn't empty.
+    if (searchParams.perGame) {
+      throw e;
+    }
+  }
   const setError = (e: any) => {
     if (e !== undefined && error === undefined) {
       setRealError(e);
@@ -59,6 +140,40 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   const blockchain = new ChildFrameBlockchainInterface();
 
+/*
+  const gameObject = uniqueId ?
+    getBlobSingleton(
+      blockchain,
+      lobbyUrl,
+      uniqueId,
+      amount,
+      perGameAmount,
+      iStarted
+    ) :
+    null;
+
+  useEffect(() => {
+    let subscription = blockchain.getObservable().subscribe({
+      next: (e: BlockchainReport) => {
+        gameObject?.blockNotification(e.peak, e.block, e.report);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    }
+  });
+
+  const handleMakeMove = useCallback((move: any) => {
+    gameObject?.makeMove(move);
+  }, []);
+
+  (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
+    console.log('start loading wasm', gameObject);
+    gameObject?.loadWasm(chia_gaming_init, cg);
+  }, []);
+
+*/
   const settable: any = {
     'setGameConnectionState': setGameConnectionState,
     'setPlayerHand': setPlayerHand,
