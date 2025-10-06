@@ -355,12 +355,12 @@ impl GameRunner {
                             .unwrap_or_default()
                             .map(|(puzzle, solution)| CoinsetSpendRecord {
                                 coin: CoinsetCoin {
-                                    parent_coin_info: format!("0x{}", hex::encode(&parent.bytes())),
-                                    puzzle_hash: format!("0x{}", hex::encode(&ph.bytes())),
+                                    parent_coin_info: format!("0x{}", hex::encode(parent.bytes())),
+                                    puzzle_hash: format!("0x{}", hex::encode(ph.bytes())),
                                     amount: amt.into(),
                                 },
-                                puzzle_reveal: format!("0x{}", hex::encode(&puzzle.bytes())),
-                                solution: format!("0x{}", hex::encode(&solution.bytes())),
+                                puzzle_reveal: format!("0x{}", hex::encode(puzzle.bytes())),
+                                solution: format!("0x{}", hex::encode(solution.bytes())),
                             })
                     })
                 })
