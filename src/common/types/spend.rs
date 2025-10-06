@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::types::atom_from_clvm;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, Hash, IntoErr, Node, Program, ProgramRef, Puzzle, PuzzleHash
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, Hash, IntoErr, Node, Program,
+    ProgramRef, Puzzle, PuzzleHash,
 };
 use crate::utils::proper_list;
 
@@ -158,7 +159,7 @@ pub struct CoinsetCoin {
 pub struct CoinsetSpendRecord {
     pub coin: CoinsetCoin,
     pub puzzle_reveal: String,
-    pub solution: String
+    pub solution: String,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
@@ -180,7 +181,7 @@ pub fn convert_coinset_org_spend_to_spend(
     puzzle_hash: &str,
     amount: u64,
     puzzle_reveal: &str,
-    solution: &str
+    solution: &str,
 ) -> Result<CoinSpend, Error> {
     let parent_coin_info_bytes = check_for_hex(parent_coin_info)?;
     let puzzle_hash_bytes = check_for_hex(puzzle_hash)?;
@@ -198,6 +199,6 @@ pub fn convert_coinset_org_spend_to_spend(
             puzzle: puzzle_reveal_prog,
             solution: solution_prog,
             signature: Aggsig::default(),
-        }
+        },
     })
 }

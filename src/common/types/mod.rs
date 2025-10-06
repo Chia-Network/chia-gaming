@@ -41,5 +41,8 @@ pub use self::puzzle::Puzzle;
 pub use self::puzzle_hash::PuzzleHash;
 pub use self::rc_node::RcNode;
 pub use self::sha256input::{atom_from_clvm, Hash, Sha256Input};
-pub use self::spend::{BrokenOutCoinSpendInfo, CoinSpend, Spend, SpendBundle, SpendRewardResult, CoinsetCoin, CoinsetSpendRecord, CoinsetSpendBundle, convert_coinset_org_spend_to_spend, check_for_hex};
+pub use self::spend::{
+    check_for_hex, convert_coinset_org_spend_to_spend, BrokenOutCoinSpendInfo, CoinSpend,
+    CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Spend, SpendBundle, SpendRewardResult,
+};
 pub use self::timeout::Timeout;

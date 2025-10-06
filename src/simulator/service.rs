@@ -17,14 +17,15 @@ use rand_chacha::ChaCha8Rng;
 use salvo::http::ResBody;
 use salvo::hyper::body::Bytes;
 use salvo::prelude::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_json::{Map, Value};
 
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, Hash, IntoErr, PrivateKey, Program,
-    PuzzleHash, SpendBundle, CoinsetCoin, CoinsetSpendRecord, CoinsetSpendBundle, check_for_hex, map_m, convert_coinset_org_spend_to_spend,
+    check_for_hex, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount, CoinID,
+    CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Error, Hash,
+    IntoErr, PrivateKey, Program, PuzzleHash, SpendBundle,
 };
 use crate::peer_container::{FullCoinSetAdapter, WatchReport};
 use crate::simulator::Simulator;
@@ -63,7 +64,6 @@ impl<V> HttpError<V> for Result<V, salvo::http::ParseError> {
         }
     }
 }
-
 
 #[allow(dead_code)]
 struct GameRunner {
@@ -119,7 +119,7 @@ fn hex_to_bytes(hexstr: &str) -> Result<Vec<u8>, Error> {
 
 #[derive(Serialize)]
 struct CoinsetBlockSpends {
-    block_spends: Vec<CoinsetSpendRecord>
+    block_spends: Vec<CoinsetSpendRecord>,
 }
 
 impl GameRunner {
@@ -207,7 +207,12 @@ impl GameRunner {
         let identity = self.lookup_identity(who).cloned();
         let mut result_balance: u64 = 0;
         if let Some(pk) = identity {
-            for coin in self.simulator.get_my_coins(&pk.puzzle_hash).into_gen()?.iter() {
+            for coin in self
+                .simulator
+                .get_my_coins(&pk.puzzle_hash)
+                .into_gen()?
+                .iter()
+            {
                 if let Some((_, _, amt)) = coin.to_parts() {
                     result_balance += amt.to_u64();
                 }
@@ -319,15 +324,18 @@ impl GameRunner {
     fn push_tx(&mut self, spend_decoded: &CoinsetSpendBundle) -> StringWithError {
         let aggsig_bytes = check_for_hex(&spend_decoded.aggregated_signature)?;
         let aggsig = Aggsig::from_slice(&aggsig_bytes)?;
-        let mut spends: Vec<CoinSpend> = map_m(|spend_data| {
-            convert_coinset_org_spend_to_spend(
-                &spend_data.coin.parent_coin_info,
-                &spend_data.coin.puzzle_hash,
-                spend_data.coin.amount,
-                &spend_data.puzzle_reveal,
-                &spend_data.solution,
-            )
-        }, &spend_decoded.coin_spends)?;
+        let mut spends: Vec<CoinSpend> = map_m(
+            |spend_data| {
+                convert_coinset_org_spend_to_spend(
+                    &spend_data.coin.parent_coin_info,
+                    &spend_data.coin.puzzle_hash,
+                    spend_data.coin.amount,
+                    &spend_data.puzzle_reveal,
+                    &spend_data.solution,
+                )
+            },
+            &spend_decoded.coin_spends,
+        )?;
         if !spends.is_empty() {
             spends[0].bundle.signature = aggsig;
         }
@@ -335,27 +343,32 @@ impl GameRunner {
     }
 
     fn block_spends(&mut self, height: u64) -> StringWithError {
-        let spends =
-            self.sim_record.get(&height).map(|report| {
-                let block_spend_data: Vec<CoinsetSpendRecord> = report.deleted_watched.iter().filter_map(|c| {
+        let spends = self.sim_record.get(&height).map(|report| {
+            let block_spend_data: Vec<CoinsetSpendRecord> = report
+                .deleted_watched
+                .iter()
+                .filter_map(|c| {
                     c.to_parts().and_then(|(parent, ph, amt)| {
-                        self.simulator.get_puzzle_and_solution(
-                            &c.to_coin_id()
-                        ).ok().unwrap_or_default().map(|(puzzle, solution)| {
-                            CoinsetSpendRecord {
+                        self.simulator
+                            .get_puzzle_and_solution(&c.to_coin_id())
+                            .ok()
+                            .unwrap_or_default()
+                            .map(|(puzzle, solution)| CoinsetSpendRecord {
                                 coin: CoinsetCoin {
                                     parent_coin_info: format!("0x{}", hex::encode(&parent.bytes())),
                                     puzzle_hash: format!("0x{}", hex::encode(&ph.bytes())),
-                                    amount: amt.into()
+                                    amount: amt.into(),
                                 },
                                 puzzle_reveal: format!("0x{}", hex::encode(&puzzle.bytes())),
-                                solution: format!("0x{}", hex::encode(&solution.bytes()))
-                            }
-                        })
+                                solution: format!("0x{}", hex::encode(&solution.bytes())),
+                            })
                     })
-                }).collect();
-                CoinsetBlockSpends { block_spends: block_spend_data }
-            });
+                })
+                .collect();
+            CoinsetBlockSpends {
+                block_spends: block_spend_data,
+            }
+        });
         let value = serde_json::to_value(&spends).into_gen()?;
         let serialized = serde_json::to_string(&value).into_gen()?;
         debug!("block spends for height {height} {serialized:?}");
@@ -521,13 +534,17 @@ async fn block_spends(req: &mut Request, response: &mut Response) -> Result<(), 
 #[derive(Extractible, Serialize, Deserialize)]
 #[salvo(extract(default_source(from = "body")))]
 struct PushTxRequest {
-    spend_bundle: CoinsetSpendBundle
+    spend_bundle: CoinsetSpendBundle,
 }
 
 #[handler]
 async fn push_tx(req: &mut Request, response: &mut Response) -> Result<(), String> {
     let spend_decoded: PushTxRequest = req.extract().await.report_err()?;
-    pass_on_request(req, response, WebRequest::PushTx(spend_decoded.spend_bundle.clone()))
+    pass_on_request(
+        req,
+        response,
+        WebRequest::PushTx(spend_decoded.spend_bundle.clone()),
+    )
 }
 
 fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {
@@ -608,9 +625,7 @@ fn service_main_inner() {
                                 Ok(format!("{result}\n"))
                             }
                             WebRequest::GetBlockData(n) => game_runner.get_block_data(n),
-                            WebRequest::GetBalance(user) => {
-                                game_runner.get_balance(&user)
-                            }
+                            WebRequest::GetBalance(user) => game_runner.get_balance(&user),
                             WebRequest::WaitBlock => {
                                 let result = game_runner.wait_block();
                                 std::thread::spawn(move || {
@@ -629,7 +644,7 @@ fn service_main_inner() {
                             WebRequest::Spend(blob) => game_runner.spend(&blob),
                             WebRequest::BlockSpends(height) => game_runner.block_spends(height),
                             WebRequest::PushTx(spend_data) => game_runner.push_tx(&spend_data),
-                            WebRequest::Reset => game_runner.reset_sim()
+                            WebRequest::Reset => game_runner.reset_sim(),
                         }
                     };
 
