@@ -169,11 +169,11 @@ pub struct CoinsetSpendBundle {
 }
 
 pub fn check_for_hex(hex_with_prefix: &str) -> Result<Vec<u8>, Error> {
-    if hex_with_prefix.starts_with("0x") {
-        return hex::decode(&hex_with_prefix[2..]).into_gen();
+    if let Some(value) = hex_with_prefix.strip_prefix("0x") {
+        return hex::decode(value).into_gen();
     }
 
-    return hex::decode(hex_with_prefix).into_gen();
+    hex::decode(hex_with_prefix).into_gen()
 }
 
 pub fn convert_coinset_org_spend_to_spend(
