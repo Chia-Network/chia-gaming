@@ -40,6 +40,7 @@ export type GameFinished = [string, number];
 export type IdleResult = {
   "continue_on": boolean,
   "finished": boolean,
+  "shutdown_received": boolean,
   "outbound_transactions": Array<SpendBundle>,
   "outbound_messages": Array<string>,
   "opponent_move": OpponentMove | undefined,
@@ -70,6 +71,7 @@ export type IdleCallbacks = {
   game_message?: ((game_id: string, readable_move_hex: string) => void) | undefined,
   game_started?: ((game_ids: string[], failed: string | undefined) => void) | undefined,
   game_finished?: ((game_id: string, amount: number) => void) | undefined,
+  shutdown_started?: (() => void) | undefined,
   shutdown_complete?: ((coin: string) => void) | undefined,
   going_on_chain?: (() => void) | undefined
 };

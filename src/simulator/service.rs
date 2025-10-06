@@ -85,6 +85,7 @@ enum WebRequest {
     Reset,
     Register(String),                     // Register a user
     GetCurrentPeak,                       // Ask for the current peak
+    GetBalance(String),                   // Ask for the user's balance
     GetBlockData(u64),                    // Get the additions and deletons from the given block
     GetPuzzleAndSolution(String),         // Given a coin id, get the puzzle and solution
     CreateSpendable(String, String, u64), // Use the named wallet to give n mojo to a target puzzle hash
@@ -200,6 +201,19 @@ impl GameRunner {
         }
 
         Ok("null\n".to_string())
+    }
+
+    fn get_balance(&self, who: &str) -> StringWithError {
+        let identity = self.lookup_identity(who).cloned();
+        let mut result_balance: u64 = 0;
+        if let Some(pk) = identity {
+            for coin in self.simulator.get_my_coins(&pk.puzzle_hash).into_gen()?.iter() {
+                if let Some((_, _, amt)) = coin.to_parts() {
+                    result_balance += amt.to_u64();
+                }
+            }
+        }
+        Ok(result_balance.to_string())
     }
 
     fn get_puzzle_and_solution(&self, coin: &str) -> StringWithError {
@@ -443,6 +457,12 @@ async fn get_block_data(req: &mut Request, response: &mut Response) -> Result<()
 }
 
 #[handler]
+async fn get_balance(req: &mut Request, response: &mut Response) -> Result<(), String> {
+    let arg = get_arg_string(req, "user").report_err()?;
+    pass_on_request(req, response, WebRequest::GetBalance(arg))
+}
+
+#[handler]
 async fn exit(_req: &mut Request) -> Result<String, String> {
     std::process::exit(0);
 }
@@ -545,6 +565,8 @@ fn service_main_inner() {
             .push(Router::with_path("get_peak").post(get_peak))
             .push(Router::with_path("get_block_data").options(cors))
             .push(Router::with_path("get_block_data").post(get_block_data))
+            .push(Router::with_path("get_balance").post(get_balance))
+            .push(Router::with_path("get_balance").options(cors))
             .push(Router::with_path("wait_block").options(cors))
             .push(Router::with_path("wait_block").post(wait_block))
             .push(Router::with_path("get_puzzle_and_solution").options(cors))
@@ -575,8 +597,7 @@ fn service_main_inner() {
                         (*channel).recv().unwrap()
                     };
 
-                    if true {
-                        // !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
+                    if !matches!(request, WebRequest::GetBlockData(_) | WebRequest::WaitBlock) {
                         debug!("request {request:?}");
                     }
                     let result = {
@@ -587,6 +608,9 @@ fn service_main_inner() {
                                 Ok(format!("{result}\n"))
                             }
                             WebRequest::GetBlockData(n) => game_runner.get_block_data(n),
+                            WebRequest::GetBalance(user) => {
+                                game_runner.get_balance(&user)
+                            }
                             WebRequest::WaitBlock => {
                                 let result = game_runner.wait_block();
                                 std::thread::spawn(move || {
