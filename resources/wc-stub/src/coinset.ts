@@ -21,23 +21,27 @@ export function bindBlockchain(app: any) {
     const { height } = req.body;
     console.log('get block record', height);
     res.set('Content-Type', 'application/json');
-    res.send(JSON.stringify({ block_record: { header_hash: height } }));
+    res.send(JSON.stringify({ block_record: { height, header_hash: height } }));
   });
 
   app.post('/get_block_spends', async (req: any, res: any) => {
     // Really the height.
     let { header_hash } = req.body;
-    const result = await fetch(`http://localhost:5800/block_spends?header_hash=${header_hash}`, {method: "POST"});
+    const result = await fetch(`http://localhost:5800/block_spends?header_hash=${header_hash}`, {method: "POST"}).then(res => res.json());
     res.set('Content-Type', 'application/json');
     res.send(JSON.stringify(result));
   });
 
   app.post('/push_tx', async (req: any, res: any) => {
     const body = req.body;
-    const lower_result: (number | undefined)[] = await fetch(`http://localhost:5800/push_tx?spend=${JSON.stringify(body)}`, {
-      method: "POST"
+    console.log(`push_tx body ${JSON.stringify(body)}`);
+    const lower_result: (number | undefined)[] = await fetch(`http://localhost:5800/push_tx`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" }
     }).then((res: any) => res.json());
     res.set('Content-Type', 'application/json');
+    console.log(`push_tx result = ${JSON.stringify(lower_result)}`);
     let result: any = {error: JSON.stringify(lower_result)};
     if (lower_result[0] === 1) {
       result = {success: "SUCCESS"};

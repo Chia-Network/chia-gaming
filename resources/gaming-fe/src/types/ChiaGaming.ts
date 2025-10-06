@@ -68,6 +68,7 @@ export type IdleCallbacks = {
   self_move?: ((game_id: string, move_hex: string) => void) | undefined,
   opponent_moved?: ((game_id: string, readable_move_hex: string) => void) | undefined,
   game_message?: ((game_id: string, readable_move_hex: string) => void) | undefined,
+  game_started?: ((game_ids: string[], failed: string | undefined) => void) | undefined,
   game_finished?: ((game_id: string, amount: number) => void) | undefined,
   shutdown_complete?: ((coin: string) => void) | undefined,
   going_on_chain?: (() => void) | undefined

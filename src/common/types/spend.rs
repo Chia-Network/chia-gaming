@@ -147,21 +147,21 @@ pub struct BrokenOutCoinSpendInfo {
 }
 
 /// Form of a spend used by coinset.org
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct CoinsetCoin {
     pub amount: u64,
     pub parent_coin_info: String,
     pub puzzle_hash: String,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct CoinsetSpendRecord {
     pub coin: CoinsetCoin,
     pub puzzle_reveal: String,
     pub solution: String
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct CoinsetSpendBundle {
     pub aggregated_signature: String,
     pub coin_spends: Vec<CoinsetSpendRecord>,

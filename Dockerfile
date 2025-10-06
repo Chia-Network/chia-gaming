@@ -36,7 +36,7 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	cd /tmp/rust && \
 	. $HOME/.cargo/env && \
 	. /app/test/bin/activate && \
-	maturin build --release --features sim-tests && \
+	maturin build --features sim-tests && \
 	cd /tmp/rust/wasm && \
 	wasm-pack build --out-dir=/tmp/rust/wasm/node-pkg --release --target=nodejs && \
 	wasm-pack build --out-dir=/tmp/rust/wasm/pkg --release --target=web && \
@@ -66,7 +66,7 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	rm -rf `find . -name \*.whl` && \
 	. $HOME/.cargo/env && \
 	. /app/test/bin/activate && \
-	maturin build --release --features sim-tests && \
+	maturin build --features sim-tests && \
 	pip install `find . -name \*.whl` && \
 	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
 	cd /tmp/rust/wasm && \
@@ -92,4 +92,4 @@ ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.py
-CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 --coinset 'http://localhost:3002' &) && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && python3 run_simulator.py"
+CMD /bin/sh -c "(node ./dist/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 --coinset 'http://localhost:3002' &) && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py"

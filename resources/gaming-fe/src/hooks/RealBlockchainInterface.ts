@@ -231,12 +231,17 @@ export function connectRealBlockchain(baseUrl: string) {
           });
 
           let resultCoin = undefined;
-          result.transaction.additions.forEach((c) => {
-            console.log('look at coin', initialSpend.target, c);
-            if (c.puzzleHash == '0x' + initialSpend.target && c.amount.toString() == initialSpend.amount.toString()) {
-              resultCoin = c;
-            }
-          });
+          console.log('full spend result', result);
+          if (result.transaction) {
+            result.transaction.additions.forEach((c) => {
+              console.log('look at coin', initialSpend.target, c);
+              if (c.puzzleHash == '0x' + initialSpend.target && c.amount.toString() == initialSpend.amount.toString()) {
+                resultCoin = c;
+              }
+            });
+          } else {
+            resultCoin = (result as any).coin;
+          }
 
           if (!resultCoin) {
             blockchainConnector.replyEmitter({

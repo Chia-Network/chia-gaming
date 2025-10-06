@@ -1,4 +1,8 @@
 resources/gaming-fe/node_modules
+resources/gaming-fe/dist
+resources/gaming-fe/node-pkg
+resources/gaming-fe/resources
+resources/gaming-fe/clsp
 resources/fe-test/node_modules
 resources/wc-stub/node_modules
 target

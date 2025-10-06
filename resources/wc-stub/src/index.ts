@@ -2,7 +2,7 @@
 // @ts-ignore
 import fetch from 'node-fetch';
 // @ts-ignore
-import bech32 from 'bech32-buffer';
+import * as bech32 from 'bech32-buffer';
 // @ts-ignore
 import Client from '@walletconnect/sign-client';
 import { Pair } from './util/Pair';
@@ -41,11 +41,23 @@ export function toHexString(byteArray: number[]) {
   }).join('');
 }
 
+export function toUint8(s: string) {
+  if (s.length % 2 != 0) {
+    throw 'Odd length hex string';
+  }
+  const result = new Uint8Array(s.length >> 1);
+  for (let i = 0; i < s.length; i += 2) {
+    let sub = s.slice(i, i+2);
+    let val = parseInt(sub, 16);
+    result[i >> 1] = val;
+  }
+  return result;
+}
+
 function processRequest(id: number, address: string, topic: string, command: string, params: any) {
   console.log('process', topic, command, params);
   let time = new Date().getTime();
   let result: any = {
-    endpointName: 'getCurrentAddress',
     startedTimeStamp: time,
     fulfilledTimeStamp: time,
     isSuccess: true,
@@ -58,13 +70,21 @@ function processRequest(id: number, address: string, topic: string, command: str
   };
 
   if (command === 'chia_getCurrentAddress') {
-    result.data = address;
-    return result;
+    result.endpointName = 'getCurrentAddress';
+    return fetch(`http://localhost:5800/register?name=${address}`, {
+      "method": "POST"
+    }).then((res: any) => res.json()).then((address: string) => {
+      console.error(`try to encode ${address}`);
+      result.data = bech32.encode('xch', toUint8(address), 'bech32m');
+      return result;
+    });
   } else if (command === 'chia_sendTransaction') {
+    console.error(params);
     const hexTarget = toHexString(bech32.decode(params.address).data as any);
     return fetch(`http://localhost:5800/create_spendable?who=${id}&target=${hexTarget}&amount=${params.amount}`, {
       "method": "POST"
     }).then((res: any) => res.json()).then((coin: string) => {
+      result.endpointName = 'sendTransaction';
       result.data = { coin, fromPuzzleHash: address };
       return result;
     });

@@ -17,7 +17,7 @@ use rand_chacha::ChaCha8Rng;
 use salvo::http::ResBody;
 use salvo::hyper::body::Bytes;
 use salvo::prelude::*;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use serde_json;
 use serde_json::{Map, Value};
 
@@ -49,6 +49,22 @@ impl<V> HttpError<V> for Result<V, Error> {
     }
 }
 
+impl<V> HttpError<V> for Result<V, salvo::http::ParseError> {
+    fn report_err(self) -> Result<V, String> {
+        match self {
+            Ok(x) => Ok(x),
+            Err(e) => {
+                let mut error = Map::default();
+                error.insert("error".to_string(), Value::String(format!("{e:?}")));
+                let as_string = serde_json::to_string(&Value::Object(error))
+                    .map_err(|_| "\"bad json conversion\"".to_string())?;
+                Err(as_string)
+            }
+        }
+    }
+}
+
+
 #[allow(dead_code)]
 struct GameRunner {
     allocator: AllocEncoder,
@@ -75,7 +91,7 @@ enum WebRequest {
     Spend(String),                        // Perform this spend on the blockchain
     WaitBlock,                            // Return when a new block arrives
     BlockSpends(u64),                     // Get block spends in coinset.org style
-    PushTx(String),                       // Spend with a coinset.org spend
+    PushTx(CoinsetSpendBundle),           // Spend with a coinset.org spend
 }
 
 type StringWithError = Result<String, Error>;
@@ -286,9 +302,7 @@ impl GameRunner {
         self.spend_list_of_spends(&spend_bundle.spends)
     }
 
-    fn push_tx(&mut self, spend_data: &str) -> StringWithError {
-        let value = serde_json::from_str(spend_data).into_gen()?;
-        let spend_decoded: CoinsetSpendBundle = serde_json::from_value(value).into_gen()?;
+    fn push_tx(&mut self, spend_decoded: &CoinsetSpendBundle) -> StringWithError {
         let aggsig_bytes = check_for_hex(&spend_decoded.aggregated_signature)?;
         let aggsig = Aggsig::from_slice(&aggsig_bytes)?;
         let mut spends: Vec<CoinSpend> = map_m(|spend_data| {
@@ -330,6 +344,7 @@ impl GameRunner {
             });
         let value = serde_json::to_value(&spends).into_gen()?;
         let serialized = serde_json::to_string(&value).into_gen()?;
+        debug!("block spends for height {height} {serialized:?}");
         Ok(serialized)
     }
 }
@@ -483,10 +498,16 @@ async fn block_spends(req: &mut Request, response: &mut Response) -> Result<(), 
     pass_on_request(req, response, WebRequest::BlockSpends(header_hash))
 }
 
+#[derive(Extractible, Serialize, Deserialize)]
+#[salvo(extract(default_source(from = "body")))]
+struct PushTxRequest {
+    spend_bundle: CoinsetSpendBundle
+}
+
 #[handler]
 async fn push_tx(req: &mut Request, response: &mut Response) -> Result<(), String> {
-    let spend_data: String = get_arg_string(req, "spend").report_err()?;
-    pass_on_request(req, response, WebRequest::PushTx(spend_data))
+    let spend_decoded: PushTxRequest = req.extract().await.report_err()?;
+    pass_on_request(req, response, WebRequest::PushTx(spend_decoded.spend_bundle.clone()))
 }
 
 fn cors_origin(req: &mut Request, response: &mut Response) -> Result<(), String> {

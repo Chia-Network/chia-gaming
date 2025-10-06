@@ -38,6 +38,7 @@ export class WasmBlobWrapper {
   playerHand: number[][];
   opponentHand: number[][];
   finished: boolean;
+  perGameAmount: number;
   gameOutcome: CalpokerOutcome | undefined;
   fetchHex: (path: string) => Promise<string>;
   doInternalLoadWasm: () => Promise<ArrayBuffer>;
@@ -45,7 +46,7 @@ export class WasmBlobWrapper {
   rxjsEmitter: NextObserver<any> | undefined;
   blockchain: InternalBlockchainInterface;
 
-  constructor (blockchain: InternalBlockchainInterface, uniqueId: string, amount: number, iStarted: boolean,
+  constructor (blockchain: InternalBlockchainInterface, uniqueId: string, amount: number, perGameAmount: number, iStarted: boolean,
         doInternalLoadWasm: () => Promise<ArrayBuffer>,
         fetchHex: (key: string) => Promise<string>, peer_conn: PeerConnectionResult
     ) {
@@ -72,6 +73,7 @@ export class WasmBlobWrapper {
     this.playerHand = [];
     this.opponentHand = [];
     this.finished = false;
+    this.perGameAmount = perGameAmount;
     this.qualifyingEvents = 0;
     this.fetchHex = fetchHex;
     this.doInternalLoadWasm = doInternalLoadWasm;
@@ -120,22 +122,16 @@ export class WasmBlobWrapper {
     });
   };
 
-  haveEvents(): boolean {
-    return this.messageQueue.length > 0;
-  }
-
   internalKickIdle(): any {
-    this.kickMessageHandling().then((res: any) => {
-      let idle_info;
-      do {
-        idle_info = this.idle();
-        if (!idle_info) {
-          return res;
-        }
-        this.rxjsEmitter?.next(idle_info);
-      } while (!idle_info.stop);
-      return res;
-    });
+    let idle_info;
+    do {
+      idle_info = this.idle();
+      if (!idle_info) {
+        return idle_info;
+      }
+      this.rxjsEmitter?.next(idle_info);
+    } while (!idle_info.stop);
+    return idle_info;
   }
 
   pushEvent(msg: any): any {
@@ -143,7 +139,7 @@ export class WasmBlobWrapper {
       return;
     }
     this.messageQueue.push(msg);
-    return this.internalKickIdle();
+    return this.kickMessageHandling();
   }
 
   handleOneMessage(msg: any): any {
@@ -169,14 +165,12 @@ export class WasmBlobWrapper {
     } else if (msg.takeGameMessage) {
       let data = msg.takeGameMessage;
       return this.takeGameMessage(data.moveNumber, data.game_id, data.readable_hex);
-    } else if (msg.kickIdle) {
-      return this.internalKickIdle();
     } else if (msg.setCardSelections !== undefined) {
       return this.internalSetCardSelections(msg.setCardSelections);
     } else if (msg.startGame) {
       return this.internalStartGame();
     } else if (msg.shutDown) {
-      return this.internalShutdown();
+      return this.internalShutdown(msg.condition);
     } else if (msg.receivedShutdown) {
       return this.internalReceivedShutdown();
     } else if (msg.takeBlockData) {
@@ -200,6 +194,7 @@ export class WasmBlobWrapper {
       result.setOpponentHand = card_lists[0];
       this.playerHand = card_lists[1];
       this.opponentHand = card_lists[0];
+
     } else {
       result.setPlayerHand = card_lists[0];
       result.setOpponentHand = card_lists[1];
@@ -264,11 +259,12 @@ export class WasmBlobWrapper {
     let result = null;
     return this.handleOneMessage(msg).then((result: any) => {
       this.rxjsEmitter?.next(result);
+
+      this.internalKickIdle();
+
       this.handlingMessage = false;
-      if (this.messageQueue.length != 0) {
-        return this.kickMessageHandling();
-      }
-      return result;
+
+      return this.kickMessageHandling();
     }).catch((e: any) => {
       console.error(e);
       this.handlingMessage = false;
@@ -394,8 +390,8 @@ export class WasmBlobWrapper {
     let gids = this.cradle?.start_games(!this.iStarted, {
       game_type: "63616c706f6b6572",
       timeout: 100,
-      amount: this.amount * 2 / 10,
-      my_contribution: this.amount / 10,
+      amount: this.perGameAmount,
+      my_contribution: this.perGameAmount / 2,
       my_turn: !this.iStarted,
       parameters: "80"
     });
@@ -421,6 +417,14 @@ export class WasmBlobWrapper {
       game_message: (game_id, readable_hex) => {
         console.error('got opponent msg', game_id, readable_hex);
         this.messageQueue.push({ takeGameMessage: { game_id, readable_hex, moveNumber: this.moveNumber } });
+      },
+      game_started: (game_ids, failed) => {
+        console.log('got game start', game_ids, failed);
+
+        if (failed) {
+          console.log('game start failed', failed);
+          this.messageQueue.push({ shutDown: true, condition: failed });
+        }
       },
       game_finished: (game_id, amount) => {
         // Signals accept.
@@ -468,6 +472,10 @@ export class WasmBlobWrapper {
 
     result.stop = !idle.continue_on;
 
+    if (result.setError) {
+      return result;
+    }
+
     result.setError = idle.receive_error;
     console.log('idle1', idle.action_queue);
     if (idle.handshake_done && !this.handshakeDone) {
@@ -501,11 +509,6 @@ export class WasmBlobWrapper {
     }
 
     return result;
-  }
-
-  kickIdle() {
-    this.pushEvent({ kickIdle: true });
-    return empty();
   }
 
   generateEntropy() {
@@ -585,18 +588,23 @@ export class WasmBlobWrapper {
     return empty().then(() => result);
   }
 
-  shutDown() {
-    this.pushEvent({ shutDown: true });
+  shutDown(condition: string | undefined) {
+    this.pushEvent({ shutDown: true, condition });
   }
 
-  internalShutdown() {
+  internalShutdown(condition: string) {
+    const details: string[] = [];
+    if (condition) {
+      details.push(condition);
+    }
     const result: any = {
       setGameConnectionState: {
         stateIdentifier: "shutdown",
-        stateDetail: []
+        stateDetail: details
       },
       outcome: undefined
     };
+    console.log('shutting down cradle');
     this.cradle?.shut_down();
     return empty().then(() => result);
   }

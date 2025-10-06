@@ -15,7 +15,7 @@ use wasm_logger;
 
 use wasm_bindgen::prelude::*;
 
-use chia_gaming::channel_handler::types::ReadableMove;
+use chia_gaming::channel_handler::types::{ReadableMove, GameStartFailed};
 use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, wasm_deposit_file, ChiaIdentity};
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
@@ -635,6 +635,24 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
+    fn game_start(
+        &mut self,
+        game_ids: &[GameID],
+        finished: std::option::Option<GameStartFailed>
+    ) -> Result<(), chia_gaming::common::types::Error> {
+        call_javascript_from_collection(&self.callbacks, "game_started", |args_array| {
+            let game_ids_array = Array::new();
+            for (i, game_id) in game_ids.iter().enumerate() {
+                game_ids_array.set(i as u32, JsValue::from_str(&game_id_to_string(game_id)));
+            }
+            args_array.set(0, game_ids_array.into());
+            if let Some(f) = finished {
+                args_array.set(1, JsValue::from_str(&format!("{:?}", f)));
+            }
+            Ok(())
+        })
+    }
+
     fn game_finished(
         &mut self,
         game_id: &GameID,
@@ -725,12 +743,19 @@ struct JsSpendBundle {
 }
 
 #[derive(Serialize)]
+struct JsGameStarted {
+    game_ids: Vec<String>,
+    failed: Option<String>,
+}
+
+#[derive(Serialize)]
 struct JsIdleResult {
     continue_on: bool,
     finished: bool,
     outbound_transactions: Vec<JsSpendBundle>,
     outbound_messages: Vec<String>,
     opponent_move: Option<(String, String)>,
+    game_started: Option<JsGameStarted>,
     game_finished: Option<(String, u64)>,
     handshake_done: bool,
     receive_error: Option<String>,
@@ -802,6 +827,15 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
     } else {
         None
     };
+    let game_started = if let Some(gs) = &idle_result.game_started {
+        Some(JsGameStarted {
+            game_ids: gs.game_ids.iter().map(|gid| game_id_to_string(gid)).collect(),
+            failed: gs.failed.as_ref().map(|f| format!("{:?}", f))
+        })
+    } else {
+        None
+    };
+
     serde_wasm_bindgen::to_value(&JsIdleResult {
         continue_on: idle_result.continue_on,
         finished: idle_result.finished,
@@ -816,6 +850,7 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
             .map(hex::encode)
             .collect(),
         opponent_move: opponent_move,
+        game_started: game_started,
         game_finished: game_finished,
         handshake_done: idle_result.handshake_done,
         action_queue: idle_result.action_queue.clone(),

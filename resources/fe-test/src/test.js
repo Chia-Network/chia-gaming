@@ -6,14 +6,16 @@ const { spawn } = require('node:child_process');
 const {Builder, Browser, By, Key, WebDriver, until} = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
 const firefox = require('selenium-webdriver/firefox');
-const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, selectWalletConnect, waitForNonError} = require('./util.js');
+const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, selectWalletConnect, waitForNonError, sendControlA} = require('./util.js');
 
 // Other browser
 const geckodriver = require('geckodriver');
 
 function makeFirefox() {
   const options1 = new firefox.Options();
-  options1.addArguments('-headless');
+  if (process.env.FIREFOX_HEADLESS) {
+    options1.addArguments('-headless');
+  }
   if (process.env.FIREFOX) {
     options1.setBinary(process.env.FIREFOX);
   }
@@ -54,6 +56,7 @@ async function clickMakeMove(driver, who) {
 }
 
 async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
+  console.log('firefox start', baseUrl, driver);
   await driver.get(baseUrl);
 
   await selectWallet(driver);
@@ -94,17 +97,59 @@ async function gotShutdown(driver) {
   await driver.wait(until.elementLocated(byExactText("Cal Poker - shutdown succeeded")));
 }
 
+async function initiateGame(driver, gameTotal, eachHand) {
+  console.log('waiting for generate button');
+  let generateRoomButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "generate-room")));
+  await generateRoomButton.click();
+
+  let gameId = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-id", "//input")), 1000);
+  let wager = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-wager", "//input")), 1000);
+  let perHand = await driver.wait(until.elementLocated(byAttribute("aria-label", "per-hand", "//input")), 1000);
+
+  await gameId.sendKeys("calpoker");
+  await wager.sendKeys("200");
+
+  // If each hand is specified, also set it.
+  if (eachHand) {
+    await perHand.click();
+    await sendControlA(driver);
+    await perHand.sendKeys(eachHand.toString());
+  }
+
+  let createButton = await driver.wait(until.elementLocated(byExactText("Create")), 1000);
+  console.log('click create');
+  await createButton.click();
+
+  console.log('focus alert');
+  await driver.wait(until.alertIsPresent());
+  let alert = await waitForNonError(driver, () => driver.switchTo().alert(), () => {}, 1.0);
+  await alert.accept();
+
+  await wait(driver, 1.0);
+
+   // Check that we got a url.
+  let partnerUrlSpan = await driver.wait(until.elementLocated(byAttribute("aria-label", "partner-target-url")));
+  console.log('partner url', partnerUrlSpan);
+  let partnerUrl = await partnerUrlSpan.getAttribute("innerText");
+  console.log('partner url text', partnerUrl);
+  expect(partnerUrl.substr(0, 4)).toBe('http');
+
+  return partnerUrl;
+}
+
+async function prepareBrowser(driver) {
+  await driver.switchTo().defaultContent();
+  await driver.switchTo().parentFrame();
+  await driver.get('about:blank');
+}
+
 // Define a category of tests using test framework, in this case Jasmine
-describe("Basic element tests", function() {
+describe("Out of money test", function() {
   const baseUrl = "http://localhost:3000";
   const driver = driver1;
   const ffdriver = driver2;
-  const selectWallet = selectWalletConnect;
 
-  it("starts", async function() {
-    // Terminate early if we didn't get the browsers we wanted.
-    expect(!!driver1 && !!driver2).toBe(true);
-
+  async function testTwoGamesAndShutdown(selectWallet) {
     // Load the login page
     await driver.get(baseUrl);
 
@@ -127,37 +172,11 @@ describe("Basic element tests", function() {
 
     await driver.switchTo().frame('subframe');
 
-    console.log('waiting for generate button');
-    let generateRoomButton = await driver.wait(until.elementLocated(byAttribute("aria-label", "generate-room")));
-    await generateRoomButton.click();
-
-    let gameId = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-id", "//input")), 1000);
-    let wager = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-wager", "//input")), 1000);
-
-    await gameId.sendKeys("calpoker");
-    await wager.sendKeys("200");
-
-    let createButton = await driver.wait(until.elementLocated(byExactText("Create")), 1000);
-    console.log('click create');
-      await createButton.click();
-
-    console.log('focus alert');
-    await driver.wait(until.alertIsPresent());
-    let alert = await waitForNonError(driver, () => driver.switchTo().alert(), () => {}, 1.0);
-    await alert.accept();
-
-    await wait(driver, 1.0);
-
-   // Check that we got a url.
-    let partnerUrlSpan = await driver.wait(until.elementLocated(byAttribute("aria-label", "partner-target-url")));
-    console.log('partner url', partnerUrlSpan);
-    let partnerUrl = await partnerUrlSpan.getAttribute("innerText");
-    console.log('partner url text', partnerUrl);
-    expect(partnerUrl.substr(0, 4)).toBe('http');
+    const partnerUrl = await initiateGame(driver, 200);
 
     // Spawn second browser.
     console.log('second browser start');
-      await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
+    await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
 
     console.log('wait for alice make move button');
     await clickMakeMove(driver, 'alice');
@@ -187,5 +206,53 @@ describe("Basic element tests", function() {
     await gotShutdown(driver);
 
     console.log('terminating');
+  }
+
+  async function testRunOutOfMoney(selectWallet) {
+    // Load the login page
+    console.log('driver.get', baseUrl, driver);
+    await driver.get(baseUrl);
+
+    await selectSimulator(driver);
+
+    await wait(driver, 5.0);
+
+    await driver.switchTo().frame('subframe');
+
+    const partnerUrl = await initiateGame(driver, 200, 300);
+
+    // Spawn second browser.
+    console.log('second browser start');
+    await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
+
+    console.log('wait for alice make move button');
+    await clickMakeMove(driver, 'alice');
+
+    console.log('selectin bob cards');
+    await clickFourCards(ffdriver, 'bob');
+
+    console.log('selecting alice cards');
+    await clickFourCards(driver, 'alice');
+
+    console.warn('get ff shutdown');
+    await gotShutdown(ffdriver);
+    console.warn('get chrome shutdown');
+    await gotShutdown(driver);
+
+    await wait(driver, 5.0);
+  }
+
+  it("starts", async function() {
+    // Terminate early if we didn't get the browsers we wanted.
+    expect(!!driver1 && !!driver2).toBe(true);
+
+    await testTwoGamesAndShutdown(selectSimulator);
+
+    await prepareBrowser(driver1);
+    await prepareBrowser(driver2);
+
+    await testRunOutOfMoney(selectSimulator);
+
+    await testTwoGamesAndShutdown(selectWalletConnect);
   }, 1 * 60 * 60 * 1000);
 });

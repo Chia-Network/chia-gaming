@@ -143,7 +143,10 @@ app.post('/lobby/join-room', (req, res) => {
   }
   room.joiner = id;
   console.log('games', lobby.games);
-  const fullTargetUrl = `${lobby.games[room.game].target}&token=${token}&amount=${room.parameters.wagerAmount}`;
+  let fullTargetUrl = `${lobby.games[room.game].target}&token=${token}`;
+  Object.keys(room.parameters).forEach((p) => {
+    fullTargetUrl = `${fullTargetUrl}&${p}=${room.parameters[p]}`;
+  });
   room.target = fullTargetUrl;
 
   io.emit('room_update', room);
@@ -204,9 +207,6 @@ io.on('connection', socket => {
 
   // Game socket messages.
   socket.on('game_message', ({ party, token, msg }) => {
-    if (process.env.DEBUG) {
-      console.log('game message', party, token, msg);
-    }
     io.emit('game_message', { party, token, msg });
   });
 
