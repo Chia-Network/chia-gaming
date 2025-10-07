@@ -35,7 +35,7 @@ use crate::potato_handler::PotatoHandler;
 
 use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
-use crate::test_support::calpoker::prefix_test_moves;
+use crate::test_support::calpoker::{prefix_test_moves, calpoker_ran_all_the_moves_predicate};
 use crate::test_support::debug_game::{
     make_debug_games, BareDebugGameDriver, DebugGameCurry, DebugGameMoveInfo,
 };
@@ -485,7 +485,7 @@ impl ToLocalUI for LocalTestUIReceiver {
     }
 }
 
-type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(&[SynchronousGameCradle]) -> bool>;
+type GameRunEarlySuccessPredicate<'a> = Option<&'a dyn Fn(usize, &[SynchronousGameCradle]) -> bool>;
 
 pub struct GameRunOutcome {
     pub identities: [ChiaIdentity; 2],
@@ -608,18 +608,13 @@ fn run_game_container_with_action_list_with_success_predicate(
             )
     };
 
-    while (move_number < moves_input.len()) && !matches!(ending, Some(0)) {
+    while !matches!(ending, Some(0)) {
         num_steps += 1;
         debug!(
             "{num_steps} can move {can_move} {move_number} {:?}",
             &moves_input[move_number..]
         );
         let move_input = moves_input.get(move_number);
-
-        if let Some(GameAction::Shutdown(_, _)) = &move_input {
-            println!("Shutting down");
-            break;
-        }
 
         if let Some(GameAction::Move(_, rm, _)) = &move_input {
             debug!("ReadableMove is {:?}", rm);
@@ -629,10 +624,8 @@ fn run_game_container_with_action_list_with_success_predicate(
             let length = moves_input.len();
             if move_number < length {
                 debug!("Got move_input {move_input:?} but could not construct ReadableMove!!");
-                // todo!();
             } else {
-                debug!("HEY! tried to access moves_input[{move_number}] but array len is {length}");
-                todo!();
+                debug!("We're past the end of the given actions, probably waiting to shut down");
             }
         }
         debug!("local_uis[0].finished {:?}", local_uis[0].game_finished);
@@ -651,7 +644,7 @@ fn run_game_container_with_action_list_with_success_predicate(
             .make_report_from_coin_set_update(current_height as u64, &current_coins)?;
 
         if let Some(p) = &pred {
-            if p(&cradles) {
+            if p(move_number, &cradles) {
                 // Success.
                 return Ok(GameRunOutcome {
                     identities: [identities[0].clone(), identities[1].clone()],
@@ -894,10 +887,11 @@ fn run_game_container_with_action_list_with_success_predicate(
     })
 }
 
-pub fn run_calpoker_container_with_action_list(
+pub fn run_calpoker_container_with_action_list_with_success_predicate(
     allocator: &mut AllocEncoder,
     moves: &[GameAction],
     v1: bool,
+    predicate: GameRunEarlySuccessPredicate,
 ) -> Result<GameRunOutcome, Error> {
     let seed_data: [u8; 32] = [0; 32];
     let mut rng = ChaCha8Rng::from_seed(seed_data);
@@ -917,7 +911,20 @@ pub fn run_calpoker_container_with_action_list(
         type_id,
         &Program::from_hex("80")?,
         moves,
-        None,
+        predicate,
+    )
+}
+
+pub fn run_calpoker_container_with_action_list(
+    allocator: &mut AllocEncoder,
+    moves: &[GameAction],
+    v1: bool,
+) -> Result<GameRunOutcome, Error> {
+    run_calpoker_container_with_action_list_with_success_predicate(
+        allocator,
+        moves,
+        v1,
+        None
     )
 }
 
@@ -1121,8 +1128,12 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
 
         // Play moves
         let moves = prefix_test_moves(&mut allocator, false);
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false)
-            .expect("this is a test");
+        run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            false,
+            Some(&calpoker_ran_all_the_moves_predicate(moves.len())),
+        ).expect("this is a test");
     }));
     res.push((
         "sim_test_with_peer_container_piss_off_peer_basic_on_chain",
@@ -1152,7 +1163,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
                 b"calpoker",
                 &Program::from_hex("80").unwrap(),
                 &moves,
-                Some(&|cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
+                Some(&|_, cradles| cradles[0].is_on_chain() && cradles[1].is_on_chain()),
             )
             .expect("should finish");
         },
@@ -1470,7 +1481,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             game_type,
             &sim_setup.args_program,
             &sim_setup.game_actions,
-            Some(&|cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
+            Some(&|_, cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
         )
         .expect("should finish");
 

@@ -14,6 +14,7 @@ use crate::common::types::{Error, GameID, Hash};
 use crate::games::calpoker::decode_calpoker_readable;
 use crate::games::calpoker::{CalpokerHandValue, RawCalpokerHandValue};
 use crate::games::calpoker::{CalpokerResult, WinDirectionUser};
+use crate::peer_container::SynchronousGameCradle;
 use crate::shutdown::BasicShutdownConditions;
 use crate::test_support::game::GameAction;
 #[cfg(feature = "sim-tests")]
@@ -21,7 +22,9 @@ use crate::test_support::game::GameActionResult;
 
 #[cfg(feature = "sim-tests")]
 use crate::simulator::tests::potato_handler_sim::{
-    run_calpoker_container_with_action_list, GameRunOutcome,
+    run_calpoker_container_with_action_list,
+    run_calpoker_container_with_action_list_with_success_predicate,
+    GameRunOutcome,
 };
 #[cfg(feature = "sim-tests")]
 use crate::simulator::tests::simenv::SimulatorEnvironment;
@@ -153,6 +156,12 @@ fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult>
 
 // TODO: Add a bit of infra: helper fnctions for testing move results, and GameRunOutcome
 
+pub fn calpoker_ran_all_the_moves_predicate(want_move_number: usize) -> Box<dyn Fn(usize, &[SynchronousGameCradle]) -> bool> {
+    Box::new(move |move_number: usize, _: &[SynchronousGameCradle]| {
+        move_number >= want_move_number
+    })
+}
+
 /// ----------------- Tests start here ------------------
 #[cfg(feature = "sim-tests")]
 pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
@@ -174,14 +183,23 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
     res.push(("test_play_calpoker_happy_path_v0", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = prefix_test_moves(&mut allocator, false).to_vec();
-        run_calpoker_container_with_action_list(&mut allocator, &moves, false).expect("test");
+        run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            false,
+            Some(&calpoker_ran_all_the_moves_predicate(moves.len()))
+        ).expect("test");
     }));
 
     res.push(("test_play_calpoker_happy_path", &|| {
         let mut allocator = AllocEncoder::new();
         let moves = prefix_test_moves(&mut allocator, true).to_vec();
-        run_calpoker_container_with_action_list(&mut allocator, &moves, true)
-            .expect("this is a test");
+        run_calpoker_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &moves,
+            true,
+            Some(&calpoker_ran_all_the_moves_predicate(moves.len()))
+        ).expect("this is a test");
     }));
 
     res.push(("test_verify_endgame_data_v0", &|| {
