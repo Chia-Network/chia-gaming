@@ -71,19 +71,6 @@ RUN --mount=type=tmpfs,dst=/app \
   mv /app/node_modules /preinst/ && \
   mv /app/package.json /preinst/ 
 
-FROM node:20.18.1 as stage3
-COPY --from=stage2 /preinst /preinst
-COPY --from=stage2 /root /root
-COPY --from=stage2 /app /app
-RUN apt-get update -y && \
-    apt-get install -y libc6 && \
-    apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
-    apt-get update && \
-    npm install -g corepack && \
-    yarn set version 1.22.22 && \
-    . /app/test/bin/activate && \
-    pip install maturin==1.9.2
-
 RUN --mount=type=tmpfs,dst=/app \
   mkdir -p /app/wc/ && \
   cp -r /preinst/wc/* /app/wc/ && \
@@ -92,9 +79,9 @@ RUN --mount=type=tmpfs,dst=/app \
   mv /app/wc/package.json /preinst/wc
 
 FROM node:20.18.1
-COPY --from=stage3 /preinst /preinst
-COPY --from=stage3 /root /root
-COPY --from=stage3 /app /app
+COPY --from=stage2 /preinst /preinst
+COPY --from=stage2 /root /root
+COPY --from=stage2 /app /app
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
