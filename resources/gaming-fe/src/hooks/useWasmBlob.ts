@@ -119,22 +119,13 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     const keys = Object.keys(state);
     keys.forEach((k) => {
       if (settable[k]) {
-        console.warn(k, state[k]);
+        // console.warn(k, state[k]);
         settable[k](state[k]);
       }
     });
   }
 
   const wasmCommandChannel = new Subject<WasmCommand>();
-
-  const peerconn = useGameSocket(
-    lobbyUrl,
-    (msg: string) => {
-      const x: DeliverMessage = { deliverMessage: msg };
-      wasmCommandChannel.next(x);
-    },
-    () => { wasmCommandChannel.next({ socketEnabled: true }); }
-  );
 
   const loadCalpoker: () => Promise<any> = () => {
     const calpokerFactory = fetchHex(
@@ -150,7 +141,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   }
 
   useEffect(() => {
-    console.log(`Wasm init: checking gotWasmStateInit`);
+    console.log('Wasm init: checking gotWasmStateInit');
     if (!gotWasmStateInit) {
       setGotWasmStateInit(true);
     } else {
@@ -220,12 +211,21 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         iStarted, // iStarted, aka have_potato
         // TODO: IEEE float ('number') is a slightly smaller range than MAX_NUM_MOJOS
         // TODO: CalPoker has both players contribute equal amounts. Change this code before Krunk
-        myContribution: searchParams.amount,
-        theirContribution: searchParams.amount,
+        myContribution: parseInt(searchParams.amount),
+        theirContribution: parseInt(searchParams.amount),
       }
       let cradle = getNewChiaGameCradle(wasmConnection, gameInitParams);
       console.log('Chia Gaming Cradle created. Session ID:', hexString);
       console.log('I am ', iStarted ? 'Alice' : 'Bob');
+
+      const peerconn = useGameSocket(
+        lobbyUrl,
+        (msg: string) => {
+          liveGame.deliverMessage(msg);
+        },
+        () => { liveGame.kickSystem(1); }
+      );
+
       let wasmParams: WasmBlobParams = {
         blockchain: blockchain,
         peerconn: peerconn,
@@ -255,7 +255,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       });
       let blockSubscription = blockchain.getObservable().subscribe({
         next: (e: BlockchainReport) => {
-          console.log('Received Chia block ', e.peak);
+          // console.log('Received Chia block ', e.peak);
           liveGame.blockNotification(e.peak, e.block, e.report);
         }
       });
@@ -287,7 +287,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   // Called once at an arbitrary time.
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
-    console.log(`Wasm init: storing chia_gaming_init=${chia_gaming_init} and cg=${cg}`);
+    console.log('Wasm init: storing chia_gaming_init=',chia_gaming_init, 'and cg=', cg);
     storeInitArgs(chia_gaming_init, cg);
   }, []);
 

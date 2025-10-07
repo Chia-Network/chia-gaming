@@ -121,10 +121,14 @@ export class WasmBlobWrapper {
   }
 
   kickSystem(flags: number) {
+    let lastQE = this.qualifyingEvents;
     this.qualifyingEvents |= flags;
     if (this.qualifyingEvents == 3) {
       this.qualifyingEvents |= 4;
       this.rxjsEmitter.next({name: "ready"});
+    }
+    if (this.qualifyingEvents != lastQE) {
+      console.log("qualifyingEvents:", this.qualifyingEvents);
     }
   }
 
@@ -175,7 +179,7 @@ export class WasmBlobWrapper {
   }
 
   handleOneMessage(msg: any): any {
-    console.log('handleOneMessage', Object.keys(msg));
+    //console.log('handleOneMessage', Object.keys(msg));
     if (msg.deliverMessage) {
       return this.internalDeliverMessage(msg.deliverMessage);
     } else if (msg.move) {
@@ -442,7 +446,7 @@ export class WasmBlobWrapper {
     }
 
     result.setError = idle.receive_error;
-    console.log('idle1', idle.action_queue);
+    // console.log('idle1', idle.action_queue);
     if (idle.handshake_done && !this.handshakeDone) {
       console.warn("HANDSHAKE DONE");
       this.handshakeDone = true;
@@ -454,7 +458,7 @@ export class WasmBlobWrapper {
       this.pushEvent({ startGame: true });
     }
 
-    console.log('idle2', idle.incoming_messages);
+    // console.log('idle2', idle.incoming_messages);
     for (let i = 0; i < idle.outbound_messages.length; i++) {
       console.log('send message to remote');
       this.sendMessage(idle.outbound_messages[i]);
@@ -577,7 +581,7 @@ export class WasmBlobWrapper {
   }
 
   internalTakeBlock(peak: number, block_report: WatchReport): any {
-    console.log('internalTakeBlock', peak, block_report);
+    // console.log('internalTakeBlock', peak, block_report);
     this.cradle.block_data(peak, block_report);
     // console.log('took block', peak);
     return empty();

@@ -190,7 +190,7 @@ export class ChiaGame {
     return this.wasmConnection.get_identity(this.cradleId);
   }
 
-  getAmount() : number{
+  getAmount() : number {
     return this.wasmConnection.get_amount(this.cradleId).amt;
   }
 
