@@ -56,7 +56,7 @@ jobs:
           ./wait-for-it.sh localhost:5800
           # The wc-stub now runs a block update service which mimics coinset.org
           # We can't predict what block number it'll be.
-          curl -d '' http://localhost:5800/wait_block | grep [0-9]+
+          curl -d '' http://localhost:5800/wait_block | grep -E '[0-9]+'
           docker kill chia-gaming-test
 
       - name: Run headless test
