@@ -1,26 +1,38 @@
 #Chialisp / CLVM output
 *.hex
+*.sym
+
+# cargo / rust
+vendor/
+target/
 
 # TLA
 tla_plus/states
 tla_plus/*_TTrace*
 
-# Python-generated files
+# Python files
 __pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
 *.egg-info
+*.cpython*
 
 # javascript
-node_modules
+node_modules/
 
 # Virtual environments
-.venv
+.venv/
 venv/
 
 target/
 
+# macos
 .DS_Store
-*.cpython*
+
+# Misc.
+*.diff
+*.bak
+*.tmp
+

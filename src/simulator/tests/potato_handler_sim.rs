@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -7,7 +8,9 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use crate::channel_handler::runner::channel_handler_env;
-use crate::channel_handler::types::{ChannelHandlerEnv, ChannelHandlerPrivateKeys, ReadableMove};
+use crate::channel_handler::types::{
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, ReadableMove,
+};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
@@ -21,8 +24,8 @@ use crate::games::calpoker::{
 };
 use crate::games::poker_collection;
 use crate::peer_container::{
-    report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, MessagePeerQueue, MessagePipe,
-    SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
+    report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, GameStartRecord, MessagePeerQueue,
+    MessagePipe, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, GameStart, GameType, PacketSender, PeerEnv,
@@ -211,6 +214,13 @@ impl ToLocalUI for SimulatedPeer {
     ) -> Result<(), Error> {
         // Record for testing, but doens't affect the game.
         self.messages.push(readable);
+        Ok(())
+    }
+    fn game_start(
+        &mut self,
+        _ids: &[GameID],
+        _failed: Option<GameStartFailed>,
+    ) -> Result<(), Error> {
         Ok(())
     }
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
@@ -408,6 +418,7 @@ pub struct OpponentMessageInfo {
 #[derive(Default, Debug)]
 pub struct LocalTestUIReceiver {
     pub shutdown_complete: bool,
+    pub game_started: Option<GameStartRecord>,
     pub game_finished: Option<Amount>,
     pub opponent_moved: bool,
     pub go_on_chain: bool,
@@ -440,6 +451,14 @@ impl ToLocalUI for LocalTestUIReceiver {
         self.opponent_messages.push(OpponentMessageInfo {
             opponent_move_size: self.opponent_moves.len(),
             opponent_message: readable.clone(),
+        });
+        Ok(())
+    }
+
+    fn game_start(&mut self, ids: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error> {
+        self.game_started = Some(GameStartRecord {
+            game_ids: ids.to_vec(),
+            failed: failed.clone(),
         });
         Ok(())
     }
@@ -574,6 +593,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 
     let mut wait_blocks = None;
     let mut report_backlogs = [Vec::default(), Vec::default()];
+    let mut start_step = 0;
     let mut num_steps = 0;
 
     // Give coins to the cradles.
@@ -722,6 +742,11 @@ fn run_game_container_with_action_list_with_success_predicate(
         }
 
         if !handshake_done && cradles.iter().all(|c| c.handshake_finished()) {
+            if start_step == 0 {
+                start_step += 1;
+                continue;
+            }
+
             // Start game.
             handshake_done = true;
 
@@ -1424,6 +1449,89 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let amount_diff = 151 - 49;
         debug!("p1_balance {p1_balance} p2_balance {p2_balance}");
         assert_eq!(p1_balance + amount_diff, p2_balance);
+    }));
+
+    res.push(("test_debug_game_out_of_money", &|| {
+        let mut allocator = AllocEncoder::new();
+        let seed_data: [u8; 32] = [0; 32];
+        let mut rng = ChaCha8Rng::from_seed(seed_data);
+        let moves = [DebugGameTestMove::new(150, 0)];
+
+        let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
+        add_debug_test_accept_shutdown(&mut sim_setup, 20);
+        let game_type: &[u8] = b"debug";
+        let mut game_starts: [Option<GameStartFailed>; 2] = [None, None];
+
+        let mut outcome = run_game_container_with_action_list_with_success_predicate(
+            &mut allocator,
+            &mut rng,
+            sim_setup.private_keys.clone(),
+            &sim_setup.identities,
+            game_type,
+            &sim_setup.args_program,
+            &sim_setup.game_actions,
+            Some(&|cradles| cradles[0].handshake_finished() && cradles[1].handshake_finished()),
+        )
+        .expect("should finish");
+
+        let game_id = outcome.cradles[0].next_game_id().unwrap();
+        let borrowed: &Program = sim_setup.args_program.borrow();
+        let result1 = outcome.cradles[0].start_games(
+            &mut allocator,
+            &mut rng,
+            true,
+            &GameStart {
+                game_id: game_id.clone(),
+                amount: Amount::new(2000),
+                my_contribution: Amount::new(1000),
+                game_type: GameType(game_type.to_vec()),
+                timeout: Timeout::new(10),
+                my_turn: true,
+                parameters: borrowed.clone(),
+            },
+        );
+
+        assert!(result1.is_ok());
+
+        let result2 = outcome.cradles[1].start_games(
+            &mut allocator,
+            &mut rng,
+            true,
+            &GameStart {
+                game_id: game_id.clone(),
+                amount: Amount::new(2000),
+                my_contribution: Amount::new(1000),
+                game_type: GameType(game_type.to_vec()),
+                timeout: Timeout::new(10),
+                my_turn: true,
+                parameters: borrowed.clone(),
+            },
+        );
+
+        for i in 0..100 {
+            for (c, game_start) in game_starts.iter_mut().enumerate() {
+                while let Some(result) = outcome.cradles[c]
+                    .idle(&mut allocator, &mut rng, &mut outcome.local_uis[c], 0)
+                    .unwrap()
+                {
+                    if let Some(gs) = &result.game_started {
+                        *game_start = gs.failed.clone();
+                    }
+
+                    for msg in result.outbound_messages.iter() {
+                        outcome.cradles[i ^ 1].deliver_message(msg).unwrap();
+                    }
+
+                    if !result.continue_on {
+                        break;
+                    }
+                }
+            }
+        }
+
+        assert!(result2.is_ok());
+        assert!(matches!(game_starts[0], Some(GameStartFailed::OutOfMoney)));
+        assert!(game_starts[1].is_none());
     }));
 
     res.push(("test_calpoker_v1_smoke", &|| {

@@ -629,7 +629,7 @@ fn run_simulation_tests(choices: Vec<String>) {
         for test_set in ref_lists.iter() {
             for (name, f) in test_set.iter() {
                 if choices.is_empty() || choices.iter().any(|choice| name.contains(choice)) {
-                    eprintln!("{} ...", name);
+                    eprintln!("RUNNING TEST {} ...", name);
                     f();
                     eprintln!("{} ... ok\n", name);
                 }
