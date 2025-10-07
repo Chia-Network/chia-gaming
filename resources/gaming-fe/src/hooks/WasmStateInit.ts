@@ -105,8 +105,9 @@ observable.subscribe({
         })
     }
 
-    getWasmBlobWrapper(wasmConnection: WasmConnection, wasmParams: WasmBlobParams) : WasmBlobWrapper {
-        return new WasmBlobWrapper(wasmParams, wasmConnection);
+    // TODO: Remove Calpoker specific "perGameAmount" - create general GameType::Params
+    getWasmBlobWrapper(wasmConnection: WasmConnection, wasmParams: WasmBlobParams, perGameAmount: number) : WasmBlobWrapper {
+        return new WasmBlobWrapper(wasmParams, wasmConnection, perGameAmount);
     }
 
     loadPresets(presetFiles: string[]) {

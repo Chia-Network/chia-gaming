@@ -355,8 +355,6 @@ export class WasmBlobWrapper {
     let gids = this.cradle.start_games(!this.iStarted, {
       game_type: "63616c706f6b6572",
       timeout: 100,
-      amount: amount * 2 / 10,
-      my_contribution: amount / 10,
       amount: this.perGameAmount,
       my_contribution: this.perGameAmount / 2,
       my_turn: !this.iStarted,

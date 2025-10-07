@@ -10,6 +10,8 @@ import { WasmStateInit, doInternalLoadWasm, storeInitArgs } from '../../hooks/Wa
 import { WasmCommand } from '../../hooks/useWasmBlob';
 import { Subject } from 'rxjs';
 
+const perGameAmount = 10;
+
 // @ts-ignore
 import * as fs from 'fs';
 // @ts-ignore
@@ -224,7 +226,7 @@ async function initWasmBlobWrapper(wasmCommandChannel: Subject<WasmCommand>, blo
             fetchHex: fetchHex,
         };
 
-        const liveGame = new WasmBlobWrapper(wasmParams, wasmConnection)
+        const liveGame = new WasmBlobWrapper(wasmParams, wasmConnection, perGameAmount)
         console.log('WasmBlobWrapper game object created.');
 
         console.log("About to subscribe to wasmCommandChannel");

@@ -25,6 +25,7 @@ export interface SetCardSelections {
   setCardSelections: number;
 }
 export interface Shutdown {
+  // TODO: Did we add a string or Enum here?
   shutdown: boolean;
 }
 export type WasmCommand = DeliverMessage | SocketEnabled | WasmMove | SetCardSelections | Shutdown;
@@ -233,7 +234,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         fetchHex: fetchHex,
       };
 
-      const liveGame = new WasmBlobWrapper(wasmParams, wasmConnection)
+      const liveGame = new WasmBlobWrapper(wasmParams, wasmConnection, perGameAmount)
       console.log('WasmBlobWrapper game object created.');
 
       wasmCommandChannel.subscribe({
@@ -245,7 +246,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
           } else if ("setCardSelections" in wasmCommand) {
             liveGame.setCardSelections((msg as SetCardSelections).setCardSelections);
           } else if ("shutDown" in wasmCommand) {
-            liveGame.shutDown();
+            liveGame.shutDown("Normal Shutdown");
           } else if ("deliverMessage" in wasmCommand) {
             liveGame.deliverMessage(wasmCommand.deliverMessage);
           }
