@@ -50,11 +50,6 @@ COPY resources/gaming-fe/package.json resources/gaming-fe/yarn.lock /preinst/
 # walletconnect automation
 COPY resources/wc-stub/package.json resources/wc-stub/yarn.lock /preinst/wc/
 
-FROM node:20.18.1 as stage2
-COPY --from=stage1 /preinst /preinst
-COPY --from=stage1 /root /root
-COPY --from=stage1 /app /app
-
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
@@ -79,9 +74,9 @@ RUN --mount=type=tmpfs,dst=/app \
   mv /app/wc/package.json /preinst/wc
 
 FROM node:20.18.1
-COPY --from=stage2 /preinst /preinst
-COPY --from=stage2 /root /root
-COPY --from=stage2 /app /app
+COPY --from=stage1 /preinst /preinst
+COPY --from=stage1 /root /root
+COPY --from=stage1 /app /app
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
