@@ -45,12 +45,14 @@ const App: React.FC = () => {
   }, [params]);
 
   if (params.lobby) {
+    console.log('params.lobby detected in', params);
     return (
       <LobbyScreen />
     );
   }
 
   if (params.game && !params.join) {
+    console.log('params.game detected in', params);
     return <Game />;
   }
 

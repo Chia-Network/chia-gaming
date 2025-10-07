@@ -90,7 +90,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
 
   useEffect(() => {
     if (!initializing) {
-      console.log('initialzing wallet connect if needed', initializing, initialized);
+      console.log(`initialzing wallet connect if needed initializing=${initializing} initialized=${initialized}`);
       walletConnectState.init();
       setInitializing(true);
     }

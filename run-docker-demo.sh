@@ -1,6 +1,11 @@
 #!/bin/bash -x
 
-docker kill chia-gaming-test
+docker kill chia-gaming-test 2> /dev/null || true
+docker rm chia-gaming-test 2> /dev/null || true
+
+set -e
+./build-docker-images.sh
+
 pid_of_3002=$(lsof -i -n -P | grep LISTEN  | grep 3002 | head -1 | awk '{print $2}')
 
 #if [ ! -z "$pid_of_3002" ]; then

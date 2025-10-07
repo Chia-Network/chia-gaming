@@ -150,6 +150,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   }
 
   useEffect(() => {
+    console.log(`Wasm init: checking gotWasmStateInit`);
     if (!gotWasmStateInit) {
       setGotWasmStateInit(true);
     } else {
@@ -286,7 +287,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   // Called once at an arbitrary time.
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
-    console.log("Wasm init: storing chia_gaming_init={chia_gaming_init} and cg={cg}");
+    console.log(`Wasm init: storing chia_gaming_init=${chia_gaming_init} and cg=${cg}`);
     storeInitArgs(chia_gaming_init, cg);
   }, []);
 
