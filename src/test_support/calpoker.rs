@@ -23,8 +23,7 @@ use crate::test_support::game::GameActionResult;
 #[cfg(feature = "sim-tests")]
 use crate::simulator::tests::potato_handler_sim::{
     run_calpoker_container_with_action_list,
-    run_calpoker_container_with_action_list_with_success_predicate,
-    GameRunOutcome,
+    run_calpoker_container_with_action_list_with_success_predicate, GameRunOutcome,
 };
 #[cfg(feature = "sim-tests")]
 use crate::simulator::tests::simenv::SimulatorEnvironment;
@@ -156,10 +155,10 @@ fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult>
 
 // TODO: Add a bit of infra: helper fnctions for testing move results, and GameRunOutcome
 
-pub fn calpoker_ran_all_the_moves_predicate(want_move_number: usize) -> Box<dyn Fn(usize, &[SynchronousGameCradle]) -> bool> {
-    Box::new(move |move_number: usize, _: &[SynchronousGameCradle]| {
-        move_number >= want_move_number
-    })
+pub fn calpoker_ran_all_the_moves_predicate(
+    want_move_number: usize,
+) -> Box<dyn Fn(usize, &[SynchronousGameCradle]) -> bool> {
+    Box::new(move |move_number: usize, _: &[SynchronousGameCradle]| move_number >= want_move_number)
 }
 
 /// ----------------- Tests start here ------------------
@@ -187,8 +186,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &mut allocator,
             &moves,
             false,
-            Some(&calpoker_ran_all_the_moves_predicate(moves.len()))
-        ).expect("test");
+            Some(&calpoker_ran_all_the_moves_predicate(moves.len())),
+        )
+        .expect("test");
     }));
 
     res.push(("test_play_calpoker_happy_path", &|| {
@@ -198,8 +198,9 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &mut allocator,
             &moves,
             true,
-            Some(&calpoker_ran_all_the_moves_predicate(moves.len()))
-        ).expect("this is a test");
+            Some(&calpoker_ran_all_the_moves_predicate(moves.len())),
+        )
+        .expect("this is a test");
     }));
 
     res.push(("test_verify_endgame_data_v0", &|| {

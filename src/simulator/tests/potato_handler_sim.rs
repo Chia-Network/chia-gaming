@@ -35,7 +35,7 @@ use crate::potato_handler::PotatoHandler;
 
 use crate::shutdown::BasicShutdownConditions;
 use crate::simulator::Simulator;
-use crate::test_support::calpoker::{prefix_test_moves, calpoker_ran_all_the_moves_predicate};
+use crate::test_support::calpoker::{calpoker_ran_all_the_moves_predicate, prefix_test_moves};
 use crate::test_support::debug_game::{
     make_debug_games, BareDebugGameDriver, DebugGameCurry, DebugGameMoveInfo,
 };
@@ -920,12 +920,7 @@ pub fn run_calpoker_container_with_action_list(
     moves: &[GameAction],
     v1: bool,
 ) -> Result<GameRunOutcome, Error> {
-    run_calpoker_container_with_action_list_with_success_predicate(
-        allocator,
-        moves,
-        v1,
-        None
-    )
+    run_calpoker_container_with_action_list_with_success_predicate(allocator, moves, v1, None)
 }
 
 fn get_balances_from_outcome(outcome: &GameRunOutcome) -> Result<(u64, u64), Error> {
@@ -1133,7 +1128,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
             &moves,
             false,
             Some(&calpoker_ran_all_the_moves_predicate(moves.len())),
-        ).expect("this is a test");
+        )
+        .expect("this is a test");
     }));
     res.push((
         "sim_test_with_peer_container_piss_off_peer_basic_on_chain",
