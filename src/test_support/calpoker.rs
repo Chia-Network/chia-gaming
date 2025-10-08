@@ -155,6 +155,7 @@ fn game_run_outcome_to_move_results(g: &GameRunOutcome) -> Vec<GameActionResult>
 
 // TODO: Add a bit of infra: helper fnctions for testing move results, and GameRunOutcome
 
+#[allow(clippy::type_complexity)]
 pub fn calpoker_ran_all_the_moves_predicate(
     want_move_number: usize,
 ) -> Box<dyn Fn(usize, &[SynchronousGameCradle]) -> bool> {
