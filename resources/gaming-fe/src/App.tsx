@@ -3,6 +3,7 @@ import { Box, Typography } from "@mui/material";
 import Game from './components/Game';
 import LobbyScreen from "./components/LobbyScreen";
 import WalletConnectHeading from "./components/WalletConnectHeading";
+import Gallery from "./components/Gallery";
 import { getGameSelection, getSearchParams } from './util';
 import { CHAIN_ID, PROJECT_ID, RELAY_URL } from './constants/env';
 import { WalletConnectProvider } from './hooks/WalletConnectContext';
@@ -48,6 +49,10 @@ const App: React.FC = () => {
     return (
       <LobbyScreen />
     );
+  }
+
+  if (params.gallery) {
+    return <Gallery />;
   }
 
   if (params.game && !params.join) {
