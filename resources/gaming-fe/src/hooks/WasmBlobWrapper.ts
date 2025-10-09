@@ -335,7 +335,7 @@ export class WasmBlobWrapper {
           timeout: 100,
           unroll_timeout: 100
         };
-        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount);
+        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount, result.fromPuzzleHash);
         this.storedMessages.forEach((m) => {
           this.cradle?.deliver_message(m);
         });
