@@ -19,7 +19,7 @@ use wasm_logger;
 
 use wasm_bindgen::prelude::*;
 
-use chia_gaming::channel_handler::types::{ReadableMove, GameStartFailed};
+use chia_gaming::channel_handler::types::{GameStartFailed, ReadableMove};
 use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, wasm_deposit_file, ChiaIdentity};
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
@@ -615,8 +615,11 @@ pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn get_amount(cid: i32) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {
-        Ok(JsAmount{ amt: cradle.cradle.amount() })
-    })?).into_js()
+        Ok(JsAmount {
+            amt: cradle.cradle.amount(),
+        })
+    })?)
+    .into_js()
 }
 
 #[wasm_bindgen]
@@ -725,7 +728,7 @@ impl ToLocalUI for JsLocalUI {
     fn game_start(
         &mut self,
         game_ids: &[GameID],
-        finished: std::option::Option<GameStartFailed>
+        finished: std::option::Option<GameStartFailed>,
     ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "game_started", |args_array| {
             let game_ids_array = Array::new();
@@ -762,12 +765,8 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
-    fn shutdown_started(
-        &mut self
-    ) -> Result<(), chia_gaming::common::types::Error> {
-        call_javascript_from_collection(&self.callbacks, "shutdown_started", |args_array| {
-            Ok(())
-        })
+    fn shutdown_started(&mut self) -> Result<(), chia_gaming::common::types::Error> {
+        call_javascript_from_collection(&self.callbacks, "shutdown_started", |_args_array| Ok(()))
     }
 
     fn shutdown_complete(
@@ -925,8 +924,12 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
     };
     let game_started = if let Some(gs) = &idle_result.game_started {
         Some(JsGameStarted {
-            game_ids: gs.game_ids.iter().map(|gid| game_id_to_string(gid)).collect(),
-            failed: gs.failed.as_ref().map(|f| format!("{:?}", f))
+            game_ids: gs
+                .game_ids
+                .iter()
+                .map(|gid| game_id_to_string(gid))
+                .collect(),
+            failed: gs.failed.as_ref().map(|f| format!("{:?}", f)),
         })
     } else {
         None
