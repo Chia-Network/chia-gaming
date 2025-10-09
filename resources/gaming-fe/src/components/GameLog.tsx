@@ -21,16 +21,16 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
       const isRedSuit = suitName === '♥' || suitName === '♦';
       const suitColor = isRedSuit ? 'red' : 'black';
       return (
-        <span style={{color: suitColor, padding: '0.25em'}}>{c[0]}{suitName}</span>
+        <Paper elevation={1} style={{color: suitColor, padding: '0.25em', marginLeft: "0.25em" }}>{c[0]}{suitName}</Paper>
       );
     });
     return (
-      <Box mt={2} style={{ display: 'flex', flexDirection: 'row', padding: "0.25em" }}>
+      <Typography style={{ display: 'flex', flexDirection: 'row', padding: "0.25em" }}>
         {makeDescription(desc)}
-        <div>
+        <div style={{display: 'flex', flexDirection: 'row', marginLeft: "0.5em" }}>
           {cards}
         </div>
-      </Box>
+      </Typography>
     );
   };
 
@@ -42,10 +42,16 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
         elevation={1}
         style={{ maxHeight: "800px", overflow: "auto", padding: "8px" }}
       >
-        {log.map((entry, index) => (
-          <Typography aria-label={`log-entry-${index}`} key={index} style={{ display: 'flex', flexDirection: 'row', alignItems: 'baseline' }}>I {entry.topLineOutcome}: {playerDisplay(entry.myHandDescription, entry.myHand)} vs {playerDisplay(entry.opponentHandDescription, entry.opponentHand)}
-          </Typography>
-        ))}
+        {log.map((entry, index) => {
+          const iWin = entry.topLineOutcome == 'win' ? 'WINNER' : '';
+          let opWin = entry.topLineOutcome == 'lose' ? 'WINNER' : '';
+          return (
+            <div>
+              <Typography aria-label={`log-entry-me-${index}`} key={index} style={{ display: 'flex', flexDirection: 'row', alignItems: 'baseline' }}>{playerDisplay(entry.myHandDescription, entry.myHand)} {iWin}</Typography>
+              <Typography aria-label={`log-entry-opponent-${index}`} key={index} style={{ display: 'flex', flexDirection: 'row', alignItems: 'baseline' }}>{playerDisplay(entry.opponentHandDescription, entry.opponentHand)} {opWin}</Typography>
+            </div>
+          );
+        })}
       </Paper>
     </Box>
   );
