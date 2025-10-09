@@ -1,8 +1,8 @@
 export interface LogInRequest {
-    fingerprint: number;
+  fingerprint: number;
 }
 
 export interface LogInResponse {
-    fingerprint: number;
-    success: true;
+  fingerprint: number;
+  success: true;
 }

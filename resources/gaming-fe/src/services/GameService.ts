@@ -20,11 +20,7 @@ export class GameService {
 
   public async startGame(room: Room): Promise<GameSession> {
     if (room.status !== 'waiting') {
-      throw new AppError(
-        ErrorCodes.LOBBY.GAME_IN_PROGRESS,
-        'Game is already in progress',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.GAME_IN_PROGRESS, 'Game is already in progress', 400);
     }
 
     const session: GameSession = {
@@ -32,10 +28,10 @@ export class GameService {
       roomId: room.token,
       gameType: room.game,
       host: room.host,
-      joiner: (room.joiner as string),
+      joiner: room.joiner as string,
       startedAt: Date.now(),
       status: 'in_progress',
-      parameters: room.parameters
+      parameters: room.parameters,
     };
 
     this.activeSessions.set(session.id, session);
@@ -47,11 +43,7 @@ export class GameService {
   public async endGame(sessionId: string, winner: string): Promise<GameSession> {
     const session = this.activeSessions.get(sessionId);
     if (!session) {
-      throw new AppError(
-        ErrorCodes.LOBBY.GAME_IN_PROGRESS,
-        'Game session not found',
-        404
-      );
+      throw new AppError(ErrorCodes.LOBBY.GAME_IN_PROGRESS, 'Game session not found', 404);
     }
 
     session.status = 'completed';
@@ -70,29 +62,16 @@ export class GameService {
 
     const dbSession = await getGameSession(sessionId);
     if (!dbSession) {
-      throw new AppError(
-        ErrorCodes.LOBBY.GAME_IN_PROGRESS,
-        'Game session not found',
-        404
-      );
+      throw new AppError(ErrorCodes.LOBBY.GAME_IN_PROGRESS, 'Game session not found', 404);
     }
 
     return dbSession;
   }
 
-  public async validateGameAction(
-    sessionId: string,
-    playerId: string,
-    action: string,
-    data: any
-  ): Promise<boolean> {
+  public async validateGameAction(sessionId: string, playerId: string, action: string, data: any): Promise<boolean> {
     const session = await this.getSession(sessionId);
     if (session.status !== 'in_progress') {
-      throw new AppError(
-        ErrorCodes.LOBBY.GAME_IN_PROGRESS,
-        'Game is not in progress',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.GAME_IN_PROGRESS, 'Game is not in progress', 400);
     }
 
     switch (session.gameType) {
@@ -103,30 +82,18 @@ export class GameService {
       case 'exotic_poker':
         return this.validateExoticPokerAction(action, data);
       default:
-        throw new AppError(
-          ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-          'Invalid game type',
-          400
-        );
+        throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid game type', 400);
     }
   }
 
   private validatePokerAction(action: string, data: any): boolean {
     const validActions = ['fold', 'check', 'call', 'raise', 'all-in'];
     if (!validActions.includes(action)) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Invalid poker action',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid poker action', 400);
     }
 
     if (action === 'raise' && (!data.amount || data.amount <= 0)) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Invalid raise amount',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid raise amount', 400);
     }
 
     return true;
@@ -135,19 +102,11 @@ export class GameService {
   private validateKrunkAction(action: string, data: any): boolean {
     const validActions = ['guess', 'hint', 'pass'];
     if (!validActions.includes(action)) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Invalid krunk action',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid krunk action', 400);
     }
 
     if (action === 'guess' && (!data.word || typeof data.word !== 'string')) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Invalid guess word',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid guess word', 400);
     }
 
     return true;
@@ -156,38 +115,21 @@ export class GameService {
   private validateExoticPokerAction(action: string, data: any): boolean {
     const validActions = ['fold', 'check', 'call', 'raise', 'all-in', 'wild'];
     if (!validActions.includes(action)) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Invalid exotic poker action',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid exotic poker action', 400);
     }
 
     if (action === 'raise' && (!data.amount || data.amount <= 0)) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Invalid raise amount',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid raise amount', 400);
     }
 
     if (action === 'wild' && (!data.card || !data.target)) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Invalid wild card action',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid wild card action', 400);
     }
 
     return true;
   }
 
-  public async processGameAction(
-    sessionId: string,
-    playerId: string,
-    action: string,
-    data: any
-  ): Promise<void> {
+  public async processGameAction(sessionId: string, playerId: string, action: string, data: any): Promise<void> {
     const isValid = await this.validateGameAction(sessionId, playerId, action, data);
     if (!isValid) {
       return;
@@ -207,27 +149,14 @@ export class GameService {
     }
   }
 
-  private async processPokerAction(
-    session: GameSession,
-    playerId: string,
-    action: string,
-    data: any
-  ): Promise<void> {
-  }
+  private async processPokerAction(session: GameSession, playerId: string, action: string, data: any): Promise<void> {}
 
-  private async processKrunkAction(
-    session: GameSession,
-    playerId: string,
-    action: string,
-    data: any
-  ): Promise<void> {
-  }
+  private async processKrunkAction(session: GameSession, playerId: string, action: string, data: any): Promise<void> {}
 
   private async processExoticPokerAction(
     session: GameSession,
     playerId: string,
     action: string,
-    data: any
-  ): Promise<void> {
-  }
-} 
+    data: any,
+  ): Promise<void> {}
+}

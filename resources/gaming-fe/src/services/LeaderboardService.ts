@@ -64,7 +64,7 @@ export class LeaderboardService {
   private createLeaderboard(
     type: Leaderboard['type'],
     gameType: GameType | 'global' | undefined,
-    timeFrame: Leaderboard['timeFrame']
+    timeFrame: Leaderboard['timeFrame'],
   ): void {
     const id = `${type}-${gameType || 'global'}-${timeFrame}`;
     const leaderboard: Leaderboard = {
@@ -73,7 +73,7 @@ export class LeaderboardService {
       gameType: gameType === 'global' ? undefined : gameType,
       timeFrame,
       entries: [],
-      lastUpdated: new Date()
+      lastUpdated: new Date(),
     };
     this.leaderboards.set(id, leaderboard);
   }
@@ -81,7 +81,7 @@ export class LeaderboardService {
   public getLeaderboard(
     type: Leaderboard['type'],
     gameType?: GameType,
-    timeFrame: Leaderboard['timeFrame'] = 'all-time'
+    timeFrame: Leaderboard['timeFrame'] = 'all-time',
   ): Leaderboard {
     const id = `${type}-${gameType || 'global'}-${timeFrame}`;
     const leaderboard = this.leaderboards.get(id);
@@ -132,10 +132,7 @@ export class LeaderboardService {
     return [];
   }
 
-  private getGameLeaderboardEntries(
-    gameType: GameType,
-    timeFrame: Leaderboard['timeFrame']
-  ): LeaderboardEntry[] {
+  private getGameLeaderboardEntries(gameType: GameType, timeFrame: Leaderboard['timeFrame']): LeaderboardEntry[] {
     return [];
   }
 
@@ -147,10 +144,10 @@ export class LeaderboardService {
     playerId: string,
     type: Leaderboard['type'],
     gameType?: GameType,
-    timeFrame: Leaderboard['timeFrame'] = 'all-time'
+    timeFrame: Leaderboard['timeFrame'] = 'all-time',
   ): number {
     const leaderboard = this.getLeaderboard(type, gameType, timeFrame);
-    const entry = leaderboard.entries.find(e => e.playerId === playerId);
+    const entry = leaderboard.entries.find((e) => e.playerId === playerId);
     return entry ? entry.rank : -1;
   }
 
@@ -158,7 +155,7 @@ export class LeaderboardService {
     type: Leaderboard['type'],
     gameType?: GameType,
     timeFrame: Leaderboard['timeFrame'] = 'all-time',
-    limit: number = 10
+    limit: number = 10,
   ): LeaderboardEntry[] {
     const leaderboard = this.getLeaderboard(type, gameType, timeFrame);
     return leaderboard.entries.slice(0, limit);
@@ -168,10 +165,10 @@ export class LeaderboardService {
     playerId: string,
     type: Leaderboard['type'],
     gameType?: GameType,
-    timeFrame: Leaderboard['timeFrame'] = 'all-time'
+    timeFrame: Leaderboard['timeFrame'] = 'all-time',
   ): LeaderboardEntry | null {
     const leaderboard = this.getLeaderboard(type, gameType, timeFrame);
-    return leaderboard.entries.find(e => e.playerId === playerId) || null;
+    return leaderboard.entries.find((e) => e.playerId === playerId) || null;
   }
 
   public updatePlayerScore(
@@ -180,13 +177,13 @@ export class LeaderboardService {
     score: number,
     stats: LeaderboardEntry['stats'],
     type: Leaderboard['type'],
-    gameType?: GameType
+    gameType?: GameType,
   ): void {
     const timeFrames: Leaderboard['timeFrame'][] = ['daily', 'weekly', 'monthly', 'all-time'];
 
     for (const timeFrame of timeFrames) {
       const leaderboard = this.getLeaderboard(type, gameType, timeFrame);
-      const entry = leaderboard.entries.find(e => e.playerId === playerId);
+      const entry = leaderboard.entries.find((e) => e.playerId === playerId);
 
       if (entry) {
         entry.score = score;
@@ -197,7 +194,7 @@ export class LeaderboardService {
           playerName,
           score,
           rank: 0,
-          stats
+          stats,
         });
       }
 
@@ -220,4 +217,4 @@ export class LeaderboardService {
       }
     }
   }
-} 
+}

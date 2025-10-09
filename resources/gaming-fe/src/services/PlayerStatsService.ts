@@ -50,11 +50,7 @@ export class PlayerStatsService {
     if (!stats) {
       const player = await getPlayer(playerId);
       if (!player) {
-        throw new AppError(
-          ErrorCodes.LOBBY.PLAYER_NOT_FOUND,
-          'Player not found',
-          404
-        );
+        throw new AppError(ErrorCodes.LOBBY.PLAYER_NOT_FOUND, 'Player not found', 404);
       }
 
       stats = {
@@ -67,7 +63,7 @@ export class PlayerStatsService {
         highestWin: 0,
         winStreak: 0,
         currentStreak: 0,
-        lastPlayed: new Date()
+        lastPlayed: new Date(),
       };
 
       this.playerStats.set(key, stats);
@@ -80,10 +76,10 @@ export class PlayerStatsService {
     playerId: string,
     gameType: GameType,
     won: boolean,
-    winnings: number
+    winnings: number,
   ): Promise<PlayerStats> {
     const stats = await this.getPlayerStats(playerId, gameType);
-    
+
     stats.gamesPlayed++;
     if (won) {
       stats.gamesWon++;
@@ -94,7 +90,7 @@ export class PlayerStatsService {
     } else {
       stats.currentStreak = 0;
     }
-    
+
     stats.lastPlayed = new Date();
     this.playerStats.set(`${playerId}-${gameType}`, stats);
 
@@ -111,76 +107,46 @@ export class PlayerStatsService {
     return achievements;
   }
 
-  private async checkAchievements(
-    playerId: string,
-    gameType: GameType,
-    stats: PlayerStats
-  ): Promise<void> {
+  private async checkAchievements(playerId: string, gameType: GameType, stats: PlayerStats): Promise<void> {
     const achievements = await this.getPlayerAchievements(playerId);
     const newAchievements: Achievement[] = [];
 
     if (stats.gamesPlayed === 1) {
-      newAchievements.push(this.createAchievement(
-        playerId,
-        'First Game',
-        'Played your first game',
-        gameType,
-        'common'
-      ));
+      newAchievements.push(
+        this.createAchievement(playerId, 'First Game', 'Played your first game', gameType, 'common'),
+      );
     }
 
     if (stats.gamesWon === 1) {
-      newAchievements.push(this.createAchievement(
-        playerId,
-        'First Victory',
-        'Won your first game',
-        gameType,
-        'common'
-      ));
+      newAchievements.push(
+        this.createAchievement(playerId, 'First Victory', 'Won your first game', gameType, 'common'),
+      );
     }
 
     if (stats.winStreak >= 3) {
-      newAchievements.push(this.createAchievement(
-        playerId,
-        'Hot Streak',
-        'Won 3 games in a row',
-        gameType,
-        'uncommon'
-      ));
+      newAchievements.push(
+        this.createAchievement(playerId, 'Hot Streak', 'Won 3 games in a row', gameType, 'uncommon'),
+      );
     }
 
     if (stats.winStreak >= 5) {
-      newAchievements.push(this.createAchievement(
-        playerId,
-        'Unstoppable',
-        'Won 5 games in a row',
-        gameType,
-        'rare'
-      ));
+      newAchievements.push(this.createAchievement(playerId, 'Unstoppable', 'Won 5 games in a row', gameType, 'rare'));
     }
 
     if (stats.totalWinnings >= 1000) {
-      newAchievements.push(this.createAchievement(
-        playerId,
-        'High Roller',
-        'Won 1000 or more in total',
-        gameType,
-        'epic'
-      ));
+      newAchievements.push(
+        this.createAchievement(playerId, 'High Roller', 'Won 1000 or more in total', gameType, 'epic'),
+      );
     }
 
     if (stats.highestWin >= 500) {
-      newAchievements.push(this.createAchievement(
-        playerId,
-        'Big Winner',
-        'Won 500 or more in a single game',
-        gameType,
-        'legendary'
-      ));
+      newAchievements.push(
+        this.createAchievement(playerId, 'Big Winner', 'Won 500 or more in a single game', gameType, 'legendary'),
+      );
     }
 
     for (const achievement of newAchievements) {
-      if (!achievements.some(a => a.name === achievement.name)) {
+      if (!achievements.some((a) => a.name === achievement.name)) {
         achievements.push(achievement);
       }
     }
@@ -193,7 +159,7 @@ export class PlayerStatsService {
     name: string,
     description: string,
     gameType: GameType,
-    rarity: Achievement['rarity']
+    rarity: Achievement['rarity'],
   ): Achievement {
     return {
       id: uuidv4(),
@@ -202,17 +168,17 @@ export class PlayerStatsService {
       description,
       unlockedAt: new Date(),
       gameType,
-      rarity
+      rarity,
     };
   }
 
   public async getLeaderboard(gameType: GameType, limit: number = 10): Promise<PlayerStats[]> {
     const stats = Array.from(this.playerStats.values())
-      .filter(s => s.gameType === gameType)
+      .filter((s) => s.gameType === gameType)
       .sort((a, b) => {
         const aWinRate = a.gamesPlayed > 0 ? a.gamesWon / a.gamesPlayed : 0;
         const bWinRate = b.gamesPlayed > 0 ? b.gamesWon / b.gamesPlayed : 0;
-        
+
         if (b.totalWinnings !== a.totalWinnings) {
           return b.totalWinnings - a.totalWinnings;
         }
@@ -225,12 +191,12 @@ export class PlayerStatsService {
 
   public async getPlayerRank(playerId: string, gameType: GameType): Promise<number> {
     const allStats = Array.from(this.playerStats.values())
-      .filter(s => s.gameType === gameType)
+      .filter((s) => s.gameType === gameType)
       .sort((a, b) => b.totalWinnings - a.totalWinnings);
 
     const playerStats = await this.getPlayerStats(playerId, gameType);
-    const rank = allStats.findIndex(s => s.playerId === playerId) + 1;
-    
+    const rank = allStats.findIndex((s) => s.playerId === playerId) + 1;
+
     return rank || allStats.length + 1;
   }
-} 
+}

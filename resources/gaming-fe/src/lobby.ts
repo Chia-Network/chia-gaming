@@ -14,7 +14,7 @@ const lobby = new Lobby();
 const app = express();
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
-  cors: { origin: '*', methods: ['GET','POST'] }
+  cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 
 // Parse args
@@ -31,22 +31,37 @@ function parseArgs() {
 
 const args = parseArgs();
 
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'", "https://explorer-api.walletconnect.com"],
-      scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'"],
-      connectSrc: ["'self'", "https://explorer-api.walletconnect.com", "wss://relay.walletconnect.com", "https://verify.walletconnect.org", "https://verify.walletconnect.org", "https://api.coinset.org", "wss://api.coinset.org", "http://localhost:5800", "wss://relay.walletconnect.org", args.tracker],
-      frameSrc: ["'self'",  'https://verify.walletconnect.org', args.tracker],
-      frameAncestors: ["'self'", '*'],
-    }
-  }
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'", 'https://explorer-api.walletconnect.com'],
+        scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'"],
+        connectSrc: [
+          "'self'",
+          'https://explorer-api.walletconnect.com',
+          'wss://relay.walletconnect.com',
+          'https://verify.walletconnect.org',
+          'https://verify.walletconnect.org',
+          'https://api.coinset.org',
+          'wss://api.coinset.org',
+          'http://localhost:5800',
+          'wss://relay.walletconnect.org',
+          args.tracker,
+        ],
+        frameSrc: ["'self'", 'https://verify.walletconnect.org', args.tracker],
+        frameAncestors: ["'self'", '*'],
+      },
+    },
+  }),
+);
 
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'HEAD', 'OPTIONS']
-}));
+app.use(
+  cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'HEAD', 'OPTIONS'],
+  }),
+);
 
 app.use(express.json());
 
@@ -56,7 +71,7 @@ const socketUsers = {};
 function joinLobby(id: string, alias: string, parameters: any): any {
   if (!id || !alias) {
     return { error: 'Missing id or alias for joining lobby.' };
-  };
+  }
   const lastActive = new Date().getTime();
   lobby.addPlayer({
     id,
@@ -81,15 +96,15 @@ function leaveLobby(id: string): any {
 
 // Kick the root.
 async function serveFile(file: string, contentType: string, res: any) {
-    const content = await readFile(file);
-    res.set('Content-Type', contentType);
-    res.send(content);
+  const content = await readFile(file);
+  res.set('Content-Type', contentType);
+  res.send(content);
 }
 app.get('/', async (req: any, res: any) => {
-  serveFile("public/index.html", "text/html", res);
+  serveFile('public/index.html', 'text/html', res);
 });
 app.get('/index.js', async (req: any, res: any) => {
-  serveFile("dist/index-rollup.js", "application/javascript", res);
+  serveFile('dist/index-rollup.js', 'application/javascript', res);
 });
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;
@@ -117,7 +132,7 @@ app.post('/lobby/generate-room', (req, res) => {
     minPlayers: 2,
     maxPlayers: 2,
     chat: [],
-    parameters
+    parameters,
   };
   lobby.rooms[token] = newRoom;
   console.log('generate room', game, lobby.games);
@@ -184,7 +199,7 @@ app.post('/lobby/leave', (req, res) => {
 
 app.get('/lobby/status', (req, res) => res.json({ lobbyQueue: lobby.getPlayers() }));
 
-io.on('connection', socket => {
+io.on('connection', (socket) => {
   socket.emit('lobby_update', lobby.getPlayers());
   socket.emit('room_update', Object.values(lobby.rooms));
 
