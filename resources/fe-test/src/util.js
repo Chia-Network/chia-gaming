@@ -112,7 +112,7 @@ async function retrieveAddress(driver) {
         const text = await addressElt.getAttribute("innerText");
         try {
             const decoded = JSON.parse(text);
-            if (Object.keys(decoded) != 0) {
+            if (decoded.address !== '' && decoded.puzzleHash !== '') {
                 return decoded;
             }
         } catch (e) {

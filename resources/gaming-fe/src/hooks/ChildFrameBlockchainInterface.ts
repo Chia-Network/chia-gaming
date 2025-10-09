@@ -1,5 +1,5 @@
 import { Subject, filter, take } from 'rxjs';
-import { DoInitialSpendResult } from '../types/ChiaGaming';
+import { DoInitialSpendResult, BlockchainInboundAddressResult } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector, BlockchainInboundReply, BlockchainOutboundRequest } from './BlockchainConnector';
 import { fakeBlockchainInfo } from './FakeBlockchainInterface';
@@ -71,7 +71,7 @@ export class ChildFrameBlockchainInterface {
     );
   }
 
-  getAddress(): Promise<any> {
+  getAddress(): Promise<BlockchainInboundAddressResult> {
     let requestId = requestNumber++;
     let request = {
       requestId,

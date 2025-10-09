@@ -1,5 +1,5 @@
 import { Subject } from 'rxjs';
-import { DoInitialSpendResult } from '../types/ChiaGaming';
+import { DoInitialSpendResult, BlockchainInboundAddressResult } from '../types/ChiaGaming';
 
 export interface BlockchainOutboundInitialSpendRequest {
   uniqueId: string;
@@ -19,11 +19,6 @@ export interface BlockchainOutboundRequest {
   initialSpend?: BlockchainOutboundInitialSpendRequest;
   transaction?: BlockchainOutboundTransactionRequest;
   getAddress?: BlockchainOutboundAddressRequest;
-}
-
-export interface BlockchainInboundAddressResult {
-  address: string;
-  puzzleHash: string;
 }
 
 export interface BlockchainInboundReply {

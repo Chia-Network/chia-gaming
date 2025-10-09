@@ -2,7 +2,7 @@ import { Subject } from 'rxjs';
 // @ts-ignore
 import bech32 from 'bech32-buffer';
 import ReconnectingWebSocket from 'reconnecting-websocket';
-import { CoinOutput, WatchReport, BlockchainReport, SelectionMessage } from '../types/ChiaGaming';
+import { CoinOutput, WatchReport, BlockchainReport, SelectionMessage, BlockchainInboundAddressResult } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
 import { generateOrRetrieveUniqueId, empty, toHexString, toUint8 } from '../util';
@@ -17,7 +17,7 @@ const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
 
 export class RealBlockchainInterface {
   baseUrl: string;
-  addressData: any;
+  addressData: BlockchainInboundAddressResult;
   fingerprint?: string;
   walletId: number;
   requestId: number;
@@ -32,7 +32,7 @@ export class RealBlockchainInterface {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    this.addressData = {};
+    this.addressData = { address: '', puzzleHash: '' };
     this.walletId = 1;
     this.requestId = 1;
     this.requests = {};
@@ -43,7 +43,7 @@ export class RealBlockchainInterface {
     this.observable = new Subject();
   }
 
-  getAddress() { return this.addressData; }
+  async getAddress() { return this.addressData; }
 
   startMonitoring() {
     if (this.ws) {

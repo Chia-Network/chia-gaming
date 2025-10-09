@@ -2,7 +2,7 @@ import { Subject, Observable } from 'rxjs';
 // @ts-ignore
 import bech32 from 'bech32-buffer';
 import { toHexString, toUint8 } from '../util';
-import { ToggleEmitter, ExternalBlockchainInterface, InternalBlockchainInterface, BlockchainReport, WatchReport, SelectionMessage } from '../types/ChiaGaming';
+import { ToggleEmitter, ExternalBlockchainInterface, InternalBlockchainInterface, BlockchainReport, WatchReport, SelectionMessage, BlockchainInboundAddressResult } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
@@ -29,7 +29,7 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
   baseUrl: string;
-  addressData: any;
+  addressData: BlockchainInboundAddressResult;
   deleted: boolean;
   at_block: number;
   max_block: number;
@@ -41,7 +41,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    this.addressData = {};
+    this.addressData = { address: '', puzzleHash: '' };
     this.deleted = false;
     this.max_block = 0;
     this.at_block = 0;
@@ -52,7 +52,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.blockEmitter = (b) => this.observable.next(b);
   }
 
-  getAddress(): any { return this.addressData; }
+  async getAddress() { return this.addressData; }
 
   startMonitoring(uniqueId: string) {
     console.log('startMonitoring', uniqueId);
@@ -214,7 +214,9 @@ export function connectSimulatorBlockchain() {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
         });
       } else if (getAddress) {
-        blockchainConnector.replyEmitter({ responseId: evt.requestId, getAddress: fakeBlockchainInfo.getAddress() });
+        fakeBlockchainInfo.getAddress().then((address) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, getAddress: address });
+        });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({

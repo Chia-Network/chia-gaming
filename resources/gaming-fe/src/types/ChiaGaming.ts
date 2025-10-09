@@ -472,8 +472,14 @@ export interface DoInitialSpendResult {
   coin: string;
 }
 
+export interface BlockchainInboundAddressResult {
+  address: string;
+  puzzleHash: string;
+}
+
 export interface InternalBlockchainInterface {
   do_initial_spend(uniqueId: string, target: string, amt: number): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
-  getAddress(): Promise<any>;
+  getAddress(): Promise<BlockchainInboundAddressResult>;
 }
+
