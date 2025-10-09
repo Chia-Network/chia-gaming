@@ -200,6 +200,10 @@ impl ToLocalUI for Pipe {
         todo!();
     }
 
+    fn shutdown_started(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         todo!();
     }
