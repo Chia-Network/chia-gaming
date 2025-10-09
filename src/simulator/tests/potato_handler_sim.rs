@@ -230,6 +230,9 @@ impl ToLocalUI for SimulatedPeer {
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
     }
+    fn shutdown_started(&mut self) -> Result<(), Error> {
+        todo!();
+    }
     fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
         todo!();
     }
@@ -727,6 +730,10 @@ impl ToLocalUI for LocalTestUIReceiver {
 
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         self.game_finished = Some(Amount::default());
+        Ok(())
+    }
+
+    fn shutdown_started(&mut self) -> Result<(), Error> {
         Ok(())
     }
 
