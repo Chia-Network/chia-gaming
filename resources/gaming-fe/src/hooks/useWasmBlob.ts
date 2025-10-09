@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { WasmBlobParams, GameConnectionState, CalpokerOutcome, BlockchainReport, RngId } from '../types/ChiaGaming';
-import useGameSocket from './useGameSocket';
+import { getGameSocket } from '../services/GameSocket';
 import { getSearchParams } from '../util';
 import { v4 as uuidv4 } from 'uuid';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
@@ -218,7 +218,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       console.log('Chia Gaming Cradle created. Session ID:', hexString);
       console.log('I am ', iStarted ? 'Alice' : 'Bob');
 
-      const peerconn = useGameSocket(
+      const peerconn = getGameSocket(
         lobbyUrl,
         (msg: string) => {
           liveGame.deliverMessage(msg);
