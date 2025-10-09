@@ -25,6 +25,8 @@ const Game: React.FC = () => {
   const params = getSearchParams();
   const {
     error,
+    log,
+    addressData,
     gameConnectionState,
     isPlayerTurn,
     iStarted,
@@ -56,6 +58,7 @@ const Game: React.FC = () => {
           </Typography>
           <Box>
             {gameConnectionState.stateDetail.map((c) => (<Typography variant="h5" align="center">{c}</Typography>))}
+            <GameLog log={log} />
           </Box>
       </Box>
     );
@@ -177,7 +180,8 @@ const Game: React.FC = () => {
       <br/>
       <Typography>{moveDescription}</Typography>
       <br/>
-      <GameLog log={[]} />
+      <GameLog log={log} />
+      <div id="blockchain-address" style={{ position: 'relative', width: 0, height: 0, opacity: '0%' }}>{JSON.stringify(addressData)}</div>
     </Box>
   );
 };

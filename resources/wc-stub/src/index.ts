@@ -71,7 +71,7 @@ function processRequest(id: number, address: string, topic: string, command: str
 
   if (command === 'chia_getCurrentAddress') {
     result.endpointName = 'getCurrentAddress';
-    return fetch(`http://localhost:5800/register?name=${address}`, {
+    return fetch(`http://localhost:5800/register?name=${topic}`, {
       "method": "POST"
     }).then((res: any) => res.json()).then((address: string) => {
       console.error(`try to encode ${address}`);
@@ -81,11 +81,20 @@ function processRequest(id: number, address: string, topic: string, command: str
   } else if (command === 'chia_sendTransaction') {
     console.error(params);
     const hexTarget = toHexString(bech32.decode(params.address).data as any);
-    return fetch(`http://localhost:5800/create_spendable?who=${id}&target=${hexTarget}&amount=${params.amount}`, {
+    return fetch(`http://localhost:5800/create_spendable?who=${topic}&target=${hexTarget}&amount=${params.amount}`, {
       "method": "POST"
     }).then((res: any) => res.json()).then((coin: string) => {
       result.endpointName = 'sendTransaction';
       result.data = { coin, fromPuzzleHash: address };
+      return result;
+    });
+  } else if (command === 'chia_getBalance') {
+    console.error(params);
+    return fetch(`http://localhost:5800/get_balance?user=${topic}`, {
+      "method": "POST"
+    }).then((res: any) => res.json()).then((balance: number) => {
+      result.endpointName = "getBalance";
+      result.data = { confirmedWalletBalance: balance };
       return result;
     });
   }

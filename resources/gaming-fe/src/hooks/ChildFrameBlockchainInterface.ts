@@ -71,6 +71,20 @@ export class ChildFrameBlockchainInterface {
     );
   }
 
+  getAddress(): Promise<any> {
+    let requestId = requestNumber++;
+    let request = {
+      requestId,
+      getAddress: { walletId: 1 }
+    };
+
+    return performTransaction(
+      (e: any) => e.getAddress,
+      requestId,
+      request
+    );
+  }
+
   getObservable() {
     return blockchainDataEmitter.getObservable();
   }

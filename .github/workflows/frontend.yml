@@ -50,6 +50,8 @@ jobs:
         run: |
           set -e -x
 
+          mv Dockerfile Dockerfile.non-ci
+          sed -e 's/#CI //g' < Dockerfile.non-ci > Dockerfile
           docker build --platform linux/amd64 --progress=plain -t chia-gaming-test . # TODO: Replace this line with ./build-docker-images.sh
           docker run --name chia-gaming-test --network=host -t chia-gaming-test &
           cd resources/fe-test

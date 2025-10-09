@@ -12,16 +12,25 @@ export interface BlockchainOutboundTransactionRequest {
   spendObject: any;
 }
 
+export type BlockchainOutboundAddressRequest = boolean;
+
 export interface BlockchainOutboundRequest {
   requestId: number;
   initialSpend?: BlockchainOutboundInitialSpendRequest;
   transaction?: BlockchainOutboundTransactionRequest;
+  getAddress?: BlockchainOutboundAddressRequest;
+}
+
+export interface BlockchainInboundAddressResult {
+  address: string;
+  puzzleHash: string;
 }
 
 export interface BlockchainInboundReply {
   responseId: number;
   initialSpend?: DoInitialSpendResult;
   transaction?: string;
+  getAddress?: BlockchainInboundAddressResult;
   error?: string;
 }
 

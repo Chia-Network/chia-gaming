@@ -96,6 +96,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
+  const [log, setLog] = useState<string[]>([]);
+  const [addressData, setAddressData] = useState<any>({});
   const [playerHand, setPlayerHand] = useState<number[][]>([]);
   const [opponentHand, setOpponentHand] = useState<number[][]>([]);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
@@ -165,6 +167,13 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     gameObject?.loadWasm(chia_gaming_init, cg);
   }, []);
 
+  const recognizeOutcome = (outcome: any) => {
+    setOutcome(outcome);
+    if (outcome) {
+      setLog([...log, outcome?.my_win_outcome]);
+    }
+  };
+
   const settable: any = {
     'setGameConnectionState': setGameConnectionState,
     'setPlayerHand': setPlayerHand,
@@ -173,7 +182,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     'setMoveNumber': setMoveNumber,
     'setError': setError,
     'setCardSelections': setOurCardSelections,
-    'setOutcome': setOutcome
+    'setOutcome': recognizeOutcome,
+    'setAddressData': setAddressData
   };
 
   useEffect(() => {
@@ -190,6 +200,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         }
       });
     }});
+
     return(() => {
       subscription.unsubscribe();
     });
@@ -197,6 +208,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   return {
     error,
+    addressData,
+    log,
     gameIdentity,
     gameConnectionState,
     uniqueWalletConnectionId,

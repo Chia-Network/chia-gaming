@@ -17,6 +17,7 @@ const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
 
 export class RealBlockchainInterface {
   baseUrl: string;
+  addressData: any;
   fingerprint?: string;
   walletId: number;
   requestId: number;
@@ -31,6 +32,7 @@ export class RealBlockchainInterface {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+    this.addressData = {};
     this.walletId = 1;
     this.requestId = 1;
     this.requests = {};
@@ -40,6 +42,8 @@ export class RealBlockchainInterface {
     this.incomingEvents = [];
     this.observable = new Subject();
   }
+
+  getAddress() { return this.addressData; }
 
   startMonitoring() {
     if (this.ws) {
@@ -215,6 +219,7 @@ export function connectRealBlockchain(baseUrl: string) {
     next: async (evt: BlockchainOutboundRequest) => {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
+      let getAddress = evt.getAddress;
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({
@@ -293,6 +298,16 @@ export function connectRealBlockchain(baseUrl: string) {
             );
           });
         }
+      } else if (getAddress) {
+        rpc.getCurrentAddress({
+          walletId: 1
+        }).then((address) => {
+          console.log('currentAddress', address);
+          const puzzleHash = toHexString(bech32.decode(address).data as any);
+          const addressData = { address, puzzleHash };
+
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, getAddress: addressData });
+        });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({

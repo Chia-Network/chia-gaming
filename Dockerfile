@@ -50,15 +50,6 @@ COPY resources/gaming-fe/package.json resources/gaming-fe/yarn.lock /preinst/
 # walletconnect automation
 COPY resources/wc-stub/package.json resources/wc-stub/yarn.lock /preinst/wc/
 
-RUN apt-get update -y && \
-    apt-get install -y libc6 && \
-    apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
-    apt-get update && \
-    npm install -g corepack && \
-    yarn set version 1.22.22 && \
-    . /app/test/bin/activate && \
-    pip install maturin==1.9.2
-
 RUN --mount=type=tmpfs,dst=/app \
   mkdir -p /app/wc/ && \
   cp -r /preinst/* /app && \
@@ -73,18 +64,16 @@ RUN --mount=type=tmpfs,dst=/app \
   mv /app/wc/node_modules /preinst/wc && \
   mv /app/wc/package.json /preinst/wc
 
-FROM node:20.18.1
-COPY --from=stage1 /preinst /preinst
-COPY --from=stage1 /root /root
-COPY --from=stage1 /app /app
-RUN apt-get update -y && \
-    apt-get install -y libc6 && \
-    apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
-    apt-get update && \
-    npm install -g corepack && \
-    yarn set version 1.22.22 && \
-    . /app/test/bin/activate && \
-    pip install maturin==1.9.2
+#CI FROM node:20.18.1
+#CI RUN apt-get update -y && \
+#CI     apt-get install -y libc6 && \
+#CI     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
+#CI     apt-get update && \
+#CI     npm install -g corepack && \
+#CI     yarn set version 1.22.22
+#CI COPY --from=stage1 /preinst /preinst
+#CI COPY --from=stage1 /root /root
+#CI COPY --from=stage1 /app /app
 
 RUN mkdir -p /app/wc/ && \
   ln -s /preinst/node_modules /app && \
@@ -131,4 +120,5 @@ ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
-CMD /bin/sh -c "cd /app && (node ./dist/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 --coinset 'http://localhost:3002' &) && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py"
+RUN echo 'cd /app && (node ./dist/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 "${@}" &) && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
+CMD /bin/bash /app/test_env.sh

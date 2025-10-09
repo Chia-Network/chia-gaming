@@ -85,6 +85,12 @@ export class WasmBlobWrapper {
     });
   }
 
+  relayAddress() {
+    return this.blockchain.getAddress().then((a) => {
+      this.rxjsEmitter?.next({ setAddressData: a });
+    });
+  }
+
   getObservable() {
     return this.rxjsMessageSingleon;
   }
@@ -309,8 +315,10 @@ export class WasmBlobWrapper {
     }
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
-    return this.blockchain.
-      do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount).then(result => {
+    return this.relayAddress().then(() => {
+      return this.blockchain.
+        do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount);
+    }).then(result => {
         let coin = result.coin;
         if (!coin) {
           throw new Error('tried to create spendable but failed');
@@ -337,7 +345,7 @@ export class WasmBlobWrapper {
           timeout: 100,
           unroll_timeout: 100
         };
-        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount);
+        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount, result.fromPuzzleHash);
         this.storedMessages.forEach((m) => {
           this.cradle?.deliver_message(m);
         });

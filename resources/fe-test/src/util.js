@@ -106,6 +106,27 @@ async function selectWalletConnect(driver) {
     await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("id", "subframe"))), (elt) => {}, 5.0);
 }
 
+async function retrieveAddress(driver) {
+    do {
+        const addressElt = await driver.wait(until.elementLocated(byAttribute("id", "blockchain-address")));
+        const text = await addressElt.getAttribute("innerText");
+        try {
+            const decoded = JSON.parse(text);
+            if (Object.keys(decoded) != 0) {
+                return decoded;
+            }
+        } catch (e) {
+            await wait(driver, 1.0);
+        }
+    } while (true);
+}
+
+async function getBalance(driver, puzzleHash) {
+    return await fetch(`http://localhost:5800/get_balance?user=${puzzleHash}`, {
+        method: "POST"
+    }).then(res => res.json());
+}
+
 async function sendControlChar(driver, char) {
     const actions = driver.actions({async: true});
     if (os.platform() === 'darwin') {
@@ -127,6 +148,8 @@ module.exports = {
     waitEnabled,
     selectSimulator,
     selectWalletConnect,
+    retrieveAddress,
+    getBalance,
     waitAriaEnabled,
     waitForNonError,
     sendControlChar,

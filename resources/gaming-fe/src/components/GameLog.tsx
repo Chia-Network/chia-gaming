@@ -15,7 +15,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
         style={{ maxHeight: "800px", overflow: "auto", padding: "8px" }}
       >
         {log.map((entry, index) => (
-          <Typography key={index}>{entry}</Typography>
+          <Typography aria-label={`log-entry-${index}`} key={index}>{entry}</Typography>
         ))}
       </Paper>
     </Box>

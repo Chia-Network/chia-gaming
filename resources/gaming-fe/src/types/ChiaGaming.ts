@@ -122,7 +122,7 @@ export class ChiaGame {
   cradle: number;
   have_potato: boolean;
 
-  constructor(wasm: WasmConnection, env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number) {
+  constructor(wasm: WasmConnection, env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number, rewardPuzzleHash: string) {
     this.wasm = wasm;
     this.waiting_messages = [];
     this.private_key = identity.private_key;
@@ -136,7 +136,7 @@ export class ChiaGame {
       their_contribution: {amt: their_contribution},
       channel_timeout: env.timeout,
       unroll_timeout: env.unroll_timeout,
-      reward_puzzle_hash: identity.puzzle_hash,
+      reward_puzzle_hash: rewardPuzzleHash
     });
     console.log(`constructed ${have_potato} cradle ${this.cradle}`);
   }
@@ -475,4 +475,5 @@ export interface DoInitialSpendResult {
 export interface InternalBlockchainInterface {
   do_initial_spend(uniqueId: string, target: string, amt: number): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
+  getAddress(): Promise<any>;
 }

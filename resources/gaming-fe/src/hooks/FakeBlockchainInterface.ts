@@ -1,4 +1,7 @@
 import { Subject, Observable } from 'rxjs';
+// @ts-ignore
+import bech32 from 'bech32-buffer';
+import { toHexString, toUint8 } from '../util';
 import { ToggleEmitter, ExternalBlockchainInterface, InternalBlockchainInterface, BlockchainReport, WatchReport, SelectionMessage } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
@@ -26,6 +29,7 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
   baseUrl: string;
+  addressData: any;
   deleted: boolean;
   at_block: number;
   max_block: number;
@@ -37,6 +41,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+    this.addressData = {};
     this.deleted = false;
     this.max_block = 0;
     this.at_block = 0;
@@ -47,9 +52,15 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.blockEmitter = (b) => this.observable.next(b);
   }
 
+  getAddress(): any { return this.addressData; }
+
   startMonitoring(uniqueId: string) {
     console.log('startMonitoring', uniqueId);
-    this.upstream.getOrRequestToken(uniqueId).then(() => {
+
+    return this.upstream.getOrRequestToken(uniqueId).then(puzzleHash => {
+      const address = bech32.encode('xch', toUint8(puzzleHash), 'bech32m');
+      this.addressData = {address, puzzleHash};
+
       fetch(`${this.baseUrl}/get_peak`, {method: "POST"}).then(res => res.json()).then(peak => {
         this.setNewPeak(peak);
       });
@@ -176,6 +187,7 @@ export function connectSimulatorBlockchain() {
     next: (evt: BlockchainOutboundRequest) => {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
+      let getAddress = evt.getAddress;
       if (initialSpend) {
         return fakeBlockchainInfo.do_initial_spend(
           initialSpend.uniqueId,
@@ -201,6 +213,8 @@ export function connectSimulatorBlockchain() {
         }).catch((e: any) => {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
         });
+      } else if (getAddress) {
+        blockchainConnector.replyEmitter({ responseId: evt.requestId, getAddress: fakeBlockchainInfo.getAddress() });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({
