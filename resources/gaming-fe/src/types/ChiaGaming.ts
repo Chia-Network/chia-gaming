@@ -182,8 +182,21 @@ export class ChiaGame {
     this.wasmConnection = wasm;
     this.waiting_messages = [];
     this.cradleId = cradleId;
-
-    console.log(`constructed cradle ${this.cradleId}`);
+    // this.private_key = identity.private_key; params.chiaIdentity.private_key;
+    // this.have_potato = have_potato;
+    /*
+    this.cradle = wasm.create_game_cradle({
+        seed: seed,
+        game_types: env.game_types,
+        identity: identity.private_key,
+        have_potato: have_potato,
+        my_contribution: {amt: my_contribution},
+        their_contribution: {amt: their_contribution},
+        channel_timeout: env.timeout,
+        unroll_timeout: env.unroll_timeout,
+        reward_puzzle_hash: rewardPuzzleHash
+      });
+    */
   }
 
   getIdentity() : IChiaIdentity {

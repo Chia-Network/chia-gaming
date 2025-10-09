@@ -19,7 +19,7 @@ export function getNewChiaGameCradle(wasmConnection: WasmConnection, params: Gam
         // This is a JsGameCradleConfig
         rng_id: params.rng.getId(),
         game_types: params.env.game_types,
-        identity: params.chiaIdentity.private_key,
+        identity: params.chiaIdentity,
         have_potato: params.iStarted,
         my_contribution: {amt: params.myContribution},
         their_contribution: {amt: params.theirContribution},
@@ -27,6 +27,8 @@ export function getNewChiaGameCradle(wasmConnection: WasmConnection, params: Gam
         unroll_timeout: params.env.unroll_timeout,
         reward_puzzle_hash: params.chiaIdentity.puzzle_hash,
     });
+    console.log(`constructed cradle ${params.iStarted} with id ${cradleId} and publicKey ${params.chiaIdentity.public_key}`);
+
     let cradle = new ChiaGame(wasmConnection, cradleId);
     return cradle;
 }
@@ -327,6 +329,34 @@ export class WasmBlobWrapper {
 
           coin = new_coin_string;
         }
+/*
+        const env = {
+          game_types: {
+            "calpoker": {
+              version: 1,
+              hex: calpokerHex
+            }
+          },
+          timeout: 100,
+          unroll_timeout: 100
+        };
+        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount, result.fromPuzzleHash);
+        this.storedMessages.forEach((m) => {
+          this.cradle?.deliver_message(m);
+        });
+        this.cradle.opening_coin(coin);
+        return {
+          'setGameConnectionState': {
+            stateIdentifier: "starting",
+            stateDetail: ["doing handshake"]
+          }
+        };
+      }).catch((e) => {
+        return {
+          'setError': e.toString()
+        };
+      });
+      */
         return coin;
     });
   }

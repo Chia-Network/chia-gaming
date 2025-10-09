@@ -161,6 +161,7 @@ pub struct GameStartRecord {
 pub struct IdleResult {
     pub continue_on: bool,
     pub finished: bool,
+    pub shutdown_received: bool,
     pub handshake_done: bool,
     pub outbound_transactions: VecDeque<SpendBundle>,
     pub coin_solution_requests: VecDeque<CoinString>,
@@ -300,6 +301,7 @@ struct SynchronousGameCradleState {
     game_messages: VecDeque<(GameID, ReadableMove)>,
     game_started: VecDeque<GameStartRecord>,
     game_finished: VecDeque<(GameID, Amount)>,
+    shutdown_received: bool,
     finished: bool,
     shutdown: Option<CoinString>,
     identity: ChiaIdentity,
@@ -394,6 +396,7 @@ impl SynchronousGameCradle {
                 unfunded_offer: None,
                 shutdown: None,
                 resync: None,
+                shutdown_received: false,
                 finished: false,
             },
             peer: PotatoHandler::new(PotatoHandlerInit {
@@ -497,6 +500,10 @@ impl ToLocalUI for SynchronousGameCradleState {
         // XXX cancelled list
         self.game_finished
             .push_back((id.clone(), Amount::default()));
+        Ok(())
+    }
+    fn shutdown_started(&mut self) -> Result<(), Error> {
+        self.shutdown_received = true;
         Ok(())
     }
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error> {
@@ -920,6 +927,7 @@ impl GameCradle for SynchronousGameCradle {
 
         let mut result = IdleResult {
             finished: self.finished(),
+            shutdown_received: self.state.shutdown_received,
             ..IdleResult::default()
         };
 

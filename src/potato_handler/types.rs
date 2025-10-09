@@ -278,6 +278,7 @@ pub trait ToLocalUI {
     fn game_finished(&mut self, id: &GameID, mover_share: Amount) -> Result<(), Error>;
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
+    fn shutdown_started(&mut self) -> Result<(), Error>;
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
 }

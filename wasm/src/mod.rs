@@ -104,6 +104,7 @@ export type IdleCallbacks = {
     "opponent_moved": ((game_id: string, readable_move_hex: string) => void) | undefined,
     "game_message": ((game_id: string, readable_move_hex: string) => void) | undefined,
     "game_finished": ((game_id: string) => void) | undefined,
+    "shutdown_started": (() => void) | undefined,
     "shutdown_complete": ((coin: string) => void) | undefined,
     "going_on_chain": (() => void) | undefined
 };
@@ -761,6 +762,14 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
+    fn shutdown_started(
+        &mut self
+    ) -> Result<(), chia_gaming::common::types::Error> {
+        call_javascript_from_collection(&self.callbacks, "shutdown_started", |args_array| {
+            Ok(())
+        })
+    }
+
     fn shutdown_complete(
         &mut self,
         coin: Option<&CoinString>,
@@ -838,6 +847,7 @@ struct JsGameStarted {
 struct JsIdleResult {
     continue_on: bool,
     finished: bool,
+    shutdown_received: bool,
     outbound_transactions: Vec<JsSpendBundle>,
     outbound_messages: Vec<String>,
     opponent_move: Option<(String, String)>,
@@ -925,6 +935,7 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
     serde_wasm_bindgen::to_value(&JsIdleResult {
         continue_on: idle_result.continue_on,
         finished: idle_result.finished,
+        shutdown_received: idle_result.shutdown_received,
         outbound_transactions: idle_result
             .outbound_transactions
             .iter()

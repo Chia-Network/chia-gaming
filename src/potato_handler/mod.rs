@@ -471,6 +471,7 @@ impl PotatoHandler {
 
                 system_interface.register_coin(coin, &timeout, Some("parent"))?;
                 let full_spend = ch.received_potato_clean_shutdown(env, sig, clvm_conditions)?;
+                system_interface.shutdown_started()?;
 
                 let channel_puzzle_public_key = ch.get_aggregate_channel_public_key();
                 let puzzle = puzzle_for_synthetic_public_key(
