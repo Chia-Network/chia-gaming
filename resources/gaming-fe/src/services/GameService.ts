@@ -1,7 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
-import { AppError, ErrorCodes } from '../types/errors';
-import { GameType, GameSession, Player, Room } from '../types/lobby';
+
 import { saveGameSession, getGameSession } from '../db';
+import { AppError, ErrorCodes } from '../types/errors';
+import { GameSession, Room } from '../types/lobby';
 
 export class GameService {
   private static instance: GameService;
@@ -68,7 +69,7 @@ export class GameService {
     return dbSession;
   }
 
-  public async validateGameAction(sessionId: string, playerId: string, action: string, data: any): Promise<boolean> {
+  public async validateGameAction(sessionId: string, _playerId: string, action: string, data: any): Promise<boolean> {
     const session = await this.getSession(sessionId);
     if (session.status !== 'in_progress') {
       throw new AppError(ErrorCodes.LOBBY.GAME_IN_PROGRESS, 'Game is not in progress', 400);
@@ -149,14 +150,20 @@ export class GameService {
     }
   }
 
-  private async processPokerAction(session: GameSession, playerId: string, action: string, data: any): Promise<void> {}
+  private async processPokerAction(_session: GameSession, _playerId: string, _action: string, _data: any): Promise<void> {
+    // TODO: Implement poker action processing
+  }
 
-  private async processKrunkAction(session: GameSession, playerId: string, action: string, data: any): Promise<void> {}
+  private async processKrunkAction(_session: GameSession, _playerId: string, _action: string, _data: any): Promise<void> {
+    // TODO: Implement krunk action processing
+  }
 
   private async processExoticPokerAction(
-    session: GameSession,
-    playerId: string,
-    action: string,
-    data: any,
-  ): Promise<void> {}
+    _session: GameSession,
+    _playerId: string,
+    _action: string,
+    _data: any,
+  ): Promise<void> {
+    // TODO: Implement exotic poker action processing
+  }
 }

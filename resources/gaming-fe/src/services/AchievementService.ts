@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+
 import { AppError, ErrorCodes } from '../types/errors';
 import { GameType } from '../types/lobby';
 
@@ -126,7 +127,6 @@ export class AchievementService {
     },
   ): string[] {
     const unlockedAchievements: string[] = [];
-    const playerAchievements = this.getPlayerAchievements(playerId);
 
     for (const achievement of this.achievements.values()) {
       let progress = 0;

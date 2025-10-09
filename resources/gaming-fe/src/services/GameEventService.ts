@@ -1,4 +1,5 @@
 import type { Socket } from 'socket.io-client';
+
 import { AppError, ErrorCodes } from '../types/errors';
 import { GameType } from '../types/lobby';
 
@@ -8,9 +9,7 @@ interface GameEvent {
   timestamp: Date;
 }
 
-interface GameEventHandlers {
-  [key: string]: ((data: any) => void)[];
-}
+type GameEventHandlers = Record<string, ((data: any) => void)[]>;
 
 interface GameEventSubscription {
   eventType: string;
@@ -21,13 +20,11 @@ export class GameEventService {
   private static instance: GameEventService;
   private socket: Socket | null = null;
   private eventHandlers: GameEventHandlers = {};
-  private reconnectAttempts: number = 0;
+  private reconnectAttempts = 0;
   private readonly maxReconnectAttempts: number = 5;
   private readonly reconnectDelay: number = 1000;
   private readonly eventQueue: GameEvent[] = [];
   private readonly maxQueueSize: number = 100;
-
-  private constructor() {}
 
   public static getInstance(): GameEventService {
     if (!GameEventService.instance) {
@@ -36,12 +33,12 @@ export class GameEventService {
     return GameEventService.instance;
   }
 
-  public connect(url: string, options: any = {}): void {
+  public async connect(url: string, options: any = {}): Promise<void> {
     if (this.socket?.connected) {
       return;
     }
 
-    const { io } = require('socket.io-client');
+    const { io } = await import('socket.io-client');
     this.socket = io(url, {
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
