@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const {Builder, Browser, By, Key, WebDriver, until} = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
 const firefox = require('selenium-webdriver/firefox');
-const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, waitForNonError, sendControlA} = require('./util.js');
+const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, selectWalletConnect, waitForNonError, sendControlA, getAddress, getBalance, retrieveAddress} = require('./util.js');
 
 // Other browser
 const geckodriver = require('geckodriver');
@@ -55,10 +55,11 @@ async function clickMakeMove(driver, who) {
     await makeMoveButton.click();
 }
 
-async function firefox_start_and_first_move(driver, baseUrl) {
+async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
+  console.log('firefox start', baseUrl, driver);
   await driver.get(baseUrl);
 
-  await selectSimulator(driver);
+  await selectWallet(driver);
 
   await driver.wait(until.elementLocated(byAttribute("id", "subframe")));
 
@@ -148,11 +149,45 @@ describe("Out of money test", function() {
   const driver = driver1;
   const ffdriver = driver2;
 
-  async function testTwoGamesAndShutdown() {
+  async function testOneGameEconomicResult(selectWallet) {
     // Load the login page
     await driver.get(baseUrl);
 
-    await selectSimulator(driver);
+    await selectWallet(driver);
+
+    await wait(driver, 5.0);
+
+    await driver.switchTo().frame('subframe');
+
+    const partnerUrl = await initiateGame(driver, 200);
+
+    // Spawn second browser.
+    console.log('second browser start');
+    await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
+
+    console.log('wait for alice make move button');
+    await clickMakeMove(driver, 'alice');
+
+    await clickFourCards(ffdriver, 'bob');
+
+    console.log('selecting alice cards');
+    await clickFourCards(driver, 'alice');
+
+    console.log('stop the game');
+    let stopButton = await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("aria-label", "stop-playing"))), (elt) => waitAriaEnabled(driver, elt), 1.0);
+    await stopButton.click();
+
+    console.log('awaiting shutdown');
+
+    await gotShutdown(ffdriver);
+    await gotShutdown(driver);
+}
+
+  async function testTwoGamesAndShutdown(selectWallet) {
+    // Load the login page
+    await driver.get(baseUrl);
+
+    await selectWallet(driver);
 
     await wait(driver, 5.0);
 
@@ -175,7 +210,12 @@ describe("Out of money test", function() {
 
     // Spawn second browser.
     console.log('second browser start');
-    await firefox_start_and_first_move(ffdriver, partnerUrl);
+    await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
+
+    const address1 = await retrieveAddress(driver);
+    const preBalance1 = await getBalance(driver, address1.puzzleHash);
+    const address2 = await retrieveAddress(ffdriver);
+    const preBalance2 = await getBalance(ffdriver, address2.puzzleHash);
 
     console.log('wait for alice make move button');
     await clickMakeMove(driver, 'alice');
@@ -200,15 +240,42 @@ describe("Out of money test", function() {
     let stopButton = await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("aria-label", "stop-playing"))), (elt) => waitAriaEnabled(driver, elt), 1.0);
     await stopButton.click();
 
+    const logEntries = [];
+    let expectedPost1 = preBalance1 + 200;
+    let expectedPost2 = preBalance2 + 200;
+    const outcomeToAddition = {"lose":-10, "win":10, "tie":0};
+
+    console.log('searching for outcome');
+    for (let i = 0; i < 2; i++) {
+        const logEntryMe = await driver.wait(until.elementLocated(byAttribute("aria-label", `log-entry-me-${i}`)));
+        const logEntryOpponent = await driver.wait(until.elementLocated(byAttribute("aria-label", `log-entry-opponent-${i}`)));
+        const outcomeMe = await logEntryMe.getAttribute("innerText");
+        const outcomeOpponent = await logEntryOpponent.getAttribute("innerText");
+        const addition = (outcomeMe.indexOf("WINNER") != -1) ? 10 : (outcomeOpponent.indexOf("WINNER") != -1) ? -10 : 0;
+        expectedPost1 += addition;
+        expectedPost2 -= addition;
+    }
+
     console.log('awaiting shutdown');
     await gotShutdown(ffdriver);
     await gotShutdown(driver);
 
     console.log('terminating');
-  }
 
-  async function testRunOutOfMoney() {
+    const postBalance1 = await getBalance(driver, address1.puzzleHash);
+    const postBalance2 = await getBalance(ffdriver, address2.puzzleHash);
+
+    console.log('balance1', preBalance1, postBalance1);
+    console.log('balance2', preBalance2, postBalance2);
+
+    if (postBalance1 != expectedPost1 || postBalance2 != expectedPost2) {
+        throw new Error('Failed expected balance check');
+    }
+}
+
+  async function testRunOutOfMoney(selectWallet) {
     // Load the login page
+    console.log('driver.get', baseUrl, driver);
     await driver.get(baseUrl);
 
     await selectSimulator(driver);
@@ -221,7 +288,7 @@ describe("Out of money test", function() {
 
     // Spawn second browser.
     console.log('second browser start');
-    await firefox_start_and_first_move(ffdriver, partnerUrl);
+    await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
 
     console.log('wait for alice make move button');
     await clickMakeMove(driver, 'alice');
@@ -244,11 +311,19 @@ describe("Out of money test", function() {
     // Terminate early if we didn't get the browsers we wanted.
     expect(!!driver1 && !!driver2).toBe(true);
 
-    await testTwoGamesAndShutdown();
+    await testTwoGamesAndShutdown(selectSimulator);
+
+    return;
 
     await prepareBrowser(driver1);
     await prepareBrowser(driver2);
 
-    await testRunOutOfMoney();
+    await testRunOutOfMoney(selectSimulator);
+
+    await prepareBrowser(driver1);
+    await prepareBrowser(driver2);
+
+    await testTwoGamesAndShutdown(selectWalletConnect);
+
   }, 1 * 60 * 60 * 1000);
 });

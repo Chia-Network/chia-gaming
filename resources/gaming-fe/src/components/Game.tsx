@@ -26,6 +26,7 @@ const Game: React.FC = () => {
   const {
     error,
     log,
+    addressData,
     gameConnectionState,
     isPlayerTurn,
     iStarted,
@@ -180,6 +181,7 @@ const Game: React.FC = () => {
       <Typography>{moveDescription}</Typography>
       <br/>
       <GameLog log={log} />
+      <div id="blockchain-address" style={{ position: 'relative', width: 0, height: 0, opacity: '0%' }}>{JSON.stringify(addressData)}</div>
     </Box>
   );
 };

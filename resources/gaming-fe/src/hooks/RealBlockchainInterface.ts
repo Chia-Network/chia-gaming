@@ -2,7 +2,7 @@ import { Subject } from 'rxjs';
 // @ts-ignore
 import bech32 from 'bech32-buffer';
 import ReconnectingWebSocket from 'reconnecting-websocket';
-import { CoinOutput, WatchReport, BlockchainReport, SelectionMessage } from '../types/ChiaGaming';
+import { CoinOutput, WatchReport, BlockchainReport, SelectionMessage, BlockchainInboundAddressResult } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
 import { generateOrRetrieveUniqueId, empty, toHexString, toUint8 } from '../util';
@@ -17,6 +17,7 @@ const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
 
 export class RealBlockchainInterface {
   baseUrl: string;
+  addressData: BlockchainInboundAddressResult;
   fingerprint?: string;
   walletId: number;
   requestId: number;
@@ -31,6 +32,7 @@ export class RealBlockchainInterface {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+    this.addressData = { address: '', puzzleHash: '' };
     this.walletId = 1;
     this.requestId = 1;
     this.requests = {};
@@ -40,6 +42,8 @@ export class RealBlockchainInterface {
     this.incomingEvents = [];
     this.observable = new Subject();
   }
+
+  async getAddress() { return this.addressData; }
 
   startMonitoring() {
     if (this.ws) {
@@ -215,6 +219,7 @@ export function connectRealBlockchain(baseUrl: string) {
     next: async (evt: BlockchainOutboundRequest) => {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
+      let getAddress = evt.getAddress;
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({
@@ -231,12 +236,17 @@ export function connectRealBlockchain(baseUrl: string) {
           });
 
           let resultCoin = undefined;
-          result.transaction.additions.forEach((c) => {
-            console.log('look at coin', initialSpend.target, c);
-            if (c.puzzleHash == '0x' + initialSpend.target && c.amount.toString() == initialSpend.amount.toString()) {
-              resultCoin = c;
-            }
-          });
+          console.log('full spend result', result);
+          if (result.transaction) {
+            result.transaction.additions.forEach((c) => {
+              console.log('look at coin', initialSpend.target, c);
+              if (c.puzzleHash == '0x' + initialSpend.target && c.amount.toString() == initialSpend.amount.toString()) {
+                resultCoin = c;
+              }
+            });
+          } else {
+            resultCoin = (result as any).coin;
+          }
 
           if (!resultCoin) {
             blockchainConnector.replyEmitter({
@@ -288,6 +298,16 @@ export function connectRealBlockchain(baseUrl: string) {
             );
           });
         }
+      } else if (getAddress) {
+        rpc.getCurrentAddress({
+          walletId: 1
+        }).then((address) => {
+          console.log('currentAddress', address);
+          const puzzleHash = toHexString(bech32.decode(address).data as any);
+          const addressData = { address, puzzleHash };
+
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, getAddress: addressData });
+        });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({

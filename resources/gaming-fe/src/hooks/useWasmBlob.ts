@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, InternalBlockchainInterface, BlockchainReport, suitNames, OutcomeLogLine, handValueToDescription } from '../types/ChiaGaming';
+import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, InternalBlockchainInterface, BlockchainReport, suitNames, OutcomeLogLine, handValueToDescription, BlockchainInboundAddressResult } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
 import { useInterval } from '../useInterval';
@@ -97,6 +97,9 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
   const [log, setLog] = useState<OutcomeLogLine[]>([]);
+  const [addressData, setAddressData] = useState<BlockchainInboundAddressResult>({
+    address: '', puzzleHash: ''
+  });
   const [playerHand, setPlayerHand] = useState<number[][]>([]);
   const [opponentHand, setOpponentHand] = useState<number[][]>([]);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
@@ -192,7 +195,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     'setMoveNumber': setMoveNumber,
     'setError': setError,
     'setCardSelections': setOurCardSelections,
-    'setOutcome': recognizeOutcome
+    'setOutcome': recognizeOutcome,
+    'setAddressData': setAddressData
   };
 
   useEffect(() => {
@@ -217,6 +221,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   return {
     error,
+    addressData,
     log,
     gameIdentity,
     gameConnectionState,
