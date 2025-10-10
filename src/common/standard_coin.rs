@@ -1,9 +1,5 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fs::read_to_string;
-
 use chia_bls;
-use hex::FromHex;
+
 use log::debug;
 use num_bigint::{BigInt, Sign};
 
@@ -29,32 +25,6 @@ use crate::common::types::{
     Node, PrivateKey, Program, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
     ToQuotedProgram,
 };
-
-thread_local! {
-    pub static PRESET_FILES: RefCell<HashMap<String, String>> = RefCell::default();
-}
-
-pub fn wasm_deposit_file(name: &str, data: &str) {
-    PRESET_FILES.with(|p| {
-        p.borrow_mut().insert(name.to_string(), data.to_string());
-    });
-}
-
-pub fn hex_to_sexp(allocator: &mut AllocEncoder, hex_data: &str) -> Result<NodePtr, types::Error> {
-    let hex_stream = Vec::<u8>::from_hex(hex_data.trim()).into_gen()?;
-    node_from_bytes(allocator.allocator(), &hex_stream).into_gen()
-}
-
-pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzle, types::Error> {
-    let hex_data = if let Some(data) = PRESET_FILES.with(|p| p.borrow().get(name).cloned()) {
-        data
-    } else {
-        read_to_string(name)
-            .map_err(|_| types::Error::StrErr(format!("Couldn't read filename {name}")))?
-    };
-    let hex_sexp = hex_to_sexp(allocator, &hex_data)?;
-    Puzzle::from_nodeptr(allocator, hex_sexp)
-}
 
 pub fn get_standard_coin_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, types::Error> {
     let hex_sexp =
