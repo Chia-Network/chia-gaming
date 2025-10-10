@@ -173,7 +173,7 @@ impl<'a, R: Rng> SimulatorEnvironment<'a, R> {
             entropy.clone(),
         )?;
 
-        // XXX allow verification of ui result and message.
+        // TODO allow verification of ui result and message.
         if received {
             let move_result = self.parties.player(player ^ 1).ch.received_potato_move(
                 &mut self.env,
