@@ -25,6 +25,7 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
 }) => {
   let doHandleMakeMove = () => {
     let moveData = "80";
+    console.log("PlayerSection::doHandleMakeMove");
     handleMakeMove(moveData);
   };
   let setSelection = (index: number, selected: boolean) => {

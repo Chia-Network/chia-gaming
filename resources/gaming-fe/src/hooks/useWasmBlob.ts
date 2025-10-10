@@ -9,26 +9,7 @@ import { blockchainConnector } from './BlockchainConnector';
 import { PARENT_FRAME_BLOCKCHAIN_ID, parentFrameBlockchainInfo } from './ParentFrameBlockchainInfo';
 import { WasmStateInit, doInternalLoadWasm, fetchHex, storeInitArgs } from './WasmStateInit';
 import { WasmBlobWrapper, getNewChiaGameCradle } from './WasmBlobWrapper';
-import { Subject } from 'rxjs';
-
-
-export interface DeliverMessage {
-  deliverMessage: string;
-}
-export interface SocketEnabled {
-  socketEnabled: boolean;
-}
-export interface WasmMove {
-  wasmMove: string;
-}
-export interface SetCardSelections {
-  setCardSelections: number;
-}
-export interface Shutdown {
-  // TODO: Did we add a string or Enum here?
-  shutdown: boolean;
-}
-export type WasmCommand = DeliverMessage | SocketEnabled | WasmMove | SetCardSelections | Shutdown;
+import { WasmCommand, wasmCommandChannel, DeliverMessage, SocketEnabled, WasmMove, SetCardSelections, Shutdown} from '../types/GameController';
 
 let onceDammit = false;
 
@@ -126,8 +107,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     });
   }
 
-  const wasmCommandChannel = new Subject<WasmCommand>();
-
+//
   const loadCalpoker: () => Promise<any> = () => {
     const calpokerFactory = fetchHex(
       "clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex"
@@ -297,6 +277,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   }, []);
 
   const handleMakeMove = (move: string) => {
+    console.log("in useWasmBlob::useEffect::handleMakeMove");
     wasmCommandChannel.next({ wasmMove: move });
   }
 

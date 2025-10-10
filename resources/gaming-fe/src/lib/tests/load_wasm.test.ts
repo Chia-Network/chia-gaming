@@ -7,7 +7,7 @@ import { blockchainDataEmitter } from '../../hooks/BlockchainInfo';
 import { ChildFrameBlockchainInterface } from '../../hooks/ChildFrameBlockchainInterface';
 import { WasmBlobWrapper, getNewChiaGameCradle } from '../../hooks/WasmBlobWrapper'
 import { WasmStateInit, doInternalLoadWasm, storeInitArgs } from '../../hooks/WasmStateInit';
-import { WasmCommand } from '../../hooks/useWasmBlob';
+import { WasmCommand, wasmCommandChannel } from '../../types/GameController';
 import { Subject } from 'rxjs';
 
 const perGameAmount = 10;
