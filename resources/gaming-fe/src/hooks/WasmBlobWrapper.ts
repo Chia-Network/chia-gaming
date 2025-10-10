@@ -1,4 +1,16 @@
-import { PeerConnectionResult, WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, WatchReport, BlockchainReport, InternalBlockchainInterface } from '../types/ChiaGaming';
+import {
+  PeerConnectionResult,
+  WasmConnection,
+  GameCradleConfig,
+  IChiaIdentity,
+  GameConnectionState,
+  ExternalBlockchainInterface,
+  ChiaGame,
+  CalpokerOutcome,
+  WatchReport,
+  BlockchainReport,
+  InternalBlockchainInterface,
+} from '../types/ChiaGaming';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { Observable, NextObserver } from 'rxjs';
 
@@ -46,11 +58,17 @@ export class WasmBlobWrapper {
   rxjsEmitter: NextObserver<any> | undefined;
   blockchain: InternalBlockchainInterface;
 
-  constructor (blockchain: InternalBlockchainInterface, uniqueId: string, amount: number, perGameAmount: number, iStarted: boolean,
-        doInternalLoadWasm: () => Promise<ArrayBuffer>,
-        fetchHex: (key: string) => Promise<string>, peer_conn: PeerConnectionResult
-    ) {
-      const deliverMessage = (msg: string) => {
+  constructor(
+    blockchain: InternalBlockchainInterface,
+    uniqueId: string,
+    amount: number,
+    perGameAmount: number,
+    iStarted: boolean,
+    doInternalLoadWasm: () => Promise<ArrayBuffer>,
+    fetchHex: (key: string) => Promise<string>,
+    peer_conn: PeerConnectionResult,
+  ) {
+    const deliverMessage = (msg: string) => {
       this.deliverMessage(msg);
     };
 
@@ -79,7 +97,7 @@ export class WasmBlobWrapper {
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.blockchain = blockchain;
     this.rxjsMessageSingleon = new Observable<any>((emitter) => {
-        this.rxjsEmitter = emitter;
+      this.rxjsEmitter = emitter;
     });
   }
 
@@ -100,11 +118,11 @@ export class WasmBlobWrapper {
       return this.fetchHex(partialUrl).then((text) => {
         return {
           name: partialUrl,
-          content: text
+          content: text,
         };
       });
     });
-    return Promise.all(presetFetches).then(presets => {
+    return Promise.all(presetFetches).then((presets) => {
       presets.forEach((nameAndContent) => {
         console.log(`preset load ${nameAndContent.name} ${nameAndContent.content.length}`);
         this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
@@ -113,14 +131,14 @@ export class WasmBlobWrapper {
       this.identity = newGameIdentity;
       this.pushEvent({ loadCalpoker: true });
       return {
-        'setGameConnectionState': {
-          stateIdentifier: "starting",
-          stateDetail: ["loaded preset files"]
+        setGameConnectionState: {
+          stateIdentifier: 'starting',
+          stateDetail: ['loaded preset files'],
         },
-        'setGameIdentity': newGameIdentity
+        setGameIdentity: newGameIdentity,
       };
     });
-  };
+  }
 
   internalKickIdle(): any {
     let idle_info;
@@ -145,10 +163,7 @@ export class WasmBlobWrapper {
   handleOneMessage(msg: any): any {
     console.log('handleOneMessage', Object.keys(msg));
     if (msg.loadWasmEvent) {
-      return this.internalLoadWasm(
-        msg.loadWasmEvent.chia_gaming_init,
-        msg.loadWasmEvent.cg
-      );
+      return this.internalLoadWasm(msg.loadWasmEvent.chia_gaming_init, msg.loadWasmEvent.cg);
     } else if (msg.loadPresets) {
       return this.loadPresets(msg.loadPresets);
     } else if (msg.createStartCoin) {
@@ -177,24 +192,27 @@ export class WasmBlobWrapper {
       return this.internalTakeBlock(msg.takeBlockData.peak, msg.takeBlockData.block_report);
     }
 
-    console.error("Unknown event:", msg);
+    console.error('Unknown event:', msg);
     return empty();
   }
 
   updateCards(readable: any, result: any) {
-    let card_lists = proper_list(readable).map((l: any) => proper_list(l).map((c: any) => proper_list(c).map((v: Uint8Array) => {
-      if (v.length > 0) {
-        return v[0];
-      }
-      return 0;
-    })));
+    let card_lists = proper_list(readable).map((l: any) =>
+      proper_list(l).map((c: any) =>
+        proper_list(c).map((v: Uint8Array) => {
+          if (v.length > 0) {
+            return v[0];
+          }
+          return 0;
+        }),
+      ),
+    );
     console.log('card_lists', card_lists);
     if (this.iStarted) {
       result.setPlayerHand = card_lists[1];
       result.setOpponentHand = card_lists[0];
       this.playerHand = card_lists[1];
       this.opponentHand = card_lists[0];
-
     } else {
       result.setPlayerHand = card_lists[0];
       result.setOpponentHand = card_lists[1];
@@ -209,14 +227,14 @@ export class WasmBlobWrapper {
       this.cardSelections,
       this.iStarted ? this.opponentHand : this.playerHand,
       this.iStarted ? this.playerHand : this.opponentHand,
-      readable
+      readable,
     );
     result.setOutcome = outcome;
   }
 
   takeOpponentMove(moveNumber: number, game_id: string, readable_move_hex: string): any {
     const result: any = {
-      setMyTurn: true
+      setMyTurn: true,
     };
     console.log('takeOpponentMove', moveNumber, game_id, readable_move_hex);
     let p = decode_sexp_hex(readable_move_hex);
@@ -241,7 +259,7 @@ export class WasmBlobWrapper {
   }
 
   takeGameMessage(moveNumber: number, game_id: string, readable_move_hex: string): any {
-    const result = { };
+    const result = {};
     console.log('takeGameMessage', moveNumber, game_id, readable_move_hex);
     let p = decode_sexp_hex(readable_move_hex);
     this.updateCards(p, result);
@@ -257,30 +275,32 @@ export class WasmBlobWrapper {
 
     this.handlingMessage = true;
     let result = null;
-    return this.handleOneMessage(msg).then((result: any) => {
-      this.rxjsEmitter?.next(result);
+    return this.handleOneMessage(msg)
+      .then((result: any) => {
+        this.rxjsEmitter?.next(result);
 
-      this.internalKickIdle();
+        this.internalKickIdle();
 
-      this.handlingMessage = false;
+        this.handlingMessage = false;
 
-      return this.kickMessageHandling();
-    }).catch((e: any) => {
-      console.error(e);
-      this.handlingMessage = false;
-      throw e;
-    });
+        return this.kickMessageHandling();
+      })
+      .catch((e: any) => {
+        console.error(e);
+        this.handlingMessage = false;
+        throw e;
+      });
   }
 
   loadCalpoker(): any {
-    return this.fetchHex("clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex").then(calpoker_hex => {
+    return this.fetchHex('clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex').then((calpoker_hex) => {
       this.calpokerHex = calpoker_hex;
       this.pushEvent({ createStartCoin: true });
       return {
-        'setGameConnectionState': {
-          stateIdentifier: "starting",
-          stateDetail: ["loaded calpoker"]
-        }
+        setGameConnectionState: {
+          stateIdentifier: 'starting',
+          stateDetail: ['loaded calpoker'],
+        },
       };
     });
   }
@@ -307,8 +327,9 @@ export class WasmBlobWrapper {
     }
 
     console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
-    return this.blockchain.
-      do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount).then(result => {
+    return this.blockchain
+      .do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount)
+      .then((result) => {
         let coin = result.coin;
         if (!coin) {
           throw new Error('tried to create spendable but failed');
@@ -317,7 +338,11 @@ export class WasmBlobWrapper {
         // Handle data conversion back when Coin object was received.
         if (typeof coin !== 'string') {
           const coinset_coin = coin as any;
-          const new_coin_string = this.wc?.convert_coinset_to_coin_string(coinset_coin.parentCoinInfo, coinset_coin.puzzleHash, coinset_coin.amount.toString());
+          const new_coin_string = this.wc?.convert_coinset_to_coin_string(
+            coinset_coin.parentCoinInfo,
+            coinset_coin.puzzleHash,
+            coinset_coin.amount.toString(),
+          );
           if (!new_coin_string) {
             throw new Error(`Coin could not be converted to coinstring: ${JSON.stringify(coinset_coin)}`);
           }
@@ -327,35 +352,45 @@ export class WasmBlobWrapper {
 
         const env = {
           game_types: {
-            "calpoker": {
+            calpoker: {
               version: 1,
-              hex: calpokerHex
-            }
+              hex: calpokerHex,
+            },
           },
           timeout: 100,
-          unroll_timeout: 100
+          unroll_timeout: 100,
         };
-        this.cradle = new ChiaGame(wc, env, this.rngSeed, identity, this.iStarted, this.amount, this.amount, result.fromPuzzleHash);
+        this.cradle = new ChiaGame(
+          wc,
+          env,
+          this.rngSeed,
+          identity,
+          this.iStarted,
+          this.amount,
+          this.amount,
+          result.fromPuzzleHash,
+        );
         this.storedMessages.forEach((m) => {
           this.cradle?.deliver_message(m);
         });
         this.cradle.opening_coin(coin);
         return {
-          'setGameConnectionState': {
-            stateIdentifier: "starting",
-            stateDetail: ["doing handshake"]
-          }
+          setGameConnectionState: {
+            stateIdentifier: 'starting',
+            stateDetail: ['doing handshake'],
+          },
         };
-      }).catch((e) => {
+      })
+      .catch((e) => {
         return {
-          'setError': e.toString()
+          setError: e.toString(),
         };
       });
   }
 
   internalLoadWasm(chia_gaming_init: any, cg: WasmConnection): any {
     console.log('wasm detected');
-    return this.doInternalLoadWasm().then(modData => {
+    return this.doInternalLoadWasm().then((modData) => {
       chia_gaming_init(modData);
       cg.init((msg: string) => console.warn('wasm', msg));
       this.wc = cg;
@@ -387,14 +422,14 @@ export class WasmBlobWrapper {
   internalStartGame(): any {
     let result: any = {};
     let gids = this.cradle?.start_games(!this.iStarted, {
-      game_type: "63616c706f6b6572",
+      game_type: '63616c706f6b6572',
       timeout: 100,
       amount: this.perGameAmount,
       my_contribution: this.perGameAmount / 2,
       my_turn: !this.iStarted,
-      parameters: "80"
+      parameters: '80',
     });
-    console.log("gameIds", gids);
+    console.log('gameIds', gids);
     if (gids) {
       gids.forEach((g) => {
         this.gameIds.push(g);
@@ -442,13 +477,13 @@ export class WasmBlobWrapper {
         result.setOpponentHand = [];
         result.setOutcome = undefined;
         result.setGameConnectionState = {
-          stateIdentifier: "running",
-          stateDetail: []
+          stateIdentifier: 'running',
+          stateDetail: [],
         };
 
         result.setMyTurn = false;
         this.messageQueue.push({ startGame: true });
-      }
+      },
     });
 
     if (!idle || this.finished) {
@@ -460,10 +495,10 @@ export class WasmBlobWrapper {
       this.finished = true;
       this.rxjsEmitter?.next({
         setGameConnectionState: {
-          stateIdentifier: "shutdown",
-          stateDetail: []
+          stateIdentifier: 'shutdown',
+          stateDetail: [],
         },
-        outcome: undefined
+        outcome: undefined,
       });
       this.messageQueue.push({ receivedShutdown: true });
       return result;
@@ -478,13 +513,13 @@ export class WasmBlobWrapper {
     result.setError = idle.receive_error;
     console.log('idle1', idle.action_queue);
     if (idle.handshake_done && !this.handshakeDone) {
-      console.warn("HANDSHAKE DONE");
+      console.warn('HANDSHAKE DONE');
       this.handshakeDone = true;
       result.setGameConnectionState = {
-        stateIdentifier: "running",
-        stateDetail: []
+        stateIdentifier: 'running',
+        stateDetail: [],
       };
-      console.log("starting games", this.iStarted);
+      console.log('starting games', this.iStarted);
       this.pushEvent({ startGame: true });
     }
 
@@ -502,7 +537,7 @@ export class WasmBlobWrapper {
       const cvt = (blob: string) => {
         return this.wc?.convert_spend_to_coinset_org(blob);
       };
-      this.blockchain.spend(cvt, blob).then(res => {
+      this.blockchain.spend(cvt, blob).then((res) => {
         console.log('spend res', res);
       });
     }
@@ -515,14 +550,16 @@ export class WasmBlobWrapper {
     for (let i = 0; i < 16; i++) {
       hexDigits.push(Math.floor(Math.random() * 16)).toString(16);
     }
-    let entropy = this.wc?.sha256bytes(hexDigits.join(""));
+    let entropy = this.wc?.sha256bytes(hexDigits.join(''));
     if (!entropy) {
       throw 'tried to make entropy without a wasm connection';
     }
     return entropy;
   }
 
-  isHandshakeDone(): boolean { return this.handshakeDone; }
+  isHandshakeDone(): boolean {
+    return this.handshakeDone;
+  }
 
   internalMakeMove(move: any): any {
     if (!this.handshakeDone || !this.wc || !this.cradle) {
@@ -532,14 +569,14 @@ export class WasmBlobWrapper {
     if (this.moveNumber === 0) {
       let entropy = this.generateEntropy();
       console.log('move 0 with entropy', entropy);
-      this.cradle?.make_move_entropy(this.gameIds[0], "80", entropy);
+      this.cradle?.make_move_entropy(this.gameIds[0], '80', entropy);
       this.moveNumber += 1;
       return empty().then(() => {
         return {
           setMyTurn: false,
-          setMoveNumber: this.moveNumber
+          setMoveNumber: this.moveNumber,
         };
-      })
+      });
     } else if (this.moveNumber === 1) {
       if (popcount(this.cardSelections) != 4) {
         return empty();
@@ -551,9 +588,9 @@ export class WasmBlobWrapper {
       return empty().then(() => {
         return {
           setMyTurn: false,
-          setMoveNumber: this.moveNumber
+          setMoveNumber: this.moveNumber,
         };
-      })
+      });
     } else if (this.moveNumber === 2) {
       this.moveNumber += 1;
       let entropy = this.generateEntropy();
@@ -563,11 +600,11 @@ export class WasmBlobWrapper {
           setMyTurn: false,
           setMoveNumber: this.moveNumber,
           setGameConnectionState: {
-            stateIdentifier: "end",
-            stateDetail: []
-          }
+            stateIdentifier: 'end',
+            stateDetail: [],
+          },
         };
-      })
+      });
     }
 
     throw `Don't yet know what to do for move ${this.moveNumber}`;
@@ -598,10 +635,10 @@ export class WasmBlobWrapper {
     }
     const result: any = {
       setGameConnectionState: {
-        stateIdentifier: "shutdown",
-        stateDetail: details
+        stateIdentifier: 'shutdown',
+        stateDetail: details,
       },
-      outcome: undefined
+      outcome: undefined,
     };
     console.log('shutting down cradle');
     this.cradle?.shut_down();
@@ -620,8 +657,8 @@ export class WasmBlobWrapper {
     console.warn('internalReceivedShutdown', this.finished);
     console.warn('setting shutdown state in ui');
     result.setGameConnectionState = {
-      stateIdentifier: "shutdown",
-      stateDetail: []
+      stateIdentifier: 'shutdown',
+      stateDetail: [],
     };
     result.outcome = undefined;
     return empty().then(() => result);
@@ -632,7 +669,7 @@ export class WasmBlobWrapper {
       block_report = {
         created_watched: [],
         deleted_watched: [],
-        timed_out: []
+        timed_out: [],
       };
       for (var b = 0; b < blocks.length; b++) {
         const block = blocks[b];
@@ -641,7 +678,7 @@ export class WasmBlobWrapper {
           block.coin.puzzle_hash,
           block.coin.amount.toString(),
           block.puzzle_reveal,
-          block.solution
+          block.solution,
         );
         if (one_report) {
           combine_reports(block_report, one_report);
@@ -649,9 +686,11 @@ export class WasmBlobWrapper {
       }
     }
     this.kickSystem(4);
-    this.pushEvent({ takeBlockData: {
-      peak: peak,
-      block_report: block_report
-    }});
+    this.pushEvent({
+      takeBlockData: {
+        peak: peak,
+        block_report: block_report,
+      },
+    });
   }
 }

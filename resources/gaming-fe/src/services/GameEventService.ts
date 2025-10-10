@@ -46,7 +46,7 @@ export class GameEventService {
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
       reconnectionDelay: this.reconnectDelay,
-      ...options
+      ...options,
     });
 
     this.setupSocketListeners();
@@ -74,11 +74,7 @@ export class GameEventService {
       console.error('Connection error:', error);
       this.reconnectAttempts++;
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-        throw new AppError(
-          ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-          'Failed to connect to game server',
-          503
-        );
+        throw new AppError(ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE, 'Failed to connect to game server', 503);
       }
     });
 
@@ -102,7 +98,7 @@ export class GameEventService {
 
     return {
       eventType,
-      handler
+      handler,
     };
   }
 
@@ -125,7 +121,7 @@ export class GameEventService {
     this.socket.emit('game_event', {
       type: eventType,
       data,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 
@@ -133,7 +129,7 @@ export class GameEventService {
     const event: GameEvent = {
       type: eventType,
       data,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
     this.eventQueue.push(event);
@@ -154,7 +150,7 @@ export class GameEventService {
   private handleGameEvent(event: GameEvent): void {
     const handlers = this.eventHandlers[event.type];
     if (handlers) {
-      handlers.forEach(handler => {
+      handlers.forEach((handler) => {
         try {
           handler(event.data);
         } catch (error) {
@@ -166,11 +162,7 @@ export class GameEventService {
 
   public joinGameRoom(gameId: string): void {
     if (!this.socket?.connected) {
-      throw new AppError(
-        ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
-      );
+      throw new AppError(ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE, 'Not connected to game server', 503);
     }
 
     this.socket.emit('join_game_room', { gameId });
@@ -186,11 +178,7 @@ export class GameEventService {
 
   public joinLobby(gameType: GameType): void {
     if (!this.socket?.connected) {
-      throw new AppError(
-        ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
-      );
+      throw new AppError(ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE, 'Not connected to game server', 503);
     }
 
     this.socket.emit('join_lobby', { gameType });
@@ -206,44 +194,32 @@ export class GameEventService {
 
   public sendChatMessage(roomId: string, message: string): void {
     if (!this.socket?.connected) {
-      throw new AppError(
-        ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
-      );
+      throw new AppError(ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE, 'Not connected to game server', 503);
     }
 
     this.socket.emit('chat_message', {
       roomId,
       message,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 
   public sendGameAction(gameId: string, action: string, data: any): void {
     if (!this.socket?.connected) {
-      throw new AppError(
-        ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
-      );
+      throw new AppError(ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE, 'Not connected to game server', 503);
     }
 
     this.socket.emit('game_action', {
       gameId,
       action,
       data,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 
   public requestGameState(gameId: string): void {
     if (!this.socket?.connected) {
-      throw new AppError(
-        ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
-      );
+      throw new AppError(ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE, 'Not connected to game server', 503);
     }
 
     this.socket.emit('request_game_state', { gameId });
@@ -264,4 +240,4 @@ export class GameEventService {
   public clearEventQueue(): void {
     this.eventQueue.length = 0;
   }
-} 
+}

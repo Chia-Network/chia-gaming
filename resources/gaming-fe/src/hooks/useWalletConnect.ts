@@ -37,15 +37,25 @@ class WalletState {
     this.observable = new Subject();
   }
 
-  getObservable() { return this.observable; }
+  getObservable() {
+    return this.observable;
+  }
 
-  getClient() { return this.client; }
+  getClient() {
+    return this.client;
+  }
 
-  getSession() { return this.session; }
+  getSession() {
+    return this.session;
+  }
 
-  getChainId() { return CHAIN_ID; }
+  getChainId() {
+    return CHAIN_ID;
+  }
 
-  getAddress() { return this.address; }
+  getAddress() {
+    return this.address;
+  }
 
   async init() {
     if (this.isInitialized) {
@@ -54,7 +64,7 @@ class WalletState {
 
     this.isInitialized = true;
 
-    this.observable.next({ stateName: "initializing", initializing: true });
+    this.observable.next({ stateName: 'initializing', initializing: true });
 
     const signClient = await Client.init({
       logger: 'error',
@@ -64,10 +74,9 @@ class WalletState {
         name: 'Chia Gaming',
         description: 'Chia Gaming Platform',
         url: window.location.origin,
-        icons: [`${window.location.origin}/logo.png`]
-      }
+        icons: [`${window.location.origin}/logo.png`],
+      },
     });
-
 
     this.client = signClient;
     const sessions = signClient.session.getAll();
@@ -79,17 +88,17 @@ class WalletState {
       this.address = address;
       this.session = session;
       this.observable.next({
-        stateName: "connected",
+        stateName: 'connected',
         initialized: true,
         haveClient: true,
         haveSession: true,
         connected: true,
-        sessions: sessions.length
+        sessions: sessions.length,
       });
     }
 
     this.observable.next({
-      stateName: "initialized",
+      stateName: 'initialized',
       initialized: true,
       haveClient: true,
     });
@@ -99,10 +108,10 @@ class WalletState {
     if (!this.client || !this.session) return;
 
     this.observable.next({
-      stateName: "initialized",
+      stateName: 'initialized',
       connected: false,
       sessions: 0,
-      address: undefined
+      address: undefined,
     });
 
     try {
@@ -110,8 +119,8 @@ class WalletState {
         topic: this.session.topic,
         reason: {
           code: 6000,
-          message: 'User disconnected'
-        }
+          message: 'User disconnected',
+        },
       });
     } catch (error) {
       this.error = 'Failed to disconnect wallet';
@@ -120,23 +129,23 @@ class WalletState {
 
   async startConnect(): Promise<StartConnectResult> {
     this.observable.next({
-      stateName: "connecting",
-      connecting: true
+      stateName: 'connecting',
+      connecting: true,
     });
     const { uri, approval } = await this.client.connect({
       optionalNamespaces: {
         chia: {
           methods: ['chia_getCurrentAddress', 'chia_sendTransaction'],
           chains: [CHAIN_ID],
-          events: []
-        }
-      }
+          events: [],
+        },
+      },
     });
 
     this.observable.next({
-      stateName: "waitingApproval",
+      stateName: 'waitingApproval',
       waitingApproval: true,
-      connecting: false
+      connecting: false,
     });
 
     return { uri, approval };
@@ -147,16 +156,16 @@ class WalletState {
     const address = session.namespaces.chia.accounts[0].split(':')[2];
 
     this.observable.next({
-      stateName: "connected",
+      stateName: 'connected',
       waitingApproval: false,
       connected: true,
       sessions: 1,
-      address
+      address,
     });
 
     this.address = address;
     this.session = session;
   }
-};
+}
 
 export const walletConnectState = new WalletState();

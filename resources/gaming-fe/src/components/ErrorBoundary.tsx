@@ -1,4 +1,4 @@
-import React from "react";
+import React from 'react';
 
 export interface ErrorProps {
   rerender: () => void;
@@ -26,7 +26,14 @@ export class ErrorBoundary extends React.Component<ErrorProps> {
     if (this.state.hasError) {
       // You can render any custom fallback UI
       return (
-        <button onClick={() => { this.state.hasError = false; this.props.rerender(); }}>Error rendering: {this.state.hasError}</button>
+        <button
+          onClick={() => {
+            this.state.hasError = false;
+            this.props.rerender();
+          }}
+        >
+          Error rendering: {this.state.hasError}
+        </button>
       );
     }
 

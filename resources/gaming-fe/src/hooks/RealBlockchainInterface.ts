@@ -52,12 +52,14 @@ export class RealBlockchainInterface {
       console.log('coinset json', json);
       if (json.type === 'peak') {
         this.peak = json.data.height;
-        this.pushEvent({checkPeak: true});
+        this.pushEvent({ checkPeak: true });
       }
     });
   }
 
-  getObservable() { return this.observable; }
+  getObservable() {
+    return this.observable;
+  }
 
   does_initial_spend() {
     return (target: string, amt: number) => {
@@ -66,12 +68,12 @@ export class RealBlockchainInterface {
         method: 'create_spendable',
         target,
         targetXch,
-        amt
-      })
+        amt,
+      });
     };
   }
 
-  set_puzzle_hash(puzzleHash: string) { }
+  set_puzzle_hash(puzzleHash: string) {}
 
   async internalRetrieveBlock(height: number) {
     console.log('full node: retrieve block', height);
@@ -79,10 +81,10 @@ export class RealBlockchainInterface {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        Accept: 'application/json',
       },
-      body: JSON.stringify({ height })
-    }).then(r => r.json());
+      body: JSON.stringify({ height }),
+    }).then((r) => r.json());
     console.log('br_height', br_height);
     this.at_block = br_height.block_record.height + 1;
     const header_hash = br_height.block_record.header_hash;
@@ -90,17 +92,17 @@ export class RealBlockchainInterface {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        Accept: 'application/json',
       },
       body: JSON.stringify({
-        header_hash: header_hash
-      })
-    }).then(r => r.json());
+        header_hash: header_hash,
+      }),
+    }).then((r) => r.json());
     console.log('br_spends', br_spends.block_spends);
     this.observable.next({
       peak: this.at_block,
       block: br_spends.block_spends,
-      report: undefined
+      report: undefined,
     });
   }
 
@@ -162,7 +164,7 @@ export class RealBlockchainInterface {
     this.requests[requestId] = {
       complete: promise_complete,
       reject: promise_reject,
-      requestId: requestId
+      requestId: requestId,
     };
     return p;
   }
@@ -173,40 +175,46 @@ export class RealBlockchainInterface {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        Accept: 'application/json',
       },
-      body: JSON.stringify({ spend_bundle: spend })
-    }).then(r => r.json()).then(r => {
-      if (r.error && r.error.indexOf("UNKNOWN_UNSPENT") != -1) {
-        console.log('unknown unspent, retry in 60 seconds');
-        return new Promise((resolve, reject) => {
-          setTimeout(() => {
-            this.spend(spend).then(r => resolve(r)).catch(reject);
-          }, 60000);
-        });
-      }
+      body: JSON.stringify({ spend_bundle: spend }),
+    })
+      .then((r) => r.json())
+      .then((r) => {
+        if (r.error && r.error.indexOf('UNKNOWN_UNSPENT') != -1) {
+          console.log('unknown unspent, retry in 60 seconds');
+          return new Promise((resolve, reject) => {
+            setTimeout(() => {
+              this.spend(spend)
+                .then((r) => resolve(r))
+                .catch(reject);
+            }, 60000);
+          });
+        }
 
-      return r;
-    });
+        return r;
+      });
   }
 }
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
   console.log('requestBlockData', block_number);
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
-    method: 'POST'
-  }).then((res) => res.json()).then((res) => {
-    console.log('requestBlockData, got', res);
-    const converted_res: WatchReport = {
-      created_watched: res.created,
-      deleted_watched: res.deleted,
-      timed_out: res.timed_out
-    };
-    forWho.deliverBlock(block_number, converted_res);
-  });
+    method: 'POST',
+  })
+    .then((res) => res.json())
+    .then((res) => {
+      console.log('requestBlockData, got', res);
+      const converted_res: WatchReport = {
+        created_watched: res.created,
+        deleted_watched: res.deleted,
+        timed_out: res.timed_out,
+      };
+      forWho.deliverBlock(block_number, converted_res);
+    });
 }
 
-export const realBlockchainInfo: RealBlockchainInterface = new RealBlockchainInterface("https://api.coinset.org");
+export const realBlockchainInfo: RealBlockchainInterface = new RealBlockchainInterface('https://api.coinset.org');
 
 export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(realBlockchainInfo.getObservable());
 
@@ -218,7 +226,7 @@ export function connectRealBlockchain(baseUrl: string) {
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({
-            walletId: 1
+            walletId: 1,
           });
           console.log('currentAddress', currentAddress);
           const fromPuzzleHash = toHexString(bech32.decode(currentAddress).data as any);
@@ -227,7 +235,7 @@ export function connectRealBlockchain(baseUrl: string) {
             amount: initialSpend.amount,
             fee: 0,
             address: bech32.encode('xch', toUint8(initialSpend.target), 'bech32m'),
-            waitForConfirmation: false
+            waitForConfirmation: false,
           });
 
           let resultCoin = undefined;
@@ -241,20 +249,20 @@ export function connectRealBlockchain(baseUrl: string) {
           if (!resultCoin) {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
-              error: `no corresponding coin created in ${JSON.stringify(result)}`
+              error: `no corresponding coin created in ${JSON.stringify(result)}`,
             });
             return;
           }
 
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
-            initialSpend: { coin: resultCoin as any, fromPuzzleHash }
+            initialSpend: { coin: resultCoin as any, fromPuzzleHash },
           });
         } catch (e: any) {
           console.log('catch from rpc', evt, ':', e);
           blockchainConnector.replyEmitter({
             responseId: evt.requestId,
-            error: JSON.stringify(e)
+            error: JSON.stringify(e),
           });
         }
       } else if (transaction) {
@@ -263,18 +271,18 @@ export function connectRealBlockchain(baseUrl: string) {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Accept': 'application/json'
+              Accept: 'application/json',
             },
-            body: JSON.stringify({ spend_bundle: transaction.spendObject })
+            body: JSON.stringify({ spend_bundle: transaction.spendObject }),
           });
           let j = await r.json();
 
           // Return if the result was not unknown unspent, in which case we
           // retry.
-          if (!j.error || j.error.indexOf("UNKNOWN_UNSPENT") === -1) {
+          if (!j.error || j.error.indexOf('UNKNOWN_UNSPENT') === -1) {
             let result = {
               responseId: evt.requestId,
-              transaction: Object.assign({}, j)
+              transaction: Object.assign({}, j),
             };
             blockchainConnector.replyEmitter(result);
             return;
@@ -282,28 +290,25 @@ export function connectRealBlockchain(baseUrl: string) {
 
           // Wait a while to try the request again.
           await new Promise((resolve, reject) => {
-            setTimeout(
-              resolve,
-              PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED
-            );
+            setTimeout(resolve, PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED);
           });
         }
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({
           responseId: evt.requestId,
-          error: `unknown blockchain request type ${JSON.stringify(evt)}`
+          error: `unknown blockchain request type ${JSON.stringify(evt)}`,
         });
       }
-    }
+    },
   });
 }
 
 blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == REAL_BLOCKCHAIN_ID) {
-      console.log("real blockchain selected");
+      console.log('real blockchain selected');
       realBlockchainInfo.startMonitoring();
     }
-  }
+  },
 });
