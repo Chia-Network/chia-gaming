@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 
 use wasm_bindgen::prelude::*;
 
-use chia_gaming::channel_handler::types::{GameStartFailed, ReadableMove};
-use chia_gaming::common::standard_coin::ChiaIdentity;
-use chia_gaming::common::load_clvm::{puzzle_hash_for_pk, wasm_deposit_file};
+use chia_gaming::channel_handler::types::{ReadableMove, GameStartFailed};
+use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
+use chia_gaming::common::load_clvm::wasm_deposit_file;
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString,
