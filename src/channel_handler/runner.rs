@@ -7,8 +7,9 @@ use crate::channel_handler::{
     ChannelHandlerInitiationResult, ChannelHandlerPrivateKeys, HandshakeResult,
 };
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
+use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::{
-    get_standard_coin_puzzle, private_to_public_key, puzzle_for_pk, read_hex_puzzle,
+    get_standard_coin_puzzle, private_to_public_key, puzzle_for_pk,
 };
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, Error, GameID, Hash, Puzzle, PuzzleHash, Sha256tree, Timeout,

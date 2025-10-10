@@ -18,7 +18,8 @@ use crate::channel_handler::types::{
 use crate::channel_handler::v1::game::Game;
 use crate::channel_handler::v1::game_handler::{GameHandler, MyTurnInputs, TheirTurnInputs};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
-use crate::common::standard_coin::{read_hex_puzzle, ChiaIdentity};
+use crate::common::load_clvm::read_hex_puzzle;
+use crate::common::standard_coin::ChiaIdentity;
 #[cfg(test)]
 use crate::common::types::PrivateKey;
 use crate::common::types::{

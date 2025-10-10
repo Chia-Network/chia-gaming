@@ -4,7 +4,7 @@ pub mod calpoker_v1;
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 
-use crate::common::standard_coin::read_hex_puzzle;
+use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{AllocEncoder, Program};
 use crate::potato_handler::types::{GameFactory, GameType};
 use std::collections::BTreeMap;

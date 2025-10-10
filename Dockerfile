@@ -76,7 +76,6 @@ RUN mkdir -p /app/dist
 COPY resources/gaming-fe /app
 RUN cd /app && yarn run build
 
-COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 RUN ln -s /app/resources /resources
 ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp
