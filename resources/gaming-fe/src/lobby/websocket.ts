@@ -1,6 +1,7 @@
-import { Server as SocketIOServer } from 'socket.io';
 import { Server as HTTPServer } from 'http';
-import { Player, MatchmakingPreferences, Room } from '../types/lobby';
+
+import { Server as SocketIOServer } from 'socket.io';
+
 import { GAME_SERVICE_URL } from '../settings';
 
 export const setupWebSocket = (httpServer: HTTPServer) => {

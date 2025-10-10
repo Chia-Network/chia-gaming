@@ -1,15 +1,14 @@
 import { Box, Typography, CircularProgress } from '@mui/material';
-import React from 'react';
 
 interface WaitingScreenProps {
   stateName: string;
   messages: string[];
 }
 
-const WaitingScreen: React.FC<WaitingScreenProps> = ({
+const WaitingScreen = ({
   stateName,
   messages,
-}) => {
+}: WaitingScreenProps) => {
   return (
     <Box
       p={4}

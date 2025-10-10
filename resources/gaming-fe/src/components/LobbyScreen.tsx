@@ -1,4 +1,3 @@
-import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -12,12 +11,14 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { useState, useEffect, useCallback } from 'react';
+
 import { useLobbySocket } from '../hooks/useLobbyConnection';
 import { generateOrRetrieveAlias, updateAlias } from '../util';
 
 interface LobbyComponentProps {}
 
-const LobbyScreen: React.FC<LobbyComponentProps> = () => {
+const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
   const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } =
     useLobbySocket(myAlias, true);
@@ -54,7 +55,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
 
   const handleCreate = async () => {
     if (!gameChoice || !wagerInput) return;
-    const { secureUrl, token } = await generateRoom(gameChoice, wagerInput, perHandInput);
+    const { secureUrl } = await generateRoom(gameChoice, wagerInput, perHandInput);
     setGotoUrl(secureUrl);
     window.prompt('Share this room URL:', secureUrl);
     closeDialog();

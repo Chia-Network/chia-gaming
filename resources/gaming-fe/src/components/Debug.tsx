@@ -1,6 +1,6 @@
+import { Box, Button, Typography, TextField } from '@mui/material';
 import React from 'react';
 //import { useWalletConnect } from "../hooks/WalletConnectContext";
-import { Box, Button, Typography, TextField, Paper } from '@mui/material';
 
 interface DebugProps {
   connectString: string;
@@ -25,7 +25,7 @@ const onConnect = () => {
 
 //const onSetConnectString = () => { 0; }
 // const setWCStringButtonHandler = () => { 0; }
-const setWCStringButtonHandler = () => {};
+const setWCStringButtonHandler = () => void 0;
 
 // Rename: DebugPanel, DebugSection ...
 const Debug: React.FC<DebugProps> = ({ connectString, setConnectString }) => {

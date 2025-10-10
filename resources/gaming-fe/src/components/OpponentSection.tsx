@@ -1,6 +1,6 @@
-import React from 'react';
-import { useCallback } from 'react';
 import { Box, Typography, Paper } from '@mui/material';
+import { useCallback } from 'react';
+
 import PlayingCard from './PlayingCard';
 
 interface OpponentSectionProps {
@@ -8,8 +8,8 @@ interface OpponentSectionProps {
   opponentHand: number[][];
 }
 
-const OpponentSection: React.FC<OpponentSectionProps> = ({ playerNumber, opponentHand }) => {
-  const setSelection = useCallback((index: number, selected: boolean) => {}, []);
+const OpponentSection = ({ playerNumber, opponentHand }: OpponentSectionProps) => {
+  const setSelection = useCallback((_index: number, _selected: boolean) => void 0, []);
 
   return (
     <Paper

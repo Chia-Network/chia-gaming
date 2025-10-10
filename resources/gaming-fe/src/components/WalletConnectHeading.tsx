@@ -1,49 +1,46 @@
-import React, { useCallback, useState, useEffect } from 'react';
 import {
   Box,
   Button,
   ButtonGroup,
   Divider,
-  FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
   Typography,
 } from '@mui/material';
-import useDebug from '../hooks/useDebug';
-import Debug from './Debug';
-// @ts-ignore
-import { bech32m } from 'bech32m-chia';
-import { walletConnectState } from '../hooks/useWalletConnect';
-import { blockchainConnector } from '../hooks/BlockchainConnector';
-import { CoinOutput } from '../types/ChiaGaming';
-import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
-import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
-import { FAKE_BLOCKCHAIN_ID, connectSimulatorBlockchain } from '../hooks/FakeBlockchainInterface';
-import { REAL_BLOCKCHAIN_ID, connectRealBlockchain } from '../hooks/RealBlockchainInterface';
-import { generateOrRetrieveUniqueId } from '../util';
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { useCallback, useState, useEffect } from 'react';
 
-const WalletConnectHeading: React.FC<any> = (args: any) => {
+import { blockchainConnector } from '../hooks/BlockchainConnector';
+import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
+import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
+import { REAL_BLOCKCHAIN_ID, connectRealBlockchain } from '../hooks/RealBlockchainInterface';
+import useDebug from '../hooks/useDebug';
+import { walletConnectState } from '../hooks/useWalletConnect';
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { generateOrRetrieveUniqueId } from '../util';
+
+import Debug from './Debug';
+import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
+
+const WalletConnectHeading = (_args: any) => {
   const { wcInfo, setWcInfo } = useDebug();
-  const [alreadyConnected, setAlreadyConnected] = useState(false);
-  const [walletConnectError, setWalletConnectError] = useState<string | undefined>();
+  const [_alreadyConnected, setAlreadyConnected] = useState(false);
+  const [_walletConnectError, setWalletConnectError] = useState<string | undefined>();
   const [fakeAddress, setFakeAddress] = useState<string | undefined>();
   const [expanded, setExpanded] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
   const [connectionUri, setConnectionUri] = useState<string | undefined>();
 
   // Wallet connect state.
-  const [stateName, setStateName] = useState('empty');
+  const [_stateName, setStateName] = useState('empty');
   const [initializing, setInitializing] = useState(false);
   const [initialized, setInitialized] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [waitingApproval, setWaitingApproval] = useState(false);
+  const [_connecting, setConnecting] = useState(false);
+  const [_waitingApproval, setWaitingApproval] = useState(false);
   const [connected, setConnected] = useState(false);
   const [haveClient, setHaveClient] = useState(false);
   const [haveSession, setHaveSession] = useState(false);
   const [sessions, setSessions] = useState(0);
-  const [address, setAddress] = useState();
+  const [_address, setAddress] = useState();
+
+  const uniqueId = generateOrRetrieveUniqueId();
 
   const walletConnectStates: any = {
     stateName: setStateName,
@@ -100,7 +97,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     function receivedWindowMessage(evt: any) {
       const key = evt.message ? 'message' : 'data';
       // Not decoded, despite how it's displayed in console.log.
-      let data = evt[key];
+      const data = evt[key];
       if (data.blockchain_request) {
         console.log('parent window received message', data.blockchain_request);
         if (evt.origin !== window.location.origin) {
@@ -154,7 +151,6 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   });
 
   const useHeight = expanded ? '3em' : '50em';
-  const uniqueId = generateOrRetrieveUniqueId();
   const handleConnectSimulator = useCallback(() => {
     const baseUrl = BLOCKCHAIN_SERVICE_URL;
 

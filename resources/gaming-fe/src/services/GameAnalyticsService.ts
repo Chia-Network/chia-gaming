@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+
 import { AppError, ErrorCodes } from '../types/errors';
 import { GameType } from '../types/lobby';
 
@@ -189,14 +190,14 @@ export class GameAnalyticsService {
     return this.gameSessions.get(sessionId) || null;
   }
 
-  public getPlayerGameHistory(playerId: string, gameType: GameType, limit: number = 10): GameSession[] {
+  public getPlayerGameHistory(playerId: string, gameType: GameType, limit = 10): GameSession[] {
     return Array.from(this.gameSessions.values())
       .filter((session) => session.gameType === gameType && session.players.some((p) => p.playerId === playerId))
       .sort((a, b) => b.startTime.getTime() - a.startTime.getTime())
       .slice(0, limit);
   }
 
-  public getTopPlayers(gameType: GameType, limit: number = 10): { playerId: string; stats: GameStats }[] {
+  public getTopPlayers(gameType: GameType, limit = 10): { playerId: string; stats: GameStats }[] {
     return Array.from(this.playerStats.values())
       .filter((stats) => stats.gameType === gameType)
       .sort((a, b) => b.stats.winRate - a.stats.winRate)

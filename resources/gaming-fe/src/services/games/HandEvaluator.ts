@@ -12,7 +12,7 @@ interface HandRank {
 }
 
 export class HandEvaluator {
-  private static readonly RANK_VALUES: { [key: string]: number } = {
+  private static readonly RANK_VALUES: Record<string, number> = {
     '2': 2,
     '3': 3,
     '4': 4,
@@ -111,7 +111,7 @@ export class HandEvaluator {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 4) {
         const remainingWilds = wildCount - (4 - group.length);
         const kickers = this.getKickers(cards, [group[0]], remainingWilds);
@@ -134,7 +134,7 @@ export class HandEvaluator {
     let threeOfAKind: Card[] | null = null;
     let pair: Card[] | null = null;
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 3) {
         threeOfAKind = group;
         break;
@@ -144,7 +144,7 @@ export class HandEvaluator {
     if (threeOfAKind) {
       const remainingWilds = wildCount - (3 - threeOfAKind.length);
 
-      for (const [rank, group] of Object.entries(rankGroups)) {
+      for (const [_rank, group] of Object.entries(rankGroups)) {
         if (group !== threeOfAKind && group.length + remainingWilds >= 2) {
           pair = group;
           break;
@@ -199,7 +199,7 @@ export class HandEvaluator {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 3) {
         const remainingWilds = wildCount - (3 - group.length);
         const kickers = this.getKickers(cards, [group[0]], remainingWilds);
@@ -221,7 +221,7 @@ export class HandEvaluator {
     const wildCount = wildCards.length;
     const pairs: Card[][] = [];
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 2) {
         pairs.push(group);
         if (pairs.length === 2) {
@@ -245,7 +245,7 @@ export class HandEvaluator {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 2) {
         const remainingWilds = wildCount - (2 - group.length);
         const kickers = this.getKickers(cards, [group[0]], remainingWilds);
@@ -272,8 +272,8 @@ export class HandEvaluator {
     };
   }
 
-  private static groupByRank(cards: Card[]): { [key: string]: Card[] } {
-    const groups: { [key: string]: Card[] } = {};
+  private static groupByRank(cards: Card[]): Record<string, Card[]> {
+    const groups: Record<string, Card[]> = {};
     for (const card of cards) {
       if (!groups[card.rank]) {
         groups[card.rank] = [];

@@ -1,15 +1,16 @@
-import { Subject, Observable } from 'rxjs';
+import { Subject } from 'rxjs';
+
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import {
-  ToggleEmitter,
   ExternalBlockchainInterface,
   InternalBlockchainInterface,
   BlockchainReport,
   WatchReport,
   SelectionMessage,
 } from '../types/ChiaGaming';
-import { blockchainDataEmitter } from './BlockchainInfo';
+
 import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { blockchainDataEmitter } from './BlockchainInfo';
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
@@ -18,7 +19,7 @@ function requestBlockData(forWho: any, block_number: number): Promise<any> {
     .then((res) => res.json())
     .then((res) => {
       if (res === null) {
-        return new Promise((resolve, reject) => {
+        return new Promise((_resolve, _reject) => {
           setTimeout(() => {
             requestBlockData(forWho, block_number);
           }, 100);
@@ -163,7 +164,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.internalNextBlock();
   }
 
-  spend(convert: (blob: string) => any, spendBlob: string): Promise<string> {
+  spend(_convert: (blob: string) => any, spendBlob: string): Promise<string> {
     return this.upstream.spend(spendBlob).then((status_array) => {
       if (status_array.length < 1) {
         throw new Error('status result array was empty');
@@ -189,8 +190,8 @@ export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(fakeBlockcha
 export function connectSimulatorBlockchain() {
   blockchainConnector.getOutbound().subscribe({
     next: (evt: BlockchainOutboundRequest) => {
-      let initialSpend = evt.initialSpend;
-      let transaction = evt.transaction;
+      const initialSpend = evt.initialSpend;
+      const transaction = evt.transaction;
       if (initialSpend) {
         return fakeBlockchainInfo
           .do_initial_spend(initialSpend.uniqueId, initialSpend.target, initialSpend.amount)
@@ -205,7 +206,7 @@ export function connectSimulatorBlockchain() {
           });
       } else if (transaction) {
         fakeBlockchainInfo
-          .spend((blob: string) => transaction.spendObject, transaction.blob)
+          .spend((_blob: string) => transaction.spendObject, transaction.blob)
           .then((response: any) => {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,

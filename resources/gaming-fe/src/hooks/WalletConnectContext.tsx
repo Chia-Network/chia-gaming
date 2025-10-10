@@ -1,6 +1,7 @@
 import Client from '@walletconnect/sign-client';
 import { PairingTypes, SessionTypes } from '@walletconnect/types';
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
+
 import { METADATA, REQUIRED_NAMESPACES } from '../constants/wallet-connect';
 
 interface WalletConnectState {

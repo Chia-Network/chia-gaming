@@ -1,11 +1,12 @@
-import express from 'express';
-import fetch from 'node-fetch';
-import minimist from 'minimist';
 import { createServer } from 'http';
 import { readFile } from 'node:fs/promises';
+
 import cors from 'cors';
-import helmet from 'helmet';
 import { config } from 'dotenv';
+import express from 'express';
+import helmet from 'helmet';
+import minimist from 'minimist';
+import fetch from 'node-fetch';
 
 config();
 
@@ -73,22 +74,22 @@ async function serveFile(file: string, contentType: string, res: any) {
   res.send(content);
 }
 async function serveDirectory(dir: string, req: any, res: any) {
-  let targetFile = dir + req.path;
+  const targetFile = dir + req.path;
   serveFile(targetFile, 'text/plain', res);
 }
-app.get('/', async (req: any, res: any) => {
+app.get('/', async (_req: any, res: any) => {
   serveFile('public/index.html', 'text/html', res);
 });
-app.get('/index.js', async (req: any, res: any) => {
+app.get('/index.js', async (_req: any, res: any) => {
   serveFile('dist/index-rollup.js', 'application/javascript', res);
 });
-app.get('/chia_gaming_wasm_bg.wasm', async (req: any, res: any) => {
+app.get('/chia_gaming_wasm_bg.wasm', async (_req: any, res: any) => {
   serveFile('dist/chia_gaming_wasm_bg.wasm', 'application/wasm', res);
 });
-app.get('/chia_gaming_wasm.js', async (req: any, res: any) => {
+app.get('/chia_gaming_wasm.js', async (_req: any, res: any) => {
   serveFile('dist/chia_gaming_wasm.js', 'application/javascript', res);
 });
-app.get('/urls', async (req: any, res: any) => {
+app.get('/urls', async (_req: any, res: any) => {
   res.set('Content-Type', 'application/json');
   res.send(
     JSON.stringify({

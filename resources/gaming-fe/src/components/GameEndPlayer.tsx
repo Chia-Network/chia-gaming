@@ -1,8 +1,7 @@
-import React from 'react';
-import { useCallback, useState } from 'react';
-import { Box, Button, Typography, Paper } from '@mui/material';
-import { popcount } from '../util';
+import { Box, Typography, Paper } from '@mui/material';
+
 import { card_color, CalpokerOutcome } from '../types/ChiaGaming';
+
 import PlayingCard from './PlayingCard';
 
 interface GameEndPlayerProps {
@@ -11,7 +10,7 @@ interface GameEndPlayerProps {
   outcome: CalpokerOutcome;
 }
 
-const GameEndPlayer: React.FC<GameEndPlayerProps> = ({ iStarted, playerNumber, outcome }) => {
+const GameEndPlayer = ({ iStarted, playerNumber, outcome }: GameEndPlayerProps) => {
   const iAmAlice = playerNumber === 2;
   const playerHand: number[][] = iAmAlice ? outcome.alice_cards : outcome.bob_cards;
   const who = iStarted !== iAmAlice ? 'Your' : 'Opponent';
@@ -39,7 +38,7 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({ iStarted, playerNumber, o
       <Box display="flex" flexDirection="row" mb={2}>
         {playerHand.map((card: number[], index: number) => {
           const id = `at-rest-${iStarted}-${card}`;
-          let selectionColor = cardColors[card_color(outcome, !iStarted, card)];
+          const selectionColor = cardColors[card_color(outcome, !iStarted, card)];
           return (
             <PlayingCard
               id={id}
@@ -48,7 +47,7 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({ iStarted, playerNumber, o
               selected={false}
               selectionColor={selectionColor}
               cardValue={card}
-              setSelection={() => {}}
+              setSelection={() => void 0}
               iAmPlayer={iStarted !== iAmAlice}
             />
           );

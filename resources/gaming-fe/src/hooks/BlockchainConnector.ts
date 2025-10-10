@@ -1,4 +1,5 @@
 import { Subject } from 'rxjs';
+
 import { DoInitialSpendResult } from '../types/ChiaGaming';
 
 export interface BlockchainOutboundInitialSpendRequest {

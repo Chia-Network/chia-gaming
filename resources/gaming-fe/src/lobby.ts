@@ -1,14 +1,15 @@
-import express from 'express';
+import crypto from 'crypto';
 import { createServer } from 'http';
 import { readFile } from 'node:fs/promises';
-import { Server as SocketIOServer } from 'socket.io';
-import { v4 as uuidv4 } from 'uuid';
-import crypto from 'crypto';
+
 import cors from 'cors';
+import express from 'express';
 import helmet from 'helmet';
 import minimist from 'minimist';
-import { GenerateRoomResult, Room, Player } from './types/lobby';
+import { Server as SocketIOServer } from 'socket.io';
+
 import { Lobby } from './lobby/lobbyState';
+import { GenerateRoomResult, Room } from './types/lobby';
 
 const lobby = new Lobby();
 const app = express();
@@ -66,7 +67,6 @@ app.use(
 app.use(express.json());
 
 const TOKEN_TTL = 10 * 60 * 1000;
-const socketUsers = {};
 
 function joinLobby(id: string, alias: string, parameters: any): any {
   if (!id || !alias) {
@@ -100,16 +100,16 @@ async function serveFile(file: string, contentType: string, res: any) {
   res.set('Content-Type', contentType);
   res.send(content);
 }
-app.get('/', async (req: any, res: any) => {
+app.get('/', async (_req: any, res: any) => {
   serveFile('public/index.html', 'text/html', res);
 });
-app.get('/index.js', async (req: any, res: any) => {
+app.get('/index.js', async (_req: any, res: any) => {
   serveFile('dist/index-rollup.js', 'application/javascript', res);
 });
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;
   if (!id || !newAlias) return res.status(400).json({ error: 'Missing id or new_alias.' });
-  let player = lobby.players[id];
+  const player = lobby.players[id];
   if (player) {
     player.alias = newAlias;
     io.emit('lobby_update', lobby.getPlayers());
@@ -141,9 +141,9 @@ app.post('/lobby/generate-room', (req, res) => {
   io.emit('room_update', newRoom);
   res.json(result);
 });
-app.post('/lobby/game', (req, res) => {
-  let { game, target } = req.body;
-  let time = new Date().getTime();
+app.post('/lobby/game', (req, _res) => {
+  const { game, target } = req.body;
+  const time = new Date().getTime();
   console.log('update game', game, target);
   lobby.addGame(time, game, target);
 });
@@ -197,7 +197,7 @@ app.post('/lobby/leave', (req, res) => {
   res.status(404).json({ error: 'Player not found in lobby.' });
 });
 
-app.get('/lobby/status', (req, res) => res.json({ lobbyQueue: lobby.getPlayers() }));
+app.get('/lobby/status', (_req, res) => res.json({ lobbyQueue: lobby.getPlayers() }));
 
 io.on('connection', (socket) => {
   socket.emit('lobby_update', lobby.getPlayers());

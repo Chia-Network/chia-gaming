@@ -1,56 +1,57 @@
-import { Subject, Observable, Subscription } from 'rxjs';
+import { Subject, Subscription } from 'rxjs';
+
 import { proper_list } from '../util';
 
-export type Amount = {
+export interface Amount {
   amt: number;
-};
+}
 
-export type Spend = {
+export interface Spend {
   puzzle: string;
   solution: string;
   signature: string;
-};
+}
 
-export type CoinSpend = {
+export interface CoinSpend {
   coin: string;
   bundle: Spend;
-};
+}
 
-export type SpendBundle = {
-  spends: Array<CoinSpend>;
-};
+export interface SpendBundle {
+  spends: CoinSpend[];
+}
 
-export type IChiaIdentity = {
+export interface IChiaIdentity {
   private_key: string;
   synthetic_private_key: string;
   public_key: string;
   synthetic_public_key: string;
   puzzle: string;
   puzzle_hash: string;
-};
+}
 
-export type GameConnectionState = {
+export interface GameConnectionState {
   stateIdentifier: string;
   stateDetail: string[];
-};
+}
 
 export type OpponentMove = [string, string];
 export type GameFinished = [string, number];
 
-export type IdleResult = {
+export interface IdleResult {
   continue_on: boolean;
   finished: boolean;
-  outbound_transactions: Array<SpendBundle>;
-  outbound_messages: Array<string>;
+  outbound_transactions: SpendBundle[];
+  outbound_messages: string[];
   opponent_move: OpponentMove | undefined;
   game_finished: GameFinished | undefined;
   handshake_done: boolean;
   receive_error: string | undefined;
-  action_queue: Array<string>;
-  incoming_messages: Array<string>;
-};
+  action_queue: string[];
+  incoming_messages: string[];
+}
 
-export type GameCradleConfig = {
+export interface GameCradleConfig {
   seed: string | undefined;
   game_types: Map<string, string>;
   identity: string | undefined;
@@ -60,11 +61,11 @@ export type GameCradleConfig = {
   channel_timeout: number;
   reward_puzzle_hash: string;
   receive_error: string | undefined;
-};
+}
 
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
-export type IdleCallbacks = {
+export interface IdleCallbacks {
   self_move?: ((game_id: string, move_hex: string) => void) | undefined;
   opponent_moved?: ((game_id: string, readable_move_hex: string) => void) | undefined;
   game_message?: ((game_id: string, readable_move_hex: string) => void) | undefined;
@@ -72,7 +73,7 @@ export type IdleCallbacks = {
   game_finished?: ((game_id: string, amount: number) => void) | undefined;
   shutdown_complete?: ((coin: string) => void) | undefined;
   going_on_chain?: (() => void) | undefined;
-};
+}
 
 export interface WasmConnection {
   // System
@@ -115,7 +116,7 @@ export interface CoinOutput {
 
 export class ChiaGame {
   wasm: WasmConnection;
-  waiting_messages: Array<string>;
+  waiting_messages: string[];
   private_key: string;
   cradle: number;
   have_potato: boolean;
@@ -176,14 +177,14 @@ export class ChiaGame {
     return this.waiting_messages.length === 0;
   }
 
-  outbound_messages(): Array<string> {
-    let w = this.waiting_messages;
+  outbound_messages(): string[] {
+    const w = this.waiting_messages;
     this.waiting_messages = [];
     return w;
   }
 
   idle(callbacks: IdleCallbacks): IdleResult {
-    let result = this.wasm.idle(this.cradle, callbacks);
+    const result = this.wasm.idle(this.cradle, callbacks);
     if (result) {
       this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
     }
@@ -230,7 +231,7 @@ export class ExternalBlockchainInterface {
 
   getOrRequestToken(uniqueId: string): Promise<string> {
     if (this.token) {
-      return new Promise((resolve, reject) => resolve(this.token));
+      return new Promise((resolve, _reject) => resolve(this.token));
     }
 
     return fetch(`${this.baseUrl}/register?name=${uniqueId}`, {
@@ -292,8 +293,8 @@ export class ExternalBlockchainInterface {
 }
 
 function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
-  let result0: T[] = [];
-  let result1: T[] = [];
+  const result0: T[] = [];
+  const result1: T[] = [];
   card.forEach((c, i) => {
     if (mask & (1 << i)) {
       result1.push(c);
@@ -305,8 +306,8 @@ function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
 }
 
 function card_matches(cards: number[][], card: number[]): boolean {
-  for (let i = 0; i < cards.length; i++) {
-    if (cards[i].toString() === card.toString()) {
+  for (const existingCard of cards) {
+    if (existingCard.toString() === card.toString()) {
       return true;
     }
   }
@@ -319,15 +320,15 @@ export function card_color(
   iAmAlice: boolean,
   card: number[],
 ): 'my-used' | 'my-final' | 'their-used' | 'their-final' {
-  let my_used_cards = iAmAlice ? outcome.alice_used_cards : outcome.bob_used_cards;
+  const my_used_cards = iAmAlice ? outcome.alice_used_cards : outcome.bob_used_cards;
   if (card_matches(my_used_cards, card)) {
     return 'my-used';
   }
-  let their_used_cards = iAmAlice ? outcome.bob_used_cards : outcome.alice_used_cards;
+  const their_used_cards = iAmAlice ? outcome.bob_used_cards : outcome.alice_used_cards;
   if (card_matches(their_used_cards, card)) {
     return 'their-used';
   }
-  let my_final_cards = iAmAlice ? outcome.alice_final_hand : outcome.bob_final_hand;
+  const my_final_cards = iAmAlice ? outcome.alice_final_hand : outcome.bob_final_hand;
   if (card_matches(my_final_cards, card)) {
     return 'my-final';
   }
@@ -398,7 +399,6 @@ export class CalpokerOutcome {
 
     this.win_direction = raw_win_direction;
     const alice_win = this.win_direction < 0;
-    const bob_win = this.win_direction > 0;
 
     if (this.win_direction === 0) {
       this.my_win_outcome = 'tie';
@@ -466,7 +466,7 @@ export class ToggleEmitter<T> {
   select(s: SelectionMessage) {
     this.selection = s.selection;
     this.upstreamSelect(s);
-    this.upstreamSelect = (s: SelectionMessage) => {};
+    this.upstreamSelect = (_s: SelectionMessage) => void 0;
   }
 
   getObservable() {
@@ -483,7 +483,7 @@ export class ToggleEmitter<T> {
 
   constructor() {
     this.upstream = [];
-    this.upstreamSelect = (s) => {};
+    this.upstreamSelect = (_s) => void 0;
     this.selection = -1;
     this.subscriptions = [];
     this.downstream = new Subject<T>();

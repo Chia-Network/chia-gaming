@@ -1,28 +1,25 @@
+import { Observable, NextObserver } from 'rxjs';
+
 import {
   PeerConnectionResult,
   WasmConnection,
-  GameCradleConfig,
   IChiaIdentity,
-  GameConnectionState,
-  ExternalBlockchainInterface,
   ChiaGame,
   CalpokerOutcome,
   WatchReport,
-  BlockchainReport,
   InternalBlockchainInterface,
 } from '../types/ChiaGaming';
-import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
-import { Observable, NextObserver } from 'rxjs';
+import { spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 
 function combine_reports(old_report: WatchReport, new_report: WatchReport) {
-  for (var i = 0; i < new_report.created_watched.length; i++) {
-    old_report.created_watched.push(new_report.created_watched[i]);
+  for (const item of new_report.created_watched) {
+    old_report.created_watched.push(item);
   }
-  for (var i = 0; i < new_report.deleted_watched.length; i++) {
-    old_report.deleted_watched.push(new_report.deleted_watched[i]);
+  for (const item of new_report.deleted_watched) {
+    old_report.deleted_watched.push(item);
   }
-  for (var i = 0; i < new_report.timed_out.length; i++) {
-    old_report.timed_out.push(new_report.timed_out[i]);
+  for (const item of new_report.timed_out) {
+    old_report.timed_out.push(item);
   }
 }
 
@@ -68,9 +65,6 @@ export class WasmBlobWrapper {
     fetchHex: (key: string) => Promise<string>,
     peer_conn: PeerConnectionResult,
   ) {
-    const deliverMessage = (msg: string) => {
-      this.deliverMessage(msg);
-    };
 
     const { sendMessage } = peer_conn;
 
@@ -127,7 +121,7 @@ export class WasmBlobWrapper {
         console.log(`preset load ${nameAndContent.name} ${nameAndContent.content.length}`);
         this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
       });
-      let newGameIdentity = this.wc?.chia_identity(this.rngSeed);
+      const newGameIdentity = this.wc?.chia_identity(this.rngSeed);
       this.identity = newGameIdentity;
       this.pushEvent({ loadCalpoker: true });
       return {
@@ -175,10 +169,10 @@ export class WasmBlobWrapper {
     } else if (msg.move) {
       return this.internalMakeMove(msg.move);
     } else if (msg.takeOpponentMove) {
-      let data = msg.takeOpponentMove;
+      const data = msg.takeOpponentMove;
       return this.takeOpponentMove(data.moveNumber, data.game_id, data.readable_move_hex);
     } else if (msg.takeGameMessage) {
-      let data = msg.takeGameMessage;
+      const data = msg.takeGameMessage;
       return this.takeGameMessage(data.moveNumber, data.game_id, data.readable_hex);
     } else if (msg.setCardSelections !== undefined) {
       return this.internalSetCardSelections(msg.setCardSelections);
@@ -197,7 +191,7 @@ export class WasmBlobWrapper {
   }
 
   updateCards(readable: any, result: any) {
-    let card_lists = proper_list(readable).map((l: any) =>
+    const card_lists = proper_list(readable).map((l: any) =>
       proper_list(l).map((c: any) =>
         proper_list(c).map((v: Uint8Array) => {
           if (v.length > 0) {
@@ -237,7 +231,7 @@ export class WasmBlobWrapper {
       setMyTurn: true,
     };
     console.log('takeOpponentMove', moveNumber, game_id, readable_move_hex);
-    let p = decode_sexp_hex(readable_move_hex);
+    const p = decode_sexp_hex(readable_move_hex);
     console.log('readable move', JSON.stringify(p));
     if (moveNumber === 1) {
       this.updateCards(p, result);
@@ -261,7 +255,7 @@ export class WasmBlobWrapper {
   takeGameMessage(moveNumber: number, game_id: string, readable_move_hex: string): any {
     const result = {};
     console.log('takeGameMessage', moveNumber, game_id, readable_move_hex);
-    let p = decode_sexp_hex(readable_move_hex);
+    const p = decode_sexp_hex(readable_move_hex);
     this.updateCards(p, result);
     return empty().then(() => result);
   }
@@ -274,7 +268,6 @@ export class WasmBlobWrapper {
     const msg = this.messageQueue.shift();
 
     this.handlingMessage = true;
-    let result = null;
     return this.handleOneMessage(msg)
       .then((result: any) => {
         this.rxjsEmitter?.next(result);
@@ -421,8 +414,8 @@ export class WasmBlobWrapper {
   }
 
   internalStartGame(): any {
-    let result: any = {};
-    let gids = this.cradle?.start_games(!this.iStarted, {
+    const result: any = {};
+    const gids = this.cradle?.start_games(!this.iStarted, {
       game_type: '63616c706f6b6572',
       timeout: 100,
       amount: this.perGameAmount,
@@ -461,7 +454,7 @@ export class WasmBlobWrapper {
           this.messageQueue.push({ shutDown: true, condition: failed });
         }
       },
-      game_finished: (game_id, amount) => {
+      game_finished: (_game_id, _amount) => {
         // Signals accept.
         this.gameIds.pop();
         console.log('got accept', this.iStarted);
@@ -525,16 +518,15 @@ export class WasmBlobWrapper {
     }
 
     console.log('idle2', idle.incoming_messages);
-    for (let i = 0; i < idle.outbound_messages.length; i++) {
+    for (const message of idle.outbound_messages) {
       console.log('send message to remote');
-      this.sendMessage(idle.outbound_messages[i]);
+      this.sendMessage(message);
     }
 
-    for (let i = 0; i < idle.outbound_transactions.length; i++) {
-      const tx = idle.outbound_transactions[i];
+    for (const tx of idle.outbound_transactions) {
       console.log('send transaction', tx);
       // Compose blob to spend
-      let blob = spend_bundle_to_clvm(tx);
+      const blob = spend_bundle_to_clvm(tx);
       const cvt = (blob: string) => {
         return this.wc?.convert_spend_to_coinset_org(blob);
       };
@@ -547,11 +539,11 @@ export class WasmBlobWrapper {
   }
 
   generateEntropy() {
-    let hexDigits = [];
+    const hexDigits = [];
     for (let i = 0; i < 16; i++) {
       hexDigits.push(Math.floor(Math.random() * 16)).toString(16);
     }
-    let entropy = this.wc?.sha256bytes(hexDigits.join(''));
+    const entropy = this.wc?.sha256bytes(hexDigits.join(''));
     if (!entropy) {
       throw 'tried to make entropy without a wasm connection';
     }
@@ -562,13 +554,13 @@ export class WasmBlobWrapper {
     return this.handshakeDone;
   }
 
-  internalMakeMove(move: any): any {
+  internalMakeMove(_move: any): any {
     if (!this.handshakeDone || !this.wc || !this.cradle) {
       return empty();
     }
 
     if (this.moveNumber === 0) {
-      let entropy = this.generateEntropy();
+      const entropy = this.generateEntropy();
       console.log('move 0 with entropy', entropy);
       this.cradle?.make_move_entropy(this.gameIds[0], '80', entropy);
       this.moveNumber += 1;
@@ -583,7 +575,7 @@ export class WasmBlobWrapper {
         return empty();
       }
       this.moveNumber += 1;
-      let entropy = this.generateEntropy();
+      const entropy = this.generateEntropy();
       const encoded = (this.cardSelections | 0x8100).toString(16);
       this.cradle?.make_move_entropy(this.gameIds[0], encoded, entropy);
       return empty().then(() => {
@@ -594,7 +586,7 @@ export class WasmBlobWrapper {
       });
     } else if (this.moveNumber === 2) {
       this.moveNumber += 1;
-      let entropy = this.generateEntropy();
+      const entropy = this.generateEntropy();
       this.cradle?.make_move_entropy(this.gameIds[0], '80', entropy);
       return empty().then(() => {
         return {
@@ -672,8 +664,7 @@ export class WasmBlobWrapper {
         deleted_watched: [],
         timed_out: [],
       };
-      for (var b = 0; b < blocks.length; b++) {
-        const block = blocks[b];
+      for (const block of blocks) {
         const one_report = this.wc?.convert_coinset_org_block_spend_to_watch_report(
           block.coin.parent_coin_info,
           block.coin.puzzle_hash,

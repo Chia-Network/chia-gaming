@@ -1,7 +1,7 @@
-import { Subject } from 'rxjs';
-import { useState, useEffect, useCallback } from 'react';
 import Client from '@walletconnect/sign-client';
 import { SessionTypes } from '@walletconnect/types';
+import { Subject } from 'rxjs';
+
 import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
 
 export interface StartConnectResult {

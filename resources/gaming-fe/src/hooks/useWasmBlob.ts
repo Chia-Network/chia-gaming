@@ -1,27 +1,22 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+
+import { GAME_SERVICE_URL } from '../settings';
 import {
-  WasmConnection,
-  GameCradleConfig,
-  IChiaIdentity,
   GameConnectionState,
-  ExternalBlockchainInterface,
-  ChiaGame,
   CalpokerOutcome,
   InternalBlockchainInterface,
   BlockchainReport,
 } from '../types/ChiaGaming';
-import useGameSocket from './useGameSocket';
-import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
-import { useInterval } from '../useInterval';
-import { v4 as uuidv4 } from 'uuid';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
-import { BlockchainOutboundRequest } from './BlockchainConnector';
-import { connectSimulatorBlockchain } from './FakeBlockchainInterface';
-import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
-import { blockchainDataEmitter } from './BlockchainInfo';
+import { getSearchParams } from '../util';
+
 import { blockchainConnector } from './BlockchainConnector';
+import { blockchainDataEmitter } from './BlockchainInfo';
+import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 import { PARENT_FRAME_BLOCKCHAIN_ID, parentFrameBlockchainInfo } from './ParentFrameBlockchainInfo';
-import { BLOCKCHAIN_SERVICE_URL, GAME_SERVICE_URL } from '../settings';
+import { WasmBlobWrapper } from './WasmBlobWrapper';
+import useGameSocket from './useGameSocket';
+
 
 let blobSingleton: any = null;
 
@@ -72,7 +67,7 @@ function getBlobSingleton(
   // We'll connect the required signals.
   window.addEventListener('message', (evt: any) => {
     const key = evt.message ? 'message' : 'data';
-    let data = evt[key];
+    const data = evt[key];
     if (data.blockchain_reply) {
       if (evt.origin != window.location.origin) {
         throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
@@ -107,26 +102,21 @@ function getBlobSingleton(
 }
 
 export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
-  const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
-  const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
-  const [uniqueWalletConnectionId, setUniqueWalletConnectionId] = useState(uuidv4());
-  const [gameStartCoin, setGameStartCoin] = useState<string | undefined>(undefined);
+  const [realPublicKey] = useState<string | undefined>(undefined);
+  const [gameIdentity] = useState<any | undefined>(undefined);
+  const [uniqueWalletConnectionId] = useState(uuidv4());
   const [gameConnectionState, setGameConnectionState] = useState<GameConnectionState>({
     stateIdentifier: 'starting',
     stateDetail: ['before handshake'],
   });
-  const [handshakeDone, setHandshakeDone] = useState<boolean>(false);
 
   const searchParams = getSearchParams();
-  const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
   const [playerHand, setPlayerHand] = useState<number[][]>([]);
   const [opponentHand, setOpponentHand] = useState<number[][]>([]);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
-  const [finalPlayerHand, setFinalPlayerHand] = useState<string[]>([]);
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
-  const [gameIds, setGameIds] = useState<string[]>([]);
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
@@ -146,24 +136,22 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     }
   };
 
-  let setCardSelections = useCallback((mask: number) => {
-    gameObject?.setCardSelections(mask);
-  }, []);
-  let messageSender = useCallback((msg: string) => {
-    console.error('send message with no sender defined', msg);
-  }, []);
-  let stopPlaying = useCallback(() => {
-    gameObject?.shutDown();
-  }, []);
-
   const blockchain = new ChildFrameBlockchainInterface();
 
   const gameObject = uniqueId
     ? getBlobSingleton(blockchain, lobbyUrl, uniqueId, amount, perGameAmount, iStarted)
     : null;
 
+  const setCardSelections = useCallback((mask: number) => {
+    gameObject?.setCardSelections(mask);
+  }, [gameObject]);
+  
+  const stopPlaying = useCallback(() => {
+    gameObject?.shutDown();
+  }, [gameObject]);
+
   useEffect(() => {
-    let subscription = blockchain.getObservable().subscribe({
+    const subscription = blockchain.getObservable().subscribe({
       next: (e: BlockchainReport) => {
         gameObject?.blockNotification(e.peak, e.block, e.report);
       },
@@ -199,7 +187,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       return;
     }
 
-    let subscription = gameObject.getObservable().subscribe({
+    const subscription = gameObject.getObservable().subscribe({
       next: (state: any) => {
         const keys = Object.keys(state);
         keys.forEach((k) => {

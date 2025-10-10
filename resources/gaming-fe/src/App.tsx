@@ -1,15 +1,14 @@
-import React, { useEffect, useState } from 'react';
 import { Box, Typography } from '@mui/material';
+import { useEffect, useState } from 'react';
+
+import Gallery from './components/Gallery';
 import Game from './components/Game';
 import LobbyScreen from './components/LobbyScreen';
 import WalletConnectHeading from './components/WalletConnectHeading';
-import Gallery from './components/Gallery';
-import { getGameSelection, getSearchParams } from './util';
-import { CHAIN_ID, PROJECT_ID, RELAY_URL } from './constants/env';
-import { WalletConnectProvider } from './hooks/WalletConnectContext';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
+import { getGameSelection, getSearchParams } from './util';
 
-const App: React.FC = () => {
+const App = () => {
   const gameSelection = getGameSelection();
   const params = getSearchParams();
   const shouldRedirectToLobby = !params.lobby && !params.iStarted;
@@ -18,7 +17,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
-      next: (peak: any) => {
+      next: (_peak: any) => {
         setHavePeak(true);
       },
     });

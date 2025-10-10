@@ -1,15 +1,16 @@
-import React, { cloneElement, useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+
 import { ErrorBoundary } from './ErrorBoundary';
-import LobbyScreen from './LobbyScreen';
-import PlayerSection from './PlayerSection';
-import OpponentSection from './OpponentSection';
 import GameEndPlayer from './GameEndPlayer';
 import GameLog from './GameLog';
-import WaitingScreen from './WaitingScreen';
+import LobbyScreen from './LobbyScreen';
+import OpponentSection from './OpponentSection';
+import PlayerSection from './PlayerSection';
 import PlayingCard from './PlayingCard';
 import { QRCodeModal } from './QRCodeModal';
-import WalletConnectHeading from './WalletConnectHeading';
+import WaitingScreen from './WaitingScreen';
 import { WalletConnectDialog } from './WalletConnect';
+import WalletConnectHeading from './WalletConnectHeading';
 
 const componentList: Record<string, any> = {
   LobbyScreen: LobbyScreen as any,
@@ -25,16 +26,16 @@ const componentList: Record<string, any> = {
 };
 
 const Gallery: React.FC = () => {
-  let choiceFromStorage = localStorage.getItem('galleryChoice');
-  let dataFromStorage = localStorage.getItem('galleryData');
+  const choiceFromStorage = localStorage.getItem('galleryChoice');
+  const dataFromStorage = localStorage.getItem('galleryData');
 
-  let [generation, setGeneration] = useState(0);
-  let [arraySelection, setArraySelection] = useState<number>(0);
-  let [componentChoice, setComponentChoice] = useState<string | undefined>(
+  const [generation, setGeneration] = useState(0);
+  const [arraySelection, setArraySelection] = useState<number>(0);
+  const [componentChoice, setComponentChoice] = useState<string | undefined>(
     choiceFromStorage ? choiceFromStorage : undefined,
   );
-  let [componentData, setComponentData] = useState<any | undefined>(dataFromStorage ? dataFromStorage : undefined);
-  let [functionCalls, setFunctionCalls] = useState<string[]>([]);
+  const [componentData, setComponentData] = useState<any | undefined>(dataFromStorage ? dataFromStorage : undefined);
+  const [functionCalls, setFunctionCalls] = useState<string[]>([]);
 
   const storeComponentChoice = useCallback(
     (evt: any) => {

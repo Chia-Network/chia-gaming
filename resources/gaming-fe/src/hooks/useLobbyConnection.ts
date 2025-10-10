@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { ChatMessage, ChatEnvelope, FragmentData, GenerateRoomResult, Room } from '../types/lobby';
-import { ExternalBlockchainInterface } from '../types/ChiaGaming';
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
-import { getSearchParams, getFragmentParams, generateOrRetrieveUniqueId } from '../util';
-import io, { Socket } from 'socket.io-client';
 import axios from 'axios';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import io, { Socket } from 'socket.io-client';
+
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { ExternalBlockchainInterface } from '../types/ChiaGaming';
+import { ChatEnvelope, FragmentData, GenerateRoomResult, Room } from '../types/lobby';
+import { getSearchParams, getFragmentParams, generateOrRetrieveUniqueId } from '../util';
+
 
 interface Player {
   id: string;
@@ -17,13 +19,13 @@ interface Player {
 export function useLobbySocket(alias: string, walletConnect: boolean) {
   const LOBBY_URL = window.location.origin;
   const params = getSearchParams();
-  const [uniqueId, setUniqueId] = useState<string>(generateOrRetrieveUniqueId());
+  const [uniqueId] = useState<string>(generateOrRetrieveUniqueId());
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<ChatEnvelope[]>([]);
   const [didJoin, setDidJoin] = useState(false);
   const socketRef = useRef<Socket>(undefined);
-  const [fragment, setFragment] = useState<FragmentData>(getFragmentParams());
+  const [fragment] = useState<FragmentData>(getFragmentParams());
   console.log('fragment retrieved', fragment);
 
   const joinRoom = useCallback(
@@ -42,8 +44,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
   );
 
   function tryJoinRoom() {
-    for (let i = 0; i < rooms.length; i++) {
-      let room = rooms[i];
+    for (const room of rooms) {
       console.log('we have: uniqueId', uniqueId, 'params', params);
       console.log('checking room', room);
       if (!room.host) {
@@ -81,7 +82,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
         })
           .then((res) => res.json())
           .then(() => {
-            let blockchain = new ExternalBlockchainInterface(BLOCKCHAIN_SERVICE_URL);
+            const blockchain = new ExternalBlockchainInterface(BLOCKCHAIN_SERVICE_URL);
             return blockchain.getOrRequestToken(params.uniqueId);
           })
           .then((walletToken) => {
@@ -159,7 +160,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
   );
 
   const leaveRoom = useCallback(
-    async (token: string) => {
+    async (_token: string) => {
       console.error('implement leave room');
     },
     [uniqueId],

@@ -1,7 +1,7 @@
-import React from 'react';
-import { useCallback, useState } from 'react';
 import { Box, Button, Typography, Paper } from '@mui/material';
+
 import { popcount } from '../util';
+
 import PlayingCard from './PlayingCard';
 
 interface PlayerSectionProps {
@@ -14,7 +14,7 @@ interface PlayerSectionProps {
   setCardSelections: (mask: number) => void;
 }
 
-const PlayerSection: React.FC<PlayerSectionProps> = ({
+const PlayerSection = ({
   playerNumber,
   playerHand,
   isPlayerTurn,
@@ -22,12 +22,12 @@ const PlayerSection: React.FC<PlayerSectionProps> = ({
   handleMakeMove,
   cardSelections,
   setCardSelections,
-}) => {
-  let doHandleMakeMove = () => {
-    let moveData = '80';
+}: PlayerSectionProps) => {
+  const doHandleMakeMove = () => {
+    const moveData = '80';
     handleMakeMove(moveData);
   };
-  let setSelection = (index: number, selected: boolean) => {
+  const setSelection = (index: number, selected: boolean) => {
     let selections = cardSelections;
     if (selected) {
       selections |= 1 << index;
