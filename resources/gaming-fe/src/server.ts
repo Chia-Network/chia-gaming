@@ -29,26 +29,42 @@ function parseArgs() {
     });
   }
 
-  return { args, extras }
+  return { args, extras };
 }
 
 const { args, extras } = parseArgs();
 
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'", "https://explorer-api.walletconnect.com", ...extras],
-      scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'", ...extras],
-      connectSrc: ["'self'", "https://explorer-api.walletconnect.com", "wss://relay.walletconnect.com", "https://verify.walletconnect.org", "https://verify.walletconnect.org", "https://api.coinset.org", "wss://api.coinset.org", "http://localhost:5800", "wss://relay.walletconnect.org", args.tracker, ...extras],
-      frameSrc: ["'self'",  'https://verify.walletconnect.org', args.tracker, ...extras],
-      frameAncestors: ["'self'", args.tracker],
-    }
-  }
-}));
-app.use(cors({
-  origin: process.env.GAME_PUBLIC_URL || args.self,
-  methods: ['GET', 'POST', 'HEAD', 'OPTIONS']
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'", 'https://explorer-api.walletconnect.com', ...extras],
+        scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'", ...extras],
+        connectSrc: [
+          "'self'",
+          'https://explorer-api.walletconnect.com',
+          'wss://relay.walletconnect.com',
+          'https://verify.walletconnect.org',
+          'https://verify.walletconnect.org',
+          'https://api.coinset.org',
+          'wss://api.coinset.org',
+          'http://localhost:5800',
+          'wss://relay.walletconnect.org',
+          args.tracker,
+          ...extras,
+        ],
+        frameSrc: ["'self'", 'https://verify.walletconnect.org', args.tracker, ...extras],
+        frameAncestors: ["'self'", args.tracker],
+      },
+    },
+  }),
+);
+app.use(
+  cors({
+    origin: process.env.GAME_PUBLIC_URL || args.self,
+    methods: ['GET', 'POST', 'HEAD', 'OPTIONS'],
+  }),
+);
 app.use(express.json());
 
 async function serveFile(file: string, contentType: string, res: any) {
@@ -64,25 +80,27 @@ app.get('/', async (req: any, res: any) => {
   serveFile('public/index.html', 'text/html', res);
 });
 app.get('/index.js', async (req: any, res: any) => {
-  serveFile("dist/index-rollup.js", "application/javascript", res);
+  serveFile('dist/index-rollup.js', 'application/javascript', res);
 });
 app.get('/chia_gaming_wasm_bg.wasm', async (req: any, res: any) => {
-  serveFile("dist/chia_gaming_wasm_bg.wasm", "application/wasm", res);
+  serveFile('dist/chia_gaming_wasm_bg.wasm', 'application/wasm', res);
 });
 app.get('/chia_gaming_wasm.js', async (req: any, res: any) => {
-  serveFile("dist/chia_gaming_wasm.js", "application/javascript", res);
+  serveFile('dist/chia_gaming_wasm.js', 'application/javascript', res);
 });
 app.get('/urls', async (req: any, res: any) => {
   res.set('Content-Type', 'application/json');
-  res.send(JSON.stringify({
-    tracker: `${args.tracker}?lobby=true`
-  }));
+  res.send(
+    JSON.stringify({
+      tracker: `${args.tracker}?lobby=true`,
+    }),
+  );
 });
 app.get('/clsp*', async (req: any, res: any) => {
-  serveDirectory("./", req, res);
+  serveDirectory('./', req, res);
 });
 app.get('/resources*', async (req: any, res: any) => {
-  serveDirectory("./", req, res);
+  serveDirectory('./', req, res);
 });
 
 process.on('SIGTERM', () => {
@@ -97,17 +115,20 @@ function refreshLobby() {
   fetch(`${args.tracker}/lobby/game`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       game: 'calpoker',
       target: `${args.self}?game=calpoker&lobbyUrl=${args.tracker}`,
+    }),
+  })
+    .then((res) => res.json())
+    .then((res) => {
+      console.log('tracker:', res);
     })
-  }).then(res => res.json()).then(res => {
-    console.log('tracker:', res);
-  }).catch(e => {
-    console.error('tracker:', e);
-  });
+    .catch((e) => {
+      console.error('tracker:', e);
+    });
 }
 
 setInterval(() => {
@@ -118,5 +139,5 @@ refreshLobby();
 
 const port = process.env.PORT || 3000;
 httpServer.listen(port, () => {
-  console.log(`Game server listening on port ${port}`)
+  console.log(`Game server listening on port ${port}`);
 });

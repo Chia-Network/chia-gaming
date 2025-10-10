@@ -9,13 +9,13 @@ import {
   MenuItem,
   Select,
   Typography,
-} from "@mui/material";
-import useDebug from "../hooks/useDebug";
-import Debug from "./Debug";
+} from '@mui/material';
+import useDebug from '../hooks/useDebug';
+import Debug from './Debug';
 // @ts-ignore
 import { bech32m } from 'bech32m-chia';
-import { walletConnectState } from "../hooks/useWalletConnect";
-import { blockchainConnector } from "../hooks/BlockchainConnector";
+import { walletConnectState } from '../hooks/useWalletConnect';
+import { blockchainConnector } from '../hooks/BlockchainConnector';
 import { CoinOutput } from '../types/ChiaGaming';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
@@ -34,7 +34,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const [connectionUri, setConnectionUri] = useState<string | undefined>();
 
   // Wallet connect state.
-  const [stateName, setStateName] = useState("empty");
+  const [stateName, setStateName] = useState('empty');
   const [initializing, setInitializing] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -46,16 +46,16 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   const [address, setAddress] = useState();
 
   const walletConnectStates: any = {
-    "stateName": setStateName,
-    "initializing": setInitializing,
-    "initialized": setInitialized,
-    "connecting": setConnecting,
-    "waitingApproval": setWaitingApproval,
-    "connected": setConnected,
-    "haveClient": setHaveClient,
-    "haveSession": setHaveSession,
-    "sessions": setSessions,
-    "address": setAddress
+    stateName: setStateName,
+    initializing: setInitializing,
+    initialized: setInitialized,
+    connecting: setConnecting,
+    waitingApproval: setWaitingApproval,
+    connected: setConnected,
+    haveClient: setHaveClient,
+    haveSession: setHaveSession,
+    sessions: setSessions,
+    address: setAddress,
   };
   useEffect(() => {
     const subscription = walletConnectState.getObservable().subscribe({
@@ -67,9 +67,9 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
           console.log('doing connect real blockchain');
           blockchainDataEmitter.select({
             selection: REAL_BLOCKCHAIN_ID,
-            uniqueId
+            uniqueId,
           });
-          connectRealBlockchain("https://api.coinset.org");
+          connectRealBlockchain('https://api.coinset.org');
         }
 
         const keys = Object.keys(evt);
@@ -78,7 +78,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
             walletConnectStates[k](evt[k]);
           }
         });
-      }
+      },
     });
 
     return () => subscription.unsubscribe();
@@ -111,37 +111,43 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       }
     }
 
-    window.addEventListener("message", receivedWindowMessage);
+    window.addEventListener('message', receivedWindowMessage);
 
     // Ensure that replies go to the child frame.
     const bcSubscription = blockchainConnector.getInbound().subscribe({
       next: (evt: any) => {
         const subframe = document.getElementById('subframe');
         if (subframe) {
-          (subframe as any).contentWindow.postMessage({
-            blockchain_reply: evt
-          }, window.location.origin);
+          (subframe as any).contentWindow.postMessage(
+            {
+              blockchain_reply: evt,
+            },
+            window.location.origin,
+          );
         } else {
-          throw new Error("blockchain reply to no subframe");
+          throw new Error('blockchain reply to no subframe');
         }
-      }
+      },
     });
 
     const biSubscription = blockchainDataEmitter.getObservable().subscribe({
       next: (evt) => {
         const subframe = document.getElementById('subframe');
         if (subframe) {
-          (subframe as any).contentWindow.postMessage({
-            blockchain_info: evt
-          }, '*');
+          (subframe as any).contentWindow.postMessage(
+            {
+              blockchain_info: evt,
+            },
+            '*',
+          );
         } else {
-          throw new Error("blockchain reply to no subframe");
+          throw new Error('blockchain reply to no subframe');
         }
-      }
+      },
     });
 
     return function () {
-      window.removeEventListener("message", receivedWindowMessage);
+      window.removeEventListener('message', receivedWindowMessage);
       bcSubscription.unsubscribe();
       biSubscription.unsubscribe();
     };
@@ -153,19 +159,21 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
     const baseUrl = BLOCKCHAIN_SERVICE_URL;
 
     fetch(`${baseUrl}/register?name=${uniqueId}`, {
-      method: "POST"
-    }).then(res => {
-      return res.json();
-    }).then(res => {
-      // Trigger fake connect if not connected.
-      console.warn('fake address is', res);
-      setFakeAddress(res);
-      setExpanded(false);
-      blockchainDataEmitter.select({
-        selection: FAKE_BLOCKCHAIN_ID,
-        uniqueId
+      method: 'POST',
+    })
+      .then((res) => {
+        return res.json();
+      })
+      .then((res) => {
+        // Trigger fake connect if not connected.
+        console.warn('fake address is', res);
+        setFakeAddress(res);
+        setExpanded(false);
+        blockchainDataEmitter.select({
+          selection: FAKE_BLOCKCHAIN_ID,
+          uniqueId,
+        });
       });
-    });
   }, []);
 
   const onDoWalletConnect = useCallback(() => {
@@ -176,15 +184,15 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       () => {
         console.warn('walletconnect should now be connected');
       },
-      (e) => setWalletConnectError(e)
-    )
+      (e) => setWalletConnectError(e),
+    );
   }, []);
 
   const onWalletDismiss = useCallback(() => {
     setExpanded(false);
   }, []);
 
-  const sessionConnected = connected ? "connected" : fakeAddress ? "simulator" : "disconnected";
+  const sessionConnected = connected ? 'connected' : fakeAddress ? 'simulator' : 'disconnected';
   const ifSession = walletConnectState.getSession() ? (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Box>
@@ -197,7 +205,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
             color="error"
             onClick={() => {
               localStorage.clear();
-              window.location.href = "";
+              window.location.href = '';
             }}
           >
             Reset Storage
@@ -213,7 +221,7 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
           color="error"
           onClick={() => {
             localStorage.clear();
-            window.location.href = "";
+            window.location.href = '';
           }}
         >
           Unlink Wallet
@@ -221,10 +229,18 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
       </Box>
     </div>
   ) : fakeAddress ? (
-    <Typography variant="h5" style={{ background: '#aa2' }}>Simulator {fakeAddress}</Typography>
+    <Typography variant="h5" style={{ background: '#aa2' }}>
+      Simulator {fakeAddress}
+    </Typography>
   ) : (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
-      <Button variant="contained" onClick={handleConnectSimulator} sx={{ mt: 3 }} style={{ background: '#aa2' }} aria-label="select-simulator">
+      <Button
+        variant="contained"
+        onClick={handleConnectSimulator}
+        sx={{ mt: 3 }}
+        style={{ background: '#aa2' }}
+        aria-label="select-simulator"
+      >
         Simulator
       </Button>
       <WalletConnectDialog
@@ -241,7 +257,17 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
   );
 
   const ifExpanded = expanded ? (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '17em', position: 'relative', background: 'white', padding: '1em' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        height: '17em',
+        position: 'relative',
+        background: 'white',
+        padding: '1em',
+      }}
+    >
       {ifSession}
       <Debug connectString={wcInfo} setConnectString={setWcInfo} />
     </div>
@@ -256,7 +282,22 @@ const WalletConnectHeading: React.FC<any> = (args: any) => {
           Chia Gaming - WalletConnect {sessionConnected}
         </div>
         <div style={{ display: 'flex', flexGrow: 1 }}> </div>
-        <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, width: '3em', height: '3em', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={toggleExpanded} aria-label='control-menu'>☰</div>
+        <div
+          style={{
+            display: 'flex',
+            flexGrow: 0,
+            flexShrink: 0,
+            width: '3em',
+            height: '3em',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+          }}
+          onClick={toggleExpanded}
+          aria-label="control-menu"
+        >
+          ☰
+        </div>
       </div>
       {ifExpanded}
     </div>

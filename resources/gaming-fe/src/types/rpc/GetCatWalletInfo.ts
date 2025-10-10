@@ -1,9 +1,9 @@
 export interface GetCatWalletInfoRequest {
-    assetId: string;
+  assetId: string;
 }
 
 export interface GetCatWalletInfoResponse {
-    name: string;
-    walletId: number;
-    success: true;
+  name: string;
+  walletId: number;
+  success: true;
 }

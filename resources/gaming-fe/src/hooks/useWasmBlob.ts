@@ -1,5 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, InternalBlockchainInterface, BlockchainReport } from '../types/ChiaGaming';
+import {
+  WasmConnection,
+  GameCradleConfig,
+  IChiaIdentity,
+  GameConnectionState,
+  ExternalBlockchainInterface,
+  ChiaGame,
+  CalpokerOutcome,
+  InternalBlockchainInterface,
+  BlockchainReport,
+} from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
 import { useInterval } from '../useInterval';
@@ -15,7 +25,14 @@ import { BLOCKCHAIN_SERVICE_URL, GAME_SERVICE_URL } from '../settings';
 
 let blobSingleton: any = null;
 
-function getBlobSingleton(blockchain: InternalBlockchainInterface, lobbyUrl: string, uniqueId: string, amount: number, perGameAmount: number, iStarted: boolean) {
+function getBlobSingleton(
+  blockchain: InternalBlockchainInterface,
+  lobbyUrl: string,
+  uniqueId: string,
+  amount: number,
+  perGameAmount: number,
+  iStarted: boolean,
+) {
   if (blobSingleton) {
     return blobSingleton;
   }
@@ -29,13 +46,15 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, lobbyUrl: str
 
   const doInternalLoadWasm = async () => {
     const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
-    return fetch(fetchUrl).then(wasm => wasm.blob()).then(blob => {
-      return blob.arrayBuffer();
-    });
+    return fetch(fetchUrl)
+      .then((wasm) => wasm.blob())
+      .then((blob) => {
+        return blob.arrayBuffer();
+      });
   };
 
   async function fetchHex(fetchUrl: string): Promise<string> {
-    return fetch(fetchUrl).then(wasm => wasm.text());
+    return fetch(fetchUrl).then((wasm) => wasm.text());
   }
 
   blobSingleton = new WasmBlobWrapper(
@@ -46,7 +65,7 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, lobbyUrl: str
     iStarted,
     doInternalLoadWasm,
     fetchHex,
-    peercon
+    peercon,
   );
 
   // This lives in the child frame.
@@ -71,14 +90,17 @@ function getBlobSingleton(blockchain: InternalBlockchainInterface, lobbyUrl: str
 
   blockchainConnector.getOutbound().subscribe({
     next: (evt: any) => {
-      window.parent.postMessage({
-        blockchain_request: evt
-      }, window.location.origin);
-    }
+      window.parent.postMessage(
+        {
+          blockchain_request: evt,
+        },
+        window.location.origin,
+      );
+    },
   });
   blockchainDataEmitter.select({
     selection: PARENT_FRAME_BLOCKCHAIN_ID,
-    uniqueId
+    uniqueId,
   });
 
   return blobSingleton;
@@ -89,7 +111,10 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
   const [uniqueWalletConnectionId, setUniqueWalletConnectionId] = useState(uuidv4());
   const [gameStartCoin, setGameStartCoin] = useState<string | undefined>(undefined);
-  const [gameConnectionState, setGameConnectionState] = useState<GameConnectionState>({ stateIdentifier: "starting", stateDetail: ["before handshake"] });
+  const [gameConnectionState, setGameConnectionState] = useState<GameConnectionState>({
+    stateIdentifier: 'starting',
+    stateDetail: ['before handshake'],
+  });
   const [handshakeDone, setHandshakeDone] = useState<boolean>(false);
 
   const searchParams = getSearchParams();
@@ -133,27 +158,20 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   const blockchain = new ChildFrameBlockchainInterface();
 
-  const gameObject = uniqueId ?
-    getBlobSingleton(
-      blockchain,
-      lobbyUrl,
-      uniqueId,
-      amount,
-      perGameAmount,
-      iStarted
-    ) :
-    null;
+  const gameObject = uniqueId
+    ? getBlobSingleton(blockchain, lobbyUrl, uniqueId, amount, perGameAmount, iStarted)
+    : null;
 
   useEffect(() => {
     let subscription = blockchain.getObservable().subscribe({
       next: (e: BlockchainReport) => {
         gameObject?.blockNotification(e.peak, e.block, e.report);
-      }
+      },
     });
 
     return () => {
       subscription.unsubscribe();
-    }
+    };
   });
 
   const handleMakeMove = useCallback((move: any) => {
@@ -166,14 +184,14 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   }, []);
 
   const settable: any = {
-    'setGameConnectionState': setGameConnectionState,
-    'setPlayerHand': setPlayerHand,
-    'setOpponentHand': setOpponentHand,
-    'setMyTurn': setMyTurn,
-    'setMoveNumber': setMoveNumber,
-    'setError': setError,
-    'setCardSelections': setOurCardSelections,
-    'setOutcome': setOutcome
+    setGameConnectionState: setGameConnectionState,
+    setPlayerHand: setPlayerHand,
+    setOpponentHand: setOpponentHand,
+    setMyTurn: setMyTurn,
+    setMoveNumber: setMoveNumber,
+    setError: setError,
+    setCardSelections: setOurCardSelections,
+    setOutcome: setOutcome,
   };
 
   useEffect(() => {
@@ -181,18 +199,20 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       return;
     }
 
-    let subscription = gameObject.getObservable().subscribe({next: (state: any) => {
-      const keys = Object.keys(state);
-      keys.forEach((k) => {
-        if (settable[k]) {
-          console.warn(k, state[k]);
-          settable[k](state[k]);
-        }
-      });
-    }});
-    return(() => {
-      subscription.unsubscribe();
+    let subscription = gameObject.getObservable().subscribe({
+      next: (state: any) => {
+        const keys = Object.keys(state);
+        keys.forEach((k) => {
+          if (settable[k]) {
+            console.warn(k, state[k]);
+            settable[k](state[k]);
+          }
+        });
+      },
     });
+    return () => {
+      subscription.unsubscribe();
+    };
   });
 
   return {
@@ -211,6 +231,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     cardSelections,
     setCardSelections,
     stopPlaying,
-    outcome
+    outcome,
   };
 }

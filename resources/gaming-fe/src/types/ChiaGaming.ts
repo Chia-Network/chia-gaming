@@ -2,76 +2,76 @@ import { Subject, Observable, Subscription } from 'rxjs';
 import { proper_list } from '../util';
 
 export type Amount = {
-  "amt": number,
+  amt: number;
 };
 
 export type Spend = {
-  "puzzle": string,
-  "solution": string,
-  "signature": string
+  puzzle: string;
+  solution: string;
+  signature: string;
 };
 
 export type CoinSpend = {
-  "coin": string,
-  "bundle": Spend
+  coin: string;
+  bundle: Spend;
 };
 
 export type SpendBundle = {
-  "spends": Array<CoinSpend>
+  spends: Array<CoinSpend>;
 };
 
 export type IChiaIdentity = {
-  "private_key": string,
-  "synthetic_private_key": string,
-  "public_key": string,
-  "synthetic_public_key": string,
-  "puzzle": string,
-  "puzzle_hash": string,
+  private_key: string;
+  synthetic_private_key: string;
+  public_key: string;
+  synthetic_public_key: string;
+  puzzle: string;
+  puzzle_hash: string;
 };
 
 export type GameConnectionState = {
-  stateIdentifier: string,
-  stateDetail: string[]
+  stateIdentifier: string;
+  stateDetail: string[];
 };
 
 export type OpponentMove = [string, string];
 export type GameFinished = [string, number];
 
 export type IdleResult = {
-  "continue_on": boolean,
-  "finished": boolean,
-  "outbound_transactions": Array<SpendBundle>,
-  "outbound_messages": Array<string>,
-  "opponent_move": OpponentMove | undefined,
-  "game_finished": GameFinished | undefined,
-  "handshake_done": boolean,
-  "receive_error": string | undefined,
-  "action_queue": Array<string>,
-  "incoming_messages": Array<string>
+  continue_on: boolean;
+  finished: boolean;
+  outbound_transactions: Array<SpendBundle>;
+  outbound_messages: Array<string>;
+  opponent_move: OpponentMove | undefined;
+  game_finished: GameFinished | undefined;
+  handshake_done: boolean;
+  receive_error: string | undefined;
+  action_queue: Array<string>;
+  incoming_messages: Array<string>;
 };
 
 export type GameCradleConfig = {
-  "seed": string | undefined,
-  "game_types": Map<string, string>,
-  "identity": string | undefined,
-  "have_potato": boolean,
-  "my_contribution": Amount,
-  "their_contribution": Amount,
-  "channel_timeout": number,
-  "reward_puzzle_hash": string,
-  "receive_error": string | undefined
+  seed: string | undefined;
+  game_types: Map<string, string>;
+  identity: string | undefined;
+  have_potato: boolean;
+  my_contribution: Amount;
+  their_contribution: Amount;
+  channel_timeout: number;
+  reward_puzzle_hash: string;
+  receive_error: string | undefined;
 };
 
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
 export type IdleCallbacks = {
-  self_move?: ((game_id: string, move_hex: string) => void) | undefined,
-  opponent_moved?: ((game_id: string, readable_move_hex: string) => void) | undefined,
-  game_message?: ((game_id: string, readable_move_hex: string) => void) | undefined,
-  game_started?: ((game_ids: string[], failed: string | undefined) => void) | undefined,
-  game_finished?: ((game_id: string, amount: number) => void) | undefined,
-  shutdown_complete?: ((coin: string) => void) | undefined,
-  going_on_chain?: (() => void) | undefined
+  self_move?: ((game_id: string, move_hex: string) => void) | undefined;
+  opponent_moved?: ((game_id: string, readable_move_hex: string) => void) | undefined;
+  game_message?: ((game_id: string, readable_move_hex: string) => void) | undefined;
+  game_started?: ((game_ids: string[], failed: string | undefined) => void) | undefined;
+  game_finished?: ((game_id: string, amount: number) => void) | undefined;
+  shutdown_complete?: ((coin: string) => void) | undefined;
+  going_on_chain?: (() => void) | undefined;
 };
 
 export interface WasmConnection {
@@ -88,7 +88,7 @@ export interface WasmConnection {
     puzzle_hash: string,
     amount: any,
     puzzle_reveal: string,
-    solution: string
+    solution: string,
   ) => any;
   convert_spend_to_coinset_org: (spend: string) => any;
   convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: any) => string;
@@ -106,7 +106,7 @@ export interface WasmConnection {
   // Misc
   chia_identity: (seed: string) => any;
   sha256bytes: (hex: string) => string;
-};
+}
 
 export interface CoinOutput {
   puzzle_hash: string;
@@ -120,7 +120,16 @@ export class ChiaGame {
   cradle: number;
   have_potato: boolean;
 
-  constructor(wasm: WasmConnection, env: any, seed: string, identity: IChiaIdentity, have_potato: boolean, my_contribution: number, their_contribution: number, rewardPuzzleHash: string) {
+  constructor(
+    wasm: WasmConnection,
+    env: any,
+    seed: string,
+    identity: IChiaIdentity,
+    have_potato: boolean,
+    my_contribution: number,
+    their_contribution: number,
+    rewardPuzzleHash: string,
+  ) {
     this.wasm = wasm;
     this.waiting_messages = [];
     this.private_key = identity.private_key;
@@ -130,11 +139,11 @@ export class ChiaGame {
       game_types: env.game_types,
       identity: identity.private_key,
       have_potato: have_potato,
-      my_contribution: {amt: my_contribution},
-      their_contribution: {amt: their_contribution},
+      my_contribution: { amt: my_contribution },
+      their_contribution: { amt: their_contribution },
       channel_timeout: env.timeout,
       unroll_timeout: env.unroll_timeout,
-      reward_puzzle_hash: rewardPuzzleHash
+      reward_puzzle_hash: rewardPuzzleHash,
     });
     console.log(`constructed ${have_potato} cradle ${this.cradle}`);
   }
@@ -173,7 +182,7 @@ export class ChiaGame {
     return w;
   }
 
-  idle(callbacks: IdleCallbacks) : IdleResult {
+  idle(callbacks: IdleCallbacks): IdleResult {
     let result = this.wasm.idle(this.cradle, callbacks);
     if (result) {
       this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
@@ -182,7 +191,13 @@ export class ChiaGame {
   }
 
   block_data(block_number: number, block_data: WatchReport) {
-    this.wasm.new_block(this.cradle, block_number, block_data.created_watched, block_data.deleted_watched, block_data.timed_out);
+    this.wasm.new_block(
+      this.cradle,
+      block_number,
+      block_data.created_watched,
+      block_data.deleted_watched,
+      block_data.timed_out,
+    );
   }
 }
 
@@ -202,7 +217,7 @@ export interface BlockchainConnection {
   get_puzzle_and_solution: (coin: string) => Promise<string[] | null>;
   spend: (clvm_hex_spend_blob: string) => Promise<(number | null)[]>;
   create_spendable: (target_ph: string, amount: number) => Promise<string | null>;
-};
+}
 
 export class ExternalBlockchainInterface {
   baseUrl: string;
@@ -219,11 +234,14 @@ export class ExternalBlockchainInterface {
     }
 
     return fetch(`${this.baseUrl}/register?name=${uniqueId}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json()).then(token => {
-      this.token = token;
-      return token;
-    });
+      body: '',
+      method: 'POST',
+    })
+      .then((f) => f.json())
+      .then((token) => {
+        this.token = token;
+        return token;
+      });
   }
 
   getToken(): string {
@@ -232,38 +250,44 @@ export class ExternalBlockchainInterface {
 
   getPeak(): Promise<number> {
     return fetch(`${this.baseUrl}/get_peak`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: '',
+      method: 'POST',
+    }).then((f) => f.json());
   }
 
   getBlockData(block: number): Promise<WatchReport | null> {
     return fetch(`${this.baseUrl}/get_block_data?block=${block}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: '',
+      method: 'POST',
+    }).then((f) => f.json());
   }
 
   waitBlock(): Promise<number> {
     return fetch(`${this.baseUrl}/wait_block`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: '',
+      method: 'POST',
+    }).then((f) => f.json());
   }
 
   getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     return fetch(`${this.baseUrl}/get_puzzle_and_solution?coin=${coin}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: '',
+      method: 'POST',
+    }).then((f) => f.json());
   }
 
   spend(spend_data_clvm_hex: string): Promise<(number | null)[]> {
     return fetch(`${this.baseUrl}/spend?blob=${spend_data_clvm_hex}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: '',
+      method: 'POST',
+    }).then((f) => f.json());
   }
 
   createSpendable(target_ph: string, amt: number): Promise<string | null> {
     return fetch(`${this.baseUrl}/create_spendable?who=${this.token}&target=${target_ph}&amount=${amt}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: '',
+      method: 'POST',
+    }).then((f) => f.json());
   }
 }
 
@@ -290,7 +314,11 @@ function card_matches(cards: number[][], card: number[]): boolean {
   return false;
 }
 
-export function card_color(outcome: CalpokerOutcome, iAmAlice: boolean, card: number[]): 'my-used' | 'my-final' | 'their-used' | 'their-final' {
+export function card_color(
+  outcome: CalpokerOutcome,
+  iAmAlice: boolean,
+  card: number[],
+): 'my-used' | 'my-final' | 'their-used' | 'their-final' {
   let my_used_cards = iAmAlice ? outcome.alice_used_cards : outcome.bob_used_cards;
   if (card_matches(my_used_cards, card)) {
     return 'my-used';
@@ -366,7 +394,7 @@ export class CalpokerOutcome {
     } else {
       this.alice_discards = myDiscards;
       this.bob_discards = result_list[0];
-    };
+    }
 
     this.win_direction = raw_win_direction;
     const alice_win = this.win_direction < 0;
@@ -423,13 +451,15 @@ export class ToggleEmitter<T> {
 
   addUpstream(upstream: Subject<T>): number {
     const i = this.subscriptions.length;
-    this.subscriptions.push(upstream.subscribe({
-      next: (elt: T) => {
-        if (this.selection === i) {
-          this.downstream.next(elt);
-        }
-      }
-    }));
+    this.subscriptions.push(
+      upstream.subscribe({
+        next: (elt: T) => {
+          if (this.selection === i) {
+            this.downstream.next(elt);
+          }
+        },
+      }),
+    );
     return i;
   }
 
@@ -439,9 +469,13 @@ export class ToggleEmitter<T> {
     this.upstreamSelect = (s: SelectionMessage) => {};
   }
 
-  getObservable() { return this.downstream; }
+  getObservable() {
+    return this.downstream;
+  }
 
-  getSelectionObservable() { return this.upstreamSelection; }
+  getSelectionObservable() {
+    return this.upstreamSelection;
+  }
 
   close() {
     this.subscriptions.forEach((s) => s.unsubscribe());

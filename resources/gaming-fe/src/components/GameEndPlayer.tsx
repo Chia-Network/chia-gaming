@@ -1,44 +1,38 @@
-import React from "react";
-import { useCallback, useState } from "react";
-import { Box, Button, Typography, Paper } from "@mui/material";
+import React from 'react';
+import { useCallback, useState } from 'react';
+import { Box, Button, Typography, Paper } from '@mui/material';
 import { popcount } from '../util';
 import { card_color, CalpokerOutcome } from '../types/ChiaGaming';
-import PlayingCard from "./PlayingCard";
+import PlayingCard from './PlayingCard';
 
 interface GameEndPlayerProps {
-iStarted: boolean;
-playerNumber: number;
-outcome: CalpokerOutcome;
+  iStarted: boolean;
+  playerNumber: number;
+  outcome: CalpokerOutcome;
 }
 
-const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
-    iStarted,
-    playerNumber,
-    outcome,
-}) => {
+const GameEndPlayer: React.FC<GameEndPlayerProps> = ({ iStarted, playerNumber, outcome }) => {
   const iAmAlice = playerNumber === 2;
   const playerHand: number[][] = iAmAlice ? outcome.alice_cards : outcome.bob_cards;
-  const who = (iStarted !== iAmAlice) ? 'Your' : 'Opponent';
-  const whoTitle = (iStarted !== iAmAlice) ? 'You' : 'Opponent';
+  const who = iStarted !== iAmAlice ? 'Your' : 'Opponent';
+  const whoTitle = iStarted !== iAmAlice ? 'You' : 'Opponent';
   const cardColors = {
     'my-used': '#4d4',
     'my-final': '#bfb',
     'their-used': '#bbb',
-    'their-final': '#fff'
+    'their-final': '#fff',
   };
   return (
     <Paper
       elevation={3}
       style={{
-        padding: "16px",
+        padding: '16px',
         flexGrow: 1,
-        display: "flex",
-        flexDirection: "column",
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
-      <Typography variant="h5">
-      {whoTitle}
-      </Typography>
+      <Typography variant="h5">{whoTitle}</Typography>
       <br />
       <Typography variant="h6">{`${who} Hand:`}</Typography>
       <br />
@@ -48,14 +42,14 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
           let selectionColor = cardColors[card_color(outcome, !iStarted, card)];
           return (
             <PlayingCard
-                id={id}
-                key={index}
-                index={index}
-                selected={false}
-                selectionColor={selectionColor}
-                cardValue={card}
-                setSelection={() => {}}
-                iAmPlayer={(iStarted !== iAmAlice)}
+              id={id}
+              key={index}
+              index={index}
+              selected={false}
+              selectionColor={selectionColor}
+              cardValue={card}
+              setSelection={() => {}}
+              iAmPlayer={iStarted !== iAmAlice}
             />
           );
         })}
@@ -65,4 +59,3 @@ const GameEndPlayer: React.FC<GameEndPlayerProps> = ({
 };
 
 export default GameEndPlayer;
-
