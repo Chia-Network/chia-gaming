@@ -1,27 +1,35 @@
-import React from 'react';
 import { Box, Typography, CircularProgress } from '@mui/material';
+import React from 'react';
 
 interface WaitingScreenProps {
   stateName: string;
   messages: string[];
-};
+}
 
-const WaitingScreen: React.FC<WaitingScreenProps> = ({ stateName, messages }) => {
+const WaitingScreen: React.FC<WaitingScreenProps> = ({
+  stateName,
+  messages,
+}) => {
   return (
     <Box
       p={4}
-      display="flex"
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
-      height="100vh"
+      display='flex'
+      flexDirection='column'
+      alignItems='center'
+      justifyContent='center'
+      height='100vh'
     >
-      <Typography variant="h4" aria-label="waiting-state">{stateName}</Typography>
-      <div>{messages.map((msg) => <div>{msg}</div>)}</div>
+      <Typography variant='h4' aria-label='waiting-state'>
+        {stateName}
+      </Typography>
+      <div>
+        {messages.map((msg) => (
+          <div>{msg}</div>
+        ))}
+      </div>
       <CircularProgress />
     </Box>
   );
 };
 
 export default WaitingScreen;
-

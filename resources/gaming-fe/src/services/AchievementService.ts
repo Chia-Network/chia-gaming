@@ -29,8 +29,7 @@ export class AchievementService {
   private static instance: AchievementService;
   private achievements: Map<string, Achievement>;
   private playerAchievements: Map<string, PlayerAchievement[]>;
-  private readonly defaultAchievements: Achievement[] = [
-  ];
+  private readonly defaultAchievements: Achievement[] = [];
 
   private constructor() {
     this.achievements = new Map();
@@ -39,7 +38,7 @@ export class AchievementService {
   }
 
   private initializeAchievements(): void {
-    this.defaultAchievements.forEach(achievement => {
+    this.defaultAchievements.forEach((achievement) => {
       this.achievements.set(achievement.id, achievement);
     });
   }
@@ -55,7 +54,7 @@ export class AchievementService {
     const id = uuidv4();
     const newAchievement: Achievement = {
       ...achievement,
-      id
+      id,
     };
     this.achievements.set(id, newAchievement);
     return id;
@@ -74,13 +73,11 @@ export class AchievementService {
   }
 
   public getAchievementsByType(type: Achievement['type']): Achievement[] {
-    return Array.from(this.achievements.values())
-      .filter(achievement => achievement.type === type);
+    return Array.from(this.achievements.values()).filter((achievement) => achievement.type === type);
   }
 
   public getAchievementsByGameType(gameType: GameType): Achievement[] {
-    return Array.from(this.achievements.values())
-      .filter(achievement => achievement.gameType === gameType);
+    return Array.from(this.achievements.values()).filter((achievement) => achievement.gameType === gameType);
   }
 
   public getPlayerAchievements(playerId: string): PlayerAchievement[] {
@@ -88,24 +85,17 @@ export class AchievementService {
   }
 
   public getPlayerCompletedAchievements(playerId: string): PlayerAchievement[] {
-    return this.getPlayerAchievements(playerId)
-      .filter(achievement => achievement.completed);
+    return this.getPlayerAchievements(playerId).filter((achievement) => achievement.completed);
   }
 
   public getPlayerAchievementProgress(playerId: string, achievementId: string): number {
-    const achievement = this.getPlayerAchievements(playerId)
-      .find(a => a.achievementId === achievementId);
+    const achievement = this.getPlayerAchievements(playerId).find((a) => a.achievementId === achievementId);
     return achievement ? achievement.progress : 0;
   }
 
-  public updateAchievementProgress(
-    playerId: string,
-    achievementId: string,
-    progress: number
-  ): void {
+  public updateAchievementProgress(playerId: string, achievementId: string, progress: number): void {
     const achievement = this.getAchievement(achievementId);
-    let playerAchievement = this.getPlayerAchievements(playerId)
-      .find(a => a.achievementId === achievementId);
+    let playerAchievement = this.getPlayerAchievements(playerId).find((a) => a.achievementId === achievementId);
 
     if (!playerAchievement) {
       playerAchievement = {
@@ -113,7 +103,7 @@ export class AchievementService {
         playerId,
         unlockedAt: new Date(),
         progress: 0,
-        completed: false
+        completed: false,
       };
       if (!this.playerAchievements.has(playerId)) {
         this.playerAchievements.set(playerId, []);
@@ -133,7 +123,7 @@ export class AchievementService {
       currentWinStreak: number;
       totalWinnings: number;
       uniqueOpponents: number;
-    }
+    },
   ): string[] {
     const unlockedAchievements: string[] = [];
     const playerAchievements = this.getPlayerAchievements(playerId);
@@ -182,20 +172,21 @@ export class AchievementService {
   }
 
   public getTotalPoints(playerId: string): number {
-    return this.getPlayerCompletedAchievements(playerId)
-      .reduce((total, achievement) => {
-        const achievementData = this.getAchievement(achievement.achievementId);
-        return total + achievementData.points;
-      }, 0);
+    return this.getPlayerCompletedAchievements(playerId).reduce((total, achievement) => {
+      const achievementData = this.getAchievement(achievement.achievementId);
+      return total + achievementData.points;
+    }, 0);
   }
 
   public getPlayerRank(playerId: string): number {
     const allPlayers = Array.from(this.playerAchievements.keys());
     const playerPoints = this.getTotalPoints(playerId);
-    
-    return allPlayers
-      .map(p => this.getTotalPoints(p))
-      .sort((a, b) => b - a)
-      .indexOf(playerPoints) + 1;
+
+    return (
+      allPlayers
+        .map((p) => this.getTotalPoints(p))
+        .sort((a, b) => b - a)
+        .indexOf(playerPoints) + 1
+    );
   }
-} 
+}

@@ -6,15 +6,11 @@ import { fakeBlockchainInfo } from './FakeBlockchainInterface';
 
 let requestNumber = 1;
 
-function performTransaction(
-  checkReply: (reply: any) => any,
-  requestId: number,
-  request: any
-): Promise<any> {
+function performTransaction(checkReply: (reply: any) => any, requestId: number, request: any): Promise<any> {
   return new Promise((resolve, reject) => {
     let thisRequestChannel = blockchainConnector.getInbound().pipe(
       filter((e: BlockchainInboundReply) => e.responseId === requestId),
-      take(1)
+      take(1),
     );
     let subscription = thisRequestChannel.subscribe({
       next: (e: BlockchainInboundReply) => {
@@ -32,7 +28,7 @@ function performTransaction(
         }
 
         resolve(replyObject);
-      }
+      },
     });
 
     blockchainConnector.requestEmitter(request);
@@ -44,15 +40,11 @@ export class ChildFrameBlockchainInterface {
     let requestId = requestNumber++;
     let request = {
       requestId,
-      initialSpend: { uniqueId, target, amount }
+      initialSpend: { uniqueId, target, amount },
     };
 
-    return performTransaction(
-      (e: any) => e.initialSpend,
-      requestId,
-      request
-    );
-}
+    return performTransaction((e: any) => e.initialSpend, requestId, request);
+  }
 
   spend(cvt: (blob: string) => any, spend: string): Promise<string> {
     let requestId = requestNumber++;
@@ -60,15 +52,11 @@ export class ChildFrameBlockchainInterface {
       requestId,
       transaction: {
         blob: spend,
-        spendObject: cvt(spend)
-      }
+        spendObject: cvt(spend),
+      },
     };
 
-    return performTransaction(
-      (e: any) => e.transaction,
-      requestId,
-      request
-    );
+    return performTransaction((e: any) => e.transaction, requestId, request);
   }
 
   getObservable() {

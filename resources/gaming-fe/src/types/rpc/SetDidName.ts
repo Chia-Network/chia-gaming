@@ -1,9 +1,9 @@
 export interface SetDidNameRequest {
-    walletId: number;
-    name: string;
+  walletId: number;
+  name: string;
 }
 
 export interface SetDidNameResponse {
-    walletId: number;
-    success: true;
+  walletId: number;
+  success: true;
 }

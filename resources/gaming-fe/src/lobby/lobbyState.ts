@@ -83,7 +83,7 @@ export class Lobby {
       expiresAt: Date.now() + ROOM_TTL,
       status: 'waiting',
       maxPlayers: 2,
-      chat: []
+      chat: [],
     };
     this.rooms[room.token] = room;
     return room;

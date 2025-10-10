@@ -1,12 +1,12 @@
 export interface VerifySignatureRequest {
-    message: string;
-    pubkey: string;
-    signature: string;
-    address?: string;
-    signingMode?: string;
+  message: string;
+  pubkey: string;
+  signature: string;
+  address?: string;
+  signingMode?: string;
 }
 
 export interface VerifySignatureResponse {
-    isValid: true;
-    success: true;
+  isValid: true;
+  success: true;
 }

@@ -25,7 +25,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
 }) => {
   const suitNames = ['Q', '♥', '♦', '♤', '♧'];
   const rank = cardValue.slice(0, -1);
-  const suit = suitNames[(cardValue.slice(-1)[0] as any)];
+  const suit = suitNames[cardValue.slice(-1)[0] as any];
   const setSelectedCB = () => {
     const newSelected = !selected;
     setSelection(index, newSelected);
@@ -44,7 +44,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     flexDirection: 'column' as 'column',
     justifyContent: 'space-between',
     padding: '8px',
-    backgroundColor: selectionColor ? selectionColor : selected ? '#ddd' : (isFaceDown ? '#2E7D32' : '#FFFFFF'),
+    backgroundColor: selectionColor ? selectionColor : selected ? '#ddd' : isFaceDown ? '#2E7D32' : '#FFFFFF',
     color: isFaceDown ? '#FFFFFF' : suitColor,
     cursor: 'pointer',
     textAlign: 'center' as 'center',
@@ -59,10 +59,7 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
             {rank}
             {suit}
           </Typography>
-          <Typography
-            variant="body2"
-            style={{ fontWeight: 'bold', transform: 'rotate(180deg)' }}
-          >
+          <Typography variant="body2" style={{ fontWeight: 'bold', transform: 'rotate(180deg)' }}>
             {rank}
             {suit}
           </Typography>
@@ -73,4 +70,3 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
 };
 
 export default PlayingCard;
-
