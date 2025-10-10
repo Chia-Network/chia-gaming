@@ -7,6 +7,8 @@ use hex::FromHex;
 use log::debug;
 use num_bigint::{BigInt, Sign};
 
+use chia_puzzles::P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE;
+
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 
@@ -55,10 +57,8 @@ pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzl
 }
 
 pub fn get_standard_coin_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, types::Error> {
-    read_hex_puzzle(
-        allocator,
-        "resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex",
-    )
+    let hex_sexp = hex_to_sexp(allocator, &P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE)?;
+    Puzzle::from_nodeptr(allocator, hex_sexp)
 }
 
 fn group_order_int() -> BigInt {
