@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, InternalBlockchainInterface, BlockchainReport, BlockchainInboundAddressResult } from '../types/ChiaGaming';
+import { WasmConnection, GameCradleConfig, IChiaIdentity, GameConnectionState, ExternalBlockchainInterface, ChiaGame, CalpokerOutcome, InternalBlockchainInterface, BlockchainReport, suitNames, OutcomeLogLine, handValueToDescription, BlockchainInboundAddressResult } from '../types/ChiaGaming';
 import useGameSocket from './useGameSocket';
 import { getSearchParams, spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount } from '../util';
 import { useInterval } from '../useInterval';
@@ -96,7 +96,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
-  const [log, setLog] = useState<string[]>([]);
+  const [log, setLog] = useState<OutcomeLogLine[]>([]);
   const [addressData, setAddressData] = useState<BlockchainInboundAddressResult>({
     address: '', puzzleHash: ''
   });
@@ -169,10 +169,21 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     gameObject?.loadWasm(chia_gaming_init, cg);
   }, []);
 
-  const recognizeOutcome = (outcome: CalpokerOutcome) => {
+  const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
     setOutcome(outcome);
     if (outcome) {
-      setLog([...log, outcome?.my_win_outcome]);
+      const myCards = iStarted ? outcome.alice_cards : outcome.bob_cards;
+      const myValue = iStarted ? outcome.alice_hand_value : outcome.bob_hand_value;
+      const theirCards = iStarted ? outcome.bob_cards : outcome.alice_cards;
+      const theirValue = iStarted ? outcome.bob_hand_value : outcome.alice_hand_value;
+      let newLogObject = {
+        topLineOutcome: outcome.my_win_outcome,
+        myHandDescription: handValueToDescription(myValue, myCards),
+        opponentHandDescription: handValueToDescription(theirValue, theirCards),
+        myHand: myCards,
+        opponentHand: theirCards
+      };
+      setLog([...log, newLogObject]);
     }
   };
 

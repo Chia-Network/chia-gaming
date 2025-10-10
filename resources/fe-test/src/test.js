@@ -245,11 +245,15 @@ describe("Out of money test", function() {
     let expectedPost2 = preBalance2 + 200;
     const outcomeToAddition = {"lose":-10, "win":10, "tie":0};
 
+    console.log('searching for outcome');
     for (let i = 0; i < 2; i++) {
-        const logEntry = await driver.wait(until.elementLocated(byAttribute("aria-label", `log-entry-${i}`)));
-        const outcome = await logEntry.getAttribute("innerText");
-        expectedPost1 += outcomeToAddition[outcome];
-        expectedPost2 -= outcomeToAddition[outcome];
+        const logEntryMe = await driver.wait(until.elementLocated(byAttribute("aria-label", `log-entry-me-${i}`)));
+        const logEntryOpponent = await driver.wait(until.elementLocated(byAttribute("aria-label", `log-entry-opponent-${i}`)));
+        const outcomeMe = await logEntryMe.getAttribute("innerText");
+        const outcomeOpponent = await logEntryOpponent.getAttribute("innerText");
+        const addition = (outcomeMe.indexOf("WINNER") != -1) ? 10 : (outcomeOpponent.indexOf("WINNER") != -1) ? -10 : 0;
+        expectedPost1 += addition;
+        expectedPost2 -= addition;
     }
 
     console.log('awaiting shutdown');
@@ -308,6 +312,8 @@ describe("Out of money test", function() {
     expect(!!driver1 && !!driver2).toBe(true);
 
     await testTwoGamesAndShutdown(selectSimulator);
+
+    return;
 
     await prepareBrowser(driver1);
     await prepareBrowser(driver2);

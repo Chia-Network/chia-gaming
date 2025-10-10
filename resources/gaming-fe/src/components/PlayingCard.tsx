@@ -1,6 +1,7 @@
 import React from 'react';
 import { useState, useCallback } from 'react';
 import { Paper, Typography } from '@mui/material';
+import { suitNames } from '../types/ChiaGaming';
 
 interface PlayingCardProps {
   id: string;
@@ -23,7 +24,6 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   isFaceDown = false,
   iAmPlayer,
 }) => {
-  const suitNames = ['Q', '♥', '♦', '♤', '♧'];
   const rank = cardValue.slice(0, -1);
   const suit = suitNames[(cardValue.slice(-1)[0] as any)];
   const setSelectedCB = () => {
