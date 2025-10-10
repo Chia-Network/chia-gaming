@@ -202,7 +202,7 @@ struct JsGameCradleConfig {
     // name vs hex string for program
     game_types: BTreeMap<String, JsGameFactory>,
     // hex string for private key
-    identity: String,
+    identity: String, //todo rename private_key
     rng_id: i32,
     have_potato: bool,
     // float or decimal string
@@ -251,6 +251,7 @@ fn get_game_config(
     js_config: JsValue,
 ) -> Result<GameConfigResult, JsValue> {
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
+//xxx here
     let private_key_bytes = hex::decode(&jsconfig.identity).into_js()?;
     let private_key = PrivateKey::from_slice(&private_key_bytes).into_js()?;
     let identity = ChiaIdentity::new(allocator, private_key).into_js()?;

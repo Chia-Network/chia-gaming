@@ -16,10 +16,9 @@ const App: React.FC = () => {
   const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState("about:blank");
 
-  console.log("PARAMS: ", params);
+  console.log("Build 6:25 Entering App.tsx URL PARAMS: ", params);
 
   useEffect(() => {
-    console.log("ANY OLD CHANGE");
     const subscription = blockchainDataEmitter.getObservable().subscribe({
       next: (peak: any) => {
         setHavePeak(true);

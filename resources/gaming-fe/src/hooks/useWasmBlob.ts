@@ -30,6 +30,8 @@ export interface Shutdown {
 }
 export type WasmCommand = DeliverMessage | SocketEnabled | WasmMove | SetCardSelections | Shutdown;
 
+let onceDammit = false;
+
 export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [realPublicKey, setRealPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
@@ -50,7 +52,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
   const [wasmStateInit, setWasmStateInit] = useState<WasmStateInit>(new WasmStateInit(doInternalLoadWasm, fetchHex));
-  const [gotWasmStateInit, setGotWasmStateInit] = useState<boolean>(false);
 
   const amount = parseInt(searchParams.amount);
   let perGameAmount = amount / 10;
@@ -141,9 +142,9 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   }
 
   useEffect(() => {
-    console.log('Wasm init: checking gotWasmStateInit');
-    if (!gotWasmStateInit) {
-      setGotWasmStateInit(true);
+    if (!onceDammit) {
+      console.log('Wasm init in ', window.parent,': checking gotWasmStateInit');
+      onceDammit = true;
     } else {
       return;
     }
@@ -187,7 +188,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
           calpokerHex, wasmConnection
         };
       });
-    }).then(({ calpokerHex, wasmConnection }) => {
+    }).then(async ({ calpokerHex, wasmConnection }) => {
       const env = {
         game_types: {
           "calpoker": {
@@ -272,18 +273,22 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       });
 
       console.log('Wasm Initialization Complete.');
-      return liveGame.createStartCoin().then();
+      const startCoin = await liveGame.createStartCoin();
+      return {liveGame, startCoin};
 
-    }).then((coin) => {
-      console.log('Initial coin creation complete. Got: ', coin);
-      if (coin === undefined) {
+    }).then(({liveGame, startCoin}) => {
+      console.log('Initial coin creation complete. Got: ', startCoin);
+      if (startCoin === undefined) {
         throw("Failed to create initial game coin");
       }
-      setGameStartCoin(coin);
+      setGameStartCoin(startCoin);
+      liveGame.setStartCoin(startCoin);
+      liveGame.internalStartGame();
       console.log('Chia Gaming infrastructure Initialization Complete.');
+
     });
     console.log('Chia Gaming infrastructure Initialization threaded and ready to be configured.');
-  }); // useEffect end
+  }, []); // useEffect end
 
   // Called once at an arbitrary time.
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {

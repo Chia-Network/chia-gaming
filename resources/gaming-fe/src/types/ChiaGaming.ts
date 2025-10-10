@@ -54,10 +54,15 @@ export type IdleResult = {
 
 // --------------------------------------------------------------
 
+// JsGameCradleConfig
+//  identity: String,
+// TODO: rng_id dne. in GameCradleConfig because these are the init params to the wasm GameCradle,
+//       which will create the Rng with identity.private_key as an input
 export type GameCradleConfig = {
   "seed": string | undefined,
   "game_types": Map<string, string>,
-  "identity": string | undefined,
+  //"identity": IChiaIdentity | undefined,
+  "identity": string | undefined, // note: for this input, this is JUST the private key
   "have_potato": boolean,
   "my_contribution": Amount,
   "their_contribution": Amount,
@@ -121,6 +126,7 @@ export interface WasmConnection {
   // System
   init: (print: any) => any;
   create_serialized_game: (json: any) => number;
+  // TODO: create_game_cradle: (config: GameCradleConfig) => number;
   create_game_cradle: (config: any) => number;
   deposit_file: (name: string, data: string) => any;
 
