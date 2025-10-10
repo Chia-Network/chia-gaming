@@ -81,8 +81,8 @@ RUN ln -s /app/resources /resources
 ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
-COPY resources/gaming-fe/start-system.sh /app/
-COPY resources/gaming-fe/run_simulator.py /app/
+COPY resources/gaming-fe/scripts/start-system.sh /app/
+COPY resources/gaming-fe/scripts/run_simulator.py /app/
 RUN chmod +x /app/start-system.sh /app/run_simulator.py
 
 CMD /app/start-system.sh
