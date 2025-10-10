@@ -10,6 +10,7 @@ import PlayingCard from "./PlayingCard";
 import { QRCodeModal } from "./QRCodeModal";
 import WalletConnectHeading from "./WalletConnectHeading";
 import { WalletConnectDialog } from "./WalletConnect";
+import CaliforniaPoker from "./BramVibe1";
 
 const componentList: Record<string, any> = {
   "LobbyScreen": LobbyScreen as any,
@@ -22,6 +23,7 @@ const componentList: Record<string, any> = {
   "QRCodeModal": QRCodeModal as any,
   "WalletConnectHeading": WalletConnectHeading as any,
   "WalletConnect": WalletConnectDialog as any,
+  "BramVibe1": CaliforniaPoker as any
 };
 
 const Gallery: React.FC = () => {
