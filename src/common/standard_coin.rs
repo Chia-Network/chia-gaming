@@ -57,7 +57,8 @@ pub fn read_hex_puzzle(allocator: &mut AllocEncoder, name: &str) -> Result<Puzzl
 }
 
 pub fn get_standard_coin_puzzle(allocator: &mut AllocEncoder) -> Result<Puzzle, types::Error> {
-    let hex_sexp = hex_to_sexp(allocator, &P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE)?;
+    let hex_sexp =
+        node_from_bytes(allocator.allocator(), &P2_DELEGATED_PUZZLE_OR_HIDDEN_PUZZLE).into_gen()?;
     Puzzle::from_nodeptr(allocator, hex_sexp)
 }
 
