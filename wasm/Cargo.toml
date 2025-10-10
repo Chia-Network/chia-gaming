@@ -20,14 +20,14 @@ path = "src/mod.rs"
 chia_gaming = { path= "..", features = [] }
 clvmr = { version = "=0.12.0", features = ["pre-eval"] }
 indexmap = "=1.6.2"
-serde = "1.0.203"
-serde_json = "1.0"
-serde-wasm-bindgen = "0.3.0"
+serde = "1.0.228"
+serde_json = "1.0.145"
+serde-wasm-bindgen = "0.6.5"
 hex = "0.4.3"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-wasm-bindgen = { version = "0.2.100", features = ["serde-serialize"] }
-wasm-bindgen-test = "0.3.25"
+wasm-bindgen = { version = "0.2.104", features = ["serde-serialize"] }
+wasm-bindgen-test = "0.3.54"
 js-sys = "0.3.77"
 num-bigint = "0.4.0"
 num-traits = "0.2.15"

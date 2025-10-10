@@ -1,6 +1,8 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
+use serde::{Deserialize, Serialize};
+
 use clvm_traits::ToClvm;
 
 use log::debug;
@@ -34,7 +36,7 @@ use crate::referee::v1::RefereeByTurn;
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TheirTurnRefereeMakerGameState {
     Initial {
         initial_state: Rc<Program>,
@@ -103,7 +105,7 @@ impl TheirTurnRefereeMakerGameState {
 // Referee coin has two inner puzzles.
 // Throughout channel handler, the one that's ours is the standard format puzzle
 // to the pubkey of the referee private key (referred to in channel_handler).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TheirTurnReferee {
     pub fixed: Rc<RMFixed>,
 

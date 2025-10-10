@@ -23,6 +23,7 @@ import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 const Game: React.FC = () => {
   const uniqueId = generateOrRetrieveUniqueId();
   const params = getSearchParams();
+  console.log(`Calling useWasmBlob(${params.lobbyUrl}, ${uniqueId})`);
   const {
     error,
     gameConnectionState,

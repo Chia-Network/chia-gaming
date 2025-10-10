@@ -8,7 +8,7 @@ use clvm_traits::ToClvm;
 use crate::common::types::{AllocEncoder, Amount, CoinID, Error, Hash as Hash32, PuzzleHash};
 
 /// Coin String
-#[derive(Default, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Default, Clone, Serialize, Deserialize, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct CoinString(Vec<u8>);
 
 impl std::fmt::Debug for CoinString {

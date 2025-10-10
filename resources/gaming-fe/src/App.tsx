@@ -16,6 +16,8 @@ const App: React.FC = () => {
   const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState("about:blank");
 
+  console.log("Build 6:25 Entering App.tsx URL PARAMS: ", params);
+
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
       next: (peak: any) => {
@@ -46,6 +48,7 @@ const App: React.FC = () => {
   }, [params]);
 
   if (params.lobby) {
+    console.log('params.lobby detected in', params);
     return (
       <LobbyScreen />
     );
@@ -56,6 +59,7 @@ const App: React.FC = () => {
   }
 
   if (params.game && !params.join) {
+    console.log('params.game detected in', params);
     return <Game />;
   }
 
