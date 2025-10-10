@@ -25,6 +25,7 @@ const Game: React.FC = () => {
   const params = getSearchParams();
   const {
     error,
+    log,
     gameConnectionState,
     isPlayerTurn,
     iStarted,
@@ -56,6 +57,7 @@ const Game: React.FC = () => {
           </Typography>
           <Box>
             {gameConnectionState.stateDetail.map((c) => (<Typography variant="h5" align="center">{c}</Typography>))}
+            <GameLog log={log} />
           </Box>
       </Box>
     );
@@ -177,7 +179,7 @@ const Game: React.FC = () => {
       <br/>
       <Typography>{moveDescription}</Typography>
       <br/>
-      <GameLog log={[]} />
+      <GameLog log={log} />
     </Box>
   );
 };
