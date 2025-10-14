@@ -18,9 +18,7 @@ interface GameConfig {
     turn: number;
     round: number;
   };
-  rules: {
-    [key: string]: any;
-  };
+  rules: Record<string, any>;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;

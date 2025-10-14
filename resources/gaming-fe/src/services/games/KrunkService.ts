@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
+
 import { AppError, ErrorCodes } from '../../types/errors';
-import { Player, GameSession } from '../../types/lobby';
+import { GameSession } from '../../types/lobby';
 
 interface Word {
   word: string;
@@ -121,8 +122,6 @@ export class KrunkService {
       throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Not your turn', 400);
     }
 
-    const player = gameState.players[playerIndex];
-
     switch (action) {
       case 'guess':
         if (!data?.word) {
@@ -167,7 +166,7 @@ export class KrunkService {
     player.hintsUsed++;
   }
 
-  private async handlePass(gameState: GameState, playerIndex: number): Promise<void> {
+  private async handlePass(gameState: GameState, _playerIndex: number): Promise<void> {
     this.moveToNextPlayer(gameState);
   }
 

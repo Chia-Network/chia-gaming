@@ -1,11 +1,10 @@
-import React from 'react';
 import { Box, Typography, Paper } from '@mui/material';
 
 interface GameLogProps {
   log: string[];
 }
 
-const GameLog: React.FC<GameLogProps> = ({ log }) => {
+const GameLog = ({ log }: GameLogProps) => {
   return (
     <Box mt={4}>
       <Typography variant="h5">Game & Transactions Log:</Typography>

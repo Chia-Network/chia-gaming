@@ -1,5 +1,5 @@
-import { v4 as uuidv4 } from 'uuid';
 import { Program } from 'clvm-lib';
+import { v4 as uuidv4 } from 'uuid';
 
 export function toUint8(s: string) {
   if (s.length % 2 != 0) {
@@ -7,8 +7,8 @@ export function toUint8(s: string) {
   }
   const result = new Uint8Array(s.length >> 1);
   for (let i = 0; i < s.length; i += 2) {
-    let sub = s.slice(i, i + 2);
-    let val = parseInt(sub, 16);
+    const sub = s.slice(i, i + 2);
+    const val = parseInt(sub, 16);
     result[i >> 1] = val;
   }
   return result;
@@ -21,7 +21,7 @@ export function toHexString(byteArray: number[]) {
   }).join('');
 }
 
-export type FragmentData = { [k: string]: string };
+export type FragmentData = Record<string, string>;
 
 export function getParamsFromString(paramString: string): any {
   const fragmentParts = paramString.split('&');
@@ -96,11 +96,11 @@ export function getGameSelection(): GameSelection | undefined {
 }
 
 function clvm_enlist(clvms: string[]): string {
-  let result = [];
+  const result = [];
 
-  for (var i = 0; i < clvms.length; i++) {
+  for (const clvm of clvms) {
     result.push('ff');
-    result.push(clvms[i]);
+    result.push(clvm);
   }
 
   result.push('80');
@@ -148,7 +148,7 @@ export function proper_list(p: any): any {
 }
 
 export function decode_sexp_hex(h: string): any {
-  let p = Program.deserialize(toUint8(h));
+  const p = Program.deserialize(toUint8(h));
   return explode(p);
 }
 

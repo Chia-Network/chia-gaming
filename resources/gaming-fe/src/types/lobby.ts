@@ -7,7 +7,7 @@ export const GameTypes = {
 };
 export type GameType = 'california_poker' | 'krunk' | 'exotic_poker';
 
-export type FragmentData = { [k: string]: string };
+export type FragmentData = Record<string, string>;
 
 export interface Player {
   id: string;

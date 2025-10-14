@@ -1,4 +1,5 @@
 import { CoreTypes, ProposalTypes } from '@walletconnect/types';
+
 import { CHAIN_ID } from './env';
 
 export enum ChiaMethod {

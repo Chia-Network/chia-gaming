@@ -1,12 +1,13 @@
-import { Subject } from 'rxjs';
-// @ts-ignore
 import bech32 from 'bech32-buffer';
 import ReconnectingWebSocket from 'reconnecting-websocket';
-import { CoinOutput, WatchReport, BlockchainReport, SelectionMessage } from '../types/ChiaGaming';
-import { blockchainDataEmitter } from './BlockchainInfo';
-import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
-import { generateOrRetrieveUniqueId, empty, toHexString, toUint8 } from '../util';
+import { Subject } from 'rxjs';
+
 import { rpc } from '../hooks/JsonRpcContext';
+import { BlockchainReport, SelectionMessage } from '../types/ChiaGaming';
+import { toHexString, toUint8 } from '../util';
+
+import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
+import { blockchainDataEmitter } from './BlockchainInfo';
 
 function wsUrl(baseurl: string) {
   const url_with_new_method = baseurl.replace('http', 'ws');
@@ -73,7 +74,9 @@ export class RealBlockchainInterface {
     };
   }
 
-  set_puzzle_hash(puzzleHash: string) {}
+  set_puzzle_hash(_puzzleHash: string) {
+    // TODO: Implement puzzle hash setting
+  }
 
   async internalRetrieveBlock(height: number) {
     console.log('full node: retrieve block', height);
@@ -153,11 +156,11 @@ export class RealBlockchainInterface {
 
   async push_request(req: any): Promise<any> {
     console.log('blockchain: push message to parent', req);
-    let requestId = this.requestId++;
+    const requestId = this.requestId++;
     req.requestId = requestId;
     window.parent.postMessage(req, '*');
     let promise_complete, promise_reject;
-    let p = new Promise((comp, rej) => {
+    const p = new Promise((comp, rej) => {
       promise_complete = comp;
       promise_reject = rej;
     });
@@ -197,22 +200,6 @@ export class RealBlockchainInterface {
   }
 }
 
-function requestBlockData(forWho: any, block_number: number): Promise<any> {
-  console.log('requestBlockData', block_number);
-  return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
-    method: 'POST',
-  })
-    .then((res) => res.json())
-    .then((res) => {
-      console.log('requestBlockData, got', res);
-      const converted_res: WatchReport = {
-        created_watched: res.created,
-        deleted_watched: res.deleted,
-        timed_out: res.timed_out,
-      };
-      forWho.deliverBlock(block_number, converted_res);
-    });
-}
 
 export const realBlockchainInfo: RealBlockchainInterface = new RealBlockchainInterface('https://api.coinset.org');
 
@@ -221,8 +208,8 @@ export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(realBlockcha
 export function connectRealBlockchain(baseUrl: string) {
   blockchainConnector.getOutbound().subscribe({
     next: async (evt: BlockchainOutboundRequest) => {
-      let initialSpend = evt.initialSpend;
-      let transaction = evt.transaction;
+      const initialSpend = evt.initialSpend;
+      const transaction = evt.transaction;
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({
@@ -267,7 +254,7 @@ export function connectRealBlockchain(baseUrl: string) {
         }
       } else if (transaction) {
         while (true) {
-          let r = await fetch(`${baseUrl}/push_tx`, {
+          const r = await fetch(`${baseUrl}/push_tx`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -275,12 +262,12 @@ export function connectRealBlockchain(baseUrl: string) {
             },
             body: JSON.stringify({ spend_bundle: transaction.spendObject }),
           });
-          let j = await r.json();
+          const j = await r.json();
 
           // Return if the result was not unknown unspent, in which case we
           // retry.
           if (!j.error || j.error.indexOf('UNKNOWN_UNSPENT') === -1) {
-            let result = {
+            const result = {
               responseId: evt.requestId,
               transaction: Object.assign({}, j),
             };
@@ -289,7 +276,7 @@ export function connectRealBlockchain(baseUrl: string) {
           }
 
           // Wait a while to try the request again.
-          await new Promise((resolve, reject) => {
+          await new Promise((resolve, _reject) => {
             setTimeout(resolve, PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED);
           });
         }

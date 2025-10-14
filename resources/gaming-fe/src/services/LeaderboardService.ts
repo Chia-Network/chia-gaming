@@ -128,11 +128,11 @@ export class LeaderboardService {
     leaderboard.lastUpdated = new Date();
   }
 
-  private getGlobalLeaderboardEntries(timeFrame: Leaderboard['timeFrame']): LeaderboardEntry[] {
+  private getGlobalLeaderboardEntries(_timeFrame: Leaderboard['timeFrame']): LeaderboardEntry[] {
     return [];
   }
 
-  private getGameLeaderboardEntries(gameType: GameType, timeFrame: Leaderboard['timeFrame']): LeaderboardEntry[] {
+  private getGameLeaderboardEntries(_gameType: GameType, _timeFrame: Leaderboard['timeFrame']): LeaderboardEntry[] {
     return [];
   }
 
@@ -155,7 +155,7 @@ export class LeaderboardService {
     type: Leaderboard['type'],
     gameType?: GameType,
     timeFrame: Leaderboard['timeFrame'] = 'all-time',
-    limit: number = 10,
+    limit = 10,
   ): LeaderboardEntry[] {
     const leaderboard = this.getLeaderboard(type, gameType, timeFrame);
     return leaderboard.entries.slice(0, limit);

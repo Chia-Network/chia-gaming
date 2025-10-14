@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
+
 import { AppError, ErrorCodes } from '../../types/errors';
-import { Player, GameSession } from '../../types/lobby';
+import { GameSession } from '../../types/lobby';
 
 interface Card {
   suit: 'hearts' | 'diamonds' | 'clubs' | 'spades';
