@@ -1,30 +1,44 @@
-import { Subject, Observable } from 'rxjs';
+import { Subject } from 'rxjs';
 // @ts-ignore
 import bech32 from 'bech32-buffer';
-import { toHexString, toUint8 } from '../util';
-import { ToggleEmitter, ExternalBlockchainInterface, InternalBlockchainInterface, BlockchainReport, WatchReport, SelectionMessage, BlockchainInboundAddressResult } from '../types/ChiaGaming';
-import { blockchainDataEmitter } from './BlockchainInfo';
-import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
+import { toUint8 } from '../util';
+
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import {
+  ExternalBlockchainInterface,
+  InternalBlockchainInterface,
+  BlockchainInboundAddressResult,
+  BlockchainReport,
+  WatchReport,
+  SelectionMessage,
+} from '../types/ChiaGaming';
+
+import {
+  blockchainConnector,
+  BlockchainOutboundRequest,
+} from './BlockchainConnector';
+import { blockchainDataEmitter } from './BlockchainInfo';
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
-    method: 'POST'
-  }).then((res) => res.json()).then((res) => {
-    if (res === null) {
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          requestBlockData(forWho, block_number);
-        }, 100);
-      });
-    }
-    const converted_res: WatchReport = {
-      created_watched: res.created,
-      deleted_watched: res.deleted,
-      timed_out: res.timed_out
-    };
-    forWho.deliverBlock(block_number, converted_res);
-  });
+    method: 'POST',
+  })
+    .then((res) => res.json())
+    .then((res) => {
+      if (res === null) {
+        return new Promise((_resolve, _reject) => {
+          setTimeout(() => {
+            requestBlockData(forWho, block_number);
+          }, 100);
+        });
+      }
+      const converted_res: WatchReport = {
+        created_watched: res.created,
+        deleted_watched: res.deleted,
+        timed_out: res.timed_out,
+      };
+      forWho.deliverBlock(block_number, converted_res);
+    });
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
@@ -67,13 +81,15 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     });
   }
 
-  getObservable() { return this.observable; }
+  getObservable() {
+    return this.observable;
+  }
 
   do_initial_spend(uniqueId: string, target: string, amt: number) {
     return this.upstream.getOrRequestToken(uniqueId).then((fromPuzzleHash) => {
       return this.upstream.createSpendable(target, amt).then((coin) => {
         if (!coin) {
-          throw new Error("no coin returned.");
+          throw new Error('no coin returned.');
         }
 
         // Returns the coin string
@@ -111,18 +127,23 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     if (event.setNewPeak) {
       this.internalSetNewPeak(event.setNewPeak);
     } else if (event.deliverBlock) {
-      this.internalDeliverBlock(event.deliverBlock.block_number, event.deliverBlock.block_data);
+      this.internalDeliverBlock(
+        event.deliverBlock.block_number,
+        event.deliverBlock.block_data,
+      );
     }
   }
 
   async internalNextBlock() {
     if (this.at_block > this.max_block) {
       return fetch(`${this.baseUrl}/wait_block`, {
-        method: 'POST'
-      }).then((res) => res.json()).then((res) => {
-        // console.log('wait_block returned', res);
-        this.setNewPeak(res);
-      });
+        method: 'POST',
+      })
+        .then((res) => res.json())
+        .then((res) => {
+          // console.log('wait_block returned', res);
+          this.setNewPeak(res);
+        });
     } else {
       return requestBlockData(this, this.at_block);
     }
@@ -153,16 +174,16 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.blockEmitter({
       peak: block_number,
       block: [],
-      report: block_data
+      report: block_data,
     });
 
     return this.internalNextBlock();
   }
 
-  spend(convert: (blob: string) => any, spendBlob: string): Promise<string> {
+  spend(_convert: (blob: string) => any, spendBlob: string): Promise<string> {
     return this.upstream.spend(spendBlob).then((status_array) => {
       if (status_array.length < 1) {
-        throw new Error("status result array was empty");
+        throw new Error('status result array was empty');
       }
 
       if (status_array[0] != 1) {
@@ -174,13 +195,17 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       }
 
       // What to return?
-      return "";
+      return '';
     });
   }
 }
 
-export const fakeBlockchainInfo = new FakeBlockchainInterface(BLOCKCHAIN_SERVICE_URL);
-export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(fakeBlockchainInfo.getObservable());
+export const fakeBlockchainInfo = new FakeBlockchainInterface(
+  BLOCKCHAIN_SERVICE_URL,
+);
+export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
+  fakeBlockchainInfo.getObservable(),
+);
 
 export function connectSimulatorBlockchain() {
   blockchainConnector.getOutbound().subscribe({
@@ -189,30 +214,39 @@ export function connectSimulatorBlockchain() {
       let transaction = evt.transaction;
       let getAddress = evt.getAddress;
       if (initialSpend) {
-        return fakeBlockchainInfo.do_initial_spend(
-          initialSpend.uniqueId,
-          initialSpend.target,
-          initialSpend.amount
-        ).then((result: any) => {
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-            initialSpend: result
+        return fakeBlockchainInfo
+          .do_initial_spend(
+            initialSpend.uniqueId,
+            initialSpend.target,
+            initialSpend.amount,
+          )
+          .then((result: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              initialSpend: result,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e.toString(),
+            });
           });
-        }).catch((e: any) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
-        });
       } else if (transaction) {
-        fakeBlockchainInfo.spend(
-          (blob: string) => transaction.spendObject,
-          transaction.blob
-        ).then((response: any) => {
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-            transaction: response
+        fakeBlockchainInfo
+          .spend((_blob: string) => transaction.spendObject, transaction.blob)
+          .then((response: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              transaction: response,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e.toString(),
+            });
           });
-        }).catch((e: any) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
-        });
       } else if (getAddress) {
         fakeBlockchainInfo.getAddress().then((address) => {
           blockchainConnector.replyEmitter({ responseId: evt.requestId, getAddress: address });
@@ -221,7 +255,7 @@ export function connectSimulatorBlockchain() {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({
           responseId: evt.requestId,
-          error: `unknown blockchain request type ${JSON.stringify(evt)}`
+          error: `unknown blockchain request type ${JSON.stringify(evt)}`,
         });
       }
     }
@@ -235,9 +269,9 @@ blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == FAKE_BLOCKCHAIN_ID) {
       // Simulator selected
-      console.log("simulator blockchain selected");
+      console.log('simulator blockchain selected');
       fakeBlockchainInfo.startMonitoring(e.uniqueId);
       connectSimulatorBlockchain();
     }
-  }
+  },
 });

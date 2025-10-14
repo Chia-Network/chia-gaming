@@ -114,7 +114,6 @@ COPY resources/wc-stub/src /app/wc/src/
 COPY resources/wc-stub/tsconfig.json /app/wc/
 RUN cd /app/wc && yarn run build
 
-COPY resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex /app/resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex
 RUN ln -s /app/resources /resources
 ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp

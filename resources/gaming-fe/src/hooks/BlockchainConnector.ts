@@ -1,4 +1,5 @@
 import { Subject } from 'rxjs';
+
 import { DoInitialSpendResult, BlockchainInboundAddressResult } from '../types/ChiaGaming';
 
 export interface BlockchainOutboundInitialSpendRequest {
@@ -38,11 +39,19 @@ class BlockchainRequestConnector {
     this.inbound = new Subject<BlockchainInboundReply>();
   }
 
-  getOutbound() { return this.outbound; }
-  getInbound() { return this.inbound; }
+  getOutbound() {
+    return this.outbound;
+  }
+  getInbound() {
+    return this.inbound;
+  }
 
-  requestEmitter(r: BlockchainOutboundRequest) { this.outbound.next(r); }
-  replyEmitter(r: BlockchainInboundReply) { this.inbound.next(r); }
+  requestEmitter(r: BlockchainOutboundRequest) {
+    this.outbound.next(r);
+  }
+  replyEmitter(r: BlockchainInboundReply) {
+    this.inbound.next(r);
+  }
 }
 
 export const blockchainConnector = new BlockchainRequestConnector();

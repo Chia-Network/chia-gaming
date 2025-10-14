@@ -6,8 +6,8 @@ import minimist from 'minimist';
 import { createServer } from 'http';
 import { readFile } from 'node:fs/promises';
 import cors from 'cors';
-import helmet from 'helmet';
 import { config } from 'dotenv';
+import helmet from 'helmet';
 
 config();
 
@@ -20,7 +20,9 @@ function parseArgs() {
   const args = minimist(process.argv.slice(2));
 
   if (!args.tracker || !args.self) {
-    console.warn('usage: server --tracker [tracker-url] --self [own-url] (--coinset [host]) --extras [extra-urls colon separated]');
+    console.warn(
+      'usage: server --tracker [tracker-url] --self [own-url] (--coinset [host]) --extras [extra-urls colon separated]',
+    );
     process.exit(1);
   }
 
@@ -36,7 +38,7 @@ function parseArgs() {
     });
   }
 
-  return { args, extras }
+  return { args, extras };
 }
 
 const { args, extras } = parseArgs();
@@ -84,17 +86,19 @@ app.get('/chia_gaming_wasm_bg.wasm', async (req: any, res: any) => {
 app.get('/chia_gaming_wasm.js', async (req: any, res: any) => {
   serveFile("dist/chia_gaming_wasm.js", "application/javascript", false, res);
 });
-app.get('/urls', async (req: any, res: any) => {
+app.get('/urls', async (_req: any, res: any) => {
   res.set('Content-Type', 'application/json');
-  res.send(JSON.stringify({
-    tracker: `${args.tracker}?lobby=true`
-  }));
+  res.send(
+    JSON.stringify({
+      tracker: `${args.tracker}?lobby=true`,
+    }),
+  );
 });
 app.get('/clsp*', async (req: any, res: any) => {
-  serveDirectory("./", req, res);
+  serveDirectory('./', req, res);
 });
 app.get('/resources*', async (req: any, res: any) => {
-  serveDirectory("./", req, res);
+  serveDirectory('./', req, res);
 });
 
 process.on('SIGTERM', () => {
@@ -109,17 +113,20 @@ function refreshLobby() {
   fetch(`${args.tracker}/lobby/game`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       game: 'calpoker',
       target: `${args.self}?game=calpoker&lobbyUrl=${args.tracker}`,
+    }),
+  })
+    .then((res) => res.json())
+    .then((res) => {
+      console.log('tracker:', res);
     })
-  }).then(res => res.json()).then(res => {
-    console.log('tracker:', res);
-  }).catch(e => {
-    console.error('tracker:', e);
-  });
+    .catch((e) => {
+      console.error('tracker:', e);
+    });
 }
 
 setInterval(() => {
@@ -130,5 +137,5 @@ refreshLobby();
 
 const port = process.env.PORT || 3000;
 httpServer.listen(port, () => {
-  console.log(`Game server listening on port ${port}`)
+  console.log(`Game server listening on port ${port}`);
 });

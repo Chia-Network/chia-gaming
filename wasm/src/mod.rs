@@ -11,12 +11,12 @@ use log::debug;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
-use wasm_logger;
 
 use wasm_bindgen::prelude::*;
 
 use chia_gaming::channel_handler::types::{ReadableMove, GameStartFailed};
-use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, wasm_deposit_file, ChiaIdentity};
+use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
+use chia_gaming::common::load_clvm::wasm_deposit_file;
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinsetSpendBundle,
@@ -123,8 +123,8 @@ struct JsWatchReport {
 }
 
 thread_local! {
-    static NEXT_ID: AtomicI32 = {
-        return AtomicI32::new(0);
+    static NEXT_ID: AtomicI32 = const {
+        AtomicI32::new(0)
     };
     static CRADLES: RefCell<HashMap<i32, JsCradle>> = {
         return RefCell::new(HashMap::new());
@@ -217,7 +217,7 @@ fn get_game_config<'b>(
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
 
     if let Some(identity_str) = &jsconfig.identity {
-        let private_key_bytes = hex::decode(&identity_str).into_js()?;
+        let private_key_bytes = hex::decode(identity_str).into_js()?;
         let mut bytes: [u8; 32] = [0; 32];
         for (i, b) in bytes.iter_mut().enumerate() {
             *b = private_key_bytes[i];
@@ -231,7 +231,7 @@ fn get_game_config<'b>(
     Ok(SynchronousGameCradleConfig {
         game_types,
         have_potato: jsconfig.have_potato,
-        identity: identity,
+        identity,
         channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
         unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
         my_contribution: jsconfig.my_contribution.amt.clone(),
@@ -342,7 +342,7 @@ fn hex_to_coinstring(hex: &str) -> Result<CoinString, types::Error> {
 }
 
 fn coinstring_to_hex(cs: &CoinString) -> String {
-    hex::encode(&cs.to_bytes())
+    hex::encode(cs.to_bytes())
 }
 
 #[wasm_bindgen]
@@ -362,15 +362,15 @@ fn watch_report_from_params(
     timed_out: Vec<String>,
 ) -> Result<WatchReport, types::Error> {
     Ok(WatchReport {
-        created_watched: map_m(|s| hex_to_coinstring(&s), &additions)?
+        created_watched: map_m(|s| hex_to_coinstring(s), &additions)?
             .iter()
             .cloned()
             .collect(),
-        deleted_watched: map_m(|s| hex_to_coinstring(&s), &removals)?
+        deleted_watched: map_m(|s| hex_to_coinstring(s), &removals)?
             .iter()
             .cloned()
             .collect(),
-        timed_out: map_m(|s| hex_to_coinstring(&s), &timed_out)?
+        timed_out: map_m(|s| hex_to_coinstring(s), &timed_out)?
             .iter()
             .cloned()
             .collect(),
@@ -379,7 +379,7 @@ fn watch_report_from_params(
 
 fn coin_string_to_hex(cs: &CoinString) -> String {
     let cs_bytes = cs.to_bytes();
-    hex::encode(&cs_bytes)
+    hex::encode(cs_bytes)
 }
 
 fn watch_report_to_js(watch_report: &WatchReport) -> JsWatchReport {
@@ -413,8 +413,8 @@ fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<CoinsetSpendBundle,
             coin_spends.push(CoinsetSpendRecord {
                 coin: CoinsetCoin {
                     amount: amt.to_u64(),
-                    parent_coin_info: format!("0x{}", hex::encode(&parent.bytes())),
-                    puzzle_hash: format!("0x{}", hex::encode(&pph.bytes())),
+                    parent_coin_info: format!("0x{}", hex::encode(parent.bytes())),
+                    puzzle_hash: format!("0x{}", hex::encode(pph.bytes())),
                 },
                 puzzle_reveal: format!("0x{}", s.bundle.puzzle.to_program().to_hex()),
                 solution: format!("0x{}", s.bundle.solution.p().to_hex()),
@@ -639,7 +639,7 @@ impl ToLocalUI for JsLocalUI {
     fn game_start(
         &mut self,
         game_ids: &[GameID],
-        finished: std::option::Option<GameStartFailed>
+        finished: std::option::Option<GameStartFailed>,
     ) -> Result<(), chia_gaming::common::types::Error> {
         call_javascript_from_collection(&self.callbacks, "game_started", |args_array| {
             let game_ids_array = Array::new();
@@ -777,7 +777,7 @@ fn spend_to_js(spend: &Spend) -> JsSpend {
     JsSpend {
         puzzle: spend.puzzle.to_hex(),
         solution: spend.solution.p().to_hex(),
-        signature: hex::encode(&spend.signature.bytes()),
+        signature: hex::encode(spend.signature.bytes()),
     }
 }
 
@@ -839,8 +839,12 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
     };
     let game_started = if let Some(gs) = &idle_result.game_started {
         Some(JsGameStarted {
-            game_ids: gs.game_ids.iter().map(|gid| game_id_to_string(gid)).collect(),
-            failed: gs.failed.as_ref().map(|f| format!("{:?}", f))
+            game_ids: gs
+                .game_ids
+                .iter()
+                .map(game_id_to_string)
+                .collect(),
+            failed: gs.failed.as_ref().map(|f| format!("{:?}", f)),
         })
     } else {
         None
@@ -860,9 +864,9 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
             .iter()
             .map(hex::encode)
             .collect(),
-        opponent_move: opponent_move,
-        game_started: game_started,
-        game_finished: game_finished,
+        opponent_move,
+        game_started,
+        game_finished,
         handshake_done: idle_result.handshake_done,
         action_queue: idle_result.action_queue.clone(),
         incoming_messages: idle_result.incoming_messages.clone(),
@@ -901,12 +905,12 @@ struct JsChiaIdentity {
 impl From<ChiaIdentity> for JsChiaIdentity {
     fn from(value: ChiaIdentity) -> JsChiaIdentity {
         JsChiaIdentity {
-            private_key: hex::encode(&value.private_key.bytes()),
-            synthetic_private_key: hex::encode(&value.synthetic_private_key.bytes()),
-            public_key: hex::encode(&value.public_key.bytes()),
-            synthetic_public_key: hex::encode(&value.synthetic_public_key.bytes()),
+            private_key: hex::encode(value.private_key.bytes()),
+            synthetic_private_key: hex::encode(value.synthetic_private_key.bytes()),
+            public_key: hex::encode(value.public_key.bytes()),
+            synthetic_public_key: hex::encode(value.synthetic_public_key.bytes()),
             puzzle: value.puzzle.to_hex(),
-            puzzle_hash: hex::encode(&value.puzzle_hash.bytes()),
+            puzzle_hash: hex::encode(value.puzzle_hash.bytes()),
         }
     }
 }
@@ -957,7 +961,7 @@ pub fn convert_coinset_org_block_spend_to_watch_report(
             watch_result.created_watched.insert(new_coin);
         }
     }
-    Ok(serde_wasm_bindgen::to_value(&watch_report_to_js(&watch_result)).into_js()?)
+    serde_wasm_bindgen::to_value(&watch_report_to_js(&watch_result)).into_js()
 }
 
 #[wasm_bindgen]
@@ -967,7 +971,7 @@ pub fn convert_spend_to_coinset_org(spend: &str) -> Result<JsValue, JsValue> {
     let spend_program = Program::from_bytes(&spend_bytes);
     let spend_node = spend_program.to_nodeptr(&mut allocator).into_js()?;
     let spend = SpendBundle::from_clvm(&mut allocator, spend_node).into_js()?;
-    Ok(serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&spend)?).into_js()?)
+    serde_wasm_bindgen::to_value(&spend_bundle_to_coinset_js(&spend)?).into_js()
 }
 
 #[wasm_bindgen]
@@ -986,7 +990,7 @@ pub fn convert_coinset_to_coin_string(
         &Amount::new(amount),
     );
     let coin_string_bytes = coin_string.to_bytes();
-    Ok(hex::encode(&coin_string_bytes))
+    Ok(hex::encode(coin_string_bytes))
 }
 
 #[wasm_bindgen]
@@ -999,7 +1003,7 @@ pub fn convert_chia_public_key_to_puzzle_hash(public_key: &str) -> Result<String
     debug!("decoded public key {pubkey:?}");
     let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &pubkey).into_js()?;
     debug!("use puzzle hash {puzzle_hash:?}");
-    Ok(hex::encode(&puzzle_hash.bytes()))
+    Ok(hex::encode(puzzle_hash.bytes()))
 }
 
 #[wasm_bindgen]
@@ -1025,6 +1029,6 @@ pub fn chia_identity(seed: &str) -> Result<JsValue, JsValue> {
 
 #[wasm_bindgen]
 pub fn sha256bytes(bytes_str: &str) -> Result<JsValue, JsValue> {
-    let hashed = hex::encode(&Sha256Input::Bytes(bytes_str.as_bytes()).hash().bytes());
+    let hashed = hex::encode(Sha256Input::Bytes(bytes_str.as_bytes()).hash().bytes());
     serde_wasm_bindgen::to_value(&hashed).into_js()
 }
