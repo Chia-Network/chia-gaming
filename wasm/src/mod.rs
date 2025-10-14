@@ -1108,7 +1108,11 @@ pub fn test_string_err() -> Result<JsValue, JsValue> {
 pub fn chia_identity(rng_id: i32) -> Result<JsValue, JsValue> {
     with_rng(rng_id, move |rng: &mut ChaCha8Rng| {
         let mut allocator = AllocEncoder::new();
+        let mut seed: [u8;32] = rng.get_seed();
         let private_key = rng.gen();
+        debug!("Generating private_key={private_key:?} from ChaCha8Rng({seed:?}");
+        seed = rng.get_seed();
+        debug!("ChaCha8Rng seed after rnd.gen() for private_key={seed:?}");
         let identity = ChiaIdentity::new(&mut allocator, private_key)?;
         let js_identity: JsChiaIdentity = identity.into();
         serde_wasm_bindgen::to_value(&js_identity)

@@ -1285,7 +1285,6 @@ impl PotatoHandler {
 
                 self.next_game_id = init_game_id(parent_coin.to_bytes());
                 debug!("StepD next game id {:?}", self.next_game_id);
-
                 self.pass_on_channel_handler_message(penv, msg_envelope)?;
 
                 let ch = self.channel_handler_mut()?;

@@ -18,7 +18,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [gameIdentity, setGameIdentity] = useState<any | undefined>(undefined);
   const [gameStartCoin, setGameStartCoin] = useState<string | undefined>(undefined);
   const [gameConnectionState, setGameConnectionState] = useState<GameConnectionState>({ stateIdentifier: "starting", stateDetail: ["before handshake"] });
-  const [handshakeDone, setHandshakeDone] = useState<boolean>(false);
   const searchParams = getSearchParams();
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
@@ -98,6 +97,9 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   };
 
   function setState(state: any): void {
+    if (state.setMyTurn !== undefined) {
+      console.log("state.setMyTurn:", state);
+    }
     const keys = Object.keys(state);
     keys.forEach((k) => {
       if (settable[k]) {
@@ -145,7 +147,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         }
         parentFrameBlockchainInfo.next(data.blockchain_info);
       }
-      console.log('window.addEventListener done');
+      // console.log('window.addEventListener for ', evt, 'done');
     });
 
     blockchainConnector.getOutbound().subscribe({
@@ -241,8 +243,12 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         }
       });
 
+      console.log('About to subscribe to liveGame.getObservable');
       let stateSubscription = liveGame.getObservable().subscribe({
         next: (state: any) => {
+          if (Object.keys(state).length > 0) {
+            console.log('About to call setState(',state,')');
+          }
           setState(state);
           if (state.shutdown) {
             console.log('Chia Gaming shutting down.');
@@ -263,7 +269,10 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       }
       setGameStartCoin(startCoin);
       liveGame.setStartCoin(startCoin);
-      liveGame.internalStartGame();
+      console.log("about to start game - IS hanshake_done ???", liveGame.getHandshakeDone());
+      //liveGame.internalStartGame();
+      //liveGame.pushEvent({startGame: true});
+      liveGame.startGame();
       console.log('Chia Gaming infrastructure Initialization Complete.');
 
     });

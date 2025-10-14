@@ -2,6 +2,8 @@ import { WasmConnection, ChiaGame, CalpokerOutcome, WatchReport, InternalBlockch
 import { spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
 import { Subject, NextObserver } from 'rxjs';
 
+async function anempty(id: number) { return { "EMPTY": id }; }
+
 function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   for (var i = 0; i < new_report.created_watched.length; i++) {
     old_report.created_watched.push(new_report.created_watched[i]);
@@ -56,6 +58,7 @@ export function getNewChiaGameCradle(wasmConnection: WasmConnection, params: Gam
 */
 
 export class WasmBlobWrapper {
+  startAGame: boolean = false;
   wasmConnection: WasmConnection;
   sendMessage: (msg: string) => void;
   cradle: ChiaGame;
@@ -115,12 +118,19 @@ export class WasmBlobWrapper {
     this.qualifyingEvents = 0;
 
     this.rxjsMessageSingleon = new Subject<any>();
-    this.rxjsEmitter = this.rxjsMessageSingleon;
+    this.rxjsEmitter = {next: (evt: any) => {
+      if (Object.keys(evt).length > 0 && !evt.stop) {
+        console.log("rxjsEmitter", evt);
+      }
+      this.rxjsMessageSingleon.next(evt);
+    }}
   }
 
   getObservable() {
     return this.rxjsMessageSingleon;
   }
+
+  getHandshakeDone(): boolean { return this.handshakeDone; }
 
   kickSystem(flags: number) {
     let lastQE = this.qualifyingEvents;
@@ -160,14 +170,14 @@ export class WasmBlobWrapper {
     });
   };
 
-  internalKickIdle(): any {
+  private internalKickIdle(): any {
     let idle_info;
     do {
       idle_info = this.idle();
       if (!idle_info) {
         return idle_info;
       }
-      this.rxjsEmitter?.next(idle_info);
+      this.rxjsEmitter.next(idle_info);
     } while (!idle_info.stop);
     return idle_info;
   }
@@ -180,8 +190,8 @@ export class WasmBlobWrapper {
     return this.kickMessageHandling();
   }
 
-  handleOneMessage(msg: any): any {
-    //console.log('handleOneMessage', Object.keys(msg));
+  private handleOneMessage(msg: any): any {
+    console.log('handleOneMessage', Object.keys(msg));
     if (msg.deliverMessage) {
       return this.internalDeliverMessage(msg.deliverMessage);
     } else if (msg.move) {
@@ -205,7 +215,7 @@ export class WasmBlobWrapper {
     }
 
     console.error("Unknown event:", msg);
-    return empty();
+    return anempty(218);
   }
 
   // TODO: Separate CalPoker method from Wasm code
@@ -265,7 +275,7 @@ export class WasmBlobWrapper {
     }
 
     result.setMoveNumber = this.moveNumber;
-    return empty().then(() => result);
+    return anempty(278).then(() => result);
   }
 
   takeGameMessage(moveNumber: number, game_id: string, readable_move_hex: string): any {
@@ -273,20 +283,21 @@ export class WasmBlobWrapper {
     console.log('takeGameMessage', moveNumber, game_id, readable_move_hex);
     let p = decode_sexp_hex(readable_move_hex);
     this.updateCards(p, result);
-    return empty().then(() => result);
+    return anempty(286).then(() => result);
   }
 
   kickMessageHandling(): any {
     if (this.messageQueue.length == 0 || this.handlingMessage) {
-      return empty();
+      return anempty(291);
     }
+    this.handlingMessage = true;
 
     const msg = this.messageQueue.shift();
 
-    this.handlingMessage = true;
-    let result = null;
+    //let result = null;
     return this.handleOneMessage(msg).then((result: any) => {
-      this.rxjsEmitter?.next(result);
+      console.log("kickMessageHandling: ", result);
+      this.rxjsEmitter.next(result);
 
       this.internalKickIdle();
 
@@ -294,7 +305,7 @@ export class WasmBlobWrapper {
 
       return this.kickMessageHandling();
     }).catch((e: any) => {
-      console.error(e);
+      console.error("THROWING in kickMessageHandling", e);
       this.handlingMessage = false;
       throw e;
     });
@@ -376,14 +387,21 @@ export class WasmBlobWrapper {
   internalDeliverMessage(msg: string): any {
     if (!this.cradle) {
       this.storedMessages.push(msg);
-      return empty();
+      return anempty(390);
     }
     console.log('deliver message', msg);
     this.cradle.deliver_message(msg);
-    return empty();
+    return anempty(394);
   }
 
-  internalStartGame(): any {
+  startGame(): void {
+    this.startAGame = true;
+    if (this.handshakeDone) {
+      this.pushEvent({startGame: true});
+    }
+  }
+
+  private internalStartGame(): any {
     let result: any = {};
     let amount = this.cradle.getAmount();
     let gids = this.cradle.start_games(!this.iStarted, {
@@ -402,7 +420,7 @@ export class WasmBlobWrapper {
       result.setGameIds = this.gameIds;
     }
     result.setMyTurn = !this.iStarted;
-    return empty().then(() => result);
+    return anempty(423).then(() => result);
   }
 
   idle(): any {
@@ -485,7 +503,9 @@ export class WasmBlobWrapper {
         stateDetail: []
       };
       console.log("starting games", this.iStarted);
-      this.pushEvent({ startGame: true });
+      if (this.startAGame) {
+        this.pushEvent({ startGame: true });
+      }
     }
 
     // console.log('idle2', idle.incoming_messages);
@@ -524,51 +544,45 @@ export class WasmBlobWrapper {
 
   isHandshakeDone(): boolean { return this.handshakeDone; }
 
-  makeMove(move: any): any {
-    if (!this.handshakeDone || !this.wasmConnection || !this.cradle) {
+  async makeMove(move: any): Promise<any> {
+    if (!this.handshakeDone) {
       // TODO: Let's return more status info here
-      return empty();
-    }
-
-    if (this.moveNumber === 0) {
+      console.log("makeMove: this.handshakeDone=",this.handshakeDone)
+      return {handshakeDone: true};
+    } else if (this.moveNumber === 0) {
       let entropy = this.generateEntropy();
       console.log('move 0 with entropy', entropy);
       this.cradle.make_move_entropy(this.gameIds[0], "80", entropy);
+      console.log("finished call to this.cradle.make_move_entropy");
       this.moveNumber += 1;
-      return empty().then(() => {
-        return {
-          setMyTurn: false,
-          setMoveNumber: this.moveNumber
-        };
-      })
+      return {
+        setMyTurn: false,
+        setMoveNumber: this.moveNumber
+      };
     } else if (this.moveNumber === 1) {
       if (popcount(this.cardSelections) != 4) {
-        return empty();
+        return anempty(564);
       }
       this.moveNumber += 1;
       let entropy = this.generateEntropy();
       const encoded = (this.cardSelections | 0x8100).toString(16);
       this.cradle.make_move_entropy(this.gameIds[0], encoded, entropy);
-      return empty().then(() => {
-        return {
-          setMyTurn: false,
-          setMoveNumber: this.moveNumber
-        };
-      })
+      return {
+        setMyTurn: false,
+        setMoveNumber: this.moveNumber
+      };
     } else if (this.moveNumber === 2) {
       this.moveNumber += 1;
       let entropy = this.generateEntropy();
       this.cradle.make_move_entropy(this.gameIds[0], '80', entropy);
-      return empty().then(() => {
-        return {
-          setMyTurn: false,
-          setMoveNumber: this.moveNumber,
-          setGameConnectionState: {
-            stateIdentifier: "end",
-            stateDetail: []
-          }
-        };
-      })
+      return {
+        setMyTurn: false,
+        setMoveNumber: this.moveNumber,
+        setGameConnectionState: {
+          stateIdentifier: "end",
+          stateDetail: []
+        }
+      };
     }
 
     throw `Don't yet know what to do for move ${this.moveNumber}`;
@@ -586,7 +600,7 @@ export class WasmBlobWrapper {
   internalSetCardSelections(mask: number): any {
     const result = { setCardSelections: mask };
     this.cardSelections = mask;
-    return empty().then(() => result);
+    return anempty(603).then(() => result);
   }
 
   shutDown(condition: string | undefined) {
@@ -607,14 +621,14 @@ export class WasmBlobWrapper {
     };
     console.log('shutting down cradle');
     this.cradle?.shut_down();
-    return empty().then(() => result);
+    return anempty(624).then(() => result);
   }
 
   internalTakeBlock(peak: number, block_report: WatchReport): any {
     // console.log('internalTakeBlock', peak, block_report);
     this.cradle.block_data(peak, block_report);
     // console.log('took block', peak);
-    return empty();
+    return anempty(631);
   }
 
   internalReceivedShutdown() {
@@ -626,7 +640,7 @@ export class WasmBlobWrapper {
       stateDetail: []
     };
     result.outcome = undefined;
-    return empty().then(() => result);
+    return anempty(643).then(() => result);
   }
 
   blockNotification(peak: number, blocks: JsCoinSetSpend[] | undefined, block_report: any) {
