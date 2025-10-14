@@ -1,7 +1,5 @@
 import Client from '@walletconnect/sign-client';
 
-import useWalletConnectPreferences from './useWalletConnectPreferences';
-
 export const WalletConnectChiaProjectId = 'f3f661fcfc24e2e6e6c6f926f02c9c6e';
 
 export const defaultMetadata = {
@@ -11,29 +9,35 @@ export const defaultMetadata = {
   icons: ['https://www.chia.net/wp-content/uploads/2022/09/chia-logo.svg'],
 };
 
-export type UseWalletConnectConfig = {
+export interface UseWalletConnectConfigMetadata {
+  name: string;
+  description: string;
+  url: string;
+  icons: string[];
+}
+export interface UseWalletConnectConfig {
   projectId: string;
   relayUrl?: string;
-  metadata?: {
-    name: string;
-    description: string;
-    url: string;
-    icons: string[];
-  };
+  metadata?: UseWalletConnectConfigMetadata;
   debug?: boolean;
 };
 
 let clientId = 1;
 
 export async function useWalletConnectClient(config: UseWalletConnectConfig) {
-  const { projectId, relayUrl = 'wss://relay.walletconnect.com', metadata = defaultMetadata, debug = false } = config;
+  const {
+    projectId,
+    relayUrl = 'wss://relay.walletconnect.com',
+    metadata = defaultMetadata,
+    debug = false,
+  } = config;
 
   let isLoading = true;
   let client: Client | undefined = undefined;
   let error: Error | undefined = undefined;
 
-  const metadataString = JSON.stringify(metadata);
-  const memoizedMetadata = JSON.parse(metadataString);
+  const metadataString: string = JSON.stringify(metadata);
+  const memoizedMetadata = JSON.parse(metadataString) as UseWalletConnectConfigMetadata;
 
   const prepareClient = async () => {
     const currentClientId = ++clientId;

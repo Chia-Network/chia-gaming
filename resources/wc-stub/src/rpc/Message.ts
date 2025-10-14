@@ -11,7 +11,7 @@ import toSnakeCase from '../util/toSnakeCase';
 export default class Message implements MessageInterface {
   command: string;
 
-  data: Object;
+  data: Record<string, unknown>;
 
   origin: ServiceNameValue;
 

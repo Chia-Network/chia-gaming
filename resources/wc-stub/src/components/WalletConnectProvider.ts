@@ -1,26 +1,34 @@
 import type { Pair } from '../util/Pair';
-import useNotifications from '../hooks/useNotifications';
-import { useWalletConnect } from '../hooks/useWalletConnect';
 
 export interface WalletConnectContext {
   enabled: boolean;
   isLoading: boolean;
   error: Error | undefined;
-  pair: (uri: string, fingerprints: number[], mainnet?: boolean) => Promise<string>;
+  pair: (
+    uri: string,
+    fingerprints: number[],
+    mainnet?: boolean,
+  ) => Promise<string>;
   disconnect: (topic: string) => Promise<void>;
   pairs: {
     getPair: (topic: string) => Pair | undefined;
     get: () => Pair[];
   };
-};
+}
 
-export type WalletConnectProviderProps = {
+export interface WalletConnectProviderProps {
   projectId: string;
 };
 
-export default function WalletConnectProvider(props: WalletConnectProviderProps) {
+function doesNothingYet() {
+  const _x = 0;
+}
+
+export default function WalletConnectProvider(
+  props: WalletConnectProviderProps,
+) {
   const { projectId } = props;
-  const showNotification = () => { };
+  const showNotification = doesNothingYet;
 
   const walletConnect = {
     projectId,

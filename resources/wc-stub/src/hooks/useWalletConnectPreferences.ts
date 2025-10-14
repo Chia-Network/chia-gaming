@@ -1,4 +1,4 @@
-export type WalletConnectPreferences = {
+export interface WalletConnectPreferences {
   enabled?: boolean;
   allowConfirmationFingerprintChange?: boolean;
 };
@@ -10,12 +10,15 @@ export default function useWalletConnectPreferences(): {
   setAllowConfirmationFingerprintChange: (enabled: boolean) => void;
 } {
   const preferences: any = {};
-  function setPreferences(p: (a: WalletConnectPreferences) => WalletConnectPreferences) {
+  function setPreferences(
+    p: (a: WalletConnectPreferences) => WalletConnectPreferences,
+  ) {
     return Object.assign(preferences, p(preferences));
-  };
+  }
 
   const enabled = preferences?.enabled ?? false;
-  const allowConfirmationFingerprintChange = preferences?.allowConfirmationFingerprintChange ?? false;
+  const allowConfirmationFingerprintChange =
+    preferences?.allowConfirmationFingerprintChange ?? false;
 
   const setEnabled = (value: boolean) => {
     setPreferences((currentPreferences: WalletConnectPreferences) => ({

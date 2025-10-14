@@ -1,9 +1,7 @@
 {
   "compilerOptions": {
     "target": "es2015",
-    "lib": [
-      "esnext"
-    ],
+    "lib": ["esnext"],
     "strict": true,
     "rootDir": "./src",
     "outDir": "./dist",
