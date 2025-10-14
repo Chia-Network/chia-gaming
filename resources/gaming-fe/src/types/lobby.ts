@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
 export const GameTypes = {
-    CALIFORNIA_POKER: 'california_poker',
-    KRUNK: 'krunk',
-    EXOTIC_POKER: 'exotic_poker'
-}
-export type GameType = 'california_poker' | 'krunk' | 'exotic_poker'
+  CALIFORNIA_POKER: 'california_poker',
+  KRUNK: 'krunk',
+  EXOTIC_POKER: 'exotic_poker',
+};
+export type GameType = 'california_poker' | 'krunk' | 'exotic_poker';
 
-export type FragmentData = { [k: string]: string }
+export type FragmentData = Record<string, string>;
 
 export interface Player {
   id: string;
@@ -79,20 +79,24 @@ export interface GameSession {
   parameters: string[];
 }
 
-export const gameTypeSchema = z.enum(['california_poker', 'krunk', 'exotic_poker']);
+export const gameTypeSchema = z.enum([
+  'california_poker',
+  'krunk',
+  'exotic_poker',
+]);
 
 export const playerSchema = z.object({
   id: z.string(),
   walletAddress: z.string(),
   name: z.string(),
   joinedAt: z.date(),
-  lastActive: z.date()
+  lastActive: z.date(),
 });
 
 export const chatMessageSchema = z.object({
   sender: z.string(),
   text: z.string(),
-  timestamp: z.date()
+  timestamp: z.date(),
 });
 
 export const roomSchema = z.object({
@@ -105,13 +109,13 @@ export const roomSchema = z.object({
   players: z.array(playerSchema),
   createdAt: z.date(),
   startedAt: z.date().optional(),
-  endedAt: z.date().optional()
+  endedAt: z.date().optional(),
 });
 
 export const matchmakingPreferencesSchema = z.object({
   gameType: gameTypeSchema,
   minPlayers: z.number().min(2).max(10),
-  maxPlayers: z.number().min(2).max(10)
+  maxPlayers: z.number().min(2).max(10),
 });
 
 export const gameSessionSchema = z.object({
@@ -121,5 +125,5 @@ export const gameSessionSchema = z.object({
   players: z.array(playerSchema),
   startedAt: z.date(),
   status: z.enum(['in_progress', 'completed']),
-  winner: z.string().optional()
+  winner: z.string().optional(),
 });

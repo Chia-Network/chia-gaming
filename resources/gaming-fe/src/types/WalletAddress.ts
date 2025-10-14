@@ -1,4 +1,4 @@
 export interface WalletAddress {
-    address: string;
-    hdPath: string;
+  address: string;
+  hdPath: string;
 }

@@ -1,4 +1,5 @@
 import type { Socket } from 'socket.io-client';
+
 import { AppError, ErrorCodes } from '../types/errors';
 import { GameType } from '../types/lobby';
 
@@ -8,9 +9,7 @@ interface GameEvent {
   timestamp: Date;
 }
 
-interface GameEventHandlers {
-  [key: string]: ((data: any) => void)[];
-}
+type GameEventHandlers = Record<string, ((data: any) => void)[]>;
 
 interface GameEventSubscription {
   eventType: string;
@@ -21,13 +20,11 @@ export class GameEventService {
   private static instance: GameEventService;
   private socket: Socket | null = null;
   private eventHandlers: GameEventHandlers = {};
-  private reconnectAttempts: number = 0;
+  private reconnectAttempts = 0;
   private readonly maxReconnectAttempts: number = 5;
   private readonly reconnectDelay: number = 1000;
   private readonly eventQueue: GameEvent[] = [];
   private readonly maxQueueSize: number = 100;
-
-  private constructor() {}
 
   public static getInstance(): GameEventService {
     if (!GameEventService.instance) {
@@ -36,17 +33,17 @@ export class GameEventService {
     return GameEventService.instance;
   }
 
-  public connect(url: string, options: any = {}): void {
+  public async connect(url: string, options: any = {}): Promise<void> {
     if (this.socket?.connected) {
       return;
     }
 
-    const { io } = require('socket.io-client');
+    const { io } = await import('socket.io-client');
     this.socket = io(url, {
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
       reconnectionDelay: this.reconnectDelay,
-      ...options
+      ...options,
     });
 
     this.setupSocketListeners();
@@ -77,7 +74,7 @@ export class GameEventService {
         throw new AppError(
           ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
           'Failed to connect to game server',
-          503
+          503,
         );
       }
     });
@@ -94,7 +91,10 @@ export class GameEventService {
     }
   }
 
-  public subscribe(eventType: string, handler: (data: any) => void): GameEventSubscription {
+  public subscribe(
+    eventType: string,
+    handler: (data: any) => void,
+  ): GameEventSubscription {
     if (!this.eventHandlers[eventType]) {
       this.eventHandlers[eventType] = [];
     }
@@ -102,7 +102,7 @@ export class GameEventService {
 
     return {
       eventType,
-      handler
+      handler,
     };
   }
 
@@ -125,7 +125,7 @@ export class GameEventService {
     this.socket.emit('game_event', {
       type: eventType,
       data,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 
@@ -133,7 +133,7 @@ export class GameEventService {
     const event: GameEvent = {
       type: eventType,
       data,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
     this.eventQueue.push(event);
@@ -154,7 +154,7 @@ export class GameEventService {
   private handleGameEvent(event: GameEvent): void {
     const handlers = this.eventHandlers[event.type];
     if (handlers) {
-      handlers.forEach(handler => {
+      handlers.forEach((handler) => {
         try {
           handler(event.data);
         } catch (error) {
@@ -169,7 +169,7 @@ export class GameEventService {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
         'Not connected to game server',
-        503
+        503,
       );
     }
 
@@ -189,7 +189,7 @@ export class GameEventService {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
         'Not connected to game server',
-        503
+        503,
       );
     }
 
@@ -209,14 +209,14 @@ export class GameEventService {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
         'Not connected to game server',
-        503
+        503,
       );
     }
 
     this.socket.emit('chat_message', {
       roomId,
       message,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 
@@ -225,7 +225,7 @@ export class GameEventService {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
         'Not connected to game server',
-        503
+        503,
       );
     }
 
@@ -233,7 +233,7 @@ export class GameEventService {
       gameId,
       action,
       data,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 
@@ -242,7 +242,7 @@ export class GameEventService {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
         'Not connected to game server',
-        503
+        503,
       );
     }
 
@@ -264,4 +264,4 @@ export class GameEventService {
   public clearEventQueue(): void {
     this.eventQueue.length = 0;
   }
-} 
+}

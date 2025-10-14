@@ -1,5 +1,5 @@
 export interface GetCurrentAddressRequest {
-    walletId?: number;
+  walletId?: number;
 }
 
 export type GetCurrentAddressResponse = string;

@@ -1,5 +1,3 @@
-import React from 'react';
-import { useState, useCallback } from 'react';
 import { Paper, Typography } from '@mui/material';
 import { suitNames } from '../types/ChiaGaming';
 
@@ -14,7 +12,7 @@ interface PlayingCardProps {
   iAmPlayer: boolean;
 }
 
-const PlayingCard: React.FC<PlayingCardProps> = ({
+const PlayingCard = ({
   id,
   index,
   cardValue,
@@ -23,9 +21,10 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
   selectionColor,
   isFaceDown = false,
   iAmPlayer,
-}) => {
+}: PlayingCardProps) => {
+  const suitNames = ['Q', '♥', '♦', '♤', '♧'];
   const rank = cardValue.slice(0, -1);
-  const suit = suitNames[(cardValue.slice(-1)[0] as any)];
+  const suit = suitNames[cardValue.slice(-1)[0] as any];
   const setSelectedCB = () => {
     const newSelected = !selected;
     setSelection(index, newSelected);
@@ -41,26 +40,38 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
     borderRadius: '8px',
     border: '1px solid #000',
     display: 'flex',
-    flexDirection: 'column' as 'column',
+    flexDirection: 'column' as const,
     justifyContent: 'space-between',
     padding: '8px',
-    backgroundColor: selectionColor ? selectionColor : selected ? '#ddd' : (isFaceDown ? '#2E7D32' : '#FFFFFF'),
+    backgroundColor: selectionColor
+      ? selectionColor
+      : selected
+        ? '#ddd'
+        : isFaceDown
+          ? '#2E7D32'
+          : '#FFFFFF',
     color: isFaceDown ? '#FFFFFF' : suitColor,
     cursor: 'pointer',
-    textAlign: 'center' as 'center',
-    boxSizing: 'border-box' as 'border-box',
+    textAlign: 'center' as const,
+    boxSizing: 'border-box' as const,
   };
 
   return (
-    <Paper id={id} elevation={3} aria-label={`card-${iAmPlayer}-${index}`} style={cardStyle} onClick={setSelectedCB}>
+    <Paper
+      id={id}
+      elevation={3}
+      aria-label={`card-${iAmPlayer}-${index}`}
+      style={cardStyle}
+      onClick={setSelectedCB}
+    >
       {!isFaceDown && (
         <>
-          <Typography variant="body2" style={{ fontWeight: 'bold' }}>
+          <Typography variant='body2' style={{ fontWeight: 'bold' }}>
             {rank}
             {suit}
           </Typography>
           <Typography
-            variant="body2"
+            variant='body2'
             style={{ fontWeight: 'bold', transform: 'rotate(180deg)' }}
           >
             {rank}
@@ -73,4 +84,3 @@ const PlayingCard: React.FC<PlayingCardProps> = ({
 };
 
 export default PlayingCard;
-

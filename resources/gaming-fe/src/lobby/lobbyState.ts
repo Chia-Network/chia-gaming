@@ -1,9 +1,14 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Player, Room, GameType, GameTypes, GameDefinition, MatchmakingPreferences } from '../types/lobby';
+
+import {
+  Player,
+  Room,
+  GameDefinition,
+  MatchmakingPreferences,
+} from '../types/lobby';
 
 const ROOM_TTL = 10 * 60 * 1000;
 const GAME_TTL = 10 * 60 * 1000;
-const CLEANUP_INTERVAL = 60 * 1000;
 
 function listOfObject<T>(object: Record<string, T>): T[] {
   const result: T[] = [];
@@ -19,7 +24,7 @@ export class Lobby {
   games: Record<string, GameDefinition> = {};
 
   sweep(time: number) {
-    let playersInRooms: Record<string, boolean> = {};
+    const playersInRooms: Record<string, boolean> = {};
     Object.keys(this.games).forEach((k) => {
       const game = this.games[k];
       if (time > game.expiration) {
@@ -55,7 +60,7 @@ export class Lobby {
   }
 
   removePlayer(playerId: string) {
-    let existing = !!this.players[playerId];
+    const existing = !!this.players[playerId];
     delete this.players[playerId];
     return existing;
   }
@@ -83,13 +88,13 @@ export class Lobby {
       expiresAt: Date.now() + ROOM_TTL,
       status: 'waiting',
       maxPlayers: 2,
-      chat: []
+      chat: [],
     };
     this.rooms[room.token] = room;
     return room;
   }
 
-  joinRoom(roomId: string, player: Player) {
+  joinRoom(roomId: string, _player: Player) {
     const room = this.rooms[roomId];
     if (!room || room.status !== 'waiting') {
       return null;
@@ -98,7 +103,7 @@ export class Lobby {
     return room;
   }
 
-  leaveRoom(roomId: string, playerId: string) {
+  leaveRoom(roomId: string, _playerId: string) {
     const room = this.rooms[roomId];
     if (!room) return false;
 
