@@ -81,12 +81,11 @@ Calpoker
 
 Running:
 
-    {"iStarted":true, "playerNumber":1,
+    {"iStarted": true, "playerNumber":1,
      "moveNumber": 2,
      "playerHand": [[3,2],[3,3],[5,1],[5,4],[10,1],[10,1],[12,4],[13,3]],
      "opponentHand": [[3,1],[4,1],[5,1],[6,2],[8,3],[9,1],[9,2],[10,3]],
      "isPlayerTurn": true,
-     "iStarted": true,
      "cardSelections": 3,
      "setCardSelections": "*function",
      "handleMakeMove": "*function",
@@ -95,8 +94,7 @@ Running:
 
 Game end:
 
-    {"iStarted":true, "playerNumber":1,
-     "iStarted": true,
+    {"iStarted": true, "playerNumber":1,
      "moveNumber": 2, "outcome":{
         "alice_discards": 85,
         "bob_discards": 170,
