@@ -1,3 +1,4 @@
+import { ContentCopy, Close, CheckCircle, QrCode2, Smartphone } from '@mui/icons-material';
 import {
   Box,
   Button,
@@ -15,9 +16,8 @@ import {
   Fade,
   Paper,
 } from '@mui/material';
-import { ContentCopy, Close, CheckCircle, QrCode2, Smartphone } from '@mui/icons-material';
-import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
+import { useEffect, useState } from 'react';
 
 interface QRCodeModalProps {
   open: boolean;

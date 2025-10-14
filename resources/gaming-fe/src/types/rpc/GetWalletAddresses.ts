@@ -7,4 +7,4 @@ export interface GetWalletAddressesRequest {
   nonObserverDerivation?: boolean;
 }
 
-export type GetWalletAddressesResponse = { [key: string]: WalletAddress[] };
+export type GetWalletAddressesResponse = Record<string, WalletAddress[]>;

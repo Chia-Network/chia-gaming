@@ -1,7 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
+
+import { getPlayer } from '../db';
 import { AppError, ErrorCodes } from '../types/errors';
-import { Player, GameType } from '../types/lobby';
-import { savePlayer, getPlayer } from '../db';
+import { GameType } from '../types/lobby';
 
 interface PlayerStats {
   id: string;
@@ -172,7 +173,7 @@ export class PlayerStatsService {
     };
   }
 
-  public async getLeaderboard(gameType: GameType, limit: number = 10): Promise<PlayerStats[]> {
+  public async getLeaderboard(gameType: GameType, limit = 10): Promise<PlayerStats[]> {
     const stats = Array.from(this.playerStats.values())
       .filter((s) => s.gameType === gameType)
       .sort((a, b) => {
@@ -194,7 +195,6 @@ export class PlayerStatsService {
       .filter((s) => s.gameType === gameType)
       .sort((a, b) => b.totalWinnings - a.totalWinnings);
 
-    const playerStats = await this.getPlayerStats(playerId, gameType);
     const rank = allStats.findIndex((s) => s.playerId === playerId) + 1;
 
     return rank || allStats.length + 1;

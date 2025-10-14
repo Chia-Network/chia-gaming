@@ -1,6 +1,5 @@
-import { createContext, PropsWithChildren, useContext } from 'react';
+
 import { ChiaMethod } from '../constants/wallet-connect';
-import { walletConnectState } from './useWalletConnect';
 import { AddCatTokenRequest, AddCatTokenResponse } from '../types/rpc/AddCatToken';
 import { CancelOfferRequest, CancelOfferResponse } from '../types/rpc/CancelOffer';
 import { CheckOfferValidityRequest, CheckOfferValidityResponse } from '../types/rpc/CheckOfferValidity';
@@ -13,15 +12,16 @@ import { GetCatWalletInfoRequest, GetCatWalletInfoResponse } from '../types/rpc/
 import { GetCurrentAddressRequest, GetCurrentAddressResponse } from '../types/rpc/GetCurrentAddress';
 import { GetNextAddressRequest, GetNextAddressResponse } from '../types/rpc/GetNextAddress';
 import { GetNftInfoRequest, GetNftInfoResponse } from '../types/rpc/GetNftInfo';
+import { GetNftWalletsWithDidsRequest, GetNftWalletsWithDidsResponse } from '../types/rpc/GetNftWalletsWithDids';
 import { GetNftsRequest, GetNftsResponse } from '../types/rpc/GetNfts';
 import { GetNftsCountRequest, GetNftsCountResponse } from '../types/rpc/GetNftsCount';
-import { GetNftWalletsWithDidsRequest, GetNftWalletsWithDidsResponse } from '../types/rpc/GetNftWalletsWithDids';
 import { GetOfferDataRequest, GetOfferDataResponse } from '../types/rpc/GetOfferData';
 import { GetOfferRecordRequest, GetOfferRecordResponse } from '../types/rpc/GetOfferRecord';
-import { GetOffersCountRequest, GetOffersCountResponse } from '../types/rpc/GetOffersCount';
 import { GetOfferSummaryRequest, GetOfferSummaryResponse } from '../types/rpc/GetOfferSummary';
+import { GetOffersCountRequest, GetOffersCountResponse } from '../types/rpc/GetOffersCount';
 import { GetSyncStatusRequest, GetSyncStatusResponse } from '../types/rpc/GetSyncStatus';
 import { GetTransactionRequest, GetTransactionResponse } from '../types/rpc/GetTransaction';
+import { GetWalletAddressesRequest, GetWalletAddressesResponse } from '../types/rpc/GetWalletAddresses';
 import { GetWalletBalanceRequest, GetWalletBalanceResponse } from '../types/rpc/GetWalletBalance';
 import { GetWalletsRequest, GetWalletsResponse } from '../types/rpc/GetWallets';
 import { LogInRequest, LogInResponse } from '../types/rpc/LogIn';
@@ -35,10 +35,10 @@ import { SpendCatRequest, SpendCatResponse } from '../types/rpc/SpendCat';
 import { TakeOfferRequest, TakeOfferResponse } from '../types/rpc/TakeOffer';
 import { TransferNftRequest, TransferNftResponse } from '../types/rpc/TransferNft';
 import { VerifySignatureRequest, VerifySignatureResponse } from '../types/rpc/VerifySignature';
-import { GetWalletAddressesRequest, GetWalletAddressesResponse } from '../types/rpc/GetWalletAddresses';
-import { useWalletConnect } from './WalletConnectContext';
 
-interface JsonRpc {
+import { walletConnectState } from './useWalletConnect';
+
+interface _JsonRpc {
   // Wallet
   logIn: (data: LogInRequest) => Promise<LogInResponse>;
   getWallets: (data: GetWalletsRequest) => Promise<GetWalletsResponse>;

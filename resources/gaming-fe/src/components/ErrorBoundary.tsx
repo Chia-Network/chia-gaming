@@ -18,7 +18,7 @@ export class ErrorBoundary extends React.Component<ErrorProps> {
     return { hasError: error.toString() };
   }
 
-  componentDidCatch(error: any, info: any) {
+  componentDidCatch(_error: any, _info: any) {
     // Ok.
   }
 

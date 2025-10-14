@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { AppError, ErrorCodes } from '../types/errors';
 import { ZodError } from 'zod';
 
-export const errorHandler = (err: Error, req: Request, res: Response, next: NextFunction) => {
+import { AppError, ErrorCodes } from '../types/errors';
+
+export const errorHandler = (err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('Error:', err);
 
   if (err instanceof AppError) {

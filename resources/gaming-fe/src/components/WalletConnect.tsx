@@ -1,19 +1,37 @@
 import {
   Button,
-  ButtonGroup,
-  Divider,
-  FormControl,
-  InputLabel,
   Link,
-  MenuItem,
-  Select,
   SxProps,
   Typography,
 } from '@mui/material';
 import { Box } from '@mui/system';
-import { cloneElement, useState } from 'react';
-import { QRCodeModal } from './QRCodeModal';
+
 import { StartConnectResult, walletConnectState } from '../hooks/useWalletConnect';
+
+import { QRCodeModal } from './QRCodeModal';
+
+const styles: Record<string, SxProps> = {
+  welcome: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  container: {
+    paddingTop: '60px',
+    width: { xs: '340px', md: '460px', lg: '540px' },
+    marginLeft: 'auto',
+    marginRight: 'auto',
+  },
+  command: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    borderRadius: '8px',
+  },
+  response: {
+    borderRadius: '8px',
+  },
+};
 
 interface ShowWalletConnectState {
   initialized: boolean;
@@ -114,7 +132,7 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
 export const doConnectWallet = (
   setShowQRModal: (s: boolean) => void,
   setConnectionUri: (s: string) => void,
-  startConnect: () => Promise<StartConnectResult>,
+  _startConnect: () => Promise<StartConnectResult>,
   setComplete: () => void,
   signalError: (s: string) => void,
 ) => {
@@ -130,27 +148,4 @@ export const doConnectWallet = (
       setComplete();
     })
     .catch((e) => signalError(e.toString()));
-};
-
-const styles: Record<string, SxProps> = {
-  welcome: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-  container: {
-    paddingTop: '60px',
-    width: { xs: '340px', md: '460px', lg: '540px' },
-    marginLeft: 'auto',
-    marginRight: 'auto',
-  },
-  command: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    borderRadius: '8px',
-  },
-  response: {
-    borderRadius: '8px',
-  },
 };

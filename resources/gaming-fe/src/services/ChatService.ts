@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+
 import { AppError, ErrorCodes } from '../types/errors';
 import { Player } from '../types/lobby';
 
@@ -176,7 +177,7 @@ export class ChatService {
     }
   }
 
-  public getRoomMessages(roomId: string, limit: number = 50): ChatMessage[] {
+  public getRoomMessages(roomId: string, limit = 50): ChatMessage[] {
     const room = this.chatRooms.get(roomId);
     if (!room) {
       throw new AppError(ErrorCodes.LOBBY.ROOM_NOT_FOUND, 'Chat room not found', 404);

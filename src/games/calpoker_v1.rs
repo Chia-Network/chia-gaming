@@ -12,7 +12,7 @@ use clvmr::{run_program, NodePtr};
 use crate::common::types::Node;
 use crate::common::types::{chia_dialect, IntoErr};
 
-use crate::common::standard_coin::read_hex_puzzle;
+use crate::common::load_clvm::read_hex_puzzle;
 use crate::utils::{map_m, proper_list};
 
 use serde::{Deserialize, Serialize};

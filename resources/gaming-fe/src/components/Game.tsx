@@ -1,26 +1,20 @@
-import React, { cloneElement, useState, useEffect, useCallback } from 'react';
-import { fromEvent } from 'rxjs';
 import {
   Box,
   Button,
-  ButtonGroup,
-  Divider,
-  FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
   Typography,
 } from '@mui/material';
-import PlayerSection from './PlayerSection';
-import OpponentSection from './OpponentSection';
-import GameEndPlayer from './GameEndPlayer';
-import GameLog from './GameLog';
-import WaitingScreen from './WaitingScreen';
-import useDebug from '../hooks/useDebug';
+
+
 import { useWasmBlob } from '../hooks/useWasmBlob';
 import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 
-const Game: React.FC = () => {
+import GameEndPlayer from './GameEndPlayer';
+import GameLog from './GameLog';
+import OpponentSection from './OpponentSection';
+import PlayerSection from './PlayerSection';
+import WaitingScreen from './WaitingScreen';
+
+const Game = () => {
   const uniqueId = generateOrRetrieveUniqueId();
   const params = getSearchParams();
   const {
@@ -66,15 +60,15 @@ const Game: React.FC = () => {
   }
 
   console.log('game outcome', outcome);
-  let myWinOutcome = outcome?.my_win_outcome;
-  let colors = {
+  const myWinOutcome = outcome?.my_win_outcome;
+  const colors = {
     win: 'green',
     lose: 'red',
     tie: '#ccc',
     success: '#363',
     warning: '#633',
   };
-  let color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome
+  const color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome
     ? myWinOutcome
     : isPlayerTurn
       ? 'success'
