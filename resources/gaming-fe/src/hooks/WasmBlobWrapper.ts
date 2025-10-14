@@ -395,11 +395,10 @@ export class WasmBlobWrapper {
       cg.init((msg: string) => console.warn('wasm', msg));
       this.wc = cg;
       const presetFiles = [
-        'resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex',
-        'clsp/unroll/unroll_meta_puzzle.hex',
-        'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
-        'clsp/referee/onchain/referee.hex',
-        'clsp/referee/onchain/referee-v1.hex',
+        "clsp/unroll/unroll_meta_puzzle.hex",
+        "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
+        "clsp/referee/onchain/referee.hex",
+        "clsp/referee/onchain/referee-v1.hex"
       ];
       this.pushEvent({ loadPresets: presetFiles });
       return {};
