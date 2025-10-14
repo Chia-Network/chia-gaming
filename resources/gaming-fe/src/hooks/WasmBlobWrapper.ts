@@ -286,6 +286,7 @@ export class WasmBlobWrapper {
     return anempty(286).then(() => result);
   }
 
+  // TODO: fix me next
   kickMessageHandling(): any {
     if (this.messageQueue.length == 0 || this.handlingMessage) {
       return anempty(291);
