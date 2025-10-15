@@ -201,7 +201,11 @@ app.post('/pair', async (req: any, res: any) => {
   res.json({ pair });
 });
 
-blockchainUpdate();
+const stopUpdate = blockchainUpdate();
 bindBlockchain(app);
+
+process.on('SIGINT', function() {
+  stopUpdate();
+});
 
 app.listen(PORT);

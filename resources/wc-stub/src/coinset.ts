@@ -2,18 +2,28 @@ import { Subject } from 'rxjs';
 
 const blockFeed = new Subject();
 
-export function blockchainUpdate() {
-  return fetch("http://localhost:5800/wait_block", {method: "POST"}).then((res: any) => res.json()).then((blockNumber: number) => {
-    blockFeed.next({
-      height: blockNumber,
-    });
-  }).then(() => {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        return blockchainUpdate();
-      }, 5000);
-    });
-  });
+export function blockchainUpdate(): () => void {
+  let active = true;
+
+  const poll = async () => {
+    if (!active) return;
+
+    try {
+      const res = await fetch("http://localhost:5800/wait_block", {method: "POST"});
+      const blockNumber = await res.json();
+      blockFeed.next({ height: blockNumber });
+    } catch (error) {
+      console.error('Blockchain update failed:', error);
+    }
+
+    if (active) {
+      setTimeout(poll, 5000);
+    }
+  };
+
+  poll();
+
+  return () => { active = false; };
 }
 
 export function bindBlockchain(app: any) {
