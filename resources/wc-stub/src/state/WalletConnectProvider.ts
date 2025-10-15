@@ -20,11 +20,9 @@ export type WalletConnectProviderProps = {
 
 export default function WalletConnectProvider(props: WalletConnectProviderProps) {
   const { projectId } = props;
-  const showNotification = () => { };
 
   const walletConnect = {
     projectId,
-    onNotification: showNotification,
   };
 
   return walletConnect;
