@@ -6,10 +6,10 @@ import * as bech32 from 'bech32-buffer';
 // @ts-ignore
 import Client from '@walletconnect/sign-client';
 import { Pair } from './util/Pair';
-import useWalletConnectPreferences from './hooks/useWalletConnectPreferences';
-import { defaultMetadata, WalletConnectChiaProjectId, UseWalletConnectConfig, useWalletConnectClient } from './hooks/useWalletConnectClient';
-import { UseWalletConnectResult, useWalletConnect } from './hooks/useWalletConnect';
-import { Pairs, parseWcLink, useWalletConnectPairs } from './hooks/useWalletConnectPairs';
+import useWalletConnectPreferences from './state/useWalletConnectPreferences';
+import { defaultMetadata, WalletConnectChiaProjectId, UseWalletConnectConfig, useWalletConnectClient } from './state/useWalletConnectClient';
+import { UseWalletConnectResult, useWalletConnect } from './state/useWalletConnect';
+import { Pairs, parseWcLink, useWalletConnectPairs } from './state/useWalletConnectPairs';
 import { disconnectPair, bindEvents } from './util/walletConnect';
 import Daemon from './rpc/Daemon';
 import express, { Application } from "express";
