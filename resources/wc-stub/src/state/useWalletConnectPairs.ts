@@ -25,34 +25,19 @@ export type Pairs = {
 
 type PairFn = (pairs: Pair[]) => Pair[];
 
-function parseQuery(q: string): any {
-  const qs = q.split('&');
-  const result: any = {};
-  for (var i = 0; i < qs.length; i++) {
-    const eq_idx = qs[i].indexOf('=');
-    if (eq_idx > 0) {
-      const k = qs[i].substr(0, eq_idx);
-      const v = qs[i].substr(eq_idx + 1);
-      result[k] = v;
-    }
-  }
-  return result;
-}
-
 export function parseWcLink(wc_link: string, fingerprints: number[]): any | null {
   const wc_index = wc_link.indexOf(':');
   if (wc_index < 0) {
     return null;
   }
-  const after_colon = wc_link.substr(wc_index + 1);
+  const after_colon = wc_link.slice(wc_index + 1);
   const at_two = after_colon.indexOf('@2');
   if (at_two < 0) {
     return null;
   }
-  const topic = after_colon.substr(0, at_two);
+  const topic = after_colon.slice(0, at_two);
   const q_index = after_colon.indexOf('?');
-  const query_part = after_colon.substr(q_index + 1);
-  const query_parsed = parseQuery(query_part);
+  const query_part = after_colon.slice(q_index + 1);
 
   return {
     uri: wc_link,

@@ -8,6 +8,9 @@ import Daemon from './Daemon';
 import ErrorData from '../util/ErrorData';
 import sleep from '../util/sleep';
 
+const PERMISSION_DENIED = '13';
+const FILE_NOT_FOUND = '22';
+
 export function log(...args: string[]) {
   console.log(args);
 }
@@ -221,10 +224,10 @@ export default class Client extends EventEmitter {
       if (message.data?.error) {
         let errorMessage = message.data.error;
 
-        if (errorMessage === '13') {
+        if (errorMessage === PERMISSION_DENIED) {
           errorMessage =
             '[Error 13] Permission denied. You are trying to access a file/directory without having the necessary permissions. Most likely one of the plot folders in your config.yaml has an issue.';
-        } else if (errorMessage === '22') {
+        } else if (errorMessage === FILE_NOT_FOUND) {
           errorMessage =
             '[Error 22] File not found. Most likely one of the plot folders in your config.yaml has an issue.';
         } else if (message?.data?.errorDetails?.message) {

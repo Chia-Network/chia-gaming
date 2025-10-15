@@ -2,7 +2,8 @@ import Client from '@walletconnect/sign-client';
 import { getSdkError } from '@walletconnect/utils';
 
 import walletConnectCommands from '../constants/WalletConnectCommands';
-import { type Pairs } from '../hooks/useWalletConnectPairs';
+import { type Pairs } from '../state/useWalletConnectPairs';
+import { type Pair, type Session } from '../util/Pair';
 
 const log: any = (...args: any[]) => {
   console.log(args);
@@ -109,7 +110,7 @@ export async function processSessionProposal(
 
     const { fingerprints, mainnet } = pair;
     const instance = mainnet ? 'mainnet' : 'testnet';
-    const accounts = fingerprints.map((fingerprint) => `chia:${instance}:${fingerprint}`);
+    const accounts = fingerprints.map((fingerprint: number) => `chia:${instance}:${fingerprint}`);
 
     const namespaces = {
       chia: {
@@ -131,7 +132,7 @@ export async function processSessionProposal(
     }
 
     // new session created
-    pairs.updatePair(pairingTopic, (p) => ({
+    pairs.updatePair(pairingTopic, (p: Pair) => ({
       ...p,
       sessions: [
         ...p.sessions,
@@ -282,7 +283,7 @@ export async function disconnectPair(client: Client, pairs: Pairs, topic: string
       // disconnect all sessions
       const sessions = pairs.getPair(topic)?.sessions ?? [];
       await Promise.all(
-        sessions.map(async (session) => {
+        sessions.map(async (session: Session) => {
           try {
             await client.disconnect({ topic: session.topic, reason: getSdkError('USER_DISCONNECTED') });
           } catch (e) {
@@ -346,7 +347,7 @@ export async function cleanupPairings(client: Client, pairs: Pairs) {
 
     // remove pairs which are not in pairing list
     await Promise.all(
-      pairs.get().map(async (pair) => {
+      pairs.get().map(async (pair: Pair) => {
         const { topic } = pair;
         const hasPairing = pairings.find((pairing) => pairing.topic === topic);
 
