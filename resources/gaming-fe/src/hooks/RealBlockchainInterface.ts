@@ -227,6 +227,7 @@ export function connectRealBlockchain(baseUrl: string) {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
       let getAddress = evt.getAddress;
+      let getBalance = evt.getBalance;
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({
@@ -326,6 +327,12 @@ export function connectRealBlockchain(baseUrl: string) {
         blockchainConnector.replyEmitter({
           responseId: evt.requestId,
           error: `unknown blockchain request type ${JSON.stringify(evt)}`,
+        });
+      } else if (getBalance) {
+        rpc.getBalance({
+          walletId: 1
+        }).then((balance: number) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balance });
         });
       }
     },

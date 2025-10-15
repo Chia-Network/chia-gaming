@@ -581,6 +581,7 @@ export interface InternalBlockchainInterface {
   ): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
+  getBalance(): Promise<number>;
 }
 
 export interface OutcomeHandType {

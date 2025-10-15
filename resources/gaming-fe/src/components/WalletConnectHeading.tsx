@@ -38,6 +38,7 @@ const WalletConnectHeading = (_args: any) => {
   const [haveSession, setHaveSession] = useState(false);
   const [sessions, setSessions] = useState(0);
   const [_address, setAddress] = useState();
+  const [balance, setBalance] = useState<number | undefined>();
 
   const uniqueId = generateOrRetrieveUniqueId();
 
@@ -198,6 +199,13 @@ const WalletConnectHeading = (_args: any) => {
     : fakeAddress
       ? 'simulator'
       : 'disconnected';
+
+  const balanceDisplay = (balance !== undefined) ? (
+    <div>Balance {balance}</div>
+  ) : (
+    <div />
+  );
+
   const ifSession = walletConnectState.getSession() ? (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Box>
@@ -312,7 +320,9 @@ const WalletConnectHeading = (_args: any) => {
         >
           Chia Gaming - WalletConnect {sessionConnected}
         </div>
-        <div style={{ display: 'flex', flexGrow: 1 }}> </div>
+        <div style={{ display: 'flex', flexGrow: 1, flexDirection: 'row' }}>
+          {balanceDisplay}
+        </div>
         <div
           style={{
             display: 'flex',
