@@ -44,14 +44,21 @@ export class PlayerStatsService {
     return PlayerStatsService.instance;
   }
 
-  public async getPlayerStats(playerId: string, gameType: GameType): Promise<PlayerStats> {
+  public async getPlayerStats(
+    playerId: string,
+    gameType: GameType,
+  ): Promise<PlayerStats> {
     const key = `${playerId}-${gameType}`;
     let stats = this.playerStats.get(key);
 
     if (!stats) {
       const player = await getPlayer(playerId);
       if (!player) {
-        throw new AppError(ErrorCodes.LOBBY.PLAYER_NOT_FOUND, 'Player not found', 404);
+        throw new AppError(
+          ErrorCodes.LOBBY.PLAYER_NOT_FOUND,
+          'Player not found',
+          404,
+        );
       }
 
       stats = {
@@ -108,41 +115,83 @@ export class PlayerStatsService {
     return achievements;
   }
 
-  private async checkAchievements(playerId: string, gameType: GameType, stats: PlayerStats): Promise<void> {
+  private async checkAchievements(
+    playerId: string,
+    gameType: GameType,
+    stats: PlayerStats,
+  ): Promise<void> {
     const achievements = await this.getPlayerAchievements(playerId);
     const newAchievements: Achievement[] = [];
 
     if (stats.gamesPlayed === 1) {
       newAchievements.push(
-        this.createAchievement(playerId, 'First Game', 'Played your first game', gameType, 'common'),
+        this.createAchievement(
+          playerId,
+          'First Game',
+          'Played your first game',
+          gameType,
+          'common',
+        ),
       );
     }
 
     if (stats.gamesWon === 1) {
       newAchievements.push(
-        this.createAchievement(playerId, 'First Victory', 'Won your first game', gameType, 'common'),
+        this.createAchievement(
+          playerId,
+          'First Victory',
+          'Won your first game',
+          gameType,
+          'common',
+        ),
       );
     }
 
     if (stats.winStreak >= 3) {
       newAchievements.push(
-        this.createAchievement(playerId, 'Hot Streak', 'Won 3 games in a row', gameType, 'uncommon'),
+        this.createAchievement(
+          playerId,
+          'Hot Streak',
+          'Won 3 games in a row',
+          gameType,
+          'uncommon',
+        ),
       );
     }
 
     if (stats.winStreak >= 5) {
-      newAchievements.push(this.createAchievement(playerId, 'Unstoppable', 'Won 5 games in a row', gameType, 'rare'));
+      newAchievements.push(
+        this.createAchievement(
+          playerId,
+          'Unstoppable',
+          'Won 5 games in a row',
+          gameType,
+          'rare',
+        ),
+      );
     }
 
     if (stats.totalWinnings >= 1000) {
       newAchievements.push(
-        this.createAchievement(playerId, 'High Roller', 'Won 1000 or more in total', gameType, 'epic'),
+        this.createAchievement(
+          playerId,
+          'High Roller',
+          'Won 1000 or more in total',
+          gameType,
+          'epic',
+        ),
       );
     }
 
     if (stats.highestWin >= 500) {
       newAchievements.push(
-        this.createAchievement(playerId, 'Big Winner', 'Won 500 or more in a single game', gameType, 'legendary'),
+        this.createAchievement(
+          playerId,
+          'Big Winner',
+          'Won 500 or more in a single game',
+          gameType,
+          'legendary',
+        ),
       );
     }
 
@@ -173,7 +222,10 @@ export class PlayerStatsService {
     };
   }
 
-  public async getLeaderboard(gameType: GameType, limit = 10): Promise<PlayerStats[]> {
+  public async getLeaderboard(
+    gameType: GameType,
+    limit = 10,
+  ): Promise<PlayerStats[]> {
     const stats = Array.from(this.playerStats.values())
       .filter((s) => s.gameType === gameType)
       .sort((a, b) => {
@@ -190,7 +242,10 @@ export class PlayerStatsService {
     return stats;
   }
 
-  public async getPlayerRank(playerId: string, gameType: GameType): Promise<number> {
+  public async getPlayerRank(
+    playerId: string,
+    gameType: GameType,
+  ): Promise<number> {
     const allStats = Array.from(this.playerStats.values())
       .filter((s) => s.gameType === gameType)
       .sort((a, b) => b.totalWinnings - a.totalWinnings);

@@ -18,7 +18,9 @@ function parseArgs() {
   const args = minimist(process.argv.slice(2));
 
   if (!args.tracker || !args.self) {
-    console.warn('usage: server --tracker [tracker-url] --self [own-url] --extras [extra-urls colon separated]');
+    console.warn(
+      'usage: server --tracker [tracker-url] --self [own-url] --extras [extra-urls colon separated]',
+    );
     process.exit(1);
   }
 
@@ -39,8 +41,17 @@ app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
-        defaultSrc: ["'self'", 'https://explorer-api.walletconnect.com', ...extras],
-        scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'", ...extras],
+        defaultSrc: [
+          "'self'",
+          'https://explorer-api.walletconnect.com',
+          ...extras,
+        ],
+        scriptSrc: [
+          "'self'",
+          "'wasm-unsafe-eval'",
+          "'unsafe-inline'",
+          ...extras,
+        ],
         connectSrc: [
           "'self'",
           'https://explorer-api.walletconnect.com',
@@ -54,7 +65,12 @@ app.use(
           args.tracker,
           ...extras,
         ],
-        frameSrc: ["'self'", 'https://verify.walletconnect.org', args.tracker, ...extras],
+        frameSrc: [
+          "'self'",
+          'https://verify.walletconnect.org',
+          args.tracker,
+          ...extras,
+        ],
         frameAncestors: ["'self'", args.tracker],
       },
     },

@@ -43,7 +43,12 @@ export class LeaderboardService {
     this.createLeaderboard('global', 'global', 'daily');
 
     const gameTypes: GameType[] = ['california_poker', 'krunk', 'exotic_poker'];
-    const timeFrames: Leaderboard['timeFrame'][] = ['all-time', 'monthly', 'weekly', 'daily'];
+    const timeFrames: Leaderboard['timeFrame'][] = [
+      'all-time',
+      'monthly',
+      'weekly',
+      'daily',
+    ];
 
     for (const gameType of gameTypes) {
       for (const timeFrame of timeFrames) {
@@ -86,7 +91,11 @@ export class LeaderboardService {
     const id = `${type}-${gameType || 'global'}-${timeFrame}`;
     const leaderboard = this.leaderboards.get(id);
     if (!leaderboard) {
-      throw new AppError(ErrorCodes.SYSTEM.NOT_FOUND, 'Leaderboard not found', 404);
+      throw new AppError(
+        ErrorCodes.SYSTEM.NOT_FOUND,
+        'Leaderboard not found',
+        404,
+      );
     }
 
     if (this.shouldUpdateLeaderboard(leaderboard)) {
@@ -98,7 +107,8 @@ export class LeaderboardService {
 
   private shouldUpdateLeaderboard(leaderboard: Leaderboard): boolean {
     const now = new Date();
-    const timeSinceLastUpdate = now.getTime() - leaderboard.lastUpdated.getTime();
+    const timeSinceLastUpdate =
+      now.getTime() - leaderboard.lastUpdated.getTime();
     return timeSinceLastUpdate >= this.updateInterval;
   }
 
@@ -111,7 +121,10 @@ export class LeaderboardService {
         break;
       case 'game':
         if (leaderboard.gameType) {
-          entries = this.getGameLeaderboardEntries(leaderboard.gameType, leaderboard.timeFrame);
+          entries = this.getGameLeaderboardEntries(
+            leaderboard.gameType,
+            leaderboard.timeFrame,
+          );
         }
         break;
       case 'achievement':
@@ -128,11 +141,16 @@ export class LeaderboardService {
     leaderboard.lastUpdated = new Date();
   }
 
-  private getGlobalLeaderboardEntries(_timeFrame: Leaderboard['timeFrame']): LeaderboardEntry[] {
+  private getGlobalLeaderboardEntries(
+    _timeFrame: Leaderboard['timeFrame'],
+  ): LeaderboardEntry[] {
     return [];
   }
 
-  private getGameLeaderboardEntries(_gameType: GameType, _timeFrame: Leaderboard['timeFrame']): LeaderboardEntry[] {
+  private getGameLeaderboardEntries(
+    _gameType: GameType,
+    _timeFrame: Leaderboard['timeFrame'],
+  ): LeaderboardEntry[] {
     return [];
   }
 
@@ -179,7 +197,12 @@ export class LeaderboardService {
     type: Leaderboard['type'],
     gameType?: GameType,
   ): void {
-    const timeFrames: Leaderboard['timeFrame'][] = ['daily', 'weekly', 'monthly', 'all-time'];
+    const timeFrames: Leaderboard['timeFrame'][] = [
+      'daily',
+      'weekly',
+      'monthly',
+      'all-time',
+    ];
 
     for (const timeFrame of timeFrames) {
       const leaderboard = this.getLeaderboard(type, gameType, timeFrame);

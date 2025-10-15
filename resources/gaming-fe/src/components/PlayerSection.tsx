@@ -35,9 +35,16 @@ const PlayerSection = ({
       selections &= ~(1 << index);
     }
     setCardSelections(selections);
-    console.warn(isPlayerTurn, moveNumber, 'cardSelections', selections, selected);
+    console.warn(
+      isPlayerTurn,
+      moveNumber,
+      'cardSelections',
+      selections,
+      selected,
+    );
   };
-  const disabled = !isPlayerTurn || (moveNumber === 1 && popcount(cardSelections) != 4);
+  const disabled =
+    !isPlayerTurn || (moveNumber === 1 && popcount(cardSelections) != 4);
   return (
     <Paper
       elevation={3}
@@ -48,11 +55,11 @@ const PlayerSection = ({
         flexDirection: 'column',
       }}
     >
-      <Typography variant="h5">{'You'}</Typography>
+      <Typography variant='h5'>{'You'}</Typography>
       <br />
-      <Typography variant="h6">Your Hand:</Typography>
+      <Typography variant='h6'>Your Hand:</Typography>
       <br />
-      <Box display="flex" flexDirection="row" mb={2}>
+      <Box display='flex' flexDirection='row' mb={2}>
         {playerHand.map((card: number[], index) => (
           <PlayingCard
             iAmPlayer
@@ -65,14 +72,14 @@ const PlayerSection = ({
           />
         ))}
       </Box>
-      <Box mt="auto">
+      <Box mt='auto'>
         <Button
-          variant="contained"
-          color="secondary"
+          variant='contained'
+          color='secondary'
           onClick={doHandleMakeMove}
           disabled={disabled}
           style={{ marginRight: '8px' }}
-          aria-label="make-move"
+          aria-label='make-move'
           aria-disabled={disabled}
         >
           Make Move

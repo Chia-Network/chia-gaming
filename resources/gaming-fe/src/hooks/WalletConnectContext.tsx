@@ -1,6 +1,13 @@
 import Client from '@walletconnect/sign-client';
 import { PairingTypes, SessionTypes } from '@walletconnect/types';
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  ReactNode,
+} from 'react';
 
 import { METADATA, REQUIRED_NAMESPACES } from '../constants/wallet-connect';
 
@@ -147,7 +154,9 @@ export function WalletConnectProvider({
         // Check for existing sessions
         setPairings(client.pairing.getAll({ active: true }));
         if (client.session.length) {
-          const lastSession = client.session.get(client.session.keys[client.session.keys.length - 1]);
+          const lastSession = client.session.get(
+            client.session.keys[client.session.keys.length - 1],
+          );
           onSessionConnected(lastSession);
         }
       } catch (error) {
@@ -175,13 +184,19 @@ export function WalletConnectProvider({
     setShowQRModal,
   };
 
-  return <WalletConnectContext.Provider value={value}>{children}</WalletConnectContext.Provider>;
+  return (
+    <WalletConnectContext.Provider value={value}>
+      {children}
+    </WalletConnectContext.Provider>
+  );
 }
 
 export function useWalletConnect() {
   const context = useContext(WalletConnectContext);
   if (!context) {
-    throw new Error('useWalletConnect must be used within WalletConnectProvider');
+    throw new Error(
+      'useWalletConnect must be used within WalletConnectProvider',
+    );
   }
   return context;
 }

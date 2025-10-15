@@ -108,7 +108,8 @@ app.get('/index.js', async (_req: any, res: any) => {
 });
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;
-  if (!id || !newAlias) return res.status(400).json({ error: 'Missing id or new_alias.' });
+  if (!id || !newAlias)
+    return res.status(400).json({ error: 'Missing id or new_alias.' });
   const player = lobby.players[id];
   if (player) {
     player.alias = newAlias;
@@ -119,7 +120,8 @@ app.post('/lobby/change-alias', (req, res) => {
 });
 app.post('/lobby/generate-room', (req, res) => {
   const { id, game, parameters } = req.body;
-  if (!id || !game) return res.status(400).json({ error: 'Missing id or game.' });
+  if (!id || !game)
+    return res.status(400).json({ error: 'Missing id or game.' });
   const token = crypto.randomBytes(16).toString('hex');
   const now = Date.now();
   const newRoom: Room = {
@@ -197,7 +199,9 @@ app.post('/lobby/leave', (req, res) => {
   res.status(404).json({ error: 'Player not found in lobby.' });
 });
 
-app.get('/lobby/status', (_req, res) => res.json({ lobbyQueue: lobby.getPlayers() }));
+app.get('/lobby/status', (_req, res) =>
+  res.json({ lobbyQueue: lobby.getPlayers() }),
+);
 
 io.on('connection', (socket) => {
   socket.emit('lobby_update', lobby.getPlayers());

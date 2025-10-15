@@ -5,10 +5,7 @@ interface WaitingScreenProps {
   messages: string[];
 }
 
-const WaitingScreen = ({
-  stateName,
-  messages,
-}: WaitingScreenProps) => {
+const WaitingScreen = ({ stateName, messages }: WaitingScreenProps) => {
   return (
     <Box
       p={4}

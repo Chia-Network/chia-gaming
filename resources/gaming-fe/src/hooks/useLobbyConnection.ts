@@ -4,9 +4,17 @@ import io, { Socket } from 'socket.io-client';
 
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import { ExternalBlockchainInterface } from '../types/ChiaGaming';
-import { ChatEnvelope, FragmentData, GenerateRoomResult, Room } from '../types/lobby';
-import { getSearchParams, getFragmentParams, generateOrRetrieveUniqueId } from '../util';
-
+import {
+  ChatEnvelope,
+  FragmentData,
+  GenerateRoomResult,
+  Room,
+} from '../types/lobby';
+import {
+  getSearchParams,
+  getFragmentParams,
+  generateOrRetrieveUniqueId,
+} from '../util';
 
 interface Player {
   id: string;
@@ -64,8 +72,18 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
         continue;
       }
 
-      console.log('conditions to enter', room.host === uniqueId, room.joiner === uniqueId, room.target, walletConnect);
-      if ((room.host === uniqueId || room.joiner === uniqueId) && room.target && walletConnect) {
+      console.log(
+        'conditions to enter',
+        room.host === uniqueId,
+        room.joiner === uniqueId,
+        room.target,
+        walletConnect,
+      );
+      if (
+        (room.host === uniqueId || room.joiner === uniqueId) &&
+        room.target &&
+        walletConnect
+      ) {
         const iStarted = room.host === uniqueId;
         // This room is inhabited and contains us, redirect.
         console.log('take us to game', JSON.stringify(room));
@@ -82,7 +100,9 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
         })
           .then((res) => res.json())
           .then(() => {
-            const blockchain = new ExternalBlockchainInterface(BLOCKCHAIN_SERVICE_URL);
+            const blockchain = new ExternalBlockchainInterface(
+              BLOCKCHAIN_SERVICE_URL,
+            );
             return blockchain.getOrRequestToken(params.uniqueId);
           })
           .then((walletToken) => {
@@ -129,13 +149,20 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
 
   const sendMessage = useCallback(
     (msg: string) => {
-      socketRef.current?.emit('chat_message', { alias, content: { text: msg, sender: alias } });
+      socketRef.current?.emit('chat_message', {
+        alias,
+        content: { text: msg, sender: alias },
+      });
     },
     [uniqueId],
   );
 
   const generateRoom = useCallback(
-    async (game: string, amount: string, perGame: string): Promise<GenerateRoomResult> => {
+    async (
+      game: string,
+      amount: string,
+      perGame: string,
+    ): Promise<GenerateRoomResult> => {
       const { data } = await axios.post(`${LOBBY_URL}/lobby/generate-room`, {
         id: uniqueId,
         alias,

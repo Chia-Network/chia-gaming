@@ -1,40 +1,117 @@
-
 import { ChiaMethod } from '../constants/wallet-connect';
-import { AddCatTokenRequest, AddCatTokenResponse } from '../types/rpc/AddCatToken';
-import { CancelOfferRequest, CancelOfferResponse } from '../types/rpc/CancelOffer';
-import { CheckOfferValidityRequest, CheckOfferValidityResponse } from '../types/rpc/CheckOfferValidity';
-import { CreateNewCatWalletRequest, CreateNewCatWalletResponse } from '../types/rpc/CreateNewCatWallet';
-import { CreateNewDidWalletRequest, CreateNewDidWalletResponse } from '../types/rpc/CreateNewDidWallet';
-import { CreateOfferForIdsRequest, CreateOfferForIdsResponse } from '../types/rpc/CreateOfferForIds';
-import { GetAllOffersRequest, GetAllOffersResponse } from '../types/rpc/GetAllOffers';
-import { GetCatAssetIdRequest, GetCatAssetIdResponse } from '../types/rpc/GetCatAssetId';
-import { GetCatWalletInfoRequest, GetCatWalletInfoResponse } from '../types/rpc/GetCatWalletInfo';
-import { GetCurrentAddressRequest, GetCurrentAddressResponse } from '../types/rpc/GetCurrentAddress';
-import { GetNextAddressRequest, GetNextAddressResponse } from '../types/rpc/GetNextAddress';
+import {
+  AddCatTokenRequest,
+  AddCatTokenResponse,
+} from '../types/rpc/AddCatToken';
+import {
+  CancelOfferRequest,
+  CancelOfferResponse,
+} from '../types/rpc/CancelOffer';
+import {
+  CheckOfferValidityRequest,
+  CheckOfferValidityResponse,
+} from '../types/rpc/CheckOfferValidity';
+import {
+  CreateNewCatWalletRequest,
+  CreateNewCatWalletResponse,
+} from '../types/rpc/CreateNewCatWallet';
+import {
+  CreateNewDidWalletRequest,
+  CreateNewDidWalletResponse,
+} from '../types/rpc/CreateNewDidWallet';
+import {
+  CreateOfferForIdsRequest,
+  CreateOfferForIdsResponse,
+} from '../types/rpc/CreateOfferForIds';
+import {
+  GetAllOffersRequest,
+  GetAllOffersResponse,
+} from '../types/rpc/GetAllOffers';
+import {
+  GetCatAssetIdRequest,
+  GetCatAssetIdResponse,
+} from '../types/rpc/GetCatAssetId';
+import {
+  GetCatWalletInfoRequest,
+  GetCatWalletInfoResponse,
+} from '../types/rpc/GetCatWalletInfo';
+import {
+  GetCurrentAddressRequest,
+  GetCurrentAddressResponse,
+} from '../types/rpc/GetCurrentAddress';
+import {
+  GetNextAddressRequest,
+  GetNextAddressResponse,
+} from '../types/rpc/GetNextAddress';
 import { GetNftInfoRequest, GetNftInfoResponse } from '../types/rpc/GetNftInfo';
-import { GetNftWalletsWithDidsRequest, GetNftWalletsWithDidsResponse } from '../types/rpc/GetNftWalletsWithDids';
+import {
+  GetNftWalletsWithDidsRequest,
+  GetNftWalletsWithDidsResponse,
+} from '../types/rpc/GetNftWalletsWithDids';
 import { GetNftsRequest, GetNftsResponse } from '../types/rpc/GetNfts';
-import { GetNftsCountRequest, GetNftsCountResponse } from '../types/rpc/GetNftsCount';
-import { GetOfferDataRequest, GetOfferDataResponse } from '../types/rpc/GetOfferData';
-import { GetOfferRecordRequest, GetOfferRecordResponse } from '../types/rpc/GetOfferRecord';
-import { GetOfferSummaryRequest, GetOfferSummaryResponse } from '../types/rpc/GetOfferSummary';
-import { GetOffersCountRequest, GetOffersCountResponse } from '../types/rpc/GetOffersCount';
-import { GetSyncStatusRequest, GetSyncStatusResponse } from '../types/rpc/GetSyncStatus';
-import { GetTransactionRequest, GetTransactionResponse } from '../types/rpc/GetTransaction';
-import { GetWalletAddressesRequest, GetWalletAddressesResponse } from '../types/rpc/GetWalletAddresses';
-import { GetWalletBalanceRequest, GetWalletBalanceResponse } from '../types/rpc/GetWalletBalance';
+import {
+  GetNftsCountRequest,
+  GetNftsCountResponse,
+} from '../types/rpc/GetNftsCount';
+import {
+  GetOfferDataRequest,
+  GetOfferDataResponse,
+} from '../types/rpc/GetOfferData';
+import {
+  GetOfferRecordRequest,
+  GetOfferRecordResponse,
+} from '../types/rpc/GetOfferRecord';
+import {
+  GetOfferSummaryRequest,
+  GetOfferSummaryResponse,
+} from '../types/rpc/GetOfferSummary';
+import {
+  GetOffersCountRequest,
+  GetOffersCountResponse,
+} from '../types/rpc/GetOffersCount';
+import {
+  GetSyncStatusRequest,
+  GetSyncStatusResponse,
+} from '../types/rpc/GetSyncStatus';
+import {
+  GetTransactionRequest,
+  GetTransactionResponse,
+} from '../types/rpc/GetTransaction';
+import {
+  GetWalletAddressesRequest,
+  GetWalletAddressesResponse,
+} from '../types/rpc/GetWalletAddresses';
+import {
+  GetWalletBalanceRequest,
+  GetWalletBalanceResponse,
+} from '../types/rpc/GetWalletBalance';
 import { GetWalletsRequest, GetWalletsResponse } from '../types/rpc/GetWallets';
 import { LogInRequest, LogInResponse } from '../types/rpc/LogIn';
 import { MintNftRequest, MintNftResponse } from '../types/rpc/MintNft';
-import { SendTransactionRequest, SendTransactionResponse } from '../types/rpc/SendTransaction';
+import {
+  SendTransactionRequest,
+  SendTransactionResponse,
+} from '../types/rpc/SendTransaction';
 import { SetDidNameRequest, SetDidNameResponse } from '../types/rpc/SetDidName';
 import { SetNftDidRequest, SetNftDidResponse } from '../types/rpc/SetNftDid';
-import { SignMessageByAddressRequest, SignMessageByAddressResponse } from '../types/rpc/SignMessageByAddress';
-import { SignMessageByIdRequest, SignMessageByIdResponse } from '../types/rpc/SignMessageById';
+import {
+  SignMessageByAddressRequest,
+  SignMessageByAddressResponse,
+} from '../types/rpc/SignMessageByAddress';
+import {
+  SignMessageByIdRequest,
+  SignMessageByIdResponse,
+} from '../types/rpc/SignMessageById';
 import { SpendCatRequest, SpendCatResponse } from '../types/rpc/SpendCat';
 import { TakeOfferRequest, TakeOfferResponse } from '../types/rpc/TakeOffer';
-import { TransferNftRequest, TransferNftResponse } from '../types/rpc/TransferNft';
-import { VerifySignatureRequest, VerifySignatureResponse } from '../types/rpc/VerifySignature';
+import {
+  TransferNftRequest,
+  TransferNftResponse,
+} from '../types/rpc/TransferNft';
+import {
+  VerifySignatureRequest,
+  VerifySignatureResponse,
+} from '../types/rpc/VerifySignature';
 
 import { walletConnectState } from './useWalletConnect';
 
@@ -42,31 +119,63 @@ interface _JsonRpc {
   // Wallet
   logIn: (data: LogInRequest) => Promise<LogInResponse>;
   getWallets: (data: GetWalletsRequest) => Promise<GetWalletsResponse>;
-  getTransaction: (data: GetTransactionRequest) => Promise<GetTransactionResponse>;
-  getWalletBalance: (data: GetWalletBalanceRequest) => Promise<GetWalletBalanceResponse>;
-  signMessageById: (data: SignMessageByIdRequest) => Promise<SignMessageByIdResponse>;
-  getCurrentAddress: (data: GetCurrentAddressRequest) => Promise<GetCurrentAddressResponse>;
-  sendTransaction: (data: SendTransactionRequest) => Promise<SendTransactionResponse>;
-  signMessageByAddress: (data: SignMessageByAddressRequest) => Promise<SignMessageByAddressResponse>;
-  verifySignature: (data: VerifySignatureRequest) => Promise<VerifySignatureResponse>;
-  getNextAddress: (data: GetNextAddressRequest) => Promise<GetNextAddressResponse>;
+  getTransaction: (
+    data: GetTransactionRequest,
+  ) => Promise<GetTransactionResponse>;
+  getWalletBalance: (
+    data: GetWalletBalanceRequest,
+  ) => Promise<GetWalletBalanceResponse>;
+  signMessageById: (
+    data: SignMessageByIdRequest,
+  ) => Promise<SignMessageByIdResponse>;
+  getCurrentAddress: (
+    data: GetCurrentAddressRequest,
+  ) => Promise<GetCurrentAddressResponse>;
+  sendTransaction: (
+    data: SendTransactionRequest,
+  ) => Promise<SendTransactionResponse>;
+  signMessageByAddress: (
+    data: SignMessageByAddressRequest,
+  ) => Promise<SignMessageByAddressResponse>;
+  verifySignature: (
+    data: VerifySignatureRequest,
+  ) => Promise<VerifySignatureResponse>;
+  getNextAddress: (
+    data: GetNextAddressRequest,
+  ) => Promise<GetNextAddressResponse>;
   getSyncStatus: (data: GetSyncStatusRequest) => Promise<GetSyncStatusResponse>;
-  getWalletAddresses: (data: GetWalletAddressesRequest) => Promise<GetWalletAddressesResponse>;
+  getWalletAddresses: (
+    data: GetWalletAddressesRequest,
+  ) => Promise<GetWalletAddressesResponse>;
 
   // Offers
   getAllOffers: (data: GetAllOffersRequest) => Promise<GetAllOffersResponse>;
-  getOffersCount: (data: GetOffersCountRequest) => Promise<GetOffersCountResponse>;
-  createOfferForIds: (data: CreateOfferForIdsRequest) => Promise<CreateOfferForIdsResponse>;
+  getOffersCount: (
+    data: GetOffersCountRequest,
+  ) => Promise<GetOffersCountResponse>;
+  createOfferForIds: (
+    data: CreateOfferForIdsRequest,
+  ) => Promise<CreateOfferForIdsResponse>;
   cancelOffer: (data: CancelOfferRequest) => Promise<CancelOfferResponse>;
-  checkOfferValidity: (data: CheckOfferValidityRequest) => Promise<CheckOfferValidityResponse>;
+  checkOfferValidity: (
+    data: CheckOfferValidityRequest,
+  ) => Promise<CheckOfferValidityResponse>;
   takeOffer: (data: TakeOfferRequest) => Promise<TakeOfferResponse>;
-  getOfferSummary: (data: GetOfferSummaryRequest) => Promise<GetOfferSummaryResponse>;
+  getOfferSummary: (
+    data: GetOfferSummaryRequest,
+  ) => Promise<GetOfferSummaryResponse>;
   getOfferData: (data: GetOfferDataRequest) => Promise<GetOfferDataResponse>;
-  getOfferRecord: (data: GetOfferRecordRequest) => Promise<GetOfferRecordResponse>;
+  getOfferRecord: (
+    data: GetOfferRecordRequest,
+  ) => Promise<GetOfferRecordResponse>;
 
   // CATs
-  createNewCatWallet: (data: CreateNewCatWalletRequest) => Promise<CreateNewCatWalletResponse>;
-  getCatWalletInfo: (data: GetCatWalletInfoRequest) => Promise<GetCatWalletInfoResponse>;
+  createNewCatWallet: (
+    data: CreateNewCatWalletRequest,
+  ) => Promise<CreateNewCatWalletResponse>;
+  getCatWalletInfo: (
+    data: GetCatWalletInfoRequest,
+  ) => Promise<GetCatWalletInfoResponse>;
   getCatAssetId: (data: GetCatAssetIdRequest) => Promise<GetCatAssetIdResponse>;
   spendCat: (data: SpendCatRequest) => Promise<SpendCatResponse>;
   addCatToken: (data: AddCatTokenRequest) => Promise<AddCatTokenResponse>;
@@ -79,15 +188,21 @@ interface _JsonRpc {
   getNftsCount: (data: GetNftsCountRequest) => Promise<GetNftsCountResponse>;
 
   // DIDs
-  createNewDidWallet: (data: CreateNewDidWalletRequest) => Promise<CreateNewDidWalletResponse>;
+  createNewDidWallet: (
+    data: CreateNewDidWalletRequest,
+  ) => Promise<CreateNewDidWalletResponse>;
   setDidName: (data: SetDidNameRequest) => Promise<SetDidNameResponse>;
   setNftDid: (data: SetNftDidRequest) => Promise<SetNftDidResponse>;
-  getNftWalletsWithDids: (data: GetNftWalletsWithDidsRequest) => Promise<GetNftWalletsWithDidsResponse>;
+  getNftWalletsWithDids: (
+    data: GetNftWalletsWithDidsRequest,
+  ) => Promise<GetNftWalletsWithDidsResponse>;
 }
 
 async function request<T>(method: ChiaMethod, data: any): Promise<T> {
-  if (!walletConnectState.getClient()) throw new Error('WalletConnect is not initialized');
-  if (!walletConnectState.getSession()) throw new Error('Session is not connected');
+  if (!walletConnectState.getClient())
+    throw new Error('WalletConnect is not initialized');
+  if (!walletConnectState.getSession())
+    throw new Error('Session is not connected');
 
   console.warn(
     'walletconnect send request:',
@@ -129,27 +244,45 @@ async function getTransaction(data: GetTransactionRequest) {
 }
 
 async function getWalletBalance(data: GetWalletBalanceRequest) {
-  return await request<GetWalletBalanceResponse>(ChiaMethod.GetWalletBalance, data);
+  return await request<GetWalletBalanceResponse>(
+    ChiaMethod.GetWalletBalance,
+    data,
+  );
 }
 
 async function getCurrentAddress(data: GetCurrentAddressRequest) {
-  return await request<GetCurrentAddressResponse>(ChiaMethod.GetCurrentAddress, data);
+  return await request<GetCurrentAddressResponse>(
+    ChiaMethod.GetCurrentAddress,
+    data,
+  );
 }
 
 async function sendTransaction(data: SendTransactionRequest) {
-  return await request<SendTransactionResponse>(ChiaMethod.SendTransaction, data);
+  return await request<SendTransactionResponse>(
+    ChiaMethod.SendTransaction,
+    data,
+  );
 }
 
 async function signMessageById(data: SignMessageByIdRequest) {
-  return await request<SignMessageByIdResponse>(ChiaMethod.SignMessageById, data);
+  return await request<SignMessageByIdResponse>(
+    ChiaMethod.SignMessageById,
+    data,
+  );
 }
 
 async function signMessageByAddress(data: SignMessageByAddressRequest) {
-  return await request<SignMessageByAddressResponse>(ChiaMethod.SignMessageByAddress, data);
+  return await request<SignMessageByAddressResponse>(
+    ChiaMethod.SignMessageByAddress,
+    data,
+  );
 }
 
 async function verifySignature(data: VerifySignatureRequest) {
-  return await request<VerifySignatureResponse>(ChiaMethod.VerifySignature, data);
+  return await request<VerifySignatureResponse>(
+    ChiaMethod.VerifySignature,
+    data,
+  );
 }
 
 async function getNextAddress(data: GetNextAddressRequest) {
@@ -161,7 +294,10 @@ async function getSyncStatus(data: GetSyncStatusRequest) {
 }
 
 async function getWalletAddresses(data: GetWalletAddressesRequest) {
-  return await request<GetWalletAddressesResponse>(ChiaMethod.GetWalletAddresses, data);
+  return await request<GetWalletAddressesResponse>(
+    ChiaMethod.GetWalletAddresses,
+    data,
+  );
 }
 
 // Offers
@@ -175,7 +311,10 @@ async function getOffersCount(data: GetOffersCountRequest) {
 }
 
 async function createOfferForIds(data: CreateOfferForIdsRequest) {
-  return await request<CreateOfferForIdsResponse>(ChiaMethod.CreateOfferForIds, data);
+  return await request<CreateOfferForIdsResponse>(
+    ChiaMethod.CreateOfferForIds,
+    data,
+  );
 }
 
 async function cancelOffer(data: CancelOfferRequest) {
@@ -183,7 +322,10 @@ async function cancelOffer(data: CancelOfferRequest) {
 }
 
 async function checkOfferValidity(data: CheckOfferValidityRequest) {
-  return await request<CheckOfferValidityResponse>(ChiaMethod.CheckOfferValidity, data);
+  return await request<CheckOfferValidityResponse>(
+    ChiaMethod.CheckOfferValidity,
+    data,
+  );
 }
 
 async function takeOffer(data: TakeOfferRequest) {
@@ -191,7 +333,10 @@ async function takeOffer(data: TakeOfferRequest) {
 }
 
 async function getOfferSummary(data: GetOfferSummaryRequest) {
-  return await request<GetOfferSummaryResponse>(ChiaMethod.GetOfferSummary, data);
+  return await request<GetOfferSummaryResponse>(
+    ChiaMethod.GetOfferSummary,
+    data,
+  );
 }
 
 async function getOfferData(data: GetOfferDataRequest) {
@@ -205,11 +350,17 @@ async function getOfferRecord(data: GetOfferRecordRequest) {
 // CATs
 
 async function createNewCatWallet(data: CreateNewCatWalletRequest) {
-  return await request<CreateNewCatWalletResponse>(ChiaMethod.CreateNewCatWallet, data);
+  return await request<CreateNewCatWalletResponse>(
+    ChiaMethod.CreateNewCatWallet,
+    data,
+  );
 }
 
 async function getCatWalletInfo(data: GetCatWalletInfoRequest) {
-  return await request<GetCatWalletInfoResponse>(ChiaMethod.GetCatWalletInfo, data);
+  return await request<GetCatWalletInfoResponse>(
+    ChiaMethod.GetCatWalletInfo,
+    data,
+  );
 }
 
 async function getCatAssetId(data: GetCatAssetIdRequest) {
@@ -248,7 +399,10 @@ async function getNftsCount(data: GetNftsCountRequest) {
 // DIDs
 
 async function createNewDidWallet(data: CreateNewDidWalletRequest) {
-  return await request<CreateNewDidWalletResponse>(ChiaMethod.CreateNewDidWallet, data);
+  return await request<CreateNewDidWalletResponse>(
+    ChiaMethod.CreateNewDidWallet,
+    data,
+  );
 }
 
 async function setDidName(data: SetDidNameRequest) {
@@ -260,7 +414,10 @@ async function setNftDid(data: SetNftDidRequest) {
 }
 
 async function getNftWalletsWithDids(data: GetNftWalletsWithDidsRequest) {
-  return await request<GetNftWalletsWithDidsResponse>(ChiaMethod.GetNftWalletsWithDids, data);
+  return await request<GetNftWalletsWithDidsResponse>(
+    ChiaMethod.GetNftWalletsWithDids,
+    data,
+  );
 }
 
 export const rpc = {

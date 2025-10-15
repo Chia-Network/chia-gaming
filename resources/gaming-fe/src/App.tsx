@@ -38,7 +38,9 @@ const App = () => {
         .then((urls) => {
           console.log('navigate to lobby', urls);
           if (gameSelection) {
-            setIframeUrl(`${urls.tracker}&token=${gameSelection.token}&view=game`);
+            setIframeUrl(
+              `${urls.tracker}&token=${gameSelection.token}&view=game`,
+            );
           } else {
             setIframeUrl(`${urls.tracker}&view=game`);
           }
@@ -59,7 +61,15 @@ const App = () => {
   }
 
   const wcHeading = (
-    <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '3rem', width: '100%' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexGrow: 0,
+        flexShrink: 0,
+        height: '3rem',
+        width: '100%',
+      }}
+    >
       <WalletConnectHeading />
     </div>
   );
@@ -78,8 +88,8 @@ const App = () => {
         }}
       >
         {wcHeading}
-        <Box p={4} maxWidth={600} mx="auto">
-          <Typography variant="h4" gutterBottom>
+        <Box p={4} maxWidth={600} mx='auto'>
+          <Typography variant='h4' gutterBottom>
             Waiting for wallet connect connection (use the menu).
           </Typography>
         </Box>
@@ -101,8 +111,14 @@ const App = () => {
     >
       {wcHeading}
       <iframe
-        id="subframe"
-        style={{ display: 'flex', width: '100%', flexShrink: 1, flexGrow: 1, height: '100%' }}
+        id='subframe'
+        style={{
+          display: 'flex',
+          width: '100%',
+          flexShrink: 1,
+          flexGrow: 1,
+          height: '100%',
+        }}
         src={iframeUrl}
       ></iframe>
     </div>

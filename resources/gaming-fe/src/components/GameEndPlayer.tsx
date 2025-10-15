@@ -10,9 +10,15 @@ interface GameEndPlayerProps {
   outcome: CalpokerOutcome;
 }
 
-const GameEndPlayer = ({ iStarted, playerNumber, outcome }: GameEndPlayerProps) => {
+const GameEndPlayer = ({
+  iStarted,
+  playerNumber,
+  outcome,
+}: GameEndPlayerProps) => {
   const iAmAlice = playerNumber === 2;
-  const playerHand: number[][] = iAmAlice ? outcome.alice_cards : outcome.bob_cards;
+  const playerHand: number[][] = iAmAlice
+    ? outcome.alice_cards
+    : outcome.bob_cards;
   const who = iStarted !== iAmAlice ? 'Your' : 'Opponent';
   const whoTitle = iStarted !== iAmAlice ? 'You' : 'Opponent';
   const cardColors = {
@@ -31,14 +37,15 @@ const GameEndPlayer = ({ iStarted, playerNumber, outcome }: GameEndPlayerProps) 
         flexDirection: 'column',
       }}
     >
-      <Typography variant="h5">{whoTitle}</Typography>
+      <Typography variant='h5'>{whoTitle}</Typography>
       <br />
-      <Typography variant="h6">{`${who} Hand:`}</Typography>
+      <Typography variant='h6'>{`${who} Hand:`}</Typography>
       <br />
-      <Box display="flex" flexDirection="row" mb={2}>
+      <Box display='flex' flexDirection='row' mb={2}>
         {playerHand.map((card: number[], index: number) => {
           const id = `at-rest-${iStarted}-${card}`;
-          const selectionColor = cardColors[card_color(outcome, !iStarted, card)];
+          const selectionColor =
+            cardColors[card_color(outcome, !iStarted, card)];
           return (
             <PlayingCard
               id={id}

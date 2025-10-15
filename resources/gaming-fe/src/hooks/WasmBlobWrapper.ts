@@ -9,7 +9,13 @@ import {
   WatchReport,
   InternalBlockchainInterface,
 } from '../types/ChiaGaming';
-import { spend_bundle_to_clvm, decode_sexp_hex, proper_list, popcount, empty } from '../util';
+import {
+  spend_bundle_to_clvm,
+  decode_sexp_hex,
+  proper_list,
+  popcount,
+  empty,
+} from '../util';
 
 function combine_reports(old_report: WatchReport, new_report: WatchReport) {
   for (const item of new_report.created_watched) {
@@ -65,7 +71,6 @@ export class WasmBlobWrapper {
     fetchHex: (key: string) => Promise<string>,
     peer_conn: PeerConnectionResult,
   ) {
-
     const { sendMessage } = peer_conn;
 
     this.uniqueId = uniqueId;
@@ -118,7 +123,9 @@ export class WasmBlobWrapper {
     });
     return Promise.all(presetFetches).then((presets) => {
       presets.forEach((nameAndContent) => {
-        console.log(`preset load ${nameAndContent.name} ${nameAndContent.content.length}`);
+        console.log(
+          `preset load ${nameAndContent.name} ${nameAndContent.content.length}`,
+        );
         this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
       });
       const newGameIdentity = this.wc?.chia_identity(this.rngSeed);
@@ -157,7 +164,10 @@ export class WasmBlobWrapper {
   handleOneMessage(msg: any): any {
     console.log('handleOneMessage', Object.keys(msg));
     if (msg.loadWasmEvent) {
-      return this.internalLoadWasm(msg.loadWasmEvent.chia_gaming_init, msg.loadWasmEvent.cg);
+      return this.internalLoadWasm(
+        msg.loadWasmEvent.chia_gaming_init,
+        msg.loadWasmEvent.cg,
+      );
     } else if (msg.loadPresets) {
       return this.loadPresets(msg.loadPresets);
     } else if (msg.createStartCoin) {
@@ -170,10 +180,18 @@ export class WasmBlobWrapper {
       return this.internalMakeMove(msg.move);
     } else if (msg.takeOpponentMove) {
       const data = msg.takeOpponentMove;
-      return this.takeOpponentMove(data.moveNumber, data.game_id, data.readable_move_hex);
+      return this.takeOpponentMove(
+        data.moveNumber,
+        data.game_id,
+        data.readable_move_hex,
+      );
     } else if (msg.takeGameMessage) {
       const data = msg.takeGameMessage;
-      return this.takeGameMessage(data.moveNumber, data.game_id, data.readable_hex);
+      return this.takeGameMessage(
+        data.moveNumber,
+        data.game_id,
+        data.readable_hex,
+      );
     } else if (msg.setCardSelections !== undefined) {
       return this.internalSetCardSelections(msg.setCardSelections);
     } else if (msg.startGame) {
@@ -183,7 +201,10 @@ export class WasmBlobWrapper {
     } else if (msg.receivedShutdown) {
       return this.internalReceivedShutdown();
     } else if (msg.takeBlockData) {
-      return this.internalTakeBlock(msg.takeBlockData.peak, msg.takeBlockData.block_report);
+      return this.internalTakeBlock(
+        msg.takeBlockData.peak,
+        msg.takeBlockData.block_report,
+      );
     }
 
     console.error('Unknown event:', msg);
@@ -226,7 +247,11 @@ export class WasmBlobWrapper {
     result.setOutcome = outcome;
   }
 
-  takeOpponentMove(moveNumber: number, game_id: string, readable_move_hex: string): any {
+  takeOpponentMove(
+    moveNumber: number,
+    game_id: string,
+    readable_move_hex: string,
+  ): any {
     const result: any = {
       setMyTurn: true,
     };
@@ -252,7 +277,11 @@ export class WasmBlobWrapper {
     return empty().then(() => result);
   }
 
-  takeGameMessage(moveNumber: number, game_id: string, readable_move_hex: string): any {
+  takeGameMessage(
+    moveNumber: number,
+    game_id: string,
+    readable_move_hex: string,
+  ): any {
     const result = {};
     console.log('takeGameMessage', moveNumber, game_id, readable_move_hex);
     const p = decode_sexp_hex(readable_move_hex);
@@ -286,7 +315,9 @@ export class WasmBlobWrapper {
   }
 
   loadCalpoker(): any {
-    return this.fetchHex('clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex').then((calpoker_hex) => {
+    return this.fetchHex(
+      'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
+    ).then((calpoker_hex) => {
       this.calpokerHex = calpoker_hex;
       this.pushEvent({ createStartCoin: true });
       return {
@@ -319,7 +350,9 @@ export class WasmBlobWrapper {
       throw new Error('create start coin with no wasm obj?');
     }
 
-    console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
+    console.log(
+      `create coin spendable by ${identity.puzzle_hash} for ${this.amount}`,
+    );
     return this.blockchain
       .do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount)
       .then((result) => {
@@ -337,7 +370,9 @@ export class WasmBlobWrapper {
             coinset_coin.amount.toString(),
           );
           if (!new_coin_string) {
-            throw new Error(`Coin could not be converted to coinstring: ${JSON.stringify(coinset_coin)}`);
+            throw new Error(
+              `Coin could not be converted to coinstring: ${JSON.stringify(coinset_coin)}`,
+            );
           }
 
           coin = new_coin_string;
@@ -388,10 +423,10 @@ export class WasmBlobWrapper {
       cg.init((msg: string) => console.warn('wasm', msg));
       this.wc = cg;
       const presetFiles = [
-        "clsp/unroll/unroll_meta_puzzle.hex",
-        "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
-        "clsp/referee/onchain/referee.hex",
-        "clsp/referee/onchain/referee-v1.hex"
+        'clsp/unroll/unroll_meta_puzzle.hex',
+        'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
+        'clsp/referee/onchain/referee.hex',
+        'clsp/referee/onchain/referee-v1.hex',
       ];
       this.pushEvent({ loadPresets: presetFiles });
       return {};
@@ -439,11 +474,23 @@ export class WasmBlobWrapper {
       // Local ui callbacks.
       opponent_moved: (game_id, readable_move_hex) => {
         console.error('got opponent move', game_id, readable_move_hex);
-        this.messageQueue.push({ takeOpponentMove: { game_id, readable_move_hex, moveNumber: this.moveNumber } });
+        this.messageQueue.push({
+          takeOpponentMove: {
+            game_id,
+            readable_move_hex,
+            moveNumber: this.moveNumber,
+          },
+        });
       },
       game_message: (game_id, readable_hex) => {
         console.error('got opponent msg', game_id, readable_hex);
-        this.messageQueue.push({ takeGameMessage: { game_id, readable_hex, moveNumber: this.moveNumber } });
+        this.messageQueue.push({
+          takeGameMessage: {
+            game_id,
+            readable_hex,
+            moveNumber: this.moveNumber,
+          },
+        });
       },
       game_started: (game_ids, failed) => {
         console.log('got game start', game_ids, failed);
@@ -664,13 +711,14 @@ export class WasmBlobWrapper {
         timed_out: [],
       };
       for (const block of blocks) {
-        const one_report = this.wc?.convert_coinset_org_block_spend_to_watch_report(
-          block.coin.parent_coin_info,
-          block.coin.puzzle_hash,
-          block.coin.amount.toString(),
-          block.puzzle_reveal,
-          block.solution,
-        );
+        const one_report =
+          this.wc?.convert_coinset_org_block_spend_to_watch_report(
+            block.coin.parent_coin_info,
+            block.coin.puzzle_hash,
+            block.coin.amount.toString(),
+            block.puzzle_reveal,
+            block.solution,
+          );
         if (one_report) {
           combine_reports(block_report, one_report);
         }

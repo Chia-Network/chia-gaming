@@ -5,8 +5,6 @@ import { getSearchParams } from '../util';
 
 export type GameState = 'idle' | 'searching' | 'playing';
 
-
-
 interface SendMessageInput {
   party: boolean;
   token: string;

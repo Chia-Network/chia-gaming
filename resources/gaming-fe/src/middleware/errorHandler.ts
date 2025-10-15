@@ -3,7 +3,12 @@ import { ZodError } from 'zod';
 
 import { AppError, ErrorCodes } from '../types/errors';
 
-export const errorHandler = (err: Error, _req: Request, res: Response, _next: NextFunction) => {
+export const errorHandler = (
+  err: Error,
+  _req: Request,
+  res: Response,
+  _next: NextFunction,
+) => {
   console.error('Error:', err);
 
   if (err instanceof AppError) {
