@@ -52,6 +52,7 @@ export class WasmBlobWrapper {
   cardSelections: number;
   playerHand: number[][];
   opponentHand: number[][];
+  shutdownCalled: boolean;
   finished: boolean;
   perGameAmount: number;
   gameOutcome: CalpokerOutcome | undefined;
@@ -89,6 +90,7 @@ export class WasmBlobWrapper {
     this.cardSelections = 0;
     this.playerHand = [];
     this.opponentHand = [];
+    this.shutdownCalled = false;
     this.finished = false;
     this.perGameAmount = perGameAmount;
     this.qualifyingEvents = 0;
@@ -97,6 +99,12 @@ export class WasmBlobWrapper {
     this.blockchain = blockchain;
     this.rxjsMessageSingleon = new Observable<any>((emitter) => {
       this.rxjsEmitter = emitter;
+    });
+  }
+
+  relayAddress() {
+    return this.blockchain.getAddress().then((a) => {
+      this.rxjsEmitter?.next({ setAddressData: a });
     });
   }
 
@@ -350,12 +358,11 @@ export class WasmBlobWrapper {
       throw new Error('create start coin with no wasm obj?');
     }
 
-    console.log(
-      `create coin spendable by ${identity.puzzle_hash} for ${this.amount}`,
-    );
-    return this.blockchain
-      .do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount)
-      .then((result) => {
+    console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
+    return this.relayAddress().then(() => {
+      return this.blockchain.
+        do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount);
+    }).then(result => {
         let coin = result.coin;
         if (!coin) {
           throw new Error('tried to create spendable but failed');
@@ -448,9 +455,13 @@ export class WasmBlobWrapper {
   }
 
   internalStartGame(): any {
-    const result: any = {};
-    const gids = this.cradle?.start_games(!this.iStarted, {
-      game_type: '63616c706f6b6572',
+    if (this.finished || this.shutdownCalled) {
+      return empty();
+    }
+
+    let result: any = {};
+    let gids = this.cradle?.start_games(!this.iStarted, {
+      game_type: "63616c706f6b6572",
       timeout: 100,
       amount: this.perGameAmount,
       my_contribution: this.perGameAmount / 2,
@@ -522,12 +533,19 @@ export class WasmBlobWrapper {
         };
 
         result.setMyTurn = false;
-        this.messageQueue.push({ startGame: true });
-      },
+        setTimeout(() => {
+          this.pushEvent({ startGame: true });
+        }, 2000);
+      }
     });
 
     if (!idle || this.finished) {
       return { stop: true };
+    }
+
+    if (idle.shutdown_received && !this.shutdownCalled) {
+      this.shutdownCalled = true;
+      console.log('shutdown received');
     }
 
     if (idle.finished && !this.finished) {
@@ -680,6 +698,7 @@ export class WasmBlobWrapper {
       outcome: undefined,
     };
     console.log('shutting down cradle');
+    this.shutdownCalled = true;
     this.cradle?.shut_down();
     return empty().then(() => result);
   }

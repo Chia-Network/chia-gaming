@@ -15,6 +15,7 @@ const Game = () => {
   const {
     error,
     log,
+    addressData,
     gameConnectionState,
     isPlayerTurn,
     iStarted,
@@ -187,6 +188,7 @@ const Game = () => {
       <Typography>{moveDescription}</Typography>
       <br />
       <GameLog log={log} />
+      <div id="blockchain-address" style={{ position: 'relative', width: 0, height: 0, opacity: '0%' }}>{JSON.stringify(addressData)}</div>
     </Box>
   );
 };

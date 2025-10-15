@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::types::atom_from_clvm;
 use crate::common::types::{
-    Aggsig, AllocEncoder, CoinString, Error, Node, Program, ProgramRef, Puzzle,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinString, Error, Hash, IntoErr, Node, Program,
+    ProgramRef, Puzzle, PuzzleHash,
 };
 use crate::utils::proper_list;
 
@@ -144,4 +145,60 @@ pub struct BrokenOutCoinSpendInfo {
     pub conditions: ProgramRef,
     pub message: Vec<u8>,
     pub signature: Aggsig,
+}
+
+/// Form of a spend used by coinset.org
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
+pub struct CoinsetCoin {
+    pub amount: u64,
+    pub parent_coin_info: String,
+    pub puzzle_hash: String,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
+pub struct CoinsetSpendRecord {
+    pub coin: CoinsetCoin,
+    pub puzzle_reveal: String,
+    pub solution: String,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
+pub struct CoinsetSpendBundle {
+    pub aggregated_signature: String,
+    pub coin_spends: Vec<CoinsetSpendRecord>,
+}
+
+pub fn check_for_hex(hex_with_prefix: &str) -> Result<Vec<u8>, Error> {
+    if let Some(value) = hex_with_prefix.strip_prefix("0x") {
+        return hex::decode(value).into_gen();
+    }
+
+    hex::decode(hex_with_prefix).into_gen()
+}
+
+pub fn convert_coinset_org_spend_to_spend(
+    parent_coin_info: &str,
+    puzzle_hash: &str,
+    amount: u64,
+    puzzle_reveal: &str,
+    solution: &str,
+) -> Result<CoinSpend, Error> {
+    let parent_coin_info_bytes = check_for_hex(parent_coin_info)?;
+    let puzzle_hash_bytes = check_for_hex(puzzle_hash)?;
+    let puzzle_reveal_bytes = check_for_hex(puzzle_reveal)?;
+    let solution_bytes = check_for_hex(solution)?;
+    let puzzle_reveal_prog = Program::from_bytes(&puzzle_reveal_bytes).into();
+    let solution_prog = Program::from_bytes(&solution_bytes).into();
+    let coinid_hash = Hash::from_slice(&parent_coin_info_bytes);
+    let parent_id = CoinID::new(coinid_hash);
+    let puzzle_hash = PuzzleHash::from_hash(Hash::from_slice(&puzzle_hash_bytes));
+    let coin_string = CoinString::from_parts(&parent_id, &puzzle_hash, &Amount::new(amount));
+    Ok(CoinSpend {
+        coin: coin_string,
+        bundle: Spend {
+            puzzle: puzzle_reveal_prog,
+            solution: solution_prog,
+            signature: Aggsig::default(),
+        },
+    })
 }
