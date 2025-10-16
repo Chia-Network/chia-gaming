@@ -22,7 +22,7 @@ clvm-utils = "0.20.0"
 lazy_static = "1.4.0"
 ff = { version = "0.13.0", features = ["derive"] }
 bson = "2.13.0"
-sha2 = "0.10.8"
+sha2 = "0.10.9"
 indoc = "2.0.5"
 serde = "1.0.203"
 hex = "0.4.3"
@@ -44,7 +44,8 @@ exec = "0.3.1"
 [build-dependencies]
 serde = "1.0.203"
 toml = "0.8.14"
-chialisp = { git = "https://github.com/Chia-Network/clvm_tools_rs.git", rev = "3cce0acf1a8b6fb8980fabcf62fd79ad762caa98" }
+#chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "3cce0acf1a8b6fb8980fabcf62fd79ad762caa98" }
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "5c22b475378e5f6bd0f928e000aded046b65431d" }
 clvmr = { version = "=0.12.0", features = ["pre-eval"] }
 colored = "3.0.0"
 
