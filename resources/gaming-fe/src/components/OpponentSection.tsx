@@ -1,38 +1,42 @@
-import React from "react";
-import { useCallback } from "react";
-import { Box, Typography, Paper } from "@mui/material";
-import PlayingCard from "./PlayingCard";
+import { Box, Typography, Paper } from '@mui/material';
+import { useCallback } from 'react';
+
+import PlayingCard from './PlayingCard';
 
 interface OpponentSectionProps {
   playerNumber: number;
   opponentHand: number[][];
 }
 
-const OpponentSection: React.FC<OpponentSectionProps> = ({
-  playerNumber,
-  opponentHand,
-}) => {
-  const setSelection = useCallback((index: number, selected: boolean) => {}, []);
+const OpponentSection = ({ playerNumber, opponentHand }: OpponentSectionProps) => {
+  const setSelection = useCallback((_index: number, _selected: boolean) => void 0, []);
 
   return (
     <Paper
       elevation={3}
       style={{
-        padding: "16px",
+        padding: '16px',
         flexGrow: 1,
-        display: "flex",
-        flexDirection: "column",
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
-      <Typography variant="h5">
-      {"Opponent"}
-      </Typography>
+      <Typography variant="h5">{'Opponent'}</Typography>
       <br />
       <Typography variant="h6">Opponent's Hand:</Typography>
       <br />
       <Box display="flex" flexDirection="row" mb={2}>
         {opponentHand.map((card, index) => (
-          <PlayingCard iAmPlayer={false} id={`card-${playerNumber}-${card}`} key={index} cardValue={card} isFaceDown={false} index={index} setSelection={setSelection} selected={false} />
+          <PlayingCard
+            iAmPlayer={false}
+            id={`card-${playerNumber}-${card}`}
+            key={index}
+            cardValue={card}
+            isFaceDown={false}
+            index={index}
+            setSelection={setSelection}
+            selected={false}
+          />
         ))}
       </Box>
     </Paper>
@@ -40,4 +44,3 @@ const OpponentSection: React.FC<OpponentSectionProps> = ({
 };
 
 export default OpponentSection;
-

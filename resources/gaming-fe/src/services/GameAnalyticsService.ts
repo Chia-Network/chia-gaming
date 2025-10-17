@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+
 import { AppError, ErrorCodes } from '../types/errors';
 import { GameType } from '../types/lobby';
 
@@ -68,11 +69,11 @@ export class GameAnalyticsService {
       sessionId,
       gameType,
       startTime: new Date(),
-      players: players.map(p => ({
+      players: players.map((p) => ({
         ...p,
-        actions: []
+        actions: [],
       })),
-      potSize: 0
+      potSize: 0,
     };
 
     this.gameSessions.set(sessionId, session);
@@ -85,7 +86,7 @@ export class GameAnalyticsService {
       throw new AppError(ErrorCodes.GAME.SESSION_NOT_FOUND, 'Game session not found', 404);
     }
 
-    const player = session.players.find(p => p.playerId === playerId);
+    const player = session.players.find((p) => p.playerId === playerId);
     if (!player) {
       throw new AppError(ErrorCodes.GAME.PLAYER_NOT_IN_SESSION, 'Player not found in game session', 404);
     }
@@ -94,7 +95,7 @@ export class GameAnalyticsService {
       playerId,
       action,
       amount,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
 
     if (amount) {
@@ -112,23 +113,27 @@ export class GameAnalyticsService {
     session.winner = winner;
 
     for (const player of session.players) {
-      const finalStack = finalStacks.find(s => s.playerId === player.playerId);
+      const finalStack = finalStacks.find((s) => s.playerId === player.playerId);
       if (finalStack) {
         player.endingStack = finalStack.stack;
         this.updatePlayerStats(player.playerId, session.gameType, {
           startingStack: player.startingStack,
           endingStack: finalStack.stack,
-          sessionDuration: session.endTime.getTime() - session.startTime.getTime()
+          sessionDuration: session.endTime.getTime() - session.startTime.getTime(),
         });
       }
     }
   }
 
-  private updatePlayerStats(playerId: string, gameType: GameType, gameResult: {
-    startingStack: number;
-    endingStack: number;
-    sessionDuration: number;
-  }): void {
+  private updatePlayerStats(
+    playerId: string,
+    gameType: GameType,
+    gameResult: {
+      startingStack: number;
+      endingStack: number;
+      sessionDuration: number;
+    },
+  ): void {
     const key = `${playerId}-${gameType}`;
     let stats = this.playerStats.get(key);
 
@@ -146,9 +151,9 @@ export class GameAnalyticsService {
           biggestWin: 0,
           biggestLoss: 0,
           winRate: 0,
-          averageGameDuration: 0
+          averageGameDuration: 0,
         },
-        lastUpdated: new Date()
+        lastUpdated: new Date(),
       };
     }
 
@@ -167,10 +172,9 @@ export class GameAnalyticsService {
     }
 
     stats.stats.winRate = (stats.stats.wins / stats.stats.totalGames) * 100;
-    stats.stats.averageGameDuration = (
+    stats.stats.averageGameDuration =
       (stats.stats.averageGameDuration * (stats.stats.totalGames - 1) + gameResult.sessionDuration) /
-      stats.stats.totalGames
-    );
+      stats.stats.totalGames;
 
     stats.lastUpdated = new Date();
     this.playerStats.set(key, stats);
@@ -186,24 +190,21 @@ export class GameAnalyticsService {
     return this.gameSessions.get(sessionId) || null;
   }
 
-  public getPlayerGameHistory(playerId: string, gameType: GameType, limit: number = 10): GameSession[] {
+  public getPlayerGameHistory(playerId: string, gameType: GameType, limit = 10): GameSession[] {
     return Array.from(this.gameSessions.values())
-      .filter(session => 
-        session.gameType === gameType &&
-        session.players.some(p => p.playerId === playerId)
-      )
-      .sort((a, b) => (b.startTime.getTime() - a.startTime.getTime()))
+      .filter((session) => session.gameType === gameType && session.players.some((p) => p.playerId === playerId))
+      .sort((a, b) => b.startTime.getTime() - a.startTime.getTime())
       .slice(0, limit);
   }
 
-  public getTopPlayers(gameType: GameType, limit: number = 10): { playerId: string; stats: GameStats }[] {
+  public getTopPlayers(gameType: GameType, limit = 10): { playerId: string; stats: GameStats }[] {
     return Array.from(this.playerStats.values())
-      .filter(stats => stats.gameType === gameType)
+      .filter((stats) => stats.gameType === gameType)
       .sort((a, b) => b.stats.winRate - a.stats.winRate)
       .slice(0, limit)
-      .map(stats => ({
+      .map((stats) => ({
         playerId: stats.playerId,
-        stats: stats.stats
+        stats: stats.stats,
       }));
   }
 
@@ -213,22 +214,22 @@ export class GameAnalyticsService {
     averageGameDuration: number;
     mostCommonAction: string;
   } {
-    const sessions = Array.from(this.gameSessions.values())
-      .filter(session => session.gameType === gameType);
+    const sessions = Array.from(this.gameSessions.values()).filter((session) => session.gameType === gameType);
 
     const totalGames = sessions.length;
     const averagePotSize = sessions.reduce((sum, session) => sum + session.potSize, 0) / totalGames;
-    const averageGameDuration = sessions.reduce((sum, session) => {
-      if (session.endTime) {
-        return sum + (session.endTime.getTime() - session.startTime.getTime());
-      }
-      return sum;
-    }, 0) / totalGames;
+    const averageGameDuration =
+      sessions.reduce((sum, session) => {
+        if (session.endTime) {
+          return sum + (session.endTime.getTime() - session.startTime.getTime());
+        }
+        return sum;
+      }, 0) / totalGames;
 
     const actionCounts = new Map<string, number>();
-    sessions.forEach(session => {
-      session.players.forEach(player => {
-        player.actions.forEach(action => {
+    sessions.forEach((session) => {
+      session.players.forEach((player) => {
+        player.actions.forEach((action) => {
           const count = actionCounts.get(action.action) || 0;
           actionCounts.set(action.action, count + 1);
         });
@@ -248,7 +249,7 @@ export class GameAnalyticsService {
       totalGames,
       averagePotSize,
       averageGameDuration,
-      mostCommonAction
+      mostCommonAction,
     };
   }
 
@@ -268,4 +269,4 @@ export class GameAnalyticsService {
       }
     }
   }
-} 
+}

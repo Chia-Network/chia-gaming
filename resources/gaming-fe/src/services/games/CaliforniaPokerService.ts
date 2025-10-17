@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
+
 import { AppError, ErrorCodes } from '../../types/errors';
-import { Player, GameSession } from '../../types/lobby';
+import { GameSession } from '../../types/lobby';
 
 interface Card {
   suit: 'hearts' | 'diamonds' | 'clubs' | 'spades';
@@ -55,7 +56,7 @@ export class CaliforniaPokerService {
   public async startGame(session: GameSession): Promise<GameState> {
     const deck = this.createDeck();
     const shuffledDeck = this.shuffleDeck(deck);
-      const players = this.initializePlayers([session.host, session.joiner], shuffledDeck);
+    const players = this.initializePlayers([session.host, session.joiner], shuffledDeck);
 
     const gameState: GameState = {
       id: uuidv4(),
@@ -68,7 +69,7 @@ export class CaliforniaPokerService {
       currentPlayerIndex: 2,
       phase: 'pre-flop',
       deck: shuffledDeck.slice(players.length * 2 + 3),
-      lastAction: undefined
+      lastAction: undefined,
     };
 
     this.postBlinds(gameState);
@@ -101,7 +102,7 @@ export class CaliforniaPokerService {
       playerId: player,
       cards: [deck[index * 2], deck[index * 2 + 1]],
       bet: 0,
-      status: 'active'
+      status: 'active',
     }));
   }
 
@@ -115,45 +116,24 @@ export class CaliforniaPokerService {
     gameState.pot = this.SMALL_BLIND + this.BIG_BLIND;
   }
 
-  public async processAction(
-    sessionId: string,
-    playerId: string,
-    action: string,
-    amount?: number
-  ): Promise<GameState> {
+  public async processAction(sessionId: string, playerId: string, action: string, amount?: number): Promise<GameState> {
     const gameState = this.gameStates.get(sessionId);
     if (!gameState) {
-      throw new AppError(
-        ErrorCodes.LOBBY.GAME_IN_PROGRESS,
-        'Game not found',
-        404
-      );
+      throw new AppError(ErrorCodes.LOBBY.GAME_IN_PROGRESS, 'Game not found', 404);
     }
 
-    const playerIndex = gameState.players.findIndex(p => p.playerId === playerId);
+    const playerIndex = gameState.players.findIndex((p) => p.playerId === playerId);
     if (playerIndex === -1) {
-      throw new AppError(
-        ErrorCodes.LOBBY.PLAYER_NOT_FOUND,
-        'Player not in game',
-        404
-      );
+      throw new AppError(ErrorCodes.LOBBY.PLAYER_NOT_FOUND, 'Player not in game', 404);
     }
 
     if (playerIndex !== gameState.currentPlayerIndex) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Not your turn',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Not your turn', 400);
     }
 
     const player = gameState.players[playerIndex];
     if (player.status !== 'active') {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Player is not active',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Player is not active', 400);
     }
 
     switch (action) {
@@ -168,11 +148,7 @@ export class CaliforniaPokerService {
         break;
       case 'raise':
         if (!amount) {
-          throw new AppError(
-            ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-            'Raise amount required',
-            400
-          );
+          throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Raise amount required', 400);
         }
         this.handleRaise(gameState, playerIndex, amount);
         break;
@@ -180,11 +156,7 @@ export class CaliforniaPokerService {
         this.handleAllIn(gameState, playerIndex);
         break;
       default:
-        throw new AppError(
-          ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-          'Invalid action',
-          400
-        );
+        throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid action', 400);
     }
 
     gameState.lastAction = { playerId, action, amount };
@@ -200,11 +172,7 @@ export class CaliforniaPokerService {
 
   private handleCheck(gameState: GameState, playerIndex: number): void {
     if (gameState.currentBet > gameState.players[playerIndex].bet) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Cannot check when there is a bet',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Cannot check when there is a bet', 400);
     }
   }
 
@@ -218,13 +186,9 @@ export class CaliforniaPokerService {
   private handleRaise(gameState: GameState, playerIndex: number, amount: number): void {
     const player = gameState.players[playerIndex];
     const totalBet = player.bet + amount;
-    
+
     if (totalBet <= gameState.currentBet) {
-      throw new AppError(
-        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        'Raise must be higher than current bet',
-        400
-      );
+      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Raise must be higher than current bet', 400);
     }
 
     player.bet = totalBet;
@@ -246,8 +210,8 @@ export class CaliforniaPokerService {
   }
 
   private checkPhaseEnd(gameState: GameState): void {
-    const activePlayers = gameState.players.filter(p => p.status === 'active');
-    const allBetsEqual = activePlayers.every(p => p.bet === gameState.currentBet);
+    const activePlayers = gameState.players.filter((p) => p.status === 'active');
+    const allBetsEqual = activePlayers.every((p) => p.bet === gameState.currentBet);
     const lastPlayerIndex = (gameState.dealerIndex + 2) % gameState.players.length;
 
     if (allBetsEqual && gameState.currentPlayerIndex === lastPlayerIndex) {
@@ -277,7 +241,7 @@ export class CaliforniaPokerService {
 
     if (gameState.phase !== 'showdown') {
       gameState.currentBet = 0;
-      gameState.players.forEach(p => p.bet = 0);
+      gameState.players.forEach((p) => (p.bet = 0));
       gameState.currentPlayerIndex = (gameState.dealerIndex + 1) % gameState.players.length;
     }
   }
@@ -289,7 +253,7 @@ export class CaliforniaPokerService {
   }
 
   private determineWinner(gameState: GameState): void {
-    const activePlayers = gameState.players.filter(p => p.status !== 'folded');
+    const activePlayers = gameState.players.filter((p) => p.status !== 'folded');
     if (activePlayers.length === 1) {
       return;
     }
@@ -302,4 +266,4 @@ export class CaliforniaPokerService {
   public endGame(sessionId: string): void {
     this.gameStates.delete(sessionId);
   }
-} 
+}

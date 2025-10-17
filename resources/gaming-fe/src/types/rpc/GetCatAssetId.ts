@@ -1,5 +1,5 @@
 export interface GetCatAssetIdRequest {
-    walletId: number;
+  walletId: number;
 }
 
 export type GetCatAssetIdResponse = string;
