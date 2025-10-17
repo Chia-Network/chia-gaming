@@ -1,5 +1,5 @@
-import { v4 as uuidv4 } from 'uuid';
 import { Program } from 'clvm-lib';
+import { v4 as uuidv4 } from 'uuid';
 
 export function toUint8(s: string) {
   if (s.length % 2 != 0) {
@@ -7,8 +7,8 @@ export function toUint8(s: string) {
   }
   const result = new Uint8Array(s.length >> 1);
   for (let i = 0; i < s.length; i += 2) {
-    let sub = s.slice(i, i+2);
-    let val = parseInt(sub, 16);
+    const sub = s.slice(i, i + 2);
+    const val = parseInt(sub, 16);
     result[i >> 1] = val;
   }
   return result;
@@ -16,24 +16,26 @@ export function toUint8(s: string) {
 
 // Thanks: https://stackoverflow.com/questions/34309988/byte-array-to-hex-string-conversion-in-javascript
 export function toHexString(byteArray: number[]) {
-  return Array.from(byteArray, function(byte) {
-    return ('0' + (byte & 0xFF).toString(16)).slice(-2);
+  return Array.from(byteArray, function (byte) {
+    return ('0' + (byte & 0xff).toString(16)).slice(-2);
   }).join('');
 }
 
-export type FragmentData = { [k: string]: string }
+export type FragmentData = Record<string, string>;
 
 export function getParamsFromString(paramString: string): any {
   const fragmentParts = paramString.split('&');
-  const params = Object.fromEntries(fragmentParts.map((part) => {
-    const partEqIdx = part.indexOf('=');
+  const params = Object.fromEntries(
+    fragmentParts.map((part) => {
+      const partEqIdx = part.indexOf('=');
 
-    if (partEqIdx > 0) {
-      return [part.substring(0, partEqIdx), part.substring(partEqIdx + 1)];
-    }
+      if (partEqIdx > 0) {
+        return [part.substring(0, partEqIdx), part.substring(partEqIdx + 1)];
+      }
 
-    return [part, 'true'];
-  }));
+      return [part, 'true'];
+    }),
+  );
   return params;
 }
 
@@ -52,11 +54,11 @@ export function getSearchParams(): any {
 }
 
 export function updateAlias(alias: string) {
-  localStorage.setItem("alias", alias);
+  localStorage.setItem('alias', alias);
 }
 
 export function generateOrRetrieveAlias(): string {
-  let previousName = localStorage.getItem("alias");
+  let previousName = localStorage.getItem('alias');
   if (previousName) {
     return previousName;
   }
@@ -67,19 +69,19 @@ export function generateOrRetrieveAlias(): string {
 }
 
 export function generateOrRetrieveUniqueId(): string {
-  let existingId = localStorage.getItem("uniqueId");
+  let existingId = localStorage.getItem('uniqueId');
   if (existingId) {
     return existingId;
   }
   existingId = uuidv4();
-  localStorage.setItem("uniqueId", existingId);
+  localStorage.setItem('uniqueId', existingId);
   return existingId;
 }
 
 interface GameSelection {
   game: string;
   token: string;
-};
+}
 // Return true if game= and token= are present in the url.
 export function getGameSelection(): GameSelection | undefined {
   const search = getSearchParams();
@@ -87,23 +89,23 @@ export function getGameSelection(): GameSelection | undefined {
   if (search.game && search.join) {
     return {
       game: search.game,
-      token: search.join
+      token: search.join,
     };
   }
   return undefined;
 }
 
 function clvm_enlist(clvms: string[]): string {
-  let result = [];
+  const result = [];
 
-  for (var i = 0; i < clvms.length; i++) {
+  for (const clvm of clvms) {
     result.push('ff');
-    result.push(clvms[i]);
+    result.push(clvm);
   }
 
   result.push('80');
   console.log(result);
-  return result.join("");
+  return result.join('');
 }
 
 function clvm_length(atom: string): string {
@@ -138,7 +140,7 @@ function explode(p: any): any {
 
 export function proper_list(p: any): any {
   const result = [];
-  while(!(p instanceof Uint8Array)) {
+  while (!(p instanceof Uint8Array)) {
     result.push(p[0]);
     p = p[1];
   }
@@ -146,7 +148,7 @@ export function proper_list(p: any): any {
 }
 
 export function decode_sexp_hex(h: string): any {
-  let p = Program.deserialize(toUint8(h));
+  const p = Program.deserialize(toUint8(h));
   return explode(p);
 }
 

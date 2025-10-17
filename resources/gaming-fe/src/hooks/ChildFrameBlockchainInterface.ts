@@ -1,22 +1,19 @@
-import { Subject, filter, take } from 'rxjs';
+import { filter, take } from 'rxjs';
+
 import { DoInitialSpendResult } from '../types/ChiaGaming';
+
+import { blockchainConnector, BlockchainInboundReply } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
-import { blockchainConnector, BlockchainInboundReply, BlockchainOutboundRequest } from './BlockchainConnector';
-import { fakeBlockchainInfo } from './FakeBlockchainInterface';
 
 let requestNumber = 1;
 
-function performTransaction(
-  checkReply: (reply: any) => any,
-  requestId: number,
-  request: any
-): Promise<any> {
+function performTransaction(checkReply: (reply: any) => any, requestId: number, request: any): Promise<any> {
   return new Promise((resolve, reject) => {
-    let thisRequestChannel = blockchainConnector.getInbound().pipe(
+    const thisRequestChannel = blockchainConnector.getInbound().pipe(
       filter((e: BlockchainInboundReply) => e.responseId === requestId),
-      take(1)
+      take(1),
     );
-    let subscription = thisRequestChannel.subscribe({
+    thisRequestChannel.subscribe({
       next: (e: BlockchainInboundReply) => {
         if (e.error) {
           console.error('returning error in transaction', e);
@@ -32,7 +29,7 @@ function performTransaction(
         }
 
         resolve(replyObject);
-      }
+      },
     });
 
     blockchainConnector.requestEmitter(request);
@@ -41,34 +38,26 @@ function performTransaction(
 
 export class ChildFrameBlockchainInterface {
   do_initial_spend(uniqueId: string, target: string, amount: number): Promise<DoInitialSpendResult> {
-    let requestId = requestNumber++;
-    let request = {
+    const requestId = requestNumber++;
+    const request = {
       requestId,
-      initialSpend: { uniqueId, target, amount }
+      initialSpend: { uniqueId, target, amount },
     };
 
-    return performTransaction(
-      (e: any) => e.initialSpend,
-      requestId,
-      request
-    );
-}
+    return performTransaction((e: any) => e.initialSpend, requestId, request);
+  }
 
   spend(cvt: (blob: string) => any, spend: string): Promise<string> {
-    let requestId = requestNumber++;
-    let request = {
+    const requestId = requestNumber++;
+    const request = {
       requestId,
       transaction: {
         blob: spend,
-        spendObject: cvt(spend)
-      }
+        spendObject: cvt(spend),
+      },
     };
 
-    return performTransaction(
-      (e: any) => e.transaction,
-      requestId,
-      request
-    );
+    return performTransaction((e: any) => e.transaction, requestId, request);
   }
 
   getObservable() {

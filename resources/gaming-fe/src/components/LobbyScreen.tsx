@@ -1,4 +1,3 @@
-import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -12,14 +11,17 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { useState, useEffect, useCallback } from 'react';
+
 import { useLobbySocket } from '../hooks/useLobbyConnection';
-import { generateOrRetrieveAlias, updateAlias } from "../util";
+import { generateOrRetrieveAlias, updateAlias } from '../util';
 
-interface LobbyComponentProps { }
+interface LobbyComponentProps {}
 
-const LobbyScreen: React.FC<LobbyComponentProps> = () => {
+const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
-  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } = useLobbySocket(myAlias, true);
+  const { players, rooms, messages, sendMessage, setLobbyAlias, generateRoom, joinRoom, uniqueId, fragment } =
+    useLobbySocket(myAlias, true);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
@@ -53,20 +55,16 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
 
   const handleCreate = async () => {
     if (!gameChoice || !wagerInput) return;
-    const { secureUrl, token } = await generateRoom(
-      gameChoice,
-      wagerInput,
-      perHandInput
-    );
+    const { secureUrl } = await generateRoom(gameChoice, wagerInput, perHandInput);
     setGotoUrl(secureUrl);
     window.prompt('Share this room URL:', secureUrl);
     closeDialog();
   };
 
   useEffect(() => {
-    console.log('check fragment',fragment);
+    console.log('check fragment', fragment);
     if (fragment.token) {
-      console.log('joining channel',fragment);
+      console.log('joining channel', fragment);
       joinRoom(fragment.token);
     }
   });
@@ -79,7 +77,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
   }
 
   function getPlayerAlias(id: string): string {
-    const index = players.findIndex(p => p.id === id);
+    const index = players.findIndex((p) => p.id === id);
     if (index === -1) {
       return `unknown player id: ${id}`;
     }
@@ -88,40 +86,33 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
 
   let aliasDisplay;
   if (editingAlias) {
-      aliasDisplay = (
-        <TextField
-          fullWidth
-          placeholder="Display name"
-          value={myAlias}
-          onChange={e => setMyAlias(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && commitEdit(e)}
-          onBlur={commitEdit}
-          />
-      );
+    aliasDisplay = (
+      <TextField
+        fullWidth
+        placeholder="Display name"
+        value={myAlias}
+        onChange={(e) => setMyAlias(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && commitEdit(e)}
+        onBlur={commitEdit}
+      />
+    );
   } else {
-      aliasDisplay = (
-        <span onClick={() => setEditingAlias(true)} >{myAlias}</span>
-      );
-  };
+    aliasDisplay = <span onClick={() => setEditingAlias(true)}>{myAlias}</span>;
+  }
 
   return (
     <Box p={4} maxWidth={600} mx="auto">
       <Typography variant="h4" gutterBottom>
         Lobby — Alias: {aliasDisplay}
       </Typography>
-      <div style={{position:"relative",
-      width: "0",
-      height: "0",
-      opacity: "0"
-      }}
-      aria-label="partner-target-url">
-      {gotoUrl}
+      <div style={{ position: 'relative', width: '0', height: '0', opacity: '0' }} aria-label="partner-target-url">
+        {gotoUrl}
       </div>
 
       <Box mb={3}>
         <Typography variant="h6">Connected Players</Typography>
         <List>
-          {players.map(p => (
+          {players.map((p) => (
             <ListItem key={p.id} dense>
               <ListItemText primary={p.id === uniqueId ? `${p.alias} (You)` : p.alias} />
             </ListItem>
@@ -132,16 +123,17 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
       <Box mb={3}>
         <Typography variant="h6">Active Rooms</Typography>
         <List>
-          {rooms.map(r => (
-            <ListItem key={r.token} dense secondaryAction={
-              <Button size="small" onClick={() => joinRoom(r.token)}>
-                Join
-              </Button>
-            }>
-              <ListItemText
-                primary={r.token}
-                secondary={`Host: ${getPlayerAlias(r.host)} | Token: ${r.token}`}
-              />
+          {rooms.map((r) => (
+            <ListItem
+              key={r.token}
+              dense
+              secondaryAction={
+                <Button size="small" onClick={() => joinRoom(r.token)}>
+                  Join
+                </Button>
+              }
+            >
+              <ListItemText primary={r.token} secondary={`Host: ${getPlayerAlias(r.host)} | Token: ${r.token}`} />
             </ListItem>
           ))}
         </List>
@@ -157,12 +149,12 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
           ))}
         </Box>
         <Box display="flex">
-            <TextField
-                fullWidth
-                placeholder="Type a message"
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSend()}
+          <TextField
+            fullWidth
+            placeholder="Type a message"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
           />
           <Button onClick={handleSend} variant="contained" sx={{ ml: 1 }}>
             Send
@@ -185,7 +177,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
             fullWidth
             margin="normal"
             value={gameChoice}
-            onChange={e => setGameChoice(e.target.value)}
+            onChange={(e) => setGameChoice(e.target.value)}
           />
           {wagerValidationError ? <Box mb={1}>{wagerValidationError}</Box> : <div></div>}
           <TextField
@@ -195,7 +187,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
             type="number"
             margin="normal"
             value={wagerInput}
-            onChange={e => setWagerInput(e.target.value)}
+            onChange={(e) => setWagerInput(e.target.value)}
           />
           <TextField
             label="Each hand (mojo)"
@@ -204,7 +196,7 @@ const LobbyScreen: React.FC<LobbyComponentProps> = () => {
             type="number"
             margin="normal"
             value={perHandInput}
-            onChange={e => setPerHandInput(e.target.value)}
+            onChange={(e) => setPerHandInput(e.target.value)}
           />
         </DialogContent>
         <DialogActions>
