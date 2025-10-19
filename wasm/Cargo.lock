@@ -236,6 +236,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chia-puzzles"
+version = "0.20.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "553363ce9550cfde0ae1306a0a79bf9afd36ea09e0222b874b6287b44ad9d178"
+dependencies = [
+ "hex",
+ "hex-literal",
+]
+
+[[package]]
 name = "chia-sha2"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -282,6 +292,7 @@ dependencies = [
  "blst",
  "bson",
  "chia-bls 0.9.0",
+ "chia-puzzles",
  "clvm-traits",
  "clvm-utils",
  "clvm_tools_rs",

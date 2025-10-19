@@ -75,18 +75,33 @@ async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
   return driver;
 }
 
+async function getCardText(driver, card) {
+  const rawText = await card.getAttribute('innerText');
+  return rawText.split(/[ \t\r\n]/)[0];
+}
+
 async function clickFourCards(driver, who) {
   await driver.wait(until.elementLocated(byAttribute("aria-label", `card-true-0`)));
+  const resultCards = [];
+
+  for (let i = 0; i < 8; i++) {
+    const card = await driver.wait(until.elementLocated(byAttribute("aria-label", `card-true-${i}`)));
+
+    resultCards.push(await getCardText(driver, card));
+  }
+
   for (let i = 0; i < 4; i++) {
     await wait(driver, 1.0);
-    console.log(`click card ${who} ${i}`);
     const card = await driver.wait(until.elementLocated(byAttribute("aria-label", `card-true-${i}`)));
+    console.log(`click card ${who} ${i}`);
     await card.click();
   }
 
   console.log(`make move (${who})`);
   await wait(driver, 1.0);
   await clickMakeMove(driver, who);
+
+  return resultCards;
 }
 
 async function firefox_press_button_second_game(driver) {
@@ -141,6 +156,24 @@ async function prepareBrowser(driver) {
   await driver.switchTo().defaultContent();
   await driver.switchTo().parentFrame();
   await driver.get('about:blank');
+}
+
+async function verifyCardsWithLog(driver, cards) {
+  const gameLogHeadingTitle = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-log-heading")));
+  console.log('gonna click the game log heading');
+  await gameLogHeadingTitle.click();
+
+  console.log('gonna find our hand in the most recent log entry');
+  const firstLogMyHand = await driver.wait(until.elementLocated(byAttribute("aria-label", "my-start-hand-0")));
+  console.log('gonna get the text');
+  const text = await firstLogMyHand.getAttribute('innerText');
+  const cardList = text.split(/[ \t\r\n]/);
+  console.log('cards of first log', cardList);
+  console.log('known cards', cards);
+
+  if (cardList.toString() !== cards.toString()) {
+    throw new Error("Log doesn't show the cards we knew we had.");
+  }
 }
 
 // Define a category of tests using test framework, in this case Jasmine
@@ -220,13 +253,23 @@ describe("Out of money test", function() {
     console.log('wait for alice make move button');
     await clickMakeMove(driver, 'alice');
 
-    await clickFourCards(ffdriver, 'bob');
+    let allBobCards = await clickFourCards(ffdriver, 'bob');
 
     console.log('selecting alice cards');
-    await clickFourCards(driver, 'alice');
+    let allAliceCards = await clickFourCards(driver, 'alice');
+
+    // Hit the title for the expanded view
+    console.log('bob cards', allBobCards);
+    console.log('alice cards', allAliceCards);
 
     console.log('first game complete');
     await firefox_press_button_second_game(ffdriver);
+
+    console.log('check alice cards');
+    await verifyCardsWithLog(driver, allAliceCards);
+
+    console.log('check bob cards');
+    await verifyCardsWithLog(ffdriver, allBobCards);
 
     console.log('alice random number (2)');
     await clickMakeMove(driver, 'alice');
@@ -271,6 +314,8 @@ describe("Out of money test", function() {
     if (postBalance1 != expectedPost1 || postBalance2 != expectedPost2) {
         throw new Error('Failed expected balance check');
     }
+
+    await wait(driver, 30.0);
 }
 
   async function testRunOutOfMoney(selectWallet) {
@@ -312,8 +357,6 @@ describe("Out of money test", function() {
     expect(!!driver1 && !!driver2).toBe(true);
 
     await testTwoGamesAndShutdown(selectSimulator);
-
-    return;
 
     await prepareBrowser(driver1);
     await prepareBrowser(driver2);

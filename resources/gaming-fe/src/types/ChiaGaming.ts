@@ -125,6 +125,9 @@ export interface WasmConnection {
   accept: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
+  cradle_amount: (cid: number) => any;
+  cradle_our_share: (cid: number) => any;
+  cradle_their_share: (cid: number) => any;
   idle: (cid: number, callbacks: any) => any;
 
   // Misc
@@ -174,6 +177,18 @@ export class ChiaGame {
 
   start_games(initiator: boolean, game: any): string[] {
     return this.wasm.start_games(this.cradle, initiator, game);
+  }
+
+  amount() {
+    return this.wasm.cradle_amount(this.cradle);
+  }
+
+  our_share() {
+    return this.wasm.cradle_our_share(this.cradle);
+  }
+
+  their_share() {
+    return this.wasm.cradle_their_share(this.cradle);
   }
 
   accept(id: string) {
@@ -318,6 +333,16 @@ export class ExternalBlockchainInterface {
       {
         body: '',
         method: 'POST',
+      },
+    ).then((f) => f.json());
+  }
+
+  getBalance(): Promise<number> {
+    return fetch(
+      `${this.baseUrl}/get_balance?user=${this.token}`,
+      {
+        body: '',
+        method: 'POST'
       },
     ).then((f) => f.json());
   }
@@ -592,6 +617,10 @@ export interface OutcomeHandType {
 
 export interface OutcomeLogLine {
   topLineOutcome: 'win' | 'lose' | 'tie';
+  myStartHand: number[][];
+  opponentStartHand: number[][];
+  myPicks: number;
+  opponentPicks: number;
   myHandDescription: OutcomeHandType;
   opponentHandDescription: OutcomeHandType;
   myHand: number[][];

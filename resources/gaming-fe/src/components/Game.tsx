@@ -16,6 +16,8 @@ const Game = () => {
     error,
     log,
     addressData,
+    ourShare,
+    theirShare,
     gameConnectionState,
     isPlayerTurn,
     iStarted,
@@ -141,10 +143,13 @@ const Game = () => {
     );
   }
 
+  const balanceDisplay = ` - Our Share ${ourShare} vs ${theirShare}`;
+
   return (
     <Box p={4}>
       <Typography variant='h4' align='center'>
         {`Cal Poker - move ${moveNumber}`}
+        {balanceDisplay}
       </Typography>
       <Button
         onClick={stopPlaying}

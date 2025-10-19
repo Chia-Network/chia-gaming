@@ -8,6 +8,7 @@ import {
   SelectionMessage,
   BlockchainInboundAddressResult
 } from '../types/ChiaGaming';
+import { WalletBalance } from '../types/WalletBalance';
 import { toHexString, toUint8 } from '../util';
 
 import {
@@ -322,17 +323,17 @@ export function connectRealBlockchain(baseUrl: string) {
 
           blockchainConnector.replyEmitter({ responseId: evt.requestId, getAddress: addressData });
         });
+      } else if (getBalance) {
+        rpc.getWalletBalance({
+          walletId: 1
+        }).then((balanceResult: WalletBalance) => {
+          blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balanceResult.spendableBalance });
+        });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({
           responseId: evt.requestId,
           error: `unknown blockchain request type ${JSON.stringify(evt)}`,
-        });
-      } else if (getBalance) {
-        rpc.getBalance({
-          walletId: 1
-        }).then((balance: number) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balance });
         });
       }
     },

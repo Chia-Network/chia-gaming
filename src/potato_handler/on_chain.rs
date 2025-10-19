@@ -79,6 +79,18 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
         self.player_ch
     }
 
+    fn amount(&self) -> Amount {
+        self.player_ch.amount(true)
+    }
+
+    fn get_our_current_share(&self) -> Option<Amount> {
+        None
+    }
+
+    fn get_their_current_share(&self) -> Option<Amount> {
+        None
+    }
+
     fn check_game_coin_spent<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,

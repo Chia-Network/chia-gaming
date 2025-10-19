@@ -85,6 +85,20 @@ export class ChildFrameBlockchainInterface {
     );
   }
 
+  getBalance(): Promise<number> {
+    let requestId = requestNumber++;
+    let request = {
+      requestId,
+      getBalance: { walletId: 1 }
+    };
+
+    return performTransaction(
+      (e: any) => e.getBalance,
+      requestId,
+      request
+    );
+  }
+
   getObservable() {
     return blockchainDataEmitter.getObservable();
   }

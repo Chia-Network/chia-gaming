@@ -481,6 +481,10 @@ export class WasmBlobWrapper {
 
   idle(): any {
     const result: any = {};
+
+    result.setOurShare = this.cradle?.our_share()?.amt;
+    result.setTheirShare = this.cradle?.their_share()?.amt;
+
     const idle = this.cradle?.idle({
       // Local ui callbacks.
       opponent_moved: (game_id, readable_move_hex) => {
@@ -598,6 +602,11 @@ export class WasmBlobWrapper {
         console.log('spend res', res);
       });
     }
+
+    this.rxjsEmitter?.next({
+      setOurShare: this.cradle?.our_share()?.amt,
+      setTheirShare: this.cradle?.their_share()?.amt
+    });
 
     return result;
   }
