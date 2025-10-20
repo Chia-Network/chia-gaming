@@ -20,11 +20,11 @@ function byAttribute(attr, val, sub) {
 }
 
 function byAttributePrefix(attr, val) {
-    return By.xpath(`//*[starts-with(@${attr},'${val}')]`);
+  return By.xpath(`//*[starts-with(@${attr},'${val}')]`);
 }
 
-function byElementAndAttribute(element,attr,val) {
-    return By.xpath(`//${element}[@${attr}='${val}']`);
+function byElementAndAttribute(element, attr, val) {
+  return By.xpath(`//${element}[@${attr}='${val}']`);
 }
 
 async function sendEnter(element) {
@@ -83,52 +83,67 @@ async function waitForNonError(driver, select, extra, time) {
 }
 
 async function selectWalletConnect(driver) {
-    const controlMenu = await driver.wait(until.elementLocated(byAttribute("aria-label", "control-menu")));
-    await controlMenu.click();
+  const controlMenu = await driver.wait(
+    until.elementLocated(byAttribute("aria-label", "control-menu")),
+  );
+  await controlMenu.click();
 
-    const linkWalletButton = await driver.wait(until.elementLocated(byExactText("Link Wallet")));
-    await linkWalletButton.click();
+  const linkWalletButton = await driver.wait(
+    until.elementLocated(byExactText("Link Wallet")),
+  );
+  await linkWalletButton.click();
 
-    await wait(driver, 5.0);
+  await wait(driver, 5.0);
 
-    const wcUriBox = await driver.wait(until.elementLocated(byAttribute("aria-label", "wallet-connect-uri", "//textarea")));
-    const wcUri = await wcUriBox.getAttribute("value");
-    console.log('wcUri', wcUri);
+  const wcUriBox = await driver.wait(
+    until.elementLocated(
+      byAttribute("aria-label", "wallet-connect-uri", "//textarea"),
+    ),
+  );
+  const wcUri = await wcUriBox.getAttribute("value");
+  console.log("wcUri", wcUri);
 
-    const rng = Math.floor(Math.random() * 1000000);
-    await fetch("http://localhost:3002/pair", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            "pairdata": wcUri,
-            fingerprints: [rng]
-        })
-    }).then(res => res.json());
+  const rng = Math.floor(Math.random() * 1000000);
+  await fetch("http://localhost:3002/pair", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      pairdata: wcUri,
+      fingerprints: [rng],
+    }),
+  }).then((res) => res.json());
 
-    await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("id", "subframe"))), (elt) => {}, 5.0);
+  await waitForNonError(
+    driver,
+    () => driver.wait(until.elementLocated(byAttribute("id", "subframe"))),
+    (elt) => {},
+    5.0,
+  );
 }
 
 async function retrieveAddress(driver) {
-    do {
-        const addressElt = await driver.wait(until.elementLocated(byAttribute("id", "blockchain-address")));
-        const text = await addressElt.getAttribute("innerText");
-        try {
-            const decoded = JSON.parse(text);
-            if (decoded.address !== '' && decoded.puzzleHash !== '') {
-                return decoded;
-            }
-        } catch (e) {
-            await wait(driver, 1.0);
-        }
-    } while (true);
+  do {
+    const addressElt = await driver.wait(
+      until.elementLocated(byAttribute("id", "blockchain-address")),
+    );
+    const text = await addressElt.getAttribute("innerText");
+    try {
+      const decoded = JSON.parse(text);
+      if (decoded.address !== "" && decoded.puzzleHash !== "") {
+        return decoded;
+      }
+    } catch (e) {
+      await wait(driver, 1.0);
+    }
+  } while (true);
 }
 
 async function getBalance(driver, puzzleHash) {
-    return await fetch(`http://localhost:5800/get_balance?user=${puzzleHash}`, {
-        method: "POST"
-    }).then(res => res.json());
+  return await fetch(`http://localhost:5800/get_balance?user=${puzzleHash}`, {
+    method: "POST",
+  }).then((res) => res.json());
 }
 
 async function sendControlChar(driver, char) {
@@ -157,19 +172,19 @@ async function sendControlA(driver) {
 }
 
 module.exports = {
-    wait,
-    byExactText,
-    byAttribute,
-    byElementAndAttribute,
-    byAttributePrefix,
-    sendEnter,
-    waitEnabled,
-    selectSimulator,
-    selectWalletConnect,
-    retrieveAddress,
-    getBalance,
-    waitAriaEnabled,
-    waitForNonError,
-    sendControlChar,
-    sendControlA,
+  wait,
+  byExactText,
+  byAttribute,
+  byElementAndAttribute,
+  byAttributePrefix,
+  sendEnter,
+  waitEnabled,
+  selectSimulator,
+  selectWalletConnect,
+  retrieveAddress,
+  getBalance,
+  waitAriaEnabled,
+  waitForNonError,
+  sendControlChar,
+  sendControlA,
 };
