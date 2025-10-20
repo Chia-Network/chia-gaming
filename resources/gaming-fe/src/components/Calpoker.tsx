@@ -4,7 +4,7 @@ import GameEndPlayer from './GameEndPlayer';
 import GameLog from './GameLog';
 import OpponentSection from './OpponentSection';
 import PlayerSection from './PlayerSection';
-import { CalpokerOutcome } from '../types/ChiaGaming';
+import { CalpokerOutcome, OutcomeLogLine } from '../types/ChiaGaming';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
@@ -18,6 +18,7 @@ export interface CalpokerProps {
   setCardSelections: (n: number) => void;
   handleMakeMove: (hex: string) => void;
   stopPlaying: () => void;
+  log: OutcomeLogLine[];
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -32,8 +33,8 @@ const Calpoker: React.FC<CalpokerProps> = ({
   setCardSelections,
   handleMakeMove,
   stopPlaying,
+  log,
 }) => {
-  console.log('game outcome', outcome);
   const myWinOutcome = outcome?.my_win_outcome;
   const colors = {
     win: 'green',
@@ -151,7 +152,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
       <br />
       <Typography>{moveDescription}</Typography>
       <br />
-      <GameLog log={[]} />
+      <GameLog log={log} />
     </Box>
   );
 };

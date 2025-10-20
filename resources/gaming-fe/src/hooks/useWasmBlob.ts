@@ -7,6 +7,8 @@ import {
   CalpokerOutcome,
   InternalBlockchainInterface,
   BlockchainReport,
+  OutcomeLogLine,
+  handValueToDescription,
 } from '../types/ChiaGaming';
 import { getSearchParams } from '../util';
 
@@ -116,6 +118,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const searchParams = getSearchParams();
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
+  const [log, setLog] = useState<OutcomeLogLine[]>([]);
   const [playerHand, setPlayerHand] = useState<number[][]>([]);
   const [opponentHand, setOpponentHand] = useState<number[][]>([]);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(
@@ -186,6 +189,28 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     gameObject?.loadWasm(chia_gaming_init, cg);
   }, []);
 
+  const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
+    setOutcome(outcome);
+    if (outcome) {
+      const myCards = iStarted ? outcome.alice_cards : outcome.bob_cards;
+      const myValue = iStarted
+        ? outcome.alice_hand_value
+        : outcome.bob_hand_value;
+      const theirCards = iStarted ? outcome.bob_cards : outcome.alice_cards;
+      const theirValue = iStarted
+        ? outcome.bob_hand_value
+        : outcome.alice_hand_value;
+      let newLogObject = {
+        topLineOutcome: outcome.my_win_outcome,
+        myHandDescription: handValueToDescription(myValue, myCards),
+        opponentHandDescription: handValueToDescription(theirValue, theirCards),
+        myHand: myCards,
+        opponentHand: theirCards,
+      };
+      setLog([...log, newLogObject]);
+    }
+  };
+
   const settable: any = {
     setGameConnectionState: setGameConnectionState,
     setPlayerHand: setPlayerHand,
@@ -194,7 +219,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setMoveNumber: setMoveNumber,
     setError: setError,
     setCardSelections: setOurCardSelections,
-    setOutcome: setOutcome,
+    setOutcome: recognizeOutcome,
   };
 
   useEffect(() => {
@@ -220,6 +245,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   return {
     error,
+    log,
     gameIdentity,
     gameConnectionState,
     uniqueWalletConnectionId,
