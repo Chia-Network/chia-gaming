@@ -168,12 +168,12 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
     setOutcome(outcome);
     if (outcome) {
-      const myCards = iStarted ? outcome.alice_cards : outcome.bob_cards;
-      const myValue = iStarted
+      const myCards = !iStarted ? outcome.alice_used_cards : outcome.bob_used_cards;
+      const myValue = !iStarted
         ? outcome.alice_hand_value
         : outcome.bob_hand_value;
-      const theirCards = iStarted ? outcome.bob_cards : outcome.alice_cards;
-      const theirValue = iStarted
+      const theirCards = !iStarted ? outcome.bob_used_cards : outcome.alice_used_cards;
+      const theirValue = !iStarted
         ? outcome.bob_hand_value
         : outcome.alice_hand_value;
       let newLogObject = {

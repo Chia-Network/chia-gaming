@@ -31,12 +31,13 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
     const suitColor = isRedSuit ? 'red' : 'black';
     return (
       <Paper
-      id={`${idPrefix}-${index}`}
+        id={`${idPrefix}-${index}`}
         elevation={1}
         style={{ color: suitColor, padding: '0.25em', marginLeft: '0.25em', background: (selected ? '#ddd' : 'white') }}
       >
         {c[0]}
         {suitName}
+        <span style={{ opacity: '0%', position: 'relative', width: 0, height: 0 }}>{selected ? '+' : ''}</span>
       </Paper>
     )
   };
@@ -78,7 +79,9 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                 alignItems: 'baseline',
               }}
             >
-              {playerDisplay(true, entry.myHandDescription, entry.myHand)} {iWin}
+              <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`my-used-hand-${index}`}>
+                {playerDisplay(true, entry.myHandDescription, entry.myHand)} {iWin}
+              </div>
             </Typography>
           ];
           let opDivChildren = [
@@ -91,23 +94,25 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                 alignItems: 'baseline',
               }}
             >
-              {playerDisplay(
-                false,
-                entry.opponentHandDescription,
-                entry.opponentHand,
-              )}{' '}
-              {opWin}
+              <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`opponent-used-hand-${index}`}>
+                {playerDisplay(
+                  false,
+                  entry.opponentHandDescription,
+                  entry.opponentHand,
+                )}{' '}
+                {opWin}
+              </div>
             </Typography>
           ];
           if (logOpen) {
             myDivChildren.push(
               <Typography style={{ display: 'flex', flexDirection: 'row' }}>
-                My Cards <div aria-label={`my-start-hand-${index}`}>{entry.myStartHand.map((c,i) => cardDisplay(c, i, 'my-cards', (entry.myPicks & (1 << i)) != 0))}</div>
+                My Cards <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`my-start-hand-${index}`}>{entry.myStartHand.map((c,i) => cardDisplay(c, i, 'my-cards', (entry.myPicks & (1 << i)) != 0))}</div>
               </Typography>
             );
             opDivChildren.push(
               <Typography style={{ display: 'flex', flexDirection: 'row' }}>
-                My Cards <div aria-label={`opponent-start-hand-${index}`}>{entry.opponentStartHand.map((c,i) => cardDisplay(c, i, 'opponent-cards', (entry.opponentPicks & (1 << i)) != 0))}</div>
+                Their Cards <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`opponent-start-hand-${index}`}>{entry.opponentStartHand.map((c,i) => cardDisplay(c, i, 'opponent-cards', (entry.opponentPicks & (1 << i)) != 0))}</div>
               </Typography>
             );
           }
