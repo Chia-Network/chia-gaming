@@ -10,7 +10,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "clvm-tools-rs (==0.1.40)",
+    "chialisp (==0.4.1)",
     "chia-rs (==0.6.1)",
     "clvm (==0.9.9) ; python_version >= '3.9' and python_version < '4'"
 ]
