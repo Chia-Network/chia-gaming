@@ -20,6 +20,7 @@ const {
   byElementAndAttribute,
   sendEnter,
   waitAriaEnabled,
+  waitAriaDisabled,
   selectSimulator,
   waitForNonError,
   sendControlA,
@@ -82,6 +83,15 @@ async function clickMakeMove(driver, who) {
     1.0,
   );
   await makeMoveButton.click();
+  // The 'make move' button should become 'aria-label' disabled after pressing it
+  // Get the button again, in case the DOM has refreshed
+  await waitForNonError(
+    driver,
+    () =>
+      driver.wait(until.elementLocated(byAttribute("aria-label", "make-move"))),
+    (elt) => waitAriaDisabled(driver, elt),
+    1.0,
+  );
 }
 
 async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
