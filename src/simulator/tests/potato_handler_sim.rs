@@ -523,7 +523,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 ) -> Result<GameRunOutcome, Error> {
     let mut move_number = 0;
     debug!("DEBUG: RNG {:?}", rng);
-    debug!("DEBUG: KEYS {:?}", private_keys);
+    // debug!("DEBUG: KEYS {:?}", private_keys);
     debug!("DEBUG: moves_input {:?}", moves_input);
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
