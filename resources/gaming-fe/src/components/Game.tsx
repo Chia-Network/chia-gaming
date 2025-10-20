@@ -67,20 +67,20 @@ const Game = () => {
   }
 
   return (
-      <Calpoker
-        outcome={outcome}
-        moveNumber={moveNumber}
-        iStarted={iStarted}
-        isPlayerTurn={isPlayerTurn}
-        playerNumber={playerNumber}
-        playerHand={playerHand}
-        opponentHand={opponentHand}
-        cardSelections={cardSelections}
-        setCardSelections={setCardSelections}
-        handleMakeMove={handleMakeMove}
-        stopPlaying={stopPlaying}
-        log={log}
-      />
+    <Calpoker
+      outcome={outcome}
+      moveNumber={moveNumber}
+      iStarted={iStarted}
+      isPlayerTurn={isPlayerTurn}
+      playerNumber={playerNumber}
+      playerHand={playerHand}
+      opponentHand={opponentHand}
+      cardSelections={cardSelections}
+      setCardSelections={setCardSelections}
+      handleMakeMove={handleMakeMove}
+      stopPlaying={stopPlaying}
+      log={log}
+    />
   );
 };
 
