@@ -574,3 +574,112 @@ export interface InternalBlockchainInterface {
   ): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
 }
+
+export interface OutcomeHandType {
+  name: string;
+  rank: boolean;
+  values: number[];
+}
+
+export interface OutcomeLogLine {
+  topLineOutcome: 'win' | 'lose' | 'tie';
+  myHandDescription: OutcomeHandType;
+  opponentHandDescription: OutcomeHandType;
+  myHand: number[][];
+  opponentHand: number[][];
+}
+
+export const suitNames = ['Q', '♥', '♦', '♤', '♧'];
+
+function aget<T>(handValue: T[], choice: number, def: T): T {
+  if (choice > handValue.length || choice < 0) {
+    return def;
+  }
+
+  return handValue[choice];
+}
+
+function rget<T>(array: T[], start: number, end: number, def: T): T[] {
+  const result = [];
+  for (let i = start; i < end; i++) {
+    result.push(aget(array, i, def));
+  }
+
+  return result;
+}
+
+export function handValueToDescription(
+  handValue: number[],
+  myCards: number[][],
+): OutcomeHandType {
+  const handType = rget(handValue, 0, 3, 0);
+
+  switch (handType.toString()) {
+    case '3,1,3':
+      return {
+        name: 'Flush',
+        rank: false,
+        values: [aget(myCards, 0, [0, 0])[1]],
+      };
+
+    case '3,1,2':
+      return {
+        name: 'Straight',
+        rank: true,
+        values: [aget(handValue, 3, 0)],
+      };
+
+    case '3,1,1':
+      return {
+        name: 'Three of a kind',
+        rank: true,
+        values: rget(handValue, 3, 6, 0),
+      };
+
+    case '2,2,1':
+      return {
+        name: 'Two pairs',
+        rank: true,
+        values: rget(handValue, 3, 6, 0),
+      };
+
+    case '2,1,1':
+      return {
+        name: 'Pair',
+        rank: true,
+        values: rget(handValue, 4, 8, 0),
+      };
+  }
+
+  handType.pop();
+
+  switch (handType.toString()) {
+    case '4,1':
+      return {
+        name: 'Four of a kind',
+        rank: true,
+        values: rget(handValue, 2, 4, 0),
+      };
+
+    case '3,2':
+      return {
+        name: 'Full house',
+        rank: true,
+        values: rget(handValue, 2, 4, 0),
+      };
+  }
+
+  if (handType[0] == 5) {
+    return {
+      name: 'Straight flush',
+      rank: true,
+      values: [aget(handValue, 1, 0)],
+    };
+  }
+
+  return {
+    name: 'High card',
+    rank: true,
+    values: [aget(handValue, 5, 0)],
+  };
+}
