@@ -1,6 +1,9 @@
 import { filter, take } from 'rxjs';
 
-import { DoInitialSpendResult, BlockchainInboundAddressResult } from '../types/ChiaGaming';
+import {
+  DoInitialSpendResult,
+  BlockchainInboundAddressResult,
+} from '../types/ChiaGaming';
 
 import {
   blockchainConnector,
@@ -75,14 +78,10 @@ export class ChildFrameBlockchainInterface {
     let requestId = requestNumber++;
     let request = {
       requestId,
-      getAddress: { walletId: 1 }
+      getAddress: { walletId: 1 },
     };
 
-    return performTransaction(
-      (e: any) => e.getAddress,
-      requestId,
-      request
-    );
+    return performTransaction((e: any) => e.getAddress, requestId, request);
   }
 
   getObservable() {

@@ -1,8 +1,4 @@
-import {
-  Box,
-  Button,
-  Typography,
-} from '@mui/material';
+import { Box, Button, Typography } from '@mui/material';
 
 import GameEndPlayer from './GameEndPlayer';
 import GameLog from './GameLog';
@@ -39,7 +35,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   handleMakeMove,
   stopPlaying,
   addressData,
-  log
+  log,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
   const colors = {
@@ -114,24 +110,30 @@ const Calpoker: React.FC<CalpokerProps> = ({
 
   return (
     <Box p={4}>
-      <Typography variant="h4" align="center">
+      <Typography variant='h4' align='center'>
         {`Cal Poker - move ${moveNumber}`}
       </Typography>
       <Button
         onClick={stopPlaying}
         disabled={moveNumber !== 0}
-        aria-label="stop-playing"
+        aria-label='stop-playing'
         aria-disabled={moveNumber !== 0}
       >
         Stop
       </Button>
       <br />
-      <Typography variant="h6" align="center" color={colors[color]}>
+      <Typography variant='h6' align='center' color={colors[color]}>
         {banner}
       </Typography>
       <br />
-      <Box display="flex" flexDirection={{ xs: 'column', md: 'row' }} alignItems="stretch" gap={2} mb={4}>
-        <Box flex={1} display="flex" flexDirection="column">
+      <Box
+        display='flex'
+        flexDirection={{ xs: 'column', md: 'row' }}
+        alignItems='stretch'
+        gap={2}
+        mb={4}
+      >
+        <Box flex={1} display='flex' flexDirection='column'>
           <PlayerSection
             playerNumber={playerNumber}
             playerHand={playerHand}
@@ -142,15 +144,23 @@ const Calpoker: React.FC<CalpokerProps> = ({
             setCardSelections={setCardSelections}
           />
         </Box>
-        <Box flex={1} display="flex" flexDirection="column">
-          <OpponentSection playerNumber={playerNumber == 1 ? 2 : 1} opponentHand={opponentHand} />
+        <Box flex={1} display='flex' flexDirection='column'>
+          <OpponentSection
+            playerNumber={playerNumber == 1 ? 2 : 1}
+            opponentHand={opponentHand}
+          />
         </Box>
       </Box>
       <br />
       <Typography>{moveDescription}</Typography>
       <br />
       <GameLog log={log} />
-      <div id="blockchain-address" style={{ position: 'relative', width: 0, height: 0, opacity: '0%' }}>{JSON.stringify(addressData)}</div>
+      <div
+        id='blockchain-address'
+        style={{ position: 'relative', width: 0, height: 0, opacity: '0%' }}
+      >
+        {JSON.stringify(addressData)}
+      </div>
     </Box>
   );
 };

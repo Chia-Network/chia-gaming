@@ -43,29 +43,66 @@ function parseArgs() {
 
 const { args, extras } = parseArgs();
 
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'", "https://explorer-api.walletconnect.com", ...extras],
-      scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-inline'", ...extras],
-      connectSrc: ["'self'", "https://explorer-api.walletconnect.com", "wss://relay.walletconnect.com", "https://verify.walletconnect.org", "https://verify.walletconnect.org", "https://api.coinset.org", "wss://api.coinset.org", "http://localhost:5800", "wss://relay.walletconnect.org", args.tracker, 'ws://localhost:3002', "http://localhost:3002", ...extras],
-      frameSrc: ["'self'",  'https://verify.walletconnect.org', args.tracker, ...extras],
-      frameAncestors: ["'self'", args.tracker],
-    }
-  }
-}));
-app.use(cors({
-  origin: process.env.GAME_PUBLIC_URL || args.self,
-  methods: ['GET', 'POST', 'HEAD', 'OPTIONS']
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: [
+          "'self'",
+          'https://explorer-api.walletconnect.com',
+          ...extras,
+        ],
+        scriptSrc: [
+          "'self'",
+          "'wasm-unsafe-eval'",
+          "'unsafe-inline'",
+          ...extras,
+        ],
+        connectSrc: [
+          "'self'",
+          'https://explorer-api.walletconnect.com',
+          'wss://relay.walletconnect.com',
+          'https://verify.walletconnect.org',
+          'https://verify.walletconnect.org',
+          'https://api.coinset.org',
+          'wss://api.coinset.org',
+          'http://localhost:5800',
+          'wss://relay.walletconnect.org',
+          args.tracker,
+          'ws://localhost:3002',
+          'http://localhost:3002',
+          ...extras,
+        ],
+        frameSrc: [
+          "'self'",
+          'https://verify.walletconnect.org',
+          args.tracker,
+          ...extras,
+        ],
+        frameAncestors: ["'self'", args.tracker],
+      },
+    },
+  }),
+);
+app.use(
+  cors({
+    origin: process.env.GAME_PUBLIC_URL || args.self,
+    methods: ['GET', 'POST', 'HEAD', 'OPTIONS'],
+  }),
+);
 app.use(express.json());
 
-async function serveFile(file: string, contentType: string, replace: boolean, res: any) {
+async function serveFile(
+  file: string,
+  contentType: string,
+  replace: boolean,
+  res: any,
+) {
   let content = await readFile(file);
   // A simple way to patch the javascript so we talk to a local surrogate for
   // api.coinset.org.
   if (replace && coinset) {
-    content = bufferReplace(content, "https://api.coinset.org", coinset);
+    content = bufferReplace(content, 'https://api.coinset.org', coinset);
   }
   res.set('Content-Type', contentType);
   res.send(content);
@@ -78,13 +115,13 @@ app.get('/', async (req: any, res: any) => {
   serveFile('public/index.html', 'text/html', false, res);
 });
 app.get('/index.js', async (req: any, res: any) => {
-  serveFile("dist/index-rollup.js", "application/javascript", true, res);
+  serveFile('dist/index-rollup.js', 'application/javascript', true, res);
 });
 app.get('/chia_gaming_wasm_bg.wasm', async (req: any, res: any) => {
-  serveFile("dist/chia_gaming_wasm_bg.wasm", "application/wasm", false, res);
+  serveFile('dist/chia_gaming_wasm_bg.wasm', 'application/wasm', false, res);
 });
 app.get('/chia_gaming_wasm.js', async (req: any, res: any) => {
-  serveFile("dist/chia_gaming_wasm.js", "application/javascript", false, res);
+  serveFile('dist/chia_gaming_wasm.js', 'application/javascript', false, res);
 });
 app.get('/urls', async (_req: any, res: any) => {
   res.set('Content-Type', 'application/json');
