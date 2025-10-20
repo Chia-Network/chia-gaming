@@ -55,10 +55,9 @@ async function clickMakeMove(driver, who) {
     await makeMoveButton.click();
     // The 'make move' button should become 'aria-label' disabled after pressing it
     // Get the button again, in case the DOM has refreshed
-    const makeMoveButton = await waitForNonError(
-        driver,
+    await waitForNonError(driver,
         () => driver.wait(until.elementLocated(byAttribute("aria-label", "make-move"))),
-        (elt) => waitAriaDisabledState(driver, elt, "disabled"),
+        (elt) => waitAriaDisabled(driver, elt),
         1.0);
 }
 
