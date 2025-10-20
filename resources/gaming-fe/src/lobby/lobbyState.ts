@@ -1,6 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 
-import { Player, Room, GameDefinition, MatchmakingPreferences } from '../types/lobby';
+import {
+  Player,
+  Room,
+  GameDefinition,
+  MatchmakingPreferences,
+} from '../types/lobby';
 
 const ROOM_TTL = 10 * 60 * 1000;
 const GAME_TTL = 10 * 60 * 1000;

@@ -1,4 +1,10 @@
-import { ContentCopy, Close, CheckCircle, QrCode2, Smartphone } from '@mui/icons-material';
+import {
+  ContentCopy,
+  Close,
+  CheckCircle,
+  QrCode2,
+  Smartphone,
+} from '@mui/icons-material';
 import {
   Box,
   Button,
@@ -82,7 +88,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
     <Dialog
       open={open}
       onClose={handleClose}
-      maxWidth="sm"
+      maxWidth='sm'
       fullWidth
       fullScreen={isMobile}
       PaperProps={{
@@ -92,7 +98,10 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
             theme.palette.mode === 'dark'
               ? 'linear-gradient(145deg, #1a1a1a 0%, #2d2d2d 100%)'
               : 'linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%)',
-          boxShadow: theme.palette.mode === 'dark' ? '0 8px 32px rgba(0, 0, 0, 0.4)' : '0 8px 32px rgba(0, 0, 0, 0.1)',
+          boxShadow:
+            theme.palette.mode === 'dark'
+              ? '0 8px 32px rgba(0, 0, 0, 0.4)'
+              : '0 8px 32px rgba(0, 0, 0, 0.1)',
         },
       }}
     >
@@ -111,11 +120,11 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <QrCode2 sx={{ color: theme.palette.primary.main }} />
-          <Typography variant="h6" component="div">
+          <Typography variant='h6' component='div'>
             Connect to Chia Wallet
           </Typography>
         </Box>
-        <IconButton onClick={handleClose} size="small">
+        <IconButton onClick={handleClose} size='small'>
           <Close />
         </IconButton>
       </DialogTitle>
@@ -124,16 +133,20 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
         <Box sx={{ textAlign: 'center' }}>
           {/* Instructions */}
           <Box sx={{ mb: 3 }}>
-            <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>
+            <Typography variant='h6' sx={{ mb: 1, fontWeight: 600 }}>
               Scan QR Code
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
               Open your Chia wallet and scan this QR code to connect securely
             </Typography>
 
             {/* Mobile hint */}
             {isMobile && (
-              <Alert icon={<Smartphone />} severity="info" sx={{ mb: 2, textAlign: 'left' }}>
+              <Alert
+                icon={<Smartphone />}
+                severity='info'
+                sx={{ mb: 2, textAlign: 'left' }}
+              >
                 On mobile, you can also copy the connection URI below
               </Alert>
             )}
@@ -163,7 +176,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
                 }}
               >
                 <CircularProgress size={40} />
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant='body2' color='text.secondary'>
                   Generating QR Code...
                 </Typography>
               </Box>
@@ -178,10 +191,14 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
                   justifyContent: 'center',
                 }}
               >
-                <Typography variant="body2" color="error">
+                <Typography variant='body2' color='error'>
                   {error}
                 </Typography>
-                <Button variant="outlined" onClick={() => window.location.reload()} size="small">
+                <Button
+                  variant='outlined'
+                  onClick={() => window.location.reload()}
+                  size='small'
+                >
                   Retry
                 </Button>
               </Box>
@@ -189,7 +206,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
               <Fade in={!!qrCodeDataUrl} timeout={500}>
                 <img
                   src={qrCodeDataUrl}
-                  alt="WalletConnect QR Code"
+                  alt='WalletConnect QR Code'
                   style={{
                     maxWidth: '100%',
                     height: 'auto',
@@ -202,10 +219,10 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
 
           {/* Connection URI */}
           <Box sx={{ mb: 2 }}>
-            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+            <Typography variant='subtitle2' sx={{ mb: 1, fontWeight: 600 }}>
               Connection URI
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
               Or copy this URI to connect manually:
             </Typography>
 
@@ -214,8 +231,8 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
               multiline
               rows={isMobile ? 4 : 3}
               value={uri || ''}
-              variant="outlined"
-              size="small"
+              variant='outlined'
+              size='small'
               InputProps={{
                 readOnly: true,
                 sx: {
@@ -226,7 +243,10 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
               sx={{
                 mb: 2,
                 '& .MuiOutlinedInput-root': {
-                  backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.02)',
+                  backgroundColor:
+                    theme.palette.mode === 'dark'
+                      ? 'rgba(255, 255, 255, 0.05)'
+                      : 'rgba(0, 0, 0, 0.02)',
                 },
               }}
             />
@@ -235,7 +255,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
           {/* Success message */}
           {copied && (
             <Fade in={copied} timeout={300}>
-              <Alert icon={<CheckCircle />} severity="success" sx={{ mb: 2 }}>
+              <Alert icon={<CheckCircle />} severity='success' sx={{ mb: 2 }}>
                 URI copied to clipboard!
               </Alert>
             </Fade>
@@ -246,14 +266,18 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
       <DialogActions sx={{ p: 3, pt: 0 }}>
         <Button
           onClick={copyToClipboard}
-          variant="outlined"
+          variant='outlined'
           startIcon={<ContentCopy />}
           disabled={!uri}
           sx={{ minWidth: 120 }}
         >
           Copy URI
         </Button>
-        <Button onClick={handleClose} variant="contained" sx={{ minWidth: 100 }}>
+        <Button
+          onClick={handleClose}
+          variant='contained'
+          sx={{ minWidth: 100 }}
+        >
           Close
         </Button>
       </DialogActions>

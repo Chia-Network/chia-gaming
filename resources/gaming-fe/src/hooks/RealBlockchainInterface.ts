@@ -6,7 +6,10 @@ import { rpc } from '../hooks/JsonRpcContext';
 import { BlockchainReport, SelectionMessage } from '../types/ChiaGaming';
 import { toHexString, toUint8 } from '../util';
 
-import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
+import {
+  blockchainConnector,
+  BlockchainOutboundRequest,
+} from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
 
 function wsUrl(baseurl: string) {
@@ -80,14 +83,17 @@ export class RealBlockchainInterface {
 
   async internalRetrieveBlock(height: number) {
     console.log('full node: retrieve block', height);
-    const br_height = await fetch(`${this.baseUrl}/get_block_record_by_height`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
+    const br_height = await fetch(
+      `${this.baseUrl}/get_block_record_by_height`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ height }),
       },
-      body: JSON.stringify({ height }),
-    }).then((r) => r.json());
+    ).then((r) => r.json());
     console.log('br_height', br_height);
     this.at_block = br_height.block_record.height + 1;
     const header_hash = br_height.block_record.header_hash;
@@ -200,10 +206,12 @@ export class RealBlockchainInterface {
   }
 }
 
+export const realBlockchainInfo: RealBlockchainInterface =
+  new RealBlockchainInterface('https://api.coinset.org');
 
-export const realBlockchainInfo: RealBlockchainInterface = new RealBlockchainInterface('https://api.coinset.org');
-
-export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(realBlockchainInfo.getObservable());
+export const REAL_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
+  realBlockchainInfo.getObservable(),
+);
 
 export function connectRealBlockchain(baseUrl: string) {
   blockchainConnector.getOutbound().subscribe({
@@ -216,19 +224,28 @@ export function connectRealBlockchain(baseUrl: string) {
             walletId: 1,
           });
           console.log('currentAddress', currentAddress);
-          const fromPuzzleHash = toHexString(bech32.decode(currentAddress).data as any);
+          const fromPuzzleHash = toHexString(
+            bech32.decode(currentAddress).data as any,
+          );
           const result = await rpc.sendTransaction({
             walletId: 1, // XXX
             amount: initialSpend.amount,
             fee: 0,
-            address: bech32.encode('xch', toUint8(initialSpend.target), 'bech32m'),
+            address: bech32.encode(
+              'xch',
+              toUint8(initialSpend.target),
+              'bech32m',
+            ),
             waitForConfirmation: false,
           });
 
           let resultCoin = undefined;
           result.transaction.additions.forEach((c) => {
             console.log('look at coin', initialSpend.target, c);
-            if (c.puzzleHash == '0x' + initialSpend.target && c.amount.toString() == initialSpend.amount.toString()) {
+            if (
+              c.puzzleHash == '0x' + initialSpend.target &&
+              c.amount.toString() == initialSpend.amount.toString()
+            ) {
               resultCoin = c;
             }
           });
@@ -277,7 +294,10 @@ export function connectRealBlockchain(baseUrl: string) {
 
           // Wait a while to try the request again.
           await new Promise((resolve, _reject) => {
-            setTimeout(resolve, PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED);
+            setTimeout(
+              resolve,
+              PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED,
+            );
           });
         }
       } else {

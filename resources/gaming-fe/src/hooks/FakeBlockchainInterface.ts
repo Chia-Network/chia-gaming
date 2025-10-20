@@ -9,7 +9,10 @@ import {
   SelectionMessage,
 } from '../types/ChiaGaming';
 
-import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
+import {
+  blockchainConnector,
+  BlockchainOutboundRequest,
+} from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
@@ -114,7 +117,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     if (event.setNewPeak) {
       this.internalSetNewPeak(event.setNewPeak);
     } else if (event.deliverBlock) {
-      this.internalDeliverBlock(event.deliverBlock.block_number, event.deliverBlock.block_data);
+      this.internalDeliverBlock(
+        event.deliverBlock.block_number,
+        event.deliverBlock.block_data,
+      );
     }
   }
 
@@ -184,8 +190,12 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 }
 
-export const fakeBlockchainInfo = new FakeBlockchainInterface(BLOCKCHAIN_SERVICE_URL);
-export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(fakeBlockchainInfo.getObservable());
+export const fakeBlockchainInfo = new FakeBlockchainInterface(
+  BLOCKCHAIN_SERVICE_URL,
+);
+export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
+  fakeBlockchainInfo.getObservable(),
+);
 
 export function connectSimulatorBlockchain() {
   blockchainConnector.getOutbound().subscribe({
@@ -194,7 +204,11 @@ export function connectSimulatorBlockchain() {
       const transaction = evt.transaction;
       if (initialSpend) {
         return fakeBlockchainInfo
-          .do_initial_spend(initialSpend.uniqueId, initialSpend.target, initialSpend.amount)
+          .do_initial_spend(
+            initialSpend.uniqueId,
+            initialSpend.target,
+            initialSpend.amount,
+          )
           .then((result: any) => {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
@@ -202,7 +216,10 @@ export function connectSimulatorBlockchain() {
             });
           })
           .catch((e: any) => {
-            blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e.toString(),
+            });
           });
       } else if (transaction) {
         fakeBlockchainInfo
@@ -214,7 +231,10 @@ export function connectSimulatorBlockchain() {
             });
           })
           .catch((e: any) => {
-            blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e.toString(),
+            });
           });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);

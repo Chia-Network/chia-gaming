@@ -98,34 +98,64 @@ export class KrunkService {
       difficulty = 'hard';
     }
 
-    const availableWords = this.WORDS.filter((w) => w.difficulty === difficulty);
-    gameState.currentWord = availableWords[Math.floor(Math.random() * availableWords.length)];
+    const availableWords = this.WORDS.filter(
+      (w) => w.difficulty === difficulty,
+    );
+    gameState.currentWord =
+      availableWords[Math.floor(Math.random() * availableWords.length)];
     gameState.currentPlayerIndex = 0;
   }
 
-  public async processAction(sessionId: string, playerId: string, action: string, data?: any): Promise<GameState> {
+  public async processAction(
+    sessionId: string,
+    playerId: string,
+    action: string,
+    data?: any,
+  ): Promise<GameState> {
     const gameState = this.gameStates.get(sessionId);
     if (!gameState) {
-      throw new AppError(ErrorCodes.LOBBY.GAME_IN_PROGRESS, 'Game not found', 404);
+      throw new AppError(
+        ErrorCodes.LOBBY.GAME_IN_PROGRESS,
+        'Game not found',
+        404,
+      );
     }
 
     if (gameState.status !== 'in_progress') {
-      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Game is not in progress', 400);
+      throw new AppError(
+        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+        'Game is not in progress',
+        400,
+      );
     }
 
-    const playerIndex = gameState.players.findIndex((p) => p.playerId === playerId);
+    const playerIndex = gameState.players.findIndex(
+      (p) => p.playerId === playerId,
+    );
     if (playerIndex === -1) {
-      throw new AppError(ErrorCodes.LOBBY.PLAYER_NOT_FOUND, 'Player not in game', 404);
+      throw new AppError(
+        ErrorCodes.LOBBY.PLAYER_NOT_FOUND,
+        'Player not in game',
+        404,
+      );
     }
 
     if (playerIndex !== gameState.currentPlayerIndex) {
-      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Not your turn', 400);
+      throw new AppError(
+        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+        'Not your turn',
+        400,
+      );
     }
 
     switch (action) {
       case 'guess':
         if (!data?.word) {
-          throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Guess word required', 400);
+          throw new AppError(
+            ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+            'Guess word required',
+            400,
+          );
         }
         await this.handleGuess(gameState, playerIndex, data.word);
         break;
@@ -136,14 +166,22 @@ export class KrunkService {
         await this.handlePass(gameState, playerIndex);
         break;
       default:
-        throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid action', 400);
+        throw new AppError(
+          ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+          'Invalid action',
+          400,
+        );
     }
 
     gameState.lastAction = { playerId, action, details: data };
     return gameState;
   }
 
-  private async handleGuess(gameState: GameState, playerIndex: number, guess: string): Promise<void> {
+  private async handleGuess(
+    gameState: GameState,
+    playerIndex: number,
+    guess: string,
+  ): Promise<void> {
     const player = gameState.players[playerIndex];
     const word = gameState.currentWord!;
 
@@ -161,20 +199,30 @@ export class KrunkService {
     }
   }
 
-  private async handleHint(gameState: GameState, playerIndex: number): Promise<void> {
+  private async handleHint(
+    gameState: GameState,
+    playerIndex: number,
+  ): Promise<void> {
     const player = gameState.players[playerIndex];
     player.hintsUsed++;
   }
 
-  private async handlePass(gameState: GameState, _playerIndex: number): Promise<void> {
+  private async handlePass(
+    gameState: GameState,
+    _playerIndex: number,
+  ): Promise<void> {
     this.moveToNextPlayer(gameState);
   }
 
   private moveToNextPlayer(gameState: GameState): void {
-    gameState.currentPlayerIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
+    gameState.currentPlayerIndex =
+      (gameState.currentPlayerIndex + 1) % gameState.players.length;
   }
 
-  private calculateScore(difficulty: Word['difficulty'], hintsUsed: number): number {
+  private calculateScore(
+    difficulty: Word['difficulty'],
+    hintsUsed: number,
+  ): number {
     let baseScore: number;
     switch (difficulty) {
       case 'easy':
@@ -208,7 +256,11 @@ export class KrunkService {
   public getLeaderboard(sessionId: string): PlayerState[] {
     const gameState = this.gameStates.get(sessionId);
     if (!gameState) {
-      throw new AppError(ErrorCodes.LOBBY.GAME_IN_PROGRESS, 'Game not found', 404);
+      throw new AppError(
+        ErrorCodes.LOBBY.GAME_IN_PROGRESS,
+        'Game not found',
+        404,
+      );
     }
 
     return [...gameState.players].sort((a, b) => b.score - a.score);

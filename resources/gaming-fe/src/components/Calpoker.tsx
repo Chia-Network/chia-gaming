@@ -1,8 +1,4 @@
-import {
-  Box,
-  Button,
-  Typography,
-} from '@mui/material';
+import { Box, Button, Typography } from '@mui/material';
 
 import GameEndPlayer from './GameEndPlayer';
 import GameLog from './GameLog';
@@ -35,7 +31,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   cardSelections,
   setCardSelections,
   handleMakeMove,
-  stopPlaying
+  stopPlaying,
 }) => {
   console.log('game outcome', outcome);
   const myWinOutcome = outcome?.my_win_outcome;
@@ -52,7 +48,9 @@ const Calpoker: React.FC<CalpokerProps> = ({
       ? 'success'
       : 'warning';
   const iAmAlice = playerNumber === 2;
-  const myHandValue = iAmAlice ? outcome?.alice_hand_value : outcome?.bob_hand_value;
+  const myHandValue = iAmAlice
+    ? outcome?.alice_hand_value
+    : outcome?.bob_hand_value;
   let banner = isPlayerTurn ? 'Your turn' : "Opponent's turn";
   if (myWinOutcome === 'win') {
     banner = `You win ${myHandValue}`;
@@ -61,27 +59,45 @@ const Calpoker: React.FC<CalpokerProps> = ({
   } else if (myWinOutcome === 'tie') {
     banner = `Game tied ${myHandValue}`;
   }
-  const moveDescription = ['Commit to random number', 'Choose 4 cards to discard', 'Finish game'][moveNumber];
+  const moveDescription = [
+    'Commit to random number',
+    'Choose 4 cards to discard',
+    'Finish game',
+  ][moveNumber];
 
   if (outcome) {
     return (
-      <div id="total">
-        <div id="overlay"> </div>
+      <div id='total'>
+        <div id='overlay'> </div>
         <Box p={4}>
-          <Typography variant="h4" align="center">
+          <Typography variant='h4' align='center'>
             {`Cal Poker - move ${moveNumber}`}
           </Typography>
           <br />
-          <Typography variant="h6" align="center" color={colors[color]}>
+          <Typography variant='h6' align='center' color={colors[color]}>
             {banner}
           </Typography>
           <br />
-          <Box display="flex" flexDirection={{ xs: 'column', md: 'row' }} alignItems="stretch" gap={2} mb={4}>
-            <Box flex={1} display="flex" flexDirection="column">
-              <GameEndPlayer iStarted={iStarted} playerNumber={iStarted ? 1 : 2} outcome={outcome} />
+          <Box
+            display='flex'
+            flexDirection={{ xs: 'column', md: 'row' }}
+            alignItems='stretch'
+            gap={2}
+            mb={4}
+          >
+            <Box flex={1} display='flex' flexDirection='column'>
+              <GameEndPlayer
+                iStarted={iStarted}
+                playerNumber={iStarted ? 1 : 2}
+                outcome={outcome}
+              />
             </Box>
-            <Box flex={1} display="flex" flexDirection="column">
-              <GameEndPlayer iStarted={iStarted} playerNumber={iStarted ? 2 : 1} outcome={outcome} />
+            <Box flex={1} display='flex' flexDirection='column'>
+              <GameEndPlayer
+                iStarted={iStarted}
+                playerNumber={iStarted ? 2 : 1}
+                outcome={outcome}
+              />
             </Box>
           </Box>
         </Box>
@@ -91,24 +107,30 @@ const Calpoker: React.FC<CalpokerProps> = ({
 
   return (
     <Box p={4}>
-      <Typography variant="h4" align="center">
+      <Typography variant='h4' align='center'>
         {`Cal Poker - move ${moveNumber}`}
       </Typography>
       <Button
         onClick={stopPlaying}
         disabled={moveNumber !== 0}
-        aria-label="stop-playing"
+        aria-label='stop-playing'
         aria-disabled={moveNumber !== 0}
       >
         Stop
       </Button>
       <br />
-      <Typography variant="h6" align="center" color={colors[color]}>
+      <Typography variant='h6' align='center' color={colors[color]}>
         {banner}
       </Typography>
       <br />
-      <Box display="flex" flexDirection={{ xs: 'column', md: 'row' }} alignItems="stretch" gap={2} mb={4}>
-        <Box flex={1} display="flex" flexDirection="column">
+      <Box
+        display='flex'
+        flexDirection={{ xs: 'column', md: 'row' }}
+        alignItems='stretch'
+        gap={2}
+        mb={4}
+      >
+        <Box flex={1} display='flex' flexDirection='column'>
           <PlayerSection
             playerNumber={playerNumber}
             playerHand={playerHand}
@@ -119,8 +141,11 @@ const Calpoker: React.FC<CalpokerProps> = ({
             setCardSelections={setCardSelections}
           />
         </Box>
-        <Box flex={1} display="flex" flexDirection="column">
-          <OpponentSection playerNumber={playerNumber == 1 ? 2 : 1} opponentHand={opponentHand} />
+        <Box flex={1} display='flex' flexDirection='column'>
+          <OpponentSection
+            playerNumber={playerNumber == 1 ? 2 : 1}
+            opponentHand={opponentHand}
+          />
         </Box>
       </Box>
       <br />

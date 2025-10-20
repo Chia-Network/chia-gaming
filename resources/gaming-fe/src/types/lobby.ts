@@ -79,7 +79,11 @@ export interface GameSession {
   parameters: string[];
 }
 
-export const gameTypeSchema = z.enum(['california_poker', 'krunk', 'exotic_poker']);
+export const gameTypeSchema = z.enum([
+  'california_poker',
+  'krunk',
+  'exotic_poker',
+]);
 
 export const playerSchema = z.object({
   id: z.string(),

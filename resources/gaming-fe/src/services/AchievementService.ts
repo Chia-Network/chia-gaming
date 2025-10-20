@@ -11,7 +11,12 @@ interface Achievement {
   gameType?: GameType;
   points: number;
   requirements: {
-    type: 'games_played' | 'games_won' | 'win_streak' | 'total_winnings' | 'special';
+    type:
+      | 'games_played'
+      | 'games_won'
+      | 'win_streak'
+      | 'total_winnings'
+      | 'special';
     value: number;
   };
   icon: string;
@@ -64,7 +69,11 @@ export class AchievementService {
   public getAchievement(achievementId: string): Achievement {
     const achievement = this.achievements.get(achievementId);
     if (!achievement) {
-      throw new AppError(ErrorCodes.SYSTEM.NOT_FOUND, 'Achievement not found', 404);
+      throw new AppError(
+        ErrorCodes.SYSTEM.NOT_FOUND,
+        'Achievement not found',
+        404,
+      );
     }
     return achievement;
   }
@@ -74,11 +83,15 @@ export class AchievementService {
   }
 
   public getAchievementsByType(type: Achievement['type']): Achievement[] {
-    return Array.from(this.achievements.values()).filter((achievement) => achievement.type === type);
+    return Array.from(this.achievements.values()).filter(
+      (achievement) => achievement.type === type,
+    );
   }
 
   public getAchievementsByGameType(gameType: GameType): Achievement[] {
-    return Array.from(this.achievements.values()).filter((achievement) => achievement.gameType === gameType);
+    return Array.from(this.achievements.values()).filter(
+      (achievement) => achievement.gameType === gameType,
+    );
   }
 
   public getPlayerAchievements(playerId: string): PlayerAchievement[] {
@@ -86,17 +99,30 @@ export class AchievementService {
   }
 
   public getPlayerCompletedAchievements(playerId: string): PlayerAchievement[] {
-    return this.getPlayerAchievements(playerId).filter((achievement) => achievement.completed);
+    return this.getPlayerAchievements(playerId).filter(
+      (achievement) => achievement.completed,
+    );
   }
 
-  public getPlayerAchievementProgress(playerId: string, achievementId: string): number {
-    const achievement = this.getPlayerAchievements(playerId).find((a) => a.achievementId === achievementId);
+  public getPlayerAchievementProgress(
+    playerId: string,
+    achievementId: string,
+  ): number {
+    const achievement = this.getPlayerAchievements(playerId).find(
+      (a) => a.achievementId === achievementId,
+    );
     return achievement ? achievement.progress : 0;
   }
 
-  public updateAchievementProgress(playerId: string, achievementId: string, progress: number): void {
+  public updateAchievementProgress(
+    playerId: string,
+    achievementId: string,
+    progress: number,
+  ): void {
     const achievement = this.getAchievement(achievementId);
-    let playerAchievement = this.getPlayerAchievements(playerId).find((a) => a.achievementId === achievementId);
+    let playerAchievement = this.getPlayerAchievements(playerId).find(
+      (a) => a.achievementId === achievementId,
+    );
 
     if (!playerAchievement) {
       playerAchievement = {
@@ -158,7 +184,10 @@ export class AchievementService {
       }
 
       if (shouldUpdate) {
-        const currentProgress = this.getPlayerAchievementProgress(playerId, achievement.id);
+        const currentProgress = this.getPlayerAchievementProgress(
+          playerId,
+          achievement.id,
+        );
         if (progress > currentProgress) {
           this.updateAchievementProgress(playerId, achievement.id, progress);
           if (progress >= achievement.requirements.value) {
@@ -172,10 +201,13 @@ export class AchievementService {
   }
 
   public getTotalPoints(playerId: string): number {
-    return this.getPlayerCompletedAchievements(playerId).reduce((total, achievement) => {
-      const achievementData = this.getAchievement(achievement.achievementId);
-      return total + achievementData.points;
-    }, 0);
+    return this.getPlayerCompletedAchievements(playerId).reduce(
+      (total, achievement) => {
+        const achievementData = this.getAchievement(achievement.achievementId);
+        return total + achievementData.points;
+      },
+      0,
+    );
   }
 
   public getPlayerRank(playerId: string): number {

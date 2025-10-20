@@ -79,7 +79,9 @@ class ChiaGame {
   idle(callbacks: IdleCallbacks): IdleResult {
     let result = idle(this.cradle, callbacks);
     console.log('idle', result);
-    this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
+    this.waiting_messages = this.waiting_messages.concat(
+      result.outbound_messages,
+    );
     return result;
   }
 }
@@ -129,7 +131,10 @@ it('loads', async () => {
   let identity2 = chia_identity('test2');
   console.log(identity1, identity2);
 
-  let calpoker_hex = fs.readFileSync(rooted('clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex'), 'utf8');
+  let calpoker_hex = fs.readFileSync(
+    rooted('clsp/games/calpoker-v0/calpoker_include_calpoker_factory.hex'),
+    'utf8',
+  );
   let env = {
     game_types: {
       calpoker: {
