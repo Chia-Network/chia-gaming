@@ -1,4 +1,4 @@
-import { WalletInfo } from "../WalletInfo";
+import { WalletInfo } from '../WalletInfo';
 
 export interface GetWalletsRequest {
   includeData: boolean;

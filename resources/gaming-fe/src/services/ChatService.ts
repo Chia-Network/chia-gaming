@@ -1,6 +1,7 @@
-import { v4 as uuidv4 } from "uuid";
-import { AppError, ErrorCodes } from "../types/errors";
-import { Player } from "../types/lobby";
+import { v4 as uuidv4 } from 'uuid';
+
+import { AppError, ErrorCodes } from '../types/errors';
+import { Player } from '../types/lobby';
 
 interface ChatMessage {
   id: string;
@@ -9,14 +10,14 @@ interface ChatMessage {
   playerName: string;
   content: string;
   timestamp: Date;
-  type: "system" | "player" | "whisper";
+  type: 'system' | 'player' | 'whisper';
   targetPlayerId?: string;
 }
 
 interface ChatRoom {
   id: string;
   name: string;
-  type: "lobby" | "game";
+  type: 'lobby' | 'game';
   players: Set<string>;
   messages: ChatMessage[];
   maxMessages: number;
@@ -46,12 +47,12 @@ export class ChatService {
   public createChatRoom(
     id: string,
     name: string,
-    type: "lobby" | "game",
+    type: 'lobby' | 'game',
   ): ChatRoom {
     if (this.chatRooms.has(id)) {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_EXISTS,
-        "Chat room already exists",
+        'Chat room already exists',
         400,
       );
     }
@@ -74,7 +75,7 @@ export class ChatService {
     if (!room) {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
-        "Chat room not found",
+        'Chat room not found',
         404,
       );
     }
@@ -96,7 +97,7 @@ export class ChatService {
     if (!room) {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
-        "Chat room not found",
+        'Chat room not found',
         404,
       );
     }
@@ -115,14 +116,14 @@ export class ChatService {
     roomId: string,
     player: Player,
     content: string,
-    type: "player" | "whisper" = "player",
+    type: 'player' | 'whisper' = 'player',
     targetPlayerId?: string,
   ): Promise<ChatMessage> {
     const room = this.chatRooms.get(roomId);
     if (!room) {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
-        "Chat room not found",
+        'Chat room not found',
         404,
       );
     }
@@ -130,7 +131,7 @@ export class ChatService {
     if (!room.players.has(player.id)) {
       throw new AppError(
         ErrorCodes.LOBBY.PLAYER_NOT_IN_ROOM,
-        "Player is not in this chat room",
+        'Player is not in this chat room',
         403,
       );
     }
@@ -140,7 +141,7 @@ export class ChatService {
     if (now - lastMessage < this.MESSAGE_RATE_LIMIT) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Message rate limit exceeded",
+        'Message rate limit exceeded',
         429,
       );
     }
@@ -148,7 +149,7 @@ export class ChatService {
     if (!content || content.trim().length === 0) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Message cannot be empty",
+        'Message cannot be empty',
         400,
       );
     }
@@ -156,16 +157,16 @@ export class ChatService {
     if (content.length > 500) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Message too long (max 500 characters)",
+        'Message too long (max 500 characters)',
         400,
       );
     }
 
-    if (type === "whisper") {
+    if (type === 'whisper') {
       if (!targetPlayerId) {
         throw new AppError(
           ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-          "Target player ID required for whisper",
+          'Target player ID required for whisper',
           400,
         );
       }
@@ -173,7 +174,7 @@ export class ChatService {
       if (!room.players.has(targetPlayerId)) {
         throw new AppError(
           ErrorCodes.LOBBY.PLAYER_NOT_FOUND,
-          "Target player not in room",
+          'Target player not in room',
           404,
         );
       }
@@ -207,11 +208,11 @@ export class ChatService {
     const message: ChatMessage = {
       id: uuidv4(),
       roomId,
-      playerId: "system",
-      playerName: "System",
+      playerId: 'system',
+      playerName: 'System',
       content,
       timestamp: new Date(),
-      type: "system",
+      type: 'system',
     };
 
     room.messages.push(message);
@@ -220,12 +221,12 @@ export class ChatService {
     }
   }
 
-  public getRoomMessages(roomId: string, limit: number = 50): ChatMessage[] {
+  public getRoomMessages(roomId: string, limit = 50): ChatMessage[] {
     const room = this.chatRooms.get(roomId);
     if (!room) {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
-        "Chat room not found",
+        'Chat room not found',
         404,
       );
     }
@@ -243,7 +244,7 @@ export class ChatService {
     if (!room) {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
-        "Chat room not found",
+        'Chat room not found',
         404,
       );
     }

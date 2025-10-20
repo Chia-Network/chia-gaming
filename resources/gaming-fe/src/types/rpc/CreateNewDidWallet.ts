@@ -1,4 +1,4 @@
-import { WalletType } from "../WalletType";
+import { WalletType } from '../WalletType';
 
 export interface CreateNewDidWalletRequest {
   amount: number;

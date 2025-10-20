@@ -1,8 +1,8 @@
-import { Subject } from "rxjs";
-import { useState, useEffect, useCallback } from "react";
-import Client from "@walletconnect/sign-client";
-import { SessionTypes } from "@walletconnect/types";
-import { PROJECT_ID, RELAY_URL, CHAIN_ID } from "../constants/env";
+import Client from '@walletconnect/sign-client';
+import { SessionTypes } from '@walletconnect/types';
+import { Subject } from 'rxjs';
+
+import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
@@ -64,15 +64,15 @@ class WalletState {
 
     this.isInitialized = true;
 
-    this.observable.next({ stateName: "initializing", initializing: true });
+    this.observable.next({ stateName: 'initializing', initializing: true });
 
     const signClient = await Client.init({
-      logger: "error",
+      logger: 'error',
       projectId: PROJECT_ID,
       relayUrl: RELAY_URL,
       metadata: {
-        name: "Chia Gaming",
-        description: "Chia Gaming Platform",
+        name: 'Chia Gaming',
+        description: 'Chia Gaming Platform',
         url: window.location.origin,
         icons: [`${window.location.origin}/logo.png`],
       },
@@ -83,12 +83,12 @@ class WalletState {
 
     if (sessions.length > 0) {
       const session = sessions[0];
-      const address = session.namespaces.chia.accounts[0].split(":")[2];
+      const address = session.namespaces.chia.accounts[0].split(':')[2];
       this.isConnected = true;
       this.address = address;
       this.session = session;
       this.observable.next({
-        stateName: "connected",
+        stateName: 'connected',
         initialized: true,
         haveClient: true,
         haveSession: true,
@@ -98,7 +98,7 @@ class WalletState {
     }
 
     this.observable.next({
-      stateName: "initialized",
+      stateName: 'initialized',
       initialized: true,
       haveClient: true,
     });
@@ -108,7 +108,7 @@ class WalletState {
     if (!this.client || !this.session) return;
 
     this.observable.next({
-      stateName: "initialized",
+      stateName: 'initialized',
       connected: false,
       sessions: 0,
       address: undefined,
@@ -119,23 +119,23 @@ class WalletState {
         topic: this.session.topic,
         reason: {
           code: 6000,
-          message: "User disconnected",
+          message: 'User disconnected',
         },
       });
     } catch (error) {
-      this.error = "Failed to disconnect wallet";
+      this.error = 'Failed to disconnect wallet';
     }
   }
 
   async startConnect(): Promise<StartConnectResult> {
     this.observable.next({
-      stateName: "connecting",
+      stateName: 'connecting',
       connecting: true,
     });
     const { uri, approval } = await this.client.connect({
       optionalNamespaces: {
         chia: {
-          methods: ["chia_getCurrentAddress", "chia_sendTransaction"],
+          methods: ['chia_getCurrentAddress', 'chia_sendTransaction'],
           chains: [CHAIN_ID],
           events: [],
         },
@@ -143,7 +143,7 @@ class WalletState {
     });
 
     this.observable.next({
-      stateName: "waitingApproval",
+      stateName: 'waitingApproval',
       waitingApproval: true,
       connecting: false,
     });
@@ -153,10 +153,10 @@ class WalletState {
 
   async connect(approval: () => Promise<SessionTypes.Struct>) {
     const session = await approval();
-    const address = session.namespaces.chia.accounts[0].split(":")[2];
+    const address = session.namespaces.chia.accounts[0].split(':')[2];
 
     this.observable.next({
-      stateName: "connected",
+      stateName: 'connected',
       waitingApproval: false,
       connected: true,
       sessions: 1,

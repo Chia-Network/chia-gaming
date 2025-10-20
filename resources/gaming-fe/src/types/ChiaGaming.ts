@@ -1,56 +1,57 @@
-import { Subject, Subscription } from "rxjs";
-import { proper_list } from "../util";
+import { Subject, Subscription } from 'rxjs';
+
+import { proper_list } from '../util';
 
 // TODO: rename "amount"
 // TODO: visit 53-bit limit
-export type Amount = {
+export interface Amount {
   amt: number;
-};
+}
 
-export type Spend = {
+export interface Spend {
   puzzle: string;
   solution: string;
   signature: string;
-};
+}
 
-export type CoinSpend = {
+export interface CoinSpend {
   coin: string;
   bundle: Spend;
-};
+}
 
-export type SpendBundle = {
-  spends: Array<CoinSpend>;
-};
+export interface SpendBundle {
+  spends: CoinSpend[];
+}
 
-export type IChiaIdentity = {
+export interface IChiaIdentity {
   private_key: string;
   synthetic_private_key: string;
   public_key: string;
   synthetic_public_key: string;
   puzzle: string;
   puzzle_hash: string;
-};
+}
 
-export type GameConnectionState = {
+export interface GameConnectionState {
   stateIdentifier: string;
   stateDetail: string[];
-};
+}
 
 export type OpponentMove = [string, string];
 export type GameFinished = [string, number];
 
-export type IdleResult = {
+export interface IdleResult {
   continue_on: boolean;
   finished: boolean;
-  outbound_transactions: Array<SpendBundle>;
-  outbound_messages: Array<string>;
+  outbound_transactions: SpendBundle[];
+  outbound_messages: string[];
   opponent_move: OpponentMove | undefined;
   game_finished: GameFinished | undefined;
   handshake_done: boolean;
   receive_error: string | undefined;
   action_queue: Array<string>;
   incoming_messages: Array<string>;
-};
+}
 
 // --------------------------------------------------------------
 
@@ -100,7 +101,7 @@ export type WasmBlobParams = {
 
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
-export type IdleCallbacks = {
+export interface IdleCallbacks {
   self_move?: ((game_id: string, move_hex: string) => void) | undefined;
   opponent_moved?:
     | ((game_id: string, readable_move_hex: string) => void)
@@ -114,7 +115,7 @@ export type IdleCallbacks = {
   game_finished?: ((game_id: string, amount: number) => void) | undefined;
   shutdown_complete?: ((coin: string) => void) | undefined;
   going_on_chain?: (() => void) | undefined;
-};
+}
 
 export type JsCoin = {
   amount: number | string;
@@ -267,14 +268,14 @@ export class ChiaGame {
     return this.waiting_messages.length === 0;
   }
 
-  outbound_messages(): Array<string> {
-    let w = this.waiting_messages;
+  outbound_messages(): string[] {
+    const w = this.waiting_messages;
     this.waiting_messages = [];
     return w;
   }
 
   idle(callbacks: IdleCallbacks): IdleResult {
-    let result = this.wasmConnection.idle(this.cradleId, callbacks);
+    const result = this.wasmConnection.idle(this.cradleId, callbacks);
     if (result) {
       this.waiting_messages = this.waiting_messages.concat(
         result.outbound_messages,
@@ -321,17 +322,17 @@ export class ExternalBlockchainInterface {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    this.token = "";
+    this.token = '';
   }
 
   getOrRequestToken(uniqueId: string): Promise<string> {
     if (this.token) {
-      return new Promise((resolve, reject) => resolve(this.token));
+      return new Promise((resolve, _reject) => resolve(this.token));
     }
 
     return fetch(`${this.baseUrl}/register?name=${uniqueId}`, {
-      body: "",
-      method: "POST",
+      body: '',
+      method: 'POST',
     })
       .then((f) => f.json())
       .then((token) => {
@@ -346,36 +347,36 @@ export class ExternalBlockchainInterface {
 
   getPeak(): Promise<number> {
     return fetch(`${this.baseUrl}/get_peak`, {
-      body: "",
-      method: "POST",
+      body: '',
+      method: 'POST',
     }).then((f) => f.json());
   }
 
   getBlockData(block: number): Promise<WatchReport | null> {
     return fetch(`${this.baseUrl}/get_block_data?block=${block}`, {
-      body: "",
-      method: "POST",
+      body: '',
+      method: 'POST',
     }).then((f) => f.json());
   }
 
   waitBlock(): Promise<number> {
     return fetch(`${this.baseUrl}/wait_block`, {
-      body: "",
-      method: "POST",
+      body: '',
+      method: 'POST',
     }).then((f) => f.json());
   }
 
   getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     return fetch(`${this.baseUrl}/get_puzzle_and_solution?coin=${coin}`, {
-      body: "",
-      method: "POST",
+      body: '',
+      method: 'POST',
     }).then((f) => f.json());
   }
 
   spend(spend_data_clvm_hex: string): Promise<(number | null)[]> {
     return fetch(`${this.baseUrl}/spend?blob=${spend_data_clvm_hex}`, {
-      body: "",
-      method: "POST",
+      body: '',
+      method: 'POST',
     }).then((f) => f.json());
   }
 
@@ -383,16 +384,16 @@ export class ExternalBlockchainInterface {
     return fetch(
       `${this.baseUrl}/create_spendable?who=${this.token}&target=${target_ph}&amount=${amt}`,
       {
-        body: "",
-        method: "POST",
+        body: '',
+        method: 'POST',
       },
     ).then((f) => f.json());
   }
 }
 
 function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
-  let result0: T[] = [];
-  let result1: T[] = [];
+  const result0: T[] = [];
+  const result1: T[] = [];
   card.forEach((c, i) => {
     if (mask & (1 << i)) {
       result1.push(c);
@@ -404,8 +405,8 @@ function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
 }
 
 function card_matches(cards: number[][], card: number[]): boolean {
-  for (let i = 0; i < cards.length; i++) {
-    if (cards[i].toString() === card.toString()) {
+  for (const existingCard of cards) {
+    if (existingCard.toString() === card.toString()) {
       return true;
     }
   }
@@ -417,26 +418,26 @@ export function card_color(
   outcome: CalpokerOutcome,
   iAmAlice: boolean,
   card: number[],
-): "my-used" | "my-final" | "their-used" | "their-final" {
-  let my_used_cards = iAmAlice
+): 'my-used' | 'my-final' | 'their-used' | 'their-final' {
+  const my_used_cards = iAmAlice
     ? outcome.alice_used_cards
     : outcome.bob_used_cards;
   if (card_matches(my_used_cards, card)) {
-    return "my-used";
+    return 'my-used';
   }
-  let their_used_cards = iAmAlice
+  const their_used_cards = iAmAlice
     ? outcome.bob_used_cards
     : outcome.alice_used_cards;
   if (card_matches(their_used_cards, card)) {
-    return "their-used";
+    return 'their-used';
   }
-  let my_final_cards = iAmAlice
+  const my_final_cards = iAmAlice
     ? outcome.alice_final_hand
     : outcome.bob_final_hand;
   if (card_matches(my_final_cards, card)) {
-    return "my-final";
+    return 'my-final';
   }
-  return "their-final";
+  return 'their-final';
 }
 
 function compare_card(a: number[], b: number[]): number {
@@ -467,7 +468,7 @@ export class CalpokerOutcome {
   bob_hand_value: number[];
 
   win_direction: number;
-  my_win_outcome: "win" | "lose" | "tie";
+  my_win_outcome: 'win' | 'lose' | 'tie';
 
   alice_cards: number[][];
   bob_cards: number[][];
@@ -486,12 +487,12 @@ export class CalpokerOutcome {
     readable: any,
   ) {
     const result_list = proper_list(readable);
-    console.warn("result_list", result_list);
+    console.warn('result_list', result_list);
     this.alice_cards = alice_cards;
     this.bob_cards = bob_cards;
 
-    console.log("alice_cards", alice_cards);
-    console.log("bob_cards", bob_cards);
+    console.log('alice_cards', alice_cards);
+    console.log('bob_cards', bob_cards);
 
     this.alice_selects = result_list[1];
     this.bob_selects = result_list[2];
@@ -509,14 +510,13 @@ export class CalpokerOutcome {
 
     this.win_direction = raw_win_direction;
     const alice_win = this.win_direction < 0;
-    const bob_win = this.win_direction > 0;
 
     if (this.win_direction === 0) {
-      this.my_win_outcome = "tie";
+      this.my_win_outcome = 'tie';
     } else if (alice_win) {
-      this.my_win_outcome = iStarted ? "win" : "lose";
+      this.my_win_outcome = iStarted ? 'win' : 'lose';
     } else {
-      this.my_win_outcome = iStarted ? "lose" : "win";
+      this.my_win_outcome = iStarted ? 'lose' : 'win';
     }
 
     const [alice_for_alice, alice_for_bob] = select_cards_using_bits(
@@ -528,27 +528,27 @@ export class CalpokerOutcome {
       this.bob_discards,
     );
 
-    console.log("alice_for_alice", alice_for_alice);
-    console.log("alice_for_bob", alice_for_bob);
-    console.log("bob_for_alice", bob_for_alice);
-    console.log("bob_for_bob", bob_for_bob);
+    console.log('alice_for_alice', alice_for_alice);
+    console.log('alice_for_bob', alice_for_bob);
+    console.log('bob_for_alice', bob_for_alice);
+    console.log('bob_for_bob', bob_for_bob);
 
     this.alice_final_hand = [...bob_for_alice];
     alice_for_alice.forEach((c) => this.alice_final_hand.push(c));
     this.alice_final_hand.sort(compare_card);
-    console.log("final alice hand", this.alice_final_hand);
+    console.log('final alice hand', this.alice_final_hand);
 
     this.bob_final_hand = [...alice_for_bob];
     bob_for_bob.forEach((c) => this.bob_final_hand.push(c));
     this.bob_final_hand.sort(compare_card);
-    console.log("final bob hand", this.bob_final_hand);
+    console.log('final bob hand', this.bob_final_hand);
 
     this.alice_used_cards = select_cards_using_bits(
       this.alice_final_hand,
       this.alice_selects,
     )[1];
     console.log(
-      "alice selects",
+      'alice selects',
       this.alice_selects.toString(16),
       this.alice_used_cards,
     );
@@ -557,7 +557,7 @@ export class CalpokerOutcome {
       this.bob_selects,
     )[1];
     console.log(
-      "bob selects",
+      'bob selects',
       this.bob_selects.toString(16),
       this.bob_used_cards,
     );
@@ -597,7 +597,7 @@ export class ToggleEmitter<T> {
   select(s: SelectionMessage) {
     this.selection = s.selection;
     this.upstreamSelect(s);
-    this.upstreamSelect = (s: SelectionMessage) => {};
+    this.upstreamSelect = (_s: SelectionMessage) => void 0;
   }
 
   getObservable() {
@@ -614,7 +614,7 @@ export class ToggleEmitter<T> {
 
   constructor() {
     this.upstream = [];
-    this.upstreamSelect = (s) => {};
+    this.upstreamSelect = (_s) => void 0;
     this.selection = -1;
     this.subscriptions = [];
     this.downstream = new Subject<T>();

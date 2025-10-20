@@ -1,4 +1,4 @@
-import { TradeRecord } from "../TradeRecord";
+import { TradeRecord } from '../TradeRecord';
 
 export interface TakeOfferRequest {
   offer: string;

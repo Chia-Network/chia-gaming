@@ -1,4 +1,4 @@
-import { NftInfo } from "../NftInfo";
+import { NftInfo } from '../NftInfo';
 
 export interface GetNftInfoRequest {
   coinId: string;

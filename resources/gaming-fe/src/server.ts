@@ -1,11 +1,12 @@
-import express from "express";
-import fetch from "node-fetch";
-import minimist from "minimist";
-import { createServer } from "http";
-import { readFile } from "node:fs/promises";
-import cors from "cors";
-import helmet from "helmet";
-import { config } from "dotenv";
+import { createServer } from 'http';
+import { readFile } from 'node:fs/promises';
+
+import cors from 'cors';
+import { config } from 'dotenv';
+import express from 'express';
+import helmet from 'helmet';
+import minimist from 'minimist';
+import fetch from 'node-fetch';
 
 config();
 
@@ -18,14 +19,14 @@ function parseArgs() {
 
   if (!args.tracker || !args.self) {
     console.warn(
-      "usage: server --tracker [tracker-url] --self [own-url] --extras [extra-urls colon separated]",
+      'usage: server --tracker [tracker-url] --self [own-url] --extras [extra-urls colon separated]',
     );
     process.exit(1);
   }
 
   const extras: string[] = [];
   if (args.extras) {
-    const newExtras = args.extras.split(":");
+    const newExtras = args.extras.split(':');
     newExtras.forEach((extra: string) => {
       extras.push(extra);
     });
@@ -42,7 +43,7 @@ app.use(
       directives: {
         defaultSrc: [
           "'self'",
-          "https://explorer-api.walletconnect.com",
+          'https://explorer-api.walletconnect.com',
           ...extras,
         ],
         scriptSrc: [
@@ -53,20 +54,19 @@ app.use(
         ],
         connectSrc: [
           "'self'",
-          "https://explorer-api.walletconnect.com",
-          "wss://relay.walletconnect.com",
-          "https://verify.walletconnect.org",
-          "https://verify.walletconnect.org",
-          "https://api.coinset.org",
-          "wss://api.coinset.org",
-          "http://localhost:5800",
-          "wss://relay.walletconnect.org",
+          'https://explorer-api.walletconnect.com',
+          'wss://relay.walletconnect.com',
+          'https://verify.walletconnect.org',
+          'https://api.coinset.org',
+          'wss://api.coinset.org',
+          'http://localhost:5800',
+          'wss://relay.walletconnect.org',
           args.tracker,
           ...extras,
         ],
         frameSrc: [
           "'self'",
-          "https://verify.walletconnect.org",
+          'https://verify.walletconnect.org',
           args.tracker,
           ...extras,
         ],
@@ -78,72 +78,72 @@ app.use(
 app.use(
   cors({
     origin: process.env.GAME_PUBLIC_URL || args.self,
-    methods: ["GET", "POST", "HEAD", "OPTIONS"],
+    methods: ['GET', 'POST', 'HEAD', 'OPTIONS'],
   }),
 );
 app.use(express.json());
 
 async function serveFile(file: string, contentType: string, res: any) {
   const content = await readFile(file);
-  res.set("Content-Type", contentType);
+  res.set('Content-Type', contentType);
   res.send(content);
 }
 async function serveDirectory(dir: string, req: any, res: any) {
-  let targetFile = dir + req.path;
-  serveFile(targetFile, "text/plain", res);
+  const targetFile = dir + req.path;
+  serveFile(targetFile, 'text/plain', res);
 }
-app.get("/", async (req: any, res: any) => {
-  serveFile("public/index.html", "text/html", res);
+app.get('/', async (_req: any, res: any) => {
+  serveFile('public/index.html', 'text/html', res);
 });
-app.get("/index.js", async (req: any, res: any) => {
-  serveFile("dist/index-rollup.js", "application/javascript", res);
+app.get('/index.js', async (_req: any, res: any) => {
+  serveFile('dist/index-rollup.js', 'application/javascript', res);
 });
-app.get("/chia_gaming_wasm_bg.wasm", async (req: any, res: any) => {
-  serveFile("dist/chia_gaming_wasm_bg.wasm", "application/wasm", res);
+app.get('/chia_gaming_wasm_bg.wasm', async (_req: any, res: any) => {
+  serveFile('dist/chia_gaming_wasm_bg.wasm', 'application/wasm', res);
 });
-app.get("/chia_gaming_wasm.js", async (req: any, res: any) => {
-  serveFile("dist/chia_gaming_wasm.js", "application/javascript", res);
+app.get('/chia_gaming_wasm.js', async (_req: any, res: any) => {
+  serveFile('dist/chia_gaming_wasm.js', 'application/javascript', res);
 });
-app.get("/urls", async (req: any, res: any) => {
-  res.set("Content-Type", "application/json");
+app.get('/urls', async (_req: any, res: any) => {
+  res.set('Content-Type', 'application/json');
   res.send(
     JSON.stringify({
       tracker: `${args.tracker}?lobby=true`,
     }),
   );
 });
-app.get("/clsp*", async (req: any, res: any) => {
-  serveDirectory("./", req, res);
+app.get('/clsp*', async (req: any, res: any) => {
+  serveDirectory('./', req, res);
 });
-app.get("/resources*", async (req: any, res: any) => {
-  serveDirectory("./", req, res);
+app.get('/resources*', async (req: any, res: any) => {
+  serveDirectory('./', req, res);
 });
 
-process.on("SIGTERM", () => {
+process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-process.on("SIGINT", () => {
+process.on('SIGINT', () => {
   process.exit(0);
 });
 
 function refreshLobby() {
   fetch(`${args.tracker}/lobby/game`, {
-    method: "POST",
+    method: 'POST',
     headers: {
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      game: "calpoker",
+      game: 'calpoker',
       target: `${args.self}?game=calpoker&lobbyUrl=${args.tracker}`,
     }),
   })
     .then((res) => res.json())
     .then((res) => {
-      console.log("tracker:", res);
+      console.log('tracker:', res);
     })
     .catch((e) => {
-      console.error("tracker:", e);
+      console.error('tracker:', e);
     });
 }
 

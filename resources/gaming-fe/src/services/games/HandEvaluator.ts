@@ -1,19 +1,19 @@
 interface Card {
-  suit: "hearts" | "diamonds" | "clubs" | "spades";
+  suit: 'hearts' | 'diamonds' | 'clubs' | 'spades';
   rank:
-    | "2"
-    | "3"
-    | "4"
-    | "5"
-    | "6"
-    | "7"
-    | "8"
-    | "9"
-    | "10"
-    | "J"
-    | "Q"
-    | "K"
-    | "A";
+    | '2'
+    | '3'
+    | '4'
+    | '5'
+    | '6'
+    | '7'
+    | '8'
+    | '9'
+    | '10'
+    | 'J'
+    | 'Q'
+    | 'K'
+    | 'A';
   isWild?: boolean;
 }
 
@@ -25,16 +25,16 @@ interface HandRank {
 }
 
 export class HandEvaluator {
-  private static readonly RANK_VALUES: { [key: string]: number } = {
-    "2": 2,
-    "3": 3,
-    "4": 4,
-    "5": 5,
-    "6": 6,
-    "7": 7,
-    "8": 8,
-    "9": 9,
-    "10": 10,
+  private static readonly RANK_VALUES: Record<string, number> = {
+    '2': 2,
+    '3': 3,
+    '4': 4,
+    '5': 5,
+    '6': 6,
+    '7': 7,
+    '8': 8,
+    '9': 9,
+    '10': 10,
     J: 11,
     Q: 12,
     K: 13,
@@ -97,10 +97,10 @@ export class HandEvaluator {
     wildCards: Card[],
   ): HandRank | null {
     const straightFlush = this.checkStraightFlush(cards, wildCards);
-    if (straightFlush && straightFlush.highCard?.rank === "A") {
+    if (straightFlush && straightFlush.highCard?.rank === 'A') {
       return {
         rank: this.HAND_RANKS.ROYAL_FLUSH,
-        name: "Royal Flush",
+        name: 'Royal Flush',
         highCard: straightFlush.highCard,
       };
     }
@@ -111,7 +111,7 @@ export class HandEvaluator {
     cards: Card[],
     wildCards: Card[],
   ): HandRank | null {
-    const suits = ["hearts", "diamonds", "clubs", "spades"] as const;
+    const suits = ['hearts', 'diamonds', 'clubs', 'spades'] as const;
 
     for (const suit of suits) {
       const suitedCards = cards.filter((card) => card.suit === suit);
@@ -120,7 +120,7 @@ export class HandEvaluator {
       if (straight) {
         return {
           rank: this.HAND_RANKS.STRAIGHT_FLUSH,
-          name: "Straight Flush",
+          name: 'Straight Flush',
           highCard: straight[straight.length - 1],
         };
       }
@@ -136,14 +136,14 @@ export class HandEvaluator {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 4) {
         const remainingWilds = wildCount - (4 - group.length);
         const kickers = this.getKickers(cards, [group[0]], remainingWilds);
 
         return {
           rank: this.HAND_RANKS.FOUR_OF_A_KIND,
-          name: "Four of a Kind",
+          name: 'Four of a Kind',
           highCard: group[0],
           kickers,
         };
@@ -162,7 +162,7 @@ export class HandEvaluator {
     let threeOfAKind: Card[] | null = null;
     let pair: Card[] | null = null;
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 3) {
         threeOfAKind = group;
         break;
@@ -172,7 +172,7 @@ export class HandEvaluator {
     if (threeOfAKind) {
       const remainingWilds = wildCount - (3 - threeOfAKind.length);
 
-      for (const [rank, group] of Object.entries(rankGroups)) {
+      for (const [_rank, group] of Object.entries(rankGroups)) {
         if (group !== threeOfAKind && group.length + remainingWilds >= 2) {
           pair = group;
           break;
@@ -182,7 +182,7 @@ export class HandEvaluator {
       if (pair) {
         return {
           rank: this.HAND_RANKS.FULL_HOUSE,
-          name: "Full House",
+          name: 'Full House',
           highCard: threeOfAKind[0],
           kickers: [pair[0]],
         };
@@ -193,7 +193,7 @@ export class HandEvaluator {
   }
 
   private static checkFlush(cards: Card[], wildCards: Card[]): HandRank | null {
-    const suits = ["hearts", "diamonds", "clubs", "spades"] as const;
+    const suits = ['hearts', 'diamonds', 'clubs', 'spades'] as const;
 
     for (const suit of suits) {
       const suitedCards = cards.filter((card) => card.suit === suit);
@@ -201,7 +201,7 @@ export class HandEvaluator {
         const sortedCards = this.sortByRank(suitedCards);
         return {
           rank: this.HAND_RANKS.FLUSH,
-          name: "Flush",
+          name: 'Flush',
           highCard: sortedCards[0],
           kickers: sortedCards.slice(1, 5),
         };
@@ -219,7 +219,7 @@ export class HandEvaluator {
     if (straight) {
       return {
         rank: this.HAND_RANKS.STRAIGHT,
-        name: "Straight",
+        name: 'Straight',
         highCard: straight[straight.length - 1],
       };
     }
@@ -233,14 +233,14 @@ export class HandEvaluator {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 3) {
         const remainingWilds = wildCount - (3 - group.length);
         const kickers = this.getKickers(cards, [group[0]], remainingWilds);
 
         return {
           rank: this.HAND_RANKS.THREE_OF_A_KIND,
-          name: "Three of a Kind",
+          name: 'Three of a Kind',
           highCard: group[0],
           kickers,
         };
@@ -258,7 +258,7 @@ export class HandEvaluator {
     const wildCount = wildCards.length;
     const pairs: Card[][] = [];
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 2) {
         pairs.push(group);
         if (pairs.length === 2) {
@@ -272,7 +272,7 @@ export class HandEvaluator {
 
           return {
             rank: this.HAND_RANKS.TWO_PAIR,
-            name: "Two Pair",
+            name: 'Two Pair',
             highCard: pairs[0][0],
             kickers: [pairs[1][0], ...kickers],
           };
@@ -287,14 +287,14 @@ export class HandEvaluator {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
 
-    for (const [rank, group] of Object.entries(rankGroups)) {
+    for (const [_rank, group] of Object.entries(rankGroups)) {
       if (group.length + wildCount >= 2) {
         const remainingWilds = wildCount - (2 - group.length);
         const kickers = this.getKickers(cards, [group[0]], remainingWilds);
 
         return {
           rank: this.HAND_RANKS.PAIR,
-          name: "Pair",
+          name: 'Pair',
           highCard: group[0],
           kickers,
         };
@@ -308,14 +308,14 @@ export class HandEvaluator {
     const sortedCards = this.sortByRank(cards);
     return {
       rank: this.HAND_RANKS.HIGH_CARD,
-      name: "High Card",
+      name: 'High Card',
       highCard: sortedCards[0],
       kickers: sortedCards.slice(1, 5),
     };
   }
 
-  private static groupByRank(cards: Card[]): { [key: string]: Card[] } {
-    const groups: { [key: string]: Card[] } = {};
+  private static groupByRank(cards: Card[]): Record<string, Card[]> {
+    const groups: Record<string, Card[]> = {};
     for (const card of cards) {
       if (!groups[card.rank]) {
         groups[card.rank] = [];

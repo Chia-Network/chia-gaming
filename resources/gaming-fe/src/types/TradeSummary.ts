@@ -10,17 +10,17 @@ export interface TradeSummary {
             launcherId: string;
             royaltyAddress: string;
             royaltyPercentage: string;
-            type: "royalty transfer program";
+            type: 'royalty transfer program';
           };
-          type: "ownership";
+          type: 'ownership';
         };
         metadata: string;
-        type: "metadata";
+        type: 'metadata';
         updaterHash: string;
       };
       launcherId: string;
       launcherPh: string;
-      type: "singleton";
+      type: 'singleton';
     }
   >;
   offered: Record<string, number>;

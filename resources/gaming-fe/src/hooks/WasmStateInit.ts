@@ -3,10 +3,10 @@ import {
   ChiaGame,
   RngId,
   WasmBlobParams,
-} from "../types/ChiaGaming";
-import { Observable, Subject } from "rxjs";
-import { GAME_SERVICE_URL } from "../settings";
-import { WasmBlobWrapper } from "./WasmBlobWrapper";
+} from '../types/ChiaGaming';
+import { Observable, Subject } from 'rxjs';
+import { GAME_SERVICE_URL } from '../settings';
+import { WasmBlobWrapper } from './WasmBlobWrapper';
 
 var chia_gaming_init: any = undefined;
 var cg: any = undefined;
@@ -14,8 +14,8 @@ var logInitialized = false;
 
 export const readyToInit = new Subject<boolean>();
 export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
-  console.log("subscriber added to waitForReadyToInit");
-  console.log("chia_gaming_init={chia_gaming_init} cg={cg}");
+  console.log('subscriber added to waitForReadyToInit');
+  console.log('chia_gaming_init={chia_gaming_init} cg={cg}');
   if (chia_gaming_init && cg) {
     subscriber.next(true);
     subscriber.complete();
@@ -25,7 +25,7 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
 });
 
 export const doInternalLoadWasm = async () => {
-  const fetchUrl = GAME_SERVICE_URL + "/chia_gaming_wasm_bg.wasm";
+  const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
   return fetch(fetchUrl)
     .then((wasm) => wasm.blob())
     .then((blob) => {
@@ -84,19 +84,19 @@ observable.subscribe({
     cg: WasmConnection,
   ): Promise<WasmConnection> {
     // Fill out WasmConnection object
-    console.log("wasm detected");
+    console.log('wasm detected');
     const modData = await this.doInternalLoadWasm();
     chia_gaming_init(modData);
     if (!logInitialized) {
       logInitialized = true;
-      cg.init((msg: string) => console.warn("wasm", msg));
+      cg.init((msg: string) => console.warn('wasm', msg));
     }
     const presetFiles = [
-      "resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex",
-      "clsp/unroll/unroll_meta_puzzle.hex",
-      "clsp/unroll/unroll_puzzle_state_channel_unrolling.hex",
-      "clsp/referee/onchain/referee.hex",
-      "clsp/referee/onchain/referee-v1.hex",
+      'resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex',
+      'clsp/unroll/unroll_meta_puzzle.hex',
+      'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
+      'clsp/referee/onchain/referee.hex',
+      'clsp/referee/onchain/referee-v1.hex',
     ];
     this.wasmConnection = cg;
     await this.loadPresets(presetFiles);
@@ -147,7 +147,7 @@ observable.subscribe({
           `preset load ${nameAndContent.name} ${nameAndContent.content.length}`,
         );
         if (!this.wasmConnection) {
-          throw "this.wasmConnection undefined in loadPresets";
+          throw 'this.wasmConnection undefined in loadPresets';
         }
         this.wasmConnection?.deposit_file(
           nameAndContent.name,
@@ -157,8 +157,8 @@ observable.subscribe({
 
       return {
         setGameConnectionState: {
-          stateIdentifier: "starting",
-          stateDetail: ["loaded preset files"],
+          stateIdentifier: 'starting',
+          stateDetail: ['loaded preset files'],
         },
       };
     });

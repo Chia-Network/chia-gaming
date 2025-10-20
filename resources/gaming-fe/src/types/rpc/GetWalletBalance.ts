@@ -1,4 +1,4 @@
-import { WalletBalance } from "../WalletBalance";
+import { WalletBalance } from '../WalletBalance';
 
 export interface GetWalletBalanceRequest {
   walletId?: number;

@@ -1,7 +1,7 @@
-import { Coin } from "./Coin";
-import { Peer } from "./Peer";
-import { SpendBundle } from "./SpendBundle";
-import { TransactionType } from "./TransactionType";
+import { Coin } from './Coin';
+import { Peer } from './Peer';
+import { SpendBundle } from './SpendBundle';
+import { TransactionType } from './TransactionType';
 
 export interface TransactionRecord {
   additions: Coin[];

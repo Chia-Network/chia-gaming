@@ -1,4 +1,4 @@
-import { TradeSummary } from "../TradeSummary";
+import { TradeSummary } from '../TradeSummary';
 
 export interface GetOfferSummaryRequest {
   offerData: string;

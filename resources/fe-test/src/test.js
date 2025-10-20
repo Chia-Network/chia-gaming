@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const {Builder, Browser, By, Key, WebDriver, until} = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
 const firefox = require('selenium-webdriver/firefox');
-const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, selectSimulator, waitForNonError, sendControlA} = require('./util.js');
+const {wait, byExactText, byAttribute, byElementAndAttribute, sendEnter, waitAriaEnabled, waitAriaDisabled, selectSimulator, waitForNonError, sendControlA} = require('./util.js');
 
 // Other browser
 const geckodriver = require('geckodriver');
@@ -53,6 +53,12 @@ async function clickMakeMove(driver, who) {
     console.log(`click make move ${who}`);
     const makeMoveButton = await waitForNonError(driver, () => driver.wait(until.elementLocated(byAttribute("aria-label", "make-move"))), (elt) => waitAriaEnabled(driver, elt), 1.0);
     await makeMoveButton.click();
+    // The 'make move' button should become 'aria-label' disabled after pressing it
+    // Get the button again, in case the DOM has refreshed
+    await waitForNonError(driver,
+        () => driver.wait(until.elementLocated(byAttribute("aria-label", "make-move"))),
+        (elt) => waitAriaDisabled(driver, elt),
+        1.0);
 }
 
 async function firefox_start_and_first_move(driver, baseUrl) {

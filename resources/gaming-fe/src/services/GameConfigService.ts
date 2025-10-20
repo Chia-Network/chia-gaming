@@ -1,5 +1,5 @@
-import { AppError, ErrorCodes } from "../types/errors";
-import { GameType } from "../types/lobby";
+import { AppError, ErrorCodes } from '../types/errors';
+import { GameType } from '../types/lobby';
 
 interface GameConfig {
   id: string;
@@ -18,9 +18,7 @@ interface GameConfig {
     turn: number;
     round: number;
   };
-  rules: {
-    [key: string]: any;
-  };
+  rules: Record<string, any>;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -37,7 +35,7 @@ interface PlayerSettings {
     showTimer: boolean;
     showPotOdds: boolean;
     showHandStrength: boolean;
-    theme: "light" | "dark" | "system";
+    theme: 'light' | 'dark' | 'system';
     language: string;
     timeZone: string;
   };
@@ -51,9 +49,9 @@ export class GameConfigService {
   private readonly defaultConfigs: Partial<GameConfig>[] = [
     // currently all placeholders
     {
-      gameType: "california_poker",
-      name: "California Poker",
-      description: "",
+      gameType: 'california_poker',
+      name: 'California Poker',
+      description: '',
       minPlayers: 2,
       maxPlayers: 9,
       startingStack: 1000,
@@ -73,9 +71,9 @@ export class GameConfigService {
       },
     },
     {
-      gameType: "krunk",
-      name: "Krunk",
-      description: "",
+      gameType: 'krunk',
+      name: 'Krunk',
+      description: '',
       minPlayers: 2,
       maxPlayers: 8,
       startingStack: 500,
@@ -91,9 +89,9 @@ export class GameConfigService {
       },
     },
     {
-      gameType: "exotic_poker",
-      name: "Exotic Poker",
-      description: "",
+      gameType: 'exotic_poker',
+      name: 'Exotic Poker',
+      description: '',
       minPlayers: 2,
       maxPlayers: 6,
       startingStack: 2000,
@@ -150,7 +148,7 @@ export class GameConfigService {
     if (!config) {
       throw new AppError(
         ErrorCodes.SYSTEM.NOT_FOUND,
-        "Game configuration not found",
+        'Game configuration not found',
         404,
       );
     }
@@ -198,9 +196,9 @@ export class GameConfigService {
           showTimer: true,
           showPotOdds: true,
           showHandStrength: true,
-          theme: "system",
-          language: "en",
-          timeZone: "UTC",
+          theme: 'system',
+          language: 'en',
+          timeZone: 'UTC',
         },
         lastUpdated: new Date(),
       };
@@ -211,7 +209,7 @@ export class GameConfigService {
   public updatePlayerSettings(
     playerId: string,
     gameType: GameType,
-    updates: Partial<PlayerSettings["settings"]>,
+    updates: Partial<PlayerSettings['settings']>,
   ): void {
     const key = `${playerId}-${gameType}`;
     const currentSettings = this.getPlayerSettings(playerId, gameType);
@@ -247,14 +245,14 @@ export class GameConfigService {
     });
   }
 
-  public getTimeLimits(gameType: GameType): GameConfig["timeLimits"] {
+  public getTimeLimits(gameType: GameType): GameConfig['timeLimits'] {
     const config = this.getGameConfig(gameType);
     return config.timeLimits;
   }
 
   public updateTimeLimits(
     gameType: GameType,
-    timeLimits: Partial<GameConfig["timeLimits"]>,
+    timeLimits: Partial<GameConfig['timeLimits']>,
   ): void {
     const config = this.getGameConfig(gameType);
     this.updateGameConfig(gameType, {
@@ -266,14 +264,14 @@ export class GameConfigService {
     });
   }
 
-  public getBlinds(gameType: GameType): GameConfig["blinds"] {
+  public getBlinds(gameType: GameType): GameConfig['blinds'] {
     const config = this.getGameConfig(gameType);
     return config.blinds;
   }
 
   public updateBlinds(
     gameType: GameType,
-    blinds: Partial<GameConfig["blinds"]>,
+    blinds: Partial<GameConfig['blinds']>,
   ): void {
     const config = this.getGameConfig(gameType);
     this.updateGameConfig(gameType, {

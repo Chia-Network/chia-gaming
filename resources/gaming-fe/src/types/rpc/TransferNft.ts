@@ -1,4 +1,4 @@
-import { SpendBundle } from "../SpendBundle";
+import { SpendBundle } from '../SpendBundle';
 
 export interface TransferNftRequest {
   walletId: number;

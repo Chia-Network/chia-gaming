@@ -1,25 +1,26 @@
-import { v4 as uuidv4 } from "uuid";
-import { AppError, ErrorCodes } from "../types/errors";
-import { GameType } from "../types/lobby";
+import { v4 as uuidv4 } from 'uuid';
+
+import { AppError, ErrorCodes } from '../types/errors';
+import { GameType } from '../types/lobby';
 
 interface Achievement {
   id: string;
   name: string;
   description: string;
-  type: "game" | "social" | "special";
+  type: 'game' | 'social' | 'special';
   gameType?: GameType;
   points: number;
   requirements: {
     type:
-      | "games_played"
-      | "games_won"
-      | "win_streak"
-      | "total_winnings"
-      | "special";
+      | 'games_played'
+      | 'games_won'
+      | 'win_streak'
+      | 'total_winnings'
+      | 'special';
     value: number;
   };
   icon: string;
-  rarity: "common" | "uncommon" | "rare" | "epic" | "legendary";
+  rarity: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 }
 
 interface PlayerAchievement {
@@ -55,7 +56,7 @@ export class AchievementService {
     return AchievementService.instance;
   }
 
-  public createAchievement(achievement: Omit<Achievement, "id">): string {
+  public createAchievement(achievement: Omit<Achievement, 'id'>): string {
     const id = uuidv4();
     const newAchievement: Achievement = {
       ...achievement,
@@ -70,7 +71,7 @@ export class AchievementService {
     if (!achievement) {
       throw new AppError(
         ErrorCodes.SYSTEM.NOT_FOUND,
-        "Achievement not found",
+        'Achievement not found',
         404,
       );
     }
@@ -81,7 +82,7 @@ export class AchievementService {
     return Array.from(this.achievements.values());
   }
 
-  public getAchievementsByType(type: Achievement["type"]): Achievement[] {
+  public getAchievementsByType(type: Achievement['type']): Achievement[] {
     return Array.from(this.achievements.values()).filter(
       (achievement) => achievement.type === type,
     );
@@ -152,31 +153,30 @@ export class AchievementService {
     },
   ): string[] {
     const unlockedAchievements: string[] = [];
-    const playerAchievements = this.getPlayerAchievements(playerId);
 
     for (const achievement of this.achievements.values()) {
       let progress = 0;
       let shouldUpdate = false;
 
       switch (achievement.requirements.type) {
-        case "games_played":
+        case 'games_played':
           progress = stats.gamesPlayed;
           shouldUpdate = true;
           break;
-        case "games_won":
+        case 'games_won':
           progress = stats.gamesWon;
           shouldUpdate = true;
           break;
-        case "win_streak":
+        case 'win_streak':
           progress = stats.currentWinStreak;
           shouldUpdate = true;
           break;
-        case "total_winnings":
+        case 'total_winnings':
           progress = stats.totalWinnings;
           shouldUpdate = true;
           break;
-        case "special":
-          if (achievement.id === "social_butterfly") {
+        case 'special':
+          if (achievement.id === 'social_butterfly') {
             progress = stats.uniqueOpponents;
             shouldUpdate = true;
           }

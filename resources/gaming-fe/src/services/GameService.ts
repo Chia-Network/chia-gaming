@@ -1,7 +1,8 @@
-import { v4 as uuidv4 } from "uuid";
-import { AppError, ErrorCodes } from "../types/errors";
-import { GameType, GameSession, Player, Room } from "../types/lobby";
-import { saveGameSession, getGameSession } from "../db";
+import { v4 as uuidv4 } from 'uuid';
+
+import { saveGameSession, getGameSession } from '../db';
+import { AppError, ErrorCodes } from '../types/errors';
+import { GameSession, Room } from '../types/lobby';
 
 export class GameService {
   private static instance: GameService;
@@ -19,10 +20,10 @@ export class GameService {
   }
 
   public async startGame(room: Room): Promise<GameSession> {
-    if (room.status !== "waiting") {
+    if (room.status !== 'waiting') {
       throw new AppError(
         ErrorCodes.LOBBY.GAME_IN_PROGRESS,
-        "Game is already in progress",
+        'Game is already in progress',
         400,
       );
     }
@@ -34,7 +35,7 @@ export class GameService {
       host: room.host,
       joiner: room.joiner as string,
       startedAt: Date.now(),
-      status: "in_progress",
+      status: 'in_progress',
       parameters: room.parameters,
     };
 
@@ -52,12 +53,12 @@ export class GameService {
     if (!session) {
       throw new AppError(
         ErrorCodes.LOBBY.GAME_IN_PROGRESS,
-        "Game session not found",
+        'Game session not found',
         404,
       );
     }
 
-    session.status = "completed";
+    session.status = 'completed';
     session.winner = winner;
     this.activeSessions.delete(sessionId);
     await saveGameSession(session);
@@ -75,7 +76,7 @@ export class GameService {
     if (!dbSession) {
       throw new AppError(
         ErrorCodes.LOBBY.GAME_IN_PROGRESS,
-        "Game session not found",
+        'Game session not found',
         404,
       );
     }
@@ -85,49 +86,49 @@ export class GameService {
 
   public async validateGameAction(
     sessionId: string,
-    playerId: string,
+    _playerId: string,
     action: string,
     data: any,
   ): Promise<boolean> {
     const session = await this.getSession(sessionId);
-    if (session.status !== "in_progress") {
+    if (session.status !== 'in_progress') {
       throw new AppError(
         ErrorCodes.LOBBY.GAME_IN_PROGRESS,
-        "Game is not in progress",
+        'Game is not in progress',
         400,
       );
     }
 
     switch (session.gameType) {
-      case "california_poker":
+      case 'california_poker':
         return this.validatePokerAction(action, data);
-      case "krunk":
+      case 'krunk':
         return this.validateKrunkAction(action, data);
-      case "exotic_poker":
+      case 'exotic_poker':
         return this.validateExoticPokerAction(action, data);
       default:
         throw new AppError(
           ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-          "Invalid game type",
+          'Invalid game type',
           400,
         );
     }
   }
 
   private validatePokerAction(action: string, data: any): boolean {
-    const validActions = ["fold", "check", "call", "raise", "all-in"];
+    const validActions = ['fold', 'check', 'call', 'raise', 'all-in'];
     if (!validActions.includes(action)) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Invalid poker action",
+        'Invalid poker action',
         400,
       );
     }
 
-    if (action === "raise" && (!data.amount || data.amount <= 0)) {
+    if (action === 'raise' && (!data.amount || data.amount <= 0)) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Invalid raise amount",
+        'Invalid raise amount',
         400,
       );
     }
@@ -136,19 +137,19 @@ export class GameService {
   }
 
   private validateKrunkAction(action: string, data: any): boolean {
-    const validActions = ["guess", "hint", "pass"];
+    const validActions = ['guess', 'hint', 'pass'];
     if (!validActions.includes(action)) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Invalid krunk action",
+        'Invalid krunk action',
         400,
       );
     }
 
-    if (action === "guess" && (!data.word || typeof data.word !== "string")) {
+    if (action === 'guess' && (!data.word || typeof data.word !== 'string')) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Invalid guess word",
+        'Invalid guess word',
         400,
       );
     }
@@ -157,27 +158,27 @@ export class GameService {
   }
 
   private validateExoticPokerAction(action: string, data: any): boolean {
-    const validActions = ["fold", "check", "call", "raise", "all-in", "wild"];
+    const validActions = ['fold', 'check', 'call', 'raise', 'all-in', 'wild'];
     if (!validActions.includes(action)) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Invalid exotic poker action",
+        'Invalid exotic poker action',
         400,
       );
     }
 
-    if (action === "raise" && (!data.amount || data.amount <= 0)) {
+    if (action === 'raise' && (!data.amount || data.amount <= 0)) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Invalid raise amount",
+        'Invalid raise amount',
         400,
       );
     }
 
-    if (action === "wild" && (!data.card || !data.target)) {
+    if (action === 'wild' && (!data.card || !data.target)) {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
-        "Invalid wild card action",
+        'Invalid wild card action',
         400,
       );
     }
@@ -203,36 +204,42 @@ export class GameService {
 
     const session = await this.getSession(sessionId);
     switch (session.gameType) {
-      case "california_poker":
+      case 'california_poker':
         await this.processPokerAction(session, playerId, action, data);
         break;
-      case "krunk":
+      case 'krunk':
         await this.processKrunkAction(session, playerId, action, data);
         break;
-      case "exotic_poker":
+      case 'exotic_poker':
         await this.processExoticPokerAction(session, playerId, action, data);
         break;
     }
   }
 
   private async processPokerAction(
-    session: GameSession,
-    playerId: string,
-    action: string,
-    data: any,
-  ): Promise<void> {}
+    _session: GameSession,
+    _playerId: string,
+    _action: string,
+    _data: any,
+  ): Promise<void> {
+    // TODO: Implement poker action processing
+  }
 
   private async processKrunkAction(
-    session: GameSession,
-    playerId: string,
-    action: string,
-    data: any,
-  ): Promise<void> {}
+    _session: GameSession,
+    _playerId: string,
+    _action: string,
+    _data: any,
+  ): Promise<void> {
+    // TODO: Implement krunk action processing
+  }
 
   private async processExoticPokerAction(
-    session: GameSession,
-    playerId: string,
-    action: string,
-    data: any,
-  ): Promise<void> {}
+    _session: GameSession,
+    _playerId: string,
+    _action: string,
+    _data: any,
+  ): Promise<void> {
+    // TODO: Implement exotic poker action processing
+  }
 }

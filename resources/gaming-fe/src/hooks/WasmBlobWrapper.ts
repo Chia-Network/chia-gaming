@@ -7,15 +7,15 @@ import {
   WasmBlobParams,
   GameInitParams,
   JsCoinSetSpend,
-} from "../types/ChiaGaming";
+} from '../types/ChiaGaming';
 import {
   spend_bundle_to_clvm,
   decode_sexp_hex,
   proper_list,
   popcount,
   empty,
-} from "../util";
-import { Subject, NextObserver } from "rxjs";
+} from '../util';
+import { Subject, NextObserver } from 'rxjs';
 
 async function anempty(id: number) {
   return { EMPTY: id };
@@ -146,7 +146,7 @@ export class WasmBlobWrapper {
     this.rxjsEmitter = {
       next: (evt: any) => {
         if (Object.keys(evt).length > 0 && !evt.stop) {
-          console.log("rxjsEmitter", evt);
+          console.log('rxjsEmitter', evt);
         }
         this.rxjsMessageSingleon.next(evt);
       },
@@ -166,10 +166,10 @@ export class WasmBlobWrapper {
     this.qualifyingEvents |= flags;
     if (this.qualifyingEvents == 3) {
       this.qualifyingEvents |= 4;
-      this.rxjsEmitter.next({ name: "ready" });
+      this.rxjsEmitter.next({ name: 'ready' });
     }
     if (this.qualifyingEvents != lastQE) {
-      console.log("qualifyingEvents:", this.qualifyingEvents);
+      console.log('qualifyingEvents:', this.qualifyingEvents);
     }
   }
 
@@ -196,8 +196,8 @@ export class WasmBlobWrapper {
       this.pushEvent({ loadCalpoker: true });
       return {
         setGameConnectionState: {
-          stateIdentifier: "starting",
-          stateDetail: ["loaded preset files"],
+          stateIdentifier: 'starting',
+          stateDetail: ['loaded preset files'],
         },
         setGameIdentity: newGameIdentity,
       };
@@ -225,7 +225,7 @@ export class WasmBlobWrapper {
   }
 
   private handleOneMessage(msg: any): any {
-    console.log("handleOneMessage", Object.keys(msg));
+    console.log('handleOneMessage', Object.keys(msg));
     if (msg.deliverMessage) {
       return this.internalDeliverMessage(msg.deliverMessage);
     } else if (msg.move) {
@@ -259,7 +259,7 @@ export class WasmBlobWrapper {
       );
     }
 
-    console.error("Unknown event:", msg);
+    console.error('Unknown event:', msg);
     return anempty(218);
   }
 
@@ -275,7 +275,7 @@ export class WasmBlobWrapper {
         }),
       ),
     );
-    console.log("card_lists", card_lists);
+    console.log('card_lists', card_lists);
     if (this.iStarted) {
       result.setPlayerHand = card_lists[1];
       result.setOpponentHand = card_lists[0];
@@ -308,21 +308,21 @@ export class WasmBlobWrapper {
     const result: any = {
       setMyTurn: true,
     };
-    console.log("takeOpponentMove", moveNumber, game_id, readable_move_hex);
+    console.log('takeOpponentMove', moveNumber, game_id, readable_move_hex);
     let p = decode_sexp_hex(readable_move_hex);
-    console.log("readable move", JSON.stringify(p));
+    console.log('readable move', JSON.stringify(p));
     if (moveNumber === 1) {
       this.updateCards(p, result);
     } else if (!this.iStarted && moveNumber === 2) {
-      console.warn("finalOutcome:", this.iStarted, moveNumber);
+      console.warn('finalOutcome:', this.iStarted, moveNumber);
       this.finalOutcome(p, result);
-      this.makeMove("80");
+      this.makeMove('80');
     } else if (moveNumber > 1) {
-      console.warn("finalOutcome:", this.iStarted, moveNumber);
+      console.warn('finalOutcome:', this.iStarted, moveNumber);
       this.finalOutcome(p, result);
-      console.warn("accept game");
+      console.warn('accept game');
       this.cradle.accept(this.gameIds[0]);
-      console.log("did accept", this.iStarted);
+      console.log('did accept', this.iStarted);
       this.gameIds.pop();
     }
 
@@ -336,7 +336,7 @@ export class WasmBlobWrapper {
     readable_move_hex: string,
   ): any {
     const result = {};
-    console.log("takeGameMessage", moveNumber, game_id, readable_move_hex);
+    console.log('takeGameMessage', moveNumber, game_id, readable_move_hex);
     let p = decode_sexp_hex(readable_move_hex);
     this.updateCards(p, result);
     return anempty(286).then(() => result);
@@ -354,7 +354,7 @@ export class WasmBlobWrapper {
     //let result = null;
     return this.handleOneMessage(msg)
       .then((result: any) => {
-        console.log("kickMessageHandling: ", result);
+        console.log('kickMessageHandling: ', result);
         this.rxjsEmitter.next(result);
 
         this.internalKickIdle();
@@ -364,7 +364,7 @@ export class WasmBlobWrapper {
         return this.kickMessageHandling();
       })
       .catch((e: any) => {
-        console.error("THROWING in kickMessageHandling", e);
+        console.error('THROWING in kickMessageHandling', e);
         this.handlingMessage = false;
         throw e;
       });
@@ -380,17 +380,17 @@ export class WasmBlobWrapper {
     return this.blockchain
       .do_initial_spend(this.uniqueId, identity.puzzle_hash, amount)
       .then((result) => {
-        console.log("createStartCoin: result: ", result);
+        console.log('createStartCoin: result: ', result);
         let coin = result.coin;
         if (!coin) {
-          throw new Error("tried to create spendable but failed");
+          throw new Error('tried to create spendable but failed');
         }
 
         // Handle data conversion back when Coin object was received.
-        if (typeof coin !== "string") {
+        if (typeof coin !== 'string') {
           const coinset_coin = coin as any;
-          console.log("createStartCoin coin: ", coin);
-          console.log("createStartCoin coinset_coin: ", coinset_coin);
+          console.log('createStartCoin coin: ', coin);
+          console.log('createStartCoin coinset_coin: ', coinset_coin);
           const new_coin_string =
             this.wasmConnection.convert_coinset_to_coin_string(
               coinset_coin.parentCoinInfo,
@@ -454,7 +454,7 @@ export class WasmBlobWrapper {
       this.storedMessages.push(msg);
       return anempty(390);
     }
-    console.log("deliver message", msg);
+    console.log('deliver message', msg);
     this.cradle.deliver_message(msg);
     return anempty(394);
   }
@@ -470,14 +470,14 @@ export class WasmBlobWrapper {
     let result: any = {};
     let amount = this.cradle.getAmount();
     let gids = this.cradle.start_games(!this.iStarted, {
-      game_type: "63616c706f6b6572",
+      game_type: '63616c706f6b6572',
       timeout: 100,
       amount: this.perGameAmount,
       my_contribution: this.perGameAmount / 2,
       my_turn: !this.iStarted,
-      parameters: "80",
+      parameters: '80',
     });
-    console.log("gameIds", gids);
+    console.log('gameIds', gids);
     if (gids) {
       gids.forEach((g) => {
         this.gameIds.push(g);
@@ -493,7 +493,7 @@ export class WasmBlobWrapper {
     const idle = this.cradle.idle({
       // Local ui callbacks.
       opponent_moved: (game_id, readable_move_hex) => {
-        console.error("got opponent move", game_id, readable_move_hex);
+        console.error('got opponent move', game_id, readable_move_hex);
         this.messageQueue.push({
           takeOpponentMove: {
             game_id,
@@ -503,7 +503,7 @@ export class WasmBlobWrapper {
         });
       },
       game_message: (game_id, readable_hex) => {
-        console.error("got opponent msg", game_id, readable_hex);
+        console.error('got opponent msg', game_id, readable_hex);
         this.messageQueue.push({
           takeGameMessage: {
             game_id,
@@ -513,17 +513,17 @@ export class WasmBlobWrapper {
         });
       },
       game_started: (game_ids, failed) => {
-        console.log("got game start", game_ids, failed);
+        console.log('got game start', game_ids, failed);
 
         if (failed) {
-          console.log("game start failed", failed);
+          console.log('game start failed', failed);
           this.messageQueue.push({ shutDown: true, condition: failed });
         }
       },
       game_finished: (game_id, amount) => {
         // Signals accept.
         this.gameIds.pop();
-        console.log("got accept", this.iStarted);
+        console.log('got accept', this.iStarted);
 
         this.myTurn = false;
         this.cardSelections = 0;
@@ -537,7 +537,7 @@ export class WasmBlobWrapper {
         result.setOpponentHand = [];
         result.setOutcome = undefined;
         result.setGameConnectionState = {
-          stateIdentifier: "running",
+          stateIdentifier: 'running',
           stateDetail: [],
         };
 
@@ -551,11 +551,11 @@ export class WasmBlobWrapper {
     }
 
     if (idle.finished && !this.finished) {
-      console.error("we shut down");
+      console.error('we shut down');
       this.finished = true;
       this.rxjsEmitter.next({
         setGameConnectionState: {
-          stateIdentifier: "shutdown",
+          stateIdentifier: 'shutdown',
           stateDetail: [],
         },
         outcome: undefined,
@@ -573,13 +573,13 @@ export class WasmBlobWrapper {
     result.setError = idle.receive_error;
     // console.log('idle1', idle.action_queue);
     if (idle.handshake_done && !this.handshakeDone) {
-      console.warn("HANDSHAKE DONE");
+      console.warn('HANDSHAKE DONE');
       this.handshakeDone = true;
       result.setGameConnectionState = {
-        stateIdentifier: "running",
+        stateIdentifier: 'running',
         stateDetail: [],
       };
-      console.log("starting games", this.iStarted);
+      console.log('starting games', this.iStarted);
       if (this.startAGame) {
         this.pushEvent({ startGame: true });
       }
@@ -587,20 +587,20 @@ export class WasmBlobWrapper {
 
     // console.log('idle2', idle.incoming_messages);
     for (let i = 0; i < idle.outbound_messages.length; i++) {
-      console.log("send message to remote");
+      console.log('send message to remote');
       this.sendMessage(idle.outbound_messages[i]);
     }
 
     for (let i = 0; i < idle.outbound_transactions.length; i++) {
       const tx = idle.outbound_transactions[i];
-      console.log("send transaction", tx);
+      console.log('send transaction', tx);
       // Compose blob to spend
       let blob = spend_bundle_to_clvm(tx);
       const cvt = (blob: string) => {
         return this.wasmConnection.convert_spend_to_coinset_org(blob);
       };
       this.blockchain.spend(cvt, blob).then((res) => {
-        console.log("spend res", res);
+        console.log('spend res', res);
       });
     }
 
@@ -612,9 +612,9 @@ export class WasmBlobWrapper {
     for (let i = 0; i < 16; i++) {
       hexDigits.push(Math.floor(Math.random() * 16)).toString(16);
     }
-    let entropy = this.wasmConnection.sha256bytes(hexDigits.join(""));
+    let entropy = this.wasmConnection.sha256bytes(hexDigits.join(''));
     if (!entropy) {
-      throw "tried to make entropy without a wasm connection";
+      throw 'tried to make entropy without a wasm connection';
     }
     return entropy;
   }
@@ -626,13 +626,13 @@ export class WasmBlobWrapper {
   async makeMove(move: any): Promise<any> {
     if (!this.handshakeDone) {
       // TODO: Let's return more status info here
-      console.log("makeMove: this.handshakeDone=", this.handshakeDone);
+      console.log('makeMove: this.handshakeDone=', this.handshakeDone);
       return { handshakeDone: true };
     } else if (this.moveNumber === 0) {
       let entropy = this.generateEntropy();
-      console.log("move 0 with entropy", entropy);
-      this.cradle.make_move_entropy(this.gameIds[0], "80", entropy);
-      console.log("finished call to this.cradle.make_move_entropy");
+      console.log('move 0 with entropy', entropy);
+      this.cradle.make_move_entropy(this.gameIds[0], '80', entropy);
+      console.log('finished call to this.cradle.make_move_entropy');
       this.moveNumber += 1;
       return {
         setMyTurn: false,
@@ -653,12 +653,12 @@ export class WasmBlobWrapper {
     } else if (this.moveNumber === 2) {
       this.moveNumber += 1;
       let entropy = this.generateEntropy();
-      this.cradle.make_move_entropy(this.gameIds[0], "80", entropy);
+      this.cradle.make_move_entropy(this.gameIds[0], '80', entropy);
       return {
         setMyTurn: false,
         setMoveNumber: this.moveNumber,
         setGameConnectionState: {
-          stateIdentifier: "end",
+          stateIdentifier: 'end',
           stateDetail: [],
         },
       };
@@ -693,12 +693,12 @@ export class WasmBlobWrapper {
     }
     const result: any = {
       setGameConnectionState: {
-        stateIdentifier: "shutdown",
+        stateIdentifier: 'shutdown',
         stateDetail: details,
       },
       outcome: undefined,
     };
-    console.log("shutting down cradle");
+    console.log('shutting down cradle');
     this.cradle?.shut_down();
     return anempty(624).then(() => result);
   }
@@ -712,10 +712,10 @@ export class WasmBlobWrapper {
 
   internalReceivedShutdown() {
     const result: any = {};
-    console.warn("internalReceivedShutdown", this.finished);
-    console.warn("setting shutdown state in ui");
+    console.warn('internalReceivedShutdown', this.finished);
+    console.warn('setting shutdown state in ui');
     result.setGameConnectionState = {
-      stateIdentifier: "shutdown",
+      stateIdentifier: 'shutdown',
       stateDetail: [],
     };
     result.outcome = undefined;

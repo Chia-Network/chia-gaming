@@ -1,7 +1,8 @@
-import { v4 as uuidv4 } from "uuid";
-import { AppError, ErrorCodes } from "../types/errors";
-import { Player, GameType } from "../types/lobby";
-import { savePlayer, getPlayer } from "../db";
+import { v4 as uuidv4 } from 'uuid';
+
+import { getPlayer } from '../db';
+import { AppError, ErrorCodes } from '../types/errors';
+import { GameType } from '../types/lobby';
 
 interface PlayerStats {
   id: string;
@@ -23,7 +24,7 @@ interface Achievement {
   description: string;
   unlockedAt: Date;
   gameType: GameType;
-  rarity: "common" | "uncommon" | "rare" | "epic" | "legendary";
+  rarity: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 }
 
 export class PlayerStatsService {
@@ -55,7 +56,7 @@ export class PlayerStatsService {
       if (!player) {
         throw new AppError(
           ErrorCodes.LOBBY.PLAYER_NOT_FOUND,
-          "Player not found",
+          'Player not found',
           404,
         );
       }
@@ -126,10 +127,10 @@ export class PlayerStatsService {
       newAchievements.push(
         this.createAchievement(
           playerId,
-          "First Game",
-          "Played your first game",
+          'First Game',
+          'Played your first game',
           gameType,
-          "common",
+          'common',
         ),
       );
     }
@@ -138,10 +139,10 @@ export class PlayerStatsService {
       newAchievements.push(
         this.createAchievement(
           playerId,
-          "First Victory",
-          "Won your first game",
+          'First Victory',
+          'Won your first game',
           gameType,
-          "common",
+          'common',
         ),
       );
     }
@@ -150,10 +151,10 @@ export class PlayerStatsService {
       newAchievements.push(
         this.createAchievement(
           playerId,
-          "Hot Streak",
-          "Won 3 games in a row",
+          'Hot Streak',
+          'Won 3 games in a row',
           gameType,
-          "uncommon",
+          'uncommon',
         ),
       );
     }
@@ -162,10 +163,10 @@ export class PlayerStatsService {
       newAchievements.push(
         this.createAchievement(
           playerId,
-          "Unstoppable",
-          "Won 5 games in a row",
+          'Unstoppable',
+          'Won 5 games in a row',
           gameType,
-          "rare",
+          'rare',
         ),
       );
     }
@@ -174,10 +175,10 @@ export class PlayerStatsService {
       newAchievements.push(
         this.createAchievement(
           playerId,
-          "High Roller",
-          "Won 1000 or more in total",
+          'High Roller',
+          'Won 1000 or more in total',
           gameType,
-          "epic",
+          'epic',
         ),
       );
     }
@@ -186,10 +187,10 @@ export class PlayerStatsService {
       newAchievements.push(
         this.createAchievement(
           playerId,
-          "Big Winner",
-          "Won 500 or more in a single game",
+          'Big Winner',
+          'Won 500 or more in a single game',
           gameType,
-          "legendary",
+          'legendary',
         ),
       );
     }
@@ -208,7 +209,7 @@ export class PlayerStatsService {
     name: string,
     description: string,
     gameType: GameType,
-    rarity: Achievement["rarity"],
+    rarity: Achievement['rarity'],
   ): Achievement {
     return {
       id: uuidv4(),
@@ -223,7 +224,7 @@ export class PlayerStatsService {
 
   public async getLeaderboard(
     gameType: GameType,
-    limit: number = 10,
+    limit = 10,
   ): Promise<PlayerStats[]> {
     const stats = Array.from(this.playerStats.values())
       .filter((s) => s.gameType === gameType)
@@ -249,7 +250,6 @@ export class PlayerStatsService {
       .filter((s) => s.gameType === gameType)
       .sort((a, b) => b.totalWinnings - a.totalWinnings);
 
-    const playerStats = await this.getPlayerStats(playerId, gameType);
     const rank = allStats.findIndex((s) => s.playerId === playerId) + 1;
 
     return rank || allStats.length + 1;

@@ -1,6 +1,7 @@
-import { v4 as uuidv4 } from "uuid";
-import { AppError, ErrorCodes } from "../types/errors";
-import { GameType } from "../types/lobby";
+import { v4 as uuidv4 } from 'uuid';
+
+import { AppError, ErrorCodes } from '../types/errors';
+import { GameType } from '../types/lobby';
 
 interface GameStats {
   totalGames: number;
@@ -39,7 +40,7 @@ interface GameSession {
 
 interface GameAction {
   playerId: string;
-  action: "fold" | "check" | "call" | "raise" | "all-in";
+  action: 'fold' | 'check' | 'call' | 'raise' | 'all-in';
   amount?: number;
   timestamp: Date;
 }
@@ -85,14 +86,14 @@ export class GameAnalyticsService {
   public recordAction(
     sessionId: string,
     playerId: string,
-    action: GameAction["action"],
+    action: GameAction['action'],
     amount?: number,
   ): void {
     const session = this.gameSessions.get(sessionId);
     if (!session) {
       throw new AppError(
         ErrorCodes.GAME.SESSION_NOT_FOUND,
-        "Game session not found",
+        'Game session not found',
         404,
       );
     }
@@ -101,7 +102,7 @@ export class GameAnalyticsService {
     if (!player) {
       throw new AppError(
         ErrorCodes.GAME.PLAYER_NOT_IN_SESSION,
-        "Player not found in game session",
+        'Player not found in game session',
         404,
       );
     }
@@ -127,7 +128,7 @@ export class GameAnalyticsService {
     if (!session) {
       throw new AppError(
         ErrorCodes.GAME.SESSION_NOT_FOUND,
-        "Game session not found",
+        'Game session not found',
         404,
       );
     }
@@ -226,7 +227,7 @@ export class GameAnalyticsService {
   public getPlayerGameHistory(
     playerId: string,
     gameType: GameType,
-    limit: number = 10,
+    limit = 10,
   ): GameSession[] {
     return Array.from(this.gameSessions.values())
       .filter(
@@ -240,7 +241,7 @@ export class GameAnalyticsService {
 
   public getTopPlayers(
     gameType: GameType,
-    limit: number = 10,
+    limit = 10,
   ): { playerId: string; stats: GameStats }[] {
     return Array.from(this.playerStats.values())
       .filter((stats) => stats.gameType === gameType)
@@ -285,7 +286,7 @@ export class GameAnalyticsService {
       });
     });
 
-    let mostCommonAction = "";
+    let mostCommonAction = '';
     let maxCount = 0;
     actionCounts.forEach((count, action) => {
       if (count > maxCount) {

@@ -1,4 +1,6 @@
-import { Subject, Observable } from "rxjs";
+import { Subject } from 'rxjs';
+
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import {
   ToggleEmitter,
   ExternalBlockchainInterface,
@@ -6,22 +8,22 @@ import {
   BlockchainReport,
   WatchReport,
   SelectionMessage,
-} from "../types/ChiaGaming";
-import { blockchainDataEmitter } from "./BlockchainInfo";
+} from '../types/ChiaGaming';
+
 import {
   blockchainConnector,
   BlockchainOutboundRequest,
-} from "./BlockchainConnector";
-import { BLOCKCHAIN_SERVICE_URL } from "../settings";
+} from './BlockchainConnector';
+import { blockchainDataEmitter } from './BlockchainInfo';
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
-    method: "POST",
+    method: 'POST',
   })
     .then((res) => res.json())
     .then((res) => {
       if (res === null) {
-        return new Promise((resolve, reject) => {
+        return new Promise((_resolve, _reject) => {
           setTimeout(() => {
             requestBlockData(forWho, block_number);
           }, 100);
@@ -60,9 +62,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   startMonitoring(uniqueId: string) {
-    console.log("startMonitoring", uniqueId);
+    console.log('startMonitoring', uniqueId);
     this.upstream.getOrRequestToken(uniqueId).then(() => {
-      fetch(`${this.baseUrl}/get_peak`, { method: "POST" })
+      fetch(`${this.baseUrl}/get_peak`, { method: 'POST' })
         .then((res) => res.json())
         .then((peak) => {
           this.setNewPeak(peak);
@@ -78,11 +80,11 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.upstream.getOrRequestToken(uniqueId).then((fromPuzzleHash) => {
       return this.upstream.createSpendable(target, amt).then((coin) => {
         if (!coin) {
-          throw new Error("no coin returned.");
+          throw new Error('no coin returned.');
         }
 
         // Returns the coin string
-        console.log("set opening coin", coin);
+        console.log('set opening coin', coin);
         return { coin, fromPuzzleHash };
       });
     });
@@ -126,7 +128,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   async internalNextBlock() {
     if (this.at_block > this.max_block) {
       return fetch(`${this.baseUrl}/wait_block`, {
-        method: "POST",
+        method: 'POST',
       })
         .then((res) => res.json())
         .then((res) => {
@@ -169,10 +171,10 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.internalNextBlock();
   }
 
-  spend(convert: (blob: string) => any, spendBlob: string): Promise<string> {
+  spend(_convert: (blob: string) => any, spendBlob: string): Promise<string> {
     return this.upstream.spend(spendBlob).then((status_array) => {
       if (status_array.length < 1) {
-        throw new Error("status result array was empty");
+        throw new Error('status result array was empty');
       }
 
       if (status_array[0] != 1) {
@@ -184,7 +186,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
       }
 
       // What to return?
-      return "";
+      return '';
     });
   }
 }
@@ -199,8 +201,8 @@ export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
 export function connectSimulatorBlockchain() {
   blockchainConnector.getOutbound().subscribe({
     next: (evt: BlockchainOutboundRequest) => {
-      let initialSpend = evt.initialSpend;
-      let transaction = evt.transaction;
+      const initialSpend = evt.initialSpend;
+      const transaction = evt.transaction;
       if (initialSpend) {
         return fakeBlockchainInfo
           .do_initial_spend(
@@ -222,7 +224,7 @@ export function connectSimulatorBlockchain() {
           });
       } else if (transaction) {
         fakeBlockchainInfo
-          .spend((blob: string) => transaction.spendObject, transaction.blob)
+          .spend((_blob: string) => transaction.spendObject, transaction.blob)
           .then((response: any) => {
             blockchainConnector.replyEmitter({
               responseId: evt.requestId,
@@ -253,7 +255,7 @@ blockchainDataEmitter.getSelectionObservable().subscribe({
   next: (e: SelectionMessage) => {
     if (e.selection == FAKE_BLOCKCHAIN_ID) {
       // Simulator selected
-      console.log("simulator blockchain selected");
+      console.log('simulator blockchain selected');
       fakeBlockchainInfo.startMonitoring(e.uniqueId);
       connectSimulatorBlockchain();
     }

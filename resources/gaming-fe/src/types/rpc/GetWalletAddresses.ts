@@ -1,4 +1,4 @@
-import { WalletAddress } from "../WalletAddress";
+import { WalletAddress } from '../WalletAddress';
 
 export interface GetWalletAddressesRequest {
   fingerprints?: number[];
@@ -7,4 +7,4 @@ export interface GetWalletAddressesRequest {
   nonObserverDerivation?: boolean;
 }
 
-export type GetWalletAddressesResponse = { [key: string]: WalletAddress[] };
+export type GetWalletAddressesResponse = Record<string, WalletAddress[]>;

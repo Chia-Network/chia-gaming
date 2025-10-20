@@ -1,20 +1,20 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import axios from 'axios';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import io, { Socket } from 'socket.io-client';
+
+import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { ExternalBlockchainInterface } from '../types/ChiaGaming';
 import {
-  ChatMessage,
   ChatEnvelope,
   FragmentData,
   GenerateRoomResult,
   Room,
-} from "../types/lobby";
-import { ExternalBlockchainInterface } from "../types/ChiaGaming";
-import { BLOCKCHAIN_SERVICE_URL } from "../settings";
+} from '../types/lobby';
 import {
   getSearchParams,
   getFragmentParams,
   generateOrRetrieveUniqueId,
-} from "../util";
-import io, { Socket } from "socket.io-client";
-import axios from "axios";
+} from '../util';
 
 interface Player {
   id: string;
@@ -27,16 +27,14 @@ interface Player {
 export function useLobbySocket(alias: string, walletConnect: boolean) {
   const LOBBY_URL = window.location.origin;
   const params = getSearchParams();
-  const [uniqueId, setUniqueId] = useState<string>(
-    generateOrRetrieveUniqueId(),
-  );
+  const [uniqueId] = useState<string>(generateOrRetrieveUniqueId());
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<ChatEnvelope[]>([]);
   const [didJoin, setDidJoin] = useState(false);
   const socketRef = useRef<Socket>(undefined);
-  const [fragment, setFragment] = useState<FragmentData>(getFragmentParams());
-  console.log("fragment retrieved", fragment);
+  const [fragment] = useState<FragmentData>(getFragmentParams());
+  console.log('fragment retrieved', fragment);
 
   const joinRoom = useCallback(
     async (token: string) => {
@@ -44,7 +42,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
         token,
         id: uniqueId,
         alias,
-        game: "lobby",
+        game: 'lobby',
         parameters: {},
       });
 
@@ -54,16 +52,15 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
   );
 
   function tryJoinRoom() {
-    for (let i = 0; i < rooms.length; i++) {
-      let room = rooms[i];
-      console.log("we have: uniqueId", uniqueId, "params", params);
-      console.log("checking room", room);
+    for (const room of rooms) {
+      console.log('we have: uniqueId', uniqueId, 'params', params);
+      console.log('checking room', room);
       if (!room.host) {
-        console.log("either host or joiner missing");
+        console.log('either host or joiner missing');
         continue;
       }
       if (params.token && room.token != params.token) {
-        console.log("room with wrong token wanted", params.token);
+        console.log('room with wrong token wanted', params.token);
         continue;
       }
 
@@ -76,7 +73,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
       }
 
       console.log(
-        "conditions to enter",
+        'conditions to enter',
         room.host === uniqueId,
         room.joiner === uniqueId,
         room.target,
@@ -89,12 +86,12 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
       ) {
         const iStarted = room.host === uniqueId;
         // This room is inhabited and contains us, redirect.
-        console.log("take us to game", JSON.stringify(room));
+        console.log('take us to game', JSON.stringify(room));
         // This is gross but should work ok.
-        fetch("/lobby/good", {
-          method: "POST",
+        fetch('/lobby/good', {
+          method: 'POST',
           headers: {
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             id: uniqueId,
@@ -103,7 +100,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
         })
           .then((res) => res.json())
           .then(() => {
-            let blockchain = new ExternalBlockchainInterface(
+            const blockchain = new ExternalBlockchainInterface(
               BLOCKCHAIN_SERVICE_URL,
             );
             return blockchain.getOrRequestToken(params.uniqueId);
@@ -125,10 +122,10 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
     const socket = io(LOBBY_URL);
     socketRef.current = socket;
 
-    socket.emit("join", { id: uniqueId, alias: alias });
+    socket.emit('join', { id: uniqueId, alias: alias });
 
-    socket.on("lobby_update", (q: Player[]) => setPlayers(q));
-    socket.on("room_update", (r: Room | Room[]) => {
+    socket.on('lobby_update', (q: Player[]) => setPlayers(q));
+    socket.on('room_update', (r: Room | Room[]) => {
       const updated = Array.isArray(r) ? r : [r];
       // Determine whether we've been connected with someone based on the .host and .joined
       // members of the rooms.
@@ -140,19 +137,19 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
 
       tryJoinRoom();
     });
-    socket.on("chat_message", (chatMsg: ChatEnvelope) => {
+    socket.on('chat_message', (chatMsg: ChatEnvelope) => {
       setMessages((m) => [...m, chatMsg]);
     });
 
     return () => {
-      socket.emit("leave", { id: alias });
+      socket.emit('leave', { id: alias });
       socket.disconnect();
     };
   }, [uniqueId]);
 
   const sendMessage = useCallback(
     (msg: string) => {
-      socketRef.current?.emit("chat_message", {
+      socketRef.current?.emit('chat_message', {
         alias,
         content: { text: msg, sender: alias },
       });
@@ -179,7 +176,7 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
 
   const setLobbyAlias = useCallback(
     async (id: string, alias: string) => {
-      console.log("setLobbyAlias", id, alias);
+      console.log('setLobbyAlias', id, alias);
       const { data } = await axios.post(`${LOBBY_URL}/lobby/change-alias`, {
         id,
         newAlias: alias,
@@ -190,8 +187,8 @@ export function useLobbySocket(alias: string, walletConnect: boolean) {
   );
 
   const leaveRoom = useCallback(
-    async (token: string) => {
-      console.error("implement leave room");
+    async (_token: string) => {
+      console.error('implement leave room');
     },
     [uniqueId],
   );

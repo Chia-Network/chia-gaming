@@ -1,7 +1,7 @@
-import { Coin } from "./Coin";
-import { Peer } from "./Peer";
-import { TradeStatus } from "./TradeStatus";
-import { TradeSummary } from "./TradeSummary";
+import { Coin } from './Coin';
+import { Peer } from './Peer';
+import { TradeStatus } from './TradeStatus';
+import { TradeSummary } from './TradeSummary';
 
 export interface TradeRecord {
   acceptedAtTime: number | null;
