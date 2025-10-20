@@ -33,7 +33,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   setCardSelections,
   handleMakeMove,
   stopPlaying,
-  log
+  log,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
   const colors = {

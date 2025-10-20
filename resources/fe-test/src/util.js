@@ -34,18 +34,33 @@ async function waitEnabled(driver, element) {
   }
 }
 
-async function waitAriaEnabled(driver, element) {
+/// waitAriaDisabledState:
+///     pass desired_state="enabled" to wait for an element to become enabled.
+///     pass desired_state != "enabled" to wait for an element to become disabled.
+async function waitAriaDisabledState(driver, element, desired_state) {
   const actions = driver.actions({ async: true });
   for (let i = 0; i < WAIT_ITERATIONS; i++) {
     const shouldExit = await element.getAttribute("aria-disabled");
-    if (shouldExit.toString() !== "true") {
-      return;
+    if (desired_state == "enabled") {
+      if (shouldExit.toString() !== "true") {
+        return;
+      }
+    } else {
+      if (shouldExit.toString() == "true") {
+        return;
+      }
     }
-
     await actions.pause(HALF_SECOND).perform();
   }
-
   throw new Error("failed to wait for enabled element");
+}
+
+async function waitAriaEnabled(driver, element) {
+  return await waitAriaDisabledState(driver, element, "enabled");
+}
+
+async function waitAriaDisabled(driver, element) {
+  return await waitAriaDisabledState(driver, element, "disabled");
 }
 
 async function selectSimulator(driver) {
@@ -112,6 +127,7 @@ module.exports = {
   waitEnabled,
   selectSimulator,
   waitAriaEnabled,
+  waitAriaDisabled,
   waitForNonError,
   sendControlChar,
   sendControlA,
