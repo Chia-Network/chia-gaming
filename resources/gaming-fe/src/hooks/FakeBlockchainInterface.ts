@@ -1,27 +1,39 @@
-import { Subject, Observable } from 'rxjs';
-import { ToggleEmitter, ExternalBlockchainInterface, InternalBlockchainInterface, BlockchainReport, WatchReport, SelectionMessage } from '../types/ChiaGaming';
-import { blockchainDataEmitter } from './BlockchainInfo';
-import { blockchainConnector, BlockchainOutboundRequest } from './BlockchainConnector';
-import { BLOCKCHAIN_SERVICE_URL } from '../settings';
+import { Subject, Observable } from "rxjs";
+import {
+  ToggleEmitter,
+  ExternalBlockchainInterface,
+  InternalBlockchainInterface,
+  BlockchainReport,
+  WatchReport,
+  SelectionMessage,
+} from "../types/ChiaGaming";
+import { blockchainDataEmitter } from "./BlockchainInfo";
+import {
+  blockchainConnector,
+  BlockchainOutboundRequest,
+} from "./BlockchainConnector";
+import { BLOCKCHAIN_SERVICE_URL } from "../settings";
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
-    method: 'POST'
-  }).then((res) => res.json()).then((res) => {
-    if (res === null) {
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          requestBlockData(forWho, block_number);
-        }, 100);
-      });
-    }
-    const converted_res: WatchReport = {
-      created_watched: res.created,
-      deleted_watched: res.deleted,
-      timed_out: res.timed_out
-    };
-    forWho.deliverBlock(block_number, converted_res);
-  });
+    method: "POST",
+  })
+    .then((res) => res.json())
+    .then((res) => {
+      if (res === null) {
+        return new Promise((resolve, reject) => {
+          setTimeout(() => {
+            requestBlockData(forWho, block_number);
+          }, 100);
+        });
+      }
+      const converted_res: WatchReport = {
+        created_watched: res.created,
+        deleted_watched: res.deleted,
+        timed_out: res.timed_out,
+      };
+      forWho.deliverBlock(block_number, converted_res);
+    });
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
@@ -48,15 +60,19 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   startMonitoring(uniqueId: string) {
-    console.log('startMonitoring', uniqueId);
+    console.log("startMonitoring", uniqueId);
     this.upstream.getOrRequestToken(uniqueId).then(() => {
-      fetch(`${this.baseUrl}/get_peak`, {method: "POST"}).then(res => res.json()).then(peak => {
-        this.setNewPeak(peak);
-      });
+      fetch(`${this.baseUrl}/get_peak`, { method: "POST" })
+        .then((res) => res.json())
+        .then((peak) => {
+          this.setNewPeak(peak);
+        });
     });
   }
 
-  getObservable() { return this.observable; }
+  getObservable() {
+    return this.observable;
+  }
 
   do_initial_spend(uniqueId: string, target: string, amt: number) {
     return this.upstream.getOrRequestToken(uniqueId).then((fromPuzzleHash) => {
@@ -66,7 +82,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         }
 
         // Returns the coin string
-        console.log('set opening coin', coin);
+        console.log("set opening coin", coin);
         return { coin, fromPuzzleHash };
       });
     });
@@ -100,18 +116,23 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     if (event.setNewPeak) {
       this.internalSetNewPeak(event.setNewPeak);
     } else if (event.deliverBlock) {
-      this.internalDeliverBlock(event.deliverBlock.block_number, event.deliverBlock.block_data);
+      this.internalDeliverBlock(
+        event.deliverBlock.block_number,
+        event.deliverBlock.block_data,
+      );
     }
   }
 
   async internalNextBlock() {
     if (this.at_block > this.max_block) {
       return fetch(`${this.baseUrl}/wait_block`, {
-        method: 'POST'
-      }).then((res) => res.json()).then((res) => {
-        // console.log('wait_block returned', res);
-        this.setNewPeak(res);
-      });
+        method: "POST",
+      })
+        .then((res) => res.json())
+        .then((res) => {
+          // console.log('wait_block returned', res);
+          this.setNewPeak(res);
+        });
     } else {
       return requestBlockData(this, this.at_block);
     }
@@ -142,7 +163,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.blockEmitter({
       peak: block_number,
       block: [],
-      report: block_data
+      report: block_data,
     });
 
     return this.internalNextBlock();
@@ -168,8 +189,12 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 }
 
-export const fakeBlockchainInfo = new FakeBlockchainInterface(BLOCKCHAIN_SERVICE_URL);
-export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(fakeBlockchainInfo.getObservable());
+export const fakeBlockchainInfo = new FakeBlockchainInterface(
+  BLOCKCHAIN_SERVICE_URL,
+);
+export const FAKE_BLOCKCHAIN_ID = blockchainDataEmitter.addUpstream(
+  fakeBlockchainInfo.getObservable(),
+);
 
 export function connectSimulatorBlockchain() {
   blockchainConnector.getOutbound().subscribe({
@@ -177,38 +202,47 @@ export function connectSimulatorBlockchain() {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
       if (initialSpend) {
-        return fakeBlockchainInfo.do_initial_spend(
-          initialSpend.uniqueId,
-          initialSpend.target,
-          initialSpend.amount
-        ).then((result: any) => {
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-            initialSpend: result
+        return fakeBlockchainInfo
+          .do_initial_spend(
+            initialSpend.uniqueId,
+            initialSpend.target,
+            initialSpend.amount,
+          )
+          .then((result: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              initialSpend: result,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e.toString(),
+            });
           });
-        }).catch((e: any) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
-        });
       } else if (transaction) {
-        fakeBlockchainInfo.spend(
-          (blob: string) => transaction.spendObject,
-          transaction.blob
-        ).then((response: any) => {
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-            transaction: response
+        fakeBlockchainInfo
+          .spend((blob: string) => transaction.spendObject, transaction.blob)
+          .then((response: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              transaction: response,
+            });
+          })
+          .catch((e: any) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              error: e.toString(),
+            });
           });
-        }).catch((e: any) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, error: e.toString() });
-        });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({
           responseId: evt.requestId,
-          error: `unknown blockchain request type ${JSON.stringify(evt)}`
+          error: `unknown blockchain request type ${JSON.stringify(evt)}`,
         });
       }
-    }
+    },
   });
 }
 
@@ -223,5 +257,5 @@ blockchainDataEmitter.getSelectionObservable().subscribe({
       fakeBlockchainInfo.startMonitoring(e.uniqueId);
       connectSimulatorBlockchain();
     }
-  }
+  },
 });

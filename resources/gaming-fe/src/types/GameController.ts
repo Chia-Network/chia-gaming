@@ -1,5 +1,4 @@
-import { Subject } from 'rxjs'
-
+import { Subject } from "rxjs";
 
 export interface DeliverMessage {
   deliverMessage: string;
@@ -18,7 +17,11 @@ export interface Shutdown {
   shutdown: boolean;
 }
 
-export type WasmCommand = DeliverMessage | SocketEnabled | WasmMove | SetCardSelections | Shutdown;
+export type WasmCommand =
+  | DeliverMessage
+  | SocketEnabled
+  | WasmMove
+  | SetCardSelections
+  | Shutdown;
 
 export const wasmCommandChannel = new Subject<WasmCommand>();
-

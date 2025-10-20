@@ -1,5 +1,5 @@
-import { AppError, ErrorCodes } from '../types/errors';
-import { GameType } from '../types/lobby';
+import { AppError, ErrorCodes } from "../types/errors";
+import { GameType } from "../types/lobby";
 
 interface GameConfig {
   id: string;
@@ -37,7 +37,7 @@ interface PlayerSettings {
     showTimer: boolean;
     showPotOdds: boolean;
     showHandStrength: boolean;
-    theme: 'light' | 'dark' | 'system';
+    theme: "light" | "dark" | "system";
     language: string;
     timeZone: string;
   };
@@ -51,67 +51,67 @@ export class GameConfigService {
   private readonly defaultConfigs: Partial<GameConfig>[] = [
     // currently all placeholders
     {
-      gameType: 'california_poker',
-      name: 'California Poker',
-      description: '',
+      gameType: "california_poker",
+      name: "California Poker",
+      description: "",
       minPlayers: 2,
       maxPlayers: 9,
       startingStack: 1000,
       blinds: {
         small: 5,
-        big: 10
+        big: 10,
       },
       timeLimits: {
         action: 30,
         turn: 60,
-        round: 300
+        round: 300,
       },
       rules: {
         allowStraddle: true,
         allowRunItTwice: true,
-        allowInsurance: true
-      }
+        allowInsurance: true,
+      },
     },
     {
-      gameType: 'krunk',
-      name: 'Krunk',
-      description: '',
+      gameType: "krunk",
+      name: "Krunk",
+      description: "",
       minPlayers: 2,
       maxPlayers: 8,
       startingStack: 500,
       timeLimits: {
         action: 20,
         turn: 60,
-        round: 180
+        round: 180,
       },
       rules: {
         wordLength: 5,
         maxHints: 3,
-        pointsPerGuess: 10
-      }
+        pointsPerGuess: 10,
+      },
     },
     {
-      gameType: 'exotic_poker',
-      name: 'Exotic Poker',
-      description: '',
+      gameType: "exotic_poker",
+      name: "Exotic Poker",
+      description: "",
       minPlayers: 2,
       maxPlayers: 6,
       startingStack: 2000,
       blinds: {
         small: 10,
-        big: 20
+        big: 20,
       },
       timeLimits: {
         action: 25,
         turn: 45,
-        round: 240
+        round: 240,
       },
       rules: {
         wildCards: true,
         specialHands: true,
-        allowSplitting: true
-      }
-    }
+        allowSplitting: true,
+      },
+    },
   ];
 
   private constructor() {
@@ -121,14 +121,14 @@ export class GameConfigService {
   }
 
   private initializeConfigs(): void {
-    this.defaultConfigs.forEach(config => {
+    this.defaultConfigs.forEach((config) => {
       if (config.gameType) {
         this.createGameConfig({
           ...config,
           id: config.gameType,
           isActive: true,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
         } as GameConfig);
       }
     });
@@ -148,17 +148,24 @@ export class GameConfigService {
   public getGameConfig(gameType: GameType): GameConfig {
     const config = this.gameConfigs.get(gameType);
     if (!config) {
-      throw new AppError(ErrorCodes.SYSTEM.NOT_FOUND, 'Game configuration not found', 404);
+      throw new AppError(
+        ErrorCodes.SYSTEM.NOT_FOUND,
+        "Game configuration not found",
+        404,
+      );
     }
     return config;
   }
 
-  public updateGameConfig(gameType: GameType, updates: Partial<GameConfig>): void {
+  public updateGameConfig(
+    gameType: GameType,
+    updates: Partial<GameConfig>,
+  ): void {
     const config = this.getGameConfig(gameType);
     const updatedConfig: GameConfig = {
       ...config,
       ...updates,
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
     this.gameConfigs.set(gameType, updatedConfig);
   }
@@ -168,11 +175,15 @@ export class GameConfigService {
   }
 
   public getActiveGameConfigs(): GameConfig[] {
-    return Array.from(this.gameConfigs.values())
-      .filter(config => config.isActive);
+    return Array.from(this.gameConfigs.values()).filter(
+      (config) => config.isActive,
+    );
   }
 
-  public getPlayerSettings(playerId: string, gameType: GameType): PlayerSettings {
+  public getPlayerSettings(
+    playerId: string,
+    gameType: GameType,
+  ): PlayerSettings {
     const key = `${playerId}-${gameType}`;
     const settings = this.playerSettings.get(key);
     if (!settings) {
@@ -187,11 +198,11 @@ export class GameConfigService {
           showTimer: true,
           showPotOdds: true,
           showHandStrength: true,
-          theme: 'system',
-          language: 'en',
-          timeZone: 'UTC'
+          theme: "system",
+          language: "en",
+          timeZone: "UTC",
         },
-        lastUpdated: new Date()
+        lastUpdated: new Date(),
       };
     }
     return settings;
@@ -200,7 +211,7 @@ export class GameConfigService {
   public updatePlayerSettings(
     playerId: string,
     gameType: GameType,
-    updates: Partial<PlayerSettings['settings']>
+    updates: Partial<PlayerSettings["settings"]>,
   ): void {
     const key = `${playerId}-${gameType}`;
     const currentSettings = this.getPlayerSettings(playerId, gameType);
@@ -208,9 +219,9 @@ export class GameConfigService {
       ...currentSettings,
       settings: {
         ...currentSettings.settings,
-        ...updates
+        ...updates,
       },
-      lastUpdated: new Date()
+      lastUpdated: new Date(),
     };
     this.playerSettings.set(key, updatedSettings);
   }
@@ -231,46 +242,46 @@ export class GameConfigService {
       ...config,
       rules: {
         ...config.rules,
-        ...rules
-      }
+        ...rules,
+      },
     });
   }
 
-  public getTimeLimits(gameType: GameType): GameConfig['timeLimits'] {
+  public getTimeLimits(gameType: GameType): GameConfig["timeLimits"] {
     const config = this.getGameConfig(gameType);
     return config.timeLimits;
   }
 
   public updateTimeLimits(
     gameType: GameType,
-    timeLimits: Partial<GameConfig['timeLimits']>
+    timeLimits: Partial<GameConfig["timeLimits"]>,
   ): void {
     const config = this.getGameConfig(gameType);
     this.updateGameConfig(gameType, {
       ...config,
       timeLimits: {
         ...config.timeLimits,
-        ...timeLimits
-      }
+        ...timeLimits,
+      },
     });
   }
 
-  public getBlinds(gameType: GameType): GameConfig['blinds'] {
+  public getBlinds(gameType: GameType): GameConfig["blinds"] {
     const config = this.getGameConfig(gameType);
     return config.blinds;
   }
 
   public updateBlinds(
     gameType: GameType,
-    blinds: Partial<GameConfig['blinds']>
+    blinds: Partial<GameConfig["blinds"]>,
   ): void {
     const config = this.getGameConfig(gameType);
     this.updateGameConfig(gameType, {
       ...config,
       blinds: {
         ...config.blinds,
-        ...blinds
-      }
+        ...blinds,
+      },
     });
   }
 
@@ -278,7 +289,7 @@ export class GameConfigService {
     const config = this.getGameConfig(gameType);
     this.updateGameConfig(gameType, {
       ...config,
-      isActive: !config.isActive
+      isActive: !config.isActive,
     });
   }
 
@@ -292,4 +303,4 @@ export class GameConfigService {
       }
     }
   }
-} 
+}

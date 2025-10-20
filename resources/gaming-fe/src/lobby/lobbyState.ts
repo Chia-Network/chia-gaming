@@ -1,5 +1,12 @@
-import { v4 as uuidv4 } from 'uuid';
-import { Player, Room, GameType, GameTypes, GameDefinition, MatchmakingPreferences } from '../types/lobby';
+import { v4 as uuidv4 } from "uuid";
+import {
+  Player,
+  Room,
+  GameType,
+  GameTypes,
+  GameDefinition,
+  MatchmakingPreferences,
+} from "../types/lobby";
 
 const ROOM_TTL = 10 * 60 * 1000;
 const GAME_TTL = 10 * 60 * 1000;
@@ -81,9 +88,9 @@ export class Lobby {
       host,
       createdAt: Date.now(),
       expiresAt: Date.now() + ROOM_TTL,
-      status: 'waiting',
+      status: "waiting",
       maxPlayers: 2,
-      chat: []
+      chat: [],
     };
     this.rooms[room.token] = room;
     return room;
@@ -91,7 +98,7 @@ export class Lobby {
 
   joinRoom(roomId: string, player: Player) {
     const room = this.rooms[roomId];
-    if (!room || room.status !== 'waiting') {
+    if (!room || room.status !== "waiting") {
       return null;
     }
 

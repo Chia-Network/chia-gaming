@@ -1,6 +1,19 @@
 interface Card {
-  suit: 'hearts' | 'diamonds' | 'clubs' | 'spades';
-  rank: '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'A';
+  suit: "hearts" | "diamonds" | "clubs" | "spades";
+  rank:
+    | "2"
+    | "3"
+    | "4"
+    | "5"
+    | "6"
+    | "7"
+    | "8"
+    | "9"
+    | "10"
+    | "J"
+    | "Q"
+    | "K"
+    | "A";
   isWild?: boolean;
 }
 
@@ -13,8 +26,19 @@ interface HandRank {
 
 export class HandEvaluator {
   private static readonly RANK_VALUES: { [key: string]: number } = {
-    '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10,
-    'J': 11, 'Q': 12, 'K': 13, 'A': 14
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "10": 10,
+    J: 11,
+    Q: 12,
+    K: 13,
+    A: 14,
   };
 
   private static readonly HAND_RANKS = {
@@ -27,13 +51,16 @@ export class HandEvaluator {
     FULL_HOUSE: 7,
     FOUR_OF_A_KIND: 8,
     STRAIGHT_FLUSH: 9,
-    ROYAL_FLUSH: 10
+    ROYAL_FLUSH: 10,
   };
 
-  public static evaluateHand(holeCards: Card[], communityCards: Card[]): HandRank {
+  public static evaluateHand(
+    holeCards: Card[],
+    communityCards: Card[],
+  ): HandRank {
     const allCards = [...holeCards, ...communityCards];
-    const validCards = allCards.filter(card => !card.isWild);
-    const wildCards = allCards.filter(card => card.isWild);
+    const validCards = allCards.filter((card) => !card.isWild);
+    const wildCards = allCards.filter((card) => card.isWild);
 
     const royalFlush = this.checkRoyalFlush(validCards, wildCards);
     if (royalFlush) return royalFlush;
@@ -65,38 +92,47 @@ export class HandEvaluator {
     return this.getHighCard(validCards);
   }
 
-  private static checkRoyalFlush(cards: Card[], wildCards: Card[]): HandRank | null {
+  private static checkRoyalFlush(
+    cards: Card[],
+    wildCards: Card[],
+  ): HandRank | null {
     const straightFlush = this.checkStraightFlush(cards, wildCards);
-    if (straightFlush && straightFlush.highCard?.rank === 'A') {
+    if (straightFlush && straightFlush.highCard?.rank === "A") {
       return {
         rank: this.HAND_RANKS.ROYAL_FLUSH,
-        name: 'Royal Flush',
-        highCard: straightFlush.highCard
+        name: "Royal Flush",
+        highCard: straightFlush.highCard,
       };
     }
     return null;
   }
 
-  private static checkStraightFlush(cards: Card[], wildCards: Card[]): HandRank | null {
-    const suits = ['hearts', 'diamonds', 'clubs', 'spades'] as const;
-    
+  private static checkStraightFlush(
+    cards: Card[],
+    wildCards: Card[],
+  ): HandRank | null {
+    const suits = ["hearts", "diamonds", "clubs", "spades"] as const;
+
     for (const suit of suits) {
-      const suitedCards = cards.filter(card => card.suit === suit);
+      const suitedCards = cards.filter((card) => card.suit === suit);
       const straight = this.findStraight([...suitedCards, ...wildCards]);
-      
+
       if (straight) {
         return {
           rank: this.HAND_RANKS.STRAIGHT_FLUSH,
-          name: 'Straight Flush',
-          highCard: straight[straight.length - 1]
+          name: "Straight Flush",
+          highCard: straight[straight.length - 1],
         };
       }
     }
-    
+
     return null;
   }
 
-  private static checkFourOfAKind(cards: Card[], wildCards: Card[]): HandRank | null {
+  private static checkFourOfAKind(
+    cards: Card[],
+    wildCards: Card[],
+  ): HandRank | null {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
 
@@ -104,12 +140,12 @@ export class HandEvaluator {
       if (group.length + wildCount >= 4) {
         const remainingWilds = wildCount - (4 - group.length);
         const kickers = this.getKickers(cards, [group[0]], remainingWilds);
-        
+
         return {
           rank: this.HAND_RANKS.FOUR_OF_A_KIND,
-          name: 'Four of a Kind',
+          name: "Four of a Kind",
           highCard: group[0],
-          kickers
+          kickers,
         };
       }
     }
@@ -117,7 +153,10 @@ export class HandEvaluator {
     return null;
   }
 
-  private static checkFullHouse(cards: Card[], wildCards: Card[]): HandRank | null {
+  private static checkFullHouse(
+    cards: Card[],
+    wildCards: Card[],
+  ): HandRank | null {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
     let threeOfAKind: Card[] | null = null;
@@ -132,7 +171,7 @@ export class HandEvaluator {
 
     if (threeOfAKind) {
       const remainingWilds = wildCount - (3 - threeOfAKind.length);
-      
+
       for (const [rank, group] of Object.entries(rankGroups)) {
         if (group !== threeOfAKind && group.length + remainingWilds >= 2) {
           pair = group;
@@ -143,9 +182,9 @@ export class HandEvaluator {
       if (pair) {
         return {
           rank: this.HAND_RANKS.FULL_HOUSE,
-          name: 'Full House',
+          name: "Full House",
           highCard: threeOfAKind[0],
-          kickers: [pair[0]]
+          kickers: [pair[0]],
         };
       }
     }
@@ -154,37 +193,43 @@ export class HandEvaluator {
   }
 
   private static checkFlush(cards: Card[], wildCards: Card[]): HandRank | null {
-    const suits = ['hearts', 'diamonds', 'clubs', 'spades'] as const;
-    
+    const suits = ["hearts", "diamonds", "clubs", "spades"] as const;
+
     for (const suit of suits) {
-      const suitedCards = cards.filter(card => card.suit === suit);
+      const suitedCards = cards.filter((card) => card.suit === suit);
       if (suitedCards.length + wildCards.length >= 5) {
         const sortedCards = this.sortByRank(suitedCards);
         return {
           rank: this.HAND_RANKS.FLUSH,
-          name: 'Flush',
+          name: "Flush",
           highCard: sortedCards[0],
-          kickers: sortedCards.slice(1, 5)
+          kickers: sortedCards.slice(1, 5),
         };
       }
     }
-    
+
     return null;
   }
 
-  private static checkStraight(cards: Card[], wildCards: Card[]): HandRank | null {
+  private static checkStraight(
+    cards: Card[],
+    wildCards: Card[],
+  ): HandRank | null {
     const straight = this.findStraight([...cards, ...wildCards]);
     if (straight) {
       return {
         rank: this.HAND_RANKS.STRAIGHT,
-        name: 'Straight',
-        highCard: straight[straight.length - 1]
+        name: "Straight",
+        highCard: straight[straight.length - 1],
       };
     }
     return null;
   }
 
-  private static checkThreeOfAKind(cards: Card[], wildCards: Card[]): HandRank | null {
+  private static checkThreeOfAKind(
+    cards: Card[],
+    wildCards: Card[],
+  ): HandRank | null {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
 
@@ -192,12 +237,12 @@ export class HandEvaluator {
       if (group.length + wildCount >= 3) {
         const remainingWilds = wildCount - (3 - group.length);
         const kickers = this.getKickers(cards, [group[0]], remainingWilds);
-        
+
         return {
           rank: this.HAND_RANKS.THREE_OF_A_KIND,
-          name: 'Three of a Kind',
+          name: "Three of a Kind",
           highCard: group[0],
-          kickers
+          kickers,
         };
       }
     }
@@ -205,7 +250,10 @@ export class HandEvaluator {
     return null;
   }
 
-  private static checkTwoPair(cards: Card[], wildCards: Card[]): HandRank | null {
+  private static checkTwoPair(
+    cards: Card[],
+    wildCards: Card[],
+  ): HandRank | null {
     const rankGroups = this.groupByRank(cards);
     const wildCount = wildCards.length;
     const pairs: Card[][] = [];
@@ -214,14 +262,19 @@ export class HandEvaluator {
       if (group.length + wildCount >= 2) {
         pairs.push(group);
         if (pairs.length === 2) {
-          const remainingWilds = wildCount - (2 - pairs[0].length) - (2 - pairs[1].length);
-          const kickers = this.getKickers(cards, [pairs[0][0], pairs[1][0]], remainingWilds);
-          
+          const remainingWilds =
+            wildCount - (2 - pairs[0].length) - (2 - pairs[1].length);
+          const kickers = this.getKickers(
+            cards,
+            [pairs[0][0], pairs[1][0]],
+            remainingWilds,
+          );
+
           return {
             rank: this.HAND_RANKS.TWO_PAIR,
-            name: 'Two Pair',
+            name: "Two Pair",
             highCard: pairs[0][0],
-            kickers: [pairs[1][0], ...kickers]
+            kickers: [pairs[1][0], ...kickers],
           };
         }
       }
@@ -238,12 +291,12 @@ export class HandEvaluator {
       if (group.length + wildCount >= 2) {
         const remainingWilds = wildCount - (2 - group.length);
         const kickers = this.getKickers(cards, [group[0]], remainingWilds);
-        
+
         return {
           rank: this.HAND_RANKS.PAIR,
-          name: 'Pair',
+          name: "Pair",
           highCard: group[0],
-          kickers
+          kickers,
         };
       }
     }
@@ -255,9 +308,9 @@ export class HandEvaluator {
     const sortedCards = this.sortByRank(cards);
     return {
       rank: this.HAND_RANKS.HIGH_CARD,
-      name: 'High Card',
+      name: "High Card",
       highCard: sortedCards[0],
-      kickers: sortedCards.slice(1, 5)
+      kickers: sortedCards.slice(1, 5),
     };
   }
 
@@ -273,20 +326,26 @@ export class HandEvaluator {
   }
 
   private static sortByRank(cards: Card[]): Card[] {
-    return [...cards].sort((a, b) => this.RANK_VALUES[b.rank] - this.RANK_VALUES[a.rank]);
+    return [...cards].sort(
+      (a, b) => this.RANK_VALUES[b.rank] - this.RANK_VALUES[a.rank],
+    );
   }
 
   private static findStraight(cards: Card[]): Card[] | null {
     const sortedCards = this.sortByRank(cards);
-    const uniqueRanks = [...new Set(sortedCards.map(card => card.rank))];
-    const rankValues = uniqueRanks.map(rank => this.RANK_VALUES[rank]).sort((a, b) => b - a);
+    const uniqueRanks = [...new Set(sortedCards.map((card) => card.rank))];
+    const rankValues = uniqueRanks
+      .map((rank) => this.RANK_VALUES[rank])
+      .sort((a, b) => b - a);
 
     if (rankValues.includes(14) && rankValues.includes(2)) {
       const lowStraight = [14, 5, 4, 3, 2];
-      if (lowStraight.every(rank => rankValues.includes(rank))) {
-        return lowStraight.map(rank => {
-          const rankStr = Object.keys(this.RANK_VALUES).find(key => this.RANK_VALUES[key] === rank)!;
-          return sortedCards.find(card => card.rank === rankStr)!;
+      if (lowStraight.every((rank) => rankValues.includes(rank))) {
+        return lowStraight.map((rank) => {
+          const rankStr = Object.keys(this.RANK_VALUES).find(
+            (key) => this.RANK_VALUES[key] === rank,
+          )!;
+          return sortedCards.find((card) => card.rank === rankStr)!;
         });
       }
     }
@@ -294,9 +353,11 @@ export class HandEvaluator {
     for (let i = 0; i <= rankValues.length - 5; i++) {
       const straight = rankValues.slice(i, i + 5);
       if (straight[0] - straight[4] === 4) {
-        return straight.map(rank => {
-          const rankStr = Object.keys(this.RANK_VALUES).find(key => this.RANK_VALUES[key] === rank)!;
-          return sortedCards.find(card => card.rank === rankStr)!;
+        return straight.map((rank) => {
+          const rankStr = Object.keys(this.RANK_VALUES).find(
+            (key) => this.RANK_VALUES[key] === rank,
+          )!;
+          return sortedCards.find((card) => card.rank === rankStr)!;
         });
       }
     }
@@ -304,8 +365,12 @@ export class HandEvaluator {
     return null;
   }
 
-  private static getKickers(cards: Card[], excludeCards: Card[], wildCount: number): Card[] {
-    const availableCards = cards.filter(card => !excludeCards.includes(card));
+  private static getKickers(
+    cards: Card[],
+    excludeCards: Card[],
+    wildCount: number,
+  ): Card[] {
+    const availableCards = cards.filter((card) => !excludeCards.includes(card));
     const sortedCards = this.sortByRank(availableCards);
     return sortedCards.slice(0, 5 - excludeCards.length - wildCount);
   }
@@ -316,15 +381,23 @@ export class HandEvaluator {
     }
 
     if (hand1.highCard && hand2.highCard) {
-      const highCardCompare = this.RANK_VALUES[hand2.highCard.rank] - this.RANK_VALUES[hand1.highCard.rank];
+      const highCardCompare =
+        this.RANK_VALUES[hand2.highCard.rank] -
+        this.RANK_VALUES[hand1.highCard.rank];
       if (highCardCompare !== 0) {
         return highCardCompare;
       }
     }
 
     if (hand1.kickers && hand2.kickers) {
-      for (let i = 0; i < Math.min(hand1.kickers.length, hand2.kickers.length); i++) {
-        const kickerCompare = this.RANK_VALUES[hand2.kickers[i].rank] - this.RANK_VALUES[hand1.kickers[i].rank];
+      for (
+        let i = 0;
+        i < Math.min(hand1.kickers.length, hand2.kickers.length);
+        i++
+      ) {
+        const kickerCompare =
+          this.RANK_VALUES[hand2.kickers[i].rank] -
+          this.RANK_VALUES[hand1.kickers[i].rank];
         if (kickerCompare !== 0) {
           return kickerCompare;
         }
@@ -333,4 +406,4 @@ export class HandEvaluator {
 
     return 0;
   }
-} 
+}

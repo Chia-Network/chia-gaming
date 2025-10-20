@@ -1,13 +1,13 @@
-import { v4 as uuidv4 } from 'uuid';
-import { Program } from 'clvm-lib';
+import { v4 as uuidv4 } from "uuid";
+import { Program } from "clvm-lib";
 
 export function toUint8(s: string) {
   if (s.length % 2 != 0) {
-    throw 'Odd length hex string';
+    throw "Odd length hex string";
   }
   const result = new Uint8Array(s.length >> 1);
   for (let i = 0; i < s.length; i += 2) {
-    let sub = s.slice(i, i+2);
+    let sub = s.slice(i, i + 2);
     let val = parseInt(sub, 16);
     result[i >> 1] = val;
   }
@@ -16,24 +16,26 @@ export function toUint8(s: string) {
 
 // Thanks: https://stackoverflow.com/questions/34309988/byte-array-to-hex-string-conversion-in-javascript
 export function toHexString(byteArray: number[]) {
-  return Array.from(byteArray, function(byte) {
-    return ('0' + (byte & 0xFF).toString(16)).slice(-2);
-  }).join('');
+  return Array.from(byteArray, function (byte) {
+    return ("0" + (byte & 0xff).toString(16)).slice(-2);
+  }).join("");
 }
 
-export type FragmentData = { [k: string]: string }
+export type FragmentData = { [k: string]: string };
 
 export function getParamsFromString(paramString: string): any {
-  const fragmentParts = paramString.split('&');
-  const params = Object.fromEntries(fragmentParts.map((part) => {
-    const partEqIdx = part.indexOf('=');
+  const fragmentParts = paramString.split("&");
+  const params = Object.fromEntries(
+    fragmentParts.map((part) => {
+      const partEqIdx = part.indexOf("=");
 
-    if (partEqIdx > 0) {
-      return [part.substring(0, partEqIdx), part.substring(partEqIdx + 1)];
-    }
+      if (partEqIdx > 0) {
+        return [part.substring(0, partEqIdx), part.substring(partEqIdx + 1)];
+      }
 
-    return [part, 'true'];
-  }));
+      return [part, "true"];
+    }),
+  );
   return params;
 }
 
@@ -44,7 +46,7 @@ export function getFragmentParams(): FragmentData {
 }
 
 export function getSearchParams(): any {
-  if (window.location.search === '') {
+  if (window.location.search === "") {
     return {};
   }
   const search = window.location.search.substring(1);
@@ -79,15 +81,15 @@ export function generateOrRetrieveUniqueId(): string {
 interface GameSelection {
   game: string;
   token: string;
-};
+}
 // Return true if game= and token= are present in the url.
 export function getGameSelection(): GameSelection | undefined {
   const search = getSearchParams();
-  console.log('getGameSelection', search);
+  console.log("getGameSelection", search);
   if (search.game && search.join) {
     return {
       game: search.game,
-      token: search.join
+      token: search.join,
     };
   }
   return undefined;
@@ -97,11 +99,11 @@ function clvm_enlist(clvms: string[]): string {
   let result = [];
 
   for (var i = 0; i < clvms.length; i++) {
-    result.push('ff');
+    result.push("ff");
     result.push(clvms[i]);
   }
 
-  result.push('80');
+  result.push("80");
   console.log(result);
   return result.join("");
 }
@@ -117,14 +119,21 @@ function clvm_length(atom: string): string {
 }
 
 function spend_to_clvm(spend: any): string {
-  const spend_clvm = clvm_enlist([spend.puzzle, spend.solution, clvm_length(spend.signature)]);
-  console.log('spend', spend_clvm);
+  const spend_clvm = clvm_enlist([
+    spend.puzzle,
+    spend.solution,
+    clvm_length(spend.signature),
+  ]);
+  console.log("spend", spend_clvm);
   return spend_clvm;
 }
 
 function coin_spend_to_clvm(coinspend: any): string {
-  const coin_spend_clvm = clvm_enlist([clvm_length(coinspend.coin), spend_to_clvm(coinspend.bundle)]);
-  console.log('coin_spend', coin_spend_clvm);
+  const coin_spend_clvm = clvm_enlist([
+    clvm_length(coinspend.coin),
+    spend_to_clvm(coinspend.bundle),
+  ]);
+  console.log("coin_spend", coin_spend_clvm);
   return coin_spend_clvm;
 }
 
@@ -138,7 +147,7 @@ function explode(p: any): any {
 
 export function proper_list(p: any): any {
   const result = [];
-  while(!(p instanceof Uint8Array)) {
+  while (!(p instanceof Uint8Array)) {
     result.push(p[0]);
     p = p[1];
   }
@@ -151,8 +160,10 @@ export function decode_sexp_hex(h: string): any {
 }
 
 export function spend_bundle_to_clvm(sbundle: any): string {
-  const bundle_clvm = clvm_enlist(sbundle.spends.map((s: any) => coin_spend_to_clvm(s)));
-  console.log('bundle', bundle_clvm);
+  const bundle_clvm = clvm_enlist(
+    sbundle.spends.map((s: any) => coin_spend_to_clvm(s)),
+  );
+  console.log("bundle", bundle_clvm);
   return bundle_clvm;
 }
 

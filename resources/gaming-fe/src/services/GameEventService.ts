@@ -1,6 +1,6 @@
-import type { Socket } from 'socket.io-client';
-import { AppError, ErrorCodes } from '../types/errors';
-import { GameType } from '../types/lobby';
+import type { Socket } from "socket.io-client";
+import { AppError, ErrorCodes } from "../types/errors";
+import { GameType } from "../types/lobby";
 
 interface GameEvent {
   type: string;
@@ -41,12 +41,12 @@ export class GameEventService {
       return;
     }
 
-    const { io } = require('socket.io-client');
+    const { io } = require("socket.io-client");
     this.socket = io(url, {
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
       reconnectionDelay: this.reconnectDelay,
-      ...options
+      ...options,
     });
 
     this.setupSocketListeners();
@@ -57,32 +57,32 @@ export class GameEventService {
       return;
     }
 
-    this.socket.on('connect', () => {
-      console.log('Connected to game server');
+    this.socket.on("connect", () => {
+      console.log("Connected to game server");
       this.reconnectAttempts = 0;
       this.processEventQueue();
     });
 
-    this.socket.on('disconnect', (reason: string) => {
-      console.log('Disconnected from game server:', reason);
-      if (reason === 'io server disconnect') {
+    this.socket.on("disconnect", (reason: string) => {
+      console.log("Disconnected from game server:", reason);
+      if (reason === "io server disconnect") {
         this.socket?.connect();
       }
     });
 
-    this.socket.on('connect_error', (error: Error) => {
-      console.error('Connection error:', error);
+    this.socket.on("connect_error", (error: Error) => {
+      console.error("Connection error:", error);
       this.reconnectAttempts++;
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         throw new AppError(
           ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-          'Failed to connect to game server',
-          503
+          "Failed to connect to game server",
+          503,
         );
       }
     });
 
-    this.socket.on('game_event', (event: GameEvent) => {
+    this.socket.on("game_event", (event: GameEvent) => {
       this.handleGameEvent(event);
     });
   }
@@ -94,7 +94,10 @@ export class GameEventService {
     }
   }
 
-  public subscribe(eventType: string, handler: (data: any) => void): GameEventSubscription {
+  public subscribe(
+    eventType: string,
+    handler: (data: any) => void,
+  ): GameEventSubscription {
     if (!this.eventHandlers[eventType]) {
       this.eventHandlers[eventType] = [];
     }
@@ -102,7 +105,7 @@ export class GameEventService {
 
     return {
       eventType,
-      handler
+      handler,
     };
   }
 
@@ -122,10 +125,10 @@ export class GameEventService {
       return;
     }
 
-    this.socket.emit('game_event', {
+    this.socket.emit("game_event", {
       type: eventType,
       data,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 
@@ -133,7 +136,7 @@ export class GameEventService {
     const event: GameEvent = {
       type: eventType,
       data,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
     this.eventQueue.push(event);
@@ -154,11 +157,11 @@ export class GameEventService {
   private handleGameEvent(event: GameEvent): void {
     const handlers = this.eventHandlers[event.type];
     if (handlers) {
-      handlers.forEach(handler => {
+      handlers.forEach((handler) => {
         try {
           handler(event.data);
         } catch (error) {
-          console.error('Error handling game event:', error);
+          console.error("Error handling game event:", error);
         }
       });
     }
@@ -168,12 +171,12 @@ export class GameEventService {
     if (!this.socket?.connected) {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
+        "Not connected to game server",
+        503,
       );
     }
 
-    this.socket.emit('join_game_room', { gameId });
+    this.socket.emit("join_game_room", { gameId });
   }
 
   public leaveGameRoom(gameId: string): void {
@@ -181,19 +184,19 @@ export class GameEventService {
       return;
     }
 
-    this.socket.emit('leave_game_room', { gameId });
+    this.socket.emit("leave_game_room", { gameId });
   }
 
   public joinLobby(gameType: GameType): void {
     if (!this.socket?.connected) {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
+        "Not connected to game server",
+        503,
       );
     }
 
-    this.socket.emit('join_lobby', { gameType });
+    this.socket.emit("join_lobby", { gameType });
   }
 
   public leaveLobby(gameType: GameType): void {
@@ -201,22 +204,22 @@ export class GameEventService {
       return;
     }
 
-    this.socket.emit('leave_lobby', { gameType });
+    this.socket.emit("leave_lobby", { gameType });
   }
 
   public sendChatMessage(roomId: string, message: string): void {
     if (!this.socket?.connected) {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
+        "Not connected to game server",
+        503,
       );
     }
 
-    this.socket.emit('chat_message', {
+    this.socket.emit("chat_message", {
       roomId,
       message,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 
@@ -224,16 +227,16 @@ export class GameEventService {
     if (!this.socket?.connected) {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
+        "Not connected to game server",
+        503,
       );
     }
 
-    this.socket.emit('game_action', {
+    this.socket.emit("game_action", {
       gameId,
       action,
       data,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 
@@ -241,12 +244,12 @@ export class GameEventService {
     if (!this.socket?.connected) {
       throw new AppError(
         ErrorCodes.SYSTEM.SERVICE_UNAVAILABLE,
-        'Not connected to game server',
-        503
+        "Not connected to game server",
+        503,
       );
     }
 
-    this.socket.emit('request_game_state', { gameId });
+    this.socket.emit("request_game_state", { gameId });
   }
 
   public isConnected(): boolean {
@@ -264,4 +267,4 @@ export class GameEventService {
   public clearEventQueue(): void {
     this.eventQueue.length = 0;
   }
-} 
+}

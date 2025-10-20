@@ -1,8 +1,8 @@
-import { Subject } from 'rxjs';
-import { useState, useEffect, useCallback } from 'react';
-import Client from '@walletconnect/sign-client';
-import { SessionTypes } from '@walletconnect/types';
-import { PROJECT_ID, RELAY_URL, CHAIN_ID } from '../constants/env';
+import { Subject } from "rxjs";
+import { useState, useEffect, useCallback } from "react";
+import Client from "@walletconnect/sign-client";
+import { SessionTypes } from "@walletconnect/types";
+import { PROJECT_ID, RELAY_URL, CHAIN_ID } from "../constants/env";
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
@@ -37,15 +37,25 @@ class WalletState {
     this.observable = new Subject();
   }
 
-  getObservable() { return this.observable; }
+  getObservable() {
+    return this.observable;
+  }
 
-  getClient() { return this.client; }
+  getClient() {
+    return this.client;
+  }
 
-  getSession() { return this.session; }
+  getSession() {
+    return this.session;
+  }
 
-  getChainId() { return CHAIN_ID; }
+  getChainId() {
+    return CHAIN_ID;
+  }
 
-  getAddress() { return this.address; }
+  getAddress() {
+    return this.address;
+  }
 
   async init() {
     if (this.isInitialized) {
@@ -57,24 +67,23 @@ class WalletState {
     this.observable.next({ stateName: "initializing", initializing: true });
 
     const signClient = await Client.init({
-      logger: 'error',
+      logger: "error",
       projectId: PROJECT_ID,
       relayUrl: RELAY_URL,
       metadata: {
-        name: 'Chia Gaming',
-        description: 'Chia Gaming Platform',
+        name: "Chia Gaming",
+        description: "Chia Gaming Platform",
         url: window.location.origin,
-        icons: [`${window.location.origin}/logo.png`]
-      }
+        icons: [`${window.location.origin}/logo.png`],
+      },
     });
-
 
     this.client = signClient;
     const sessions = signClient.session.getAll();
 
     if (sessions.length > 0) {
       const session = sessions[0];
-      const address = session.namespaces.chia.accounts[0].split(':')[2];
+      const address = session.namespaces.chia.accounts[0].split(":")[2];
       this.isConnected = true;
       this.address = address;
       this.session = session;
@@ -84,7 +93,7 @@ class WalletState {
         haveClient: true,
         haveSession: true,
         connected: true,
-        sessions: sessions.length
+        sessions: sessions.length,
       });
     }
 
@@ -102,7 +111,7 @@ class WalletState {
       stateName: "initialized",
       connected: false,
       sessions: 0,
-      address: undefined
+      address: undefined,
     });
 
     try {
@@ -110,33 +119,33 @@ class WalletState {
         topic: this.session.topic,
         reason: {
           code: 6000,
-          message: 'User disconnected'
-        }
+          message: "User disconnected",
+        },
       });
     } catch (error) {
-      this.error = 'Failed to disconnect wallet';
+      this.error = "Failed to disconnect wallet";
     }
   }
 
   async startConnect(): Promise<StartConnectResult> {
     this.observable.next({
       stateName: "connecting",
-      connecting: true
+      connecting: true,
     });
     const { uri, approval } = await this.client.connect({
       optionalNamespaces: {
         chia: {
-          methods: ['chia_getCurrentAddress', 'chia_sendTransaction'],
+          methods: ["chia_getCurrentAddress", "chia_sendTransaction"],
           chains: [CHAIN_ID],
-          events: []
-        }
-      }
+          events: [],
+        },
+      },
     });
 
     this.observable.next({
       stateName: "waitingApproval",
       waitingApproval: true,
-      connecting: false
+      connecting: false,
     });
 
     return { uri, approval };
@@ -144,19 +153,19 @@ class WalletState {
 
   async connect(approval: () => Promise<SessionTypes.Struct>) {
     const session = await approval();
-    const address = session.namespaces.chia.accounts[0].split(':')[2];
+    const address = session.namespaces.chia.accounts[0].split(":")[2];
 
     this.observable.next({
       stateName: "connected",
       waitingApproval: false,
       connected: true,
       sessions: 1,
-      address
+      address,
     });
 
     this.address = address;
     this.session = session;
   }
-};
+}
 
 export const walletConnectState = new WalletState();

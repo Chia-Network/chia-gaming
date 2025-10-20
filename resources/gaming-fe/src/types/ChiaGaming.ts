@@ -1,55 +1,55 @@
-import { Subject, Subscription } from 'rxjs';
-import { proper_list } from '../util';
+import { Subject, Subscription } from "rxjs";
+import { proper_list } from "../util";
 
 // TODO: rename "amount"
 // TODO: visit 53-bit limit
 export type Amount = {
-  "amt": number,
+  amt: number;
 };
 
 export type Spend = {
-  "puzzle": string,
-  "solution": string,
-  "signature": string
+  puzzle: string;
+  solution: string;
+  signature: string;
 };
 
 export type CoinSpend = {
-  "coin": string,
-  "bundle": Spend
+  coin: string;
+  bundle: Spend;
 };
 
 export type SpendBundle = {
-  "spends": Array<CoinSpend>
+  spends: Array<CoinSpend>;
 };
 
 export type IChiaIdentity = {
-  "private_key": string,
-  "synthetic_private_key": string,
-  "public_key": string,
-  "synthetic_public_key": string,
-  "puzzle": string,
-  "puzzle_hash": string,
+  private_key: string;
+  synthetic_private_key: string;
+  public_key: string;
+  synthetic_public_key: string;
+  puzzle: string;
+  puzzle_hash: string;
 };
 
 export type GameConnectionState = {
-  stateIdentifier: string,
-  stateDetail: string[]
+  stateIdentifier: string;
+  stateDetail: string[];
 };
 
 export type OpponentMove = [string, string];
 export type GameFinished = [string, number];
 
 export type IdleResult = {
-  "continue_on": boolean,
-  "finished": boolean,
-  "outbound_transactions": Array<SpendBundle>,
-  "outbound_messages": Array<string>,
-  "opponent_move": OpponentMove | undefined,
-  "game_finished": GameFinished | undefined,
-  "handshake_done": boolean,
-  "receive_error": string | undefined,
-  "action_queue": Array<string>,
-  "incoming_messages": Array<string>
+  continue_on: boolean;
+  finished: boolean;
+  outbound_transactions: Array<SpendBundle>;
+  outbound_messages: Array<string>;
+  opponent_move: OpponentMove | undefined;
+  game_finished: GameFinished | undefined;
+  handshake_done: boolean;
+  receive_error: string | undefined;
+  action_queue: Array<string>;
+  incoming_messages: Array<string>;
 };
 
 // --------------------------------------------------------------
@@ -59,16 +59,16 @@ export type IdleResult = {
 // TODO: rng_id dne. in GameCradleConfig because these are the init params to the wasm GameCradle,
 //       which will create the Rng with identity.private_key as an input
 export type GameCradleConfig = {
-  "seed": string | undefined,
-  "game_types": Map<string, string>,
+  seed: string | undefined;
+  game_types: Map<string, string>;
   //"identity": IChiaIdentity | undefined,
-  "identity": string | undefined, // note: for this input, this is JUST the private key
-  "have_potato": boolean,
-  "my_contribution": Amount,
-  "their_contribution": Amount,
-  "channel_timeout": number,
-  "reward_puzzle_hash": string,
-  "receive_error": string | undefined
+  identity: string | undefined; // note: for this input, this is JUST the private key
+  have_potato: boolean;
+  my_contribution: Amount;
+  their_contribution: Amount;
+  channel_timeout: number;
+  reward_puzzle_hash: string;
+  receive_error: string | undefined;
 };
 
 // TODO: overlapping data in ChiaGameParams & WasmBlobParams:
@@ -88,12 +88,12 @@ export interface GameInitParams {
 // XXX Why is wasmConnection an argument to WasmBlobWrapper() ?
 // WasmBlobWrapper adapts the FFI calls to The Chia Gaming framework
 export type WasmBlobParams = {
-  blockchain: InternalBlockchainInterface,
-  peerconn: PeerConnectionResult,
-  cradle: ChiaGame,
-  uniqueId: string,
-  iStarted: boolean,
-  fetchHex: (key: string) => Promise<string>,
+  blockchain: InternalBlockchainInterface;
+  peerconn: PeerConnectionResult;
+  cradle: ChiaGame;
+  uniqueId: string;
+  iStarted: boolean;
+  fetchHex: (key: string) => Promise<string>;
 };
 
 // --------------------------------------------------------------
@@ -101,26 +101,32 @@ export type WasmBlobParams = {
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
 export type IdleCallbacks = {
-  self_move?: ((game_id: string, move_hex: string) => void) | undefined,
-  opponent_moved?: ((game_id: string, readable_move_hex: string) => void) | undefined,
-  game_message?: ((game_id: string, readable_move_hex: string) => void) | undefined,
-  game_started?: ((game_ids: string[], failed: string | undefined) => void) | undefined,
-  game_finished?: ((game_id: string, amount: number) => void) | undefined,
-  shutdown_complete?: ((coin: string) => void) | undefined,
-  going_on_chain?: (() => void) | undefined
+  self_move?: ((game_id: string, move_hex: string) => void) | undefined;
+  opponent_moved?:
+    | ((game_id: string, readable_move_hex: string) => void)
+    | undefined;
+  game_message?:
+    | ((game_id: string, readable_move_hex: string) => void)
+    | undefined;
+  game_started?:
+    | ((game_ids: string[], failed: string | undefined) => void)
+    | undefined;
+  game_finished?: ((game_id: string, amount: number) => void) | undefined;
+  shutdown_complete?: ((coin: string) => void) | undefined;
+  going_on_chain?: (() => void) | undefined;
 };
 
 export type JsCoin = {
-    amount: number | string,
-    parent_coin_info: string,
-    puzzle_hash: string,
-}
+  amount: number | string;
+  parent_coin_info: string;
+  puzzle_hash: string;
+};
 
 export type JsCoinSetSpend = {
-    coin: JsCoin,
-    puzzle_reveal: string,
-    solution: string,
-}
+  coin: JsCoin;
+  puzzle_reveal: string;
+  solution: string;
+};
 
 export interface WasmConnection {
   // System
@@ -136,21 +142,36 @@ export interface WasmConnection {
 
   // Blockchain
   opening_coin: (cid: number, coinstring: string) => any;
-  new_block: (cid: number, height: number, additions: string[], removals: string[], timed_out: string[]) => any;
+  new_block: (
+    cid: number,
+    height: number,
+    additions: string[],
+    removals: string[],
+    timed_out: string[],
+  ) => any;
   convert_coinset_org_block_spend_to_watch_report: (
     parent_coin_info: string,
     puzzle_hash: string,
     amount: any,
     puzzle_reveal: string,
-    solution: string
+    solution: string,
   ) => WatchReport;
   convert_spend_to_coinset_org: (spend: string) => any;
-  convert_coinset_to_coin_string: (parent_coin_info: string, puzzle_hash: string, amount: any) => string;
+  convert_coinset_to_coin_string: (
+    parent_coin_info: string,
+    puzzle_hash: string,
+    amount: any,
+  ) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
   start_games: (cid: number, initiator: boolean, game: any) => any;
-  make_move_entropy: (cid: number, id: string, readable: string, new_entropy: string) => any;
+  make_move_entropy: (
+    cid: number,
+    id: string,
+    readable: string,
+    new_entropy: string,
+  ) => any;
   make_move: (cid: number, id: string, readable: string) => any;
   accept: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
@@ -162,16 +183,16 @@ export interface WasmConnection {
   // Misc
   chia_identity: (rng_id: number) => any;
   sha256bytes: (hex: string) => string;
-};
+}
 
 export class RngId {
-    rngId: number;
-    constructor(rngId: number) {
-        this.rngId = rngId;
-    }
-    getId() {
-      return this.rngId;
-    }
+  rngId: number;
+  constructor(rngId: number) {
+    this.rngId = rngId;
+  }
+  getId() {
+    return this.rngId;
+  }
 }
 
 export interface CoinOutput {
@@ -205,11 +226,11 @@ export class ChiaGame {
     */
   }
 
-  getIdentity() : IChiaIdentity {
+  getIdentity(): IChiaIdentity {
     return this.wasmConnection.get_identity(this.cradleId);
   }
 
-  getAmount() : number {
+  getAmount(): number {
     return this.wasmConnection.get_amount(this.cradleId).amt;
   }
 
@@ -226,7 +247,12 @@ export class ChiaGame {
   }
 
   make_move_entropy(id: string, readable: string, new_entropy: string): any {
-    return this.wasmConnection.make_move_entropy(this.cradleId, id, readable, new_entropy);
+    return this.wasmConnection.make_move_entropy(
+      this.cradleId,
+      id,
+      readable,
+      new_entropy,
+    );
   }
 
   deliver_message(msg: string) {
@@ -247,16 +273,24 @@ export class ChiaGame {
     return w;
   }
 
-  idle(callbacks: IdleCallbacks) : IdleResult {
+  idle(callbacks: IdleCallbacks): IdleResult {
     let result = this.wasmConnection.idle(this.cradleId, callbacks);
     if (result) {
-      this.waiting_messages = this.waiting_messages.concat(result.outbound_messages);
+      this.waiting_messages = this.waiting_messages.concat(
+        result.outbound_messages,
+      );
     }
     return result;
   }
 
   block_data(block_number: number, block_data: WatchReport) {
-    this.wasmConnection.new_block(this.cradleId, block_number, block_data.created_watched, block_data.deleted_watched, block_data.timed_out);
+    this.wasmConnection.new_block(
+      this.cradleId,
+      block_number,
+      block_data.created_watched,
+      block_data.deleted_watched,
+      block_data.timed_out,
+    );
   }
 }
 
@@ -275,8 +309,11 @@ export interface BlockchainConnection {
   wait_block: () => Promise<number>;
   get_puzzle_and_solution: (coin: string) => Promise<string[] | null>;
   spend: (clvm_hex_spend_blob: string) => Promise<(number | null)[]>;
-  create_spendable: (target_ph: string, amount: number) => Promise<string | null>;
-};
+  create_spendable: (
+    target_ph: string,
+    amount: number,
+  ) => Promise<string | null>;
+}
 
 export class ExternalBlockchainInterface {
   baseUrl: string;
@@ -284,7 +321,7 @@ export class ExternalBlockchainInterface {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    this.token = '';
+    this.token = "";
   }
 
   getOrRequestToken(uniqueId: string): Promise<string> {
@@ -293,11 +330,14 @@ export class ExternalBlockchainInterface {
     }
 
     return fetch(`${this.baseUrl}/register?name=${uniqueId}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json()).then(token => {
-      this.token = token;
-      return token;
-    });
+      body: "",
+      method: "POST",
+    })
+      .then((f) => f.json())
+      .then((token) => {
+        this.token = token;
+        return token;
+      });
   }
 
   getToken(): string {
@@ -306,38 +346,47 @@ export class ExternalBlockchainInterface {
 
   getPeak(): Promise<number> {
     return fetch(`${this.baseUrl}/get_peak`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: "",
+      method: "POST",
+    }).then((f) => f.json());
   }
 
   getBlockData(block: number): Promise<WatchReport | null> {
     return fetch(`${this.baseUrl}/get_block_data?block=${block}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: "",
+      method: "POST",
+    }).then((f) => f.json());
   }
 
   waitBlock(): Promise<number> {
     return fetch(`${this.baseUrl}/wait_block`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: "",
+      method: "POST",
+    }).then((f) => f.json());
   }
 
   getPuzzleAndSolution(coin: string): Promise<string[] | null> {
     return fetch(`${this.baseUrl}/get_puzzle_and_solution?coin=${coin}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: "",
+      method: "POST",
+    }).then((f) => f.json());
   }
 
   spend(spend_data_clvm_hex: string): Promise<(number | null)[]> {
     return fetch(`${this.baseUrl}/spend?blob=${spend_data_clvm_hex}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+      body: "",
+      method: "POST",
+    }).then((f) => f.json());
   }
 
   createSpendable(target_ph: string, amt: number): Promise<string | null> {
-    return fetch(`${this.baseUrl}/create_spendable?who=${this.token}&target=${target_ph}&amount=${amt}`, {
-      body: '', method: 'POST'
-    }).then(f => f.json());
+    return fetch(
+      `${this.baseUrl}/create_spendable?who=${this.token}&target=${target_ph}&amount=${amt}`,
+      {
+        body: "",
+        method: "POST",
+      },
+    ).then((f) => f.json());
   }
 }
 
@@ -364,20 +413,30 @@ function card_matches(cards: number[][], card: number[]): boolean {
   return false;
 }
 
-export function card_color(outcome: CalpokerOutcome, iAmAlice: boolean, card: number[]): 'my-used' | 'my-final' | 'their-used' | 'their-final' {
-  let my_used_cards = iAmAlice ? outcome.alice_used_cards : outcome.bob_used_cards;
+export function card_color(
+  outcome: CalpokerOutcome,
+  iAmAlice: boolean,
+  card: number[],
+): "my-used" | "my-final" | "their-used" | "their-final" {
+  let my_used_cards = iAmAlice
+    ? outcome.alice_used_cards
+    : outcome.bob_used_cards;
   if (card_matches(my_used_cards, card)) {
-    return 'my-used';
+    return "my-used";
   }
-  let their_used_cards = iAmAlice ? outcome.bob_used_cards : outcome.alice_used_cards;
+  let their_used_cards = iAmAlice
+    ? outcome.bob_used_cards
+    : outcome.alice_used_cards;
   if (card_matches(their_used_cards, card)) {
-    return 'their-used';
+    return "their-used";
   }
-  let my_final_cards = iAmAlice ? outcome.alice_final_hand : outcome.bob_final_hand;
+  let my_final_cards = iAmAlice
+    ? outcome.alice_final_hand
+    : outcome.bob_final_hand;
   if (card_matches(my_final_cards, card)) {
-    return 'my-final';
+    return "my-final";
   }
-  return 'their-final';
+  return "their-final";
 }
 
 function compare_card(a: number[], b: number[]): number {
@@ -408,7 +467,7 @@ export class CalpokerOutcome {
   bob_hand_value: number[];
 
   win_direction: number;
-  my_win_outcome: 'win' | 'lose' | 'tie';
+  my_win_outcome: "win" | "lose" | "tie";
 
   alice_cards: number[][];
   bob_cards: number[][];
@@ -419,14 +478,20 @@ export class CalpokerOutcome {
   alice_used_cards: number[][];
   bob_used_cards: number[][];
 
-  constructor(iStarted: boolean, myDiscards: number, alice_cards: number[][], bob_cards: number[][], readable: any) {
+  constructor(
+    iStarted: boolean,
+    myDiscards: number,
+    alice_cards: number[][],
+    bob_cards: number[][],
+    readable: any,
+  ) {
     const result_list = proper_list(readable);
-    console.warn('result_list', result_list);
+    console.warn("result_list", result_list);
     this.alice_cards = alice_cards;
     this.bob_cards = bob_cards;
 
-    console.log('alice_cards', alice_cards);
-    console.log('bob_cards', bob_cards);
+    console.log("alice_cards", alice_cards);
+    console.log("bob_cards", bob_cards);
 
     this.alice_selects = result_list[1];
     this.bob_selects = result_list[2];
@@ -440,42 +505,62 @@ export class CalpokerOutcome {
     } else {
       this.alice_discards = myDiscards;
       this.bob_discards = result_list[0];
-    };
+    }
 
     this.win_direction = raw_win_direction;
     const alice_win = this.win_direction < 0;
     const bob_win = this.win_direction > 0;
 
     if (this.win_direction === 0) {
-      this.my_win_outcome = 'tie';
+      this.my_win_outcome = "tie";
     } else if (alice_win) {
-      this.my_win_outcome = iStarted ? 'win' : 'lose';
+      this.my_win_outcome = iStarted ? "win" : "lose";
     } else {
-      this.my_win_outcome = iStarted ? 'lose' : 'win';
+      this.my_win_outcome = iStarted ? "lose" : "win";
     }
 
-    const [alice_for_alice, alice_for_bob] = select_cards_using_bits(this.alice_cards, this.alice_discards);
-    const [bob_for_bob, bob_for_alice] = select_cards_using_bits(this.bob_cards, this.bob_discards);
+    const [alice_for_alice, alice_for_bob] = select_cards_using_bits(
+      this.alice_cards,
+      this.alice_discards,
+    );
+    const [bob_for_bob, bob_for_alice] = select_cards_using_bits(
+      this.bob_cards,
+      this.bob_discards,
+    );
 
-    console.log('alice_for_alice', alice_for_alice);
-    console.log('alice_for_bob', alice_for_bob);
-    console.log('bob_for_alice', bob_for_alice);
-    console.log('bob_for_bob', bob_for_bob);
+    console.log("alice_for_alice", alice_for_alice);
+    console.log("alice_for_bob", alice_for_bob);
+    console.log("bob_for_alice", bob_for_alice);
+    console.log("bob_for_bob", bob_for_bob);
 
     this.alice_final_hand = [...bob_for_alice];
     alice_for_alice.forEach((c) => this.alice_final_hand.push(c));
     this.alice_final_hand.sort(compare_card);
-    console.log('final alice hand', this.alice_final_hand);
+    console.log("final alice hand", this.alice_final_hand);
 
     this.bob_final_hand = [...alice_for_bob];
     bob_for_bob.forEach((c) => this.bob_final_hand.push(c));
     this.bob_final_hand.sort(compare_card);
-    console.log('final bob hand', this.bob_final_hand);
+    console.log("final bob hand", this.bob_final_hand);
 
-    this.alice_used_cards = select_cards_using_bits(this.alice_final_hand, this.alice_selects)[1];
-    console.log('alice selects', this.alice_selects.toString(16), this.alice_used_cards);
-    this.bob_used_cards = select_cards_using_bits(this.bob_final_hand, this.bob_selects)[1];
-    console.log('bob selects', this.bob_selects.toString(16), this.bob_used_cards);
+    this.alice_used_cards = select_cards_using_bits(
+      this.alice_final_hand,
+      this.alice_selects,
+    )[1];
+    console.log(
+      "alice selects",
+      this.alice_selects.toString(16),
+      this.alice_used_cards,
+    );
+    this.bob_used_cards = select_cards_using_bits(
+      this.bob_final_hand,
+      this.bob_selects,
+    )[1];
+    console.log(
+      "bob selects",
+      this.bob_selects.toString(16),
+      this.bob_used_cards,
+    );
   }
 }
 
@@ -497,13 +582,15 @@ export class ToggleEmitter<T> {
 
   addUpstream(upstream: Subject<T>): number {
     const i = this.subscriptions.length;
-    this.subscriptions.push(upstream.subscribe({
-      next: (elt: T) => {
-        if (this.selection === i) {
-          this.downstream.next(elt);
-        }
-      }
-    }));
+    this.subscriptions.push(
+      upstream.subscribe({
+        next: (elt: T) => {
+          if (this.selection === i) {
+            this.downstream.next(elt);
+          }
+        },
+      }),
+    );
     return i;
   }
 
@@ -513,9 +600,13 @@ export class ToggleEmitter<T> {
     this.upstreamSelect = (s: SelectionMessage) => {};
   }
 
-  getObservable() { return this.downstream; }
+  getObservable() {
+    return this.downstream;
+  }
 
-  getSelectionObservable() { return this.upstreamSelection; }
+  getSelectionObservable() {
+    return this.upstreamSelection;
+  }
 
   close() {
     this.subscriptions.forEach((s) => s.unsubscribe());
@@ -529,7 +620,8 @@ export class ToggleEmitter<T> {
     this.downstream = new Subject<T>();
     this.subscriptions = [];
     this.upstreamSelection = new Subject<SelectionMessage>();
-    this.upstreamSelect = (s: SelectionMessage) => this.upstreamSelection.next(s);
+    this.upstreamSelect = (s: SelectionMessage) =>
+      this.upstreamSelection.next(s);
   }
 }
 
@@ -545,7 +637,11 @@ export interface DoInitialSpendResult {
 }
 
 export interface InternalBlockchainInterface {
-  do_initial_spend(uniqueId: string, target: string, amt: number): Promise<DoInitialSpendResult>;
+  do_initial_spend(
+    uniqueId: string,
+    target: string,
+    amt: number,
+  ): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
   getObservable(): Subject<any>;
 }

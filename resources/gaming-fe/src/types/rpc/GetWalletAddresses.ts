@@ -1,10 +1,10 @@
-import { WalletAddress } from '../WalletAddress';
+import { WalletAddress } from "../WalletAddress";
 
 export interface GetWalletAddressesRequest {
-    fingerprints?: number[];
-    index?: number;
-    count?: number;
-    nonObserverDerivation?: boolean;
+  fingerprints?: number[];
+  index?: number;
+  count?: number;
+  nonObserverDerivation?: boolean;
 }
 
 export type GetWalletAddressesResponse = { [key: string]: WalletAddress[] };
