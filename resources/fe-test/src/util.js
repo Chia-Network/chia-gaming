@@ -110,6 +110,7 @@ module.exports = {
     waitEnabled,
     selectSimulator,
     waitAriaEnabled,
+    waitAriaDisabled,
     waitForNonError,
     sendControlChar,
     sendControlA,
