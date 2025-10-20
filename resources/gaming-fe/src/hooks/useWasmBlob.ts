@@ -13,10 +13,12 @@ import { getSearchParams } from '../util';
 import { blockchainConnector } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
-import { PARENT_FRAME_BLOCKCHAIN_ID, parentFrameBlockchainInfo } from './ParentFrameBlockchainInfo';
+import {
+  PARENT_FRAME_BLOCKCHAIN_ID,
+  parentFrameBlockchainInfo,
+} from './ParentFrameBlockchainInfo';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 import useGameSocket from './useGameSocket';
-
 
 let blobSingleton: any = null;
 
@@ -105,17 +107,20 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [realPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity] = useState<any | undefined>(undefined);
   const [uniqueWalletConnectionId] = useState(uuidv4());
-  const [gameConnectionState, setGameConnectionState] = useState<GameConnectionState>({
-    stateIdentifier: 'starting',
-    stateDetail: ['before handshake'],
-  });
+  const [gameConnectionState, setGameConnectionState] =
+    useState<GameConnectionState>({
+      stateIdentifier: 'starting',
+      stateDetail: ['before handshake'],
+    });
 
   const searchParams = getSearchParams();
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
   const [playerHand, setPlayerHand] = useState<number[][]>([]);
   const [opponentHand, setOpponentHand] = useState<number[][]>([]);
-  const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(undefined);
+  const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(
+    undefined,
+  );
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
@@ -139,13 +144,23 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const blockchain = new ChildFrameBlockchainInterface();
 
   const gameObject = uniqueId
-    ? getBlobSingleton(blockchain, lobbyUrl, uniqueId, amount, perGameAmount, iStarted)
+    ? getBlobSingleton(
+        blockchain,
+        lobbyUrl,
+        uniqueId,
+        amount,
+        perGameAmount,
+        iStarted,
+      )
     : null;
 
-  const setCardSelections = useCallback((mask: number) => {
-    gameObject?.setCardSelections(mask);
-  }, [gameObject]);
-  
+  const setCardSelections = useCallback(
+    (mask: number) => {
+      gameObject?.setCardSelections(mask);
+    },
+    [gameObject],
+  );
+
   const stopPlaying = useCallback(() => {
     gameObject?.shutDown();
   }, [gameObject]);

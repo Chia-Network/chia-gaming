@@ -119,13 +119,20 @@ function clvm_length(atom: string): string {
 }
 
 function spend_to_clvm(spend: any): string {
-  const spend_clvm = clvm_enlist([spend.puzzle, spend.solution, clvm_length(spend.signature)]);
+  const spend_clvm = clvm_enlist([
+    spend.puzzle,
+    spend.solution,
+    clvm_length(spend.signature),
+  ]);
   console.log('spend', spend_clvm);
   return spend_clvm;
 }
 
 function coin_spend_to_clvm(coinspend: any): string {
-  const coin_spend_clvm = clvm_enlist([clvm_length(coinspend.coin), spend_to_clvm(coinspend.bundle)]);
+  const coin_spend_clvm = clvm_enlist([
+    clvm_length(coinspend.coin),
+    spend_to_clvm(coinspend.bundle),
+  ]);
   console.log('coin_spend', coin_spend_clvm);
   return coin_spend_clvm;
 }
@@ -153,7 +160,9 @@ export function decode_sexp_hex(h: string): any {
 }
 
 export function spend_bundle_to_clvm(sbundle: any): string {
-  const bundle_clvm = clvm_enlist(sbundle.spends.map((s: any) => coin_spend_to_clvm(s)));
+  const bundle_clvm = clvm_enlist(
+    sbundle.spends.map((s: any) => coin_spend_to_clvm(s)),
+  );
   console.log('bundle', bundle_clvm);
   return bundle_clvm;
 }

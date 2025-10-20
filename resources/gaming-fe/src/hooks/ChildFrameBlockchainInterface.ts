@@ -2,12 +2,19 @@ import { filter, take } from 'rxjs';
 
 import { DoInitialSpendResult } from '../types/ChiaGaming';
 
-import { blockchainConnector, BlockchainInboundReply } from './BlockchainConnector';
+import {
+  blockchainConnector,
+  BlockchainInboundReply,
+} from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
 
 let requestNumber = 1;
 
-function performTransaction(checkReply: (reply: any) => any, requestId: number, request: any): Promise<any> {
+function performTransaction(
+  checkReply: (reply: any) => any,
+  requestId: number,
+  request: any,
+): Promise<any> {
   return new Promise((resolve, reject) => {
     const thisRequestChannel = blockchainConnector.getInbound().pipe(
       filter((e: BlockchainInboundReply) => e.responseId === requestId),
@@ -37,7 +44,11 @@ function performTransaction(checkReply: (reply: any) => any, requestId: number, 
 }
 
 export class ChildFrameBlockchainInterface {
-  do_initial_spend(uniqueId: string, target: string, amount: number): Promise<DoInitialSpendResult> {
+  do_initial_spend(
+    uniqueId: string,
+    target: string,
+    amount: number,
+  ): Promise<DoInitialSpendResult> {
     const requestId = requestNumber++;
     const request = {
       requestId,

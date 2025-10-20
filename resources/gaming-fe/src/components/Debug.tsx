@@ -31,19 +31,25 @@ const setWCStringButtonHandler = () => void 0;
 const Debug: React.FC<DebugProps> = ({ connectString, setConnectString }) => {
   return (
     <Box mt={4}>
-      <Typography variant="h5">Debug Controls:</Typography>
+      <Typography variant='h5'>Debug Controls:</Typography>
       <br />
 
       <TextField
-        label="Connect String"
-        type="text"
+        label='Connect String'
+        type='text'
         value={connectString}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConnectString(e.target.value)}
-        placeholder="e.g. wc:ffffff...."
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setConnectString(e.target.value)
+        }
+        placeholder='e.g. wc:ffffff....'
         fullWidth
-        margin="normal"
+        margin='normal'
       />
-      <Button variant="contained" color="primary" onClick={setWCStringButtonHandler}>
+      <Button
+        variant='contained'
+        color='primary'
+        onClick={setWCStringButtonHandler}
+      >
         Set WC string
       </Button>
       {/*}

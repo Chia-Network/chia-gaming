@@ -7,9 +7,12 @@ interface GameLogProps {
 const GameLog = ({ log }: GameLogProps) => {
   return (
     <Box mt={4}>
-      <Typography variant="h5">Game & Transactions Log:</Typography>
+      <Typography variant='h5'>Game & Transactions Log:</Typography>
       <br />
-      <Paper elevation={1} style={{ maxHeight: '800px', overflow: 'auto', padding: '8px' }}>
+      <Paper
+        elevation={1}
+        style={{ maxHeight: '800px', overflow: 'auto', padding: '8px' }}
+      >
         {log.map((entry, index) => (
           <Typography key={index}>{entry}</Typography>
         ))}

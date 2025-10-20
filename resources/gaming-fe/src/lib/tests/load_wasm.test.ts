@@ -15,7 +15,11 @@ import {
   IdleResult,
 } from '../../../node-pkg/chia_gaming_wasm.js';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
-import { InternalBlockchainInterface, PeerConnectionResult, BlockchainReport } from '../../types/ChiaGaming';
+import {
+  InternalBlockchainInterface,
+  PeerConnectionResult,
+  BlockchainReport,
+} from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import {
   FAKE_BLOCKCHAIN_ID,
@@ -23,7 +27,10 @@ import {
   connectSimulatorBlockchain,
 } from '../../hooks/FakeBlockchainInterface';
 import { blockchainDataEmitter } from '../../hooks/BlockchainInfo';
-import { blockchainConnector, BlockchainOutboundRequest } from '../../hooks/BlockchainConnector';
+import {
+  blockchainConnector,
+  BlockchainOutboundRequest,
+} from '../../hooks/BlockchainConnector';
 import { ChildFrameBlockchainInterface } from '../../hooks/ChildFrameBlockchainInterface';
 
 import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
@@ -123,7 +130,10 @@ async function action_with_messages(
     cradle.getObservable().subscribe({
       next: (evt) => {
         console.log('WasmBlobWrapper Event: ', evt);
-        if (evt.setGameConnectionState && evt.setGameConnectionState.stateIdentifier === 'running') {
+        if (
+          evt.setGameConnectionState &&
+          evt.setGameConnectionState.stateIdentifier === 'running'
+        ) {
           evt_results[index] = true;
         }
       },
@@ -163,7 +173,9 @@ async function initWasmBlobWrapper(
     return new ArrayBuffer(0);
   }; // Promise<ArrayBuffer>;
   // Ensure that each user has a wallet.
-  await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, { method: 'POST' });
+  await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {
+    method: 'POST',
+  });
   let wbw = new WasmBlobWrapper(
     blockchainInterface,
     uniqueId,
@@ -199,7 +211,12 @@ it(
         cradle1.add_outbound_message(message);
       },
     };
-    let wasm_blob1 = await initWasmBlobWrapper(blockchainInterface, 'a11ce000', true, peer_conn1);
+    let wasm_blob1 = await initWasmBlobWrapper(
+      blockchainInterface,
+      'a11ce000',
+      true,
+      peer_conn1,
+    );
     cradle1.set_blob(wasm_blob1);
 
     const cradle2 = new WasmBlobWrapperAdapter();
@@ -208,7 +225,12 @@ it(
         cradle2.add_outbound_message(message);
       },
     };
-    let wasm_blob2 = await initWasmBlobWrapper(blockchainInterface, 'b0b77777', false, peer_conn2);
+    let wasm_blob2 = await initWasmBlobWrapper(
+      blockchainInterface,
+      'b0b77777',
+      false,
+      peer_conn2,
+    );
     cradle2.set_blob(wasm_blob2);
 
     await action_with_messages(blockchainInterface, cradle1, cradle2);

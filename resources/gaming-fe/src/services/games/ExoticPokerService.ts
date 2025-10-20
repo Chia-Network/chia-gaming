@@ -5,7 +5,20 @@ import { GameSession } from '../../types/lobby';
 
 interface Card {
   suit: 'hearts' | 'diamonds' | 'clubs' | 'spades';
-  rank: '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'A';
+  rank:
+    | '2'
+    | '3'
+    | '4'
+    | '5'
+    | '6'
+    | '7'
+    | '8'
+    | '9'
+    | '10'
+    | 'J'
+    | 'Q'
+    | 'K'
+    | 'A';
   isWild?: boolean;
 }
 
@@ -41,8 +54,27 @@ interface GameState {
 export class ExoticPokerService {
   private static instance: ExoticPokerService;
   private gameStates: Map<string, GameState>;
-  private readonly SUITS: Card['suit'][] = ['hearts', 'diamonds', 'clubs', 'spades'];
-  private readonly RANKS: Card['rank'][] = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+  private readonly SUITS: Card['suit'][] = [
+    'hearts',
+    'diamonds',
+    'clubs',
+    'spades',
+  ];
+  private readonly RANKS: Card['rank'][] = [
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    '10',
+    'J',
+    'Q',
+    'K',
+    'A',
+  ];
   private readonly SMALL_BLIND = 5;
   private readonly BIG_BLIND = 10;
   private readonly MAX_WILD_CARDS = 3;
@@ -61,7 +93,10 @@ export class ExoticPokerService {
   public async startGame(session: GameSession): Promise<GameState> {
     const deck = this.createDeck();
     const shuffledDeck = this.shuffleDeck(deck);
-    const players = this.initializePlayers([session.host, session.joiner], shuffledDeck);
+    const players = this.initializePlayers(
+      [session.host, session.joiner],
+      shuffledDeck,
+    );
 
     const gameState: GameState = {
       id: uuidv4(),
@@ -123,24 +158,47 @@ export class ExoticPokerService {
     gameState.pot = this.SMALL_BLIND + this.BIG_BLIND;
   }
 
-  public async processAction(sessionId: string, playerId: string, action: string, data?: any): Promise<GameState> {
+  public async processAction(
+    sessionId: string,
+    playerId: string,
+    action: string,
+    data?: any,
+  ): Promise<GameState> {
     const gameState = this.gameStates.get(sessionId);
     if (!gameState) {
-      throw new AppError(ErrorCodes.LOBBY.GAME_IN_PROGRESS, 'Game not found', 404);
+      throw new AppError(
+        ErrorCodes.LOBBY.GAME_IN_PROGRESS,
+        'Game not found',
+        404,
+      );
     }
 
-    const playerIndex = gameState.players.findIndex((p) => p.playerId === playerId);
+    const playerIndex = gameState.players.findIndex(
+      (p) => p.playerId === playerId,
+    );
     if (playerIndex === -1) {
-      throw new AppError(ErrorCodes.LOBBY.PLAYER_NOT_FOUND, 'Player not in game', 404);
+      throw new AppError(
+        ErrorCodes.LOBBY.PLAYER_NOT_FOUND,
+        'Player not in game',
+        404,
+      );
     }
 
     if (playerIndex !== gameState.currentPlayerIndex) {
-      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Not your turn', 400);
+      throw new AppError(
+        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+        'Not your turn',
+        400,
+      );
     }
 
     const player = gameState.players[playerIndex];
     if (player.status !== 'active') {
-      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Player is not active', 400);
+      throw new AppError(
+        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+        'Player is not active',
+        400,
+      );
     }
 
     switch (action) {
@@ -155,7 +213,11 @@ export class ExoticPokerService {
         break;
       case 'raise':
         if (!data?.amount) {
-          throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Raise amount required', 400);
+          throw new AppError(
+            ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+            'Raise amount required',
+            400,
+          );
         }
         this.handleRaise(gameState, playerIndex, data.amount);
         break;
@@ -164,15 +226,28 @@ export class ExoticPokerService {
         break;
       case 'wild':
         if (!data?.targetCard) {
-          throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Target card required for wild action', 400);
+          throw new AppError(
+            ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+            'Target card required for wild action',
+            400,
+          );
         }
         await this.handleWildCard(gameState, playerIndex, data.targetCard);
         break;
       default:
-        throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid action', 400);
+        throw new AppError(
+          ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+          'Invalid action',
+          400,
+        );
     }
 
-    gameState.lastAction = { playerId, action, amount: data?.amount, targetCard: data?.targetCard };
+    gameState.lastAction = {
+      playerId,
+      action,
+      amount: data?.amount,
+      targetCard: data?.targetCard,
+    };
     this.moveToNextPlayer(gameState);
     this.checkPhaseEnd(gameState);
 
@@ -185,7 +260,11 @@ export class ExoticPokerService {
 
   private handleCheck(gameState: GameState, playerIndex: number): void {
     if (gameState.currentBet > gameState.players[playerIndex].bet) {
-      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Cannot check when there is a bet', 400);
+      throw new AppError(
+        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+        'Cannot check when there is a bet',
+        400,
+      );
     }
   }
 
@@ -196,12 +275,20 @@ export class ExoticPokerService {
     gameState.pot += callAmount;
   }
 
-  private handleRaise(gameState: GameState, playerIndex: number, amount: number): void {
+  private handleRaise(
+    gameState: GameState,
+    playerIndex: number,
+    amount: number,
+  ): void {
     const player = gameState.players[playerIndex];
     const totalBet = player.bet + amount;
 
     if (totalBet <= gameState.currentBet) {
-      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Raise must be higher than current bet', 400);
+      throw new AppError(
+        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+        'Raise must be higher than current bet',
+        400,
+      );
     }
 
     player.bet = totalBet;
@@ -216,20 +303,36 @@ export class ExoticPokerService {
     gameState.pot += gameState.currentBet;
   }
 
-  private async handleWildCard(gameState: GameState, playerIndex: number, targetCard: Card): Promise<void> {
+  private async handleWildCard(
+    gameState: GameState,
+    playerIndex: number,
+    targetCard: Card,
+  ): Promise<void> {
     const player = gameState.players[playerIndex];
 
     if (player.wildCards >= 1) {
-      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'No wild cards remaining', 400);
+      throw new AppError(
+        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+        'No wild cards remaining',
+        400,
+      );
     }
 
     if (gameState.wildCardsRemaining <= 0) {
-      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'No wild cards remaining in the game', 400);
+      throw new AppError(
+        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+        'No wild cards remaining in the game',
+        400,
+      );
     }
 
     const isValidTarget = this.validateWildCardTarget(gameState, targetCard);
     if (!isValidTarget) {
-      throw new AppError(ErrorCodes.LOBBY.INVALID_GAME_PARAMS, 'Invalid target card for wild card', 400);
+      throw new AppError(
+        ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
+        'Invalid target card for wild card',
+        400,
+      );
     }
 
     targetCard.isWild = true;
@@ -237,9 +340,14 @@ export class ExoticPokerService {
     gameState.wildCardsRemaining--;
   }
 
-  private validateWildCardTarget(gameState: GameState, targetCard: Card): boolean {
+  private validateWildCardTarget(
+    gameState: GameState,
+    targetCard: Card,
+  ): boolean {
     const player = gameState.players[gameState.currentPlayerIndex];
-    const isInHand = player.cards.some((card) => card.suit === targetCard.suit && card.rank === targetCard.rank);
+    const isInHand = player.cards.some(
+      (card) => card.suit === targetCard.suit && card.rank === targetCard.rank,
+    );
     const isInCommunity = gameState.communityCards.some(
       (card) => card.suit === targetCard.suit && card.rank === targetCard.rank,
     );
@@ -249,14 +357,22 @@ export class ExoticPokerService {
 
   private moveToNextPlayer(gameState: GameState): void {
     do {
-      gameState.currentPlayerIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
-    } while (gameState.players[gameState.currentPlayerIndex].status !== 'active');
+      gameState.currentPlayerIndex =
+        (gameState.currentPlayerIndex + 1) % gameState.players.length;
+    } while (
+      gameState.players[gameState.currentPlayerIndex].status !== 'active'
+    );
   }
 
   private checkPhaseEnd(gameState: GameState): void {
-    const activePlayers = gameState.players.filter((p) => p.status === 'active');
-    const allBetsEqual = activePlayers.every((p) => p.bet === gameState.currentBet);
-    const lastPlayerIndex = (gameState.dealerIndex + 2) % gameState.players.length;
+    const activePlayers = gameState.players.filter(
+      (p) => p.status === 'active',
+    );
+    const allBetsEqual = activePlayers.every(
+      (p) => p.bet === gameState.currentBet,
+    );
+    const lastPlayerIndex =
+      (gameState.dealerIndex + 2) % gameState.players.length;
 
     if (allBetsEqual && gameState.currentPlayerIndex === lastPlayerIndex) {
       this.advancePhase(gameState);
@@ -286,7 +402,8 @@ export class ExoticPokerService {
     if (gameState.phase !== 'showdown') {
       gameState.currentBet = 0;
       gameState.players.forEach((p) => (p.bet = 0));
-      gameState.currentPlayerIndex = (gameState.dealerIndex + 1) % gameState.players.length;
+      gameState.currentPlayerIndex =
+        (gameState.dealerIndex + 1) % gameState.players.length;
     }
   }
 
@@ -297,7 +414,9 @@ export class ExoticPokerService {
   }
 
   private determineWinner(gameState: GameState): void {
-    const activePlayers = gameState.players.filter((p) => p.status !== 'folded');
+    const activePlayers = gameState.players.filter(
+      (p) => p.status !== 'folded',
+    );
     if (activePlayers.length === 1) {
       return;
     }

@@ -36,7 +36,9 @@ const Gallery: React.FC = () => {
   const [componentChoice, setComponentChoice] = useState<string | undefined>(
     choiceFromStorage ? choiceFromStorage : undefined,
   );
-  const [componentData, setComponentData] = useState<any | undefined>(dataFromStorage ? dataFromStorage : undefined);
+  const [componentData, setComponentData] = useState<any | undefined>(
+    dataFromStorage ? dataFromStorage : undefined,
+  );
   const [functionCalls, setFunctionCalls] = useState<string[]>([]);
 
   const storeComponentChoice = useCallback(
@@ -160,7 +162,11 @@ const Gallery: React.FC = () => {
         <div>Component:</div>
         <select value={componentChoice} onChange={storeComponentChoice}>
           {choiceList.map((c) =>
-            c === undefined ? <option value="">No selection</option> : <option value={c}>{c}</option>,
+            c === undefined ? (
+              <option value=''>No selection</option>
+            ) : (
+              <option value={c}>{c}</option>
+            ),
           )}
         </select>
       </div>
@@ -177,7 +183,11 @@ const Gallery: React.FC = () => {
         }}
       >
         <div>Data:</div>
-        <textarea style={{ width: '100%', height: '4em' }} value={componentData} onChange={storeComponentData} />
+        <textarea
+          style={{ width: '100%', height: '4em' }}
+          value={componentData}
+          onChange={storeComponentData}
+        />
       </div>
       <div
         style={{
@@ -192,10 +202,21 @@ const Gallery: React.FC = () => {
         }}
       >
         <div>Calls:</div>
-        <textarea style={{ width: '100%', height: '4em' }} value={functionCalls.join('\n')} />
+        <textarea
+          style={{ width: '100%', height: '4em' }}
+          value={functionCalls.join('\n')}
+        />
       </div>
-      <ErrorBoundary rerender={() => storeComponentChoice({ target: { value: componentChoice } })}>
-        <div style={{ position: 'relative', width: '0', height: 0, opacity: '0%' }}>{generation}</div>
+      <ErrorBoundary
+        rerender={() =>
+          storeComponentChoice({ target: { value: componentChoice } })
+        }
+      >
+        <div
+          style={{ position: 'relative', width: '0', height: 0, opacity: '0%' }}
+        >
+          {generation}
+        </div>
         {body}
       </ErrorBoundary>
     </div>

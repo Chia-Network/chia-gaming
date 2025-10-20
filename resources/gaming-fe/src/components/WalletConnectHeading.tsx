@@ -1,16 +1,13 @@
-import {
-  Box,
-  Button,
-  ButtonGroup,
-  Divider,
-  Typography,
-} from '@mui/material';
+import { Box, Button, ButtonGroup, Divider, Typography } from '@mui/material';
 import { useCallback, useState, useEffect } from 'react';
 
 import { blockchainConnector } from '../hooks/BlockchainConnector';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
-import { REAL_BLOCKCHAIN_ID, connectRealBlockchain } from '../hooks/RealBlockchainInterface';
+import {
+  REAL_BLOCKCHAIN_ID,
+  connectRealBlockchain,
+} from '../hooks/RealBlockchainInterface';
 import useDebug from '../hooks/useDebug';
 import { walletConnectState } from '../hooks/useWalletConnect';
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
@@ -22,7 +19,9 @@ import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
 const WalletConnectHeading = (_args: any) => {
   const { wcInfo, setWcInfo } = useDebug();
   const [_alreadyConnected, setAlreadyConnected] = useState(false);
-  const [_walletConnectError, setWalletConnectError] = useState<string | undefined>();
+  const [_walletConnectError, setWalletConnectError] = useState<
+    string | undefined
+  >();
   const [fakeAddress, setFakeAddress] = useState<string | undefined>();
   const [expanded, setExpanded] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
@@ -87,7 +86,11 @@ const WalletConnectHeading = (_args: any) => {
 
   useEffect(() => {
     if (!initializing) {
-      console.log('initialzing wallet connect if needed', initializing, initialized);
+      console.log(
+        'initialzing wallet connect if needed',
+        initializing,
+        initialized,
+      );
       walletConnectState.init();
       setInitializing(true);
     }
@@ -101,7 +104,9 @@ const WalletConnectHeading = (_args: any) => {
       if (data.blockchain_request) {
         console.log('parent window received message', data.blockchain_request);
         if (evt.origin !== window.location.origin) {
-          throw new Error(`wrong origin for parent event: ${JSON.stringify(evt)}`);
+          throw new Error(
+            `wrong origin for parent event: ${JSON.stringify(evt)}`,
+          );
         }
         // Ensure that requests from the child frame go to our request channel.
         blockchainConnector.getOutbound().next(data.blockchain_request);
@@ -188,17 +193,25 @@ const WalletConnectHeading = (_args: any) => {
     setExpanded(false);
   }, []);
 
-  const sessionConnected = connected ? 'connected' : fakeAddress ? 'simulator' : 'disconnected';
+  const sessionConnected = connected
+    ? 'connected'
+    : fakeAddress
+      ? 'simulator'
+      : 'disconnected';
   const ifSession = walletConnectState.getSession() ? (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Box>
-        <ButtonGroup variant="outlined" fullWidth>
-          <Button variant="outlined" color="error" onClick={() => walletConnectState.disconnect()}>
+        <ButtonGroup variant='outlined' fullWidth>
+          <Button
+            variant='outlined'
+            color='error'
+            onClick={() => walletConnectState.disconnect()}
+          >
             Unlink Wallet
           </Button>
           <Button
-            variant="outlined"
-            color="error"
+            variant='outlined'
+            color='error'
             onClick={() => {
               localStorage.clear();
               window.location.href = '';
@@ -210,11 +223,11 @@ const WalletConnectHeading = (_args: any) => {
       </Box>
       <Divider sx={{ mt: 4 }} />
       <Box mt={3}>
-        <Typography variant="h5">Response</Typography>
+        <Typography variant='h5'>Response</Typography>
         <Button
           fullWidth
-          variant="outlined"
-          color="error"
+          variant='outlined'
+          color='error'
           onClick={() => {
             localStorage.clear();
             window.location.href = '';
@@ -225,17 +238,24 @@ const WalletConnectHeading = (_args: any) => {
       </Box>
     </div>
   ) : fakeAddress ? (
-    <Typography variant="h5" style={{ background: '#aa2' }}>
+    <Typography variant='h5' style={{ background: '#aa2' }}>
       Simulator {fakeAddress}
     </Typography>
   ) : (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        height: '100%',
+      }}
+    >
       <Button
-        variant="contained"
+        variant='contained'
         onClick={handleConnectSimulator}
         sx={{ mt: 3 }}
         style={{ background: '#aa2' }}
-        aria-label="select-simulator"
+        aria-label='select-simulator'
       >
         Simulator
       </Button>
@@ -272,9 +292,24 @@ const WalletConnectHeading = (_args: any) => {
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: useHeight, width: '100vw' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: useHeight,
+        width: '100vw',
+      }}
+    >
       <div style={{ display: 'flex', flexDirection: 'row', height: '3em' }}>
-        <div style={{ display: 'flex', flexGrow: 0, flexShrink: 0, height: '100%', padding: '1em' }}>
+        <div
+          style={{
+            display: 'flex',
+            flexGrow: 0,
+            flexShrink: 0,
+            height: '100%',
+            padding: '1em',
+          }}
+        >
           Chia Gaming - WalletConnect {sessionConnected}
         </div>
         <div style={{ display: 'flex', flexGrow: 1 }}> </div>
@@ -290,7 +325,7 @@ const WalletConnectHeading = (_args: any) => {
             cursor: 'pointer',
           }}
           onClick={toggleExpanded}
-          aria-label="control-menu"
+          aria-label='control-menu'
         >
           ☰
         </div>
