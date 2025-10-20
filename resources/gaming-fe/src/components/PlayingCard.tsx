@@ -42,7 +42,13 @@ const PlayingCard = ({
     flexDirection: 'column' as const,
     justifyContent: 'space-between',
     padding: '8px',
-    backgroundColor: selectionColor ? selectionColor : selected ? '#ddd' : isFaceDown ? '#2E7D32' : '#FFFFFF',
+    backgroundColor: selectionColor
+      ? selectionColor
+      : selected
+        ? '#ddd'
+        : isFaceDown
+          ? '#2E7D32'
+          : '#FFFFFF',
     color: isFaceDown ? '#FFFFFF' : suitColor,
     cursor: 'pointer',
     textAlign: 'center' as const,
@@ -50,14 +56,23 @@ const PlayingCard = ({
   };
 
   return (
-    <Paper id={id} elevation={3} aria-label={`card-${iAmPlayer}-${index}`} style={cardStyle} onClick={setSelectedCB}>
+    <Paper
+      id={id}
+      elevation={3}
+      aria-label={`card-${iAmPlayer}-${index}`}
+      style={cardStyle}
+      onClick={setSelectedCB}
+    >
       {!isFaceDown && (
         <>
-          <Typography variant="body2" style={{ fontWeight: 'bold' }}>
+          <Typography variant='body2' style={{ fontWeight: 'bold' }}>
             {rank}
             {suit}
           </Typography>
-          <Typography variant="body2" style={{ fontWeight: 'bold', transform: 'rotate(180deg)' }}>
+          <Typography
+            variant='body2'
+            style={{ fontWeight: 'bold', transform: 'rotate(180deg)' }}
+          >
             {rank}
             {suit}
           </Typography>

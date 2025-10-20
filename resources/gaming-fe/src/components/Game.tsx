@@ -1,9 +1,4 @@
-import {
-  Box,
-  Button,
-  Typography,
-} from '@mui/material';
-
+import { Box, Button, Typography } from '@mui/material';
 
 import { useWasmBlob } from '../hooks/useWasmBlob';
 import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
@@ -36,18 +31,23 @@ const Game = () => {
   }
 
   if (gameConnectionState.stateIdentifier === 'starting') {
-    return <WaitingScreen stateName={gameConnectionState.stateIdentifier} messages={gameConnectionState.stateDetail} />;
+    return (
+      <WaitingScreen
+        stateName={gameConnectionState.stateIdentifier}
+        messages={gameConnectionState.stateDetail}
+      />
+    );
   }
 
   if (gameConnectionState.stateIdentifier === 'shutdown') {
     return (
       <Box p={4}>
-        <Typography variant="h4" align="center" aria-label="shutdown">
+        <Typography variant='h4' align='center' aria-label='shutdown'>
           {`Cal Poker - shutdown succeeded`}
         </Typography>
         <Box>
           {gameConnectionState.stateDetail.map((c) => (
-            <Typography variant="h5" align="center">
+            <Typography variant='h5' align='center'>
               {c}
             </Typography>
           ))}
@@ -57,19 +57,19 @@ const Game = () => {
   }
 
   return (
-      <Calpoker
-        outcome={outcome}
-        moveNumber={moveNumber}
-        iStarted={iStarted}
-        isPlayerTurn={isPlayerTurn}
-        playerNumber={playerNumber}
-        playerHand={playerHand}
-        opponentHand={opponentHand}
-        cardSelections={cardSelections}
-        setCardSelections={setCardSelections}
-        handleMakeMove={handleMakeMove}
-        stopPlaying={stopPlaying}
-      />
+    <Calpoker
+      outcome={outcome}
+      moveNumber={moveNumber}
+      iStarted={iStarted}
+      isPlayerTurn={isPlayerTurn}
+      playerNumber={playerNumber}
+      playerHand={playerHand}
+      opponentHand={opponentHand}
+      cardSelections={cardSelections}
+      setCardSelections={setCardSelections}
+      handleMakeMove={handleMakeMove}
+      stopPlaying={stopPlaying}
+    />
   );
 };
 

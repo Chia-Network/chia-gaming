@@ -146,12 +146,19 @@ export class GameConfigService {
   public getGameConfig(gameType: GameType): GameConfig {
     const config = this.gameConfigs.get(gameType);
     if (!config) {
-      throw new AppError(ErrorCodes.SYSTEM.NOT_FOUND, 'Game configuration not found', 404);
+      throw new AppError(
+        ErrorCodes.SYSTEM.NOT_FOUND,
+        'Game configuration not found',
+        404,
+      );
     }
     return config;
   }
 
-  public updateGameConfig(gameType: GameType, updates: Partial<GameConfig>): void {
+  public updateGameConfig(
+    gameType: GameType,
+    updates: Partial<GameConfig>,
+  ): void {
     const config = this.getGameConfig(gameType);
     const updatedConfig: GameConfig = {
       ...config,
@@ -166,10 +173,15 @@ export class GameConfigService {
   }
 
   public getActiveGameConfigs(): GameConfig[] {
-    return Array.from(this.gameConfigs.values()).filter((config) => config.isActive);
+    return Array.from(this.gameConfigs.values()).filter(
+      (config) => config.isActive,
+    );
   }
 
-  public getPlayerSettings(playerId: string, gameType: GameType): PlayerSettings {
+  public getPlayerSettings(
+    playerId: string,
+    gameType: GameType,
+  ): PlayerSettings {
     const key = `${playerId}-${gameType}`;
     const settings = this.playerSettings.get(key);
     if (!settings) {
@@ -238,7 +250,10 @@ export class GameConfigService {
     return config.timeLimits;
   }
 
-  public updateTimeLimits(gameType: GameType, timeLimits: Partial<GameConfig['timeLimits']>): void {
+  public updateTimeLimits(
+    gameType: GameType,
+    timeLimits: Partial<GameConfig['timeLimits']>,
+  ): void {
     const config = this.getGameConfig(gameType);
     this.updateGameConfig(gameType, {
       ...config,
@@ -254,7 +269,10 @@ export class GameConfigService {
     return config.blinds;
   }
 
-  public updateBlinds(gameType: GameType, blinds: Partial<GameConfig['blinds']>): void {
+  public updateBlinds(
+    gameType: GameType,
+    blinds: Partial<GameConfig['blinds']>,
+  ): void {
     const config = this.getGameConfig(gameType);
     this.updateGameConfig(gameType, {
       ...config,

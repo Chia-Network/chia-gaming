@@ -8,8 +8,14 @@ interface OpponentSectionProps {
   opponentHand: number[][];
 }
 
-const OpponentSection = ({ playerNumber, opponentHand }: OpponentSectionProps) => {
-  const setSelection = useCallback((_index: number, _selected: boolean) => void 0, []);
+const OpponentSection = ({
+  playerNumber,
+  opponentHand,
+}: OpponentSectionProps) => {
+  const setSelection = useCallback(
+    (_index: number, _selected: boolean) => void 0,
+    [],
+  );
 
   return (
     <Paper
@@ -21,11 +27,11 @@ const OpponentSection = ({ playerNumber, opponentHand }: OpponentSectionProps) =
         flexDirection: 'column',
       }}
     >
-      <Typography variant="h5">{'Opponent'}</Typography>
+      <Typography variant='h5'>{'Opponent'}</Typography>
       <br />
-      <Typography variant="h6">Opponent's Hand:</Typography>
+      <Typography variant='h6'>Opponent's Hand:</Typography>
       <br />
-      <Box display="flex" flexDirection="row" mb={2}>
+      <Box display='flex' flexDirection='row' mb={2}>
         {opponentHand.map((card, index) => (
           <PlayingCard
             iAmPlayer={false}

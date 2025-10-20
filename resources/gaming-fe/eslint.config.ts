@@ -30,7 +30,10 @@ export default defineConfig([
       },
     },
     rules: {
-      '@typescript-eslint/no-use-before-define': ['error', { functions: false, classes: false, variables: true }],
+      '@typescript-eslint/no-use-before-define': [
+        'error',
+        { functions: false, classes: false, variables: true },
+      ],
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -46,7 +49,7 @@ export default defineConfig([
         'warn',
         {
           selector: 'variable',
-          format: ['camelCase', 'PascalCase', 'UPPER_CASE', 'snake_case'], 
+          format: ['camelCase', 'PascalCase', 'UPPER_CASE', 'snake_case'],
           leadingUnderscore: 'allow',
         },
         {
@@ -89,21 +92,27 @@ export default defineConfig([
       'react/jsx-closing-bracket-location': [2, 'tag-aligned'],
       'react/jsx-indent-props': [2, 2],
       'react/jsx-closing-tag-location': 2,
-      'react/jsx-wrap-multilines': [2, {
-        declaration: 'parens-new-line',
-        assignment: 'parens-new-line',
-        return: 'parens-new-line',
-        arrow: 'parens-new-line',
-        condition: 'parens-new-line',
-        logical: 'parens-new-line',
-        prop: 'parens-new-line',
-      }],
+      'react/jsx-wrap-multilines': [
+        2,
+        {
+          declaration: 'parens-new-line',
+          assignment: 'parens-new-line',
+          return: 'parens-new-line',
+          arrow: 'parens-new-line',
+          condition: 'parens-new-line',
+          logical: 'parens-new-line',
+          prop: 'parens-new-line',
+        },
+      ],
     },
   },
 
   {
     files: ['src/**/*.{js,mjs,cjs,ts,jsx,tsx}', '*.{js,mjs,cjs,ts}'],
-    extends: [importPlugin.flatConfigs.recommended, importPlugin.flatConfigs.typescript],
+    extends: [
+      importPlugin.flatConfigs.recommended,
+      importPlugin.flatConfigs.typescript,
+    ],
     settings: {
       'import/resolver': {
         typescript: {
@@ -139,7 +148,7 @@ export default defineConfig([
       '../**',
       '../../**',
       'node-pkg/**',
-      'scripts/testMock.js', 
+      'scripts/testMock.js',
     ],
   },
 
