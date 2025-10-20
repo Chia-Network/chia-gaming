@@ -92,7 +92,7 @@ observable.subscribe({
       cg.init((msg: string) => console.warn('wasm', msg));
     }
     const presetFiles = [
-      'resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex',
+      //'resources/p2_delegated_puzzle_or_hidden_puzzle.clsp.hex', -- now loaded cia crates.io::chia_puzzles
       'clsp/unroll/unroll_meta_puzzle.hex',
       'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
       'clsp/referee/onchain/referee.hex',

@@ -3,6 +3,7 @@ import { Box, Button, Typography } from '@mui/material';
 import { useWasmBlob } from '../hooks/useWasmBlob';
 import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 
+import GameLog from './GameLog';
 import WaitingScreen from './WaitingScreen';
 import Calpoker from './Calpoker';
 
@@ -12,6 +13,7 @@ const Game = () => {
   console.log(`Calling useWasmBlob(${params.lobbyUrl}, ${uniqueId})`);
   const {
     error,
+    log,
     gameConnectionState,
     isPlayerTurn,
     iStarted,
@@ -52,6 +54,14 @@ const Game = () => {
               {c}
             </Typography>
           ))}
+          <Box>
+            {gameConnectionState.stateDetail.map((c) => (
+              <Typography variant='h5' align='center'>
+                {c}
+              </Typography>
+            ))}
+            <GameLog log={log} />
+          </Box>
         </Box>
       </Box>
     );
@@ -70,6 +80,7 @@ const Game = () => {
       setCardSelections={setCardSelections}
       handleMakeMove={handleMakeMove}
       stopPlaying={stopPlaying}
+      log={log}
     />
   );
 };

@@ -5,6 +5,8 @@ import {
   CalpokerOutcome,
   BlockchainReport,
   RngId,
+  OutcomeLogLine,
+  handValueToDescription,
 } from '../types/ChiaGaming';
 import { getGameSocket } from '../services/GameSocket';
 import { getSearchParams } from '../util';
@@ -12,6 +14,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
 import { blockchainDataEmitter } from './BlockchainInfo';
 import { blockchainConnector } from './BlockchainConnector';
+
 import {
   PARENT_FRAME_BLOCKCHAIN_ID,
   parentFrameBlockchainInfo,
@@ -43,6 +46,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [gameStartCoin, setGameStartCoin] = useState<string | undefined>(
     undefined,
   );
+
   const [gameConnectionState, setGameConnectionState] =
     useState<GameConnectionState>({
       stateIdentifier: 'starting',
@@ -52,6 +56,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
+  const [log, setLog] = useState<OutcomeLogLine[]>([]);
   const [playerHand, setPlayerHand] = useState<number[][]>([]);
   const [opponentHand, setOpponentHand] = useState<number[][]>([]);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(
@@ -95,6 +100,27 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       iStarted
     ) :
     null;
+  const gameObject = uniqueId
+    ? getBlobSingleton(
+        blockchain,
+        lobbyUrl,
+        uniqueId,
+        amount,
+        perGameAmount,
+        iStarted,
+      )
+    : null;
+
+  const setCardSelections = useCallback(
+    (mask: number) => {
+      gameObject?.setCardSelections(mask);
+    },
+    [gameObject],
+  );
+
+  const stopPlaying = useCallback(() => {
+    gameObject?.shutDown();
+  }, [gameObject]);
 
   useEffect(() => {
     const subscription = blockchain.getObservable().subscribe({
@@ -118,6 +144,28 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   }, []);
 
 */
+  const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
+    setOutcome(outcome);
+    if (outcome) {
+      const myCards = iStarted ? outcome.alice_cards : outcome.bob_cards;
+      const myValue = iStarted
+        ? outcome.alice_hand_value
+        : outcome.bob_hand_value;
+      const theirCards = iStarted ? outcome.bob_cards : outcome.alice_cards;
+      const theirValue = iStarted
+        ? outcome.bob_hand_value
+        : outcome.alice_hand_value;
+      let newLogObject = {
+        topLineOutcome: outcome.my_win_outcome,
+        myHandDescription: handValueToDescription(myValue, myCards),
+        opponentHandDescription: handValueToDescription(theirValue, theirCards),
+        myHand: myCards,
+        opponentHand: theirCards,
+      };
+      setLog([...log, newLogObject]);
+    }
+  };
+
   const settable: any = {
     setGameConnectionState: setGameConnectionState,
     setPlayerHand: setPlayerHand,
@@ -126,7 +174,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setMoveNumber: setMoveNumber,
     setError: setError,
     setCardSelections: setOurCardSelections,
-    setOutcome: setOutcome,
+    setOutcome: recognizeOutcome,
   };
 
   function setState(state: any): void {
@@ -363,6 +411,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   return {
     error,
+    log,
     gameIdentity,
     gameConnectionState,
     realPublicKey,

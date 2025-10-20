@@ -231,14 +231,14 @@ export class WasmBlobWrapper {
     } else if (msg.move) {
       return this.makeMove(msg.move);
     } else if (msg.takeOpponentMove) {
-      let data = msg.takeOpponentMove;
+      const data = msg.takeOpponentMove;
       return this.takeOpponentMove(
         data.moveNumber,
         data.game_id,
         data.readable_move_hex,
       );
     } else if (msg.takeGameMessage) {
-      let data = msg.takeGameMessage;
+      const data = msg.takeGameMessage;
       return this.takeGameMessage(
         data.moveNumber,
         data.game_id,

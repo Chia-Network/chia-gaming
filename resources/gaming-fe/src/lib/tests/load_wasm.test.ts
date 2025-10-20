@@ -10,6 +10,7 @@ import {
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import { FAKE_BLOCKCHAIN_ID } from '../../hooks/FakeBlockchainInterface';
 import { blockchainDataEmitter } from '../../hooks/BlockchainInfo';
+
 import { ChildFrameBlockchainInterface } from '../../hooks/ChildFrameBlockchainInterface';
 import {
   WasmBlobWrapper,
@@ -198,7 +199,6 @@ async function initWasmBlobWrapper(
     BLOCKCHAIN_SERVICE_URL,
     '/register?name=',
     uniqueId,
-    ')',
   );
   await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {
     method: 'POST',
