@@ -24,6 +24,7 @@ const {
   waitForNonError,
   sendControlA,
   retrieveAddress,
+  getBalance,
 } = require("./util.js");
 
 // Other browser
