@@ -4,7 +4,7 @@
     "lib": ["dom", "dom.iterable", "esnext"],
     "strict": true,
     "rootDir": "./src",
-    "outDir": "./dist",
+    "outDir": "./dist/js",
     "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -22,5 +22,5 @@
     "noEmitOnError": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["node_modules", "dist", "build", "coverage"]
+  "exclude": ["node_modules", "dist", "build", "coverage", "src/lib"]
 }
