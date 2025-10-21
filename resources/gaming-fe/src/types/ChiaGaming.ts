@@ -41,6 +41,7 @@ export type GameFinished = [string, number];
 export interface IdleResult {
   continue_on: boolean;
   finished: boolean;
+  shutdown_received: boolean;
   outbound_transactions: SpendBundle[];
   outbound_messages: string[];
   opponent_move: OpponentMove | undefined;
@@ -77,6 +78,7 @@ export interface IdleCallbacks {
     | ((game_ids: string[], failed: string | undefined) => void)
     | undefined;
   game_finished?: ((game_id: string, amount: number) => void) | undefined;
+  shutdown_started?: (() => void) | undefined;
   shutdown_complete?: ((coin: string) => void) | undefined;
   going_on_chain?: (() => void) | undefined;
 }
@@ -567,6 +569,11 @@ export interface DoInitialSpendResult {
   coin: string;
 }
 
+export interface BlockchainInboundAddressResult {
+  address: string;
+  puzzleHash: string;
+}
+
 export interface InternalBlockchainInterface {
   do_initial_spend(
     uniqueId: string,
@@ -574,6 +581,7 @@ export interface InternalBlockchainInterface {
     amt: number,
   ): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
+  getAddress(): Promise<BlockchainInboundAddressResult>;
 }
 
 export interface OutcomeHandType {

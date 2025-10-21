@@ -13,20 +13,27 @@ import Service from './Service';
 import type { Options } from './Service';
 
 export default class FullNode extends Service {
-  constructor(client: any/*Client*/, options?: Options) {
+  constructor(client: any /*Client*/, options?: Options) {
     super(ServiceName.FULL_NODE, client, options);
   }
 
   async getBlockRecords(args: { start: number; end: number }) {
-    return this.command<{ blockRecords: BlockRecord[] }>('get_block_records', args);
+    return this.command<{ blockRecords: BlockRecord[] }>(
+      'get_block_records',
+      args,
+    );
   }
 
   async getUnfinishedBlockHeaders() {
-    return this.command<{ headers: BlockHeader[] }>('get_unfinished_block_headers');
+    return this.command<{ headers: BlockHeader[] }>(
+      'get_unfinished_block_headers',
+    );
   }
 
   async getBlockchainState() {
-    return this.command<{ blockchainState: BlockchainState }>('get_blockchain_state');
+    return this.command<{ blockchainState: BlockchainState }>(
+      'get_blockchain_state',
+    );
   }
 
   async getConnections() {
@@ -57,19 +64,31 @@ export default class FullNode extends Service {
     return this.command<{ status: string }>('push_tx', args);
   }
 
-  onBlockchainState(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onBlockchainState(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onCommand('get_blockchain_state', callback, processData);
   }
 
-  onConnections(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onConnections(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onCommand('get_connections', callback, processData);
   }
 
-  onNewBlock(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onNewBlock(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onStateChanged('new_block', callback, processData);
   }
 
-  onNewPeak(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onNewPeak(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onStateChanged('new_peak', callback, processData);
   }
 }

@@ -1,6 +1,6 @@
 export interface Session {
   topic: string;
-};
+}
 
 export interface Pair {
   topic: string;
@@ -8,4 +8,4 @@ export interface Pair {
   mainnet: boolean;
   bypassCommands?: any;
   sessions: Session[];
-};
+}

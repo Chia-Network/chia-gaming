@@ -33,13 +33,17 @@ export default function prepareWalletConnectCommand(
         parsedValues[name] = new BigNumber(value);
 
         if (parsedValues[name].isNaN()) {
-          throw new Error(`Invalid BigNumber value for argument ${name}. Value: ${value}`);
+          throw new Error(
+            `Invalid BigNumber value for argument ${name}. Value: ${value}`,
+          );
         }
       } else if (type === 'number') {
         parsedValues[name] = Number(value);
 
         if (Number.isNaN(parsedValues[name])) {
-          throw new Error(`Invalid number value for argument ${name}. Value: ${value}`);
+          throw new Error(
+            `Invalid number value for argument ${name}. Value: ${value}`,
+          );
         }
       } else if (type === 'boolean') {
         parsedValues[name] = Boolean(value);

@@ -233,6 +233,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
               value={uri || ''}
               variant='outlined'
               size='small'
+              aria-label='wallet-connect-uri'
               InputProps={{
                 readOnly: true,
                 sx: {
