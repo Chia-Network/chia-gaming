@@ -55,7 +55,7 @@ class ChiaGame {
       unroll_timeout: env.unroll_timeout,
       reward_puzzle_hash: identity.puzzle_hash,
     });
-    console.log(`constructed ${have_potato}`);
+    console.log('constructed', have_potato, 'with ChiaGame config=', this.cradle);
   }
 
   deliver_message(msg: string) {
@@ -127,8 +127,8 @@ it('loads', async () => {
   preset_file('clsp/unroll/unroll_puzzle_state_channel_unrolling.hex');
   preset_file('clsp/referee/onchain/referee.hex');
   preset_file('clsp/referee/onchain/referee-v1.hex');
-  let identity1 = chia_identity('test1');
-  let identity2 = chia_identity('test2');
+  let identity1 = chia_identity(1);
+  let identity2 = chia_identity(2);
   console.log(identity1, identity2);
 
   let calpoker_hex = fs.readFileSync(

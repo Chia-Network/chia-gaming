@@ -1,6 +1,8 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
+use serde::{Deserialize, Serialize};
+
 use log::debug;
 
 use crate::channel_handler::types::{Evidence, ReadableMove, ValidationInfo};
@@ -23,7 +25,7 @@ use crate::referee::v1::RefereeByTurn;
 
 // Contains a state of the game for use in currying the coin puzzle or for
 // reference when calling the game_handler.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MyTurnRefereeMakerGameState {
     Initial {
         initial_state: Rc<Program>,
@@ -186,7 +188,7 @@ impl MyTurnRefereeMakerGameState {
 /// In bram's mind, there's no difference between move 0 _leaving_ alice and _arriving_
 /// at bob, so we need to ensure that an outgoing move uses the same validation program
 /// as the incoming move that follows.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MyTurnReferee {
     pub fixed: Rc<RMFixed>,
 

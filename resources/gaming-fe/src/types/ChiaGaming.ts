@@ -126,7 +126,7 @@ export interface WasmConnection {
   idle: (cid: number, callbacks: any) => any;
 
   // Misc
-  chia_identity: (seed: string) => any;
+  chia_identity: (id: number) => any;
   sha256bytes: (hex: string) => string;
 }
 
@@ -156,6 +156,7 @@ export class ChiaGame {
     this.waiting_messages = [];
     this.private_key = identity.private_key;
     this.have_potato = have_potato;
+    this.rngId = wasm.
     this.cradle = wasm.create_game_cradle({
       seed: seed,
       game_types: env.game_types,
@@ -167,7 +168,7 @@ export class ChiaGame {
       unroll_timeout: env.unroll_timeout,
       reward_puzzle_hash: rewardPuzzleHash,
     });
-    console.log(`constructed ${have_potato} cradle ${this.cradle}`);
+    console.log('constructed', have_potato, "with cradle=", this.cradle);
   }
 
   start_games(initiator: boolean, game: any): string[] {

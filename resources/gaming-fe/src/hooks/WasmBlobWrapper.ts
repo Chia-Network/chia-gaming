@@ -32,7 +32,7 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 export class WasmBlobWrapper {
   amount: number;
   wc: WasmConnection | undefined;
-  rngSeed: string;
+  rngId: number;
   sendMessage: (msg: string) => void;
   identity: IChiaIdentity | undefined;
   cradle: ChiaGame | undefined;
@@ -74,7 +74,7 @@ export class WasmBlobWrapper {
     const { sendMessage } = peer_conn;
 
     this.uniqueId = uniqueId;
-    this.rngSeed = this.uniqueId.substr(0, 8);
+    this.rngId = this.uniqueId.substr(0, 8);
     this.sendMessage = sendMessage;
     this.amount = amount;
     this.currentBlock = 0;
@@ -128,7 +128,7 @@ export class WasmBlobWrapper {
         );
         this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
       });
-      const newGameIdentity = this.wc?.chia_identity(this.rngSeed);
+      const newGameIdentity = this.wc?.chia_identity(this.rngId);
       this.identity = newGameIdentity;
       this.pushEvent({ loadCalpoker: true });
       return {
@@ -329,7 +329,7 @@ export class WasmBlobWrapper {
     });
   }
 
-  loadWasm(chia_gaming_init: any, cg: WasmConnection): any {
+  loadWasm(chia_gaming_init: any, cg: any): any {
     this.loadWasmEvent = { loadWasmEvent: { chia_gaming_init, cg } };
     this.kickSystem(1);
     return empty();
@@ -391,7 +391,7 @@ export class WasmBlobWrapper {
         this.cradle = new ChiaGame(
           wc,
           env,
-          this.rngSeed,
+          this.rngId,
           identity,
           this.iStarted,
           this.amount,

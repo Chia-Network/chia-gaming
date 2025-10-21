@@ -470,8 +470,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static dyn Fn())> {
         let mut allocator = AllocEncoder::new();
         let s = Simulator::default();
         let private_key: PrivateKey = rng.gen();
-        let identity =
-            ChiaIdentity::new(&mut allocator, private_key.clone()).expect("should create");
+        debug!("private_key: {private_key:?}");
+        let identity = ChiaIdentity::new(&mut allocator, private_key.clone())
+            .map_err(|err| {
+                debug!("{err:?}");
+                err
+            })
+            .expect("no");
         debug!("identity public key {:?}", identity.public_key);
         s.farm_block(&identity.puzzle_hash);
 

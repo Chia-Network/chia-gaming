@@ -190,7 +190,7 @@ async function initWasmBlobWrapper(
   console.log('WasmBlobWrapper Observable: ', ob);
   let wwo = Object.assign({}, WholeWasmObject);
   wwo.init = () => {};
-  wbw.loadWasm(() => {}, wwo);
+  wbw.loadWasm(() => {}, wwo);//
 
   return wbw;
 }
