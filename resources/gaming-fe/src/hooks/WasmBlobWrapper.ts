@@ -358,11 +358,18 @@ export class WasmBlobWrapper {
       throw new Error('create start coin with no wasm obj?');
     }
 
-    console.log(`create coin spendable by ${identity.puzzle_hash} for ${this.amount}`);
-    return this.relayAddress().then(() => {
-      return this.blockchain.
-        do_initial_spend(this.uniqueId, identity.puzzle_hash, this.amount);
-    }).then(result => {
+    console.log(
+      `create coin spendable by ${identity.puzzle_hash} for ${this.amount}`,
+    );
+    return this.relayAddress()
+      .then(() => {
+        return this.blockchain.do_initial_spend(
+          this.uniqueId,
+          identity.puzzle_hash,
+          this.amount,
+        );
+      })
+      .then((result) => {
         let coin = result.coin;
         if (!coin) {
           throw new Error('tried to create spendable but failed');
@@ -461,7 +468,7 @@ export class WasmBlobWrapper {
 
     let result: any = {};
     let gids = this.cradle?.start_games(!this.iStarted, {
-      game_type: "63616c706f6b6572",
+      game_type: '63616c706f6b6572',
       timeout: 100,
       amount: this.perGameAmount,
       my_contribution: this.perGameAmount / 2,
@@ -540,7 +547,7 @@ export class WasmBlobWrapper {
         setTimeout(() => {
           this.pushEvent({ startGame: true });
         }, 2000);
-      }
+      },
     });
 
     if (!idle || this.finished) {

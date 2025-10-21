@@ -8,7 +8,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from clvm_tools_rs import start_clvm_program
+from chialisp import start_clvm_program
 
 from chia_gaming.clvm_types.program import Program
 from chia_gaming.util.sized_bytes import bytes32

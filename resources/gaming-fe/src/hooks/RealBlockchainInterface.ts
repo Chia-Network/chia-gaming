@@ -6,7 +6,7 @@ import { rpc } from '../hooks/JsonRpcContext';
 import {
   BlockchainReport,
   SelectionMessage,
-  BlockchainInboundAddressResult
+  BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
 import { WalletBalance } from '../types/WalletBalance';
 import { toHexString, toUint8 } from '../util';
@@ -52,7 +52,9 @@ export class RealBlockchainInterface {
     this.observable = new Subject();
   }
 
-  async getAddress() { return this.addressData; }
+  async getAddress() {
+    return this.addressData;
+  }
 
   startMonitoring() {
     if (this.ws) {
@@ -255,7 +257,10 @@ export function connectRealBlockchain(baseUrl: string) {
           if (result.transaction) {
             result.transaction.additions.forEach((c) => {
               console.log('look at coin', initialSpend.target, c);
-              if (c.puzzleHash == '0x' + initialSpend.target && c.amount.toString() == initialSpend.amount.toString()) {
+              if (
+                c.puzzleHash == '0x' + initialSpend.target &&
+                c.amount.toString() == initialSpend.amount.toString()
+              ) {
                 resultCoin = c;
               }
             });
@@ -314,20 +319,28 @@ export function connectRealBlockchain(baseUrl: string) {
           });
         }
       } else if (getAddress) {
-        rpc.getCurrentAddress({
-          walletId: 1
-        }).then((address) => {
-          console.log('currentAddress', address);
-          const puzzleHash = toHexString(bech32.decode(address).data as any);
-          const addressData = { address, puzzleHash };
+        rpc
+          .getCurrentAddress({
+            walletId: 1,
+          })
+          .then((address) => {
+            console.log('currentAddress', address);
+            const puzzleHash = toHexString(bech32.decode(address).data as any);
+            const addressData = { address, puzzleHash };
 
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, getAddress: addressData });
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+	    getAddress: addressData
+	  });
         });
       } else if (getBalance) {
         rpc.getWalletBalance({
           walletId: 1
         }).then((balanceResult: WalletBalance) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balanceResult.spendableBalance });
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+	    getBalance: balanceResult.spendableBalance
+	  });
         });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);

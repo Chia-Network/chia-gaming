@@ -66,18 +66,22 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     this.blockEmitter = (b) => this.observable.next(b);
   }
 
-  async getAddress() { return this.addressData; }
+  async getAddress() {
+    return this.addressData;
+  }
 
   startMonitoring(uniqueId: string) {
     console.log('startMonitoring', uniqueId);
 
-    return this.upstream.getOrRequestToken(uniqueId).then(puzzleHash => {
+    return this.upstream.getOrRequestToken(uniqueId).then((puzzleHash) => {
       const address = bech32.encode('xch', toUint8(puzzleHash), 'bech32m');
-      this.addressData = {address, puzzleHash};
+      this.addressData = { address, puzzleHash };
 
-      fetch(`${this.baseUrl}/get_peak`, {method: "POST"}).then(res => res.json()).then(peak => {
-        this.setNewPeak(peak);
-      });
+      fetch(`${this.baseUrl}/get_peak`, { method: 'POST' })
+        .then((res) => res.json())
+        .then((peak) => {
+          this.setNewPeak(peak);
+        });
     });
   }
 
@@ -254,7 +258,10 @@ export function connectSimulatorBlockchain() {
           });
       } else if (getAddress) {
         fakeBlockchainInfo.getAddress().then((address) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, getAddress: address });
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+            getAddress: address,
+          });
         });
       } else if (getBalance) {
         fakeBlockchainInfo.getBalance().then((balance) => {
@@ -267,7 +274,7 @@ export function connectSimulatorBlockchain() {
           error: `unknown blockchain request type ${JSON.stringify(evt)}`,
         });
       }
-    }
+    },
   });
 }
 
