@@ -97,7 +97,7 @@ app.get('/', async (_req: any, res: any) => {
   serveFile('public/index.html', 'text/html', res);
 });
 app.get('/index.js', async (_req: any, res: any) => {
-  serveFile('dist/index-rollup.js', 'application/javascript', res);
+  serveFile('dist/js/index-rollup.js', 'application/javascript', res);
 });
 app.get('/chia_gaming_wasm_bg.wasm', async (_req: any, res: any) => {
   serveFile('dist/chia_gaming_wasm_bg.wasm', 'application/wasm', res);
