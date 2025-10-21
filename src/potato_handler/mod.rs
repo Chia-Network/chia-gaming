@@ -183,11 +183,15 @@ impl PotatoHandler {
     }
 
     pub fn get_our_current_share(&self) -> Option<Amount> {
-        self.channel_handler.as_ref().map(|ch| ch.get_our_current_share())
+        self.channel_handler
+            .as_ref()
+            .map(|ch| ch.get_our_current_share())
     }
 
     pub fn get_their_current_share(&self) -> Option<Amount> {
-        self.channel_handler.as_ref().map(|ch| ch.get_their_current_share())
+        self.channel_handler
+            .as_ref()
+            .map(|ch| ch.get_their_current_share())
     }
 
     pub fn is_on_chain(&self) -> bool {

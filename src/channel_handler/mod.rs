@@ -270,17 +270,13 @@ impl ChannelHandler {
     }
 
     pub fn amount(&self, on_chain: bool) -> Amount {
-        let allocated =
-            self.my_allocated_balance.clone() +
-            self.their_allocated_balance.clone();
+        let allocated = self.my_allocated_balance.clone() + self.their_allocated_balance.clone();
 
         if on_chain {
             return allocated;
         }
 
-        allocated +
-            self.my_out_of_game_balance.clone() +
-            self.their_out_of_game_balance.clone()
+        allocated + self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone()
     }
 
     pub fn get_our_current_share(&self) -> Amount {
