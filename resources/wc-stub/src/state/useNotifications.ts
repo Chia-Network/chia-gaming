@@ -1,4 +1,4 @@
 export default function useNotifications() {
-  const context = { };
+  const context = {};
   return context;
 }

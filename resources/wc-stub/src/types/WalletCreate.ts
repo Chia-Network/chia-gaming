@@ -38,6 +38,11 @@ type WalletCreateNFT = {
   walletId: number;
 };
 
-type WalletCreate = WalletCreateCAT | WalletCreateDID | WalletCreateRecoveryDID | WalletCreatePool | WalletCreateNFT;
+type WalletCreate =
+  | WalletCreateCAT
+  | WalletCreateDID
+  | WalletCreateRecoveryDID
+  | WalletCreatePool
+  | WalletCreateNFT;
 
 export default WalletCreate;
