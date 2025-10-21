@@ -2,6 +2,7 @@ const os = require("os");
 const { Builder, Browser, By, Key, until } = require("selenium-webdriver");
 const HALF_SECOND = 500;
 const WAIT_ITERATIONS = 100;
+const ADDRESS_RETRIES = 30;
 
 async function wait(driver, secs) {
   const actions = driver.actions({ async: true });
@@ -139,7 +140,7 @@ async function selectWalletConnect(driver) {
 }
 
 async function retrieveAddress(driver) {
-  do {
+  for (let i = 0; i < ADDRESS_RETRIES; i++) {
     const addressElt = await driver.wait(
       until.elementLocated(byAttribute("id", "blockchain-address")),
     );
@@ -152,7 +153,9 @@ async function retrieveAddress(driver) {
     } catch (e) {
       await wait(driver, 1.0);
     }
-  } while (true);
+  }
+
+  throw new Error("Too many retries getting blockchain address");
 }
 
 async function getBalance(driver, puzzleHash) {

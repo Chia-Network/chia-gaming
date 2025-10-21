@@ -21,13 +21,9 @@ function parseArgs() {
 
   if (!args.tracker || !args.self) {
     console.warn(
-      'usage: server --tracker [tracker-url] --self [own-url] (--coinset [host]) --extras [extra-urls colon separated]',
+      'usage: server --tracker [tracker-url] --self [own-url] --extras [extra-urls colon separated]',
     );
     process.exit(1);
-  }
-
-  if (args.coinset) {
-    coinset = args.coinset;
   }
 
   const extras: string[] = [];
@@ -137,6 +133,12 @@ app.get('/clsp*', async (req: any, res: any) => {
 app.get('/resources*', async (req: any, res: any) => {
   serveDirectory('./', req, res);
 });
+if (process.env.ALLOW_REWRITING) {
+  app.post('/coinset', async (req: any, res: any) => {
+    coinset = res.body;
+    res.send("ok")
+  });
+}
 
 process.on('SIGTERM', () => {
   process.exit(0);
