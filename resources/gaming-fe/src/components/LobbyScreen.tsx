@@ -15,7 +15,6 @@ import { useState, useEffect, useCallback } from 'react';
 
 import { useLobbySocket } from '../hooks/useLobbyConnection';
 import { generateOrRetrieveAlias, updateAlias } from '../util';
-import { setupBlockchainConnection } from '../hooks/useBlockchainConnection';
 import { ChildFrameBlockchainInterface } from '../hooks/ChildFrameBlockchainInterface';
 
 interface LobbyComponentProps {}
