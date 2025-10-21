@@ -1,33 +1,34 @@
-FROM node:20.18.1
-RUN apt-get update -y
-RUN apt-get install -y libc6
-RUN apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential
-RUN apt-get update
-RUN npm install -g corepack
-RUN yarn set version 1.22.22
-WORKDIR /app
-RUN python3 -m venv ./test
-RUN . /app/test/bin/activate && pip install maturin==1.9.2
-RUN sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.5.5-rc3"
-# Gross, check the hash at least.
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && sh ./rustup.sh -y
-RUN echo 'source $HOME/.cargo/env' >> $HOME/.profile
+FROM node:20.18.1 as stage1
 ENV PATH="/root/.cargo/bin:${PATH}"
-RUN . $HOME/.cargo/env && rustup default stable && rustup target add wasm32-unknown-unknown --toolchain stable && cargo +stable install --version 0.13.1 wasm-pack
+RUN apt-get update -y && \
+    apt-get install -y libc6 && \
+    apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
+    apt-get update && \
+    npm install -g corepack && \
+    yarn set version 1.22.22 && \
+    python3 -m venv /app/test && \
+    . /app/test/bin/activate && \
+    pip install maturin==1.9.2 && \
+    sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.5.5-rc3" && \
+    : "# Gross, check the hash at least." && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && \
+    sh ./rustup.sh -y && \
+    echo 'source $HOME/.cargo/env' >> $HOME/.profile && \
+    . $HOME/.cargo/env && \
+    rustup default stable && \
+    rustup target add wasm32-unknown-unknown --toolchain stable && cargo +stable install --version 0.13.1 wasm-pack && \
+    mkdir -p /app/rust/src && mkdir -p /app/rust/wasm/src && \
+    sh -c "echo > /app/rust/src/lib.rs" && \
+    sh -c "echo > /app/rust/wasm/src/mod.rs"
+    
+WORKDIR /app
 ADD clsp /app/clsp
 
 # Setup to pre-build the dependencies
-RUN mkdir -p /app/rust/src
-COPY rust-toolchain.toml /app/rust/rust-toolchain.toml
-COPY Cargo.toml /app/rust/Cargo.toml
-COPY Cargo.lock /app/rust/Cargo.lock
-RUN sh -c "echo > /app/rust/src/lib.rs"
+COPY rust-toolchain.toml Cargo.toml Cargo.lock /app/rust/
 
 # Setup pre-build wasm
-RUN mkdir -p /app/rust/wasm/src
-COPY wasm/Cargo.toml /app/rust/wasm/Cargo.toml
-COPY wasm/Cargo.lock /app/rust/wasm/Cargo.lock
-RUN sh -c "echo > /app/rust/wasm/src/mod.rs"
+COPY wasm/Cargo.toml wasm/Cargo.lock /app/rust/wasm/
 
 # Pre-build
 RUN --mount=type=tmpfs,dst=/tmp/rust \
@@ -43,10 +44,42 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
   rm -rf /tmp/rust/wasm/node-pkg /tmp/rust/wasm/pkg && \
 	(cd /tmp/rust && tar cvf - .) | (cd /app/rust && tar xf -)
 
-#Stage front-end / UI / UX into the container
-COPY resources/gaming-fe/package.json /app
-COPY resources/gaming-fe/yarn.lock /app
-RUN cd /app && yarn install
+# Stage front-end / UI / UX into the container
+COPY resources/gaming-fe/package.json resources/gaming-fe/yarn.lock /preinst/
+
+# walletconnect automation
+COPY resources/wc-stub/package.json resources/wc-stub/yarn.lock /preinst/wc/
+
+RUN --mount=type=tmpfs,dst=/app \
+  mkdir -p /app/wc/ && \
+  cp -r /preinst/* /app && \
+  cd /app && yarn install && \
+  mv /app/node_modules /preinst/ && \
+  mv /app/package.json /preinst/ 
+
+RUN --mount=type=tmpfs,dst=/app \
+  mkdir -p /app/wc/ && \
+  cp -r /preinst/wc/* /app/wc/ && \
+  cd /app/wc && yarn install && \
+  mv /app/wc/node_modules /preinst/wc && \
+  mv /app/wc/package.json /preinst/wc
+
+#CI FROM node:20.18.1
+#CI RUN apt-get update -y && \
+#CI     apt-get install -y libc6 && \
+#CI     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
+#CI     apt-get update && \
+#CI     npm install -g corepack && \
+#CI     yarn set version 1.22.22
+#CI COPY --from=stage1 /preinst /preinst
+#CI COPY --from=stage1 /root /root
+#CI COPY --from=stage1 /app /app
+
+RUN mkdir -p /app/wc/ && \
+  ln -s /preinst/node_modules /app && \
+  ln -s /preinst/package.json /app && \
+  ln -s /preinst/wc/node_modules /app/wc && \
+  ln -s /preinst/wc/package.json /app/wc
 
 ADD src /app/rust/src
 RUN touch /app/rust/src/lib.rs
@@ -76,9 +109,15 @@ RUN mkdir -p /app/dist
 COPY resources/gaming-fe /app
 RUN cd /app && yarn run build
 
+# walletconnect automation build
+COPY resources/wc-stub/src /app/wc/src/
+COPY resources/wc-stub/tsconfig.json /app/wc/
+RUN cd /app/wc && yarn run build
+
 RUN ln -s /app/resources /resources
 ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
-RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > run_simulator.py
-CMD /bin/sh -c "(node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; node ./dist/js/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 &) && . /app/test/bin/activate && python3 run_simulator.py"
+RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
+RUN echo 'cd /app && (node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; ALLOW_REWRITING=1 node ./dist/js/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 "${@}" &) && curl --retry 5 --retry-delay 1 --retry-all-errors -d 'http://localhost:3002' http://localhost:3000/coinset && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
+CMD /bin/bash /app/test_env.sh

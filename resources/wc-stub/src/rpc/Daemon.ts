@@ -28,7 +28,9 @@ export default class Daemon extends Service {
     >
   > = {};
 
-  private serviceStopPromises: Partial<Record<ServiceNameValue, Promise<void>>> = {};
+  private serviceStopPromises: Partial<
+    Record<ServiceNameValue, Promise<void>>
+  > = {};
 
   #runningServices: Partial<Record<ServiceNameValue, boolean>> = {};
 
@@ -44,7 +46,11 @@ export default class Daemon extends Service {
     }>('register_service', args);
   }
 
-  async startService(args: { service: ServiceNameValue; testing?: boolean; noWait?: boolean }) {
+  async startService(args: {
+    service: ServiceNameValue;
+    testing?: boolean;
+    noWait?: boolean;
+  }) {
     const { noWait, ...rest } = args;
     const { service } = args;
 
@@ -135,7 +141,11 @@ export default class Daemon extends Service {
     }>('running_services');
   }
 
-  async waitForService(service: ServiceNameValue, waitForStart: boolean, maxRetries: number = 600) {
+  async waitForService(
+    service: ServiceNameValue,
+    waitForStart: boolean,
+    maxRetries: number = 600,
+  ) {
     // 10 minutes
     const { client } = this;
 
@@ -333,14 +343,22 @@ export default class Daemon extends Service {
       workspaceLocation2: 't2',
     };
 
-    const outputArgs: Record<string, unknown> = { service: ServiceName.PLOTTER };
+    const outputArgs: Record<string, unknown> = {
+      service: ServiceName.PLOTTER,
+    };
 
     Object.keys(inputArgs).forEach((key) => {
-      if (conversionDict[key]) outputArgs[conversionDict[key]] = inputArgs[key as keyof typeof inputArgs];
+      if (conversionDict[key])
+        outputArgs[conversionDict[key]] =
+          inputArgs[key as keyof typeof inputArgs];
       else outputArgs[key] = inputArgs[key as keyof typeof inputArgs];
     });
 
-    if (outputArgs.plotter && (outputArgs.plotter as string).startsWith('bladebit')) outputArgs.plotter = 'bladebit';
+    if (
+      outputArgs.plotter &&
+      (outputArgs.plotter as string).startsWith('bladebit')
+    )
+      outputArgs.plotter = 'bladebit';
     if (outputArgs.cache) outputArgs.cache = `${outputArgs.cache}G`;
 
     Object.keys(outputArgs).forEach((key) => {
@@ -353,7 +371,13 @@ export default class Daemon extends Service {
     // some keys must be provided as empty strings and some must not be provided at all
     if (outputArgs.p === '') delete outputArgs.p;
 
-    return this.command<{ ids: string[] }>('start_plotting', outputArgs, undefined, undefined, true);
+    return this.command<{ ids: string[] }>(
+      'start_plotting',
+      outputArgs,
+      undefined,
+      undefined,
+      true,
+    );
   }
 
   exit() {
@@ -361,7 +385,9 @@ export default class Daemon extends Service {
   }
 
   async stopAllServices() {
-    const { runningServices } = (await this.runningServices()) as { runningServices: ServiceNameValue[] };
+    const { runningServices } = (await this.runningServices()) as {
+      runningServices: ServiceNameValue[];
+    };
 
     return Promise.all(
       runningServices.map((service) => {
@@ -374,12 +400,18 @@ export default class Daemon extends Service {
     );
   }
 
-  onKeyringStatusChanged(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onKeyringStatusChanged(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onCommand('keyring_status_changed', callback, processData);
   }
 
   async waitForKeyringUnlocked(): Promise<void> {
-    const checkKeyringStatusAndWait = async (resolve: (value: void) => void, reject: (reason: Error) => void) => {
+    const checkKeyringStatusAndWait = async (
+      resolve: (value: void) => void,
+      reject: (reason: Error) => void,
+    ) => {
       let unsubscribe: undefined | (() => void);
 
       try {
@@ -411,9 +443,11 @@ export default class Daemon extends Service {
       return this.waitForKeyringUnlockedPromise;
     }
 
-    this.waitForKeyringUnlockedPromise = new Promise<void>((resolve, reject) => {
-      checkKeyringStatusAndWait(resolve, reject);
-    }).finally(() => {
+    this.waitForKeyringUnlockedPromise = new Promise<void>(
+      (resolve, reject) => {
+        checkKeyringStatusAndWait(resolve, reject);
+      },
+    ).finally(() => {
       this.waitForKeyringUnlockedPromise = null;
     });
 
@@ -425,10 +459,14 @@ export default class Daemon extends Service {
   }
 
   getKeysForPlotting(args?: { fingerprints?: number[] }) {
-    return this.command<{ keys: { [fingerprint: number]: { farmerPublicKey: string; poolPublicKey: string } } }>(
-      'get_keys_for_plotting',
-      args,
-    );
+    return this.command<{
+      keys: {
+        [fingerprint: number]: {
+          farmerPublicKey: string;
+          poolPublicKey: string;
+        };
+      };
+    }>('get_keys_for_plotting', args);
   }
 
   getPublicKey(args?: { fingerprint: number }) {

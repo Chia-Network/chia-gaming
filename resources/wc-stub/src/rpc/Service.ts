@@ -11,7 +11,7 @@ export type Options = {
 };
 
 export default abstract class Service extends EventEmitter {
-  readonly client: any/*Client*/;
+  readonly client: any /*Client*/;
 
   readonly name: ServiceNameValue;
 
@@ -19,7 +19,12 @@ export default abstract class Service extends EventEmitter {
 
   #readyPromise: Promise<null> | undefined;
 
-  constructor(name: ServiceNameValue, client: any/*Client*/, options: Options = {}, onInit?: () => Promise<void>) {
+  constructor(
+    name: ServiceNameValue,
+    client: any /*Client*/,
+    options: Options = {},
+    onInit?: () => Promise<void>,
+  ) {
     super();
 
     const { origin } = options;
@@ -124,7 +129,11 @@ export default abstract class Service extends EventEmitter {
     };
   }
 
-  onStateChanged(state: string, callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onStateChanged(
+    state: string,
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onCommand(
       'state_changed',
       (data, message) => {

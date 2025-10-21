@@ -8,6 +8,7 @@ mod divmod;
 mod error;
 mod game_id;
 mod int_utils;
+mod map_m;
 mod node;
 mod private_key;
 mod program;
@@ -16,6 +17,7 @@ mod public_key;
 mod puzzle;
 mod puzzle_hash;
 mod rc_node;
+mod serializable_chacha8;
 mod sha256input;
 mod spend;
 mod timeout;
@@ -30,6 +32,7 @@ pub use self::divmod::divmod;
 pub use self::error::{ErrToError, Error, IntoErr};
 pub use self::game_id::GameID;
 pub use self::int_utils::{i64_from_atom, u64_from_atom, usize_from_atom};
+pub use self::map_m::map_m;
 pub use self::node::Node;
 pub use self::private_key::{PrivateKey, SerdeByteConsumer};
 pub use self::program::{Program, Sha256tree, ToQuotedProgram};
@@ -38,6 +41,10 @@ pub use self::public_key::PublicKey;
 pub use self::puzzle::Puzzle;
 pub use self::puzzle_hash::PuzzleHash;
 pub use self::rc_node::RcNode;
+pub use self::serializable_chacha8::ChaCha8SerializationWrapper;
 pub use self::sha256input::{atom_from_clvm, Hash, Sha256Input};
-pub use self::spend::{BrokenOutCoinSpendInfo, CoinSpend, Spend, SpendBundle, SpendRewardResult};
+pub use self::spend::{
+    check_for_hex, convert_coinset_org_spend_to_spend, BrokenOutCoinSpendInfo, CoinSpend,
+    CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Spend, SpendBundle, SpendRewardResult,
+};
 pub use self::timeout::Timeout;
