@@ -6,6 +6,7 @@ import {
   GameConnectionState,
   CalpokerOutcome,
   InternalBlockchainInterface,
+  BlockchainInboundAddressResult,
   BlockchainReport,
   OutcomeLogLine,
   handValueToDescription,
@@ -119,6 +120,11 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
   const [log, setLog] = useState<OutcomeLogLine[]>([]);
+  const [addressData, setAddressData] =
+    useState<BlockchainInboundAddressResult>({
+      address: '',
+      puzzleHash: '',
+    });
   const [playerHand, setPlayerHand] = useState<number[][]>([]);
   const [opponentHand, setOpponentHand] = useState<number[][]>([]);
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(
@@ -220,6 +226,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setError: setError,
     setCardSelections: setOurCardSelections,
     setOutcome: recognizeOutcome,
+    setAddressData: setAddressData,
   };
 
   useEffect(() => {
@@ -245,6 +252,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   return {
     error,
+    addressData,
     log,
     gameIdentity,
     gameConnectionState,

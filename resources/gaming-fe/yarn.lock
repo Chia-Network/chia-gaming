@@ -3496,6 +3496,11 @@ buffer-from@^1.0.0:
   resolved "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz"
   integrity sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==
 
+buffer-replace@^2.0.0:
+  version "2.0.0"
+  resolved "https://registry.npmjs.org/buffer-replace/-/buffer-replace-2.0.0.tgz#5b2d64a89848a5f68782ddb336c0865097bf5db9"
+  integrity sha512-KPX5rC80XIuJfWdqOyFYjl3om5wFzKw1OpviLKFVyTO20Spu6rS5wQJhV/8s22OAP1U9AkO8WiSb15qYq4MXeg==
+
 buffer@^5.5.0:
   version "5.7.1"
   resolved "https://registry.npmjs.org/buffer/-/buffer-5.7.1.tgz"

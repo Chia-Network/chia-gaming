@@ -18,6 +18,7 @@ export interface CalpokerProps {
   setCardSelections: (n: number) => void;
   handleMakeMove: (hex: string) => void;
   stopPlaying: () => void;
+  addressData: any;
   log: OutcomeLogLine[];
 }
 
@@ -33,6 +34,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   setCardSelections,
   handleMakeMove,
   stopPlaying,
+  addressData,
   log,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
@@ -153,6 +155,12 @@ const Calpoker: React.FC<CalpokerProps> = ({
       <Typography>{moveDescription}</Typography>
       <br />
       <GameLog log={log} />
+      <div
+        id='blockchain-address'
+        style={{ position: 'relative', width: 0, height: 0, opacity: '0%' }}
+      >
+        {JSON.stringify(addressData)}
+      </div>
     </Box>
   );
 };
