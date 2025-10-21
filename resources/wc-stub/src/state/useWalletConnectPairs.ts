@@ -5,7 +5,10 @@ type PairCallback = (pairs: Pair[]) => Pair[];
 export type Pairs = {
   addPair: (pair: Pair) => void;
   getPair: (topic: string) => Pair | undefined;
-  updatePair: (topic: string, pair: Partial<Pair> | ((pair: Pair) => Pair)) => void;
+  updatePair: (
+    topic: string,
+    pair: Partial<Pair> | ((pair: Pair) => Pair),
+  ) => void;
   removePair: (topic: string) => void;
   hasPair: (topic: string) => boolean;
 
@@ -16,8 +19,16 @@ export type Pairs = {
 
   removeSessionFromPair: (sessionTopic: string) => void;
 
-  bypassCommand: (sessionTopic: string, command: string, confirm: boolean) => void;
-  bypassCommands: (sessionTopic: string, commands: string[], confirm: boolean) => void;
+  bypassCommand: (
+    sessionTopic: string,
+    command: string,
+    confirm: boolean,
+  ) => void;
+  bypassCommands: (
+    sessionTopic: string,
+    commands: string[],
+    confirm: boolean,
+  ) => void;
   removeBypassCommand: (sessionTopic: string, command: string) => void;
   resetBypassForAllPairs: () => void;
   resetBypassForPair: (pairTopic: string) => void;
@@ -25,7 +36,10 @@ export type Pairs = {
 
 type PairFn = (pairs: Pair[]) => Pair[];
 
-export function parseWcLink(wc_link: string, fingerprints: number[]): any | null {
+export function parseWcLink(
+  wc_link: string,
+  fingerprints: number[],
+): any | null {
   const wc_index = wc_link.indexOf(':');
   if (wc_index < 0) {
     return null;
@@ -44,7 +58,7 @@ export function parseWcLink(wc_link: string, fingerprints: number[]): any | null
     topic: topic,
     fingerprints: fingerprints,
     mainnet: true,
-    sessions: []
+    sessions: [],
   };
 }
 
@@ -54,7 +68,10 @@ export function useWalletConnectPairs(): Pairs {
     pairsRef = computeNew(pairsRef);
   }
 
-  const updatePair = (topic: string, data: Partial<Omit<Pair, 'topic'>> | ((pair: Pair) => Pair)) => {
+  const updatePair = (
+    topic: string,
+    data: Partial<Omit<Pair, 'topic'>> | ((pair: Pair) => Pair),
+  ) => {
     setPairs((pairs: Pair[]) => {
       const index = pairs.findIndex((item) => item.topic === topic);
       if (index === -1) {
@@ -62,7 +79,8 @@ export function useWalletConnectPairs(): Pairs {
       }
 
       const oldPair = pairs[index];
-      const newPairing = typeof data === 'function' ? data(oldPair) : { ...oldPair, ...data };
+      const newPairing =
+        typeof data === 'function' ? data(oldPair) : { ...oldPair, ...data };
       const newPairings = [...pairs];
       newPairings[index] = newPairing;
 
@@ -76,7 +94,10 @@ export function useWalletConnectPairs(): Pairs {
 
   const removePairBySession = (sessionTopic: string) => {
     setPairs((pairs: Pair[]) =>
-      pairs.filter((item) => !item.sessions.find((session) => session.topic === sessionTopic)),
+      pairs.filter(
+        (item) =>
+          !item.sessions.find((session) => session.topic === sessionTopic),
+      ),
     );
   };
 
@@ -89,7 +110,9 @@ export function useWalletConnectPairs(): Pairs {
   };
 
   const getPairBySession = (sessionTopic: string) => {
-    return pairsRef.find((item) => item.sessions?.find((session) => session.topic === sessionTopic));
+    return pairsRef.find((item) =>
+      item.sessions?.find((session) => session.topic === sessionTopic),
+    );
   };
 
   const addPair = (pair: Pair) => {
@@ -114,9 +137,15 @@ export function useWalletConnectPairs(): Pairs {
 
   const get = () => pairsRef;
 
-  const bypassCommand = (sessionTopic: string, command: string, confirm: boolean) => {
+  const bypassCommand = (
+    sessionTopic: string,
+    command: string,
+    confirm: boolean,
+  ) => {
     setPairs((pairs: Pair[]) => {
-      const pair = pairs.find((item) => item.sessions?.find((session) => session.topic === sessionTopic));
+      const pair = pairs.find((item) =>
+        item.sessions?.find((session) => session.topic === sessionTopic),
+      );
       if (!pair) {
         throw new Error('Pair not found');
       }
@@ -134,9 +163,15 @@ export function useWalletConnectPairs(): Pairs {
     });
   };
 
-  const bypassCommands = (sessionTopic: string, commands: string[], confirm: boolean) => {
+  const bypassCommands = (
+    sessionTopic: string,
+    commands: string[],
+    confirm: boolean,
+  ) => {
     setPairs((pairs: Pair[]) => {
-      const pair = pairs.find((item) => item.sessions?.find((session) => session.topic === sessionTopic));
+      const pair = pairs.find((item) =>
+        item.sessions?.find((session) => session.topic === sessionTopic),
+      );
       if (!pair) {
         throw new Error('Pair not found');
       }
@@ -147,7 +182,10 @@ export function useWalletConnectPairs(): Pairs {
           item.topic === pair.topic
             ? {
                 ...item.bypassCommands,
-                ...commands.reduce((acc, command) => ({ ...acc, [command]: confirm }), {}),
+                ...commands.reduce(
+                  (acc, command) => ({ ...acc, [command]: confirm }),
+                  {},
+                ),
               }
             : item.bypassCommands,
       }));
@@ -162,7 +200,9 @@ export function useWalletConnectPairs(): Pairs {
     };
 
     setPairs((pairs: Pair[]) => {
-      const pair = pairs.find((item) => item.sessions?.find((session) => session.topic === sessionTopic));
+      const pair = pairs.find((item) =>
+        item.sessions?.find((session) => session.topic === sessionTopic),
+      );
       if (!pair) {
         throw new Error('Pair not found');
       }

@@ -12,6 +12,8 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
+use chia_gaming::common::types::ChaCha8SerializationWrapper;
+
 use wasm_bindgen::prelude::*;
 
 use chia_gaming::channel_handler::types::{ReadableMove, GameStartFailed};
@@ -111,7 +113,7 @@ struct JsAmount {
 
 struct JsCradle {
     allocator: AllocEncoder,
-    rng: ChaCha8Rng,
+    rng: ChaCha8SerializationWrapper,
     cradle: SynchronousGameCradle,
 }
 
@@ -129,6 +131,10 @@ thread_local! {
     static CRADLES: RefCell<HashMap<i32, JsCradle>> = {
         return RefCell::new(HashMap::new());
     };
+    static RNGS: RefCell<HashMap<i32, ChaCha8Rng>> = {
+    return RefCell::new(HashMap::new());
+};
+
 }
 
 #[wasm_bindgen]
@@ -156,6 +162,13 @@ fn insert_cradle(this_id: i32, runner: JsCradle) {
 struct JsRndConfig {
     // hex string.
     seed: String,
+}
+
+fn insert_rng(id: i32, rng: ChaCha8Rng) {
+    RNGS.with(|cell| {
+        let mut mut_ref = cell.borrow_mut();
+        mut_ref.insert(id, rng);
+    });
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -285,6 +298,38 @@ extern "C" {
     pub type ICreateGameCradle;
 }
 
+#[wasm_bindgen]
+pub fn create_rng(seed: String) -> Result<i32, JsValue> {
+    let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
+    let rng = ChaCha8Rng::from_seed(*hashed.bytes());
+    let id = get_next_id();
+    insert_rng(id, rng);
+    return Ok(id);
+}
+
+pub fn with_rng<F, T>(cid: i32, f: F) -> Result<T, JsValue>
+where
+    F: FnOnce(&mut ChaCha8Rng) -> Result<T, types::Error>,
+{
+    RNGS.with(|cell| {
+        let mut mut_ref = cell.borrow_mut();
+        if let Some(cradle) = mut_ref.get_mut(&cid) {
+            return f(cradle).into_js();
+        }
+
+        Err(JsValue::from_str(&format!(
+            "could not find RNG instance {cid}"
+        )))
+    })
+}
+
+pub fn deserialize_rng(frozen_rng: JsValue) -> Result<i32, JsValue> {
+    let rng: ChaCha8SerializationWrapper = serde_wasm_bindgen::from_value(frozen_rng).into_js()?;
+    let rng_id = get_next_id();
+    insert_rng(rng_id, rng.0.clone());
+    return Ok(rng_id);
+}
+
 /// The name 'typescript_type' is part of the FFI
 #[allow(unused_variables)] // 'typescript_type' MUST be named 'typescript_type'
 #[wasm_bindgen(typescript_type = "ICreateGameCradle")]
@@ -311,7 +356,7 @@ pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     let game_cradle = SynchronousGameCradle::new(&mut rng, synchronous_game_cradle_config);
     let cradle = JsCradle {
         allocator,
-        rng,
+        rng: ChaCha8SerializationWrapper(rng),
         cradle: game_cradle,
     };
 
@@ -350,7 +395,7 @@ pub fn opening_coin(cid: i32, hex_coinstring: &str) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
         cradle.cradle.opening_coin(
             &mut cradle.allocator,
-            &mut cradle.rng,
+            &mut cradle.rng.0,
             hex_to_coinstring(hex_coinstring)?,
         )
     })
@@ -442,7 +487,7 @@ pub fn new_block(
         let watch_report = watch_report_from_params(additions, removals, timed_out)?;
         cradle.cradle.new_block(
             &mut cradle.allocator,
-            &mut cradle.rng,
+            &mut cradle.rng.0,
             height,
             &watch_report,
         )
@@ -484,7 +529,7 @@ pub fn start_games(cid: i32, initiator: bool, game: JsValue) -> Result<Vec<Strin
         };
         cradle.cradle.start_games(
             &mut cradle.allocator,
-            &mut cradle.rng,
+            &mut cradle.rng.0,
             initiator,
             &game_start,
         )
@@ -507,10 +552,10 @@ pub fn make_move_inner(
         None
     };
     with_game(cid, move |cradle: &mut JsCradle| {
-        let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.gen());
+        let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.gen());
         cradle.cradle.make_move(
             &mut cradle.allocator,
-            &mut cradle.rng,
+            &mut cradle.rng.0,
             &game_id,
             readable_bytes,
             entropy,
@@ -539,7 +584,7 @@ pub fn accept(cid: i32, id: &str) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
         cradle
             .cradle
-            .accept(&mut cradle.allocator, &mut cradle.rng, &game_id)
+            .accept(&mut cradle.allocator, &mut cradle.rng.0, &game_id)
     })
 }
 
@@ -548,7 +593,7 @@ pub fn shut_down(cid: i32) -> Result<(), JsValue> {
     with_game(cid, move |cradle: &mut JsCradle| {
         cradle.cradle.shut_down(
             &mut cradle.allocator,
-            &mut cradle.rng,
+            &mut cradle.rng.0,
             Rc::new(BasicShutdownConditions),
         )
     })
@@ -679,7 +724,7 @@ impl ToLocalUI for JsLocalUI {
     fn shutdown_started(
         &mut self
     ) -> Result<(), chia_gaming::common::types::Error> {
-        call_javascript_from_collection(&self.callbacks, "shutdown_started", |args_array| {
+        call_javascript_from_collection(&self.callbacks, "shutdown_started", |_args_array| {
             Ok(())
         })
     }
@@ -906,7 +951,7 @@ pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
         if let Some(idle_result) =
             cradle
                 .cradle
-                .idle(&mut cradle.allocator, &mut cradle.rng, &mut local_ui, 3)?
+                .idle(&mut cradle.allocator, &mut cradle.rng.0, &mut local_ui, 3)?
         // Give extras
         {
             idle_result_to_js(&idle_result)

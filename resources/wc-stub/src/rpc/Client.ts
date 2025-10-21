@@ -103,7 +103,9 @@ export default class Client extends EventEmitter {
     this.emit('state', this.getState());
   }
 
-  onStateChange(callback: (state: { state: ConnectionState; attempt: number }) => void) {
+  onStateChange(
+    callback: (state: { state: ConnectionState; attempt: number }) => void,
+  ) {
     this.on('state', callback);
 
     return () => {
@@ -212,7 +214,9 @@ export default class Client extends EventEmitter {
     } = this;
 
     log('Received message', data.toString());
-    const message = <Message & { data: Response }>Message.fromJSON(data, camelCase);
+    const message = <Message & { data: Response }>(
+      Message.fromJSON(data, camelCase)
+    );
 
     const { requestId } = message;
 
@@ -242,7 +246,12 @@ export default class Client extends EventEmitter {
 
       if (message.data?.success !== true) {
         log(`Request ${requestId} rejected`, 'Unknown error message');
-        reject(new ErrorData(`Request ${requestId} failed: ${JSON.stringify(message.data)}`, message.data));
+        reject(
+          new ErrorData(
+            `Request ${requestId} failed: ${JSON.stringify(message.data)}`,
+            message.data,
+          ),
+        );
         return;
       }
 
@@ -253,7 +262,11 @@ export default class Client extends EventEmitter {
     }
   };
 
-  async send(message: Message, timeout?: number, disableFormat?: boolean): Promise<Message> {
+  async send(
+    message: Message,
+    timeout?: number,
+    disableFormat?: boolean,
+  ): Promise<Message> {
     const {
       connected,
       options: { timeout: defaultTimeout, camelCase },
@@ -306,7 +319,10 @@ export default class Client extends EventEmitter {
             this.requests.delete(requestId);
 
             reject(
-              new ErrorData(`The request ${requestId} has timed out ${currentTimeout / 1000} seconds.`, undefined),
+              new ErrorData(
+                `The request ${requestId} has timed out ${currentTimeout / 1000} seconds.`,
+                undefined,
+              ),
             );
           }
         }, currentTimeout);

@@ -1,7 +1,9 @@
 export default function useWalletConnectContext() {
-  const context = { };
+  const context = {};
   if (!context) {
-    throw new Error('useWalletConnectContext must be used within a WalletConnectProvider');
+    throw new Error(
+      'useWalletConnectContext must be used within a WalletConnectProvider',
+    );
   }
 
   return context;
