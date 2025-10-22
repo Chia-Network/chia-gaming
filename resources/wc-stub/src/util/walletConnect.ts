@@ -2,13 +2,16 @@ import Client from '@walletconnect/sign-client';
 import { getSdkError } from '@walletconnect/utils';
 
 import walletConnectCommands from '../constants/WalletConnectCommands';
-import { type Pairs } from '../hooks/useWalletConnectPairs';
+import { type Pairs } from '../state/useWalletConnectPairs';
+import { type Pair, type Session } from '../util/Pair';
 
 const log: any = (...args: any[]) => {
   console.log(args);
 };
 
-const availableCommands = walletConnectCommands.map((command) => `chia_${command.command}`);
+const availableCommands = walletConnectCommands.map(
+  (command) => `chia_${command.command}`,
+);
 
 /*
 export const STANDARD_ERROR_MAP = {
@@ -77,7 +80,8 @@ export async function processSessionProposal(
     let requiredNamespace: any = requiredNamespaces.chia;
     if (!requiredNamespace) {
       console.warn('chia namespace was optional');
-      event.params.requiredNamespaces.chia = event.params.optionalNamespaces.chia;
+      event.params.requiredNamespaces.chia =
+        event.params.optionalNamespaces.chia;
       requiredNamespace = event.params.requiredNamespaces.chia;
     }
     console.warn('requiredNamespace?', requiredNamespace);
@@ -86,13 +90,17 @@ export async function processSessionProposal(
     }
 
     const { chains, methods } = requiredNamespace;
-    const chain = chains.find((item: any) => ['chia:testnet', 'chia:mainnet'].includes(item));
+    const chain = chains.find((item: any) =>
+      ['chia:testnet', 'chia:mainnet'].includes(item),
+    );
     if (!chain) {
       throw new Error('Chain not supported');
     }
 
     // find unsupported methods
-    const method = methods.find((item: any) => !availableCommands.includes(item));
+    const method = methods.find(
+      (item: any) => !availableCommands.includes(item),
+    );
     if (method) {
       log('dApp wants to use unsupported command', method);
       // throw new Error(`Method not supported: ${method}`);
@@ -109,7 +117,9 @@ export async function processSessionProposal(
 
     const { fingerprints, mainnet } = pair;
     const instance = mainnet ? 'mainnet' : 'testnet';
-    const accounts = fingerprints.map((fingerprint) => `chia:${instance}:${fingerprint}`);
+    const accounts = fingerprints.map(
+      (fingerprint: number) => `chia:${instance}:${fingerprint}`,
+    );
 
     const namespaces = {
       chia: {
@@ -131,7 +141,7 @@ export async function processSessionProposal(
     }
 
     // new session created
-    pairs.updatePair(pairingTopic, (p) => ({
+    pairs.updatePair(pairingTopic, (p: Pair) => ({
       ...p,
       sessions: [
         ...p.sessions,
@@ -168,7 +178,11 @@ export async function processSessionProposal(
   }
 }
 
-export async function processSessionDelete(client: Client, pairs: Pairs, event: { id: number; topic: string }) {
+export async function processSessionDelete(
+  client: Client,
+  pairs: Pairs,
+  event: { id: number; topic: string },
+) {
   try {
     const { topic: session } = event;
 
@@ -274,7 +288,11 @@ export async function processSessionRequest(
   }
 }
 
-export async function disconnectPair(client: Client, pairs: Pairs, topic: string) {
+export async function disconnectPair(
+  client: Client,
+  pairs: Pairs,
+  topic: string,
+) {
   try {
     const pairings = await client.core.pairing.getPairings();
     const pairing = pairings.find((p) => p.topic === topic);
@@ -282,9 +300,12 @@ export async function disconnectPair(client: Client, pairs: Pairs, topic: string
       // disconnect all sessions
       const sessions = pairs.getPair(topic)?.sessions ?? [];
       await Promise.all(
-        sessions.map(async (session) => {
+        sessions.map(async (session: Session) => {
           try {
-            await client.disconnect({ topic: session.topic, reason: getSdkError('USER_DISCONNECTED') });
+            await client.disconnect({
+              topic: session.topic,
+              reason: getSdkError('USER_DISCONNECTED'),
+            });
           } catch (e) {
             if (e instanceof Error && e.message.includes('No matching key')) {
               log(`Session was already disconnected ${session.topic}`);
@@ -327,7 +348,10 @@ export async function cleanupPairings(client: Client, pairs: Pairs) {
 
         // disconnect peers which are not used in application
         if (!pairs.hasPair(topic)) {
-          log('Disconnecting pairing because WalletConnect pair is not registered in the application', topic);
+          log(
+            'Disconnecting pairing because WalletConnect pair is not registered in the application',
+            topic,
+          );
           await disconnectPair(client, pairs, topic);
           return;
         }
@@ -346,12 +370,15 @@ export async function cleanupPairings(client: Client, pairs: Pairs) {
 
     // remove pairs which are not in pairing list
     await Promise.all(
-      pairs.get().map(async (pair) => {
+      pairs.get().map(async (pair: Pair) => {
         const { topic } = pair;
         const hasPairing = pairings.find((pairing) => pairing.topic === topic);
 
         if (!hasPairing) {
-          log('Disconnecting pairing because WalletConnect pair is not registered in the pairing list', topic);
+          log(
+            'Disconnecting pairing because WalletConnect pair is not registered in the pairing list',
+            topic,
+          );
           await disconnectPair(client, pairs, topic);
         }
       }),
@@ -364,7 +391,11 @@ export async function cleanupPairings(client: Client, pairs: Pairs) {
 export function bindEvents(
   client: Client,
   pairs: Pairs,
-  onProcess: () => (topic: string, command: string, params: any) => Promise<any>,
+  onProcess: () => (
+    topic: string,
+    command: string,
+    params: any,
+  ) => Promise<any>,
 ) {
   if (!client) {
     throw new Error('Client not initialized');

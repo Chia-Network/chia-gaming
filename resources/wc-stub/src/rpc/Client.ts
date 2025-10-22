@@ -8,6 +8,9 @@ import Daemon from './Daemon';
 import ErrorData from '../util/ErrorData';
 import sleep from '../util/sleep';
 
+const PERMISSION_DENIED = '13';
+const FILE_NOT_FOUND = '22';
+
 export function log(...args: string[]) {
   console.log(args);
 }
@@ -100,7 +103,9 @@ export default class Client extends EventEmitter {
     this.emit('state', this.getState());
   }
 
-  onStateChange(callback: (state: { state: ConnectionState; attempt: number }) => void) {
+  onStateChange(
+    callback: (state: { state: ConnectionState; attempt: number }) => void,
+  ) {
     this.on('state', callback);
 
     return () => {
@@ -209,7 +214,9 @@ export default class Client extends EventEmitter {
     } = this;
 
     log('Received message', data.toString());
-    const message = <Message & { data: Response }>Message.fromJSON(data, camelCase);
+    const message = <Message & { data: Response }>(
+      Message.fromJSON(data, camelCase)
+    );
 
     const { requestId } = message;
 
@@ -221,10 +228,10 @@ export default class Client extends EventEmitter {
       if (message.data?.error) {
         let errorMessage = message.data.error;
 
-        if (errorMessage === '13') {
+        if (errorMessage === PERMISSION_DENIED) {
           errorMessage =
             '[Error 13] Permission denied. You are trying to access a file/directory without having the necessary permissions. Most likely one of the plot folders in your config.yaml has an issue.';
-        } else if (errorMessage === '22') {
+        } else if (errorMessage === FILE_NOT_FOUND) {
           errorMessage =
             '[Error 22] File not found. Most likely one of the plot folders in your config.yaml has an issue.';
         } else if (message?.data?.errorDetails?.message) {
@@ -239,7 +246,12 @@ export default class Client extends EventEmitter {
 
       if (message.data?.success !== true) {
         log(`Request ${requestId} rejected`, 'Unknown error message');
-        reject(new ErrorData(`Request ${requestId} failed: ${JSON.stringify(message.data)}`, message.data));
+        reject(
+          new ErrorData(
+            `Request ${requestId} failed: ${JSON.stringify(message.data)}`,
+            message.data,
+          ),
+        );
         return;
       }
 
@@ -250,7 +262,11 @@ export default class Client extends EventEmitter {
     }
   };
 
-  async send(message: Message, timeout?: number, disableFormat?: boolean): Promise<Message> {
+  async send(
+    message: Message,
+    timeout?: number,
+    disableFormat?: boolean,
+  ): Promise<Message> {
     const {
       connected,
       options: { timeout: defaultTimeout, camelCase },
@@ -303,7 +319,10 @@ export default class Client extends EventEmitter {
             this.requests.delete(requestId);
 
             reject(
-              new ErrorData(`The request ${requestId} has timed out ${currentTimeout / 1000} seconds.`, undefined),
+              new ErrorData(
+                `The request ${requestId} has timed out ${currentTimeout / 1000} seconds.`,
+                undefined,
+              ),
             );
           }
         }, currentTimeout);

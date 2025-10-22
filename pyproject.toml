@@ -17,8 +17,8 @@ chia-blockchain = "^2.5.4"
 
 # - Reenable these when we switch over from clvm_tools.
 # [project.scripts]
-# brun = "clvm_tools_rs.cmds:brun"
-# run = "clvm_tools_rs.cmds:run"
-# opc = "clvm_tools_rs.cmds:opc"
-# opd = "clvm_tools_rs.cmds:opd"
-# cldb = "clvm_tools_rs.cmds:cldb"
+# brun = "chialisp.cmds:brun"
+# run = "chialisp.cmds:run"
+# opc = "chialisp.cmds:opc"
+# opd = "chialisp.cmds:opd"
+# cldb = "chialisp.cmds:cldb"
