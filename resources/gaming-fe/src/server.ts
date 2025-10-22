@@ -12,6 +12,7 @@ import helmet from 'helmet';
 config();
 
 const app = (express as any)();
+app.use(express.text());
 const httpServer = createServer(app);
 let coinset: string | null = null;
 
@@ -135,7 +136,7 @@ app.get('/resources*', async (req: any, res: any) => {
 });
 if (process.env.ALLOW_REWRITING) {
   app.post('/coinset', async (req: any, res: any) => {
-    coinset = res.body;
+    coinset = req.body;
     res.send("ok")
   });
 }

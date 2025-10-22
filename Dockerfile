@@ -119,5 +119,5 @@ ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
-RUN echo 'cd /app && (node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; ALLOW_REWRITING=1 node ./dist/js/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 "${@}" &) && curl --retry 5 --retry-delay 1 --retry-all-errors -d 'http://localhost:3002' http://localhost:3000/coinset && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
+RUN echo 'cd /app && (node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; ALLOW_REWRITING=1 node ./dist/js/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 "${@}" &) && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
 CMD /bin/bash /app/test_env.sh
