@@ -1,10 +1,10 @@
 import { Box, Button, Typography } from '@mui/material';
 
-import GameEndPlayer from './GameEndPlayer';
-import GameLog from './GameLog';
-import OpponentSection from './OpponentSection';
-import PlayerSection from './PlayerSection';
-import { CalpokerOutcome, OutcomeLogLine } from '../types/ChiaGaming';
+
+import { CalpokerOutcome, OutcomeLogLine } from '../../types/ChiaGaming';
+import {  OpponentSection, PlayerSection } from './components';
+import GameEndPlayer from '../../components/GameEndPlayer';
+import GameLog from '../../components/GameLog';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;

@@ -1,5 +1,6 @@
 import { Paper, Typography } from '@mui/material';
-import { suitNames } from '../types/ChiaGaming';
+import { suitNames } from '../../../types/ChiaGaming';
+
 
 interface PlayingCardProps {
   id: string;
@@ -22,7 +23,6 @@ const PlayingCard = ({
   isFaceDown = false,
   iAmPlayer,
 }: PlayingCardProps) => {
-  const suitNames = ['Q', '♥', '♦', '♤', '♧'];
   const rank = cardValue.slice(0, -1);
   const suit = suitNames[cardValue.slice(-1)[0] as any];
   const setSelectedCB = () => {

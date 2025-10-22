@@ -2,7 +2,7 @@ import { Box, Typography, Paper } from '@mui/material';
 
 import { card_color, CalpokerOutcome } from '../types/ChiaGaming';
 
-import PlayingCard from './PlayingCard';
+import PlayingCard from '../features/calPoker/components/PlayingCard';
 
 interface GameEndPlayerProps {
   iStarted: boolean;

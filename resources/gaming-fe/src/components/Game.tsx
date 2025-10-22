@@ -3,9 +3,12 @@ import { Box, Button, Typography } from '@mui/material';
 import { useWasmBlob } from '../hooks/useWasmBlob';
 import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 
-import GameLog from './GameLog';
+
 import WaitingScreen from './WaitingScreen';
-import Calpoker from './Calpoker';
+import Calpoker from '../features/calPoker';
+import GameLog from './GameLog';
+
+
 
 const Game = () => {
   const uniqueId = generateOrRetrieveUniqueId();
