@@ -104,10 +104,10 @@ app.get('/', async (_req: any, res: any) => {
   serveFile('public/index.html', 'text/html', res);
 });
 app.get('/index.css', async (req: any, res: any) => {
-  serveFile('dist/index.css', 'text/css', res);
+  serveFile('dist/css/index.css', 'text/css', res);
 });
 app.get('/index.js', async (_req: any, res: any) => {
-  serveFile('dist/index-rollup.js', 'application/javascript', res);
+  serveFile('dist/js/index-rollup.js', 'application/javascript', res);
 });
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;

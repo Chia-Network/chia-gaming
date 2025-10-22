@@ -111,10 +111,10 @@ app.get('/', async (req: any, res: any) => {
   serveFile('public/index.html', 'text/html', false, res);
 });
 app.get('/index.css', async (req: any, res: any) => {
-  serveFile('dist/index.css', 'text/css', false, res);
+  serveFile('dist/css/index.css', 'text/css', false, res);
 });
-app.get('/index.js', async (req: any, res: any) => {
-  serveFile('dist/index-rollup.js', 'application/javascript', true, res);
+app.get('/index.js', async (_req: any, res: any) => {
+  serveFile('dist/js/index-rollup.js', 'application/javascript', true, res);
 });
 app.get('/chia_gaming_wasm_bg.wasm', async (req: any, res: any) => {
   serveFile('dist/chia_gaming_wasm_bg.wasm', 'application/wasm', false, res);

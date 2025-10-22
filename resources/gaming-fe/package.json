@@ -6,8 +6,8 @@
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
-    "build": "./node_modules/.bin/tsc --project . && ./node_modules/.bin/esbuild dist/index.js --bundle --outfile=dist/index-rollup.js && ./node_modules/.bin/esbuild dist/server.js --platform=node --bundle --outfile=dist/server-rollup.cjs && ./node_modules/.bin/esbuild dist/lobby.js --platform=node --bundle --outfile=dist/lobby-rollup.cjs && npx @tailwindcss/cli -i ./src/index.css -o ./dist/index.css",
-    "start": "node dist/server-rollup.cjs",
+    "build": "./node_modules/.bin/tsc --project . && ./node_modules/.bin/esbuild dist/js/index.js --bundle --outfile=dist/js/index-rollup.js && ./node_modules/.bin/esbuild dist/js/server.js --platform=node --bundle --outfile=dist/js/server-rollup.cjs && ./node_modules/.bin/esbuild dist/js/lobby.js --platform=node --bundle --outfile=dist/js/lobby-rollup.cjs && npx @tailwindcss/cli -i ./src/index.css -o ./dist/css/index.css",
+    "start": "node dist/js/server-rollup.cjs",
     "dev": "ts-node-dev --respawn src/server.ts",
     "test": "./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node --experimental-require-module node_modules/.bin/jest --useStderr",
     "lint": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs",
