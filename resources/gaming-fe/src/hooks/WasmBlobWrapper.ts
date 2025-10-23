@@ -138,7 +138,7 @@ export class WasmBlobWrapper {
         this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
       });
       const rngId = this.wc?.create_rng(this.rngSeed);
-      if (!rngId) {
+      if (rngId === undefined) {
         throw("Unvalid rngId");
       }
       this.rngId = rngId;

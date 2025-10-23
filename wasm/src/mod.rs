@@ -301,6 +301,7 @@ pub fn create_rng(seed: String) -> Result<i32, JsValue> {
     let rng = ChaCha8Rng::from_seed(*hashed.bytes());
     let id = get_next_id();
     insert_rng(id, rng);
+    debug!("create_rng: {id}");
     return Ok(id);
 }
 
