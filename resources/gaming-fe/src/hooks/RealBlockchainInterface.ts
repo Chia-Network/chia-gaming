@@ -1,4 +1,5 @@
-import bech32 from 'bech32-buffer';
+import bech32_module from 'bech32-buffer';
+import * as bech32_buffer from 'bech32-buffer';
 import ReconnectingWebSocket from 'reconnecting-websocket';
 import { Subject } from 'rxjs';
 
@@ -21,6 +22,7 @@ function wsUrl(baseurl: string) {
   return `${url_with_new_method}/ws`;
 }
 
+const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
 const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
 
 export class RealBlockchainInterface {
