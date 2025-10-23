@@ -11,38 +11,13 @@ use crate::channel_handler::types::{
 use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, Hash, Program, ProgramRef, PublicKey,
+    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef, PublicKey,
     PuzzleHash, SpendBundle, Timeout,
 };
-use crate::potato_handler::on_chain::OnChainPotatoHandler;
+use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::referee::types::RefereeOnChainTransaction;
 use crate::shutdown::ShutdownConditions;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GameStart {
-    pub game_id: GameID,
-    pub game_type: GameType,
-    pub timeout: Timeout,
-    pub amount: Amount,
-    pub my_contribution: Amount,
-    pub my_turn: bool,
-    pub parameters: Program,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WireGameStart {
-    pub game_ids: Vec<GameID>,
-    pub start: GameStart,
-}
-
-#[derive(Debug, Clone)]
-pub struct GameStartQueueEntry(pub Vec<GameID>);
-
-#[derive(Debug, Clone)]
-pub struct MyGameStartQueueEntry {
-    pub my_games: Vec<Rc<dyn GameStartInfoInterface>>,
-    pub their_games: Vec<Rc<dyn GameStartInfoInterface>>,
-}
+use crate::potato_handler::start::GameStart;
 
 // Internal: decide what kind of condition wait we're in.
 #[derive(Debug)]
@@ -234,9 +209,6 @@ pub trait WalletSpendInterface {
     fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error>;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
-pub struct GameType(pub Vec<u8>);
-
 pub trait ToLocalUI {
     fn resync_move(
         &mut self,
@@ -333,20 +305,6 @@ pub trait FromLocalUI<
         R: 'a;
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct HandshakeB {
-    pub channel_public_key: PublicKey,
-    pub unroll_public_key: PublicKey,
-    pub reward_puzzle_hash: PuzzleHash,
-    pub referee_puzzle_hash: PuzzleHash,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct HandshakeA {
-    pub parent: CoinString,
-    pub simple: HandshakeB,
-}
-
 #[derive(Debug, Clone)]
 pub struct GSI(pub Rc<dyn GameStartInfoInterface>);
 impl Serialize for GSI {
@@ -406,43 +364,6 @@ impl PeerMessage {
                 | PeerMessage::HandshakeF { .. }
         )
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct HandshakeStepInfo {
-    pub first_player_hs_info: HandshakeA,
-    #[allow(dead_code)]
-    pub second_player_hs_info: HandshakeB,
-}
-
-#[derive(Debug, Clone)]
-pub struct HandshakeStepWithSpend {
-    pub info: HandshakeStepInfo,
-    #[allow(dead_code)]
-    pub spend: SpendBundle,
-}
-
-#[derive(Debug)]
-pub enum HandshakeState {
-    StepA,
-    StepB,
-    StepC(CoinString, Box<HandshakeA>),
-    StepD(Box<HandshakeStepInfo>),
-    StepE(Box<HandshakeStepInfo>),
-    PostStepE(Box<HandshakeStepInfo>),
-    StepF(Box<HandshakeStepInfo>),
-    PostStepF(Box<HandshakeStepInfo>),
-    Finished(Box<HandshakeStepWithSpend>),
-    // Going on chain ourselves route.
-    OnChainTransition(CoinString, Box<HandshakeStepWithSpend>),
-    OnChainWaitingForUnrollTimeoutOrSpend(CoinString),
-    // Other party went on chain, we're catching up route.
-    OnChainWaitForConditions(CoinString, Box<HandshakeStepWithSpend>),
-    // Converge here to on chain state.
-    OnChainWaitingForUnrollSpend(CoinString),
-    OnChainWaitingForUnrollConditions(CoinString),
-    OnChain(Box<OnChainPotatoHandler>),
-    Completed,
 }
 
 pub trait PacketSender {

@@ -31,7 +31,11 @@ use crate::potato_handler::types::{
     SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 #[cfg(test)]
-use crate::potato_handler::types::{FromLocalUI, GameStart, GameType, PotatoHandlerInit};
+use crate::potato_handler::types::{FromLocalUI, PotatoHandlerInit};
+#[cfg(test)]
+use crate::potato_handler::start::GameStart;
+#[cfg(test)]
+use crate::common::types::GameType;
 use crate::potato_handler::PotatoHandler;
 
 use crate::common::constants::CREATE_COIN;
