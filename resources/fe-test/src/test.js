@@ -122,8 +122,38 @@ async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
 }
 
 async function getCardText(driver, card) {
-  const rawText = await card.getAttribute('innerText');
-  return rawText.split(/[ \t\r\n]/)[0];
+  const rawText = await card.getAttribute('textContent');
+  const result = [];
+  let accum = '';
+  let state = 0;
+
+  for (let ch of rawText) {
+    switch(state) {
+    case 0:
+      if (ch.charCodeAt(0) > 255) {
+        state = 1;
+      }
+      accum += ch;
+      break;
+
+    case 1:
+      if (ch >= '0' && ch <= '9') {
+        result.push(accum);
+        accum = ch;
+        state = 0;
+        break;
+      }
+
+      accum += ch;
+      break;
+    }
+  }
+
+  if (accum.length) {
+    result.push(accum);
+  }
+
+  return result;
 }
 
 async function clickFourCards(driver, who, picks) {
@@ -132,8 +162,8 @@ async function clickFourCards(driver, who, picks) {
 
   for (let i = 0; i < 8; i++) {
     const card = await driver.wait(until.elementLocated(byAttribute("aria-label", `card-true-${i}`)));
-
-    resultCards.push(await getCardText(driver, card));
+    const cardText = await getCardText(driver, card);
+    resultCards.push(cardText[0]);
   }
 
   for (let i = 0; i < 8; i++) {
@@ -216,7 +246,7 @@ async function initiateGame(driver, gameTotal, eachHand) {
     until.elementLocated(byAttribute("aria-label", "partner-target-url")),
   );
   console.log("partner url", partnerUrlSpan);
-  let partnerUrl = await partnerUrlSpan.getAttribute("innerText");
+  let partnerUrl = await partnerUrlSpan.getAttribute("textContent");
   console.log("partner url text", partnerUrl);
   expect(partnerUrl.substr(0, 4)).toBe("http");
 
@@ -235,8 +265,7 @@ function stripCards(cards) {
 
 async function getCards(driver, label) {
   const hand = await driver.wait(until.elementLocated(byAttribute("aria-label", label)));
-  const text = await hand.getAttribute('innerText');
-  return text.split(/[ \t\r\n]/);
+  return getCardText(driver, hand);
 }
 
 async function verifyCardsWithLog(driver, cards) {
@@ -270,6 +299,13 @@ async function verifyCardsWithLog(driver, cards) {
 
   const givenCards = rawCardsToGiven(rawCardList);
   const theirGivenCards = rawCardsToGiven(theirRawList);
+
+  console.log('givenCards', givenCards);
+  console.log('theirGivenCards', theirGivenCards);
+  console.log('cardList', cardList);
+  console.log('cards', cards);
+  console.log('myUsedList', myUsedList);
+  console.log('theirUsedList', theirUsedList);
 
   if (cardList.toString() !== cards.toString()) {
     throw new Error("Log doesn't show the cards we knew we had.");
@@ -435,8 +471,8 @@ describe("Out of money test", function () {
           byAttribute("aria-label", `log-entry-opponent-${i}`),
         ),
       );
-      const outcomeMe = await logEntryMe.getAttribute("innerText");
-      const outcomeOpponent = await logEntryOpponent.getAttribute("innerText");
+      const outcomeMe = await logEntryMe.getAttribute("textContent");
+      const outcomeOpponent = await logEntryOpponent.getAttribute("textContent");
       const addition =
         outcomeMe.indexOf("WINNER") != -1
           ? 10

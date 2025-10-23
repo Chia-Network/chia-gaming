@@ -121,4 +121,10 @@ export class Lobby {
   getRooms(): Room[] {
     return listOfObject(this.rooms);
   }
+
+  // Get this list game origins we're currently tracking so the web page
+  // can decide whether a balance from one of these is allowed.
+  getTracking(): string[] {
+    return listOfObject(this.games).map((g) => g.target);
+  }
 }

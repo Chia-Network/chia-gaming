@@ -8,14 +8,26 @@ import {
 // This lives in the child frame.
 export function setupBlockchainConnection(uniqueId: string) {
   // We'll connect the required signals.
-  window.addEventListener('message', (evt: any) => {
+  const windowListener = (evt: any) => {
     const key = evt.message ? 'message' : 'data';
     const data = evt[key];
     if (data.blockchain_reply) {
-      if (
-        evt.origin != window.location.origin &&
-        !data.blockchain_reply.getBalance
-      ) {
+      if (evt.origin !== window.location.origin) {
+        if (data.blockchain_reply.getBalance) {
+          // This origin should be in the list of games that's advertising to us.
+          fetch('/lobby/tracking').then(res => res.json()).then((tracking) => {
+            const matchingTracked = tracking.map((t: string) => {
+              const u = new URL(t);
+              return u.origin == evt.origin;
+            });
+            if (matchingTracked.length !== 0) {
+              blockchainConnector.getInbound().next(data.blockchain_reply);
+            }
+          });
+
+          return;
+        }
+
         throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
       }
       blockchainConnector.getInbound().next(data.blockchain_reply);
@@ -27,9 +39,11 @@ export function setupBlockchainConnection(uniqueId: string) {
       }
       parentFrameBlockchainInfo.next(data.blockchain_info);
     }
-  });
+  };
 
-  blockchainConnector.getOutbound().subscribe({
+  window.addEventListener('message', windowListener);
+
+  const connectorSubscription = blockchainConnector.getOutbound().subscribe({
     next: (evt: any) => {
       window.parent.postMessage(
         {
@@ -43,4 +57,9 @@ export function setupBlockchainConnection(uniqueId: string) {
     selection: PARENT_FRAME_BLOCKCHAIN_ID,
     uniqueId,
   });
+
+  return () => {
+    window.removeEventListener('message', windowListener);
+    connectorSubscription.unsubscribe();
+  };
 }
