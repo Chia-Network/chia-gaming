@@ -1,0 +1,54 @@
+name: Build Chia Gaming Images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - './Dockerfile*'
+      - '.github/workflows/publish-docker-images.yml'
+  pull_request:
+    paths:
+      - './Dockerfile*'
+      - '.github/workflows/publish-docker-images.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '30 12 * * 5'
+
+concurrency:
+  # SHA is added to the end of `group` if we are on `main` to let all main workflows run
+  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: true
+
+jobs:
+  build_rust_image:
+    uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
+    with:
+      runs-on: ubuntu-22.04
+      alternate-latest-mode: true
+      dockerfile: "./Dockerfile.rust"
+      image_subpath: "chia-gaming-rust"
+  build_web_image:
+    needs: build_rust_image
+    uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
+    with:
+      runs-on: ubuntu-22.04
+      alternate-latest-mode: true
+      dockerfile: "./Dockerfile.web"
+      image_subpath: "chia-gaming-web"
+  build_sim_image:
+    needs: build_web_image
+    uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
+    with:
+      runs-on: ubuntu-22.04
+      alternate-latest-mode: true
+      dockerfile: "./Dockerfile.sim"
+      image_subpath: "chia-gaming-sim"
+  build_testnet_image:
+    needs: build_web_image
+    uses: Chia-Network/actions/.github/workflows/docker-build.yaml@main
+    with:
+      runs-on: ubuntu-22.04
+      alternate-latest-mode: true
+      dockerfile: "Dockerfile"
+      image_subpath: "chia-gaming-simnet"

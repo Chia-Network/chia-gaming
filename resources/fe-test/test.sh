@@ -5,9 +5,9 @@ set -e
 
 yarn install --dev
 
-docker kill chia-gaming-test || true
-docker rm chia-gaming-test || true
-docker run --name chia-gaming-test -p 127.0.0.1:3000:3000 -p 127.0.0.1:3001:3001 -p 127.0.0.1:3002:3002 -p 127.0.0.1:5800:5800  -t chia-gaming-test /bin/bash -c "/app/test_env.sh --coinset http://localhost:3002" &
+docker kill chia-gaming-sim || true
+docker rm chia-gaming-sim || true
+docker run --name chia-gaming-sim -p 127.0.0.1:3000:3000 -p 127.0.0.1:3001:3001 -p 127.0.0.1:3002:3002 -p 127.0.0.1:5800:5800  -t chia-gaming-sim /bin/bash -c "/app/test_env.sh --coinset http://localhost:3002" &
 
 if [ -z "$FIREFOX" ]; then
   case $(uname) in
@@ -47,7 +47,7 @@ else
 fi
 
 echo 'cleaning up'
-docker kill chia-gaming-test
-docker rm chia-gaming-test
+docker kill chia-gaming-sim
+docker rm chia-gaming-sim
 
 exit ${STATUS}
