@@ -86,6 +86,7 @@ export interface IdleCallbacks {
 export interface WasmConnection {
   // System
   init: (print: any) => any;
+  create_rng: (seed: string) => number;
   create_game_cradle: (config: any) => number;
   deposit_file: (name: string, data: string) => any;
 
@@ -158,18 +159,19 @@ export class ChiaGame {
     this.waiting_messages = [];
     this.private_key = identity.private_key;
     this.have_potato = have_potato;
-    this.rngId = wasm.
-    this.cradle = wasm.create_game_cradle({
-      seed: seed,
-      game_types: env.game_types,
-      identity: identity.private_key,
-      have_potato: have_potato,
-      my_contribution: { amt: my_contribution },
-      their_contribution: { amt: their_contribution },
-      channel_timeout: env.timeout,
-      unroll_timeout: env.unroll_timeout,
-      reward_puzzle_hash: rewardPuzzleHash,
-    });
+    this.cradle = wasm.create_game_cradle(
+      {
+        rng_id: env.rng_id,
+        game_types: env.game_types,
+        identity: identity.private_key,
+        have_potato: have_potato,
+        my_contribution: { amt: my_contribution },
+        their_contribution: { amt: their_contribution },
+        channel_timeout: env.timeout,
+        unroll_timeout: env.unroll_timeout,
+        reward_puzzle_hash: rewardPuzzleHash,
+      }
+    );
     console.log('constructed', have_potato, "with cradle=", this.cradle);
   }
 

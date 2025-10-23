@@ -168,13 +168,6 @@ fn insert_rng(id: i32, rng: ChaCha8Rng) {
     });
 }
 
-fn insert_rng(id: i32, rng: ChaCha8Rng) {
-    RNGS.with(|cell| {
-        let mut mut_ref = cell.borrow_mut();
-        mut_ref.insert(id, rng);
-    });
-}
-
 #[derive(Serialize, Deserialize, Default, Debug)]
 struct JsGameFactory {
     version: i32,
@@ -234,7 +227,6 @@ struct GameConfigResult {
 fn get_game_config(
     allocator: &mut AllocEncoder,
     js_config: JsValue,
-    rng_id: Option<i32>,
 ) -> Result<GameConfigResult, JsValue> {
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
     let private_key_bytes = hex::decode(&jsconfig.identity).into_js()?;
@@ -242,7 +234,7 @@ fn get_game_config(
     let identity = ChiaIdentity::new(allocator, private_key).into_js()?;
     let game_types = convert_game_types(&jsconfig.game_types)?;
     let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).into_js()?;
-    let rng = rng_id.unwrap_or_else(|| jsconfig.rng_id);
+
     Ok(GameConfigResult {
         config: SynchronousGameCradleConfig {
             game_types,
@@ -254,7 +246,7 @@ fn get_game_config(
             their_contribution: jsconfig.their_contribution.amt.clone(),
             reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)),
         },
-        rng_id: rng,
+        rng_id: jsconfig.rng_id,
     })
 }
 
@@ -339,14 +331,12 @@ pub fn deserialize_rng(frozen_rng: JsValue) -> Result<i32, JsValue> {
 #[allow(unused_variables)] // 'typescript_type' MUST be named 'typescript_type'
 #[wasm_bindgen(typescript_type = "ICreateGameCradle")]
 //#[allow(unused_variables)]  // 'typescript_type' MUST be named 'typescript_type'
-pub fn create_game_cradle(rng_seed: String, js_config: JsValue) -> Result<i32, JsValue> {
+pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     let new_id = get_next_id();
     debug!("AA");
     let mut allocator = AllocEncoder::new();
     debug!("BB");
-    let Ok(rng_id) = create_rng(rng_seed) else {todo!() };
-    debug!("BBBB");
-    let game_config = get_game_config(&mut allocator, js_config.clone(), Some(rng_id))?;
+    let game_config = get_game_config(&mut allocator, js_config.clone())?;
     debug!("CC");
     with_rng(game_config.rng_id, move |rng: &mut ChaCha8Rng| {
         let synchronous_game_cradle_config = game_config.config.clone();

@@ -32,8 +32,9 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 export class WasmBlobWrapper {
   amount: number;
   wc: WasmConnection | undefined;
-  rngId: number;
   sendMessage: (msg: string) => void;
+  rngSeed: string;
+  rngId: number | undefined;
   identity: IChiaIdentity | undefined;
   cradle: ChiaGame | undefined;
   uniqueId: string;
@@ -73,9 +74,9 @@ export class WasmBlobWrapper {
     peer_conn: PeerConnectionResult,
   ) {
     const { sendMessage } = peer_conn;
-
     this.uniqueId = uniqueId;
-    this.rngId = this.uniqueId.substr(0, 8);
+    this.rngSeed = this.uniqueId.substr(0, 8);
+    this.rngId = undefined;
     this.sendMessage = sendMessage;
     this.amount = amount;
     this.currentBlock = 0;
@@ -136,7 +137,12 @@ export class WasmBlobWrapper {
         );
         this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
       });
-      const newGameIdentity = this.wc?.chia_identity(this.rngId);
+      const rngId = this.wc?.create_rng(this.rngSeed);
+      if (!rngId) {
+        throw("Unvalid rngId");
+      }
+      this.rngId = rngId;
+      const newGameIdentity = this.wc?.chia_identity(rngId);
       this.identity = newGameIdentity;
       this.pushEvent({ loadCalpoker: true });
       return {
@@ -393,6 +399,7 @@ export class WasmBlobWrapper {
         }
 
         const env = {
+          rng_id: this.rngId,
           game_types: {
             calpoker: {
               version: 1,
@@ -405,7 +412,7 @@ export class WasmBlobWrapper {
         this.cradle = new ChiaGame(
           wc,
           env,
-          this.rngId,
+          this.rngSeed,
           identity,
           this.iStarted,
           this.amount,
