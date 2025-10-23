@@ -6,6 +6,8 @@ use std::rc::Rc;
 
 use log::debug;
 
+use serde::{Deserialize, Serialize};
+
 use crate::channel_handler::types::{Evidence, ReadableMove};
 use crate::channel_handler::v1::game_start_info::GameStartInfo;
 use crate::common::standard_coin::ChiaIdentity;
@@ -23,9 +25,10 @@ use crate::referee::v1::types::{
     curry_referee_puzzle, curry_referee_puzzle_hash, OnChainRefereeMoveData,
     OnChainRefereeSolution, RefereePuzzleArgs,
 };
+use crate::referee::RefereeSerializeContainer;
 use crate::referee::RewindResult;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub enum RefereeByTurn {
     MyTurn(Rc<MyTurnReferee>),
@@ -36,7 +39,6 @@ pub enum RefereeByTurn {
 pub type RefereePuzzleArgsRef = Rc<RefereePuzzleArgs>;
 
 use crate::referee::RefereeInterface;
-
 #[allow(dead_code)]
 impl RefereeByTurn {
     #[allow(clippy::too_many_arguments)]
@@ -739,6 +741,10 @@ impl RefereeInterface for RefereeByTurn {
     ) -> Result<Option<TheirTurnCoinSpentResult>, Error> {
         // Will need to route this.
         todo!();
+    }
+
+    fn get_serialized_form(&self) -> RefereeSerializeContainer {
+        RefereeSerializeContainer::V1(self.clone())
     }
 }
 

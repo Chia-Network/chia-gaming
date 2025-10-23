@@ -16,9 +16,10 @@ use chia_gaming::common::types::ChaCha8SerializationWrapper;
 
 use wasm_bindgen::prelude::*;
 
-use chia_gaming::channel_handler::types::{ReadableMove, GameStartFailed};
-use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
+use chia_gaming::channel_handler::types::{GameStartFailed, ReadableMove};
 use chia_gaming::common::load_clvm::wasm_deposit_file;
+use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
+
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
     chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinsetSpendBundle,
@@ -111,7 +112,9 @@ struct JsAmount {
     amt: Amount,
 }
 
+#[derive(Serialize, Deserialize)]
 struct JsCradle {
+    #[serde(skip_serializing, skip_deserializing)]
     allocator: AllocEncoder,
     rng: ChaCha8SerializationWrapper,
     cradle: SynchronousGameCradle,
@@ -158,12 +161,6 @@ fn insert_cradle(this_id: i32, runner: JsCradle) {
     });
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct JsRndConfig {
-    // hex string.
-    seed: String,
-}
-
 fn insert_rng(id: i32, rng: ChaCha8Rng) {
     RNGS.with(|cell| {
         let mut mut_ref = cell.borrow_mut();
@@ -179,10 +176,12 @@ struct JsGameFactory {
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 struct JsGameCradleConfig {
+    // GameInitParams?
     // name vs hex string for program
     game_types: BTreeMap<String, JsGameFactory>,
     // hex string for private key
-    identity: Option<String>,
+    identity: String, //todo rename private_key
+    rng_id: i32,
     have_potato: bool,
     // float or decimal string
     my_contribution: JsAmount,
@@ -220,36 +219,34 @@ fn convert_game_types(
     Ok(result)
 }
 
-// return a collection of clvm factory programs indexed by byte strings used to identify
-// them.  probably the indexes should be hashes, thinking about it, but can be anything.
-fn get_game_config<'b>(
+struct GameConfigResult {
+    config: SynchronousGameCradleConfig,
+    rng_id: i32,
+}
+
+fn get_game_config(
     allocator: &mut AllocEncoder,
-    identity: &'b mut ChiaIdentity,
     js_config: JsValue,
-) -> Result<SynchronousGameCradleConfig<'b>, JsValue> {
+) -> Result<GameConfigResult, JsValue> {
     let jsconfig: JsGameCradleConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
-
-    if let Some(identity_str) = &jsconfig.identity {
-        let private_key_bytes = hex::decode(identity_str).into_js()?;
-        let mut bytes: [u8; 32] = [0; 32];
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = private_key_bytes[i];
-        }
-        let private_key = PrivateKey::from_bytes(&bytes).into_js()?;
-        *identity = ChiaIdentity::new(allocator, private_key).into_js()?;
-    }
-
+    let private_key_bytes = hex::decode(&jsconfig.identity).into_js()?;
+    let private_key = PrivateKey::from_slice(&private_key_bytes).into_js()?;
+    let identity = ChiaIdentity::new(allocator, private_key).into_js()?;
     let game_types = convert_game_types(&jsconfig.game_types)?;
     let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).into_js()?;
-    Ok(SynchronousGameCradleConfig {
-        game_types,
-        have_potato: jsconfig.have_potato,
-        identity,
-        channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
-        unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
-        my_contribution: jsconfig.my_contribution.amt.clone(),
-        their_contribution: jsconfig.their_contribution.amt.clone(),
-        reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)),
+
+    Ok(GameConfigResult {
+        config: SynchronousGameCradleConfig {
+            game_types,
+            have_potato: jsconfig.have_potato,
+            identity: identity,
+            channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
+            unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
+            my_contribution: jsconfig.my_contribution.amt.clone(),
+            their_contribution: jsconfig.their_contribution.amt.clone(),
+            reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)),
+        },
+        rng_id: jsconfig.rng_id,
     })
 }
 
@@ -304,6 +301,7 @@ pub fn create_rng(seed: String) -> Result<i32, JsValue> {
     let rng = ChaCha8Rng::from_seed(*hashed.bytes());
     let id = get_next_id();
     insert_rng(id, rng);
+    debug!("create_rng: {id}");
     return Ok(id);
 }
 
@@ -336,33 +334,33 @@ pub fn deserialize_rng(frozen_rng: JsValue) -> Result<i32, JsValue> {
 //#[allow(unused_variables)]  // 'typescript_type' MUST be named 'typescript_type'
 pub fn create_game_cradle(js_config: JsValue) -> Result<i32, JsValue> {
     let new_id = get_next_id();
-
-    let mut use_seed: [u8; 32] = [0; 32];
-    if let Some(js_rnd_config) =
-        serde_wasm_bindgen::from_value::<JsRndConfig>(js_config.clone()).ok()
-    {
-        let seed_bytes = hex::decode(&js_rnd_config.seed).into_js()?;
-        for (i, b) in seed_bytes.iter().enumerate() {
-            use_seed[i % use_seed.len()] = *b;
-        }
-    }
-    let mut rng = ChaCha8Rng::from_seed(use_seed);
+    debug!("AA");
     let mut allocator = AllocEncoder::new();
+    debug!("BB");
+    let game_config = get_game_config(&mut allocator, js_config.clone())?;
+    debug!("CC");
+    with_rng(game_config.rng_id, move |rng: &mut ChaCha8Rng| {
+        let synchronous_game_cradle_config = game_config.config.clone();
+        debug!("DD");
+        let game_cradle = SynchronousGameCradle::new(rng, synchronous_game_cradle_config);
+        debug!("EE");
+        let cradle = JsCradle {
+            allocator,
+            rng: ChaCha8SerializationWrapper(rng.clone()),
+            cradle: game_cradle,
+        };
+        debug!("FF");
+        insert_cradle(new_id, cradle);
+        Ok(new_id)
+    })
+}
 
-    let random_private_key: PrivateKey = rng.gen();
-    let mut identity = ChiaIdentity::new(&mut allocator, random_private_key).into_js()?;
-    let synchronous_game_cradle_config =
-        get_game_config(&mut allocator, &mut identity, js_config.clone())?;
-    let game_cradle = SynchronousGameCradle::new(&mut rng, synchronous_game_cradle_config);
-    let cradle = JsCradle {
-        allocator,
-        rng: ChaCha8SerializationWrapper(rng),
-        cradle: game_cradle,
-    };
-
+#[wasm_bindgen]
+pub fn create_serialized_game(json: JsValue) -> Result<i32, JsValue> {
+    let cradle = serde_wasm_bindgen::from_value::<JsCradle>(json.clone()).into_js()?;
+    let new_id = get_next_id();
     insert_cradle(new_id, cradle);
-
-    Ok(new_id)
+    return Ok(new_id);
 }
 
 fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
@@ -378,6 +376,13 @@ where
         Err(JsValue::from_str(&format!(
             "could not find game instance {cid}"
         )))
+    })
+}
+
+#[wasm_bindgen]
+pub fn serialize_cradle(cid: i32) -> Result<JsValue, JsValue> {
+    with_game(cid, move |cradle: &mut JsCradle| {
+        serde_wasm_bindgen::to_value(&cradle).map_err(|e| types::Error::StrErr(e.to_string()))
     })
 }
 
@@ -576,6 +581,25 @@ pub fn make_move_entropy(
 #[wasm_bindgen]
 pub fn make_move(cid: i32, id: &str, readable: &str) -> Result<(), JsValue> {
     make_move_inner(cid, id, readable, None)
+}
+
+#[wasm_bindgen]
+pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(Into::<JsChiaIdentity>::into(cradle.cradle.identity()))
+    })?)
+    .into_js()
+}
+
+// TODO: Resolve Amount(js+rs), (js)number, i32, u64
+#[wasm_bindgen]
+pub fn get_amount(cid: i32) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(JsAmount {
+            amt: cradle.cradle.amount(),
+        })
+    })?)
+    .into_js()
 }
 
 #[wasm_bindgen]
@@ -884,11 +908,7 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
     };
     let game_started = if let Some(gs) = &idle_result.game_started {
         Some(JsGameStarted {
-            game_ids: gs
-                .game_ids
-                .iter()
-                .map(game_id_to_string)
-                .collect(),
+            game_ids: gs.game_ids.iter().map(game_id_to_string).collect(),
             failed: gs.failed.as_ref().map(|f| format!("{:?}", f)),
         })
     } else {
@@ -1086,14 +1106,19 @@ pub fn test_string_err() -> Result<JsValue, JsValue> {
 }
 
 #[wasm_bindgen(typescript_type = "IChiaIdentityFun")]
-pub fn chia_identity(seed: &str) -> Result<JsValue, JsValue> {
-    let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
-    let mut rng = ChaCha8Rng::from_seed(*hashed.bytes());
-    let mut allocator = AllocEncoder::new();
-    let private_key = rng.gen();
-    let identity = ChiaIdentity::new(&mut allocator, private_key).into_js()?;
-    let js_identity: JsChiaIdentity = identity.into();
-    serde_wasm_bindgen::to_value(&js_identity).into_js()
+pub fn chia_identity(rng_id: i32) -> Result<JsValue, JsValue> {
+    with_rng(rng_id, move |rng: &mut ChaCha8Rng| {
+        let mut allocator = AllocEncoder::new();
+        let mut seed: [u8; 32] = rng.get_seed();
+        let private_key = rng.gen();
+        debug!("Generating private_key={private_key:?} from ChaCha8Rng({seed:?}");
+        seed = rng.get_seed();
+        debug!("ChaCha8Rng seed after rnd.gen() for private_key={seed:?}");
+        let identity = ChiaIdentity::new(&mut allocator, private_key)?;
+        let js_identity: JsChiaIdentity = identity.into();
+        serde_wasm_bindgen::to_value(&js_identity)
+            .map_err(|x| types::Error::StrErr(format!("{x:?}")))
+    })
 }
 
 #[wasm_bindgen]

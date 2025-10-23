@@ -425,7 +425,7 @@ pub struct MessageInputs {
     pub amount: Amount,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageHandler(pub Program);
 
 impl MessageHandler {

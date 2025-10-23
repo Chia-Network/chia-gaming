@@ -10,6 +10,8 @@ use clvmr::allocator::NodePtr;
 
 use log::debug;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 use crate::channel_handler::types::{Evidence, GameStartInfo, ReadableMove, ValidationProgram};
 use crate::common::constants::CREATE_COIN;
 use crate::common::standard_coin::{standard_solution_partial, ChiaIdentity};
@@ -26,16 +28,67 @@ use crate::referee::types::{
     ValidatorResult,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RefereeByTurn {
     MyTurn(Rc<MyTurnReferee>),
     TheirTurn(Rc<TheirTurnReferee>),
 }
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize)]
+pub enum RefereeSerializeContainer {
+    V0(RefereeByTurn),
+    V1(v1::RefereeByTurn),
+}
+
+impl RefereeSerializeContainer {
+    fn to_rc(&self) -> Rc<dyn RefereeInterface> {
+        match self {
+            RefereeSerializeContainer::V0(v0) => Rc::new(v0.clone()),
+            RefereeSerializeContainer::V1(v1) => Rc::new(v1.clone()),
+        }
+    }
+}
+
+pub fn serialize_referee<S: Serializer>(
+    x: &Rc<dyn RefereeInterface>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    x.get_serialized_form().serialize(s)
+}
+
+pub fn serialize_referee_option<S: Serializer>(
+    x: &Option<Rc<dyn RefereeInterface>>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    x.as_ref().map(|v| v.get_serialized_form()).serialize(s)
+}
+
+pub fn deserialize_referee<'de, D>(deserializer: D) -> Result<Rc<dyn RefereeInterface>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let to_check = RefereeSerializeContainer::deserialize(deserializer)?;
+    Ok(to_check.to_rc())
+}
+
+pub fn deserialize_referee_option<'de, D>(
+    deserializer: D,
+) -> Result<Option<Rc<dyn RefereeInterface>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let to_check = Option::<RefereeSerializeContainer>::deserialize(deserializer)?;
+    Ok(to_check.map(|v| v.to_rc()))
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RewindResult {
     pub version: usize,
     pub state_number: Option<usize>,
+    #[serde(
+        serialize_with = "serialize_referee_option",
+        deserialize_with = "deserialize_referee_option"
+    )]
     pub new_referee: Option<Rc<dyn RefereeInterface>>,
     pub transaction: Option<RefereeOnChainTransaction>,
     pub outcome_puzzle_hash: PuzzleHash,
@@ -142,6 +195,8 @@ pub trait RefereeInterface {
         &self,
         allocator: &mut AllocEncoder,
     ) -> Result<PuzzleHash, Error>;
+
+    fn get_serialized_form(&self) -> RefereeSerializeContainer;
 }
 
 impl RefereeByTurn {
@@ -836,6 +891,10 @@ impl RefereeInterface for RefereeByTurn {
     ) -> Result<PuzzleHash, Error> {
         let args = self.spend_this_coin();
         curry_referee_puzzle_hash(allocator, &self.fixed().referee_coin_puzzle_hash, &args)
+    }
+
+    fn get_serialized_form(&self) -> RefereeSerializeContainer {
+        RefereeSerializeContainer::V0(self.clone())
     }
 }
 
