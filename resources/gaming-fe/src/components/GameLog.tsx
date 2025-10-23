@@ -42,7 +42,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
     )
   };
 
-  const playerDisplay = (me: boolean, desc: OutcomeHandType, hand: number[][]) => {
+  const playerDisplay = (me: boolean, label: string, desc: OutcomeHandType, hand: number[][]) => {
     const cards = hand.map((c,i) => cardDisplay(c, i, `outcome-${me ? "me" : "opponent"}`, false));
     return (
       <Typography
@@ -50,6 +50,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
       >
         {makeDescription(desc)}
         <div
+          aria-label={label}
           style={{ display: 'flex', flexDirection: 'row', marginLeft: '0.5em' }}
         >
           {cards}
@@ -79,8 +80,13 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                 alignItems: 'baseline',
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`my-used-hand-${index}`}>
-                {playerDisplay(true, entry.myHandDescription, entry.myHand)} {iWin}
+              <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`my-log-entry-${index}`}>
+                {playerDisplay(
+                  true,
+                  `my-used-hand-${index}`,
+                  entry.myHandDescription,
+                  entry.myHand
+                )} {iWin}
               </div>
             </Typography>
           ];
@@ -94,9 +100,10 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                 alignItems: 'baseline',
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`opponent-used-hand-${index}`}>
+              <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`opponent-log-entry-${index}`}>
                 {playerDisplay(
                   false,
+                  `opponent-used-hand-${index}`,
                   entry.opponentHandDescription,
                   entry.opponentHand,
                 )}{' '}

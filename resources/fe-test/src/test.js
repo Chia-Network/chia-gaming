@@ -300,14 +300,7 @@ async function verifyCardsWithLog(driver, cards) {
   const givenCards = rawCardsToGiven(rawCardList);
   const theirGivenCards = rawCardsToGiven(theirRawList);
 
-  console.log('givenCards', givenCards);
-  console.log('theirGivenCards', theirGivenCards);
-  console.log('cardList', cardList);
-  console.log('cards', cards);
-  console.log('myUsedList', myUsedList);
-  console.log('theirUsedList', theirUsedList);
-
-  if (cardList.toString() !== cards.toString()) {
+  if (JSON.stringify(cardList) !== JSON.stringify(cards)) {
     throw new Error("Log doesn't show the cards we knew we had.");
   }
 
