@@ -8,7 +8,7 @@ use crate::common::types::{
     Sha256tree, Timeout,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChannelHandlerPrivateKeys {
     pub my_channel_coin_private_key: PrivateKey,
     pub my_unroll_coin_private_key: PrivateKey,
@@ -51,6 +51,17 @@ pub struct ChannelHandlerUnrollSpendInfo {
     pub coin: UnrollCoin,
     /// Contains the other half of the signature.
     pub signatures: PotatoSignatures,
+}
+
+#[derive(Clone, Debug)]
+pub enum GameStartFailed {
+    OutOfMoney,
+}
+
+#[derive(Clone, Debug)]
+pub enum StartGameResult {
+    Failure(GameStartFailed),
+    Success(Box<PotatoSignatures>),
 }
 
 pub struct ChannelHandlerEnv<'a, R: Rng> {

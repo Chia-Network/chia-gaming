@@ -17,8 +17,7 @@ lazy_static! {
 
 use crate::channel_handler::game::Game;
 use crate::channel_handler::runner::ChannelHandlerGame;
-use crate::channel_handler::types::ChannelHandlerEnv;
-use crate::channel_handler::types::ReadableMove;
+use crate::channel_handler::types::{ChannelHandlerEnv, ReadableMove, StartGameResult};
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, ChiaIdentity,
 };
@@ -198,10 +197,13 @@ pub fn new_channel_handler_game<R: Rng>(
     let spend2 = party.player(0).ch.received_empty_potato(env, &sigs2)?;
     party.update_channel_coin_after_receive(0, &spend2)?;
 
-    let start_potato = party
+    let StartGameResult::Success(start_potato) = party
         .player(0)
         .ch
-        .send_potato_start_game(env, &[our_game_start])?;
+        .send_potato_start_game(env, &[our_game_start])?
+    else {
+        return Err(Error::StrErr("game start failed in test".to_string()));
+    };
 
     let (_, solidified_state) =
         party

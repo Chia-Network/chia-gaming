@@ -5,8 +5,8 @@ use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::channel_handler::types::{
-    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartInfo, GameStartInfoInterface,
-    MoveResult, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
+    ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, GameStartInfo,
+    GameStartInfoInterface, MoveResult, PotatoMoveCachedData, PotatoSignatures, ReadableMove,
 };
 use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
@@ -272,9 +272,12 @@ pub trait ToLocalUI {
         id: &GameID,
         readable: ReadableMove,
     ) -> Result<(), Error>;
+
+    fn game_start(&mut self, id: &[GameID], failed: Option<GameStartFailed>) -> Result<(), Error>;
     fn game_finished(&mut self, id: &GameID, mover_share: Amount) -> Result<(), Error>;
     fn game_cancelled(&mut self, id: &GameID) -> Result<(), Error>;
 
+    fn shutdown_started(&mut self) -> Result<(), Error>;
     fn shutdown_complete(&mut self, reward_coin_string: Option<&CoinString>) -> Result<(), Error>;
     fn going_on_chain(&mut self, got_error: bool) -> Result<(), Error>;
 }
@@ -532,6 +535,12 @@ pub trait PotatoHandlerImpl {
     fn channel_handler_mut(&mut self) -> &mut ChannelHandler;
 
     fn into_channel_handler(self) -> ChannelHandler;
+
+    fn amount(&self) -> Amount;
+
+    fn get_our_current_share(&self) -> Option<Amount>;
+
+    fn get_their_current_share(&self) -> Option<Amount>;
 
     fn my_move_in_game(&self, game_id: &GameID) -> Option<bool>;
 

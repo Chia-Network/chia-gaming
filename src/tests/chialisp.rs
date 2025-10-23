@@ -1,4 +1,4 @@
-use crate::common::standard_coin::read_hex_puzzle;
+use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Node, Program, Sha256Input};
 
 use clvm_traits::ToClvm;

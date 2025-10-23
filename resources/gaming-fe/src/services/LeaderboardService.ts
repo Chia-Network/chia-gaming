@@ -43,7 +43,12 @@ export class LeaderboardService {
     this.createLeaderboard('global', 'global', 'daily');
 
     const gameTypes: GameType[] = ['california_poker', 'krunk', 'exotic_poker'];
-    const timeFrames: Leaderboard['timeFrame'][] = ['all-time', 'monthly', 'weekly', 'daily'];
+    const timeFrames: Leaderboard['timeFrame'][] = [
+      'all-time',
+      'monthly',
+      'weekly',
+      'daily',
+    ];
 
     for (const gameType of gameTypes) {
       for (const timeFrame of timeFrames) {
@@ -64,7 +69,7 @@ export class LeaderboardService {
   private createLeaderboard(
     type: Leaderboard['type'],
     gameType: GameType | 'global' | undefined,
-    timeFrame: Leaderboard['timeFrame']
+    timeFrame: Leaderboard['timeFrame'],
   ): void {
     const id = `${type}-${gameType || 'global'}-${timeFrame}`;
     const leaderboard: Leaderboard = {
@@ -73,7 +78,7 @@ export class LeaderboardService {
       gameType: gameType === 'global' ? undefined : gameType,
       timeFrame,
       entries: [],
-      lastUpdated: new Date()
+      lastUpdated: new Date(),
     };
     this.leaderboards.set(id, leaderboard);
   }
@@ -81,12 +86,16 @@ export class LeaderboardService {
   public getLeaderboard(
     type: Leaderboard['type'],
     gameType?: GameType,
-    timeFrame: Leaderboard['timeFrame'] = 'all-time'
+    timeFrame: Leaderboard['timeFrame'] = 'all-time',
   ): Leaderboard {
     const id = `${type}-${gameType || 'global'}-${timeFrame}`;
     const leaderboard = this.leaderboards.get(id);
     if (!leaderboard) {
-      throw new AppError(ErrorCodes.SYSTEM.NOT_FOUND, 'Leaderboard not found', 404);
+      throw new AppError(
+        ErrorCodes.SYSTEM.NOT_FOUND,
+        'Leaderboard not found',
+        404,
+      );
     }
 
     if (this.shouldUpdateLeaderboard(leaderboard)) {
@@ -98,7 +107,8 @@ export class LeaderboardService {
 
   private shouldUpdateLeaderboard(leaderboard: Leaderboard): boolean {
     const now = new Date();
-    const timeSinceLastUpdate = now.getTime() - leaderboard.lastUpdated.getTime();
+    const timeSinceLastUpdate =
+      now.getTime() - leaderboard.lastUpdated.getTime();
     return timeSinceLastUpdate >= this.updateInterval;
   }
 
@@ -111,7 +121,10 @@ export class LeaderboardService {
         break;
       case 'game':
         if (leaderboard.gameType) {
-          entries = this.getGameLeaderboardEntries(leaderboard.gameType, leaderboard.timeFrame);
+          entries = this.getGameLeaderboardEntries(
+            leaderboard.gameType,
+            leaderboard.timeFrame,
+          );
         }
         break;
       case 'achievement':
@@ -128,13 +141,15 @@ export class LeaderboardService {
     leaderboard.lastUpdated = new Date();
   }
 
-  private getGlobalLeaderboardEntries(timeFrame: Leaderboard['timeFrame']): LeaderboardEntry[] {
+  private getGlobalLeaderboardEntries(
+    _timeFrame: Leaderboard['timeFrame'],
+  ): LeaderboardEntry[] {
     return [];
   }
 
   private getGameLeaderboardEntries(
-    gameType: GameType,
-    timeFrame: Leaderboard['timeFrame']
+    _gameType: GameType,
+    _timeFrame: Leaderboard['timeFrame'],
   ): LeaderboardEntry[] {
     return [];
   }
@@ -147,10 +162,10 @@ export class LeaderboardService {
     playerId: string,
     type: Leaderboard['type'],
     gameType?: GameType,
-    timeFrame: Leaderboard['timeFrame'] = 'all-time'
+    timeFrame: Leaderboard['timeFrame'] = 'all-time',
   ): number {
     const leaderboard = this.getLeaderboard(type, gameType, timeFrame);
-    const entry = leaderboard.entries.find(e => e.playerId === playerId);
+    const entry = leaderboard.entries.find((e) => e.playerId === playerId);
     return entry ? entry.rank : -1;
   }
 
@@ -158,7 +173,7 @@ export class LeaderboardService {
     type: Leaderboard['type'],
     gameType?: GameType,
     timeFrame: Leaderboard['timeFrame'] = 'all-time',
-    limit: number = 10
+    limit = 10,
   ): LeaderboardEntry[] {
     const leaderboard = this.getLeaderboard(type, gameType, timeFrame);
     return leaderboard.entries.slice(0, limit);
@@ -168,10 +183,10 @@ export class LeaderboardService {
     playerId: string,
     type: Leaderboard['type'],
     gameType?: GameType,
-    timeFrame: Leaderboard['timeFrame'] = 'all-time'
+    timeFrame: Leaderboard['timeFrame'] = 'all-time',
   ): LeaderboardEntry | null {
     const leaderboard = this.getLeaderboard(type, gameType, timeFrame);
-    return leaderboard.entries.find(e => e.playerId === playerId) || null;
+    return leaderboard.entries.find((e) => e.playerId === playerId) || null;
   }
 
   public updatePlayerScore(
@@ -180,13 +195,18 @@ export class LeaderboardService {
     score: number,
     stats: LeaderboardEntry['stats'],
     type: Leaderboard['type'],
-    gameType?: GameType
+    gameType?: GameType,
   ): void {
-    const timeFrames: Leaderboard['timeFrame'][] = ['daily', 'weekly', 'monthly', 'all-time'];
+    const timeFrames: Leaderboard['timeFrame'][] = [
+      'daily',
+      'weekly',
+      'monthly',
+      'all-time',
+    ];
 
     for (const timeFrame of timeFrames) {
       const leaderboard = this.getLeaderboard(type, gameType, timeFrame);
-      const entry = leaderboard.entries.find(e => e.playerId === playerId);
+      const entry = leaderboard.entries.find((e) => e.playerId === playerId);
 
       if (entry) {
         entry.score = score;
@@ -197,7 +217,7 @@ export class LeaderboardService {
           playerName,
           score,
           rank: 0,
-          stats
+          stats,
         });
       }
 
@@ -220,4 +240,4 @@ export class LeaderboardService {
       }
     }
   }
-} 
+}

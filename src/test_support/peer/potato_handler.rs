@@ -14,9 +14,7 @@ use rand_chacha::ChaCha8Rng;
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::ChannelHandlerEnv;
 #[cfg(test)]
-use crate::channel_handler::types::ChannelHandlerPrivateKeys;
-#[cfg(test)]
-use crate::channel_handler::types::ReadableMove;
+use crate::channel_handler::types::{ChannelHandlerPrivateKeys, GameStartFailed, ReadableMove};
 use crate::common::standard_coin::private_to_public_key;
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
@@ -188,11 +186,22 @@ impl ToLocalUI for Pipe {
         self.opponent_messages.push((id.clone(), readable));
         Ok(())
     }
+    fn game_start(
+        &mut self,
+        _id: &[GameID],
+        _failed: Option<GameStartFailed>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
     fn game_finished(&mut self, _id: &GameID, _my_share: Amount) -> Result<(), Error> {
         Ok(())
     }
     fn game_cancelled(&mut self, _id: &GameID) -> Result<(), Error> {
         todo!();
+    }
+
+    fn shutdown_started(&mut self) -> Result<(), Error> {
+        Ok(())
     }
 
     fn shutdown_complete(&mut self, _reward_coin_string: Option<&CoinString>) -> Result<(), Error> {

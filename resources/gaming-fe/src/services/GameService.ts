@@ -1,7 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
-import { AppError, ErrorCodes } from '../types/errors';
-import { GameType, GameSession, Player, Room } from '../types/lobby';
+
 import { saveGameSession, getGameSession } from '../db';
+import { AppError, ErrorCodes } from '../types/errors';
+import { GameSession, Room } from '../types/lobby';
 
 export class GameService {
   private static instance: GameService;
@@ -23,7 +24,7 @@ export class GameService {
       throw new AppError(
         ErrorCodes.LOBBY.GAME_IN_PROGRESS,
         'Game is already in progress',
-        400
+        400,
       );
     }
 
@@ -32,10 +33,10 @@ export class GameService {
       roomId: room.token,
       gameType: room.game,
       host: room.host,
-      joiner: (room.joiner as string),
+      joiner: room.joiner as string,
       startedAt: Date.now(),
       status: 'in_progress',
-      parameters: room.parameters
+      parameters: room.parameters,
     };
 
     this.activeSessions.set(session.id, session);
@@ -44,13 +45,16 @@ export class GameService {
     return session;
   }
 
-  public async endGame(sessionId: string, winner: string): Promise<GameSession> {
+  public async endGame(
+    sessionId: string,
+    winner: string,
+  ): Promise<GameSession> {
     const session = this.activeSessions.get(sessionId);
     if (!session) {
       throw new AppError(
         ErrorCodes.LOBBY.GAME_IN_PROGRESS,
         'Game session not found',
-        404
+        404,
       );
     }
 
@@ -73,7 +77,7 @@ export class GameService {
       throw new AppError(
         ErrorCodes.LOBBY.GAME_IN_PROGRESS,
         'Game session not found',
-        404
+        404,
       );
     }
 
@@ -82,16 +86,16 @@ export class GameService {
 
   public async validateGameAction(
     sessionId: string,
-    playerId: string,
+    _playerId: string,
     action: string,
-    data: any
+    data: any,
   ): Promise<boolean> {
     const session = await this.getSession(sessionId);
     if (session.status !== 'in_progress') {
       throw new AppError(
         ErrorCodes.LOBBY.GAME_IN_PROGRESS,
         'Game is not in progress',
-        400
+        400,
       );
     }
 
@@ -106,7 +110,7 @@ export class GameService {
         throw new AppError(
           ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
           'Invalid game type',
-          400
+          400,
         );
     }
   }
@@ -117,7 +121,7 @@ export class GameService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Invalid poker action',
-        400
+        400,
       );
     }
 
@@ -125,7 +129,7 @@ export class GameService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Invalid raise amount',
-        400
+        400,
       );
     }
 
@@ -138,7 +142,7 @@ export class GameService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Invalid krunk action',
-        400
+        400,
       );
     }
 
@@ -146,7 +150,7 @@ export class GameService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Invalid guess word',
-        400
+        400,
       );
     }
 
@@ -159,7 +163,7 @@ export class GameService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Invalid exotic poker action',
-        400
+        400,
       );
     }
 
@@ -167,7 +171,7 @@ export class GameService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Invalid raise amount',
-        400
+        400,
       );
     }
 
@@ -175,7 +179,7 @@ export class GameService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Invalid wild card action',
-        400
+        400,
       );
     }
 
@@ -186,9 +190,14 @@ export class GameService {
     sessionId: string,
     playerId: string,
     action: string,
-    data: any
+    data: any,
   ): Promise<void> {
-    const isValid = await this.validateGameAction(sessionId, playerId, action, data);
+    const isValid = await this.validateGameAction(
+      sessionId,
+      playerId,
+      action,
+      data,
+    );
     if (!isValid) {
       return;
     }
@@ -208,26 +217,29 @@ export class GameService {
   }
 
   private async processPokerAction(
-    session: GameSession,
-    playerId: string,
-    action: string,
-    data: any
+    _session: GameSession,
+    _playerId: string,
+    _action: string,
+    _data: any,
   ): Promise<void> {
+    // TODO: Implement poker action processing
   }
 
   private async processKrunkAction(
-    session: GameSession,
-    playerId: string,
-    action: string,
-    data: any
+    _session: GameSession,
+    _playerId: string,
+    _action: string,
+    _data: any,
   ): Promise<void> {
+    // TODO: Implement krunk action processing
   }
 
   private async processExoticPokerAction(
-    session: GameSession,
-    playerId: string,
-    action: string,
-    data: any
+    _session: GameSession,
+    _playerId: string,
+    _action: string,
+    _data: any,
   ): Promise<void> {
+    // TODO: Implement exotic poker action processing
   }
-} 
+}

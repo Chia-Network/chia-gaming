@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "eslint.config.ts",
+    "prettier.config.mjs",
+    "**/*.js",
+    "**/*.mjs"
+  ],
+  "exclude": ["node_modules", "dist", "build", "coverage"]
+}
