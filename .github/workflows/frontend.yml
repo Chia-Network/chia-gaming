@@ -49,17 +49,21 @@ jobs:
       - name: Smoke test docker image
         run: |
           set -e -x
-
+          mv Dockerfile Dockerfile.non-ci
+          sed -e 's/#CI //g' < Dockerfile.non-ci > Dockerfile
           docker build --platform linux/amd64 --progress=plain -t chia-gaming-sim . # TODO: Replace this line with ./build-docker-images.sh
           docker run --name chia-gaming-sim --network=host -t chia-gaming-sim &
           cd resources/fe-test
           ./wait-for-it.sh localhost:5800
-          curl -d '' http://localhost:5800/wait_block | grep 2
+          # The wc-stub now runs a block update service which mimics coinset.org
+          # We can't predict what block number it'll be.
+          curl -d '' http://localhost:5800/wait_block | grep -E '[0-9]+'
           docker kill chia-gaming-sim
 
       - name: Run headless test
         env:
           DETECT_CHROMEDRIVER_VERSION: "true"
+          FIREFOX_HEADLESS: "true"
         run: |
           (cd resources/gaming-fe &&
               yarn install &&

@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+
 import { AppError, ErrorCodes } from '../types/errors';
 import { Player } from '../types/lobby';
 
@@ -43,12 +44,16 @@ export class ChatService {
     return ChatService.instance;
   }
 
-  public createChatRoom(id: string, name: string, type: 'lobby' | 'game'): ChatRoom {
+  public createChatRoom(
+    id: string,
+    name: string,
+    type: 'lobby' | 'game',
+  ): ChatRoom {
     if (this.chatRooms.has(id)) {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_EXISTS,
         'Chat room already exists',
-        400
+        400,
       );
     }
 
@@ -58,7 +63,7 @@ export class ChatService {
       type,
       players: new Set(),
       messages: [],
-      maxMessages: this.MAX_MESSAGES
+      maxMessages: this.MAX_MESSAGES,
     };
 
     this.chatRooms.set(id, room);
@@ -71,7 +76,7 @@ export class ChatService {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
         'Chat room not found',
-        404
+        404,
       );
     }
 
@@ -93,12 +98,12 @@ export class ChatService {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
         'Chat room not found',
-        404
+        404,
       );
     }
 
     room.players.delete(player.id);
-    
+
     const playerRooms = this.playerRooms.get(player.id);
     if (playerRooms) {
       playerRooms.delete(roomId);
@@ -112,14 +117,14 @@ export class ChatService {
     player: Player,
     content: string,
     type: 'player' | 'whisper' = 'player',
-    targetPlayerId?: string
+    targetPlayerId?: string,
   ): Promise<ChatMessage> {
     const room = this.chatRooms.get(roomId);
     if (!room) {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
         'Chat room not found',
-        404
+        404,
       );
     }
 
@@ -127,7 +132,7 @@ export class ChatService {
       throw new AppError(
         ErrorCodes.LOBBY.PLAYER_NOT_IN_ROOM,
         'Player is not in this chat room',
-        403
+        403,
       );
     }
 
@@ -137,7 +142,7 @@ export class ChatService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Message rate limit exceeded',
-        429
+        429,
       );
     }
 
@@ -145,7 +150,7 @@ export class ChatService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Message cannot be empty',
-        400
+        400,
       );
     }
 
@@ -153,7 +158,7 @@ export class ChatService {
       throw new AppError(
         ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
         'Message too long (max 500 characters)',
-        400
+        400,
       );
     }
 
@@ -162,7 +167,7 @@ export class ChatService {
         throw new AppError(
           ErrorCodes.LOBBY.INVALID_GAME_PARAMS,
           'Target player ID required for whisper',
-          400
+          400,
         );
       }
 
@@ -170,7 +175,7 @@ export class ChatService {
         throw new AppError(
           ErrorCodes.LOBBY.PLAYER_NOT_FOUND,
           'Target player not in room',
-          404
+          404,
         );
       }
     }
@@ -183,7 +188,7 @@ export class ChatService {
       content: content.trim(),
       timestamp: new Date(),
       type,
-      targetPlayerId
+      targetPlayerId,
     };
 
     room.messages.push(message);
@@ -207,7 +212,7 @@ export class ChatService {
       playerName: 'System',
       content,
       timestamp: new Date(),
-      type: 'system'
+      type: 'system',
     };
 
     room.messages.push(message);
@@ -216,13 +221,13 @@ export class ChatService {
     }
   }
 
-  public getRoomMessages(roomId: string, limit: number = 50): ChatMessage[] {
+  public getRoomMessages(roomId: string, limit = 50): ChatMessage[] {
     const room = this.chatRooms.get(roomId);
     if (!room) {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
         'Chat room not found',
-        404
+        404,
       );
     }
 
@@ -240,7 +245,7 @@ export class ChatService {
       throw new AppError(
         ErrorCodes.LOBBY.ROOM_NOT_FOUND,
         'Chat room not found',
-        404
+        404,
       );
     }
 

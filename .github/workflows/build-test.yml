@@ -119,7 +119,8 @@ jobs:
           python -m pip install maturin==1.9.2
           maturin build --features sim-tests
           pip install `find . -name \*.whl`
-          python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
+          # Run simulator tests
+          python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()" 2>&1 | grep -v 'updating the mempool using the slow-path'
 
   calpoker_onchain_tests:
     runs-on: ubuntu-22.04 # ${{ matrix.os }}
@@ -176,7 +177,7 @@ jobs:
           rustup component add llvm-tools-preview
           cargo install --version 0.8.1 grcov
           export RUSTFLAGS="-Cinstrument-coverage"
-          export LLVM_PROFILE_FILE=$(pwd)/target/clvm_tools_rs-%p-%m.profraw
+          export LLVM_PROFILE_FILE=$(pwd)/target/chialisp-%p-%m.profraw
           export CARGO_TARGET_DIR=$(pwd)/target
           python -m venv venv
           source venv/bin/activate
@@ -250,28 +251,3 @@ jobs:
     - name: Build Docker Images
       run: bash -x build-docker-images.sh
 
-  build_npm:
-    name: Npm
-    runs-on: ubuntu-latest
-    needs: [unit_tests, build_and_test]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 1
-
-      - name: Set Env
-        uses: Chia-Network/actions/setjobenv@main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up rust
-        # See also rust-toolchain.toml
-        uses: dtolnay/rust-toolchain@1.89.0  # ${{ RUST_VERSION }}
-        with:
-          components: "clippy, rustfmt"
-
-      - name: do wasm tests in frontend
-        run: |
-         docker build -t chia-gaming-sim .
-         docker run -t chia-gaming-sim /app/test.sh

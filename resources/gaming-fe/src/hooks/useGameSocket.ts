@@ -1,65 +1,42 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useRef } from 'react';
+import io, { Socket } from 'socket.io-client';
+
 import { getSearchParams } from '../util';
-import io, { Socket } from "socket.io-client";
 
-export type GameState = "idle" | "searching" | "playing";
-
-interface StartGameData {
-  playerHand: string[];
-  opponentHand: string[];
-  playerNumber: number;
-  opponentWager: string;
-  wagerAmount: string;
-  currentTurn: number;
-}
-
-interface ActionData {
-  type: "bet" | "endTurn" | "move";
-  actionBy: number;
-  amount?: number;
-  currentTurn?: number;
-}
+export type GameState = 'idle' | 'searching' | 'playing';
 
 interface SendMessageInput {
   party: boolean;
   token: string;
   msg: string;
-};
+}
 
 export interface UseGameSocketReturn {
   sendMessage: (input: string) => void;
   gameState: GameState;
   wagerAmount: string;
   setWagerAmount: (value: string) => void;
-  opponentWager: string;
-  log: string[];
-  playerHand: string[];
-  opponentHand: string[];
   playerCoins: number;
   setPlayerCoins: React.Dispatch<React.SetStateAction<number>>;
-  opponentCoins: number;
   isPlayerTurn: boolean;
   playerNumber: number;
 }
 
-const useGameSocket = (lobbyUrl: string, deliverMessage: (m: string) => void, setSocketEnabled: (e: boolean) => void): UseGameSocketReturn => {
+const useGameSocket = (
+  lobbyUrl: string,
+  deliverMessage: (m: string) => void,
+  setSocketEnabled: (e: boolean) => void,
+): UseGameSocketReturn => {
   const searchParams = getSearchParams();
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
   const socketRef = useRef<Socket | null>(null);
-  const playerNumberRef = useRef<number>(0);
 
-  const [gameState, setGameState] = useState<GameState>("idle");
-  const [wagerAmount, setWagerAmount] = useState<string>("");
-  const [opponentWager, setOpponentWager] = useState<string>("");
-  const [log, setLog] = useState<string[]>([]);
-  const [playerHand, setPlayerHand] = useState<string[]>([]);
-  const [opponentHand, setOpponentHand] = useState<string[]>([]);
+  const [gameState, setGameState] = useState<GameState>('idle');
+  const [wagerAmount, setWagerAmount] = useState<string>('');
   const [playerCoins, setPlayerCoins] = useState<number>(100);
-  const [opponentCoins, setOpponentCoins] = useState<number>(100);
-  const [room, setRoom] = useState<string>("");
-  const [isPlayerTurn, setIsPlayerTurn] = useState<boolean>(false);
-  const [playerNumber, setPlayerNumber] = useState<number>(0);
+  const [isPlayerTurn] = useState<boolean>(false);
+  const [playerNumber] = useState<number>(0);
 
   const eff = () => {
     let fullyConnected = false;
@@ -70,10 +47,10 @@ const useGameSocket = (lobbyUrl: string, deliverMessage: (m: string) => void, se
     const socket = socketRef.current;
 
     const handleWaiting = () => {
-      setGameState("searching");
+      setGameState('searching');
     };
 
-    socket?.on("waiting", handleWaiting);
+    socket?.on('waiting', handleWaiting);
 
     // Try to get through a 'peer' message until we succeed.
     const beacon = setInterval(() => {
@@ -81,7 +58,7 @@ const useGameSocket = (lobbyUrl: string, deliverMessage: (m: string) => void, se
     }, 500);
 
     // When we receive a message from our peer, we know we're connected.
-    socket?.on('peer', msg => {
+    socket?.on('peer', (msg) => {
       if (msg.iStarted != iStarted && !fullyConnected) {
         // If they haven't seen our message yet, we know we're connected so
         // we can send a ping to them now.
@@ -103,7 +80,7 @@ const useGameSocket = (lobbyUrl: string, deliverMessage: (m: string) => void, se
     });
 
     return () => {
-      socket?.off("game_message", handleWaiting);
+      socket?.off('game_message', handleWaiting);
     };
   };
 
@@ -113,7 +90,7 @@ const useGameSocket = (lobbyUrl: string, deliverMessage: (m: string) => void, se
     socketRef.current?.emit('game_message', {
       party: iStarted,
       token,
-      msg
+      msg,
     });
   };
 
@@ -122,13 +99,8 @@ const useGameSocket = (lobbyUrl: string, deliverMessage: (m: string) => void, se
     gameState,
     wagerAmount,
     setWagerAmount,
-    opponentWager,
-    log,
-    playerHand,
-    opponentHand,
     playerCoins,
     setPlayerCoins,
-    opponentCoins,
     isPlayerTurn,
     playerNumber,
   };

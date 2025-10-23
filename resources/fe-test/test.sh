@@ -1,19 +1,42 @@
 #!/bin/bash
 
+set -x
 set -e
 
 yarn install --dev
 
 docker kill chia-gaming-sim || true
 docker rm chia-gaming-sim || true
-docker run --name chia-gaming-sim --network=host -t chia-gaming-test &
+docker run --name chia-gaming-sim -p 127.0.0.1:3000:3000 -p 127.0.0.1:3001:3001 -p 127.0.0.1:3002:3002 -p 127.0.0.1:5800:5800  -t chia-gaming-sim /bin/bash -c "/app/test_env.sh --coinset http://localhost:3002" &
 
-echo 'waiting for service alive .'
-/bin/bash ./wait-for-it.sh -t 90 -h localhost -p 3000
-echo 'waiting for service alive ..'
-/bin/bash ./wait-for-it.sh -t 90 -h localhost -p 3001
-echo 'waiting for service alive ...'
-/bin/bash ./wait-for-it.sh -t 90 -h localhost -p 5800
+if [ -z "$FIREFOX" ]; then
+  case $(uname) in
+  Darwin)
+    export FIREFOX=/Applications/Firefox.app/Contents/MacOS
+    ;;
+  *)
+    echo "Please set env var 'FIREFOX'";;
+  esac
+else
+  echo "Using env var FIREFOX=${FIREFOX}"
+fi
+
+wait_for_port() {
+  url="$1"
+  curl --connect-timeout 5 \
+    --max-time 10 \
+    --retry 10 \
+    --retry-delay 0 \
+    --retry-max-time 40 \
+    --retry-all-errors \
+    ${url}
+}
+
+wait_for_port http://localhost:3000
+wait_for_port http://localhost:3001
+
+# Enable coinset url rewriting
+curl --retry 5 --retry-delay 1 --retry-all-errors -H "Content-Type: text/plain" -d http://localhost:3002 http://localhost:3000/coinset
 
 echo 'running tests'
 STATUS=1
