@@ -18,7 +18,7 @@ import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
 
 const WalletConnectHeading = (_args: any) => {
   const { wcInfo, setWcInfo } = useDebug();
-  const [_alreadoyConnected, setAlreadyConnected] = useState(false);
+  const [_alreadyConnected, setAlreadyConnected] = useState(false);
   const [_walletConnectError, setWalletConnectError] = useState<
     string | undefined
   >();
