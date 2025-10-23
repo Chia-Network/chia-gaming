@@ -35,6 +35,9 @@ wait_for_port() {
 wait_for_port http://localhost:3000
 wait_for_port http://localhost:3001
 
+# Enable coinset url rewriting
+curl --retry 5 --retry-delay 1 --retry-all-errors -H "Content-Type: text/plain" -d http://localhost:3002 http://localhost:3000/coinset
+
 echo 'running tests'
 STATUS=1
 if ./node_modules/.bin/jest ; then

@@ -12,6 +12,7 @@ import helmet from 'helmet';
 config();
 
 const app = (express as any)();
+app.use(express.text());
 const httpServer = createServer(app);
 let coinset: string | null = null;
 
@@ -110,8 +111,8 @@ async function serveDirectory(dir: string, req: any, res: any) {
 app.get('/', async (req: any, res: any) => {
   serveFile('public/index.html', 'text/html', false, res);
 });
-app.get('/index.js', async (req: any, res: any) => {
-  serveFile('dist/index-rollup.js', 'application/javascript', true, res);
+app.get('/index.js', async (_req: any, res: any) => {
+  serveFile('dist/js/index-rollup.js', 'application/javascript', true, res);
 });
 app.get('/chia_gaming_wasm_bg.wasm', async (req: any, res: any) => {
   serveFile('dist/chia_gaming_wasm_bg.wasm', 'application/wasm', false, res);
@@ -135,7 +136,7 @@ app.get('/resources*', async (req: any, res: any) => {
 });
 if (process.env.ALLOW_REWRITING) {
   app.post('/coinset', async (req: any, res: any) => {
-    coinset = res.body;
+    coinset = req.body;
     res.send("ok")
   });
 }
