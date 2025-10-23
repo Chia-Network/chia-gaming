@@ -125,6 +125,9 @@ export interface WasmConnection {
   accept: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
+  cradle_amount: (cid: number) => any;
+  cradle_our_share: (cid: number) => any;
+  cradle_their_share: (cid: number) => any;
   idle: (cid: number, callbacks: any) => any;
 
   // Misc
@@ -174,6 +177,18 @@ export class ChiaGame {
 
   start_games(initiator: boolean, game: any): string[] {
     return this.wasm.start_games(this.cradle, initiator, game);
+  }
+
+  amount() {
+    return this.wasm.cradle_amount(this.cradle);
+  }
+
+  our_share() {
+    return this.wasm.cradle_our_share(this.cradle);
+  }
+
+  their_share() {
+    return this.wasm.cradle_their_share(this.cradle);
   }
 
   accept(id: string) {
@@ -321,6 +336,16 @@ export class ExternalBlockchainInterface {
       },
     ).then((f) => f.json());
   }
+
+  getBalance(): Promise<number> {
+    return fetch(
+      `${this.baseUrl}/get_balance?user=${this.token}`,
+      {
+        body: '',
+        method: 'POST'
+      },
+    ).then((f) => f.json());
+  }
 }
 
 function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
@@ -433,11 +458,11 @@ export class CalpokerOutcome {
     let raw_win_direction = result_list[5][0] === 255 ? -1 : result_list[5][0];
     if (iStarted) {
       raw_win_direction *= -1;
-      this.alice_discards = result_list[0];
-      this.bob_discards = myDiscards;
-    } else {
       this.alice_discards = myDiscards;
       this.bob_discards = result_list[0];
+    } else {
+      this.alice_discards = result_list[0];
+      this.bob_discards = myDiscards;
     }
 
     this.win_direction = raw_win_direction;
@@ -451,11 +476,11 @@ export class CalpokerOutcome {
       this.my_win_outcome = iStarted ? 'lose' : 'win';
     }
 
-    const [alice_for_alice, alice_for_bob] = select_cards_using_bits(
+    const [alice_for_bob, alice_for_alice] = select_cards_using_bits(
       this.alice_cards,
       this.alice_discards,
     );
-    const [bob_for_bob, bob_for_alice] = select_cards_using_bits(
+    const [bob_for_alice, bob_for_bob] = select_cards_using_bits(
       this.bob_cards,
       this.bob_discards,
     );
@@ -581,6 +606,7 @@ export interface InternalBlockchainInterface {
   ): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
+  getBalance(): Promise<number>;
 }
 
 export interface OutcomeHandType {
@@ -591,6 +617,10 @@ export interface OutcomeHandType {
 
 export interface OutcomeLogLine {
   topLineOutcome: 'win' | 'lose' | 'tie';
+  myStartHand: number[][];
+  opponentStartHand: number[][];
+  myPicks: number;
+  opponentPicks: number;
   myHandDescription: OutcomeHandType;
   opponentHandDescription: OutcomeHandType;
   myHand: number[][];

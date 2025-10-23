@@ -921,6 +921,30 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
 }
 
 #[wasm_bindgen]
+pub fn cradle_amount(cid: i32) -> Result<JsValue, JsValue> {
+    let amount = with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(cradle.cradle.amount())
+    })?;
+    serde_wasm_bindgen::to_value(&JsAmount { amt: amount }).into_js()
+}
+
+#[wasm_bindgen]
+pub fn cradle_our_share(cid: i32) -> Result<JsValue, JsValue> {
+    let amount = with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(cradle.cradle.get_our_current_share())
+    })?;
+    serde_wasm_bindgen::to_value(&amount.map(|a| JsAmount { amt: a })).into_js()
+}
+
+#[wasm_bindgen]
+pub fn cradle_their_share(cid: i32) -> Result<JsValue, JsValue> {
+    let amount = with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(cradle.cradle.get_their_current_share())
+    })?;
+    serde_wasm_bindgen::to_value(&amount.map(|a| JsAmount { amt: a })).into_js()
+}
+
+#[wasm_bindgen]
 pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
     let mut local_ui = to_local_ui(callbacks)?;
     with_game(cid, move |cradle: &mut JsCradle| {

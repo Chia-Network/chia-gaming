@@ -9,6 +9,7 @@ import {
   SelectionMessage,
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
+import { WalletBalance } from '../types/WalletBalance';
 import { toHexString, toUint8 } from '../util';
 
 import {
@@ -231,6 +232,7 @@ export function connectRealBlockchain(baseUrl: string) {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
       let getAddress = evt.getAddress;
+      let getBalance = evt.getBalance;
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({
@@ -328,11 +330,20 @@ export function connectRealBlockchain(baseUrl: string) {
             const puzzleHash = toHexString(bech32.decode(address).data as any);
             const addressData = { address, puzzleHash };
 
-            blockchainConnector.replyEmitter({
-              responseId: evt.requestId,
-              getAddress: addressData,
-            });
-          });
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+	    getAddress: addressData
+	  });
+        });
+      } else if (getBalance) {
+        rpc.getWalletBalance({
+          walletId: 1
+        }).then((balanceResult: WalletBalance) => {
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+	    getBalance: balanceResult.spendableBalance
+	  });
+        });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({
