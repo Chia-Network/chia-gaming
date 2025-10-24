@@ -136,7 +136,6 @@ export interface WasmConnection {
   init: (print: any) => any;
   create_serialized_game: (json: any) => number;
   // TODO: create_game_cradle: (config: GameCradleConfig) => number;
-  create_rng: (seed: string) => number;
   create_game_cradle: (config: any) => number;
   deposit_file: (name: string, data: string) => any;
 
@@ -231,15 +230,15 @@ export class ChiaGame {
   }
 
   amount() {
-    return this.wasm.cradle_amount(this.cradle);
+    return this.wasmConnection.cradle_amount(this.cradleId);
   }
 
   our_share() {
-    return this.wasm.cradle_our_share(this.cradle);
+    return this.wasmConnection.cradle_our_share(this.cradleId);
   }
 
   their_share() {
-    return this.wasm.cradle_their_share(this.cradle);
+    return this.wasmConnection.cradle_their_share(this.cradleId);
   }
 
   accept(id: string) {
@@ -394,13 +393,10 @@ export class ExternalBlockchainInterface {
   }
 
   getBalance(): Promise<number> {
-    return fetch(
-      `${this.baseUrl}/get_balance?user=${this.token}`,
-      {
-        body: '',
-        method: 'POST'
-      },
-    ).then((f) => f.json());
+    return fetch(`${this.baseUrl}/get_balance?user=${this.token}`, {
+      body: '',
+      method: 'POST',
+    }).then((f) => f.json());
   }
 }
 

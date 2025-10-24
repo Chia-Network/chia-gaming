@@ -22,9 +22,10 @@ use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
 
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinsetSpendBundle,
-    CoinsetSpendRecord, CoinsetCoin, CoinString, GameID, Hash, IntoErr, PrivateKey, Program, PublicKey,
-    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, convert_coinset_org_spend_to_spend, map_m
+    chia_dialect, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount,
+    CoinCondition, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle,
+    CoinsetSpendRecord, GameID, Hash, IntoErr, PrivateKey, Program, PublicKey, PuzzleHash,
+    Sha256Input, Spend, SpendBundle, Timeout,
 };
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
@@ -743,12 +744,8 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
-    fn shutdown_started(
-        &mut self
-    ) -> Result<(), chia_gaming::common::types::Error> {
-        call_javascript_from_collection(&self.callbacks, "shutdown_started", |_args_array| {
-            Ok(())
-        })
+    fn shutdown_started(&mut self) -> Result<(), chia_gaming::common::types::Error> {
+        call_javascript_from_collection(&self.callbacks, "shutdown_started", |_args_array| Ok(()))
     }
 
     fn shutdown_complete(
@@ -940,9 +937,7 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
 
 #[wasm_bindgen]
 pub fn cradle_amount(cid: i32) -> Result<JsValue, JsValue> {
-    let amount = with_game(cid, move |cradle: &mut JsCradle| {
-        Ok(cradle.cradle.amount())
-    })?;
+    let amount = with_game(cid, move |cradle: &mut JsCradle| Ok(cradle.cradle.amount()))?;
     serde_wasm_bindgen::to_value(&JsAmount { amt: amount }).into_js()
 }
 
@@ -1024,10 +1019,20 @@ pub fn convert_coinset_org_block_spend_to_watch_report(
         puzzle_hash,
         amount,
         puzzle_reveal,
-        solution
-    ).into_js()?;
-    let puzzle_reveal_node = converted_spend.bundle.puzzle.to_program().to_nodeptr(&mut allocator).into_js()?;
-    let solution_node = converted_spend.bundle.solution.to_nodeptr(&mut allocator).into_js()?;
+        solution,
+    )
+    .into_js()?;
+    let puzzle_reveal_node = converted_spend
+        .bundle
+        .puzzle
+        .to_program()
+        .to_nodeptr(&mut allocator)
+        .into_js()?;
+    let solution_node = converted_spend
+        .bundle
+        .solution
+        .to_nodeptr(&mut allocator)
+        .into_js()?;
     let coin_string = &converted_spend.coin;
     let parent_of_created = coin_string.to_coin_id();
     let run_output = run_program(

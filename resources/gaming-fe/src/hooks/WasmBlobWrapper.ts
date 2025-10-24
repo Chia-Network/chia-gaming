@@ -390,7 +390,7 @@ export class WasmBlobWrapper {
         return this.blockchain.do_initial_spend(
           this.uniqueId,
           identity.puzzle_hash,
-          this.amount,
+          amount,
         );
       })
       .then((result) => {
