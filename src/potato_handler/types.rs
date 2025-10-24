@@ -11,13 +11,13 @@ use crate::channel_handler::types::{
 use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef, PublicKey,
-    PuzzleHash, SpendBundle, Timeout,
+    Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
+    PublicKey, PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
+use crate::potato_handler::start::GameStart;
 use crate::referee::types::RefereeOnChainTransaction;
 use crate::shutdown::ShutdownConditions;
-use crate::potato_handler::start::GameStart;
 
 // Internal: decide what kind of condition wait we're in.
 #[derive(Debug)]

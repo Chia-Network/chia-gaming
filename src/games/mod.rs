@@ -5,7 +5,7 @@ use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
 
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{AllocEncoder, Program, GameType};
+use crate::common::types::{AllocEncoder, GameType, Program};
 use crate::potato_handler::types::GameFactory;
 use std::collections::BTreeMap;
 

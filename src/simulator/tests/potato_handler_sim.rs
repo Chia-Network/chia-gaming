@@ -16,8 +16,8 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, Node, PrivateKey, Program,
-    PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, IntoErr, Node,
+    PrivateKey, Program, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
 use crate::games::calpoker::{
     decode_calpoker_readable, decode_readable_card_choices, get_final_used_cards,
@@ -27,11 +27,11 @@ use crate::peer_container::{
     report_coin_changes_to_peer, FullCoinSetAdapter, GameCradle, GameStartRecord, MessagePeerQueue,
     MessagePipe, SynchronousGameCradle, SynchronousGameCradleConfig, WatchEntry, WatchReport,
 };
-use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerEnv,
-    PeerMessage, ToLocalUI, WalletSpendInterface,
-};
 use crate::potato_handler::start::GameStart;
+use crate::potato_handler::types::{
+    BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage, ToLocalUI,
+    WalletSpendInterface,
+};
 use crate::potato_handler::PotatoHandler;
 
 use crate::shutdown::BasicShutdownConditions;

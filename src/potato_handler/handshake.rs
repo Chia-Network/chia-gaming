@@ -1,6 +1,4 @@
-use crate::common::types::{
-    PublicKey, PuzzleHash, CoinString, SpendBundle
-};
+use crate::common::types::{CoinString, PublicKey, PuzzleHash, SpendBundle};
 use crate::potato_handler::on_chain::OnChainPotatoHandler;
 use serde::{Deserialize, Serialize};
 

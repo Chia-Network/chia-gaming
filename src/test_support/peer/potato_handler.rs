@@ -16,6 +16,8 @@ use crate::channel_handler::types::ChannelHandlerEnv;
 #[cfg(test)]
 use crate::channel_handler::types::{ChannelHandlerPrivateKeys, GameStartFailed, ReadableMove};
 use crate::common::standard_coin::private_to_public_key;
+#[cfg(test)]
+use crate::common::types::GameType;
 use crate::common::types::{
     AllocEncoder, Amount, CoinID, CoinString, Error, IntoErr, PuzzleHash, Spend, SpendBundle,
 };
@@ -26,16 +28,14 @@ use crate::games::poker_collection;
 #[cfg(test)]
 use crate::peer_container::WalletBootstrapState;
 use crate::peer_container::{MessagePeerQueue, MessagePipe};
+#[cfg(test)]
+use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, PacketSender, PeerEnv, PeerMessage,
     SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 #[cfg(test)]
 use crate::potato_handler::types::{FromLocalUI, PotatoHandlerInit};
-#[cfg(test)]
-use crate::potato_handler::start::GameStart;
-#[cfg(test)]
-use crate::common::types::GameType;
 use crate::potato_handler::PotatoHandler;
 
 use crate::common::constants::CREATE_COIN;

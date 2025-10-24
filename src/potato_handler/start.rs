@@ -1,8 +1,6 @@
 use std::rc::Rc;
 
-use crate::common::types::{
-    Amount, GameID, Program, Timeout, GameType
-};
+use crate::common::types::{Amount, GameID, GameType, Program, Timeout};
 use serde::{Deserialize, Serialize};
 
 use crate::channel_handler::types::GameStartInfoInterface;
