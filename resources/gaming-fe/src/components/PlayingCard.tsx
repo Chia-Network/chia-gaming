@@ -1,10 +1,24 @@
 import { Paper, Typography } from '@mui/material';
-import { suitNames } from '../types/ChiaGaming';
+
+const suitNames: Record<number, string> = {
+  0: 'Q',
+  1: '♥',
+  2: '♦',
+  3: '♠',
+  4: '♣',
+};
+
+const rankSymbols: Record<number, string> = {
+  14: 'A',
+  11: 'J',
+  12: 'Q',
+  13: 'K',
+};
 
 interface PlayingCardProps {
   id: string;
   index: number;
-  cardValue: number[];
+  cardValue: number[]; // [rank, suit]
   isFaceDown?: boolean;
   selected: boolean;
   selectionColor?: string;
@@ -22,23 +36,21 @@ const PlayingCard = ({
   isFaceDown = false,
   iAmPlayer,
 }: PlayingCardProps) => {
-  const suitNames = ['Q', '♥', '♦', '♤', '♧'];
-  const rank = cardValue.slice(0, -1);
-  const suit = suitNames[cardValue.slice(-1)[0] as any];
-  const setSelectedCB = () => {
-    const newSelected = !selected;
-    setSelection(index, newSelected);
-  };
+  const rank = cardValue[0];
+  const suit = suitNames[cardValue[1]];
+  const rankDisplay = rankSymbols[rank] ?? rank;
 
   const isRedSuit = suit === '♥' || suit === '♦';
   const suitColor = isRedSuit ? 'red' : 'black';
+
+  const handleClick = () => setSelection(index, !selected);
 
   const cardStyle = {
     width: '60px',
     height: '90px',
     marginRight: '8px',
     borderRadius: '8px',
-    border: '1px solid #000',
+    border: selected ? '2px solid #1976d2' : '1px solid #000',
     display: 'flex',
     flexDirection: 'column' as const,
     justifyContent: 'space-between',
@@ -54,6 +66,8 @@ const PlayingCard = ({
     cursor: 'pointer',
     textAlign: 'center' as const,
     boxSizing: 'border-box' as const,
+    transform: selected ? 'translateY(-5px)' : 'none',
+    transition: 'transform 0.2s ease',
   };
 
   return (
@@ -62,19 +76,22 @@ const PlayingCard = ({
       elevation={3}
       aria-label={`card-${iAmPlayer}-${index}`}
       style={cardStyle}
-      onClick={setSelectedCB}
+      onClick={handleClick}
     >
       {!isFaceDown && (
         <>
           <Typography variant='body2' style={{ fontWeight: 'bold' }}>
-            {rank}
+            {rankDisplay}
             {suit}
           </Typography>
           <Typography
             variant='body2'
-            style={{ fontWeight: 'bold', transform: 'rotate(180deg)' }}
+            style={{
+              fontWeight: 'bold',
+              transform: 'rotate(180deg)',
+            }}
           >
-            {rank}
+            {rankDisplay}
             {suit}
           </Typography>
         </>
