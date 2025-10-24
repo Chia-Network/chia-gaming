@@ -1,17 +1,20 @@
+import express from 'express';
+import fetch from 'node-fetch';
+// @ts-ignore
+import bufferReplace from 'buffer-replace';
+import minimist from 'minimist';
 import { createServer } from 'http';
 import { readFile } from 'node:fs/promises';
-
 import cors from 'cors';
 import { config } from 'dotenv';
-import express from 'express';
 import helmet from 'helmet';
-import minimist from 'minimist';
-import fetch from 'node-fetch';
 
 config();
 
 const app = (express as any)();
+app.use(express.text());
 const httpServer = createServer(app);
+let coinset: string | null = null;
 
 // Parse args
 function parseArgs() {
@@ -62,6 +65,8 @@ app.use(
           'http://localhost:5800',
           'wss://relay.walletconnect.org',
           args.tracker,
+          'ws://localhost:3002',
+          'http://localhost:3002',
           ...extras,
         ],
         frameSrc: [
@@ -83,26 +88,36 @@ app.use(
 );
 app.use(express.json());
 
-async function serveFile(file: string, contentType: string, res: any) {
-  const content = await readFile(file);
+async function serveFile(
+  file: string,
+  contentType: string,
+  replace: boolean,
+  res: any,
+) {
+  let content = await readFile(file);
+  // A simple way to patch the javascript so we talk to a local surrogate for
+  // api.coinset.org.
+  if (replace && coinset) {
+    content = bufferReplace(content, 'https://api.coinset.org', coinset);
+  }
   res.set('Content-Type', contentType);
   res.send(content);
 }
 async function serveDirectory(dir: string, req: any, res: any) {
-  const targetFile = dir + req.path;
-  serveFile(targetFile, 'text/plain', res);
+  let targetFile = dir + req.path;
+  serveFile(targetFile, 'text/plain', false, res);
 }
-app.get('/', async (_req: any, res: any) => {
-  serveFile('public/index.html', 'text/html', res);
+app.get('/', async (req: any, res: any) => {
+  serveFile('public/index.html', 'text/html', false, res);
 });
 app.get('/index.js', async (_req: any, res: any) => {
-  serveFile('dist/index-rollup.js', 'application/javascript', res);
+  serveFile('dist/js/index-rollup.js', 'application/javascript', true, res);
 });
-app.get('/chia_gaming_wasm_bg.wasm', async (_req: any, res: any) => {
-  serveFile('dist/chia_gaming_wasm_bg.wasm', 'application/wasm', res);
+app.get('/chia_gaming_wasm_bg.wasm', async (req: any, res: any) => {
+  serveFile('dist/chia_gaming_wasm_bg.wasm', 'application/wasm', false, res);
 });
-app.get('/chia_gaming_wasm.js', async (_req: any, res: any) => {
-  serveFile('dist/chia_gaming_wasm.js', 'application/javascript', res);
+app.get('/chia_gaming_wasm.js', async (req: any, res: any) => {
+  serveFile('dist/chia_gaming_wasm.js', 'application/javascript', false, res);
 });
 app.get('/urls', async (_req: any, res: any) => {
   res.set('Content-Type', 'application/json');
@@ -118,6 +133,12 @@ app.get('/clsp*', async (req: any, res: any) => {
 app.get('/resources*', async (req: any, res: any) => {
   serveDirectory('./', req, res);
 });
+if (process.env.ALLOW_REWRITING) {
+  app.post('/coinset', async (req: any, res: any) => {
+    coinset = req.body;
+    res.send('ok');
+  });
+}
 
 process.on('SIGTERM', () => {
   process.exit(0);

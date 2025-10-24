@@ -13,15 +13,24 @@ type WalletConnectCommandBase = {
   bypassConfirm?: boolean;
 };
 
-export type WalletConnectCommandNotification = Omit<WalletConnectCommandBase, 'service'> & {
+export type WalletConnectCommandNotification = Omit<
+  WalletConnectCommandBase,
+  'service'
+> & {
   service: 'NOTIFICATION';
 };
 
-export type WalletConnectCommandExecute = Omit<WalletConnectCommandBase, 'service'> & {
+export type WalletConnectCommandExecute = Omit<
+  WalletConnectCommandBase,
+  'service'
+> & {
   service: 'EXECUTE';
   execute: Object | ((params: Record<string, any>) => Object);
 };
 
-type WalletConnectCommand = WalletConnectCommandBase | WalletConnectCommandNotification | WalletConnectCommandExecute;
+type WalletConnectCommand =
+  | WalletConnectCommandBase
+  | WalletConnectCommandNotification
+  | WalletConnectCommandExecute;
 
 export default WalletConnectCommand;

@@ -30,13 +30,19 @@ export default class Wallet extends Service {
 
   async getWallets(args?: { includeData: boolean }) {
     const { includeData = false } = args || {};
-    return this.command<{ fingerprint: number; wallets: WalletListItem[] }>('get_wallets', {
-      includeData,
-    });
+    return this.command<{ fingerprint: number; wallets: WalletListItem[] }>(
+      'get_wallets',
+      {
+        includeData,
+      },
+    );
   }
 
   async getTransaction(args: { transactionId: string }) {
-    return this.command<{ transaction: Transaction; transactionId: string }>('get_transaction', args);
+    return this.command<{ transaction: Transaction; transactionId: string }>(
+      'get_transaction',
+      args,
+    );
   }
 
   async getTransactionMemo(args: { transactionId: string }) {
@@ -48,11 +54,17 @@ export default class Wallet extends Service {
   }
 
   async getPwStatus(args: { walletId: number }) {
-    return this.command<{ state: PoolWalletStatus; unconfirmedTransactions: Transaction[] }>('pw_status', args);
+    return this.command<{
+      state: PoolWalletStatus;
+      unconfirmedTransactions: Transaction[];
+    }>('pw_status', args);
   }
 
   async pwAbsorbRewards(args: { walletId: number; fee?: string }) {
-    return this.command<{ state: PoolWalletStatus; transaction: Transaction }>('pw_absorb_rewards', args);
+    return this.command<{ state: PoolWalletStatus; transaction: Transaction }>(
+      'pw_absorb_rewards',
+      args,
+    );
   }
 
   async pwJoinPool(args: {
@@ -62,11 +74,17 @@ export default class Wallet extends Service {
     targetPuzzlehash?: string;
     fee?: string;
   }) {
-    return this.command<{ totalFee: number; transaction: Transaction }>('pw_join_pool', args);
+    return this.command<{ totalFee: number; transaction: Transaction }>(
+      'pw_join_pool',
+      args,
+    );
   }
 
   async pwSelfPool(args: { walletId: number; fee?: string }) {
-    return this.command<{ totalFee: number; transaction: Transaction }>('pw_self_pool', args);
+    return this.command<{ totalFee: number; transaction: Transaction }>(
+      'pw_self_pool',
+      args,
+    );
   }
 
   async createNewWallet(args: {
@@ -84,11 +102,17 @@ export default class Wallet extends Service {
   }
 
   async getWalletBalance(args: { walletId: number }) {
-    return this.command<{ walletBalance: WalletBalance }>('get_wallet_balance', args);
+    return this.command<{ walletBalance: WalletBalance }>(
+      'get_wallet_balance',
+      args,
+    );
   }
 
   async getWalletBalances(args?: { walletIds: number[] }) {
-    return this.command<{ walletBalances: WalletBalance[] }>('get_wallet_balances', args);
+    return this.command<{ walletBalances: WalletBalance[] }>(
+      'get_wallet_balances',
+      args,
+    );
   }
 
   async getFarmedAmount() {
@@ -103,7 +127,10 @@ export default class Wallet extends Service {
     memos?: string[];
     puzzleDecorator?: PuzzleDecorator[];
   }) {
-    return this.command<{ transaction: Transaction; transactionId: string }>('send_transaction', args);
+    return this.command<{ transaction: Transaction; transactionId: string }>(
+      'send_transaction',
+      args,
+    );
   }
 
   async generateMnemonic() {
@@ -118,7 +145,10 @@ export default class Wallet extends Service {
     }>('get_public_keys');
   }
 
-  async addKey(args: { mnemonic: string[]; type: 'new_wallet' | 'skip' | 'restore_backup' }) {
+  async addKey(args: {
+    mnemonic: string[];
+    type: 'new_wallet' | 'skip' | 'restore_backup';
+  }) {
     return this.command<{ fingerprint: number }>('add_key', args);
   }
 
@@ -144,7 +174,10 @@ export default class Wallet extends Service {
     type?: 'normal' | 'skip' | 'restore_backup'; // skip is used to skip import
   }) {
     const { fingerprint, type = 'normal' } = args;
-    return this.command<{ fingerprint: number }>('log_in', { fingerprint, type });
+    return this.command<{ fingerprint: number }>('log_in', {
+      fingerprint,
+      type,
+    });
   }
 
   async getPrivateKey(args: { fingerprint: number }) {
@@ -163,7 +196,10 @@ export default class Wallet extends Service {
     reverse?: boolean;
     confirmed?: boolean;
   }) {
-    return this.command<{ transactions: Transaction[]; walletId: number }>('get_transactions', args);
+    return this.command<{ transactions: Transaction[]; walletId: number }>(
+      'get_transactions',
+      args,
+    );
   }
 
   async getTransactionsCount(args: {
@@ -174,7 +210,10 @@ export default class Wallet extends Service {
     };
     confirmed?: boolean;
   }) {
-    return this.command<{ count: number; walletId: number }>('get_transaction_count', args);
+    return this.command<{ count: number; walletId: number }>(
+      'get_transaction_count',
+      args,
+    );
   }
 
   async getNextAddress(args: { walletId: number; newAddress: boolean }) {
@@ -199,7 +238,9 @@ export default class Wallet extends Service {
   }
 
   async getNetworkInfo() {
-    return this.command<{ networkName: string; networkPrefix: string }>('get_network_info');
+    return this.command<{ networkName: string; networkPrefix: string }>(
+      'get_network_info',
+    );
   }
 
   async getSyncStatus() {
@@ -222,20 +263,27 @@ export default class Wallet extends Service {
     includeMyOffers?: boolean;
     includeTakenOffers?: boolean;
   }) {
-    return this.command<{ offers: string[]; tradeRecords: TradeRecord[] }>('get_all_offers', {
-      includeCompleted: true,
-      fileContents: true,
-      start: args.start,
-      end: args.end,
-      sortKey: args.sortKey,
-      reverse: args.reverse,
-      excludeMyOffers: !args.includeMyOffers,
-      excludeTakenOffers: !args.includeTakenOffers,
-    });
+    return this.command<{ offers: string[]; tradeRecords: TradeRecord[] }>(
+      'get_all_offers',
+      {
+        includeCompleted: true,
+        fileContents: true,
+        start: args.start,
+        end: args.end,
+        sortKey: args.sortKey,
+        reverse: args.reverse,
+        excludeMyOffers: !args.includeMyOffers,
+        excludeTakenOffers: !args.includeTakenOffers,
+      },
+    );
   }
 
   async getOffersCount() {
-    return this.command<{ myOffersCount: number; takenOffersCount: number; total: number }>('get_offers_count');
+    return this.command<{
+      myOffersCount: number;
+      takenOffersCount: number;
+      total: number;
+    }>('get_offers_count');
   }
 
   async createOfferForIds(args: {
@@ -256,12 +304,19 @@ export default class Wallet extends Service {
     );
   }
 
-  async cancelOffer(args: { tradeId: string; secure: boolean; fee: number | string }) {
+  async cancelOffer(args: {
+    tradeId: string;
+    secure: boolean;
+    fee: number | string;
+  }) {
     return this.command<void>('cancel_offer', args);
   }
 
   async checkOfferValidity(args: { offer: string }) {
-    return this.command<{ id: string; valid: boolean }>('check_offer_validity', args);
+    return this.command<{ id: string; valid: boolean }>(
+      'check_offer_validity',
+      args,
+    );
   }
 
   async takeOffer(args: { offer: string; fee: number | string }) {
@@ -269,24 +324,33 @@ export default class Wallet extends Service {
   }
 
   async getOfferSummary({ offerData }: { offerData: string }) {
-    return this.command<{ id: string; summary: OfferSummaryRecord }>('get_offer_summary', {
-      offer: offerData,
-    });
+    return this.command<{ id: string; summary: OfferSummaryRecord }>(
+      'get_offer_summary',
+      {
+        offer: offerData,
+      },
+    );
   }
 
   // TODO refactor the getOfferData and getOfferRecord into get_offer, to match the backend
   async getOfferData({ offerId }: { offerId: string }) {
-    return this.command<{ offer: string; tradeRecord: TradeRecord }>('get_offer', {
-      tradeId: offerId,
-      fileContents: true,
-    });
+    return this.command<{ offer: string; tradeRecord: TradeRecord }>(
+      'get_offer',
+      {
+        tradeId: offerId,
+        fileContents: true,
+      },
+    );
   }
 
   async getOfferRecord({ offerId }: { offerId: string }) {
-    return this.command<{ offer: null; tradeRecord: TradeRecord }>('get_offer', {
-      tradeId: offerId,
-      fileContents: false,
-    });
+    return this.command<{ offer: null; tradeRecord: TradeRecord }>(
+      'get_offer',
+      {
+        tradeId: offerId,
+        fileContents: false,
+      },
+    );
   }
 
   async getCurrentDerivationIndex() {
@@ -315,7 +379,11 @@ export default class Wallet extends Service {
   }
 
   // notifications
-  async getNotifications(args: { ids?: string[]; start?: number; end?: number }) {
+  async getNotifications(args: {
+    ids?: string[];
+    start?: number;
+    end?: number;
+  }) {
     return this.command<{
       notifications: {
         id: string;
@@ -330,7 +398,12 @@ export default class Wallet extends Service {
     return this.command<void>('delete_notifications', args);
   }
 
-  async sendNotification(args: { target: string; message: string; amount: string | number; fee: string | number }) {
+  async sendNotification(args: {
+    target: string;
+    message: string;
+    amount: string | number;
+    fee: string | number;
+  }) {
     return this.command<{
       tx: Transaction;
     }>('send_notification', args);
@@ -359,21 +432,33 @@ export default class Wallet extends Service {
     return this.command<AutoClaim>('get_auto_claim');
   }
 
-  async spendClawbackCoins(args: { coinIds: string[]; fee: number | BigNumber }) {
+  async spendClawbackCoins(args: {
+    coinIds: string[];
+    fee: number | BigNumber;
+  }) {
     return this.command<{
       transactionIds: string[];
     }>('spend_clawback_coins', args);
   }
 
-  onSyncChanged(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onSyncChanged(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onStateChanged('sync_changed', callback, processData);
   }
 
-  onNewBlock(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onNewBlock(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onStateChanged('new_block', callback, processData);
   }
 
-  onNewPeak(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onNewPeak(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onStateChanged('new_peak', callback, processData);
   }
 
@@ -403,19 +488,31 @@ export default class Wallet extends Service {
     return this.onStateChanged('coin_removed', callback);
   }
 
-  onWalletCreated(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onWalletCreated(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onStateChanged('wallet_created', callback, processData);
   }
 
-  onConnections(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onConnections(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onCommand('get_connections', callback, processData);
   }
 
-  onTransactionUpdate(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onTransactionUpdate(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onStateChanged('tx_update', callback, processData);
   }
 
-  onPendingTransaction(callback: (data: any, message: Message) => void, processData?: (data: any) => any) {
+  onPendingTransaction(
+    callback: (data: any, message: Message) => void,
+    processData?: (data: any) => any,
+  ) {
     return this.onStateChanged('pending_transaction', callback, processData);
   }
 

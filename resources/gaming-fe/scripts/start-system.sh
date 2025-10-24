@@ -17,7 +17,7 @@ set -x
 (node ./dist/lobby-rollup.cjs --self http://localhost:3001 &)
 wait_for_port http://localhost:3001
 
-(node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 &)
+(ALLOW_REWRITING=1 node ./dist/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 &)
 wait_for_port http://localhost:3000
 
 python3 run_simulator.py

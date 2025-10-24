@@ -563,6 +563,12 @@ pub trait PotatoHandlerImpl {
 
     fn into_channel_handler(self) -> ChannelHandler;
 
+    fn amount(&self) -> Amount;
+
+    fn get_our_current_share(&self) -> Option<Amount>;
+
+    fn get_their_current_share(&self) -> Option<Amount>;
+
     fn my_move_in_game(&self, game_id: &GameID) -> Option<bool>;
 
     fn check_game_coin_spent<'a, G, R: Rng + 'a>(

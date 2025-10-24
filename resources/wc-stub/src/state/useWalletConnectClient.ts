@@ -26,7 +26,12 @@ export type UseWalletConnectConfig = {
 let clientId = 1;
 
 export async function useWalletConnectClient(config: UseWalletConnectConfig) {
-  const { projectId, relayUrl = 'wss://relay.walletconnect.com', metadata = defaultMetadata, debug = false } = config;
+  const {
+    projectId,
+    relayUrl = 'wss://relay.walletconnect.com',
+    metadata = defaultMetadata,
+    debug = false,
+  } = config;
 
   let isLoading = true;
   let client: Client | undefined = undefined;

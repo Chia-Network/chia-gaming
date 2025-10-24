@@ -8,6 +8,8 @@ import { CalpokerOutcome, OutcomeLogLine } from '../types/ChiaGaming';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
+  ourShare: number | undefined;
+  theirShare: number | undefined;
   moveNumber: number;
   iStarted: boolean;
   isPlayerTurn: boolean;
@@ -18,11 +20,14 @@ export interface CalpokerProps {
   setCardSelections: (n: number) => void;
   handleMakeMove: (hex: string) => void;
   stopPlaying: () => void;
+  addressData: any;
   log: OutcomeLogLine[];
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
   outcome,
+  ourShare,
+  theirShare,
   moveNumber,
   iStarted,
   isPlayerTurn,
@@ -33,6 +38,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   setCardSelections,
   handleMakeMove,
   stopPlaying,
+  addressData,
   log,
 }) => {
   const myWinOutcome = outcome?.my_win_outcome;
@@ -106,10 +112,16 @@ const Calpoker: React.FC<CalpokerProps> = ({
     );
   }
 
+  const balanceDisplay =
+    ourShare !== undefined && theirShare !== undefined
+      ? ` - Our Share ${ourShare} vs ${theirShare}`
+      : '';
+
   return (
     <Box p={4}>
       <Typography variant='h4' align='center'>
         {`Cal Poker - move ${moveNumber}`}
+        {balanceDisplay}
       </Typography>
       <Button
         onClick={stopPlaying}
@@ -153,6 +165,12 @@ const Calpoker: React.FC<CalpokerProps> = ({
       <Typography>{moveDescription}</Typography>
       <br />
       <GameLog log={log} />
+      <div
+        id='blockchain-address'
+        style={{ position: 'relative', width: 0, height: 0, opacity: '0%' }}
+      >
+        {JSON.stringify(addressData)}
+      </div>
     </Box>
   );
 };

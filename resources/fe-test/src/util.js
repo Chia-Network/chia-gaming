@@ -2,6 +2,7 @@ const os = require("os");
 const { Builder, Browser, By, Key, until } = require("selenium-webdriver");
 const HALF_SECOND = 500;
 const WAIT_ITERATIONS = 100;
+const ADDRESS_RETRIES = 30;
 
 async function wait(driver, secs) {
   const actions = driver.actions({ async: true });
@@ -17,6 +18,10 @@ function byAttribute(attr, val, sub) {
     sub = "";
   }
   return By.xpath(`//*[@${attr}='${val}']${sub}`);
+}
+
+function byAttributePrefix(attr, val) {
+  return By.xpath(`//*[starts-with(@${attr},'${val}')]`);
 }
 
 function byElementAndAttribute(element, attr, val) {
@@ -93,6 +98,72 @@ async function waitForNonError(driver, select, extra, time) {
   return stopButton;
 }
 
+async function selectWalletConnect(driver) {
+  const controlMenu = await driver.wait(
+    until.elementLocated(byAttribute("aria-label", "control-menu")),
+  );
+  await controlMenu.click();
+
+  const linkWalletButton = await driver.wait(
+    until.elementLocated(byExactText("Link Wallet")),
+  );
+  await linkWalletButton.click();
+
+  await wait(driver, 5.0);
+
+  const wcUriBox = await driver.wait(
+    until.elementLocated(
+      byAttribute("aria-label", "wallet-connect-uri", "//textarea"),
+    ),
+  );
+  const wcUri = await wcUriBox.getAttribute("value");
+  console.log("wcUri", wcUri);
+
+  const rng = Math.floor(Math.random() * 1000000);
+  await fetch("http://localhost:3002/pair", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      pairdata: wcUri,
+      fingerprints: [rng],
+    }),
+  }).then((res) => res.json());
+
+  await waitForNonError(
+    driver,
+    () => driver.wait(until.elementLocated(byAttribute("id", "subframe"))),
+    (elt) => {},
+    5.0,
+  );
+}
+
+async function retrieveAddress(driver) {
+  for (let i = 0; i < ADDRESS_RETRIES; i++) {
+    const addressElt = await driver.wait(
+      until.elementLocated(byAttribute("id", "blockchain-address")),
+    );
+    const text = await addressElt.getAttribute("textContent");
+    try {
+      const decoded = JSON.parse(text);
+      if (decoded.address !== "" && decoded.puzzleHash !== "") {
+        return decoded;
+      }
+    } catch (e) {
+      await wait(driver, 1.0);
+    }
+  }
+
+  throw new Error("Too many retries getting blockchain address");
+}
+
+async function getBalance(driver, puzzleHash) {
+  return await fetch(`http://localhost:5800/get_balance?user=${puzzleHash}`, {
+    method: "POST",
+  }).then((res) => res.json());
+}
+
 async function sendControlChar(driver, char) {
   const actions = driver.actions({ async: true });
   if (os.platform() === "darwin") {
@@ -123,9 +194,13 @@ module.exports = {
   byExactText,
   byAttribute,
   byElementAndAttribute,
+  byAttributePrefix,
   sendEnter,
   waitEnabled,
   selectSimulator,
+  selectWalletConnect,
+  retrieveAddress,
+  getBalance,
   waitAriaEnabled,
   waitAriaDisabled,
   waitForNonError,

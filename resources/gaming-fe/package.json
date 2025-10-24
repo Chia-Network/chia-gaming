@@ -6,8 +6,8 @@
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
-    "build": "./node_modules/.bin/tsc --project . && ./node_modules/.bin/esbuild dist/index.js --bundle --outfile=dist/index-rollup.js && ./node_modules/.bin/esbuild dist/server.js --platform=node --bundle --outfile=dist/server-rollup.cjs && ./node_modules/.bin/esbuild dist/lobby.js --platform=node --bundle --outfile=dist/lobby-rollup.cjs",
-    "start": "node dist/server-rollup.cjs",
+    "build": "./node_modules/.bin/tsc --project . && ./node_modules/.bin/esbuild dist/js/index.js --bundle --outfile=dist/js/index-rollup.js && ./node_modules/.bin/esbuild dist/js/server.js --platform=node --bundle --outfile=dist/js/server-rollup.cjs && ./node_modules/.bin/esbuild dist/js/lobby.js --platform=node --bundle --outfile=dist/js/lobby-rollup.cjs",
+    "start": "node dist/js/server-rollup.cjs",
     "dev": "ts-node-dev --respawn src/server.ts",
     "test": "./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node node_modules/.bin/jest --no-color --no-interactive --no-status --useStderr",
     "lint": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs",
@@ -38,6 +38,7 @@
     "@walletconnect/utils": "^2.10.0",
     "axios": "^1.9.0",
     "bech32-buffer": "^0.2.1",
+    "buffer-replace": "^2.0.0",
     "chia-utils": "^1.0.10",
     "clvm-lib": "^1.0.1",
     "cors": "^2.8.5",

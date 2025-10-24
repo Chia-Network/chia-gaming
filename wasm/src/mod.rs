@@ -1,5 +1,3 @@
-mod map_m;
-
 use js_sys::{Array, JsString, Object};
 
 use std::cell::RefCell;
@@ -24,9 +22,9 @@ use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
 
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString,
-    GameID, Hash, IntoErr, PrivateKey, Program, PublicKey, PuzzleHash, Sha256Input, Spend,
-    SpendBundle, Timeout,
+    chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinsetSpendBundle,
+    CoinsetSpendRecord, CoinsetCoin, CoinString, GameID, Hash, IntoErr, PrivateKey, Program, PublicKey,
+    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, convert_coinset_org_spend_to_spend, map_m
 };
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
@@ -43,8 +41,6 @@ use clvmr::run_program;
 #[global_allocator]
 static ALLOCATOR: LockedAllocator<FreeListAllocator> =
     LockedAllocator::new(FreeListAllocator::new());
-
-use crate::map_m::map_m;
 
 #[wasm_bindgen(typescript_custom_section)]
 const TS_APPEND_CONTENT: &'static str = r#"
@@ -129,26 +125,6 @@ struct JsWatchReport {
     created_watched: Vec<String>,
     deleted_watched: Vec<String>,
     timed_out: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Default, Debug)]
-struct JsCoin {
-    amount: u64,
-    parent_coin_info: String,
-    puzzle_hash: String,
-}
-
-#[derive(Serialize, Deserialize, Default, Debug)]
-struct JsCoinSetSpend {
-    coin: JsCoin,
-    puzzle_reveal: String,
-    solution: String,
-}
-
-#[derive(Serialize, Deserialize, Default, Debug)]
-struct JsCoinSetSpendBundle {
-    aggregated_signature: String,
-    coin_spends: Vec<JsCoinSetSpend>,
 }
 
 thread_local! {
@@ -323,6 +299,7 @@ pub fn create_rng(seed: String) -> Result<i32, JsValue> {
     let rng = ChaCha8Rng::from_seed(*hashed.bytes());
     let id = get_next_id();
     insert_rng(id, rng);
+    debug!("create_rng: {id}");
     return Ok(id);
 }
 
@@ -473,7 +450,7 @@ fn watch_report_to_js(watch_report: &WatchReport) -> JsWatchReport {
     }
 }
 
-fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<JsCoinSetSpendBundle, JsValue> {
+fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<CoinsetSpendBundle, JsValue> {
     let mut aggsig = Aggsig::default();
     for cs in spend.spends.iter() {
         aggsig += cs.bundle.signature.clone();
@@ -481,8 +458,8 @@ fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<JsCoinSetSpendBundl
     let mut coin_spends = Vec::new();
     for s in spend.spends.iter() {
         if let Some((parent, pph, amt)) = s.coin.to_parts() {
-            coin_spends.push(JsCoinSetSpend {
-                coin: JsCoin {
+            coin_spends.push(CoinsetSpendRecord {
+                coin: CoinsetCoin {
                     amount: amt.to_u64(),
                     parent_coin_info: format!("0x{}", hex::encode(parent.bytes())),
                     puzzle_hash: format!("0x{}", hex::encode(pph.bytes())),
@@ -495,8 +472,8 @@ fn spend_bundle_to_coinset_js(spend: &SpendBundle) -> Result<JsCoinSetSpendBundl
         }
     }
 
-    Ok(JsCoinSetSpendBundle {
-        aggregated_signature: format!("0x{}", hex::encode(aggsig.bytes())),
+    Ok(CoinsetSpendBundle {
+        aggregated_signature: format!("0x{}", hex::encode(&aggsig.bytes())),
         coin_spends,
     })
 }
@@ -766,8 +743,12 @@ impl ToLocalUI for JsLocalUI {
         })
     }
 
-    fn shutdown_started(&mut self) -> Result<(), chia_gaming::common::types::Error> {
-        call_javascript_from_collection(&self.callbacks, "shutdown_started", |_args_array| Ok(()))
+    fn shutdown_started(
+        &mut self
+    ) -> Result<(), chia_gaming::common::types::Error> {
+        call_javascript_from_collection(&self.callbacks, "shutdown_started", |_args_array| {
+            Ok(())
+        })
     }
 
     fn shutdown_complete(
@@ -958,6 +939,30 @@ fn idle_result_to_js(idle_result: &IdleResult) -> Result<JsValue, types::Error> 
 }
 
 #[wasm_bindgen]
+pub fn cradle_amount(cid: i32) -> Result<JsValue, JsValue> {
+    let amount = with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(cradle.cradle.amount())
+    })?;
+    serde_wasm_bindgen::to_value(&JsAmount { amt: amount }).into_js()
+}
+
+#[wasm_bindgen]
+pub fn cradle_our_share(cid: i32) -> Result<JsValue, JsValue> {
+    let amount = with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(cradle.cradle.get_our_current_share())
+    })?;
+    serde_wasm_bindgen::to_value(&amount.map(|a| JsAmount { amt: a })).into_js()
+}
+
+#[wasm_bindgen]
+pub fn cradle_their_share(cid: i32) -> Result<JsValue, JsValue> {
+    let amount = with_game(cid, move |cradle: &mut JsCradle| {
+        Ok(cradle.cradle.get_their_current_share())
+    })?;
+    serde_wasm_bindgen::to_value(&amount.map(|a| JsAmount { amt: a })).into_js()
+}
+
+#[wasm_bindgen]
 pub fn idle(cid: i32, callbacks: JsValue) -> Result<JsValue, JsValue> {
     let mut local_ui = to_local_ui(callbacks)?;
     with_game(cid, move |cradle: &mut JsCradle| {
@@ -1014,18 +1019,16 @@ pub fn convert_coinset_org_block_spend_to_watch_report(
     solution: &str,
 ) -> Result<JsValue, JsValue> {
     let mut allocator = AllocEncoder::new();
-    let parent_coin_info_bytes = check_for_hex(parent_coin_info)?;
-    let puzzle_hash_bytes = check_for_hex(puzzle_hash)?;
-    let puzzle_reveal_bytes = check_for_hex(puzzle_reveal)?;
-    let solution_bytes = check_for_hex(solution)?;
-    let puzzle_reveal_prog = Program::from_bytes(&puzzle_reveal_bytes);
-    let solution_prog = Program::from_bytes(&solution_bytes);
-    let puzzle_reveal_node = puzzle_reveal_prog.to_nodeptr(&mut allocator).into_js()?;
-    let solution_node = solution_prog.to_nodeptr(&mut allocator).into_js()?;
-    let coinid_hash = Hash::from_slice(&parent_coin_info_bytes);
-    let parent_id = CoinID::new(coinid_hash);
-    let puzzle_hash = PuzzleHash::from_hash(Hash::from_slice(&puzzle_hash_bytes));
-    let coin_string = CoinString::from_parts(&parent_id, &puzzle_hash, &Amount::new(amount));
+    let converted_spend = convert_coinset_org_spend_to_spend(
+        parent_coin_info,
+        puzzle_hash,
+        amount,
+        puzzle_reveal,
+        solution
+    ).into_js()?;
+    let puzzle_reveal_node = converted_spend.bundle.puzzle.to_program().to_nodeptr(&mut allocator).into_js()?;
+    let solution_node = converted_spend.bundle.solution.to_nodeptr(&mut allocator).into_js()?;
+    let coin_string = &converted_spend.coin;
     let parent_of_created = coin_string.to_coin_id();
     let run_output = run_program(
         allocator.allocator(),

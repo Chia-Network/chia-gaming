@@ -38,6 +38,8 @@ const WalletConnectHeading = (_args: any) => {
   const [haveSession, setHaveSession] = useState(false);
   const [sessions, setSessions] = useState(0);
   const [_address, setAddress] = useState();
+  const [balance, setBalance] = useState<number | undefined>();
+  const [haveBlock, setHaveBlock] = useState(false);
 
   const uniqueId = generateOrRetrieveUniqueId();
 
@@ -53,10 +55,17 @@ const WalletConnectHeading = (_args: any) => {
     sessions: setSessions,
     address: setAddress,
   };
+
+  function requestBalance() {
+    blockchainConnector.getOutbound().next({
+      requestId: -1,
+      getBalance: true,
+    });
+  }
+
   useEffect(() => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: any) => {
-        console.log('observe walletconnect', evt);
         if (evt.stateName === 'connected') {
           setExpanded(false);
           setAlreadyConnected(true);
@@ -66,6 +75,7 @@ const WalletConnectHeading = (_args: any) => {
             uniqueId,
           });
           connectRealBlockchain('https://api.coinset.org');
+          requestBalance();
         }
 
         const keys = Object.keys(evt);
@@ -78,7 +88,7 @@ const WalletConnectHeading = (_args: any) => {
     });
 
     return () => subscription.unsubscribe();
-  });
+  }, []);
 
   const toggleExpanded = useCallback(() => {
     setExpanded(!expanded);
@@ -102,7 +112,6 @@ const WalletConnectHeading = (_args: any) => {
       // Not decoded, despite how it's displayed in console.log.
       const data = evt[key];
       if (data.blockchain_request) {
-        console.log('parent window received message', data.blockchain_request);
         if (evt.origin !== window.location.origin) {
           throw new Error(
             `wrong origin for parent event: ${JSON.stringify(evt)}`,
@@ -118,6 +127,11 @@ const WalletConnectHeading = (_args: any) => {
     // Ensure that replies go to the child frame.
     const bcSubscription = blockchainConnector.getInbound().subscribe({
       next: (evt: any) => {
+        if (evt.getBalance) {
+          setBalance(evt.getBalance);
+          setTimeout(requestBalance, 2000);
+        }
+
         const subframe = document.getElementById('subframe');
         if (subframe) {
           (subframe as any).contentWindow.postMessage(
@@ -133,7 +147,11 @@ const WalletConnectHeading = (_args: any) => {
     });
 
     const biSubscription = blockchainDataEmitter.getObservable().subscribe({
-      next: (evt) => {
+      next: (evt: any) => {
+        if (!haveBlock) {
+          setHaveBlock(true);
+          requestBalance();
+        }
         const subframe = document.getElementById('subframe');
         if (subframe) {
           (subframe as any).contentWindow.postMessage(
@@ -153,7 +171,7 @@ const WalletConnectHeading = (_args: any) => {
       bcSubscription.unsubscribe();
       biSubscription.unsubscribe();
     };
-  });
+  }, [haveBlock]);
 
   const useHeight = expanded ? '3em' : '50em';
   const handleConnectSimulator = useCallback(() => {
@@ -174,6 +192,7 @@ const WalletConnectHeading = (_args: any) => {
           selection: FAKE_BLOCKCHAIN_ID,
           uniqueId,
         });
+        requestBalance();
       });
   }, []);
 
@@ -198,6 +217,7 @@ const WalletConnectHeading = (_args: any) => {
     : fakeAddress
       ? 'simulator'
       : 'disconnected';
+
   const ifSession = walletConnectState.getSession() ? (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Box>
@@ -291,6 +311,9 @@ const WalletConnectHeading = (_args: any) => {
     <div style={{ display: 'flex', width: '100%', height: 0 }}></div>
   );
 
+  const balanceDisplay =
+    balance !== undefined ? <div>- Balance {balance}</div> : <div />;
+
   return (
     <div
       style={{
@@ -312,7 +335,17 @@ const WalletConnectHeading = (_args: any) => {
         >
           Chia Gaming - WalletConnect {sessionConnected}
         </div>
-        <div style={{ display: 'flex', flexGrow: 1 }}> </div>
+        <div
+          style={{
+            display: 'flex',
+            flexGrow: 1,
+            flexShrink: 0,
+            height: '100%',
+            padding: '1em',
+          }}
+        >
+          {balanceDisplay}
+        </div>
         <div
           style={{
             display: 'flex',
@@ -320,6 +353,7 @@ const WalletConnectHeading = (_args: any) => {
             flexShrink: 0,
             width: '3em',
             height: '3em',
+            padding: '1em',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',

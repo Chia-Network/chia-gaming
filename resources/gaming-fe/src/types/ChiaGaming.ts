@@ -43,6 +43,7 @@ export type GameFinished = [string, number];
 export interface IdleResult {
   continue_on: boolean;
   finished: boolean;
+  shutdown_received: boolean;
   outbound_transactions: SpendBundle[];
   outbound_messages: string[];
   opponent_move: OpponentMove | undefined;
@@ -113,6 +114,7 @@ export interface IdleCallbacks {
     | ((game_ids: string[], failed: string | undefined) => void)
     | undefined;
   game_finished?: ((game_id: string, amount: number) => void) | undefined;
+  shutdown_started?: (() => void) | undefined;
   shutdown_complete?: ((coin: string) => void) | undefined;
   going_on_chain?: (() => void) | undefined;
 }
@@ -134,6 +136,7 @@ export interface WasmConnection {
   init: (print: any) => any;
   create_serialized_game: (json: any) => number;
   // TODO: create_game_cradle: (config: GameCradleConfig) => number;
+  create_rng: (seed: string) => number;
   create_game_cradle: (config: any) => number;
   deposit_file: (name: string, data: string) => any;
 
@@ -177,6 +180,9 @@ export interface WasmConnection {
   accept: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
+  cradle_amount: (cid: number) => any;
+  cradle_our_share: (cid: number) => any;
+  cradle_their_share: (cid: number) => any;
   idle: (cid: number, callbacks: any) => any;
   get_identity: (cid: number) => IChiaIdentity;
   get_amount: (cid: number) => Amount;
@@ -210,21 +216,6 @@ export class ChiaGame {
     this.wasmConnection = wasm;
     this.waiting_messages = [];
     this.cradleId = cradleId;
-    // this.private_key = identity.private_key; params.chiaIdentity.private_key;
-    // this.have_potato = have_potato;
-    /*
-    this.cradle = wasm.create_game_cradle({
-        seed: seed,
-        game_types: env.game_types,
-        identity: identity.private_key,
-        have_potato: have_potato,
-        my_contribution: {amt: my_contribution},
-        their_contribution: {amt: their_contribution},
-        channel_timeout: env.timeout,
-        unroll_timeout: env.unroll_timeout,
-        reward_puzzle_hash: rewardPuzzleHash
-      });
-    */
   }
 
   getIdentity(): IChiaIdentity {
@@ -237,6 +228,18 @@ export class ChiaGame {
 
   start_games(initiator: boolean, game: any): string[] {
     return this.wasmConnection.start_games(this.cradleId, initiator, game);
+  }
+
+  amount() {
+    return this.wasm.cradle_amount(this.cradle);
+  }
+
+  our_share() {
+    return this.wasm.cradle_our_share(this.cradle);
+  }
+
+  their_share() {
+    return this.wasm.cradle_their_share(this.cradle);
   }
 
   accept(id: string) {
@@ -389,6 +392,16 @@ export class ExternalBlockchainInterface {
       },
     ).then((f) => f.json());
   }
+
+  getBalance(): Promise<number> {
+    return fetch(
+      `${this.baseUrl}/get_balance?user=${this.token}`,
+      {
+        body: '',
+        method: 'POST'
+      },
+    ).then((f) => f.json());
+  }
 }
 
 function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
@@ -501,11 +514,11 @@ export class CalpokerOutcome {
     let raw_win_direction = result_list[5][0] === 255 ? -1 : result_list[5][0];
     if (iStarted) {
       raw_win_direction *= -1;
-      this.alice_discards = result_list[0];
-      this.bob_discards = myDiscards;
-    } else {
       this.alice_discards = myDiscards;
       this.bob_discards = result_list[0];
+    } else {
+      this.alice_discards = result_list[0];
+      this.bob_discards = myDiscards;
     }
 
     this.win_direction = raw_win_direction;
@@ -519,11 +532,11 @@ export class CalpokerOutcome {
       this.my_win_outcome = iStarted ? 'lose' : 'win';
     }
 
-    const [alice_for_alice, alice_for_bob] = select_cards_using_bits(
+    const [alice_for_bob, alice_for_alice] = select_cards_using_bits(
       this.alice_cards,
       this.alice_discards,
     );
-    const [bob_for_bob, bob_for_alice] = select_cards_using_bits(
+    const [bob_for_alice, bob_for_bob] = select_cards_using_bits(
       this.bob_cards,
       this.bob_discards,
     );
@@ -636,6 +649,11 @@ export interface DoInitialSpendResult {
   coin: string;
 }
 
+export interface BlockchainInboundAddressResult {
+  address: string;
+  puzzleHash: string;
+}
+
 export interface InternalBlockchainInterface {
   do_initial_spend(
     uniqueId: string,
@@ -644,6 +662,8 @@ export interface InternalBlockchainInterface {
   ): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
   getObservable(): Subject<any>;
+  getAddress(): Promise<BlockchainInboundAddressResult>;
+  getBalance(): Promise<number>;
 }
 
 export interface OutcomeHandType {
@@ -654,6 +674,10 @@ export interface OutcomeHandType {
 
 export interface OutcomeLogLine {
   topLineOutcome: 'win' | 'lose' | 'tie';
+  myStartHand: number[][];
+  opponentStartHand: number[][];
+  myPicks: number;
+  opponentPicks: number;
   myHandDescription: OutcomeHandType;
   opponentHandDescription: OutcomeHandType;
   myHand: number[][];

@@ -570,6 +570,14 @@ impl SynchronousGameCradle {
         self.peer.amount()
     }
 
+    pub fn get_our_current_share(&self) -> Option<Amount> {
+        self.peer.get_our_current_share()
+    }
+
+    pub fn get_their_current_share(&self) -> Option<Amount> {
+        self.peer.get_their_current_share()
+    }
+
     pub fn finished(&self) -> bool {
         self.state.finished
     }
