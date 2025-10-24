@@ -43,7 +43,6 @@ app.use(
           'https://explorer-api.walletconnect.com',
           'wss://relay.walletconnect.com',
           'https://verify.walletconnect.org',
-          'https://verify.walletconnect.org',
           'https://api.coinset.org',
           'wss://api.coinset.org',
           'http://localhost:5800',

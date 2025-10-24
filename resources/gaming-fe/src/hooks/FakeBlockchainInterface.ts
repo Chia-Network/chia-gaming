@@ -7,6 +7,7 @@ import { toUint8 } from '../util';
 
 import { BLOCKCHAIN_SERVICE_URL } from '../settings';
 import {
+  ToggleEmitter,
   ExternalBlockchainInterface,
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
@@ -21,7 +22,7 @@ import {
 } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
 
-const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
+const bech32: any = bech32_module ? bech32_module : bech32_buffer;
 
 function requestBlockData(forWho: any, block_number: number): Promise<any> {
   return fetch(`${forWho.baseUrl}/get_block_data?block=${block_number}`, {
@@ -269,7 +270,10 @@ export function connectSimulatorBlockchain() {
         });
       } else if (getBalance) {
         fakeBlockchainInfo.getBalance().then((balance) => {
-          blockchainConnector.replyEmitter({ responseId: evt.requestId, getBalance: balance });
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+            getBalance: balance,
+          });
         });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);

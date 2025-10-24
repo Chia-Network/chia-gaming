@@ -60,7 +60,6 @@ app.use(
           'https://explorer-api.walletconnect.com',
           'wss://relay.walletconnect.com',
           'https://verify.walletconnect.org',
-          'https://verify.walletconnect.org',
           'https://api.coinset.org',
           'wss://api.coinset.org',
           'http://localhost:5800',
@@ -137,7 +136,7 @@ app.get('/resources*', async (req: any, res: any) => {
 if (process.env.ALLOW_REWRITING) {
   app.post('/coinset', async (req: any, res: any) => {
     coinset = req.body;
-    res.send("ok")
+    res.send('ok');
   });
 }
 
