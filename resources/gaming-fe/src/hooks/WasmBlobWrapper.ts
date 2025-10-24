@@ -32,8 +32,9 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 export class WasmBlobWrapper {
   amount: number;
   wc: WasmConnection | undefined;
-  rngSeed: string;
   sendMessage: (msg: string) => void;
+  rngSeed: string;
+  rngId: number | undefined;
   identity: IChiaIdentity | undefined;
   cradle: ChiaGame | undefined;
   uniqueId: string;
@@ -73,9 +74,9 @@ export class WasmBlobWrapper {
     peer_conn: PeerConnectionResult,
   ) {
     const { sendMessage } = peer_conn;
-
     this.uniqueId = uniqueId;
     this.rngSeed = this.uniqueId.substr(0, 8);
+    this.rngId = undefined;
     this.sendMessage = sendMessage;
     this.amount = amount;
     this.currentBlock = 0;
@@ -136,7 +137,12 @@ export class WasmBlobWrapper {
         );
         this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
       });
-      const newGameIdentity = this.wc?.chia_identity(this.rngSeed);
+      const rngId = this.wc?.create_rng(this.rngSeed);
+      if (rngId === undefined) {
+        throw("Unvalid rngId");
+      }
+      this.rngId = rngId;
+      const newGameIdentity = this.wc?.chia_identity(rngId);
       this.identity = newGameIdentity;
       this.pushEvent({ loadCalpoker: true });
       return {
@@ -337,7 +343,7 @@ export class WasmBlobWrapper {
     });
   }
 
-  loadWasm(chia_gaming_init: any, cg: WasmConnection): any {
+  loadWasm(chia_gaming_init: any, cg: any): any {
     this.loadWasmEvent = { loadWasmEvent: { chia_gaming_init, cg } };
     this.kickSystem(1);
     return empty();
@@ -393,6 +399,7 @@ export class WasmBlobWrapper {
         }
 
         const env = {
+          rng_id: this.rngId,
           game_types: {
             calpoker: {
               version: 1,
@@ -488,6 +495,10 @@ export class WasmBlobWrapper {
 
   idle(): any {
     const result: any = {};
+
+    result.setOurShare = this.cradle?.our_share()?.amt;
+    result.setTheirShare = this.cradle?.their_share()?.amt;
+
     const idle = this.cradle?.idle({
       // Local ui callbacks.
       opponent_moved: (game_id, readable_move_hex) => {
@@ -605,6 +616,11 @@ export class WasmBlobWrapper {
         console.log('spend res', res);
       });
     }
+
+    this.rxjsEmitter?.next({
+      setOurShare: this.cradle?.our_share()?.amt,
+      setTheirShare: this.cradle?.their_share()?.amt
+    });
 
     return result;
   }

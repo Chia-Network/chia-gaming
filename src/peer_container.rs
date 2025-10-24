@@ -6,6 +6,9 @@ use clvm_traits::ToClvm;
 use log::debug;
 use rand::Rng;
 
+use serde::{Deserialize, Serialize};
+use serde_json_any_key::*;
+
 use crate::channel_handler::runner::channel_handler_env;
 use crate::channel_handler::types::{
     ChannelHandlerEnv, ChannelHandlerPrivateKeys, GameStartFailed, ReadableMove,
@@ -41,11 +44,11 @@ pub trait MessagePeerQueue {
     fn get_unfunded_offer(&self) -> Option<SpendBundle>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct WatchEntry {
     pub timeout_blocks: Timeout,
     pub timeout_at: Option<u64>,
-    pub name: Option<&'static str>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -148,7 +151,7 @@ impl<'a> Iterator for RegisteredCoinsIterator<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameStartRecord {
     pub game_ids: Vec<GameID>,
     pub failed: Option<GameStartFailed>,
@@ -205,6 +208,8 @@ pub trait GameCradle {
         readable: Vec<u8>,
         new_entropy: Hash,
     ) -> Result<(), Error>;
+
+    fn identity(&self) -> ChiaIdentity;
 
     /// Signal accepting a game outcome.  Forwards to FromLocalUI::accept.
     /// Perhaps we should consider reporting the rewards.
@@ -275,8 +280,10 @@ pub trait GameCradle {
     ) -> Result<PuzzleHash, Error>;
 }
 
+#[derive(Serialize, Deserialize)]
 struct SynchronousGameCradleState {
     current_height: u64,
+    #[serde(with = "any_key_map")]
     watching_coins: HashMap<CoinString, WatchEntry>,
 
     is_initiator: bool,
@@ -329,7 +336,7 @@ impl WalletSpendInterface for SynchronousGameCradleState {
             WatchEntry {
                 timeout_at: Some(timeout.to_u64() + self.current_height),
                 timeout_blocks: timeout.clone(),
-                name,
+                name: name.map(|s| s.to_string()),
             },
         );
 
@@ -345,15 +352,17 @@ impl WalletSpendInterface for SynchronousGameCradleState {
 
 /// A game cradle that operates synchronously.  It can be composed with a game cradle that
 /// operates message pipes to become asynchronous.
+#[derive(Serialize, Deserialize)]
 pub struct SynchronousGameCradle {
     state: SynchronousGameCradleState,
     peer: PotatoHandler,
 }
 
-pub struct SynchronousGameCradleConfig<'a> {
+#[derive(Debug, Clone)]
+pub struct SynchronousGameCradleConfig {
     pub game_types: BTreeMap<GameType, GameFactory>,
     pub have_potato: bool,
-    pub identity: &'a ChiaIdentity,
+    pub identity: ChiaIdentity,
     pub my_contribution: Amount,
     pub their_contribution: Amount,
     pub channel_timeout: Timeout,
@@ -559,6 +568,14 @@ impl SynchronousGameCradle {
 
     pub fn amount(&self) -> Amount {
         self.peer.amount()
+    }
+
+    pub fn get_our_current_share(&self) -> Option<Amount> {
+        self.peer.get_our_current_share()
+    }
+
+    pub fn get_their_current_share(&self) -> Option<Amount> {
+        self.peer.get_their_current_share()
     }
 
     pub fn finished(&self) -> bool {
@@ -818,6 +835,10 @@ impl GameCradle for SynchronousGameCradle {
             system_interface: &mut self.state,
         };
         self.peer.start_games(&mut penv, i_initiated, game)
+    }
+
+    fn identity(&self) -> ChiaIdentity {
+        self.state.identity.clone()
     }
 
     /// Signal making a move.  Forwards to FromLocalUI::make_move.
