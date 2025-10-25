@@ -17,6 +17,8 @@ const Game = () => {
     error,
     log,
     addressData,
+    ourShare,
+    theirShare,
     gameConnectionState,
     isPlayerTurn,
     iStarted,
@@ -85,6 +87,8 @@ const Game = () => {
       stopPlaying={stopPlaying}
       log={log}
       addressData={addressData}
+      ourShare={ourShare}
+      theirShare={theirShare}
     />
   );
 };

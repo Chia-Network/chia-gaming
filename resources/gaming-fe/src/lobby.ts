@@ -202,9 +202,12 @@ app.post('/lobby/leave', (req, res) => {
   res.status(404).json({ error: 'Player not found in lobby.' });
 });
 
-app.get('/lobby/status', (_req, res) =>
-  res.json({ lobbyQueue: lobby.getPlayers() }),
-);
+app.get('/lobby/tracking', (_req, res) => {
+  res.json({ tracking: lobby.getTracking() });
+});
+app.get('/lobby/status', (_req, res) => {
+  res.json({ lobbyQueue: lobby.getPlayers() });
+});
 
 io.on('connection', (socket) => {
   socket.emit('lobby_update', lobby.getPlayers());

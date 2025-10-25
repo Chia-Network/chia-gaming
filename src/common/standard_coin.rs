@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use chia_bls;
 
 use log::debug;
@@ -65,7 +67,11 @@ pub fn calculate_synthetic_secret_key(
     }
     PrivateKey::from_bytes(&private_key_bytes)
         .map(Ok)
-        .unwrap_or_else(|e| Err(format!("calculate_synthetic_public_key: {e:?}")))
+        .unwrap_or_else(|e| {
+            Err(format!(
+                "calculate_synthetic_secret_key failed on {private_key_bytes:?}: {e:?}"
+            ))
+        })
         .into_gen()
 }
 
@@ -81,7 +87,11 @@ pub fn calculate_synthetic_public_key(
     }
     let synthetic_offset = PrivateKey::from_bytes(&private_key_bytes)
         .map(Ok)
-        .unwrap_or_else(|e| Err(format!("calculate_synthetic_public_key: {e:?}")))
+        .unwrap_or_else(|e| {
+            Err(format!(
+                "calculate_synthetic_public_key failed on {private_key_bytes:?}: {e:?}"
+            ))
+        })
         .into_gen()?;
     let public_of_synthetic = private_to_public_key(&synthetic_offset);
     Ok(public_key.clone() + public_of_synthetic)
@@ -410,7 +420,7 @@ pub fn standard_solution_partial(
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChiaIdentity {
     pub private_key: PrivateKey,
     pub synthetic_public_key: PublicKey,

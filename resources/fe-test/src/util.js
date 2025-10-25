@@ -144,7 +144,7 @@ async function retrieveAddress(driver) {
     const addressElt = await driver.wait(
       until.elementLocated(byAttribute("id", "blockchain-address")),
     );
-    const text = await addressElt.getAttribute("innerText");
+    const text = await addressElt.getAttribute("textContent");
     try {
       const decoded = JSON.parse(text);
       if (decoded.address !== "" && decoded.puzzleHash !== "") {
