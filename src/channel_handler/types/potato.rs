@@ -1,6 +1,7 @@
 use crate::channel_handler::types::{LiveGame, ReadableMove};
 use crate::channel_handler::ChannelCoinSpendInfo;
 use crate::common::types::{Aggsig, Amount, GameID, Hash, Program, PuzzleHash};
+use crate::referee::types::GameMoveDetails;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
@@ -11,6 +12,15 @@ pub struct PotatoSignatures {
     // Half signed thing allowing you to supercede an earlier state to this one.
     pub my_unroll_half_signature_peer: Aggsig,
 }
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MoveResult {
+    pub signatures: PotatoSignatures,
+    pub game_move: GameMoveDetails,
+}
+
+#[derive(Serialize, Deserialize)]
 
 pub struct PotatoAcceptCachedData {
     pub game_id: GameID,
@@ -26,7 +36,7 @@ impl std::fmt::Debug for PotatoAcceptCachedData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PotatoMoveCachedData {
     pub state_number: usize,
     pub game_id: GameID,
@@ -37,7 +47,7 @@ pub struct PotatoMoveCachedData {
     pub amount: Amount,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum CachedPotatoRegenerateLastHop {
     PotatoCreatedGame(Vec<GameID>, Amount, Amount),
     PotatoAccept(Box<PotatoAcceptCachedData>),

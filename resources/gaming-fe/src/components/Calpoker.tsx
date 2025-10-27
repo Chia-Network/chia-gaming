@@ -8,6 +8,8 @@ import { CalpokerOutcome, OutcomeLogLine } from '../types/ChiaGaming';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
+  ourShare: number | undefined;
+  theirShare: number | undefined;
   moveNumber: number;
   iStarted: boolean;
   isPlayerTurn: boolean;
@@ -24,6 +26,8 @@ export interface CalpokerProps {
 
 const Calpoker: React.FC<CalpokerProps> = ({
   outcome,
+  ourShare,
+  theirShare,
   moveNumber,
   iStarted,
   isPlayerTurn,
@@ -108,10 +112,15 @@ const Calpoker: React.FC<CalpokerProps> = ({
     );
   }
 
+  const balanceDisplay =
+    (ourShare !== undefined && theirShare !== undefined) ?
+    ` - Our Share ${ourShare} vs ${theirShare}` : '';
+
   return (
     <Box p={4}>
       <Typography variant='h4' align='center'>
         {`Cal Poker - move ${moveNumber}`}
+        {balanceDisplay}
       </Typography>
       <Button
         onClick={stopPlaying}

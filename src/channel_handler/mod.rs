@@ -16,6 +16,8 @@ use rand::prelude::*;
 use clvm_traits::ToClvm;
 use clvmr::allocator::NodePtr;
 
+use serde::{Deserialize, Serialize};
+
 use crate::channel_handler::game_handler::TheirTurnResult;
 use crate::channel_handler::types::{
     AcceptTransactionState, CachedPotatoRegenerateLastHop, ChannelCoin, ChannelCoinInfo,
@@ -84,6 +86,7 @@ use crate::referee::{RefereeInterface, RefereeMaker};
 /// onto the chain is the most recent 'their move'.  We preserve the ability to
 /// recall and sign this move via timeout_unroll and timeout_stored_signatures
 /// which are updated when we send a move.
+#[derive(Serialize, Deserialize)]
 pub struct ChannelHandler {
     private_keys: ChannelHandlerPrivateKeys,
 
@@ -267,6 +270,16 @@ impl ChannelHandler {
 
     pub fn all_games_finished(&self) -> bool {
         self.live_games.is_empty()
+    }
+
+    pub fn amount(&self, on_chain: bool) -> Amount {
+        let allocated = self.my_allocated_balance.clone() + self.their_allocated_balance.clone();
+
+        if on_chain {
+            return allocated;
+        }
+
+        allocated + self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone()
     }
 
     pub fn get_our_current_share(&self) -> Amount {

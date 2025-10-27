@@ -1,4 +1,5 @@
-import bech32 from 'bech32-buffer';
+import bech32_module from 'bech32-buffer';
+import * as bech32_buffer from 'bech32-buffer';
 import ReconnectingWebSocket from 'reconnecting-websocket';
 import { Subject } from 'rxjs';
 
@@ -8,6 +9,7 @@ import {
   SelectionMessage,
   BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
+import { WalletBalance } from '../types/WalletBalance';
 import { toHexString, toUint8 } from '../util';
 
 import {
@@ -21,6 +23,7 @@ function wsUrl(baseurl: string) {
   return `${url_with_new_method}/ws`;
 }
 
+const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
 const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
 
 export class RealBlockchainInterface {
@@ -229,6 +232,7 @@ export function connectRealBlockchain(baseUrl: string) {
       let initialSpend = evt.initialSpend;
       let transaction = evt.transaction;
       let getAddress = evt.getAddress;
+      let getBalance = evt.getBalance;
       if (initialSpend) {
         try {
           const currentAddress = await rpc.getCurrentAddress({
@@ -326,11 +330,20 @@ export function connectRealBlockchain(baseUrl: string) {
             const puzzleHash = toHexString(bech32.decode(address).data as any);
             const addressData = { address, puzzleHash };
 
-            blockchainConnector.replyEmitter({
-              responseId: evt.requestId,
-              getAddress: addressData,
-            });
-          });
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+	    getAddress: addressData
+	  });
+        });
+      } else if (getBalance) {
+        rpc.getWalletBalance({
+          walletId: 1
+        }).then((balanceResult: WalletBalance) => {
+          blockchainConnector.replyEmitter({
+            responseId: evt.requestId,
+	    getBalance: balanceResult.spendableBalance
+	  });
+        });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({

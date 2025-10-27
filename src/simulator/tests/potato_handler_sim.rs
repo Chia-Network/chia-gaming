@@ -127,8 +127,9 @@ impl SimulatedWalletSpend {
         &mut self,
         coin_id: &CoinString,
         timeout: &Timeout,
-        name: Option<&'static str>,
+        opt_name: Option<&'static str>,
     ) -> Result<(), Error> {
+        let name: Option<String> = opt_name.map(str::to_string);
         debug!("register coin {name:?}");
         self.watching_coins.insert(
             coin_id.clone(),
@@ -522,7 +523,7 @@ fn run_game_container_with_action_list_with_success_predicate(
 ) -> Result<GameRunOutcome, Error> {
     let mut move_number = 0;
     debug!("DEBUG: RNG {:?}", rng);
-    debug!("DEBUG: KEYS {:?}", private_keys);
+    // debug!("DEBUG: KEYS {:?}", private_keys);
     debug!("DEBUG: moves_input {:?}", moves_input);
     // Coinset adapter for each side.
     let game_type_map = poker_collection(allocator);
@@ -570,7 +571,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         SynchronousGameCradleConfig {
             game_types: game_type_map.clone(),
             have_potato: true,
-            identity: &identities[0],
+            identity: identities[0].clone(),
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
@@ -583,7 +584,7 @@ fn run_game_container_with_action_list_with_success_predicate(
         SynchronousGameCradleConfig {
             game_types: game_type_map.clone(),
             have_potato: false,
-            identity: &identities[1],
+            identity: identities[1].clone(),
             my_contribution: Amount::new(100),
             their_contribution: Amount::new(100),
             channel_timeout: Timeout::new(100),
