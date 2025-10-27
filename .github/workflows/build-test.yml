@@ -251,3 +251,45 @@ jobs:
     - name: Build Docker Images
       run: bash -x build-docker-images.sh
 
+    - name: Extract Game side Artifact
+      run: |
+        python -m pip install toml
+        export VERSION="$(./get_chia_gaming_version.py)"
+        export SOURCE="${{ github.workspace }}/artifacts"
+        export TARGET="${{ github.workspace }}/chia-game-deploy-${VERSION}"
+        bash -x docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "mkdir -p /artifacts/nginx && cp -r /app /artifacts/app"
+
+        # Create a directory for one loose file
+        mkdir -p "${TARGET}/dist/js"
+        cp "${SOURCE}/app/dist/js/index-rollup.js" "${TARGET}/dist/js"
+
+        # Copy multiple objects.
+        cp -r "${SOURCE}/app/dist/*wasm*" "${TARGET}/dist"
+        cp -r "${SOURCE}/app/clsp" "${TARGET}"
+        cp -r "${SOURCE}/app/public" "${TARGET}"
+
+        # Nginx configuration
+        mkdir -p "${TARGET}/nginx"
+        cp -r resources/nginx/game.conf "${TARGET}/nginx"
+        cp -r resources/nginx/beacon.sh "${TARGET}/beacon.sh"
+        cp -r resources/nginx/README.txt "${TARGET}/README.txt"
+
+        # Zip
+        cd "${TARGET}/.."
+        zip -r "${TARGET}.zip" "chia-game-deploy-${VERSION}"
+
+    - name: Upload Release Artifacts
+      if: env.RELEASE == 'true'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        FILES=$(find ${{ github.workspace }}/artifacts -type f -name 'chia-game-deploy*.zip')
+        while IFS= read -r file; do
+          gh release upload \
+            $RELEASE_TAG \
+            $file
+        done <<< "$FILES"
+
+        gh release upload \
+          $RELEASE_TAG \
+          artifacts/installer-chia-exporter*/*.deb

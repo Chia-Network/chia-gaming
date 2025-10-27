@@ -121,5 +121,5 @@ COPY resources/nginx/game.conf /etc/nginx/sites-enabled
 COPY resources/nginx/urls /app/dist
 COPY resources/nginx/beacon.sh /app
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
-RUN echo 'cd /app && (node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (cd /app/wc && node ./dist/index.js &) && (nginx -g "daemon off;" &) && (/app/beacon.sh &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
+RUN echo 'cd /app && (node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (cd /app/wc && node ./dist/index.js &) && (nginx -g "daemon off;" &) && (/app/beacon.sh http://localhost:3000 http://localhost:3001 &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
 CMD /bin/bash /app/test_env.sh
