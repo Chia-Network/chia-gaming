@@ -121,9 +121,14 @@ async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
   return driver;
 }
 
-const cardRankLetters = 'AJQK';
+const cardNumericRanks = {
+  'J': 11,
+  'Q': 12,
+  'K': 13,
+  'A': 14
+};
 function isCardRank(ch) {
-  return (ch >= '0' && ch <= '9') || (cardRankLetters.indexOf(ch) != -1);
+  return (ch >= '0' && ch <= '9') || cardNumericRanks[ch];
 }
 
 async function getCardText(driver, card) {
@@ -131,6 +136,13 @@ async function getCardText(driver, card) {
   const result = [];
   let accum = '';
   let state = 0;
+
+  function pushCard(c) {
+    Object.keys(cardNumericRanks).forEach((r) => {
+      c = c.replace(r, cardNumericRanks[r]);
+    });
+    result.push(c);
+  }
 
   for (let ch of rawText) {
     switch(state) {
@@ -143,7 +155,7 @@ async function getCardText(driver, card) {
 
     case 1:
       if (isCardRank(ch)) {
-        result.push(accum);
+        pushCard(accum);
         accum = ch;
         state = 0;
         break;
@@ -155,7 +167,7 @@ async function getCardText(driver, card) {
   }
 
   if (accum.length) {
-    result.push(accum);
+    pushCard(accum);
   }
 
   return result;
