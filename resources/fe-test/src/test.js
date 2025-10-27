@@ -121,11 +121,28 @@ async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
   return driver;
 }
 
+const cardNumericRanks = {
+  'J': 11,
+  'Q': 12,
+  'K': 13,
+  'A': 14
+};
+function isCardRank(ch) {
+  return (ch >= '0' && ch <= '9') || cardNumericRanks[ch];
+}
+
 async function getCardText(driver, card) {
   const rawText = await card.getAttribute('textContent');
   const result = [];
   let accum = '';
   let state = 0;
+
+  function pushCard(c) {
+    Object.keys(cardNumericRanks).forEach((r) => {
+      c = c.replace(r, cardNumericRanks[r]);
+    });
+    result.push(c);
+  }
 
   for (let ch of rawText) {
     switch(state) {
@@ -137,8 +154,8 @@ async function getCardText(driver, card) {
       break;
 
     case 1:
-      if (ch >= '0' && ch <= '9') {
-        result.push(accum);
+      if (isCardRank(ch)) {
+        pushCard(accum);
         accum = ch;
         state = 0;
         break;
@@ -150,7 +167,7 @@ async function getCardText(driver, card) {
   }
 
   if (accum.length) {
-    result.push(accum);
+    pushCard(accum);
   }
 
   return result;
@@ -301,6 +318,7 @@ async function verifyCardsWithLog(driver, cards) {
   const theirGivenCards = rawCardsToGiven(theirRawList);
 
   if (JSON.stringify(cardList) !== JSON.stringify(cards)) {
+    console.log(cardList, cards);
     throw new Error("Log doesn't show the cards we knew we had.");
   }
 
