@@ -121,6 +121,11 @@ async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
   return driver;
 }
 
+const cardRankLetters = 'AJQK';
+function isCardRank(ch) {
+  return (ch >= '0' && ch <= '9') || (cardRankLetters.indexOf(ch) != -1);
+}
+
 async function getCardText(driver, card) {
   const rawText = await card.getAttribute('textContent');
   const result = [];
@@ -137,7 +142,7 @@ async function getCardText(driver, card) {
       break;
 
     case 1:
-      if (ch >= '0' && ch <= '9') {
+      if (isCardRank(ch)) {
         result.push(accum);
         accum = ch;
         state = 0;
