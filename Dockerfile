@@ -2,8 +2,7 @@ FROM node:20.18.1 as stage1
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
-    apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
-    apt-get update && \
+    apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential nginx && \
     npm install -g corepack && \
     yarn set version 1.22.22 && \
     python3 -m venv /app/test && \
@@ -118,6 +117,9 @@ RUN ln -s /app/resources /resources
 ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
+COPY resources/nginx/game.conf /etc/nginx/sites-enabled
+COPY resources/nginx/urls /app/dist
+COPY resources/nginx/beacon.sh /app
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
-RUN echo 'cd /app && (node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; ALLOW_REWRITING=1 node ./dist/js/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 "${@}" &) && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
+RUN echo 'cd /app && (node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (cd /app/wc && node ./dist/index.js &) && (nginx -g "daemon off;" &) && (/app/beacon.sh &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
 CMD /bin/bash /app/test_env.sh
