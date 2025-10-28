@@ -20,7 +20,7 @@ import { GameDefinition } from '../types/lobby';
 import { generateOrRetrieveAlias, updateAlias } from '../util';
 import { ChildFrameBlockchainInterface } from '../hooks/ChildFrameBlockchainInterface';
 
-interface LobbyComponentProps { }
+interface LobbyComponentProps {}
 
 const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
