@@ -64,6 +64,16 @@ export interface GameCradleConfig {
   receive_error: string | undefined;
 }
 
+export type WasmBlobParams = {
+  rngSeed: string;
+  blockchain: InternalBlockchainInterface;
+  peerconn: PeerConnectionResult;
+  cradle: ChiaGame;
+  uniqueId: string;
+  iStarted: boolean;
+  fetchHex: (key: string) => Promise<string>;
+};
+
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
 export interface IdleCallbacks {
@@ -86,9 +96,13 @@ export interface IdleCallbacks {
 export interface WasmConnection {
   // System
   init: (print: any) => any;
-  create_rng: (seed: string) => number;
   create_game_cradle: (config: any) => number;
   deposit_file: (name: string, data: string) => any;
+
+  // RNG init
+  deserialize_rng: (serializedGame: any) => number;
+  create_rng: (seed: string) => number;
+  create_serialized_game: (json: any) => number;
 
   // Blockchain
   opening_coin: (cid: number, coinstring: string) => any;
@@ -136,6 +150,16 @@ export interface WasmConnection {
   sha256bytes: (hex: string) => string;
 }
 
+export class RngId {
+  rngId: number;
+  constructor(rngId: number) {
+    this.rngId = rngId;
+  }
+  getId() {
+    return this.rngId;
+  }
+}
+
 export interface CoinOutput {
   puzzle_hash: string;
   amount: number;
@@ -148,6 +172,7 @@ export class ChiaGame {
   cradle: number;
   have_potato: boolean;
 
+  //xxx
   constructor(
     wasm: WasmConnection,
     env: any,
@@ -157,6 +182,10 @@ export class ChiaGame {
     my_contribution: number,
     their_contribution: number,
     rewardPuzzleHash: string,
+   /*
+   wasm: WasmConnection,
+   cradleId: number,
+   */
   ) {
     this.wasm = wasm;
     this.waiting_messages = [];

@@ -184,7 +184,7 @@ observable.subscribe({
     let wc = this.wasmConnection;
     if (wc) {
       let cradleId = wc.create_serialized_game(serializedGame);
-      let cradle = new ChiaGame(wc, cradleId);
+      let cradle = new ChiaGame(wc, cradleId);// xxx
       return cradle;
     }
     return undefined;
