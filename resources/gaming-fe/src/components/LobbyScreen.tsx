@@ -10,14 +10,17 @@ import {
   ListItemText,
   TextField,
   Typography,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { useState, useEffect, useCallback } from 'react';
 
 import { useLobbySocket } from '../hooks/useLobbyConnection';
+import { GameDefinition } from '../types/lobby';
 import { generateOrRetrieveAlias, updateAlias } from '../util';
 import { ChildFrameBlockchainInterface } from '../hooks/ChildFrameBlockchainInterface';
 
-interface LobbyComponentProps {}
+interface LobbyComponentProps { }
 
 const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
@@ -31,6 +34,7 @@ const LobbyScreen = () => {
     joinRoom,
     uniqueId,
     fragment,
+    lobbyGames,
   } = useLobbySocket(myAlias, true);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -197,14 +201,19 @@ const LobbyScreen = () => {
       <Dialog open={dialogOpen} onClose={closeDialog}>
         <DialogTitle>Create a Room</DialogTitle>
         <DialogContent>
-          <TextField
+          <Select
             label='Game'
             aria-label='game-id'
             fullWidth
-            margin='normal'
             value={gameChoice}
             onChange={(e) => setGameChoice(e.target.value)}
-          />
+          >
+            {lobbyGames.map((g) => {
+              return (
+                <MenuItem aria-label={`choose-${g.game}`} value={g.game}>{g.game}</MenuItem>
+              );
+            })}
+          </Select>
           {wagerValidationError ? (
             <Box mb={1}>{wagerValidationError}</Box>
           ) : (
