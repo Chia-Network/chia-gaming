@@ -16,7 +16,6 @@ import {
 import { useState, useEffect, useCallback } from 'react';
 
 import { useLobbySocket } from '../hooks/useLobbyConnection';
-import { GameDefinition } from '../types/lobby';
 import { generateOrRetrieveAlias, updateAlias } from '../util';
 import { ChildFrameBlockchainInterface } from '../hooks/ChildFrameBlockchainInterface';
 
