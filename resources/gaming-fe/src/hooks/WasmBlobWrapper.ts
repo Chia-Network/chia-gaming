@@ -251,14 +251,14 @@ export class WasmBlobWrapper {
   }
 
   finalOutcome(readable: any, result: any) {
-    const outcome = new CalpokerOutcome(
+    this.gameOutcome = new CalpokerOutcome(
       this.iStarted,
       this.cardSelections,
       this.iStarted ? this.opponentHand : this.playerHand,
       this.iStarted ? this.playerHand : this.opponentHand,
       readable,
     );
-    result.setOutcome = outcome;
+    result.setOutcome = this.gameOutcome;
   }
 
   takeOpponentMove(
@@ -545,6 +545,7 @@ export class WasmBlobWrapper {
         result.setPlayerHand = [];
         result.setOpponentHand = [];
         result.setOutcome = undefined;
+        result.setLastOutcome = this.gameOutcome;
         result.setGameConnectionState = {
           stateIdentifier: 'running',
           stateDetail: [],
