@@ -17,8 +17,6 @@ const {
   wait,
   byExactText,
   byAttribute,
-  byElementAndAttribute,
-  sendEnter,
   waitAriaEnabled,
   waitAriaDisabled,
   selectSimulator,

@@ -15,6 +15,8 @@ const App = () => {
   const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
 
+  console.log('Build 6:25 Entering App.tsx URL PARAMS: ', params);
+
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
       next: (_peak: any) => {
@@ -49,6 +51,7 @@ const App = () => {
   }, [params]);
 
   if (params.lobby) {
+    console.log('params.lobby detected in', params);
     return <LobbyScreen />;
   }
 
@@ -57,6 +60,7 @@ const App = () => {
   }
 
   if (params.game && !params.join) {
+    console.log('params.game detected in', params);
     return <Game />;
   }
 

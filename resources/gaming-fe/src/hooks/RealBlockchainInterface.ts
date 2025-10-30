@@ -23,7 +23,7 @@ function wsUrl(baseurl: string) {
   return `${url_with_new_method}/ws`;
 }
 
-const bech32: any = (bech32_module ? bech32_module : bech32_buffer);
+const bech32: any = bech32_module ? bech32_module : bech32_buffer;
 const PUSH_TX_RETRY_TO_LET_UNCOFIRMED_TRANSACTIONS_BE_CONFIRMED = 30000;
 
 export class RealBlockchainInterface {
@@ -330,20 +330,22 @@ export function connectRealBlockchain(baseUrl: string) {
             const puzzleHash = toHexString(bech32.decode(address).data as any);
             const addressData = { address, puzzleHash };
 
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-	    getAddress: addressData
-	  });
-        });
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getAddress: addressData,
+            });
+          });
       } else if (getBalance) {
-        rpc.getWalletBalance({
-          walletId: 1
-        }).then((balanceResult: WalletBalance) => {
-          blockchainConnector.replyEmitter({
-            responseId: evt.requestId,
-	    getBalance: balanceResult.spendableBalance
-	  });
-        });
+        rpc
+          .getWalletBalance({
+            walletId: 1,
+          })
+          .then((balanceResult: WalletBalance) => {
+            blockchainConnector.replyEmitter({
+              responseId: evt.requestId,
+              getBalance: balanceResult.spendableBalance,
+            });
+          });
       } else {
         console.error(`unknown blockchain request type ${JSON.stringify(evt)}`);
         blockchainConnector.replyEmitter({
