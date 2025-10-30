@@ -25,6 +25,7 @@ const {
   selectWalletConnect,
   waitForNonError,
   sendControlA,
+  sendControlM,
   retrieveAddress,
   getBalance,
 } = require("./util.js");
@@ -216,10 +217,18 @@ async function initiateGame(driver, gameTotal, eachHand) {
   );
   await generateRoomButton.click();
 
+  // Choose game
   let gameId = await driver.wait(
-    until.elementLocated(byAttribute("aria-label", "game-id", "//input")),
+    until.elementLocated(byAttribute("aria-label", "game-id")),
     1000,
   );
+  await gameId.click();
+  let choice = await driver.wait(
+    until.elementLocated(byAttribute("aria-label", "choose-calpoker")),
+    1000,
+  );
+  await choice.click();
+
   let wager = await driver.wait(
     until.elementLocated(byAttribute("aria-label", "game-wager", "//input")),
     1000,
@@ -229,7 +238,6 @@ async function initiateGame(driver, gameTotal, eachHand) {
     1000,
   );
 
-  await gameId.sendKeys("calpoker");
   await wager.sendKeys("200");
 
   // If each hand is specified, also set it.

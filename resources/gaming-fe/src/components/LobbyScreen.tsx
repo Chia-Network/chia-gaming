@@ -10,6 +10,8 @@ import {
   ListItemText,
   TextField,
   Typography,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { useState, useEffect, useCallback } from 'react';
 
@@ -31,6 +33,7 @@ const LobbyScreen = () => {
     joinRoom,
     uniqueId,
     fragment,
+    lobbyGames,
   } = useLobbySocket(myAlias, true);
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -197,14 +200,19 @@ const LobbyScreen = () => {
       <Dialog open={dialogOpen} onClose={closeDialog}>
         <DialogTitle>Create a Room</DialogTitle>
         <DialogContent>
-          <TextField
+          <Select
             label='Game'
             aria-label='game-id'
             fullWidth
-            margin='normal'
             value={gameChoice}
             onChange={(e) => setGameChoice(e.target.value)}
-          />
+          >
+            {lobbyGames.map((g) => {
+              return (
+                <MenuItem aria-label={`choose-${g.game}`} value={g.game}>{g.game}</MenuItem>
+              );
+            })}
+          </Select>
           {wagerValidationError ? (
             <Box mb={1}>{wagerValidationError}</Box>
           ) : (
