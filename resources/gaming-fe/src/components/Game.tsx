@@ -27,6 +27,7 @@ const Game = () => {
     cardSelections,
     setCardSelections,
     outcome,
+    lastOutcome,
     stopPlaying,
   } = useWasmBlob(params.lobbyUrl, uniqueId);
 
@@ -72,6 +73,7 @@ const Game = () => {
   return (
     <Calpoker
       outcome={outcome}
+      lastOutcome={lastOutcome}
       moveNumber={moveNumber}
       iStarted={iStarted}
       isPlayerTurn={isPlayerTurn}
