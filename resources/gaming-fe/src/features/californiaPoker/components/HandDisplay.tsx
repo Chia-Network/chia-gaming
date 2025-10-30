@@ -8,6 +8,7 @@ function HandDisplay(props: HandDisplayProps) {
   const {
     title,
     cards,
+    playerNumber,
     area,
     winner,
     winnerType,
@@ -138,6 +139,8 @@ function HandDisplay(props: HandDisplayProps) {
 
                 return (
                   <Card
+                    index={cardInRowIndex}
+                    id={`card-${playerNumber}-${card}`}
                     key={`${area}-${originalIndex}`}
                     card={card}
                     cardId={`${area}-${originalIndex}`}

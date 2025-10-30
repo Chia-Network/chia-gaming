@@ -88,11 +88,11 @@ const App = () => {
         }}
       >
         {wcHeading}
-        <Box p={4} maxWidth={600} mx='auto'>
+        {/* <Box p={4} maxWidth={600} mx='auto'>
           <Typography variant='h4' gutterBottom>
             Waiting for wallet connect connection (use the menu).
           </Typography>
-        </Box>
+        </Box> */}
       </div>
     );
   }
@@ -118,6 +118,7 @@ const App = () => {
           flexShrink: 1,
           flexGrow: 1,
           height: '100%',
+          
         }}
         src={iframeUrl}
       ></iframe>

@@ -30,9 +30,9 @@ const setWCStringButtonHandler = () => void 0;
 // Rename: DebugPanel, DebugSection ...
 const Debug: React.FC<DebugProps> = ({ connectString, setConnectString }) => {
   return (
-    <Box mt={4}>
-      <Typography variant='h5'>Debug Controls:</Typography>
-      <br />
+    <Box>
+      {/* <Typography variant='h5'>Debug Controls:</Typography>
+      <br /> */}
 
       <TextField
         label='Connect String'

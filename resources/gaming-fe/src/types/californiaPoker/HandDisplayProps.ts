@@ -4,6 +4,7 @@ import { FormatHandProps } from "./FormatHandProps";
 
 interface HandDisplayProps {
   title: string;
+  playerNumber: number;
   cards: CardValueSuit[];
   area: string;
   winner: string | null;

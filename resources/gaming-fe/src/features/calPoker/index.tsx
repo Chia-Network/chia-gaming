@@ -1,10 +1,18 @@
-import { Box, Button, Typography } from '@mui/material';
-
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Typography,
+  useMediaQuery,
+  useTheme,
+} from '@mui/material';
 
 import { CalpokerOutcome, OutcomeLogLine } from '../../types/ChiaGaming';
-import {  OpponentSection, PlayerSection } from './components';
 import GameEndPlayer from '../../components/GameEndPlayer';
 import GameLog from '../../components/GameLog';
+import CaliforniaPoker from '../californiaPoker';
+import { StopCircle } from '@mui/icons-material';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
@@ -41,6 +49,9 @@ const Calpoker: React.FC<CalpokerProps> = ({
   addressData,
   log,
 }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
   const myWinOutcome = outcome?.my_win_outcome;
   const colors = {
     win: 'green',
@@ -113,63 +124,158 @@ const Calpoker: React.FC<CalpokerProps> = ({
   }
 
   const balanceDisplay =
-    (ourShare !== undefined && theirShare !== undefined) ?
-    ` - Our Share ${ourShare} vs ${theirShare}` : '';
+    ourShare !== undefined && theirShare !== undefined
+      ? ` - Our Share ${ourShare} vs ${theirShare}`
+      : '';
 
   return (
-    <Box p={4}>
-      <Typography variant='h4' align='center'>
-        {`Cal Poker - move ${moveNumber}`}
-        {balanceDisplay}
-      </Typography>
-      <Button
-        onClick={stopPlaying}
-        disabled={moveNumber !== 0}
-        aria-label='stop-playing'
-        aria-disabled={moveNumber !== 0}
-      >
-        Stop
-      </Button>
-      <br />
-      <Typography variant='h6' align='center' color={colors[color]}>
-        {banner}
-      </Typography>
-      <br />
+    <Box
+      p={{ xs: 2, sm: 3, md: 4 }}
+      sx={{
+        minHeight: '100vh',
+        bgcolor: '#f8fafc',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+      }}
+    >
+      {/* Header */}
       <Box
+        width='100%'
         display='flex'
-        flexDirection={{ xs: 'column', md: 'row' }}
-        alignItems='stretch'
-        gap={2}
-        mb={4}
+        flexDirection={{ xs: 'column', sm: 'row' }}
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
       >
-        <Box flex={1} display='flex' flexDirection='column'>
-          <PlayerSection
-            playerNumber={playerNumber}
-            playerHand={playerHand}
-            isPlayerTurn={isPlayerTurn}
-            moveNumber={moveNumber}
-            handleMakeMove={handleMakeMove}
-            cardSelections={cardSelections}
-            setCardSelections={setCardSelections}
-          />
-        </Box>
-        <Box flex={1} display='flex' flexDirection='column'>
-          <OpponentSection
-            playerNumber={playerNumber == 1 ? 2 : 1}
-            opponentHand={opponentHand}
-          />
+        <Typography
+          variant={isMobile ? 'h5' : 'h4'}
+          sx={{
+            fontWeight: 700,
+            color: '#424F6D',
+            textAlign: { xs: 'center', sm: 'left' },
+          }}
+        >
+          {`Cal Poker - Move ${moveNumber}`}
+        </Typography>
+
+        <Box
+          display='flex'
+          alignItems='center'
+          justifyContent={{ xs: 'center', sm: 'flex-end' }}
+          gap={2}
+          mt={{ xs: 1, sm: 0 }}
+        >
+          <Typography
+            variant='body1'
+            sx={{ color: '#6B7280', fontWeight: 600 }}
+          >
+            {balanceDisplay}
+          </Typography>
+
+          <Button
+            onClick={stopPlaying}
+            disabled={moveNumber !== 0}
+            variant='contained'
+            startIcon={<StopCircle />}
+            sx={{
+              backgroundColor:
+                moveNumber === 0 ? '#EF4444' : 'rgba(239,68,68,0.5)',
+              color: '#fff',
+              fontWeight: 600,
+              borderRadius: '8px',
+              '&:hover': {
+                backgroundColor:
+                  moveNumber === 0 ? '#DC2626' : 'rgba(239,68,68,0.5)',
+              },
+            }}
+          >
+            Stop
+          </Button>
         </Box>
       </Box>
-      <br />
-      <Typography>{moveDescription}</Typography>
-      <br />
-      <GameLog log={log} />
-      <div
+
+      {/* Banner */}
+      <Card
+        elevation={3}
+        sx={{
+          width: '100%',
+          mb: 3,
+          background: `linear-gradient(90deg, ${colors[color]} 0%, #4F5D75 100%)`,
+          color: 'white',
+          borderRadius: '12px',
+          textAlign: 'center',
+          boxShadow: '0 4px 10px rgba(0,0,0,0.1)',
+        }}
+      >
+        <CardContent>
+          <Typography
+            variant={isMobile ? 'h6' : 'h5'}
+            sx={{
+              fontWeight: 600,
+              textShadow: '0 2px 4px rgba(0,0,0,0.3)',
+            }}
+          >
+            {banner || 'Waiting for players...'}
+          </Typography>
+        </CardContent>
+      </Card>
+
+      {/* Main Game Layout */}
+      <Box
+        width='100%'
+        display='flex'
+        flexDirection={{ xs: 'column', md: 'row' }}
+        gap={2}
+      >
+        {/* Game Section */}
+        <Card
+          elevation={3}
+          sx={{
+            flex: { xs: '1 1 100%', md: '3 1 0%' },
+            borderRadius: '12px',
+            p: { xs: 2, sm: 3 },
+          }}
+        >
+          <CardContent>
+            <CaliforniaPoker
+              playerNumber={playerNumber}
+              isPlayerTurn={isPlayerTurn}
+              moveNumber={moveNumber}
+              playerHand={playerHand}
+              opponentHand={opponentHand}
+              cardSelections={cardSelections}
+              setCardSelections={setCardSelections}
+              handleMakeMove={handleMakeMove}
+              iStarted={iStarted}
+            />
+
+            <Typography
+              mt={2}
+              textAlign='center'
+              sx={{
+                color: '#424F6D',
+                fontWeight: 500,
+                fontSize: isMobile ? '0.9rem' : '1rem',
+              }}
+            >
+              {moveDescription}
+            </Typography>
+          </CardContent>
+        </Card>
+
+        {/* Game Log Section */}
+
+        <GameLog log={log} />
+      </Box>
+
+      {/* Hidden blockchain address */}
+      <Box
         id='blockchain-address'
-        style={{ position: 'relative', width: 0, height: 0, opacity: '0%' }}
+        sx={{ position: 'absolute', width: 0, height: 0, opacity: 0 }}
       >
         {JSON.stringify(addressData)}
-      </div>
+      </Box>
     </Box>
   );
 };

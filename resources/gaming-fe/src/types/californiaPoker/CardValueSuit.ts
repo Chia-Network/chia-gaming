@@ -1,4 +1,4 @@
-type SuitName = '♠' | '♥' | '♦' | '♣';
+type SuitName = 'Q' |'♠' | '♥' | '♦' | '♣';
 interface CardValueSuit {
   rank: number;
   suit: SuitName;

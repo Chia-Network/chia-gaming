@@ -1,8 +1,14 @@
 const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'];
-
+const RANK_SYMBOLS: Record<number, string> = {
+  14: 'A',
+  11: 'J',
+  12: 'Q',
+  13: 'K',
+};
 // OKHSL colors: hue in degrees, saturation 100%, lightness as specified
 const SUIT_COLORS = {
+  'Q': 'oklch(70% 0.3 90)', // Gold (90° hue, 70% lightness)
   '♠': 'oklch(0% 0 0)', // Black (0% lightness, 0 chroma for true black)
   '♥': 'oklch(50% 0.3 25)', // Red (25° hue, 50% lightness)
   '♦': 'oklch(50% 0.3 265)', // Blue (265° hue, 50% lightness)
@@ -45,5 +51,6 @@ export {
     SWAP_ANIMATION_DURATION,
     BUTTON_BASE,
     BUTTON_ACTIVE,
-    BUTTON_DISABLED
+    BUTTON_DISABLED,
+    RANK_SYMBOLS
 };

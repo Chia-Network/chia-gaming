@@ -2,9 +2,13 @@ import { CardRenderProps } from "../../../types/californiaPoker";
 import { SUIT_COLORS } from "../constants/constants";
 import CardContent from "./CardContent";
 
+
+
 function Card(props: CardRenderProps) {
   const {
+    id,
     card,
+    index,
     isSelected,
     onClick,
     isBeingSwapped = false,
@@ -46,9 +50,10 @@ function Card(props: CardRenderProps) {
 
   const styles = getCardStyles();
   const colorClass = SUIT_COLORS[card.suit] || '#000000';
-
+ 
   return (
     <div
+      id={id}
       data-card-id={cardId}
       className={`min-w-12 w-16 h-24 border-2 rounded-lg flex flex-col items-center justify-center font-bold
         ${styles.border} ${styles.bg} ${styles.cursor}

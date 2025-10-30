@@ -1,4 +1,16 @@
-import { Box, Button, ButtonGroup, Divider, Typography } from '@mui/material';
+import {
+  Badge,
+  Box,
+  Button,
+  ButtonGroup,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  Fab,
+  IconButton,
+  Typography,
+} from '@mui/material';
 import { useCallback, useState, useEffect } from 'react';
 
 import { blockchainConnector } from '../hooks/BlockchainConnector';
@@ -15,6 +27,7 @@ import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
+import { BugReportOutlined, Close } from '@mui/icons-material';
 
 const WalletConnectHeading = (_args: any) => {
   const { wcInfo, setWcInfo } = useDebug();
@@ -26,6 +39,7 @@ const WalletConnectHeading = (_args: any) => {
   const [expanded, setExpanded] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
   const [connectionUri, setConnectionUri] = useState<string | undefined>();
+  const [debugOpen, setDebugOpen] = useState(false);
 
   // Wallet connect state.
   const [_stateName, setStateName] = useState('empty');
@@ -59,7 +73,7 @@ const WalletConnectHeading = (_args: any) => {
   function requestBalance() {
     blockchainConnector.getOutbound().next({
       requestId: -1,
-      getBalance: true
+      getBalance: true,
     });
   }
 
@@ -262,37 +276,88 @@ const WalletConnectHeading = (_args: any) => {
       Simulator {fakeAddress}
     </Typography>
   ) : (
-    <div
-      style={{
+    <Box
+      sx={{
+        mt: 16,
         display: 'flex',
         flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
         width: '100%',
         height: '100%',
+        px: 2,
+        py: 4,
       }}
     >
+      {/* Simulator Button */}
       <Button
         variant='contained'
         onClick={handleConnectSimulator}
-        sx={{ mt: 3 }}
-        style={{ background: '#aa2' }}
         aria-label='select-simulator'
+        sx={{
+          width: { xs: '80%', sm: '60%', md: '50%' },
+          mb: 3,
+          backgroundColor: '#E5FE75',
+          boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.85)',
+          color: '#424F6D',
+          fontWeight: 600,
+          '&:hover': {
+            backgroundColor: '#bb3',
+          },
+        }}
       >
-        Simulator
+        CONTINUE WITH SIMULATOR
       </Button>
-      <WalletConnectDialog
-        initialized={initialized}
-        haveClient={haveClient}
-        haveSession={haveSession}
-        sessions={sessions}
-        showQRModal={showQRModal}
-        connectionUri={connectionUri}
-        onConnect={onDoWalletConnect}
-        dismiss={onWalletDismiss}
-      ></WalletConnectDialog>
-    </div>
+
+      {/* Divider with OR in the middle */}
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: { xs: '85%', sm: '65%', md: '45%' },
+          my: 3,
+        }}
+      >
+        <Divider sx={{ flex: 1, borderColor: 'rgba(0,0,0,0.2)' }} />
+        <Typography
+          variant='body2'
+          sx={{
+            mx: 2,
+            color: '#666',
+            fontWeight: 500,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          OR
+        </Typography>
+        <Divider sx={{ flex: 1, borderColor: 'rgba(0,0,0,0.2)' }} />
+      </Box>
+
+      {/* WalletConnect Dialog */}
+      <Box
+        sx={{
+          width: { xs: '90%', sm: '70%', md: '50%' },
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
+        <WalletConnectDialog
+          initialized={initialized}
+          haveClient={haveClient}
+          haveSession={haveSession}
+          sessions={sessions}
+          showQRModal={showQRModal}
+          connectionUri={connectionUri}
+          onConnect={onDoWalletConnect}
+          dismiss={onWalletDismiss}
+        />
+      </Box>
+    </Box>
   );
 
-  const ifExpanded = expanded ? (
+  const ifExpanded = expanded && (
     <div
       style={{
         display: 'flex',
@@ -302,20 +367,16 @@ const WalletConnectHeading = (_args: any) => {
         position: 'relative',
         background: 'white',
         padding: '1em',
+        marginTop: '10em',
+        gap: '1em',
       }}
     >
       {ifSession}
-      <Debug connectString={wcInfo} setConnectString={setWcInfo} />
     </div>
-  ) : (
-    <div style={{ display: 'flex', width: '100%', height: 0 }}></div>
   );
 
-  const balanceDisplay = (balance !== undefined) ? (
-    <div>- Balance {balance}</div>
-  ) : (
-    <div/>
-  );
+  const balanceDisplay =
+    balance !== undefined ? <div>- Balance {balance}</div> : <div />;
 
   return (
     <div
@@ -324,50 +385,186 @@ const WalletConnectHeading = (_args: any) => {
         flexDirection: 'column',
         height: useHeight,
         width: '100vw',
+        backgroundColor: 'white',
+        // zIndex: 1000,
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'row', height: '3em' }}>
-        <div
-          style={{
+        {/* Header */}
+        {/* Fixed Header */}
+        <Box
+          sx={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100%',
             display: 'flex',
-            flexGrow: 0,
-            flexShrink: 0,
-            height: '100%',
-            padding: '1em',
-          }}
-        >
-          Chia Gaming - WalletConnect {sessionConnected}
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            flexGrow: 1,
-            flexShrink: 0,
-            height: '100%',
-            padding: '1em',
-          }}
-        >
-          {balanceDisplay}
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            flexGrow: 0,
-            flexShrink: 0,
-            width: '3em',
-            height: '3em',
-            padding: '1em',
             alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
+            justifyContent: 'space-between',
+            bgcolor: 'white',
+            color: '#424F6D',
+            px: { xs: 2, sm: 3 },
+            height: '4.5em',
+            boxShadow: '0px 4px 12px rgba(0,0,0,0.1)',
+            zIndex: 1200,
           }}
-          onClick={toggleExpanded}
-          aria-label='control-menu'
         >
-          ☰
-        </div>
+          {/* LEFT: Title */}
+          <Typography
+            variant='h6'
+            fontWeight={600}
+            sx={{
+              whiteSpace: 'nowrap',
+              fontSize: { xs: '1rem', sm: '1.25rem' },
+            }}
+          >
+            Chia Gaming
+          </Typography>
+
+          {/* RIGHT: WalletConnect + Balance + Burger */}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: { xs: 4.5, sm: 3, md: 8 },
+              flexWrap: 'wrap',
+              justifyContent: 'flex-end',
+            }}
+          >
+            {/* WalletConnect Status */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <Typography
+                variant='body2'
+                fontWeight={600}
+                sx={{ fontSize: { xs: '0.85rem', sm: '0.95rem' } }}
+              >
+                Wallet Connect
+              </Typography>
+
+              <Badge
+                variant='standard'
+                sx={{
+                  '& .MuiBadge-badge': {
+                    backgroundColor:
+                      sessionConnected === 'connected'
+                        ? '#D4EDDA'
+                        : sessionConnected === 'simulator'
+                          ? '#FFF3CD'
+                          : '#F8D7DA',
+                    color:
+                      sessionConnected === 'connected'
+                        ? '#155724'
+                        : sessionConnected === 'simulator'
+                          ? '#856404'
+                          : '#721C24',
+                    border: `2px solid ${
+                      sessionConnected === 'connected'
+                        ? '#28A745'
+                        : sessionConnected === 'simulator'
+                          ? '#FFC107'
+                          : '#DC3545'
+                    }`,
+                    borderRadius: '12px',
+                    px: 1.4,
+                    py: 0.8,
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                  },
+                }}
+                badgeContent={
+                  sessionConnected === 'connected'
+                    ? 'Connected'
+                    : sessionConnected === 'simulator'
+                      ? 'Simulator'
+                      : 'Disconnected'
+                }
+              />
+            </Box>
+
+            {/* BALANCE */}
+            {balance !== undefined && (
+              <Typography
+                variant='body2'
+                sx={{
+                  color: '#424F6D',
+                  fontWeight: 500,
+                  opacity: 0.8,
+                  fontSize: { xs: '0.85rem', sm: '0.95rem' },
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Balance: {balance} XCH
+              </Typography>
+            )}
+
+            {/* BURGER BUTTON */}
+            <Button
+              onClick={toggleExpanded}
+              aria-label='menu-toggle'
+              sx={{
+                minWidth: 'auto',
+                color: '#424F6D',
+                fontSize: 26,
+                fontWeight: 'bold',
+                lineHeight: 1,
+                px: 1,
+                '&:hover': {
+                  bgcolor: 'rgba(66,79,109,0.08)',
+                },
+              }}
+            >
+              ☰
+            </Button>
+          </Box>
+        </Box>
       </div>
+
       {ifExpanded}
+      <IconButton
+        aria-label='debug'
+        onClick={() => setDebugOpen(true)}
+        sx={{
+          color: '#000000',
+          position: 'fixed',
+          bottom: 24,
+          right: 24,
+          bgcolor: 'white',
+          boxShadow: 2,
+          '&:hover': { bgcolor: '#7A8398', color: 'white' },
+        }}
+      >
+        <BugReportOutlined />
+      </IconButton>
+
+      {/* Debug Modal */}
+      <Dialog
+        open={debugOpen}
+        onClose={() => setDebugOpen(false)}
+        fullWidth
+        maxWidth='sm'
+      >
+        <DialogTitle
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontWeight: 600,
+            color: '#424F6D',
+          }}
+        >
+          Developer Debug
+          <IconButton
+            aria-label='close'
+            onClick={() => setDebugOpen(false)}
+            sx={{ color: '#424F6D' }}
+          >
+            <Close />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Debug connectString={wcInfo} setConnectString={setWcInfo} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

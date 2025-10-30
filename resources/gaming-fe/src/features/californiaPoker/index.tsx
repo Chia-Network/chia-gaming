@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 // Types
 import {
   BestHandType,
+  CaliforniapokerProps,
   CardValueSuit,
   MovingCardData,
   SwappingCards,
@@ -30,12 +31,52 @@ import {
   sortHand,
 } from './utils';
 import { HandDisplay, MovingCard } from './components';
+import { SuitName } from '../../types/californiaPoker/CardValueSuit';
+import { Button } from '@mui/material';
 
 // Main Component
-const CaliforniaPoker = () => {
+const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
+  moveNumber,
+  isPlayerTurn,
+  playerNumber,
+  playerHand,
+  opponentHand,
+  cardSelections,
+  setCardSelections,
+  handleMakeMove,
+}) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
-  const [playerHand, setPlayerHand] = useState<CardValueSuit[]>([]);
-  const [aiHand, setAiHand] = useState<CardValueSuit[]>([]);
+  // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
+  const suitMap: Record<number, SuitName> = {
+    0: 'Q',
+    1: '♠',
+    2: '♥',
+    3: '♦',
+    4: '♣',
+  };
+
+  const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);
+  const [opponentCards, setOpponentCards] = useState<CardValueSuit[]>([]);
+
+  // whenever playerHand or aiHand changes → convert into CardValueSuit[]
+  useEffect(() => {
+    const mappedPlayer = playerHand.map(([rank, suit], index) => ({
+      rank,
+      suit: suitMap[suit],
+      originalIndex: index,
+    }));
+
+    const mappedOpponent = opponentHand.map(([rank, suit], index) => ({
+      rank,
+      suit: suitMap[suit],
+      originalIndex: index,
+    }));
+
+    setPlayerCards(mappedPlayer);
+    setOpponentCards(mappedOpponent);
+  }, [playerHand, opponentHand]);
+
+  // const [opponentCards, setAiHand] = useState<CardValueSuit[]>([]);
   const [playerSelected, setPlayerSelected] = useState<number[]>([]);
   const [winner, setWinner] = useState<string | null>(null);
   const [playerBestHand, setPlayerBestHand] = useState<
@@ -50,12 +91,6 @@ const CaliforniaPoker = () => {
   const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
 
   const dealCards = () => {
-    const deck = shuffleArray(createDeck());
-    const playerCards: CardValueSuit[] = sortHand(deck.slice(0, 8));
-    const aiCards: CardValueSuit[] = sortHand(deck.slice(8, 16));
-
-    setPlayerHand(playerCards);
-    setAiHand(aiCards);
     setGameState(GAME_STATES.SELECTING);
     setPlayerSelected([]);
     setWinner(null);
@@ -65,9 +100,21 @@ const CaliforniaPoker = () => {
     if (gameState !== GAME_STATES.SELECTING) return;
 
     if (playerSelected.includes(cardIndex)) {
-      setPlayerSelected(playerSelected.filter((i) => i !== cardIndex));
+      const newSelection = playerSelected.filter((i) => i !== cardIndex);
+      setPlayerSelected(newSelection);
+
+      // Update bitmask
+      let selections = cardSelections;
+      selections &= ~(1 << cardIndex); // clear bit
+      setCardSelections(selections);
     } else if (playerSelected.length < 4) {
-      setPlayerSelected([...playerSelected, cardIndex]);
+      const newSelection = [...playerSelected, cardIndex];
+      setPlayerSelected(newSelection);
+
+      // Update bitmask
+      let selections = cardSelections;
+      selections |= 1 << cardIndex; // set bit
+      setCardSelections(selections);
     }
   };
 
@@ -78,7 +125,7 @@ const CaliforniaPoker = () => {
     let bestCombination = allCombinations[0];
 
     allCombinations.forEach((combination) => {
-      const cardsToKeep = aiHand.filter(
+      const cardsToKeep = opponentCards.filter(
         (_, index) => !combination.includes(index),
       );
       const score = scoreKeepCombination(cardsToKeep);
@@ -91,7 +138,10 @@ const CaliforniaPoker = () => {
 
     return bestCombination;
   };
-
+  const doHandleMakeMove = () => {
+    const moveData = '80';
+    handleMakeMove(moveData);
+  };
   const calculateMovingCards = (
     playerSwapIndices: number[],
     aiSwapIndices: number[],
@@ -120,7 +170,7 @@ const CaliforniaPoker = () => {
 
         movingCardData.push({
           id: `player-to-ai-${playerCardIndex}`,
-          card: playerHand[playerCardIndex],
+          card: playerCards[playerCardIndex],
           startX: playerRect.left,
           startY: playerRect.top,
           endX: aiRect.left,
@@ -137,7 +187,7 @@ const CaliforniaPoker = () => {
 
         movingCardData.push({
           id: `ai-to-player-${aiCardIndex}`,
-          card: aiHand[aiCardIndex],
+          card: opponentCards[aiCardIndex],
           startX: aiRect.left,
           startY: aiRect.top,
           endX: playerRect.left,
@@ -152,18 +202,24 @@ const CaliforniaPoker = () => {
     return movingCardData;
   };
 
+  const makeMove = () => {
+    const moveData = '80';
+    handleMakeMove(moveData);
+  };
+
   const swapCards = () => {
     if (playerSelected.length !== 4) return;
-
+    const moveData = '80';
+    handleMakeMove(moveData);
     const aiSelection = aiSelectCards();
     setGameState(GAME_STATES.SWAPPING);
 
     const playerSwapCards = playerSelected.map((i) => ({
-      ...playerHand[i],
+      ...playerCards[i],
       originalIndex: i,
     }));
     const aiSwapCards = aiSelection.map((i: number) => ({
-      ...aiHand[i],
+      ...opponentCards[i],
       originalIndex: i,
     }));
 
@@ -185,25 +241,25 @@ const CaliforniaPoker = () => {
 
     setTimeout(() => {
       // Perform the swap
-      const newPlayerHand = [...playerHand];
-      const newAiHand = [...aiHand];
+      const newPlayerHand = [...playerCards];
+      const newOpponentHand = [...opponentCards];
 
       playerSelected.forEach((playerIndex, swapIndex) => {
         const aiIndex = aiSelection[swapIndex];
         const tempCard = newPlayerHand[playerIndex];
-        newPlayerHand[playerIndex] = newAiHand[aiIndex];
-        newAiHand[aiIndex] = tempCard;
+        newPlayerHand[playerIndex] = newOpponentHand[aiIndex];
+        newOpponentHand[aiIndex] = tempCard;
       });
 
-      setPlayerHand(newPlayerHand);
-      setAiHand(newAiHand);
+      setPlayerCards(newPlayerHand);
+      setOpponentCards(newOpponentHand);
       setShowSwapAnimation(false);
       setMovingCards([]);
       setGameState(GAME_STATES.FINAL);
 
       // Determine best hands and winner
       const playerBest: BestHandType = getBestHand(newPlayerHand);
-      const aiBest: BestHandType = getBestHand(newAiHand);
+      const aiBest: BestHandType = getBestHand(newOpponentHand);
 
       setPlayerBestHand(playerBest);
       setAiBestHand(aiBest);
@@ -235,7 +291,7 @@ const CaliforniaPoker = () => {
   }, []);
 
   return (
-    <div className='min-h-screen bg-gray-100 p-2'>
+    <div className='bg-gray-100 p-2'>
       <div className='max-w-6xl mx-auto game-container relative'>
         {gameState === GAME_STATES.INITIAL && (
           <div className='text-center'>
@@ -253,7 +309,8 @@ const CaliforniaPoker = () => {
             <div className='space-y-0'>
               <HandDisplay
                 title='Opponent Hand'
-                cards={aiHand}
+                cards={opponentCards}
+                playerNumber={playerNumber == 1 ? 2 : 1}
                 area='ai'
                 winner={winner}
                 winnerType='ai'
@@ -273,7 +330,8 @@ const CaliforniaPoker = () => {
 
               <HandDisplay
                 title='Your Hand'
-                cards={playerHand}
+                cards={playerCards}
+                playerNumber={playerNumber}
                 area='player'
                 winner={winner}
                 winnerType='player'
@@ -291,28 +349,62 @@ const CaliforniaPoker = () => {
               {(gameState === GAME_STATES.SELECTING ||
                 gameState === GAME_STATES.SWAPPING) && (
                 <>
-                  <button
-                    onClick={swapCards}
-                    disabled={
-                      playerSelected.length !== 4 ||
-                      gameState === GAME_STATES.SWAPPING
+                  {(() => {
+                    let label = '';
+                    let disabled = false;
+                    let active = false;
+
+                    if (moveNumber === 0) {
+                      if (isPlayerTurn) {
+                        label = 'Start Game';
+                        disabled = false;
+                        active = true;
+                      } else {
+                        label = 'Opponent Turn to Start';
+                        disabled = true;
+                      }
+                    } else if (moveNumber === 1) {
+                      if (isPlayerTurn) {
+                        label =
+                          playerSelected.length === 4
+                            ? 'Swap Cards'
+                            : `Select 4 cards (${playerSelected.length}/4)`;
+                        disabled = playerSelected.length !== 4;
+                        active = playerSelected.length === 4;
+                      } else {
+                        label = "Opponent's Move";
+                        disabled = true;
+                      }
+                    } else if (moveNumber === 2) {
+                      label = 'Waiting for Opponent to Swap...';
+                      disabled = true;
                     }
-                    className={`${BUTTON_BASE} ${
-                      playerSelected.length === 4 &&
-                      gameState !== GAME_STATES.SWAPPING
-                        ? BUTTON_ACTIVE
-                        : BUTTON_DISABLED
-                    }`}
-                  >
-                    {gameState === GAME_STATES.SWAPPING
-                      ? 'Swapping...'
-                      : playerSelected.length === 4
-                        ? 'Swap Cards'
-                        : `Select 4 cards (${playerSelected.length}/4)`}
-                  </button>
+
+                    return (
+                      <button
+                        onClick={doHandleMakeMove}
+                        disabled={disabled}
+                        className={`${BUTTON_BASE} ${
+                          active && !disabled ? BUTTON_ACTIVE : BUTTON_DISABLED
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })()}
                 </>
               )}
-
+              {/* <Button
+                variant='contained'
+                color='secondary'
+                onClick={doHandleMakeMove}
+                disabled={!isPlayerTurn}
+                style={{ marginRight: '8px' }}
+                aria-label='make-move'
+                aria-disabled={!isPlayerTurn}
+              >
+                Make Move
+              </Button> */}
               {gameState === GAME_STATES.FINAL && (
                 <button
                   onClick={dealCards}
