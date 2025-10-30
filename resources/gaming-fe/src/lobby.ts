@@ -146,11 +146,13 @@ app.post('/lobby/generate-room', (req, res) => {
   io.emit('room_update', newRoom);
   res.json(result);
 });
-app.post('/lobby/game', (req, _res) => {
+app.post('/lobby/game', (req, res) => {
   const { game, target } = req.body;
   const time = new Date().getTime();
   console.log('update game', game, target);
   lobby.addGame(time, game, target);
+  io.emit('game_update', lobby.getGames());
+  res.json({"ok":true});
 });
 app.post('/lobby/join-room', (req, res) => {
   const { token, id } = req.body;
@@ -212,6 +214,7 @@ app.get('/lobby/status', (_req, res) => {
 io.on('connection', (socket) => {
   socket.emit('lobby_update', lobby.getPlayers());
   socket.emit('room_update', Object.values(lobby.rooms));
+  io.emit('game_update', lobby.getGames());
 
   // Lobby socket messages.
   socket.on('join', ({ id, alias }) => {

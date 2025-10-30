@@ -189,6 +189,10 @@ async function sendControlA(driver) {
   await sendControlChar(driver, "a");
 }
 
+async function sendControlM(driver) {
+  await sendControlChar(driver, "m");
+}
+
 module.exports = {
   wait,
   byExactText,
@@ -206,4 +210,5 @@ module.exports = {
   waitForNonError,
   sendControlChar,
   sendControlA,
+  sendControlM,
 };

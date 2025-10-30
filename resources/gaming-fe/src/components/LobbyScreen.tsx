@@ -9,10 +9,11 @@ import {
   DialogTitle,
   Divider,
   IconButton,
-  MenuItem,
   Stack,
   TextField,
   Typography,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -38,6 +39,7 @@ const LobbyScreen = () => {
     joinRoom,
     uniqueId,
     fragment,
+    lobbyGames,
   } = useLobbySocket(myAlias, true);
 
   const [chatInput, setChatInput] = useState('');
@@ -51,10 +53,6 @@ const LobbyScreen = () => {
   const [chatOpen, setChatOpen] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const [secureUrl, setSecureUrl] = useState('');
-  const gameOptions = [
-    { label: 'Calpoker', value: 'calpoker' },
-    // Add more games here if needed
-  ];
   // Calculate per-hand amount
   const setWagerInput = useCallback((newWagerInput: string) => {
     setWagerInputPrimitive(newWagerInput);
@@ -472,25 +470,23 @@ const LobbyScreen = () => {
       <Dialog open={dialogOpen} onClose={closeDialog}>
         <DialogTitle>Create a Room</DialogTitle>
         <DialogContent>
-          <TextField
-            select
+          <Select
             label='Game'
             aria-label='game-id'
             fullWidth
-            margin='normal'
             value={gameChoice}
-            onChange={(e) => setGameChoice(e.target.value)} // always sets lowercase value
+            onChange={(e) => setGameChoice(e.target.value)}
           >
-            {gameOptions.map((option) => (
-              <MenuItem key={option.value} value={option.value}>
-                {option.label}
-              </MenuItem>
-            ))}
-          </TextField>
-          {wagerValidationError && (
-            <Typography color='error' variant='body2'>
-              {wagerValidationError}
-            </Typography>
+            {lobbyGames.map((g) => {
+              return (
+                <MenuItem aria-label={`choose-${g.game}`} value={g.game}>{g.game}</MenuItem>
+              );
+            })}
+          </Select>
+          {wagerValidationError ? (
+            <Box mb={1}>{wagerValidationError}</Box>
+          ) : (
+            <div></div>
           )}
           <TextField
             label='Wager (mojo)'
