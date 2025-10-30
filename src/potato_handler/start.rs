@@ -1,9 +1,8 @@
-use std::rc::Rc;
-
-use crate::common::types::{Amount, GameID, GameType, Program, Timeout};
+use crate::{
+    common::types::{Amount, GameID, GameType, Program, Timeout},
+    potato_handler::types::GSI,
+};
 use serde::{Deserialize, Serialize};
-
-use crate::channel_handler::types::GameStartInfoInterface;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GameStart {

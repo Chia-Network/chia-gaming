@@ -13,7 +13,7 @@ use crate::channel_handler::v1;
 use crate::channel_handler::ChannelHandler;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinString, Error, GameID, GameType, Hash, Program, ProgramRef,
-    PublicKey, PuzzleHash, SpendBundle, Timeout,
+    PuzzleHash, SpendBundle, Timeout,
 };
 use crate::potato_handler::handshake::{HandshakeA, HandshakeB};
 use crate::potato_handler::start::GameStart;
