@@ -33,9 +33,8 @@ use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, ConditionWaitKind, FromLocalUI, GameAction,
-    GameFactory, PacketSender, PeerEnv,
-    PeerMessage, PotatoHandlerImpl, PotatoHandlerInit, PotatoState, ShutdownActionHolder,
-    SpendWalletReceiver, ToLocalUI, WalletSpendInterface, GSI,
+    GameFactory, PacketSender, PeerEnv, PeerMessage, PotatoHandlerImpl, PotatoHandlerInit,
+    PotatoState, ShutdownActionHolder, SpendWalletReceiver, ToLocalUI, WalletSpendInterface, GSI,
 };
 
 use crate::potato_handler::handshake::{
