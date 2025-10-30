@@ -86,6 +86,7 @@ export interface IdleCallbacks {
 export interface WasmConnection {
   // System
   init: (print: any) => any;
+  create_rng: (seed: string) => number;
   create_game_cradle: (config: any) => number;
   deposit_file: (name: string, data: string) => any;
 
@@ -125,10 +126,13 @@ export interface WasmConnection {
   accept: (cid: number, id: string) => any;
   shut_down: (cid: number) => any;
   deliver_message: (cid: number, inbound_message: string) => any;
+  cradle_amount: (cid: number) => any;
+  cradle_our_share: (cid: number) => any;
+  cradle_their_share: (cid: number) => any;
   idle: (cid: number, callbacks: any) => any;
 
   // Misc
-  chia_identity: (seed: string) => any;
+  chia_identity: (id: number) => any;
   sha256bytes: (hex: string) => string;
 }
 
@@ -158,22 +162,36 @@ export class ChiaGame {
     this.waiting_messages = [];
     this.private_key = identity.private_key;
     this.have_potato = have_potato;
-    this.cradle = wasm.create_game_cradle({
-      seed: seed,
-      game_types: env.game_types,
-      identity: identity.private_key,
-      have_potato: have_potato,
-      my_contribution: { amt: my_contribution },
-      their_contribution: { amt: their_contribution },
-      channel_timeout: env.timeout,
-      unroll_timeout: env.unroll_timeout,
-      reward_puzzle_hash: rewardPuzzleHash,
-    });
-    console.log(`constructed ${have_potato} cradle ${this.cradle}`);
+    this.cradle = wasm.create_game_cradle(
+      {
+        rng_id: env.rng_id,
+        game_types: env.game_types,
+        identity: identity.private_key,
+        have_potato: have_potato,
+        my_contribution: { amt: my_contribution },
+        their_contribution: { amt: their_contribution },
+        channel_timeout: env.timeout,
+        unroll_timeout: env.unroll_timeout,
+        reward_puzzle_hash: rewardPuzzleHash,
+      }
+    );
+    console.log('constructed', have_potato, "with cradle=", this.cradle);
   }
 
   start_games(initiator: boolean, game: any): string[] {
     return this.wasm.start_games(this.cradle, initiator, game);
+  }
+
+  amount() {
+    return this.wasm.cradle_amount(this.cradle);
+  }
+
+  our_share() {
+    return this.wasm.cradle_our_share(this.cradle);
+  }
+
+  their_share() {
+    return this.wasm.cradle_their_share(this.cradle);
   }
 
   accept(id: string) {
@@ -321,6 +339,16 @@ export class ExternalBlockchainInterface {
       },
     ).then((f) => f.json());
   }
+
+  getBalance(): Promise<number> {
+    return fetch(
+      `${this.baseUrl}/get_balance?user=${this.token}`,
+      {
+        body: '',
+        method: 'POST'
+      },
+    ).then((f) => f.json());
+  }
 }
 
 function select_cards_using_bits<T>(card: T[], mask: number): T[][] {
@@ -433,11 +461,11 @@ export class CalpokerOutcome {
     let raw_win_direction = result_list[5][0] === 255 ? -1 : result_list[5][0];
     if (iStarted) {
       raw_win_direction *= -1;
-      this.alice_discards = result_list[0];
-      this.bob_discards = myDiscards;
-    } else {
       this.alice_discards = myDiscards;
       this.bob_discards = result_list[0];
+    } else {
+      this.alice_discards = result_list[0];
+      this.bob_discards = myDiscards;
     }
 
     this.win_direction = raw_win_direction;
@@ -451,11 +479,11 @@ export class CalpokerOutcome {
       this.my_win_outcome = iStarted ? 'lose' : 'win';
     }
 
-    const [alice_for_alice, alice_for_bob] = select_cards_using_bits(
+    const [alice_for_bob, alice_for_alice] = select_cards_using_bits(
       this.alice_cards,
       this.alice_discards,
     );
-    const [bob_for_bob, bob_for_alice] = select_cards_using_bits(
+    const [bob_for_alice, bob_for_bob] = select_cards_using_bits(
       this.bob_cards,
       this.bob_discards,
     );
@@ -581,6 +609,7 @@ export interface InternalBlockchainInterface {
   ): Promise<DoInitialSpendResult>;
   spend(convert: (blob: string) => any, spend: string): Promise<string>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
+  getBalance(): Promise<number>;
 }
 
 export interface OutcomeHandType {
@@ -591,13 +620,17 @@ export interface OutcomeHandType {
 
 export interface OutcomeLogLine {
   topLineOutcome: 'win' | 'lose' | 'tie';
+  myStartHand: number[][];
+  opponentStartHand: number[][];
+  myPicks: number;
+  opponentPicks: number;
   myHandDescription: OutcomeHandType;
   opponentHandDescription: OutcomeHandType;
   myHand: number[][];
   opponentHand: number[][];
 }
 
-export const suitNames = ['Q', '♥', '♦', '♤', '♧'];
+export const suitNames = ['Q', '♥', '♦', '♠', '♣'];
 
 function aget<T>(handValue: T[], choice: number, def: T): T {
   if (choice > handValue.length || choice < 0) {

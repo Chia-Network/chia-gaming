@@ -22,6 +22,7 @@ const {
   waitAriaEnabled,
   waitAriaDisabled,
   selectSimulator,
+  selectWalletConnect,
   waitForNonError,
   sendControlA,
   retrieveAddress,
@@ -82,7 +83,11 @@ async function clickMakeMove(driver, who) {
     (elt) => waitAriaEnabled(driver, elt),
     1.0,
   );
+
+  console.log('have enabled, clicking button');
   await makeMoveButton.click();
+  console.log('button clicked, waiting for disabled');
+
   // The 'make move' button should become 'aria-label' disabled after pressing it
   // Get the button again, in case the DOM has refreshed
   await waitForNonError(
@@ -116,22 +121,82 @@ async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
   return driver;
 }
 
-async function clickFourCards(driver, who) {
-  await driver.wait(
-    until.elementLocated(byAttribute("aria-label", `card-true-0`)),
-  );
-  for (let i = 0; i < 4; i++) {
-    await wait(driver, 1.0);
-    console.log(`click card ${who} ${i}`);
-    const card = await driver.wait(
-      until.elementLocated(byAttribute("aria-label", `card-true-${i}`)),
-    );
-    await card.click();
+const cardNumericRanks = {
+  'J': 11,
+  'Q': 12,
+  'K': 13,
+  'A': 14
+};
+function isCardRank(ch) {
+  return (ch >= '0' && ch <= '9') || cardNumericRanks[ch];
+}
+
+async function getCardText(driver, card) {
+  const rawText = await card.getAttribute('textContent');
+  const result = [];
+  let accum = '';
+  let state = 0;
+
+  function pushCard(c) {
+    Object.keys(cardNumericRanks).forEach((r) => {
+      c = c.replace(r, cardNumericRanks[r]);
+    });
+    result.push(c);
+  }
+
+  for (let ch of rawText) {
+    switch(state) {
+    case 0:
+      if (ch.charCodeAt(0) > 255) {
+        state = 1;
+      }
+      accum += ch;
+      break;
+
+    case 1:
+      if (isCardRank(ch)) {
+        pushCard(accum);
+        accum = ch;
+        state = 0;
+        break;
+      }
+
+      accum += ch;
+      break;
+    }
+  }
+
+  if (accum.length) {
+    pushCard(accum);
+  }
+
+  return result;
+}
+
+async function clickFourCards(driver, who, picks) {
+  await driver.wait(until.elementLocated(byAttribute("aria-label", `card-true-0`)));
+  const resultCards = [];
+
+  for (let i = 0; i < 8; i++) {
+    const card = await driver.wait(until.elementLocated(byAttribute("aria-label", `card-true-${i}`)));
+    const cardText = await getCardText(driver, card);
+    resultCards.push(cardText[0]);
+  }
+
+  for (let i = 0; i < 8; i++) {
+    if (picks & (1 << i)) {
+      await wait(driver, 1.0);
+      const card = await driver.wait(until.elementLocated(byAttribute("aria-label", `card-true-${i}`)));
+      console.log(`click card ${who} ${i}`);
+      await card.click();
+    }
   }
 
   console.log(`make move (${who})`);
   await wait(driver, 1.0);
   await clickMakeMove(driver, who);
+
+  return resultCards;
 }
 
 async function firefox_press_button_second_game(driver) {
@@ -198,7 +263,7 @@ async function initiateGame(driver, gameTotal, eachHand) {
     until.elementLocated(byAttribute("aria-label", "partner-target-url")),
   );
   console.log("partner url", partnerUrlSpan);
-  let partnerUrl = await partnerUrlSpan.getAttribute("innerText");
+  let partnerUrl = await partnerUrlSpan.getAttribute("textContent");
   console.log("partner url text", partnerUrl);
   expect(partnerUrl.substr(0, 4)).toBe("http");
 
@@ -209,6 +274,74 @@ async function prepareBrowser(driver) {
   await driver.switchTo().defaultContent();
   await driver.switchTo().parentFrame();
   await driver.get("about:blank");
+}
+
+function stripCards(cards) {
+  return cards.map((c) => c.replace('+', ''));
+}
+
+async function getCards(driver, label) {
+  const hand = await driver.wait(until.elementLocated(byAttribute("aria-label", label)));
+  return getCardText(driver, hand);
+}
+
+async function verifyCardsWithLog(driver, cards) {
+  const gameLogHeadingTitle = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-log-heading")));
+  console.log('gonna click the game log heading');
+  await gameLogHeadingTitle.click();
+
+  console.log('gonna find our hand in the most recent log entry');
+  const rawCardList = await getCards(driver, "my-start-hand-0");
+  const theirRawList = await getCards(driver, "opponent-start-hand-0");
+  const myUsedList = await getCards(driver, "my-used-hand-0");
+  const theirUsedList = await getCards(driver, "opponent-used-hand-0");
+  const cardList = stripCards(rawCardList);
+  const theirList = stripCards(theirRawList);
+
+  function rawCardsToGiven(rawCardList) {
+    const givenCards = {};
+
+    stripCards(rawCardList.filter((c) => c.indexOf('+') != -1)).forEach((c) => {
+      givenCards[c] = true;
+    });
+
+    return givenCards;
+  }
+
+  function countUses(collection, list) {
+    let count = 0;
+    list.forEach((c) => { if (collection[c]) { count++; } });
+    return count;
+  }
+
+  const givenCards = rawCardsToGiven(rawCardList);
+  const theirGivenCards = rawCardsToGiven(theirRawList);
+
+  if (JSON.stringify(cardList) !== JSON.stringify(cards)) {
+    console.log(cardList, cards);
+    throw new Error("Log doesn't show the cards we knew we had.");
+  }
+
+  // None of the cards in givenCards should appear in my used list.
+  myUsedList.forEach((c) => {
+    if (givenCards[c]) { throw new Error("We used a card we gave away"); }
+  });
+
+  // None of the cards in theirGivenCards should appear their used list.
+  theirUsedList.forEach((c) => {
+    if (theirGivenCards[c]) { throw new Error("Opponent used a card they gave away"); }
+  });
+
+  // At least one of their given cards should appear in my used list.
+  let myUsesOfTheirCards = countUses(theirGivenCards, myUsedList);
+  if (myUsesOfTheirCards == 0) {
+    throw new Error("We didn't use any cards given by opponent.");
+  }
+
+  let theirUsesOfMyCards = countUses(givenCards, theirUsedList);
+  if (theirUsesOfMyCards == 0) {
+    throw new Error("They didn't use any cards given by us.");
+  }
 }
 
 // Define a category of tests using test framework, in this case Jasmine
@@ -236,10 +369,10 @@ describe("Out of money test", function () {
     console.log("wait for alice make move button");
     await clickMakeMove(driver, "alice");
 
-    await clickFourCards(ffdriver, "bob");
+    await clickFourCards(ffdriver, 'bob', 0xaa);
 
-    console.log("selecting alice cards");
-    await clickFourCards(driver, "alice");
+    console.log('selecting alice cards');
+    await clickFourCards(driver, 'alice', 0x55);
 
     console.log("stop the game");
     let stopButton = await waitForNonError(
@@ -296,21 +429,31 @@ describe("Out of money test", function () {
     console.log("wait for alice make move button");
     await clickMakeMove(driver, "alice");
 
-    await clickFourCards(ffdriver, "bob");
+    let allBobCards = await clickFourCards(ffdriver, 'bob', 0xaa);
 
-    console.log("selecting alice cards");
-    await clickFourCards(driver, "alice");
+    console.log('selecting alice cards');
+    let allAliceCards = await clickFourCards(driver, 'alice', 0x55);
+
+    // Hit the title for the expanded view
+    console.log('bob cards', allBobCards);
+    console.log('alice cards', allAliceCards);
 
     console.log("first game complete");
     await firefox_press_button_second_game(ffdriver);
 
-    console.log("alice random number (2)");
-    await clickMakeMove(driver, "alice");
+    console.log('check alice cards');
+    await verifyCardsWithLog(driver, allAliceCards);
 
-    await clickFourCards(ffdriver, "bob");
+    console.log('check bob cards');
+    await verifyCardsWithLog(ffdriver, allBobCards);
 
-    console.log("selecting alice cards (2)");
-    await clickFourCards(driver, "alice");
+    console.log('alice random number (2)');
+    await clickMakeMove(driver, 'alice');
+
+    await clickFourCards(ffdriver, 'bob', 0xaa);
+
+    console.log('selecting alice cards (2)');
+    await clickFourCards(driver, 'alice', 0x55);
 
     console.log("stop the game");
     let stopButton = await waitForNonError(
@@ -339,8 +482,8 @@ describe("Out of money test", function () {
           byAttribute("aria-label", `log-entry-opponent-${i}`),
         ),
       );
-      const outcomeMe = await logEntryMe.getAttribute("innerText");
-      const outcomeOpponent = await logEntryOpponent.getAttribute("innerText");
+      const outcomeMe = await logEntryMe.getAttribute("textContent");
+      const outcomeOpponent = await logEntryOpponent.getAttribute("textContent");
       const addition =
         outcomeMe.indexOf("WINNER") != -1
           ? 10
@@ -388,11 +531,11 @@ describe("Out of money test", function () {
     console.log("wait for alice make move button");
     await clickMakeMove(driver, "alice");
 
-    console.log("selectin bob cards");
-    await clickFourCards(ffdriver, "bob");
+    console.log('selecting bob cards');
+    await clickFourCards(ffdriver, 'bob', 0xaa);
 
-    console.log("selecting alice cards");
-    await clickFourCards(driver, "alice");
+    console.log('selecting alice cards');
+    await clickFourCards(driver, 'alice', 0x55);
 
     console.warn("get ff shutdown");
     await gotShutdown(ffdriver);
@@ -409,8 +552,6 @@ describe("Out of money test", function () {
       expect(!!driver1 && !!driver2).toBe(true);
 
       await testTwoGamesAndShutdown(selectSimulator);
-
-      return;
 
       await prepareBrowser(driver1);
       await prepareBrowser(driver2);

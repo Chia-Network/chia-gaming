@@ -22,6 +22,7 @@ import {
 } from './ParentFrameBlockchainInfo';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 import useGameSocket from './useGameSocket';
+import { setupBlockchainConnection } from './useBlockchainConnection';
 
 let blobSingleton: any = null;
 
@@ -68,40 +69,7 @@ function getBlobSingleton(
     peercon,
   );
 
-  // This lives in the child frame.
-  // We'll connect the required signals.
-  window.addEventListener('message', (evt: any) => {
-    const key = evt.message ? 'message' : 'data';
-    const data = evt[key];
-    if (data.blockchain_reply) {
-      if (evt.origin != window.location.origin) {
-        throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
-      }
-      blockchainConnector.getInbound().next(data.blockchain_reply);
-    }
-
-    if (data.blockchain_info) {
-      if (evt.origin != window.location.origin) {
-        throw new Error(`wrong origin for child event: ${JSON.stringify(evt)}`);
-      }
-      parentFrameBlockchainInfo.next(data.blockchain_info);
-    }
-  });
-
-  blockchainConnector.getOutbound().subscribe({
-    next: (evt: any) => {
-      window.parent.postMessage(
-        {
-          blockchain_request: evt,
-        },
-        window.location.origin,
-      );
-    },
-  });
-  blockchainDataEmitter.select({
-    selection: PARENT_FRAME_BLOCKCHAIN_ID,
-    uniqueId,
-  });
+  setupBlockchainConnection(uniqueId);
 
   return blobSingleton;
 }
@@ -110,6 +78,9 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [realPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity] = useState<any | undefined>(undefined);
   const [uniqueWalletConnectionId] = useState(uuidv4());
+  const [balance, setBalance] = useState<number | undefined>(undefined);
+  const [ourShare, setOurShare] = useState<number | undefined>(undefined);
+  const [theirShare, setTheirShare] = useState<number | undefined>(undefined);
   const [gameConnectionState, setGameConnectionState] =
     useState<GameConnectionState>({
       stateIdentifier: 'starting',
@@ -135,6 +106,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
   const amount = parseInt(searchParams.amount);
+
   let perGameAmount = amount / 10;
   try {
     perGameAmount = parseInt(searchParams.perGame);
@@ -198,12 +170,12 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
     setOutcome(outcome);
     if (outcome) {
-      const myCards = iStarted ? outcome.alice_cards : outcome.bob_cards;
-      const myValue = iStarted
+      const myCards = !iStarted ? outcome.alice_used_cards : outcome.bob_used_cards;
+      const myValue = !iStarted
         ? outcome.alice_hand_value
         : outcome.bob_hand_value;
-      const theirCards = iStarted ? outcome.bob_cards : outcome.alice_cards;
-      const theirValue = iStarted
+      const theirCards = !iStarted ? outcome.bob_used_cards : outcome.alice_used_cards;
+      const theirValue = !iStarted
         ? outcome.bob_hand_value
         : outcome.alice_hand_value;
       let newLogObject = {
@@ -212,8 +184,12 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         opponentHandDescription: handValueToDescription(theirValue, theirCards),
         myHand: myCards,
         opponentHand: theirCards,
+        myStartHand: playerHand,
+        opponentStartHand: opponentHand,
+        myPicks: iStarted ? outcome.alice_discards : outcome.bob_discards,
+        opponentPicks: iStarted ? outcome.bob_discards : outcome.alice_discards
       };
-      setLog([...log, newLogObject]);
+      setLog([newLogObject, ...log]);
     }
   };
 
@@ -227,6 +203,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setCardSelections: setOurCardSelections,
     setOutcome: recognizeOutcome,
     setAddressData: setAddressData,
+    setOurShare: setOurShare,
+    setTheirShare: setTheirShare
   };
 
   useEffect(() => {
@@ -253,6 +231,9 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   return {
     error,
     addressData,
+    amount,
+    ourShare,
+    theirShare,
     log,
     gameIdentity,
     gameConnectionState,
