@@ -22,11 +22,11 @@ pub struct WireGameStart {
     pub start: GameStart,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameStartQueueEntry(pub Vec<GameID>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MyGameStartQueueEntry {
-    pub my_games: Vec<Rc<dyn GameStartInfoInterface>>,
-    pub their_games: Vec<Rc<dyn GameStartInfoInterface>>,
+    pub my_games: Vec<GSI>,
+    pub their_games: Vec<GSI>,
 }

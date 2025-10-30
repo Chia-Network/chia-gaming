@@ -16,21 +16,21 @@ pub struct HandshakeA {
     pub simple: HandshakeB,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeStepInfo {
     pub first_player_hs_info: HandshakeA,
     #[allow(dead_code)]
     pub second_player_hs_info: HandshakeB,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeStepWithSpend {
     pub info: HandshakeStepInfo,
     #[allow(dead_code)]
     pub spend: SpendBundle,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum HandshakeState {
     StepA,
     StepB,
