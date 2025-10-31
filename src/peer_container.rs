@@ -18,13 +18,13 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, Hash, IntoErr, Program, PuzzleHash,
-    Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
+    PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
 };
+use crate::potato_handler::start::GameStart;
 use crate::potato_handler::types::{
-    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, GameStart, GameType,
-    PacketSender, PeerEnv, PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI,
-    WalletSpendInterface,
+    BootstrapTowardGame, BootstrapTowardWallet, FromLocalUI, GameFactory, PacketSender, PeerEnv,
+    PeerMessage, PotatoHandlerInit, SpendWalletReceiver, ToLocalUI, WalletSpendInterface,
 };
 use crate::potato_handler::PotatoHandler;
 use crate::shutdown::ShutdownConditions;

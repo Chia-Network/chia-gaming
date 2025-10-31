@@ -23,8 +23,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     chia_dialect, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinString, Error,
-    GameID, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash, Sha256Input,
-    Sha256tree, Spend, SpendBundle, Timeout,
+    GameID, GameType, GetCoinStringParts, Hash, IntoErr, Node, Program, Puzzle, PuzzleHash,
+    Sha256Input, Sha256tree, Spend, SpendBundle, Timeout,
 };
 use crate::utils::proper_list;
 
@@ -33,13 +33,18 @@ use crate::shutdown::{get_conditions_with_channel_handler, ShutdownConditions};
 
 use crate::potato_handler::types::{
     BootstrapTowardGame, BootstrapTowardWallet, ConditionWaitKind, FromLocalUI, GameAction,
-    GameFactory, GameStart, GameStartQueueEntry, GameType, HandshakeA, HandshakeB, HandshakeState,
-    HandshakeStepInfo, HandshakeStepWithSpend, MyGameStartQueueEntry, PacketSender, PeerEnv,
-    PeerMessage, PotatoHandlerImpl, PotatoHandlerInit, PotatoState, ShutdownActionHolder,
-    SpendWalletReceiver, ToLocalUI, WalletSpendInterface, GSI,
+    GameFactory, PacketSender, PeerEnv, PeerMessage, PotatoHandlerImpl, PotatoHandlerInit,
+    PotatoState, SpendWalletReceiver, ToLocalUI, WalletSpendInterface, GSI,
 };
 
+use crate::potato_handler::handshake::{
+    HandshakeA, HandshakeB, HandshakeState, HandshakeStepInfo, HandshakeStepWithSpend,
+};
+use crate::potato_handler::start::{GameStart, GameStartQueueEntry, MyGameStartQueueEntry};
+
+pub mod handshake;
 pub mod on_chain;
+pub mod start;
 pub mod types;
 
 pub type GameStartInfoPair = (
