@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 
 import Gallery from './components/Gallery';
 import Game from './components/Game';
-import LobbyScreen from './components/LobbyScreen';
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
 import { getGameSelection, getSearchParams } from './util';
@@ -47,10 +46,6 @@ const App = () => {
         });
     }
   }, [params]);
-
-  if (params.lobby) {
-    return <LobbyScreen />;
-  }
 
   if (params.gallery) {
     return <Gallery />;

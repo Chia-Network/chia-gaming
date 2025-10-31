@@ -5,6 +5,9 @@ resources/gaming-fe/resources
 resources/gaming-fe/clsp
 resources/fe-test/node_modules
 resources/wc-stub/node_modules
+resources/lobby-connection/node_modules
+resources/lobby-service/node_modules
+resources/lobby-view/node_modules
 target
 wasm/target
 test

@@ -1,0 +1,38 @@
+{
+  "version": "0.0.1",
+  "name": "chia-gaming-lobby-connection",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "build": "./node_modules/.bin/tsc --project .",
+    "test": "./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node --experimental-require-module node_modules/.bin/jest --useStderr",
+    "lint": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs",
+    "lint:fix": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs --fix",
+    "lint:check": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs --max-warnings 0",
+    "lint:errors-only": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs --quiet",
+    "format": "prettier --write 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'",
+    "format:check": "prettier --check 'src/**/*.{ts,tsx,js,jsx,mjs,json}' '*.{ts,js,mjs,json}'",
+    "pre-commit": "npm run format && npm run lint:errors-only",
+    "pre-commit-safe": "npm run format || true",
+    "lint:report": "npm run lint:errors-only || echo 'Linting found issues but not blocking commit. Run npm run lint:fix to auto-fix many issues.'"
+  },
+  "dependencies": {
+    "@types/express": "^5.0.5",
+    "@types/minimist": "^1.2.5",
+    "@types/node": "^24.9.2",
+    "@types/react": "^19.2.2",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "esbuild": "^0.25.11",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "minimist": "^1.2.8",
+    "react": "^19.2.0",
+    "socket.io-client": "^4.8.1",
+    "typescript": "^5.9.3",
+    "uuid": "^13.0.0"
+  }
+}

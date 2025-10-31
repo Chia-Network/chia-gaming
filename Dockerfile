@@ -43,18 +43,45 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
   rm -rf /tmp/rust/wasm/node-pkg /tmp/rust/wasm/pkg && \
 	(cd /tmp/rust && tar cvf - .) | (cd /app/rust && tar xf -)
 
+# Lobby connection - needed by other builds
+COPY resources/lobby-connection/ /app/lobby-connection/
+RUN mkdir -p /preinst && cd /app/lobby-connection && yarn install && yarn build && mv /app/lobby-connection /preinst
+
 # Stage front-end / UI / UX into the container
-COPY resources/gaming-fe/package.json resources/gaming-fe/yarn.lock /preinst/
+COPY resources/gaming-fe/package.json resources/gaming-fe/yarn.lock /preinst/game/
+
+# Lobby front-end
+COPY resources/lobby-view/package.json resources/lobby-view/yarn.lock /preinst/lobby-view/
+
+# Lobby service
+COPY resources/lobby-service/package.json resources/lobby-service/yarn.lock /preinst/lobby-service/
 
 # walletconnect automation
 COPY resources/wc-stub/package.json resources/wc-stub/yarn.lock /preinst/wc/
 
 RUN --mount=type=tmpfs,dst=/app \
-  mkdir -p /app/wc/ && \
-  cp -r /preinst/* /app && \
-  cd /app && yarn install && \
-  mv /app/node_modules /preinst/ && \
-  mv /app/package.json /preinst/ 
+  mkdir -p /app/game/ && \
+  cp -r /preinst/lobby-connection /app/lobby-connection && \
+  cp -r /preinst/game/* /app/game/ && \
+  ls -l /app && ls -l /app/lobby-connection && ls -l /preinst/lobby-connection && \
+  cd /app/game && yarn install && \
+  mv /app/game/node_modules /preinst/game/ && \
+  mv /app/game/package.json /preinst/game/ 
+
+RUN --mount=type=tmpfs,dst=/app \
+  mkdir -p /app/lobby-view/ && \
+  cp -r /preinst/lobby-connection /app/lobby-connection && \
+  cp -r /preinst/lobby-view/* /app/lobby-view/ && \
+  cd /app/lobby-view && yarn install && \
+  mv /app/lobby-view/node_modules /preinst/lobby-view && \
+  mv /app/lobby-view/package.json /preinst/lobby-view
+
+RUN --mount=type=tmpfs,dst=/app \
+  mkdir -p /app/lobby-service/ && \
+  cp -r /preinst/lobby-service/* /app/lobby-service/ && \
+  cd /app/lobby-service && yarn install && \
+  mv /app/lobby-service/node_modules /preinst/lobby-service && \
+  mv /app/lobby-service/package.json /preinst/lobby-service
 
 RUN --mount=type=tmpfs,dst=/app \
   mkdir -p /app/wc/ && \
@@ -74,9 +101,13 @@ RUN --mount=type=tmpfs,dst=/app \
 #CI COPY --from=stage1 /root /root
 #CI COPY --from=stage1 /app /app
 
-RUN mkdir -p /app/wc/ && \
-  ln -s /preinst/node_modules /app && \
-  ln -s /preinst/package.json /app && \
+RUN mkdir -p /app/game/ && mkdir -p /app/wc/ && mkdir -p /app/lobby-service/ && mkdir -p /app/lobby-connection && mkdir -p /app/lobby-view && \
+  ln -s /preinst/game/node_modules /app/game/ && \
+  ln -s /preinst/game/package.json /app/game/ && \
+  ln -s /preinst/lobby-service/node_modules /app/lobby-service && \
+  ln -s /preinst/lobby-service/package.json /app/lobby-service && \
+  ln -s /preinst/lobby-view/node_modules /app/lobby-view && \
+  ln -s /preinst/lobby-view/package.json /app/lobby-view && \
   ln -s /preinst/wc/node_modules /app/wc && \
   ln -s /preinst/wc/package.json /app/wc
 
@@ -98,28 +129,39 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	cp -r /tmp/rust/target/wheels/* /app/rust/target/wheels && \
 	cd /tmp/rust/wasm && \
 	cargo clean -p chia_gaming_wasm && \
-	wasm-pack build --out-dir=/app/node-pkg --release --target=nodejs && \
-	wasm-pack build --out-dir=/app/dist --release --target=web
+	wasm-pack build --out-dir=/app/game/node-pkg --release --target=nodejs && \
+	wasm-pack build --out-dir=/app/game/dist --release --target=web
 
 # Place wasm backend in docker container
 RUN mkdir -p /app/dist
 
 # Build the front-end / UI / UX within the container env
-COPY resources/gaming-fe /app
-RUN cd /app && yarn run build
+COPY resources/gaming-fe /app/game/
+RUN cd /app/game && yarn run build && ls /
+
+# Build the lobby view
+COPY resources/lobby-view /app/lobby-view/
+RUN cd /app/lobby-view && yarn run build
+
+# lobby service
+COPY resources/lobby-service/src /app/lobby-service/src/
+COPY resources/lobby-service/tsconfig.json /app/lobby-service/
+RUN cd /app/lobby-service && yarn run build
 
 # walletconnect automation build
 COPY resources/wc-stub/src /app/wc/src/
 COPY resources/wc-stub/tsconfig.json /app/wc/
 RUN cd /app/wc && yarn run build
 
-RUN ln -s /app/resources /resources
-ADD clsp /app/clsp
-RUN ln -s /app/clsp /clsp
+RUN ln -s /app/game/resources /resources
+ADD clsp /app/game/clsp
+RUN ln -s /app/game/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
 COPY resources/nginx/game.conf /etc/nginx/sites-enabled
+COPY resources/nginx/lobby.conf /etc/nginx/sites-enabled
 COPY resources/nginx/urls /app/dist
 COPY resources/nginx/beacon.sh /app
+
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
-RUN echo 'cd /app && (node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (cd /app/wc && node ./dist/index.js &) && (nginx -g "daemon off;" &) && (/app/beacon.sh http://localhost:3000 http://localhost:3001 &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
+RUN echo 'cd /app && (cd /app/lobby-service && node ./dist/index-rollup.cjs --self http://localhost:3001 &) && (cd /app/wc && node ./dist/index.js &) && (nginx -g "daemon off;" &) && (/app/beacon.sh http://localhost:3000 http://localhost:3001 &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
 CMD /bin/bash /app/test_env.sh
