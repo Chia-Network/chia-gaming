@@ -30,7 +30,7 @@ use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
 use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
-use crate::potato_handler::start::GameStart;
+use chia_gaming::potato_handler::start::GameStart;
 use chia_gaming::shutdown::BasicShutdownConditions;
 
 #[cfg(target_arch = "wasm32")]
