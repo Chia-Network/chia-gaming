@@ -1,7 +1,8 @@
 import { CalpokerOutcome, OutcomeLogLine } from "../ChiaGaming";
 
 export interface CaliforniapokerProps {
- 
+  lastOutcome: CalpokerOutcome | undefined;
+  log: OutcomeLogLine[]
   moveNumber: number;
   iStarted: boolean;
   isPlayerTurn: boolean;

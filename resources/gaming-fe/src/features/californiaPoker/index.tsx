@@ -44,6 +44,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   cardSelections,
   setCardSelections,
   handleMakeMove,
+  lastOutcome,
+  log,
 }) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
@@ -58,8 +60,14 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);
   const [opponentCards, setOpponentCards] = useState<CardValueSuit[]>([]);
 
+  useEffect(() => {
+    swapCards();
+  }, [lastOutcome]);
   // whenever playerHand or aiHand changes → convert into CardValueSuit[]
   useEffect(() => {
+    if(playerHand.length===0 || opponentHand.length===0){
+      return;
+    }
     const mappedPlayer = playerHand.map(([rank, suit], index) => ({
       rank,
       suit: suitMap[suit],
@@ -118,28 +126,15 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     }
   };
 
-  const aiSelectCards = () => {
-    const allCombinations = getSwapCombinations();
+  console.log(lastOutcome, 'lastOutcome in doHandleMakeMove');
+  console.log(playerHand, 'playerHand in doHandleMakeMove');
+  console.log(opponentHand, 'opponentHand in doHandleMakeMove');
+  console.log(log, 'gameEnd Log');
 
-    let bestScore = -1;
-    let bestCombination = allCombinations[0];
 
-    allCombinations.forEach((combination) => {
-      const cardsToKeep = opponentCards.filter(
-        (_, index) => !combination.includes(index),
-      );
-      const score = scoreKeepCombination(cardsToKeep);
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestCombination = combination;
-      }
-    });
-
-    return bestCombination;
-  };
   const doHandleMakeMove = () => {
     const moveData = '80';
+
     handleMakeMove(moveData);
   };
   const calculateMovingCards = (
@@ -202,72 +197,88 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     return movingCardData;
   };
 
-  const makeMove = () => {
-    const moveData = '80';
-    handleMakeMove(moveData);
-  };
-
   const swapCards = () => {
-    if (playerSelected.length !== 4) return;
-    const moveData = '80';
-    handleMakeMove(moveData);
-    const aiSelection = aiSelectCards();
-    setGameState(GAME_STATES.SWAPPING);
+  if (!lastOutcome) return;
 
-    const playerSwapCards = playerSelected.map((i) => ({
-      ...playerCards[i],
-      originalIndex: i,
-    }));
-    const aiSwapCards = aiSelection.map((i: number) => ({
-      ...opponentCards[i],
-      originalIndex: i,
-    }));
+  const gameRoundData = lastOutcome;
+  setGameState(GAME_STATES.SWAPPING);
 
-    setSwappingCards({ player: playerSwapCards, ai: aiSwapCards });
+  // Determine who is the player in JSON
+  const isPlayerAlice = playerNumber === 1;
 
-    // Clear selections immediately after starting swap
-    setPlayerSelected([]);
+  // Map the correct hands depending on perspective
+  const playerOriginal = isPlayerAlice ? gameRoundData.alice_cards : gameRoundData.bob_cards;
+  const playerFinal = isPlayerAlice ? gameRoundData.alice_final_hand : gameRoundData.bob_final_hand;
+  const opponentOriginal = isPlayerAlice ? gameRoundData.bob_cards : gameRoundData.alice_cards;
+  const opponentFinal = isPlayerAlice ? gameRoundData.bob_final_hand : gameRoundData.alice_final_hand;
 
-    setTimeout(() => {
-      const movingCardData = calculateMovingCards(playerSelected, aiSelection);
-      setMovingCards(movingCardData);
-
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setShowSwapAnimation(true);
-        });
-      });
-    }, ANIMATION_DELAY);
-
-    setTimeout(() => {
-      // Perform the swap
-      const newPlayerHand = [...playerCards];
-      const newOpponentHand = [...opponentCards];
-
-      playerSelected.forEach((playerIndex, swapIndex) => {
-        const aiIndex = aiSelection[swapIndex];
-        const tempCard = newPlayerHand[playerIndex];
-        newPlayerHand[playerIndex] = newOpponentHand[aiIndex];
-        newOpponentHand[aiIndex] = tempCard;
-      });
-
-      setPlayerCards(newPlayerHand);
-      setOpponentCards(newOpponentHand);
-      setShowSwapAnimation(false);
-      setMovingCards([]);
-      setGameState(GAME_STATES.FINAL);
-
-      // Determine best hands and winner
-      const playerBest: BestHandType = getBestHand(newPlayerHand);
-      const aiBest: BestHandType = getBestHand(newOpponentHand);
-
-      setPlayerBestHand(playerBest);
-      setAiBestHand(aiBest);
-
-      const comparison = compareRanks(playerBest.rank, aiBest.rank);
-      setWinner(comparison > 0 ? 'player' : comparison < 0 ? 'ai' : 'tie');
-    }, SWAP_ANIMATION_DURATION);
+  // Compute swap indices
+  const getSwappedIndices = (original: number[][], final: number[][]) => {
+    const indices: number[] = [];
+    original.forEach(([rank, suit], index) => {
+      const found = final.find(([r, s]) => r === rank && s === suit);
+      if (!found) indices.push(index);
+    });
+    return indices;
   };
+
+  const playerSwapIndices = getSwappedIndices(playerOriginal, playerFinal);
+  const aiSwapIndices = getSwappedIndices(opponentOriginal, opponentFinal);
+
+  const playerSwapCards = playerSwapIndices.map((i) => ({
+    ...playerCards[i],
+    originalIndex: i,
+  }));
+  const opponentSwapCards = aiSwapIndices.map((i) => ({
+    ...opponentCards[i],
+    originalIndex: i,
+  }));
+
+  setSwappingCards({ player: playerSwapCards, ai: opponentSwapCards });
+  setPlayerSelected([]);
+
+  // Delay animation for remote players to allow DOM layout to stabilize
+setTimeout(() => {
+  // Ensure the current frame (old cards) is fully painted
+  requestAnimationFrame(() => {
+    const movingCardData = calculateMovingCards(playerSwapIndices, aiSwapIndices);
+    setMovingCards(movingCardData);
+
+    // Allow React to render <MovingCard /> components first
+    requestAnimationFrame(() => {
+      setShowSwapAnimation(true);
+    });
+  });
+}, isPlayerTurn ? ANIMATION_DELAY : ANIMATION_DELAY + 500);
+
+  setTimeout(() => {
+    // Apply final hands from correct perspective
+    const newPlayerHand = playerFinal.map(([rank, suit]) => ({
+      rank,
+      suit: suitMap[suit],
+    }));
+    const newOpponentHand = opponentFinal.map(([rank, suit]) => ({
+      rank,
+      suit: suitMap[suit],
+    }));
+
+    setPlayerCards(newPlayerHand);
+    setOpponentCards(newOpponentHand);
+    setShowSwapAnimation(false);
+    setMovingCards([]);
+    setGameState(GAME_STATES.FINAL);
+
+    const playerBest = getBestHand(newPlayerHand);
+    const aiBest = getBestHand(newOpponentHand);
+
+    setPlayerBestHand(playerBest);
+    setAiBestHand(aiBest);
+
+    const comparison = compareRanks(playerBest.rank, aiBest.rank);
+    setWinner(comparison > 0 ? 'player' : comparison < 0 ? 'ai' : 'tie');
+  }, SWAP_ANIMATION_DURATION);
+};
+
 
   function getBestHand(cards: CardValueSuit[]): BestHandType {
     const combinations = getCombinations(cards);

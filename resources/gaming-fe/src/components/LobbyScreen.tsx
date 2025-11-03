@@ -474,6 +474,7 @@ const LobbyScreen = () => {
             label='Game'
             aria-label='game-id'
             fullWidth
+            
             value={gameChoice}
             onChange={(e) => setGameChoice(e.target.value)}
           >

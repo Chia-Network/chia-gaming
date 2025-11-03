@@ -27,7 +27,9 @@ import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
-import { BugReportOutlined, Close } from '@mui/icons-material';
+import { BugReportOutlined, Close, LocalActivity } from '@mui/icons-material';
+import WalletBadge from './WalletBadge';
+import WalletStatus from './WalletStatus';
 
 const WalletConnectHeading = (_args: any) => {
   const { wcInfo, setWcInfo } = useDebug();
@@ -36,7 +38,7 @@ const WalletConnectHeading = (_args: any) => {
     string | undefined
   >();
   const [fakeAddress, setFakeAddress] = useState<string | undefined>();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [showQRModal, setShowQRModal] = useState(false);
   const [connectionUri, setConnectionUri] = useState<string | undefined>();
   const [debugOpen, setDebugOpen] = useState(false);
@@ -81,7 +83,7 @@ const WalletConnectHeading = (_args: any) => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: any) => {
         if (evt.stateName === 'connected') {
-          setExpanded(false);
+          toggleExpanded();
           setAlreadyConnected(true);
           console.log('doing connect real blockchain');
           blockchainDataEmitter.select({
@@ -201,7 +203,7 @@ const WalletConnectHeading = (_args: any) => {
         // Trigger fake connect if not connected.
         console.warn('fake address is', res);
         setFakeAddress(res);
-        setExpanded(false);
+        toggleExpanded();
         blockchainDataEmitter.select({
           selection: FAKE_BLOCKCHAIN_ID,
           uniqueId,
@@ -223,7 +225,7 @@ const WalletConnectHeading = (_args: any) => {
   }, []);
 
   const onWalletDismiss = useCallback(() => {
-    setExpanded(false);
+    toggleExpanded();
   }, []);
 
   const sessionConnected = connected
@@ -232,50 +234,7 @@ const WalletConnectHeading = (_args: any) => {
       ? 'simulator'
       : 'disconnected';
 
-  const ifSession = walletConnectState.getSession() ? (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      <Box>
-        <ButtonGroup variant='outlined' fullWidth>
-          <Button
-            variant='outlined'
-            color='error'
-            onClick={() => walletConnectState.disconnect()}
-          >
-            Unlink Wallet
-          </Button>
-          <Button
-            variant='outlined'
-            color='error'
-            onClick={() => {
-              localStorage.clear();
-              window.location.href = '';
-            }}
-          >
-            Reset Storage
-          </Button>
-        </ButtonGroup>
-      </Box>
-      <Divider sx={{ mt: 4 }} />
-      <Box mt={3}>
-        <Typography variant='h5'>Response</Typography>
-        <Button
-          fullWidth
-          variant='outlined'
-          color='error'
-          onClick={() => {
-            localStorage.clear();
-            window.location.href = '';
-          }}
-        >
-          Unlink Wallet
-        </Button>
-      </Box>
-    </div>
-  ) : fakeAddress ? (
-    <Typography variant='h5' style={{ background: '#aa2' }}>
-      Simulator {fakeAddress}
-    </Typography>
-  ) : (
+  const ifSession = (
     <Box
       sx={{
         mt: 16,
@@ -410,75 +369,87 @@ const WalletConnectHeading = (_args: any) => {
           }}
         >
           {/* LEFT: Title */}
-          <Typography
-            variant='h6'
-            fontWeight={600}
-            sx={{
-              whiteSpace: 'nowrap',
-              fontSize: { xs: '1rem', sm: '1.25rem' },
-            }}
-          >
-            Chia Gaming
-          </Typography>
-
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            {/* <img src='../assets/images/chia_logo.png' alt='logo' height={32} /> */}
+            <Typography
+              variant='h6'
+              fontWeight={600}
+              sx={{
+                whiteSpace: 'nowrap',
+                fontSize: { xs: '1rem', sm: '1.25rem' },
+                color: '#555555',
+              }}
+            >
+              Chia Gaming
+            </Typography>
+          </Box>
+          <Box>
+            {walletConnectState.getSession() ? (
+              <>
+                <Box>
+                  <ButtonGroup variant='outlined' fullWidth>
+                    <Button
+                      variant='outlined'
+                      color='error'
+                      onClick={() => walletConnectState.disconnect()}
+                    >
+                      Unlink Wallet
+                    </Button>
+                    <Button
+                      variant='outlined'
+                      color='error'
+                      onClick={() => {
+                        localStorage.clear();
+                        window.location.href = '';
+                      }}
+                    >
+                      Reset Storage
+                    </Button>
+                  </ButtonGroup>
+                </Box>
+                <Divider sx={{ mt: 4 }} />
+                <Box mt={3}>
+                  <Typography variant='h5'>Response</Typography>
+                  <Button
+                    fullWidth
+                    variant='outlined'
+                    color='error'
+                    onClick={() => {
+                      localStorage.clear();
+                      window.location.href = '';
+                    }}
+                  >
+                    Unlink Wallet
+                  </Button>
+                </Box>
+              </>
+            ) : fakeAddress ? (
+              <Typography style={{}}>Simulator {fakeAddress}</Typography>
+            ) : (
+              <WalletStatus />
+            )}
+          </Box>
           {/* RIGHT: WalletConnect + Balance + Burger */}
           <Box
             sx={{
               display: 'flex',
               alignItems: 'center',
-              gap: { xs: 4.5, sm: 3, md: 8 },
-              flexWrap: 'wrap',
-              justifyContent: 'flex-end',
+              gap: { xs: 4.5, sm: 3, md: 2 },
             }}
           >
             {/* WalletConnect Status */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Typography
-                variant='body2'
-                fontWeight={600}
-                sx={{ fontSize: { xs: '0.85rem', sm: '0.95rem' } }}
-              >
-                Wallet Connect
-              </Typography>
-
-              <Badge
-                variant='standard'
+                fontWeight={'semi-bold'}
                 sx={{
-                  '& .MuiBadge-badge': {
-                    backgroundColor:
-                      sessionConnected === 'connected'
-                        ? '#D4EDDA'
-                        : sessionConnected === 'simulator'
-                          ? '#FFF3CD'
-                          : '#F8D7DA',
-                    color:
-                      sessionConnected === 'connected'
-                        ? '#155724'
-                        : sessionConnected === 'simulator'
-                          ? '#856404'
-                          : '#721C24',
-                    border: `2px solid ${
-                      sessionConnected === 'connected'
-                        ? '#28A745'
-                        : sessionConnected === 'simulator'
-                          ? '#FFC107'
-                          : '#DC3545'
-                    }`,
-                    borderRadius: '12px',
-                    px: 1.4,
-                    py: 0.8,
-                    fontSize: '0.7rem',
-                    fontWeight: 600,
-                  },
+                  fontSize: { xs: '0.85rem', sm: '0.95rem', color: '#555555' },
                 }}
-                badgeContent={
-                  sessionConnected === 'connected'
-                    ? 'Connected'
-                    : sessionConnected === 'simulator'
-                      ? 'Simulator'
-                      : 'Disconnected'
-                }
-              />
+              >
+                WalletConnect
+              </Typography>
+              <Box>
+                <WalletBadge sessionConnected={sessionConnected} />
+              </Box>
             </Box>
 
             {/* BALANCE */}
@@ -498,7 +469,7 @@ const WalletConnectHeading = (_args: any) => {
             )}
 
             {/* BURGER BUTTON */}
-            <Button
+            {/* <Button
               onClick={toggleExpanded}
               aria-label='menu-toggle'
               sx={{
@@ -514,7 +485,7 @@ const WalletConnectHeading = (_args: any) => {
               }}
             >
               ☰
-            </Button>
+            </Button> */}
           </Box>
         </Box>
       </div>
