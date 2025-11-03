@@ -9,47 +9,6 @@
   <body id="body">
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
-    <script>
-     function getParamsFromString(paramString) {
-         const fragmentParts = paramString.split('&');
-         const params = Object.fromEntries(fragmentParts.map((part) => {
-             const partEqIdx = part.indexOf('=');
-
-             if (partEqIdx > 0) {
-                 return [part.substring(0, partEqIdx), part.substring(partEqIdx + 1)];
-             }
-
-             return [part, 'true'];
-         }));
-         return params;
-     }
-
-     function getSearchParams() {
-         if (window.location.search === '') {
-             return {};
-         }
-         const search = window.location.search.substring(1);
-         return getParamsFromString(search);
-     }
-
-     const params = getSearchParams();
-     if (params.game) {
-         const body = document.getElementById('body');
-         const scriptElement = document.createElement('script');
-         const text = [
-             'import * as cg from "./chia_gaming_wasm.js";',
-             'const intervalId = setInterval(() => {',
-             '  if (window.loadWasm) {',
-             '    clearInterval(intervalId);',
-             '    window.loadWasm(cg.initSync, cg);',
-             '  }',
-             '}, 500);'
-         ];
-         scriptElement.setAttribute('type', 'module');
-         scriptElement.appendChild(document.createTextNode(text.join('\n')));
-         body.appendChild(scriptElement);
-     }
-    </script>
     <script src="index.js"></script>
   </body>
 </html>

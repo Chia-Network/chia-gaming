@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import React from 'react';
 import io, { Socket } from 'socket.io-client';
 
 export type GameState = 'idle' | 'searching' | 'playing';
@@ -63,6 +63,7 @@ export interface ChatEnvelope {
 }
 
 const useGameSocket = (
+  react: typeof React,
   lobbyUrl: string,
   deliverMessage: (m: string) => void,
   setSocketEnabled: (e: boolean) => void,
@@ -70,13 +71,13 @@ const useGameSocket = (
 ): UseGameSocketReturn => {
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
-  const socketRef = useRef<Socket | null>(null);
+  const socketRef = react.useRef<Socket | null>(null);
 
-  const [gameState, setGameState] = useState<GameState>('idle');
-  const [wagerAmount, setWagerAmount] = useState<string>('');
-  const [playerCoins, setPlayerCoins] = useState<number>(100);
-  const [isPlayerTurn] = useState<boolean>(false);
-  const [playerNumber] = useState<number>(0);
+  const [gameState, setGameState] = react.useState<GameState>('idle');
+  const [wagerAmount, setWagerAmount] = react.useState<string>('');
+  const [playerCoins, setPlayerCoins] = react.useState<number>(100);
+  const [isPlayerTurn] = react.useState<boolean>(false);
+  const [playerNumber] = react.useState<number>(0);
 
   const eff = () => {
     let fullyConnected = false;
@@ -155,6 +156,7 @@ interface Player {
 }
 
 export function useLobbySocket(
+  react: typeof React,
   lobbyUrl: string,
   uniqueId: string,
   alias: string,
@@ -163,14 +165,14 @@ export function useLobbySocket(
   fragment: any,
   navigate: (url: string) => void,
 ) {
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [messages, setMessages] = useState<ChatEnvelope[]>([]);
-  const [didJoin, setDidJoin] = useState(false);
-  const socketRef = useRef<Socket>(undefined);
+  const [players, setPlayers] = react.useState<Player[]>([]);
+  const [rooms, setRooms] = react.useState<Room[]>([]);
+  const [messages, setMessages] = react.useState<ChatEnvelope[]>([]);
+  const [didJoin, setDidJoin] = react.useState(false);
+  const socketRef = react.useRef<Socket>(undefined);
   console.log('fragment retrieved', fragment);
 
-  const joinRoom = useCallback(
+  const joinRoom = react.useCallback(
     async (token: string) => {
       const { data } = await fetch(
         `${lobbyUrl}/lobby/join-room`,
@@ -252,7 +254,7 @@ export function useLobbySocket(
 
   tryJoinRoom();
 
-  useEffect(() => {
+  react.useEffect(() => {
     const socket = io(lobbyUrl);
     socketRef.current = socket;
 
@@ -281,7 +283,7 @@ export function useLobbySocket(
     };
   }, [uniqueId]);
 
-  const sendMessage = useCallback(
+  const sendMessage = react.useCallback(
     (msg: string) => {
       socketRef.current?.emit('chat_message', {
         alias,
@@ -291,7 +293,7 @@ export function useLobbySocket(
     [uniqueId],
   );
 
-  const generateRoom = useCallback(
+  const generateRoom = react.useCallback(
     async (
       game: string,
       amount: string,
@@ -314,7 +316,7 @@ export function useLobbySocket(
     [uniqueId],
   );
 
-  const setLobbyAlias = useCallback(
+  const setLobbyAlias = react.useCallback(
     async (id: string, alias: string) => {
       console.log('setLobbyAlias', id, alias);
       const { data } = await fetch(
@@ -332,7 +334,7 @@ export function useLobbySocket(
     [uniqueId],
   );
 
-  const leaveRoom = useCallback(
+  const leaveRoom = react.useCallback(
     async (_token: string) => {
       console.error('implement leave room');
     },

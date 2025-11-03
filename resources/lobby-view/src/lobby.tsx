@@ -1,3 +1,5 @@
+import React from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -11,7 +13,6 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
 import { useLobbySocket } from 'chia-gaming-lobby-connection';
@@ -49,6 +50,7 @@ const LobbyScreen = () => {
     generateRoom,
     joinRoom,
   } = useLobbySocket(
+    React,
     window.location.origin,
     uniqueId,
     myAlias,

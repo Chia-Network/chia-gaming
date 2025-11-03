@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -41,7 +42,7 @@ function getBlobSingleton(
   const deliverMessage = (msg: string) => {
     blobSingleton?.deliverMessage(msg);
   };
-  const peercon = useGameSocket(lobbyUrl, deliverMessage, () => {
+  const peercon = useGameSocket(React, lobbyUrl, deliverMessage, () => {
     blobSingleton?.kickSystem(2);
   }, getSearchParams());
 
