@@ -12,6 +12,8 @@ import {
   ListItemText,
   TextField,
   Typography,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -49,6 +51,7 @@ const LobbyScreen = () => {
     setLobbyAlias,
     generateRoom,
     joinRoom,
+    lobbyGames,
   } = useLobbySocket(
     window.location.origin,
     uniqueId,
@@ -226,14 +229,19 @@ const LobbyScreen = () => {
       <Dialog open={dialogOpen} onClose={closeDialog}>
         <DialogTitle>Create a Room</DialogTitle>
         <DialogContent>
-          <TextField
+          <Select
             label='Game'
             aria-label='game-id'
             fullWidth
-            margin='normal'
             value={gameChoice}
             onChange={(e) => setGameChoice(e.target.value)}
-          />
+          >
+            {lobbyGames.map((g) => {
+              return (
+                <MenuItem aria-label={`choose-${g.game}`} value={g.game}>{g.game}</MenuItem>
+              );
+            })}
+          </Select>
           {wagerValidationError ? (
             <Box mb={1}>{wagerValidationError}</Box>
           ) : (

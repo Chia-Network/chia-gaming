@@ -52,6 +52,12 @@ export interface GenerateRoomResult {
   token: string;
 }
 
+export interface GameDefinition {
+  game: string;
+  target: string;
+  expiration: number;
+}
+
 export interface ChatMessage {
   sender?: string;
   text: string;
@@ -147,7 +153,7 @@ const useGameSocket = (
   };
 };
 
-interface Player {
+export interface Player {
   id: string;
   alias: string;
   game: string;
@@ -168,6 +174,7 @@ export function useLobbySocket(
   const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<ChatEnvelope[]>([]);
   const [didJoin, setDidJoin] = useState(false);
+  const [lobbyGames, setLobbyGames] = useState<GameDefinition[]>([]);
   const socketRef = useRef<Socket>(undefined);
   console.log('fragment retrieved', fragment);
 
@@ -272,6 +279,9 @@ export function useLobbySocket(
 
       tryJoinRoom();
     });
+    socket.on('game_update', (g: GameDefinition[]) => {
+      setLobbyGames(g);
+    });
     socket.on('chat_message', (chatMsg: ChatEnvelope) => {
       setMessages((m: ChatEnvelope[]) => [...m, chatMsg]);
     });
@@ -351,6 +361,7 @@ export function useLobbySocket(
     setLobbyAlias,
     uniqueId,
     fragment,
+    lobbyGames,
   };
 }
 
