@@ -7,7 +7,7 @@
     "dist/**/*"
   ],
   "scripts": {
-    "build": "./node_modules/.bin/tsc --project .",
+    "build": "./node_modules/.bin/tsc --project . && npm prune --production",
     "test": "./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node --experimental-require-module node_modules/.bin/jest --useStderr",
     "lint": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs",
     "lint:fix": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs --fix",
@@ -23,16 +23,22 @@
     "@types/express": "^5.0.5",
     "@types/minimist": "^1.2.5",
     "@types/node": "^24.9.2",
-    "@types/react": "^19.2.2",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
     "esbuild": "^0.25.11",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "minimist": "^1.2.8",
-    "react": "19.2.0",
     "socket.io-client": "^4.8.1",
     "typescript": "^5.9.3",
     "uuid": "^13.0.0"
+  },
+  "peerDependencies": {
+    "@types/react": "19.2.0",
+    "react": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.0",
+    "react": "19.2.0"
   }
 }

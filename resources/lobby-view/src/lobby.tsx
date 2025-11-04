@@ -50,7 +50,6 @@ const LobbyScreen = () => {
     generateRoom,
     joinRoom,
   } = useLobbySocket(
-    React,
     window.location.origin,
     uniqueId,
     myAlias,

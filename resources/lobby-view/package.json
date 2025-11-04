@@ -25,8 +25,8 @@
     "@rollup/plugin-node-resolve": "^16.0.1",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.0",
-    "@types/react": "^18.0.0",
-    "@types/react-dom": "^18.0.0",
+    "@types/react": "19.2.0",
+    "@types/react-dom": "19.2.0",
     "@types/rx": "^4.1.4",
     "@types/socket.io-client": "^3.0.0",
     "chia-gaming-lobby-connection": "../lobby-connection",
@@ -34,15 +34,13 @@
     "clvm-lib": "^1.0.1",
     "esbuild": "^0.25.5",
     "extensionless": "^1.9.9",
-    "lobby-connection": "../lobby-connection",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "reconnecting-websocket": "^4.4.0",
     "rxjs": "^7.8.2",
     "socket.io": "^4.7.2",
     "socket.io-client": "^4.8.1",
-    "uuid": "^13.0.0",
-    "zod": "^3.24.4"
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@babel/cli": "^7.28.3",

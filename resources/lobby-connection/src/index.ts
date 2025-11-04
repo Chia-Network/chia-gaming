@@ -1,4 +1,5 @@
 import React from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import io, { Socket } from 'socket.io-client';
 
 export type GameState = 'idle' | 'searching' | 'playing';
@@ -63,7 +64,6 @@ export interface ChatEnvelope {
 }
 
 const useGameSocket = (
-  react: typeof React,
   lobbyUrl: string,
   deliverMessage: (m: string) => void,
   setSocketEnabled: (e: boolean) => void,
@@ -71,13 +71,13 @@ const useGameSocket = (
 ): UseGameSocketReturn => {
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
-  const socketRef = react.useRef<Socket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
 
-  const [gameState, setGameState] = react.useState<GameState>('idle');
-  const [wagerAmount, setWagerAmount] = react.useState<string>('');
-  const [playerCoins, setPlayerCoins] = react.useState<number>(100);
-  const [isPlayerTurn] = react.useState<boolean>(false);
-  const [playerNumber] = react.useState<number>(0);
+  const [gameState, setGameState] = useState<GameState>('idle');
+  const [wagerAmount, setWagerAmount] = useState<string>('');
+  const [playerCoins, setPlayerCoins] = useState<number>(100);
+  const [isPlayerTurn] = useState<boolean>(false);
+  const [playerNumber] = useState<number>(0);
 
   const eff = () => {
     let fullyConnected = false;
@@ -99,7 +99,7 @@ const useGameSocket = (
     }, 500);
 
     // When we receive a message from our peer, we know we're connected.
-    socket?.on('peer', (msg) => {
+    socket?.on('peer', (msg: any) => {
       if (msg.iStarted != iStarted && !fullyConnected) {
         // If they haven't seen our message yet, we know we're connected so
         // we can send a ping to them now.
@@ -156,7 +156,6 @@ interface Player {
 }
 
 export function useLobbySocket(
-  react: typeof React,
   lobbyUrl: string,
   uniqueId: string,
   alias: string,
@@ -165,14 +164,14 @@ export function useLobbySocket(
   fragment: any,
   navigate: (url: string) => void,
 ) {
-  const [players, setPlayers] = react.useState<Player[]>([]);
-  const [rooms, setRooms] = react.useState<Room[]>([]);
-  const [messages, setMessages] = react.useState<ChatEnvelope[]>([]);
-  const [didJoin, setDidJoin] = react.useState(false);
-  const socketRef = react.useRef<Socket>(undefined);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [messages, setMessages] = useState<ChatEnvelope[]>([]);
+  const [didJoin, setDidJoin] = useState(false);
+  const socketRef = useRef<Socket>(undefined);
   console.log('fragment retrieved', fragment);
 
-  const joinRoom = react.useCallback(
+  const joinRoom = useCallback(
     async (token: string) => {
       const { data } = await fetch(
         `${lobbyUrl}/lobby/join-room`,
@@ -254,7 +253,7 @@ export function useLobbySocket(
 
   tryJoinRoom();
 
-  react.useEffect(() => {
+  useEffect(() => {
     const socket = io(lobbyUrl);
     socketRef.current = socket;
 
@@ -265,16 +264,16 @@ export function useLobbySocket(
       const updated = Array.isArray(r) ? r : [r];
       // Determine whether we've been connected with someone based on the .host and .joined
       // members of the rooms.
-      setRooms((prev) => {
-        const map = new Map(prev.map((x) => [x.token, x]));
-        updated.forEach((x) => map.set(x.token, x));
+      setRooms((prev: Room[]) => {
+        const map = new Map(prev.map((x: Room) => [x.token, x]));
+        updated.forEach((x: Room) => map.set(x.token, x));
         return Array.from(map.values());
       });
 
       tryJoinRoom();
     });
     socket.on('chat_message', (chatMsg: ChatEnvelope) => {
-      setMessages((m) => [...m, chatMsg]);
+      setMessages((m: ChatEnvelope[]) => [...m, chatMsg]);
     });
 
     return () => {
@@ -283,7 +282,7 @@ export function useLobbySocket(
     };
   }, [uniqueId]);
 
-  const sendMessage = react.useCallback(
+  const sendMessage = useCallback(
     (msg: string) => {
       socketRef.current?.emit('chat_message', {
         alias,
@@ -293,7 +292,7 @@ export function useLobbySocket(
     [uniqueId],
   );
 
-  const generateRoom = react.useCallback(
+  const generateRoom = useCallback(
     async (
       game: string,
       amount: string,
@@ -316,7 +315,7 @@ export function useLobbySocket(
     [uniqueId],
   );
 
-  const setLobbyAlias = react.useCallback(
+  const setLobbyAlias = useCallback(
     async (id: string, alias: string) => {
       console.log('setLobbyAlias', id, alias);
       const { data } = await fetch(
@@ -334,7 +333,7 @@ export function useLobbySocket(
     [uniqueId],
   );
 
-  const leaveRoom = react.useCallback(
+  const leaveRoom = useCallback(
     async (_token: string) => {
       console.error('implement leave room');
     },
