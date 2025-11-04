@@ -5,9 +5,10 @@ import Gallery from './components/Gallery';
 import Game from './components/Game';
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
-import { getGameSelection, getSearchParams } from './util';
+import { getGameSelection, getSearchParams, generateOrRetrieveUniqueId } from './util';
 
 const App = () => {
+  const uniqueId = generateOrRetrieveUniqueId();
   const gameSelection = getGameSelection();
   const params = getSearchParams();
   const shouldRedirectToLobby = !params.lobby && !params.iStarted;
@@ -38,10 +39,10 @@ const App = () => {
           console.log('navigate to lobby', urls);
           if (gameSelection) {
             setIframeUrl(
-              `${urls.tracker}&token=${gameSelection.token}&view=game`,
+              `${urls.tracker}&uniqueId=${uniqueId}&token=${gameSelection.token}&view=game`,
             );
           } else {
-            setIframeUrl(`${urls.tracker}&view=game`);
+            setIframeUrl(`${urls.tracker}&view=game&uniqueId=${uniqueId}`);
           }
         });
     }

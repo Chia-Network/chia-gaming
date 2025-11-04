@@ -298,7 +298,7 @@ export function useLobbySocket(
       amount: string,
       perGame: string,
     ): Promise<GenerateRoomResult> => {
-      const { data } = await fetch(
+      const data = await fetch(
         `${lobbyUrl}/lobby/generate-room`, {
           method: "POST",
           body: JSON.stringify({

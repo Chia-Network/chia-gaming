@@ -137,7 +137,9 @@ RUN mkdir -p /app/dist
 
 # Build the front-end / UI / UX within the container env
 COPY resources/gaming-fe /app/game/
-RUN cd /app/game && yarn run build && ls /
+RUN cd /app/game && yarn run build && \
+  cp -r /app/game/dist /app && \
+  cp -r /app/game/public /app
 
 # Build the lobby view
 COPY resources/lobby-view /app/lobby-view/
