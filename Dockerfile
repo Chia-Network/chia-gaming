@@ -165,5 +165,6 @@ COPY resources/nginx/urls /app/dist
 COPY resources/nginx/beacon.sh /app
 
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
-RUN echo 'cd /app && (cd /app/lobby-service && node ./dist/index-rollup.cjs --self http://localhost:3001 &) && (cd /app/wc && node ./dist/index.js &) && (nginx -g "daemon off;" &) && (/app/beacon.sh http://localhost:3000 http://localhost:3001 &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
+COPY resources/fe-test/scripts/test_env.sh /app
+
 CMD /bin/bash /app/test_env.sh
