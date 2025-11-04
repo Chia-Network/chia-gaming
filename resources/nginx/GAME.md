@@ -1,9 +1,9 @@
-Serving calpoker
+Serving the calpoker game
 ---
 
 Parts of the archive:
 
-```chia-game-deploy-x.y.z/...```
+```chia-gaming-game/```
 
 ...nginx/game.conf
 ===
@@ -20,7 +20,11 @@ Run this script from systemd or elsewhere when the game is being served like thi
 
 This will keep your game alive in the tracker.
 
-...app
+...dist
+===
+...public
+===
+...clsp
 ===
 
-Put the app directory in the directory you identified to nginx as ```$content_root```.
+Put these directories in the directory you identified to nginx as ```$content_root```.

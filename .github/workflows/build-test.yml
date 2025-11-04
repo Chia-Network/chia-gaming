@@ -256,27 +256,53 @@ jobs:
         python -m pip install toml
         export VERSION="$(./get_chia_gaming_version.py)"
         export SOURCE="${{ github.workspace }}/artifacts"
-        export TARGET="${{ github.workspace }}/chia-game-deploy-${VERSION}"
+        export TARGET="${{ github.workspace }}/chia-gaming-deploy"
+        export SHORT_GAME="chia-gaming-game-${VERSION}"
+        export SHORT_LOBBY="chia-gaming-lobby-${VERSION}"
+        export GAME="${TARGET}/${SHORT_GAME}"
+        export LOBBY="${TARGET}/${SHORT_LOBBY}"
+
         bash -x docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "mkdir -p /artifacts/nginx && cp -r /app /artifacts/app"
 
-        # Create a directory for one loose file
-        mkdir -p "${TARGET}/dist/js"
-        cp "${SOURCE}/app/dist/js/index-rollup.js" "${TARGET}/dist/js"
+        mkdir -p "${GAME}/dist"
+        mkdir -p "${GAME}/public"
+        mkdir -p "${GAME}/clsp"
+        mkdir -p "${GAME}/nginx"
 
-        # Copy multiple objects.
-        cp -r "${SOURCE}/app/dist/*wasm*" "${TARGET}/dist"
-        cp -r "${SOURCE}/app/clsp" "${TARGET}"
-        cp -r "${SOURCE}/app/public" "${TARGET}"
+        cp -r "${SOURCE}/app/game/dist/*" "${GAME}/dist"
+        cp -r "${SOURCE}/app/game/public/*" "${GAME}/public"
+        cp -r "${SOURCE}/app/clsp/*" "${GAME}/clsp"
 
-        # Nginx configuration
-        mkdir -p "${TARGET}/nginx"
-        cp -r resources/nginx/game.conf "${TARGET}/nginx"
-        cp -r resources/nginx/beacon.sh "${TARGET}/beacon.sh"
-        cp -r resources/nginx/README.txt "${TARGET}/README.txt"
+        cp -r resources/nginx/game.conf "${GAME}/nginx"
+        cp -r resources/nginx/beacon.sh "${GAME}/beacon.sh"
+        cp -r resources/nginx/GAME.md "${GAME}/README.md"
+
+        mkdir -p "${LOBBY}/dist"
+        mkdir -p "${LOBBY}/public"
+        mkdir -p "${LOBBY}/nginx"
+
+        cp -r "${SOURCE}/app/lobby/dist/*" "${LOBBY}/dist"
+        cp -r "${SOURCE}/app/lobby/public/*" "${LOBBY}/public"
+
+        cp -r resources/nginx/lobby.conf "${LOBBY}/nginx"
+        cp -r resources/nginx/LOBBY.md "${LOBBY}/README.md"
 
         # Zip
-        cd "${TARGET}/.."
-        zip -r "${TARGET}.zip" "chia-game-deploy-${VERSION}"
+        cd "${TARGET}"
+        zip -r "chia-gaming-frontend.zip" "${SHORT_GAME}"
+        zip -r "chia-gaming-lobby.zip" "${SHORT_LOBBY}"
+
+    - name: Archive chia-gaming-frontend
+      uses: actions/upload-artifact@v4
+      with:
+        name: chia-gaming-frontend.zip
+        path: ${{ github.workspace }}/chia-gaming-deploy/chia-gaming-frontend.zip
+
+    - name: Archive chia-gaming-lobby
+      uses: actions/upload-artifact@v4
+      with:
+        name: chia-gaming-lobby.zip
+        path: ${{ github.workspace }}/chia-gaming-deploy/chia-gaming-lobby.zip
 
     - name: Upload Release Artifacts
       if: env.RELEASE == 'true'
