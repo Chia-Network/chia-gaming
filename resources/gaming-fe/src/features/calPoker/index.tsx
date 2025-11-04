@@ -85,45 +85,45 @@ const Calpoker: React.FC<CalpokerProps> = ({
     'Finish game',
   ][moveNumber];
 
-  if (outcome) {
-    return (
-      <div id='total'>
-        <div id='overlay'> </div>
-        <Box p={4}>
-          <Typography variant='h4' align='center'>
-            {`Cal Poker - move ${moveNumber}`}
-          </Typography>
-          <br />
-          <Typography variant='h6' align='center' color={colors[color]}>
-            {banner}
-          </Typography>
-          <br />
-          <Box
-            display='flex'
-            flexDirection={{ xs: 'column', md: 'row' }}
-            alignItems='stretch'
-            gap={2}
-            mb={4}
-          >
-            <Box flex={1} display='flex' flexDirection='column'>
-              <GameEndPlayer
-                iStarted={iStarted}
-                playerNumber={iStarted ? 1 : 2}
-                outcome={outcome}
-              />
-            </Box>
-            <Box flex={1} display='flex' flexDirection='column'>
-              <GameEndPlayer
-                iStarted={iStarted}
-                playerNumber={iStarted ? 2 : 1}
-                outcome={outcome}
-              />
-            </Box>
-          </Box>
-        </Box>
-      </div>
-    );
-  }
+  // if (outcome) {
+  //   return (
+  //     <div id='total'>
+  //       <div id='overlay'> </div>
+  //       <Box p={4}>
+  //         <Typography variant='h4' align='center'>
+  //           {`Cal Poker - move ${moveNumber}`}
+  //         </Typography>
+  //         <br />
+  //         <Typography variant='h6' align='center' color={colors[color]}>
+  //           {banner}
+  //         </Typography>
+  //         <br />
+  //         <Box
+  //           display='flex'
+  //           flexDirection={{ xs: 'column', md: 'row' }}
+  //           alignItems='stretch'
+  //           gap={2}
+  //           mb={4}
+  //         >
+  //           <Box flex={1} display='flex' flexDirection='column'>
+  //             <GameEndPlayer
+  //               iStarted={iStarted}
+  //               playerNumber={iStarted ? 1 : 2}
+  //               outcome={outcome}
+  //             />
+  //           </Box>
+  //           <Box flex={1} display='flex' flexDirection='column'>
+  //             <GameEndPlayer
+  //               iStarted={iStarted}
+  //               playerNumber={iStarted ? 2 : 1}
+  //               outcome={outcome}
+  //             />
+  //           </Box>
+  //         </Box>
+  //       </Box>
+  //     </div>
+  //   );
+  // }
 
   const balanceDisplay =
     ourShare !== undefined && theirShare !== undefined

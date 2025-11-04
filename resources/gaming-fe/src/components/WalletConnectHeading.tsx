@@ -9,6 +9,7 @@ import {
   Divider,
   Fab,
   IconButton,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { useCallback, useState, useEffect } from 'react';
@@ -27,7 +28,12 @@ import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
-import { BugReportOutlined, Close, LocalActivity } from '@mui/icons-material';
+import {
+  BugReportOutlined,
+  Close,
+  ContentCopy,
+  LocalActivity,
+} from '@mui/icons-material';
 import WalletBadge from './WalletBadge';
 import WalletStatus from './WalletStatus';
 
@@ -424,7 +430,7 @@ const WalletConnectHeading = (_args: any) => {
                 </Box>
               </>
             ) : fakeAddress ? (
-              <Typography style={{}}>Simulator {fakeAddress}</Typography>
+              <></>
             ) : (
               <WalletStatus />
             )}
@@ -449,6 +455,36 @@ const WalletConnectHeading = (_args: any) => {
               </Typography>
               <Box>
                 <WalletBadge sessionConnected={sessionConnected} />
+              </Box>
+              <Box>
+                {fakeAddress && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Typography
+                      sx={{
+                        fontSize: { xs: '0.85rem', sm: '0.9rem' },
+                        color: '#424F6D',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {`${fakeAddress.slice(0, 3)}...${fakeAddress.slice(-3)}`}
+                    </Typography>
+
+                    <Tooltip title='Copy address'>
+                      <IconButton
+                        size='small'
+                        onClick={() =>
+                          navigator.clipboard.writeText(fakeAddress)
+                        }
+                        sx={{
+                          color: '#555555',
+                          '&:hover': { color: '#000000' },
+                        }}
+                      >
+                        <ContentCopy sx={{ fontSize: 16 }} />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                )}
               </Box>
             </Box>
 
@@ -495,16 +531,29 @@ const WalletConnectHeading = (_args: any) => {
         aria-label='debug'
         onClick={() => setDebugOpen(true)}
         sx={{
-          color: '#000000',
+          color: '#000',
           position: 'fixed',
           bottom: 24,
           right: 24,
           bgcolor: 'white',
-          boxShadow: 2,
-          '&:hover': { bgcolor: '#7A8398', color: 'white' },
+          border: '1px solid #ccc',
+          borderRadius: '0 12px 12px 0', // right rounded
+          boxShadow: '0px 4px 12px rgba(0,0,0,0.2)',
+          px: 1.5,
+          py: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'all 0.25s ease',
+          '&:hover': {
+            bgcolor: '#7A8398',
+            color: 'white',
+            transform: 'translateY(-2px)',
+            boxShadow: '0px 6px 16px rgba(0,0,0,0.25)',
+          },
         }}
       >
-        <BugReportOutlined />
+        <BugReportOutlined sx={{ fontSize: 22 }} />
       </IconButton>
 
       {/* Debug Modal */}

@@ -49,6 +49,7 @@
     "extensionless": "^1.9.9",
     "framer-motion": "^12.23.24",
     "helmet": "^7.1.0",
+    "lucide-react": "^0.552.0",
     "minimist": "^1.2.8",
     "node-fetch": "^3.3.2",
     "qrcode": "^1.5.4",

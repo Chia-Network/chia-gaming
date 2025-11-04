@@ -23,9 +23,11 @@ import {
   SportsEsports,
   PeopleAlt,
   ContentCopy,
+  WorkspacePremiumOutlined,
 } from '@mui/icons-material';
 import { useLobbySocket } from '../hooks/useLobbyConnection';
 import { generateOrRetrieveAlias, updateAlias } from '../util';
+import { Crown } from 'lucide-react';
 
 const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
@@ -44,7 +46,7 @@ const LobbyScreen = () => {
 
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [gameChoice, setGameChoice] = useState('');
+  const [gameChoice, setGameChoice] = useState(lobbyGames[0]?.game || '');
   const [wagerInput, setWagerInputPrimitive] = useState('');
   const [wagerValidationError, setWagerValidationError] = useState('');
   const [perHandInput, setPerHandInput] = useState('');
@@ -118,6 +120,12 @@ const LobbyScreen = () => {
     return player ? player.alias : `Unknown Player (${id})`;
   }
 
+  useEffect(() => {
+    if (lobbyGames.length > 0 && !gameChoice) {
+      setGameChoice(lobbyGames[0].game);
+    }
+  }, [lobbyGames, gameChoice]);
+
   const shortenedUrl =
     secureUrl?.length > 40 ? `${secureUrl.slice(0, 40)}...` : secureUrl;
 
@@ -141,9 +149,6 @@ const LobbyScreen = () => {
           <Typography variant='h5' fontWeight={700}>
             Game Lobby
           </Typography>
-          <Typography variant='body2' color='text.secondary'>
-            Alias: {myAlias}
-          </Typography>
         </Box>
         <Button
           variant='outlined'
@@ -157,10 +162,10 @@ const LobbyScreen = () => {
             textTransform: 'uppercase',
             borderRadius: '6px',
             padding: '8px 20px',
-            boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.25)',
+            boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
             '&:hover': {
-              bgcolor: '#7A8398',
-              boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
+              bgcolor: '#EBECEE',
+              boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.45)',
             },
           }}
         >
@@ -181,12 +186,27 @@ const LobbyScreen = () => {
         sx={{
           display: 'flex',
           flexDirection: { xs: 'column', md: 'row' },
-          gap: 3,
+          border: { md: '1px solid #d1d5db' },
+          gap: { xs: 3, md: 0 },
         }}
       >
         {/* Active Rooms */}
-        <Box sx={{ flex: 2 }}>
-          <Card variant='outlined' sx={{ borderRadius: 3 }}>
+        <Box
+          sx={{
+            flex: 2,
+            borderRight: { md: '1px solid #d1d5db' },
+            pr: { md: 0, xs: 0 },
+          }}
+        >
+          <Card
+            variant='outlined'
+            sx={{
+              borderRadius: 0,
+              border: 'none',
+              boxShadow: 'none',
+              height: { md: 'calc(100vh - 200px)', xs: 'auto' }, // use available height on desktop
+            }}
+          >
             <CardContent>
               <Stack
                 direction={{ xs: 'column', sm: 'row' }}
@@ -211,10 +231,10 @@ const LobbyScreen = () => {
                     textTransform: 'uppercase',
                     borderRadius: '6px',
                     padding: '8px 20px',
-                    boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.25)',
+                    boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
                     '&:hover': {
                       backgroundColor: '#3A4663',
-                      boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
+                      boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.45)',
                     },
                   }}
                 >
@@ -254,13 +274,13 @@ const LobbyScreen = () => {
                   >
                     <Box>
                       <Typography variant='subtitle1' fontWeight={600}>
-                        {r.game || 'Unknown Game'}
+                        {r.token || 'Unknown Game'}
                       </Typography>
                       <Typography variant='body2' color='text.secondary'>
                         Host: {getPlayerAlias(r.host)}
                       </Typography>
                       <Typography variant='body2' color='text.secondary'>
-                        Token: {r.token}
+                        Game: {r.game}
                       </Typography>
                     </Box>
                     <Button
@@ -271,10 +291,10 @@ const LobbyScreen = () => {
                         alignSelf: { xs: 'flex-end', sm: 'center' },
                         backgroundColor: '#424F6D',
                         color: '#fff',
-                        boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.25)',
+                        boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
                         '&:hover': {
                           backgroundColor: '#3A4663',
-                          boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
+                          boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.45)',
                         },
                       }}
                     >
@@ -288,8 +308,16 @@ const LobbyScreen = () => {
         </Box>
 
         {/* Connected Players */}
-        <Box sx={{ flex: 1 }}>
-          <Card variant='outlined' sx={{ borderRadius: 3 }}>
+        <Box sx={{ flex: 1, borderLeft: { md: '1px solid #d1d5db' } }}>
+          <Card
+            variant='outlined'
+            sx={{
+              borderRadius: 0,
+              border: 'none',
+              boxShadow: 'none',
+              height: { md: 'calc(100vh - 200px)', xs: 'auto' },
+            }}
+          >
             <CardContent>
               <Stack
                 direction='row'
@@ -375,11 +403,27 @@ const LobbyScreen = () => {
                   </Typography>
                 </Box>
               ) : (
-                players.map((player) => (
+                players.map((player, index) => (
                   <Typography key={player.id} variant='body2' mb={0.5}>
-                    {player.id === uniqueId
-                      ? `${player.alias} (You)`
-                      : player.alias}
+                    {index + 1}:&nbsp;
+                    {player.id === uniqueId ? (
+                      <>
+                        <Box
+                          component='span'
+                          sx={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                          }}
+                        >
+                          {player.alias}
+                          &nbsp;(You)
+                          <Crown className='w-5 h-5 text-yellow-500' />
+                        </Box>
+                      </>
+                    ) : (
+                      player.alias
+                    )}
                   </Typography>
                 ))
               )}
@@ -391,18 +435,32 @@ const LobbyScreen = () => {
       {/* Floating Chat Button */}
       <IconButton
         sx={{
-          color: '#000000',
+          color: '#000',
           position: 'fixed',
           bottom: 24,
-          right: 64,
+          right: 72,
           bgcolor: 'white',
-          boxShadow: 2,
-          '&:hover': { bgcolor: '#7A8398', color: 'white' },
+          border: '1px solid #ccc',
+          borderRadius: '12px 0 0 12px', // left rounded
+          borderRight: 'none', // removes right border so it connects
+          boxShadow: '0px 4px 12px rgba(0,0,0,0.2)',
+          px: 1.5,
+          py: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'all 0.25s ease',
+          '&:hover': {
+            bgcolor: '#7A8398',
+            color: 'white',
+            transform: 'translateY(-2px)',
+            boxShadow: '0px 6px 16px rgba(0,0,0,0.25)',
+          },
         }}
         onClick={() => setChatOpen(!chatOpen)}
         aria-label='open-chat'
       >
-        <ChatBubbleOutline />
+        <ChatBubbleOutline sx={{ fontSize: 22 }} />
       </IconButton>
 
       {/* Chat Window */}
@@ -474,13 +532,15 @@ const LobbyScreen = () => {
             label='Game'
             aria-label='game-id'
             fullWidth
-            
+            sx={{ color: '#555555' }}
             value={gameChoice}
             onChange={(e) => setGameChoice(e.target.value)}
           >
             {lobbyGames.map((g) => {
               return (
-                <MenuItem aria-label={`choose-${g.game}`} value={g.game}>{g.game}</MenuItem>
+                <MenuItem aria-label={`choose-${g.game}`} value={g.game}>
+                  {g.game}
+                </MenuItem>
               );
             })}
           </Select>

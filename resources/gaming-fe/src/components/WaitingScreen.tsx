@@ -99,22 +99,6 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
               filter: 'drop-shadow(0 0 4px rgba(66,79,109,0.3))',
             }}
           />
-          <Box
-            sx={{
-              top: 0,
-              left: 0,
-              bottom: 0,
-              right: 0,
-              position: 'absolute',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Typography variant="caption" sx={{ fontWeight: 600, color: '#424F6D' }}>
-              Loading
-            </Typography>
-          </Box>
         </Box>
       </motion.div>
     </Box>
