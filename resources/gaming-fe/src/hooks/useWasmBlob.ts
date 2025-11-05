@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-
+import {
+  WasmStateInit,
+  doInternalLoadWasm,
+  fetchHex,
+  storeInitArgs,
+  loadCalpoker,
+} from './WasmStateInit';
 import { GAME_SERVICE_URL } from '../settings';
 import {
   GameConnectionState,
@@ -10,8 +16,9 @@ import {
   BlockchainReport,
   OutcomeLogLine,
   handValueToDescription,
+  RngId,
 } from '../types/ChiaGaming';
-import { getSearchParams } from '../util';
+import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
 
 import { blockchainConnector } from './BlockchainConnector';
 import { blockchainDataEmitter } from './BlockchainInfo';
@@ -25,6 +32,7 @@ import useGameSocket from './useGameSocket';
 import { setupBlockchainConnection } from './useBlockchainConnection';
 
 let blobSingleton: any = null;
+let initStarted = false;
 
 function getBlobSingleton(
   blockchain: InternalBlockchainInterface,
@@ -105,6 +113,9 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
+  const [wasmStateInit, setWasmStateInit] = useState<WasmStateInit>(
+    new WasmStateInit(doInternalLoadWasm, fetchHex),
+  );
   const amount = parseInt(searchParams.amount);
 
   let perGameAmount = amount / 10;
@@ -207,9 +218,24 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setTheirShare: setTheirShare
   };
 
+  function setState(state: any): void {
+    if (state.setMyTurn !== undefined) {
+      console.log('state.setMyTurn:', state);
+    }
+    const keys = Object.keys(state);
+    keys.forEach((k) => {
+      if (settable[k]) {
+        // console.warn(k, state[k]);
+        settable[k](state[k]);
+      }
+    });
+  }
+
   useEffect(() => {
-    if (!gameObject) {
+    if (initStarted) {
       return;
+    } else {
+      initStarted = true;
     }
 
     const subscription = gameObject.getObservable().subscribe({
@@ -221,12 +247,41 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
             settable[k](state[k]);
           }
         });
-      },
+      }
     });
+
+    // pass wasmconnection into wasmblobwrapper
+    empty().then(async () => {
+      let wasmConnection = await wasmStateInit.getWasmConnection();
+      gameObject.loadWasm(wasmConnection);
+      let calpokerHex = await loadCalpoker(fetchHex);
+      let seed = getRandomInt(1<<31);
+      let seedStr = getEvenHexString(seed);
+      let rngId = wasmConnection.create_rng(seedStr);
+      let identity = wasmConnection.chia_identity(rngId);
+      let address = await blockchain.getAddress();
+      let cradle = wasmStateInit.createGame(calpokerHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
+      gameObject.setGameCradle(cradle);
+      let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
+      gameObject.activateSpend(coin);
+    });
+
     return () => {
       subscription.unsubscribe();
-    };
+    }
   });
+
+
+  // Called once at an arbitrary time.
+  (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
+    console.log(
+      'Wasm init: storing chia_gaming_init=',
+      chia_gaming_init,
+      'and cg=',
+      cg,
+    );
+    storeInitArgs(chia_gaming_init, cg);
+  }, []);
 
   return {
     error,
