@@ -22,15 +22,15 @@ use chia_gaming::common::standard_coin::{puzzle_hash_for_pk, ChiaIdentity};
 
 use chia_gaming::common::types;
 use chia_gaming::common::types::{
-    chia_dialect, convert_coinset_org_spend_to_spend, map_m, Aggsig, AllocEncoder, Amount,
-    CoinCondition, CoinID, CoinSpend, CoinString, CoinsetCoin, CoinsetSpendBundle,
-    CoinsetSpendRecord, GameID, Hash, IntoErr, PrivateKey, Program, PublicKey, PuzzleHash,
-    Sha256Input, Spend, SpendBundle, Timeout,
+    chia_dialect, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinSpend, CoinsetSpendBundle,
+    CoinsetSpendRecord, CoinsetCoin, CoinString, GameID, GameType, Hash, IntoErr, PrivateKey, Program, PublicKey,
+    PuzzleHash, Sha256Input, Spend, SpendBundle, Timeout, convert_coinset_org_spend_to_spend, map_m
 };
 use chia_gaming::peer_container::{
     GameCradle, IdleResult, SynchronousGameCradle, SynchronousGameCradleConfig, WatchReport,
 };
-use chia_gaming::potato_handler::types::{GameFactory, GameStart, GameType, ToLocalUI};
+use chia_gaming::potato_handler::types::{GameFactory, ToLocalUI};
+use chia_gaming::potato_handler::start::GameStart;
 use chia_gaming::shutdown::BasicShutdownConditions;
 
 #[cfg(target_arch = "wasm32")]

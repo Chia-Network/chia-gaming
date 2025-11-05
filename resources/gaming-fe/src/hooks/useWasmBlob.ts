@@ -66,7 +66,9 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [outcome, setOutcome] = useState<CalpokerOutcome | undefined>(
     undefined,
   );
-  const [finalPlayerHand, setFinalPlayerHand] = useState<string[]>([]);
+  const [lastOutcome, setLastOutcome] = useState<CalpokerOutcome | undefined>(
+    undefined,
+  );
   const [isPlayerTurn, setMyTurn] = useState<boolean>(false);
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
@@ -218,6 +220,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       },
     });
     return calpokerFactory;
+    setLastOutcome: setLastOutcome,
   };
 
   useEffect(() => {
@@ -449,5 +452,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setCardSelections,
     stopPlaying,
     outcome,
+    lastOutcome,
   };
 }

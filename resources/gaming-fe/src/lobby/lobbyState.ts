@@ -127,4 +127,8 @@ export class Lobby {
   getTracking(): string[] {
     return listOfObject(this.games).map((g) => g.target);
   }
+
+  getGames(): GameDefinition[] {
+    return listOfObject(this.games);
+  }
 }

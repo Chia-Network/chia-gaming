@@ -680,7 +680,7 @@ export interface OutcomeLogLine {
   opponentHand: number[][];
 }
 
-export const suitNames = ['Q', '♥', '♦', '♤', '♧'];
+export const suitNames = ['Q', '♥', '♦', '♠', '♣'];
 
 function aget<T>(handValue: T[], choice: number, def: T): T {
   if (choice > handValue.length || choice < 0) {

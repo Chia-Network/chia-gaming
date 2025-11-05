@@ -8,6 +8,7 @@ import { CalpokerOutcome, OutcomeLogLine } from '../types/ChiaGaming';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
+  lastOutcome: CalpokerOutcome | undefined;
   ourShare: number | undefined;
   theirShare: number | undefined;
   moveNumber: number;
@@ -26,6 +27,7 @@ export interface CalpokerProps {
 
 const Calpoker: React.FC<CalpokerProps> = ({
   outcome,
+  lastOutcome,
   ourShare,
   theirShare,
   moveNumber,
