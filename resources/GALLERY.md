@@ -89,10 +89,12 @@ Running:
      "cardSelections": 3,
      "setCardSelections": "*function",
      "handleMakeMove": "*function",
-     "stopPlaying": "*function"
+     "stopPlaying": "*function",
+     "log": [],
+     "addressData": {}
     }
 
-Game end:
+Game end: (lastOutcome can also be added here)
 
     {"iStarted": true, "playerNumber":1,
      "moveNumber": 2, "outcome":{
@@ -110,4 +112,7 @@ Game end:
         "bob_final_hand": [[3,1],[4,1],[5,1],[6,2],[8,3],[9,1],[9,2],[10,3]],
         "alice_used_cards": [[3,2],[3,3],[5,1],[5,4],[13,3]],
         "bob_used_cards": [[3,1],[4,1],[5,1],[6,2],[8,3]]
-    }}
+     },
+     "log": [],
+     "addressData": {}
+    }
