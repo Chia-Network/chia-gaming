@@ -193,6 +193,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setAddressData: setAddressData,
     setOurShare: setOurShare,
     setTheirShare: setTheirShare,
+    setLastOutcome: setLastOutcome,
   };
 
   function setState(state: any): void {
@@ -220,7 +221,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       },
     });
     return calpokerFactory;
-    setLastOutcome: setLastOutcome,
   };
 
   useEffect(() => {
