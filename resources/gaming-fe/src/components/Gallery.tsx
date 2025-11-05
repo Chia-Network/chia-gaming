@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 import { ErrorBoundary } from './ErrorBoundary';
+import CaliforniaPoker from "./BramVibe1";
 import Calpoker from './Calpoker';
 import GameEndPlayer from './GameEndPlayer';
 import GameLog from './GameLog';
@@ -15,6 +16,7 @@ import WalletConnectHeading from './WalletConnectHeading';
 
 const componentList: Record<string, any> = {
   LobbyScreen: LobbyScreen as any,
+  BramVibe1: CaliforniaPoker as any,
   Calpoker: Calpoker as any,
   PlayerSection: PlayerSection as any,
   OpponentSection: OpponentSection as any,

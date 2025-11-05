@@ -111,6 +111,9 @@ async function serveDirectory(dir: string, req: any, res: any) {
 app.get('/', async (req: any, res: any) => {
   serveFile('public/index.html', 'text/html', false, res);
 });
+app.get('/index.css', async (req: any, res: any) => {
+  serveFile('dist/css/index.css', 'text/css', false, res);
+});
 app.get('/index.js', async (_req: any, res: any) => {
   serveFile('dist/js/index-rollup.js', 'application/javascript', true, res);
 });

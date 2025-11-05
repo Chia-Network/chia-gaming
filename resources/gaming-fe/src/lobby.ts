@@ -103,6 +103,9 @@ async function serveFile(file: string, contentType: string, res: any) {
 app.get('/', async (_req: any, res: any) => {
   serveFile('public/index.html', 'text/html', res);
 });
+app.get('/index.css', async (req: any, res: any) => {
+  serveFile('dist/css/index.css', 'text/css', res);
+});
 app.get('/index.js', async (_req: any, res: any) => {
   serveFile('dist/js/index-rollup.js', 'application/javascript', res);
 });
