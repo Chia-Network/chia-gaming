@@ -232,23 +232,17 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   }
 
   useEffect(() => {
+    const subscription = gameObject.getObservable().subscribe({
+      next: (state: any) => setState(state)
+    });
+
     if (initStarted) {
-      return;
+      return () => {
+        subscription.unsubscribe();
+      };
     } else {
       initStarted = true;
     }
-
-    const subscription = gameObject.getObservable().subscribe({
-      next: (state: any) => {
-        const keys = Object.keys(state);
-        keys.forEach((k) => {
-          if (settable[k]) {
-            console.warn(k, state[k]);
-            settable[k](state[k]);
-          }
-        });
-      }
-    });
 
     // pass wasmconnection into wasmblobwrapper
     empty().then(async () => {
@@ -260,6 +254,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       let rngId = wasmConnection.create_rng(seedStr);
       let identity = wasmConnection.chia_identity(rngId);
       let address = await blockchain.getAddress();
+      gameObject.setBlockchainAddress(address);
       let cradle = wasmStateInit.createGame(calpokerHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
       gameObject.setGameCradle(cradle);
       let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
