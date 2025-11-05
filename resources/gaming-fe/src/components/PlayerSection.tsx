@@ -25,6 +25,7 @@ const PlayerSection = ({
 }: PlayerSectionProps) => {
   const doHandleMakeMove = () => {
     const moveData = '80';
+    console.log('PlayerSection::doHandleMakeMove');
     handleMakeMove(moveData);
   };
   const setSelection = (index: number, selected: boolean) => {

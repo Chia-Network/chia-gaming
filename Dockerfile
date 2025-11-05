@@ -20,7 +20,7 @@ RUN apt-get update -y && \
     mkdir -p /app/rust/src && mkdir -p /app/rust/wasm/src && \
     sh -c "echo > /app/rust/src/lib.rs" && \
     sh -c "echo > /app/rust/wasm/src/mod.rs"
-    
+
 WORKDIR /app
 ADD clsp /app/clsp
 
@@ -55,7 +55,7 @@ RUN --mount=type=tmpfs,dst=/app \
   cp -r /preinst/* /app && \
   cd /app && yarn install && \
   mv /app/node_modules /preinst/ && \
-  mv /app/package.json /preinst/ 
+  mv /app/package.json /preinst/
 
 RUN --mount=type=tmpfs,dst=/app \
   mkdir -p /app/wc/ && \
@@ -118,6 +118,8 @@ RUN ln -s /app/resources /resources
 ADD clsp /app/clsp
 RUN ln -s /app/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
-RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
-RUN echo 'cd /app && (node ./dist/js/lobby-rollup.cjs --self http://localhost:3001 &) && (sleep 10 ; ALLOW_REWRITING=1 node ./dist/js/server-rollup.cjs --self http://localhost:3000 --tracker http://localhost:3001 "${@}" &) && (cd /app/wc && node ./dist/index.js &) && . /app/test/bin/activate && RUST_LOG=debug python3 run_simulator.py' > /app/test_env.sh && chmod +x /app/test_env.sh
-CMD /bin/bash /app/test_env.sh
+COPY resources/gaming-fe/scripts/start-system.sh /app/
+COPY resources/gaming-fe/scripts/run_simulator.py /app/
+RUN chmod +x /app/start-system.sh /app/run_simulator.py
+
+CMD /app/start-system.sh

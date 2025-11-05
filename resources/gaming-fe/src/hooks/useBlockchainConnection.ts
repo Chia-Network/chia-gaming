@@ -15,15 +15,17 @@ export function setupBlockchainConnection(uniqueId: string) {
       if (evt.origin !== window.location.origin) {
         if (data.blockchain_reply.getBalance) {
           // This origin should be in the list of games that's advertising to us.
-          fetch('/lobby/tracking').then(res => res.json()).then((tracking) => {
-            const matchingTracked = tracking.map((t: string) => {
-              const u = new URL(t);
-              return u.origin == evt.origin;
+          fetch('/lobby/tracking')
+            .then((res) => res.json())
+            .then((tracking) => {
+              const matchingTracked = tracking.map((t: string) => {
+                const u = new URL(t);
+                return u.origin == evt.origin;
+              });
+              if (matchingTracked.length !== 0) {
+                blockchainConnector.getInbound().next(data.blockchain_reply);
+              }
             });
-            if (matchingTracked.length !== 0) {
-              blockchainConnector.getInbound().next(data.blockchain_reply);
-            }
-          });
 
           return;
         }

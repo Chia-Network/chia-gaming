@@ -59,7 +59,7 @@ const WalletConnectHeading = (_args: any) => {
   function requestBalance() {
     blockchainConnector.getOutbound().next({
       requestId: -1,
-      getBalance: true
+      getBalance: true,
     });
   }
 
@@ -311,11 +311,8 @@ const WalletConnectHeading = (_args: any) => {
     <div style={{ display: 'flex', width: '100%', height: 0 }}></div>
   );
 
-  const balanceDisplay = (balance !== undefined) ? (
-    <div>- Balance {balance}</div>
-  ) : (
-    <div/>
-  );
+  const balanceDisplay =
+    balance !== undefined ? <div>- Balance {balance}</div> : <div />;
 
   return (
     <div

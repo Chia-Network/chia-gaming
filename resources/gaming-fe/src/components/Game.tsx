@@ -10,6 +10,7 @@ import Calpoker from './Calpoker';
 const Game = () => {
   const uniqueId = generateOrRetrieveUniqueId();
   const params = getSearchParams();
+  console.log(`Calling useWasmBlob(${params.lobbyUrl}, ${uniqueId})`);
   const {
     error,
     log,

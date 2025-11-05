@@ -1,9 +1,23 @@
-import { useState, useRef } from 'react';
+import { getSearchParams } from '../util';
 import io, { Socket } from 'socket.io-client';
 
-import { getSearchParams } from '../util';
-
 export type GameState = 'idle' | 'searching' | 'playing';
+
+interface StartGameData {
+  playerHand: string[];
+  opponentHand: string[];
+  playerNumber: number;
+  opponentWager: string;
+  wagerAmount: string;
+  currentTurn: number;
+}
+
+interface ActionData {
+  type: 'bet' | 'endTurn' | 'move';
+  actionBy: number;
+  amount?: number;
+  currentTurn?: number;
+}
 
 interface SendMessageInput {
   party: boolean;
@@ -11,50 +25,63 @@ interface SendMessageInput {
   msg: string;
 }
 
-export interface UseGameSocketReturn {
+export interface GameSocketReturn {
   sendMessage: (input: string) => void;
   gameState: GameState;
   wagerAmount: string;
   setWagerAmount: (value: string) => void;
+  opponentWager: string;
+  log: string[];
+  playerHand: string[];
+  opponentHand: string[];
   playerCoins: number;
-  setPlayerCoins: React.Dispatch<React.SetStateAction<number>>;
+  setPlayerCoins: (playerCoins: number) => void;
+  opponentCoins: number;
   isPlayerTurn: boolean;
   playerNumber: number;
 }
 
-const useGameSocket = (
+export const getGameSocket = (
   lobbyUrl: string,
   deliverMessage: (m: string) => void,
   setSocketEnabled: (e: boolean) => void,
-): UseGameSocketReturn => {
+): GameSocketReturn => {
   const searchParams = getSearchParams();
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
-  const socketRef = useRef<Socket | null>(null);
 
-  const [gameState, setGameState] = useState<GameState>('idle');
-  const [wagerAmount, setWagerAmount] = useState<string>('');
-  const [playerCoins, setPlayerCoins] = useState<number>(100);
-  const [isPlayerTurn] = useState<boolean>(false);
-  const [playerNumber] = useState<number>(0);
+  let socketRef: Socket | null = null;
+  let playerNumberRef: number = 0;
+
+  let gameState: GameState = 'idle';
+  let wagerAmount = '';
+  let opponentWager = '';
+  let log: string[] = [];
+  let playerHand: string[] = [];
+  let opponentHand: string[] = [];
+  let playerCoins = 100;
+  let opponentCoins = 100;
+  let room = '';
+  let isPlayerTurn = false;
+  let playerNumber = 0;
 
   const eff = () => {
     let fullyConnected = false;
-    if (!socketRef.current) {
+    if (!socketRef) {
       const socketResult: any = io(lobbyUrl);
-      socketRef.current = socketResult;
+      socketRef = socketResult;
     }
-    const socket = socketRef.current;
+    const socket = socketRef;
 
     const handleWaiting = () => {
-      setGameState('searching');
+      gameState = 'searching';
     };
 
     socket?.on('waiting', handleWaiting);
 
     // Try to get through a 'peer' message until we succeed.
     const beacon = setInterval(() => {
-      socketRef.current?.emit('peer', { iStarted });
+      socketRef?.emit('peer', { iStarted });
     }, 500);
 
     // When we receive a message from our peer, we know we're connected.
@@ -63,7 +90,7 @@ const useGameSocket = (
         // If they haven't seen our message yet, we know we're connected so
         // we can send a ping to them now.
         fullyConnected = true;
-        socketRef.current?.emit('peer', { iStarted });
+        socketRef?.emit('peer', { iStarted });
         clearInterval(beacon);
         setSocketEnabled(true);
       }
@@ -87,11 +114,19 @@ const useGameSocket = (
   eff();
 
   const sendMessage = (msg: string) => {
-    socketRef.current?.emit('game_message', {
+    socketRef?.emit('game_message', {
       party: iStarted,
       token,
       msg,
     });
+  };
+
+  let setWagerAmount = (newWager: string) => {
+    wagerAmount = newWager;
+  };
+
+  let setPlayerCoins = (newPlayerCoins: number) => {
+    playerCoins = newPlayerCoins;
   };
 
   return {
@@ -99,11 +134,14 @@ const useGameSocket = (
     gameState,
     wagerAmount,
     setWagerAmount,
+    opponentWager,
+    log,
+    playerHand,
+    opponentHand,
     playerCoins,
     setPlayerCoins,
+    opponentCoins,
     isPlayerTurn,
     playerNumber,
   };
 };
-
-export default useGameSocket;

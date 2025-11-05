@@ -88,14 +88,10 @@ export class ChildFrameBlockchainInterface {
     let requestId = requestNumber++;
     let request = {
       requestId,
-      getBalance: { walletId: 1 }
+      getBalance: { walletId: 1 },
     };
 
-    return performTransaction(
-      (e: any) => e.getBalance,
-      requestId,
-      request
-    );
+    return performTransaction((e: any) => e.getBalance, requestId, request);
   }
 
   getObservable() {

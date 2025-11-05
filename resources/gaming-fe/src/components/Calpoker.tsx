@@ -115,8 +115,9 @@ const Calpoker: React.FC<CalpokerProps> = ({
   }
 
   const balanceDisplay =
-    (ourShare !== undefined && theirShare !== undefined) ?
-    ` - Our Share ${ourShare} vs ${theirShare}` : '';
+    ourShare !== undefined && theirShare !== undefined
+      ? ` - Our Share ${ourShare} vs ${theirShare}`
+      : '';
 
   return (
     <Box p={4}>

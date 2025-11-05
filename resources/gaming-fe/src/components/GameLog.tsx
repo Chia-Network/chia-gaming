@@ -25,7 +25,12 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
     setLogOpen(!logOpen);
   }, [logOpen]);
 
-  const cardDisplay = (c: number[], index: number, idPrefix: string, selected: boolean) => {
+  const cardDisplay = (
+    c: number[],
+    index: number,
+    idPrefix: string,
+    selected: boolean,
+  ) => {
     const suitName = suitNames[c[1]];
     const isRedSuit = suitName === '♥' || suitName === '♦';
     const suitColor = isRedSuit ? 'red' : 'black';
@@ -33,17 +38,33 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
       <Paper
         id={`${idPrefix}-${index}`}
         elevation={1}
-        style={{ color: suitColor, padding: '0.25em', marginLeft: '0.25em', background: (selected ? '#ddd' : 'white') }}
+        style={{
+          color: suitColor,
+          padding: '0.25em',
+          marginLeft: '0.25em',
+          background: selected ? '#ddd' : 'white',
+        }}
       >
         {c[0]}
         {suitName}
-        <span style={{ opacity: '0%', position: 'relative', width: 0, height: 0 }}>{selected ? '+' : ''}</span>
+        <span
+          style={{ opacity: '0%', position: 'relative', width: 0, height: 0 }}
+        >
+          {selected ? '+' : ''}
+        </span>
       </Paper>
-    )
+    );
   };
 
-  const playerDisplay = (me: boolean, label: string, desc: OutcomeHandType, hand: number[][]) => {
-    const cards = hand.map((c,i) => cardDisplay(c, i, `outcome-${me ? "me" : "opponent"}`, false));
+  const playerDisplay = (
+    me: boolean,
+    label: string,
+    desc: OutcomeHandType,
+    hand: number[][],
+  ) => {
+    const cards = hand.map((c, i) =>
+      cardDisplay(c, i, `outcome-${me ? 'me' : 'opponent'}`, false),
+    );
     return (
       <Typography
         style={{ display: 'flex', flexDirection: 'row', padding: '0.25em' }}
@@ -61,7 +82,13 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
 
   return (
     <Box mt={4}>
-      <Typography variant='h5' onClick={onClickHandler} aria-label="game-log-heading">Game & Transactions Log:</Typography>
+      <Typography
+        variant='h5'
+        onClick={onClickHandler}
+        aria-label='game-log-heading'
+      >
+        Game & Transactions Log:
+      </Typography>
       <br />
       <Paper
         elevation={1}
@@ -80,15 +107,19 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                 alignItems: 'baseline',
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`my-log-entry-${index}`}>
+              <div
+                style={{ display: 'flex', flexDirection: 'row' }}
+                aria-label={`my-log-entry-${index}`}
+              >
                 {playerDisplay(
                   true,
                   `my-used-hand-${index}`,
                   entry.myHandDescription,
-                  entry.myHand
-                )} {iWin}
+                  entry.myHand,
+                )}{' '}
+                {iWin}
               </div>
-            </Typography>
+            </Typography>,
           ];
           let opDivChildren = [
             <Typography
@@ -100,7 +131,10 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                 alignItems: 'baseline',
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`opponent-log-entry-${index}`}>
+              <div
+                style={{ display: 'flex', flexDirection: 'row' }}
+                aria-label={`opponent-log-entry-${index}`}
+              >
                 {playerDisplay(
                   false,
                   `opponent-used-hand-${index}`,
@@ -109,23 +143,49 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                 )}{' '}
                 {opWin}
               </div>
-            </Typography>
+            </Typography>,
           ];
           if (logOpen) {
             myDivChildren.push(
               <Typography style={{ display: 'flex', flexDirection: 'row' }}>
-                My Cards <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`my-start-hand-${index}`}>{entry.myStartHand.map((c,i) => cardDisplay(c, i, 'my-cards', (entry.myPicks & (1 << i)) != 0))}</div>
-              </Typography>
+                My Cards{' '}
+                <div
+                  style={{ display: 'flex', flexDirection: 'row' }}
+                  aria-label={`my-start-hand-${index}`}
+                >
+                  {entry.myStartHand.map((c, i) =>
+                    cardDisplay(
+                      c,
+                      i,
+                      'my-cards',
+                      (entry.myPicks & (1 << i)) != 0,
+                    ),
+                  )}
+                </div>
+              </Typography>,
             );
             opDivChildren.push(
               <Typography style={{ display: 'flex', flexDirection: 'row' }}>
-                Their Cards <div style={{ display: 'flex', flexDirection: 'row' }} aria-label={`opponent-start-hand-${index}`}>{entry.opponentStartHand.map((c,i) => cardDisplay(c, i, 'opponent-cards', (entry.opponentPicks & (1 << i)) != 0))}</div>
-              </Typography>
+                Their Cards{' '}
+                <div
+                  style={{ display: 'flex', flexDirection: 'row' }}
+                  aria-label={`opponent-start-hand-${index}`}
+                >
+                  {entry.opponentStartHand.map((c, i) =>
+                    cardDisplay(
+                      c,
+                      i,
+                      'opponent-cards',
+                      (entry.opponentPicks & (1 << i)) != 0,
+                    ),
+                  )}
+                </div>
+              </Typography>,
             );
           }
 
           const children = [...myDivChildren, ...opDivChildren];
-          return (<div>{children}</div>);
+          return <div>{children}</div>;
         })}
       </Paper>
     </Box>
