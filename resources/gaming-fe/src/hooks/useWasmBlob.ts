@@ -263,7 +263,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       let cradle = wasmStateInit.createGame(calpokerHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
       gameObject.setGameCradle(cradle);
       let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
-      gameObject.activateSpend(coin);
+      gameObject.activateSpend(coin.coinString);
     });
 
     return () => {
