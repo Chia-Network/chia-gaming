@@ -112,23 +112,11 @@
 ; We have composed cards as sublists but need them as pairs.
 (defun card_list_to_pair ((rank suit)) (c rank suit))
 
-; state is the cards for both players and alice's card pick commitment
-; move is Bob's discards
-; should immediately respond with a move revealing discards and selecting best cards and final split
-(defun calpoker_alice_driver_d (MY_SALT MY_PICKS amount
-            (@ state (bob_discards alice_cards bob_cards my_commit)) move validation_program_hash split)
+(defun compute_alice_outcome (MY_SALT MY_PICKS move my_all_cards bob_all_cards amount alice_driver_e)
     (assign
-        (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
-            alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
-
-        (my_all_cards . bob_all_cards)
-            (c
-               (map make_card (print "make card alice" my_all_cards_indices))
-               (map make_card (print "make card bob" bob_all_cards_indices))
-            )
-
         (my_hand_value my_selects) (handcalc (map card_list_to_pair (print "my all cards" my_all_cards)))
         (bob_hand_value bob_selects) (handcalc (map card_list_to_pair (print "bob all cards" bob_all_cards)))
+
         ;; win_result is 1 if my_hand_value is greater than bob_hand_value
         win_result (list_compare my_hand_value bob_hand_value)
         ;; split is captured in a their turn handler below so it's the opposite of what
@@ -146,6 +134,25 @@
             ()
             (curry calpoker_alice_driver_e (concat MY_SALT MY_PICKS (single-byte (indices_to_bitfield my_selects))) split)
         )
+    )
+)
+
+; state is the cards for both players and alice's card pick commitment
+; move is Bob's discards
+; should immediately respond with a move revealing discards and selecting best cards and final split
+(defun calpoker_alice_driver_d (MY_SALT MY_PICKS amount
+            (@ state (bob_discards alice_cards bob_cards my_commit)) move validation_program_hash split)
+    (assign
+        (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
+            alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
+
+        (my_all_cards . bob_all_cards)
+            (c
+               (map make_card (print "make card alice" my_all_cards_indices))
+               (map make_card (print "make card bob" bob_all_cards_indices))
+            )
+
+        (compute_alice_outcome MY_SALT MY_PICKS move my_all_cards bob_all_cards)
     )
 )
 
@@ -263,7 +270,7 @@
          alice_final_cards
          bob_final_cards
          alice_hand_value
-         )
+         )  
         )
      move
      validation_program_hash

@@ -4,6 +4,7 @@
 (import games.calpoker-v1.onchain.make_cards)
 (import games.calpoker-v1.onchain.onehandcalc)
 (import games.calpoker-v1.onchain.arrange_cards)
+(import games.calpoker-v1.calpoker_generate)
 
 (export (kind . arguments)
   (if
@@ -42,6 +43,9 @@
 
      (= kind "handcalc")
      (handcalc &rest arguments)
+
+     (= kind "compute_alice_outcome)
+     (compute_alice_outcome &rest arguments)
 
      ;; Otherwise
      (x "Couldn't find entrypoint: " kind)
