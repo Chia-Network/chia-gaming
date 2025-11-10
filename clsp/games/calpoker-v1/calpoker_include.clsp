@@ -2,9 +2,7 @@
 
 (import std.and)
 (import std.assert)
-;; (import games.calpoker-v1.calpoker_generate exposing calpoker_template)
-
-(defun calpoker_template () ())
+(import games.calpoker-v1.calpoker_generate exposing calpoker_template)
 
 (export calpoker_template)
 
