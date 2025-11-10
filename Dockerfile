@@ -162,6 +162,7 @@ COPY resources/nginx/game.conf /etc/nginx/sites-enabled
 COPY resources/nginx/lobby.conf /etc/nginx/sites-enabled
 COPY resources/nginx/urls /app/dist
 COPY resources/nginx/beacon.sh /app
+COPY resources/gaming-fe/test.sh /app
 
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
 COPY resources/fe-test/scripts/test_env.sh /app
