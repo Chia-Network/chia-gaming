@@ -196,61 +196,8 @@ jobs:
         with:
           path-to-lcov: './lcov.info'
 
-  # m1 mac
-  build_wheels:
-    name: Build wheel on Mac M1
-    needs: [unit_tests]
-    runs-on: [MacOS, ARM64]
-    strategy:
-      fail-fast: false
-
-    steps:
-    - uses: Chia-Network/actions/clean-workspace@main
-
-    - name: Checkout code
-      uses: actions/checkout@v3
-      with:
-        fetch-depth: 1
-
-    - name: Install python
-      uses: Chia-Network/actions/setup-python@main
-      with:
-        python-version: "3.10"
-
-    - name: Set up rust
-      run: |
-        curl https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init.sha256 | awk '{print $1 " *rustup-init"}' > checksum.txt
-        curl -O https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
-        cat checksum.txt
-        shasum -a 256 -c checksum.txt
-
-    - name: Install rust on mac
-      run: |
-        chmod +x rustup-init
-        ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
-        rm rustup-init checksum.txt
-        echo 'export PATH=$HOME/.cargo/bin:$PATH' >> $HOME/.profile
-
-    - name: Set up a venv for chia-blockchain
-      run: |
-        python3 -m venv test
-        source ./test/bin/activate
-        python -m pip install chia-blockchain==2.5.5-rc3
-
-    - name: Run tests
-      run: |
-        echo "PWD=$(pwd)"
-        source ./test/bin/activate
-        # "+stable" flag is not supported here yet
-        cargo test
-        python -m pip install maturin==1.9.2
-        maturin build --features sim-tests
-        pip install `find . -name \*.whl`
-        python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
-
-    - name: Build Docker Images
-      run: bash -x build-docker-images.sh
-
+  extract:
+    runs-on: ubuntu-latest
     - name: Extract Game side Artifact
       run: |
         python -m pip install toml
@@ -303,6 +250,58 @@ jobs:
       with:
         name: chia-gaming-lobby.zip
         path: ${{ github.workspace }}/chia-gaming-deploy/chia-gaming-lobby.zip
+
+  # m1 mac
+  build_wheels:
+    name: Build wheel on Mac M1
+    needs: [unit_tests]
+    runs-on: [MacOS, ARM64]
+    strategy:
+      fail-fast: false
+
+    steps:
+    - uses: Chia-Network/actions/clean-workspace@main
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 1
+
+    - name: Install python
+      uses: Chia-Network/actions/setup-python@main
+      with:
+        python-version: "3.10"
+
+    - name: Set up rust
+      run: |
+        curl https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init.sha256 | awk '{print $1 " *rustup-init"}' > checksum.txt
+        curl -O https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
+        cat checksum.txt
+        shasum -a 256 -c checksum.txt
+
+    - name: Install rust on mac
+      run: |
+        chmod +x rustup-init
+        ./rustup-init -y || (echo "Rust is already installed. Exiting..." && exit 2)
+        rm rustup-init checksum.txt
+        echo 'export PATH=$HOME/.cargo/bin:$PATH' >> $HOME/.profile
+
+    - name: Set up a venv for chia-blockchain
+      run: |
+        python3 -m venv test
+        source ./test/bin/activate
+        python -m pip install chia-blockchain==2.5.5-rc3
+
+    - name: Run tests
+      run: |
+        echo "PWD=$(pwd)"
+        source ./test/bin/activate
+        # "+stable" flag is not supported here yet
+        cargo test
+        python -m pip install maturin==1.9.2
+        maturin build --features sim-tests
+        pip install `find . -name \*.whl`
+        python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
 
     - name: Upload Release Artifacts
       if: env.RELEASE == 'true'
