@@ -102,7 +102,7 @@ jobs:
 
           docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "cp -r /app /artifacts/app"
 
-          ls -l /artifacts/appo
+          ls -l /artifacts/app
 
           mkdir -p "${SOURCE}/nginx"
           mkdir -p "${GAME}/dist"
