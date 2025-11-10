@@ -121,17 +121,6 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	wasm-pack build --out-dir=/app/game/node-pkg --release --target=nodejs && \
 	wasm-pack build --out-dir=/app/game/dist --release --target=web
 
-#CI FROM node:20.18.1
-#CI RUN apt-get update -y && \
-#CI     apt-get install -y libc6 && \
-#CI     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
-#CI     apt-get update && \
-#CI     npm install -g corepack && \
-#CI     yarn set version 1.22.22
-#CI COPY --from=stage1 /preinst /preinst
-#CI COPY --from=stage1 /root /root
-#CI COPY --from=stage1 /app /app
-
 # Place wasm backend in docker container
 RUN mkdir -p /app/dist
 
@@ -163,6 +152,17 @@ COPY resources/nginx/game.conf /etc/nginx/sites-enabled
 COPY resources/nginx/lobby.conf /etc/nginx/sites-enabled
 COPY resources/nginx/urls /app/dist
 COPY resources/nginx/beacon.sh /app
+
+#CI FROM node:20.18.1
+#CI RUN apt-get update -y && \
+#CI     apt-get install -y libc6 && \
+#CI     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
+#CI     apt-get update && \
+#CI     npm install -g corepack && \
+#CI     yarn set version 1.22.22
+#CI COPY --from=stage1 /preinst /preinst
+#CI COPY --from=stage1 /root /root
+#CI COPY --from=stage1 /app /app
 
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
 COPY resources/fe-test/scripts/test_env.sh /app
