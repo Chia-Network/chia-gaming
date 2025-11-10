@@ -99,8 +99,11 @@ jobs:
           export GAME="${TARGET}/${SHORT_GAME}"
           export LOBBY="${TARGET}/${SHORT_LOBBY}"
 
-          docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "mkdir -p /artifacts/nginx && cp -r /app /artifacts/app"
+          docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "cp -r /app /artifacts/app"
 
+          ls -l /artifacts/app
+
+          mkdir -p "${SOURCE}/nginx"
           mkdir -p "${GAME}/dist"
           mkdir -p "${GAME}/public"
           mkdir -p "${GAME}/clsp"
