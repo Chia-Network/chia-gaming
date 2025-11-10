@@ -1,4 +1,4 @@
-FROM node:20.18.1 as stage1
+FROM node:20.18.1 AS stage1
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
@@ -76,6 +76,17 @@ RUN --mount=type=tmpfs,dst=/app \
   mv /app/lobby-view/node_modules /preinst/lobby-view && \
   mv /app/lobby-view/package.json /preinst/lobby-view
 
+#CI FROM node:20.18.1 AS stage2
+#CI RUN apt-get update -y && \
+#CI     apt-get install -y libc6 && \
+#CI     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
+#CI     apt-get update && \
+#CI     npm install -g corepack && \
+#CI     yarn set version 1.22.22
+#CI COPY --from=stage1 /preinst /preinst
+#CI COPY --from=stage1 /root /root
+#CI COPY --from=stage1 /app /app
+
 RUN --mount=type=tmpfs,dst=/app \
   mkdir -p /app/lobby-service/ && \
   cp -r /preinst/lobby-service/* /app/lobby-service/ && \
@@ -97,9 +108,9 @@ RUN --mount=type=tmpfs,dst=/app \
 #CI     apt-get update && \
 #CI     npm install -g corepack && \
 #CI     yarn set version 1.22.22
-#CI COPY --from=stage1 /preinst /preinst
-#CI COPY --from=stage1 /root /root
-#CI COPY --from=stage1 /app /app
+#CI COPY --from=stage2 /preinst /preinst
+#CI COPY --from=stage2 /root /root
+#CI COPY --from=stage2 /app /app
 
 RUN mkdir -p /app/game/ && mkdir -p /app/wc/ && mkdir -p /app/lobby-service/ && mkdir -p /app/lobby-connection && mkdir -p /app/lobby-view && \
   ln -s /preinst/game/node_modules /app/game/ && \
