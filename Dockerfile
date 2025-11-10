@@ -152,7 +152,6 @@ RUN cd /app/wc && yarn run build
 #CI     npm install -g corepack && \
 #CI     yarn set version 1.22.22
 #CI COPY --from=stage1 /preinst /preinst
-#CI COPY --from=stage1 /root /root
 #CI COPY --from=stage1 /app /app
 
 RUN ln -s /app/game/resources /resources
