@@ -8,7 +8,7 @@ RUN apt-get update -y && \
     python3 -m venv /app/test && \
     . /app/test/bin/activate && \
     pip install maturin==1.9.2 && \
-    sh -c ". /app/test/bin/activate && python3 -m pip install chia-blockchain==2.5.5-rc3" && \
+    sh -c ". /app/test/bin/activate && python3 -m pip install chiavdf==1.1.12 chia-blockchain==2.5.5-rc3" && \
     : "# Gross, check the hash at least." && \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && \
     sh ./rustup.sh -y && \
