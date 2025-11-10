@@ -198,6 +198,8 @@ jobs:
 
   extract:
     runs-on: ubuntu-latest
+
+    steps:
     - name: Extract Game side Artifact
       run: |
         python -m pip install toml
