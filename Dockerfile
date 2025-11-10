@@ -147,7 +147,7 @@ RUN cd /app/wc && yarn run build
 FROM node:20.18.1
 RUN apt-get update -y && \
     apt-get install -y libc6 && \
-    apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential nginx && \
+    apt-get install -y python3 python3-dev python3-pip python3-venv curl nginx && \
     apt-get update && \
     npm install -g corepack && \
     yarn set version 1.22.22
