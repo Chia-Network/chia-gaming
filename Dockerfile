@@ -144,15 +144,6 @@ COPY resources/wc-stub/src /app/wc/src/
 COPY resources/wc-stub/tsconfig.json /app/wc/
 RUN cd /app/wc && yarn run build
 
-RUN ln -s /app/game/resources /resources
-ADD clsp /app/game/clsp
-RUN ln -s /app/game/clsp /clsp
-COPY resources/gaming-fe/package.json /app/package.json
-COPY resources/nginx/game.conf /etc/nginx/sites-enabled
-COPY resources/nginx/lobby.conf /etc/nginx/sites-enabled
-COPY resources/nginx/urls /app/dist
-COPY resources/nginx/beacon.sh /app
-
 #CI FROM node:20.18.1
 #CI RUN apt-get update -y && \
 #CI     apt-get install -y libc6 && \
@@ -163,6 +154,15 @@ COPY resources/nginx/beacon.sh /app
 #CI COPY --from=stage1 /preinst /preinst
 #CI COPY --from=stage1 /root /root
 #CI COPY --from=stage1 /app /app
+
+RUN ln -s /app/game/resources /resources
+ADD clsp /app/game/clsp
+RUN ln -s /app/game/clsp /clsp
+COPY resources/gaming-fe/package.json /app/package.json
+COPY resources/nginx/game.conf /etc/nginx/sites-enabled
+COPY resources/nginx/lobby.conf /etc/nginx/sites-enabled
+COPY resources/nginx/urls /app/dist
+COPY resources/nginx/beacon.sh /app
 
 RUN (echo 'from chia_gaming import chia_gaming' ; echo 'chia_gaming.service_main()') > /app/run_simulator.py
 COPY resources/fe-test/scripts/test_env.sh /app
