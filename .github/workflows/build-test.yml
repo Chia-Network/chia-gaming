@@ -262,7 +262,7 @@ jobs:
         export GAME="${TARGET}/${SHORT_GAME}"
         export LOBBY="${TARGET}/${SHORT_LOBBY}"
 
-        bash -x docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "mkdir -p /artifacts/nginx && cp -r /app /artifacts/app"
+        docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "mkdir -p /artifacts/nginx && cp -r /app /artifacts/app"
 
         mkdir -p "${GAME}/dist"
         mkdir -p "${GAME}/public"
