@@ -91,9 +91,10 @@ jobs:
       - name: Extract Game side Artifact
         run: |
           python -m pip install toml
+          export GW=${{ github.workspace }}
           export VERSION="$(./resources/get_chia_gaming_version.py)"
-          export SOURCE="${{ github.workspace }}/artifacts"
-          export TARGET="${{ github.workspace }}/chia-gaming-deploy"
+          export SOURCE="${GW}/artifacts"
+          export TARGET="${GW}/chia-gaming-deploy"
           export SHORT_GAME="chia-gaming-game-${VERSION}"
           export SHORT_LOBBY="chia-gaming-lobby-${VERSION}"
           export GAME="${TARGET}/${SHORT_GAME}"
@@ -101,7 +102,7 @@ jobs:
 
           docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "cp -r /app /artifacts/app"
 
-          ls -l /artifacts/app
+          ls -l /artifacts/appo
 
           mkdir -p "${SOURCE}/nginx"
           mkdir -p "${GAME}/dist"
