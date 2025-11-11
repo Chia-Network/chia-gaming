@@ -1,0 +1,6 @@
+[Unit]
+Description=Chia Gaming beacon
+After=network.target
+
+[Service]
+ExecStart=/app/beacon.sh @TRACKER@
