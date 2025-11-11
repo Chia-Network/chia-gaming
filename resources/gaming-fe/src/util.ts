@@ -179,3 +179,16 @@ export function popcount(n: number): number {
 export async function empty() {
   return {};
 }
+
+export function getRandomInt(max: number) {
+  return Math.floor(Math.random() * max);
+}
+
+export function getEvenHexString(n: number) {
+  let hexString = n.toString(16);
+  if ((hexString.length & 1) == 0) {
+    return hexString;
+  } else {
+    return hexString.slice(0, hexString.length - 1);
+  }
+}

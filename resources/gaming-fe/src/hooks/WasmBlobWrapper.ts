@@ -8,6 +8,8 @@ import {
   CalpokerOutcome,
   WatchReport,
   InternalBlockchainInterface,
+  GameInitParams,
+  BlockchainInboundAddressResult,
 } from '../types/ChiaGaming';
 import {
   spend_bundle_to_clvm,
@@ -49,7 +51,7 @@ export class WasmBlobWrapper {
   myTurn: boolean;
   moveNumber: number;
   qualifyingEvents: number;
-  loadWasmEvent: any | undefined;
+  // loadWasmEvent: any | undefined;
   cardSelections: number;
   playerHand: number[][];
   opponentHand: number[][];
@@ -103,10 +105,33 @@ export class WasmBlobWrapper {
     });
   }
 
-  relayAddress() {
-    return this.blockchain.getAddress().then((a) => {
-      this.rxjsEmitter?.next({ setAddressData: a });
+  reportError(err: any) {
+    // TODO: Use this method to report all errors
+    this.rxjsEmitter?.next({
+      setError: err.toString()
     });
+  }
+
+  setGameCradle(cradle: ChiaGame) {
+    this.cradle = cradle;
+    this.storedMessages.forEach((m) => {
+      this.cradle?.deliver_message(m);
+    });
+  }
+
+  activateSpend(coin: string) {
+    this.cradle?.opening_coin(coin);
+
+    this.rxjsEmitter?.next({
+      setGameConnectionState: {
+        stateIdentifier: 'starting',
+        stateDetail: ['doing handshake'],
+      },
+    });
+  }
+
+  setBlockchainAddress(a: BlockchainInboundAddressResult) {
+    this.rxjsEmitter?.next({ setAddressData: a });
   }
 
   getObservable() {
@@ -117,7 +142,7 @@ export class WasmBlobWrapper {
     this.qualifyingEvents |= flags;
     if (this.qualifyingEvents == 7) {
       this.qualifyingEvents |= 8;
-      this.pushEvent(this.loadWasmEvent);
+      // this.pushEvent(this.loadWasmEvent);
     }
   }
 
@@ -144,7 +169,7 @@ export class WasmBlobWrapper {
       this.rngId = rngId;
       const newGameIdentity = this.wc?.chia_identity(rngId);
       this.identity = newGameIdentity;
-      this.pushEvent({ loadCalpoker: true });
+      //this.pushEvent({ loadCalpoker: true });
       return {
         setGameConnectionState: {
           stateIdentifier: 'starting',
@@ -177,18 +202,18 @@ export class WasmBlobWrapper {
 
   handleOneMessage(msg: any): any {
     console.log('handleOneMessage', Object.keys(msg));
-    if (msg.loadWasmEvent) {
-      return this.internalLoadWasm(
-        msg.loadWasmEvent.chia_gaming_init,
-        msg.loadWasmEvent.cg,
-      );
-    } else if (msg.loadPresets) {
-      return this.loadPresets(msg.loadPresets);
-    } else if (msg.createStartCoin) {
-      return this.createStartCoin();
-    } else if (msg.loadCalpoker) {
-      return this.loadCalpoker();
-    } else if (msg.deliverMessage) {
+    // if (msg.loadWasmEvent) {
+    //   return this.internalLoadWasm(
+    //     msg.loadWasmEvent.chia_gaming_init,
+    //     msg.loadWasmEvent.cg,
+    //   );
+    //} else if (msg.loadPresets) {
+    //  return this.loadPresets(msg.loadPresets);
+    //} else if (msg.createStartCoin) {
+    //  return this.createStartCoin();
+    //} else if (msg.loadCalpoker) {
+    //  return this.loadCalpoker();
+    if (msg.deliverMessage) {
       return this.internalDeliverMessage(msg.deliverMessage);
     } else if (msg.move) {
       return this.internalMakeMove(msg.move);
@@ -328,130 +353,11 @@ export class WasmBlobWrapper {
       });
   }
 
-  loadCalpoker(): any {
-    return this.fetchHex(
-      'clsp/games/calpoker-v1/calpoker_include_calpoker_factory.hex',
-    ).then((calpoker_hex) => {
-      this.calpokerHex = calpoker_hex;
-      this.pushEvent({ createStartCoin: true });
-      return {
-        setGameConnectionState: {
-          stateIdentifier: 'starting',
-          stateDetail: ['loaded calpoker'],
-        },
-      };
-    });
-  }
-
-  loadWasm(chia_gaming_init: any, cg: any): any {
-    this.loadWasmEvent = { loadWasmEvent: { chia_gaming_init, cg } };
+  loadWasm(wasmConnection: WasmConnection): any {
+    this.wc = wasmConnection;
+    //this.loadWasmEvent = { loadWasmEvent: { chia_gaming_init, cg } };
     this.kickSystem(1);
     return empty();
-  }
-
-  createStartCoin(): any {
-    const identity = this.identity;
-    if (!identity) {
-      throw new Error('create start coin with no identity');
-    }
-    const calpokerHex = this.calpokerHex;
-    if (!calpokerHex) {
-      throw new Error('create start coin with no calpoker loaded');
-    }
-
-    const wc = this.wc;
-    if (!wc) {
-      throw new Error('create start coin with no wasm obj?');
-    }
-
-    console.log(
-      `create coin spendable by ${identity.puzzle_hash} for ${this.amount}`,
-    );
-    return this.relayAddress()
-      .then(() => {
-        return this.blockchain.do_initial_spend(
-          this.uniqueId,
-          identity.puzzle_hash,
-          this.amount,
-        );
-      })
-      .then((result) => {
-        let coin = result.coin;
-        if (!coin) {
-          throw new Error('tried to create spendable but failed');
-        }
-
-        // Handle data conversion back when Coin object was received.
-        if (typeof coin !== 'string') {
-          const coinset_coin = coin as any;
-          const new_coin_string = this.wc?.convert_coinset_to_coin_string(
-            coinset_coin.parentCoinInfo,
-            coinset_coin.puzzleHash,
-            coinset_coin.amount.toString(),
-          );
-          if (!new_coin_string) {
-            throw new Error(
-              `Coin could not be converted to coinstring: ${JSON.stringify(coinset_coin)}`,
-            );
-          }
-
-          coin = new_coin_string;
-        }
-
-        const env = {
-          rng_id: this.rngId,
-          game_types: {
-            calpoker: {
-              version: 1,
-              hex: calpokerHex,
-            },
-          },
-          timeout: 100,
-          unroll_timeout: 100,
-        };
-        this.cradle = new ChiaGame(
-          wc,
-          env,
-          this.rngSeed,
-          identity,
-          this.iStarted,
-          this.amount,
-          this.amount,
-          result.fromPuzzleHash,
-        );
-        this.storedMessages.forEach((m) => {
-          this.cradle?.deliver_message(m);
-        });
-        this.cradle.opening_coin(coin);
-        return {
-          setGameConnectionState: {
-            stateIdentifier: 'starting',
-            stateDetail: ['doing handshake'],
-          },
-        };
-      })
-      .catch((e) => {
-        return {
-          setError: e.toString(),
-        };
-      });
-  }
-
-  internalLoadWasm(chia_gaming_init: any, cg: WasmConnection): any {
-    console.log('wasm detected');
-    return this.doInternalLoadWasm().then((modData) => {
-      chia_gaming_init(modData);
-      cg.init((msg: string) => console.warn('wasm', msg));
-      this.wc = cg;
-      const presetFiles = [
-        'clsp/unroll/unroll_meta_puzzle.hex',
-        'clsp/unroll/unroll_puzzle_state_channel_unrolling.hex',
-        'clsp/referee/onchain/referee.hex',
-        'clsp/referee/onchain/referee-v1.hex',
-      ];
-      this.pushEvent({ loadPresets: presetFiles });
-      return {};
-    });
   }
 
   deliverMessage(msg: string) {
