@@ -99,11 +99,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-frontend.zip
-          path: ${{ github.workspace }}/chia-gaming-deploy/chia-gaming-frontend.zip
+          path: ${{ github.workspace }}/chia-gaming-deploy/g
 
       - name: Archive chia-gaming-lobby
         uses: actions/upload-artifact@v4
         with:
           name: chia-gaming-lobby.zip
-          path: ${{ github.workspace }}/chia-gaming-deploy/chia-gaming-lobby.zip
+          path: ${{ github.workspace }}/chia-gaming-deploy/l
 

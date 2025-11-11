@@ -8,10 +8,10 @@ fi
 export VERSION="$(./resources/get_chia_gaming_version.py)"
 export SOURCE="$1/artifacts"
 export TARGET="$1/chia-gaming-deploy"
-export SHORT_GAME="chia-gaming-game-${VERSION}"
-export SHORT_LOBBY="chia-gaming-lobby-${VERSION}"
-export GAME="${TARGET}/${SHORT_GAME}"
-export LOBBY="${TARGET}/${SHORT_LOBBY}"
+export SHORT_GAME="chia-gaming-game"
+export SHORT_LOBBY="chia-gaming-lobby"
+export GAME="${TARGET}/g/${SHORT_GAME}"
+export LOBBY="${TARGET}/l/${SHORT_LOBBY}"
 
 mkdir -p "${SOURCE}/app"
 mkdir -p "${SOURCE}/nginx"
@@ -39,8 +39,3 @@ cp -r "${SOURCE}/app/lobby-service/dist/index.js" "${LOBBY}/service.js"
 
 cp -r resources/nginx/lobby.conf "${LOBBY}/nginx"
 cp -r resources/nginx/LOBBY.md "${LOBBY}/README.md"
-
-# Zip
-cd "${TARGET}"
-zip -r "chia-gaming-frontend.zip" "${SHORT_GAME}"
-zip -r "chia-gaming-lobby.zip" "${SHORT_LOBBY}"
