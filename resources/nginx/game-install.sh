@@ -61,7 +61,6 @@ sed -e "s@/app@${WEBROOT}@g" -e "s!http://localhost:3001!${TRACKER}!g" -e "s!ws:
 # Install beacon service if we're on a systemd system
 if [ -d /etc/systemd/system ] ; then
 	sed -e "s@/app@${SERVICE}@g" -e "!@TRACKER@!${TRACKER}!g" < ./nginx/beacon.service > /etc/systemd/system
-	systemctl -user 
 fi
 
 cp -r "${TARGET}/chia-gaming-game/dist" "${WEBROOT}"
