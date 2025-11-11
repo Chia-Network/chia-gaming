@@ -112,6 +112,7 @@ jobs:
         run: |
           # We need chia-blockchain so we can run the blockchain simulator
           python -m pip install setuptools==75.0.0
+          python -m pip install chiavdf==1.1.12
           python -m pip install chia-blockchain==2.5.5-rc3
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
@@ -181,6 +182,7 @@ jobs:
           export CARGO_TARGET_DIR=$(pwd)/target
           python -m venv venv
           source venv/bin/activate
+          pip install chiavdf==1.1.12
           pip install chia-blockchain==2.5.5-rc3
           python -m pip install maturin==1.9.2
           maturin build --features sim-tests

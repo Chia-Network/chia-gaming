@@ -14,7 +14,7 @@ interface GameLogProps {
 
 const GameLog: React.FC<GameLogProps> = ({ log }) => {
   const [logOpen, setLogOpen] = useState(false);
-  
+
   const makeDescription = (desc: OutcomeHandType) => {
     if (desc.rank) return `${desc.name} ${desc.values.toString()}`;
     return `${desc.name} ${suitNames[desc.values[0]]}`;
@@ -72,7 +72,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
     );
     return (
       <Box display='flex' flexDirection='row' alignItems='center' py={0.5}>
-        <Typography variant='body2' fontWeight={600} mr={1}>
+        <Typography aria-label={`${label}-description`} data-hand-description={JSON.stringify(desc)} variant='body2' fontWeight={600} mr={1}>
           {makeDescription(desc)}:
         </Typography>
         <Box
@@ -160,6 +160,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                       display='flex'
                       alignItems='center'
                       justifyContent='space-between'
+                      data-testid={`log-entry-me-${index}`}
                       mb={0.5}
                     >
                       {playerDisplay(
@@ -176,11 +177,12 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                     {logOpen && (
                       <Box mt={1}>
                         <Typography variant='body2' fontWeight={600}>
-                          My Cards:
+                          My Start Cards:
                         </Typography>
                         <Box
                           display='flex'
                           flexWrap='wrap'
+                          aria-label={`my-start-hand-${index}`}
                         >
                           {entry.myStartHand.map((c, i) =>
                             cardDisplay(
@@ -188,6 +190,23 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                               i,
                               'my-cards',
                               (entry.myPicks & (1 << i)) !== 0,
+                            ),
+                          )}
+                        </Box>
+                        <Typography variant='body2' fontWeight={600}>
+                          My Final Cards:
+                        </Typography>
+                        <Box
+                            display='flex'
+                            flexWrap='wrap'
+                            aria-label={`my-final-hand-${index}`}
+                        >
+                          {entry.myFinalHand.map((c, i) =>
+                            cardDisplay(
+                              c,
+                              i,
+                              'my-final-cards',
+                              (entry.mySelects & (1 << i)) !== 0,
                             ),
                           )}
                         </Box>
@@ -210,6 +229,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                       display='flex'
                       alignItems='center'
                       justifyContent='space-between'
+                      data-testid={`log-entry-opponent-${index}`}
                       mb={0.5}
                     >
                       {playerDisplay(
@@ -226,11 +246,12 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                     {logOpen && (
                       <Box mt={1}>
                         <Typography variant='body2' fontWeight={600}>
-                          Their Cards:
+                          Their Start Cards:
                         </Typography>
                         <Box
                           display='flex'
                           flexWrap='wrap'
+                          aria-label={`opponent-start-hand-${index}`}
                         >
                           {entry.opponentStartHand.map((c, i) =>
                             cardDisplay(
@@ -238,6 +259,23 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                               i,
                               'opponent-cards',
                               (entry.opponentPicks & (1 << i)) !== 0,
+                            ),
+                          )}
+                        </Box>
+                        <Typography variant='body2' fontWeight={600}>
+                          Their Final Cards:
+                        </Typography>
+                        <Box
+                          display='flex'
+                          flexWrap='wrap'
+                          aria-label={`opponent-final-hand-${index}`}
+                        >
+                          {entry.opponentFinalHand.map((c, i) =>
+                            cardDisplay(
+                              c,
+                              i,
+                              'opponent-final-cards',
+                              (entry.opponentSelects & (1 << i)) !== 0,
                             ),
                           )}
                         </Box>

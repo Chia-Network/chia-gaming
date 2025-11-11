@@ -180,6 +180,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
             disabled={moveNumber !== 0}
             variant='contained'
             startIcon={<StopCircle />}
+            data-testid='stop-playing'
             sx={{
               backgroundColor:
                 moveNumber === 0 ? '#EF4444' : 'rgba(239,68,68,0.5)',
