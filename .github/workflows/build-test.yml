@@ -112,7 +112,7 @@ jobs:
         run: |
           # We need chia-blockchain so we can run the blockchain simulator
           python -m pip install setuptools==75.0.0
-          python -m pip install chia-blockchain==2.5.5-rc3
+          python -m pip install chiavdf==1.1.12 chia-blockchain==2.5.5-rc3
           # Try tests without sim-tests to ensure we're tracking build failures in that
           # configuration.  Also it's a lot shorter.
           cargo test
@@ -248,6 +248,18 @@ jobs:
         pip install `find . -name \*.whl`
         python -c "from chia_gaming import chia_gaming; chia_gaming.run_simulation_tests()"
 
-    - name: Build Docker Images
-      run: bash -x build-docker-images.sh
+    - name: Upload Release Artifacts
+      if: env.RELEASE == 'true'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        FILES=$(find ${{ github.workspace }}/artifacts -type f -name 'chia-game-deploy*.zip')
+        while IFS= read -r file; do
+          gh release upload \
+            $RELEASE_TAG \
+            $file
+        done <<< "$FILES"
 
+        gh release upload \
+          $RELEASE_TAG \
+          artifacts/installer-chia-exporter*/*.deb

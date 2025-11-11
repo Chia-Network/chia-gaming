@@ -21,7 +21,7 @@ import {
   parentFrameBlockchainInfo,
 } from './ParentFrameBlockchainInfo';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
-import useGameSocket from './useGameSocket';
+import useGameSocket from 'chia-gaming-lobby-connection';
 import { setupBlockchainConnection } from './useBlockchainConnection';
 
 let blobSingleton: any = null;
@@ -43,7 +43,7 @@ function getBlobSingleton(
   };
   const peercon = useGameSocket(lobbyUrl, deliverMessage, () => {
     blobSingleton?.kickSystem(2);
-  });
+  }, getSearchParams());
 
   const doInternalLoadWasm = async () => {
     const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';

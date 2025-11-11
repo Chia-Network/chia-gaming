@@ -1,3 +1,5 @@
+import React from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -13,16 +15,34 @@ import {
   Select,
   MenuItem,
 } from '@mui/material';
-import { useState, useEffect, useCallback } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 
-import { useLobbySocket } from '../hooks/useLobbyConnection';
-import { generateOrRetrieveAlias, updateAlias } from '../util';
-import { ChildFrameBlockchainInterface } from '../hooks/ChildFrameBlockchainInterface';
+import { useLobbySocket } from 'chia-gaming-lobby-connection';
+
+import { getFragmentParams, getSearchParams } from './util';
+
+export function generateOrRetrieveAlias(): string {
+  let previousName = localStorage.getItem('alias');
+  if (previousName) {
+    return previousName;
+  }
+
+  previousName = `newUser${uuidv4()}`;
+  updateAlias(previousName);
+  return previousName;
+}
+
+export function updateAlias(alias: string) {
+  localStorage.setItem('alias', alias);
+}
 
 interface LobbyComponentProps {}
 
 const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
+  const params = getSearchParams();
+  const fragment = getFragmentParams();
+  const uniqueId = params.uniqueId;
   const {
     players,
     rooms,
@@ -31,10 +51,19 @@ const LobbyScreen = () => {
     setLobbyAlias,
     generateRoom,
     joinRoom,
-    uniqueId,
-    fragment,
     lobbyGames,
-  } = useLobbySocket(myAlias, true);
+  } = useLobbySocket(
+    window.location.origin,
+    uniqueId,
+    myAlias,
+    true,
+    params,
+    fragment,
+    (newUrl: string) => {
+      console.warn(`from tryJoinRoom, navigate ${newUrl}`);
+      window.location.href = newUrl;
+    }
+  );
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState('');
