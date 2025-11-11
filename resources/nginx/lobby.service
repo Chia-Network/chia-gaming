@@ -4,3 +4,6 @@ After=network.target
 
 [Service]
 ExecStart=/bin/sh -c "cd /app && node ./service.js"
+
+[Install]
+WantedBy=sysinit.target
