@@ -45,6 +45,7 @@ jobs:
       - name: Install wasm-pack
         run: |
           cargo install --version 0.13.1 wasm-pack
+          python -m pip install toml
 
       - name: Smoke test docker image
         run: |
@@ -65,6 +66,12 @@ jobs:
         run: |
          # Expects chia-gaming-test to exist
          docker run -t chia-gaming-test /app/test.sh
+
+      - name: Extract Game side Artifact
+        run: |
+          export GW=${{ github.workspace }}
+
+          ./resources/extract-from-image.sh "${GW}"
 
       - name: Run headless test
         env:
@@ -87,51 +94,6 @@ jobs:
           else
               echo "No xvfb processes to kill"
           fi
-
-      - name: Extract Game side Artifact
-        run: |
-          python -m pip install toml
-          export GW=${{ github.workspace }}
-          export VERSION="$(./resources/get_chia_gaming_version.py)"
-          export SOURCE="${GW}/artifacts"
-          export TARGET="${GW}/chia-gaming-deploy"
-          export SHORT_GAME="chia-gaming-game-${VERSION}"
-          export SHORT_LOBBY="chia-gaming-lobby-${VERSION}"
-          export GAME="${TARGET}/${SHORT_GAME}"
-          export LOBBY="${TARGET}/${SHORT_LOBBY}"
-
-          docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "cp -r /app /artifacts/app"
-
-          ls -l "${GW}/artifacts/app"
-
-          mkdir -p "${SOURCE}/nginx"
-          mkdir -p "${GAME}/dist"
-          mkdir -p "${GAME}/public"
-          mkdir -p "${GAME}/clsp"
-          mkdir -p "${GAME}/nginx"
-
-          cp -r "${SOURCE}/app/game/dist/*" "${GAME}/dist"
-          cp -r "${SOURCE}/app/game/public/*" "${GAME}/public"
-          cp -r "${SOURCE}/app/clsp/*" "${GAME}/clsp"
-
-          cp -r resources/nginx/game.conf "${GAME}/nginx"
-          cp -r resources/nginx/beacon.sh "${GAME}/beacon.sh"
-          cp -r resources/nginx/GAME.md "${GAME}/README.md"
-
-          mkdir -p "${LOBBY}/dist"
-          mkdir -p "${LOBBY}/public"
-          mkdir -p "${LOBBY}/nginx"
-
-          cp -r "${SOURCE}/app/lobby/dist/*" "${LOBBY}/dist"
-          cp -r "${SOURCE}/app/lobby/public/*" "${LOBBY}/public"
-
-          cp -r resources/nginx/lobby.conf "${LOBBY}/nginx"
-          cp -r resources/nginx/LOBBY.md "${LOBBY}/README.md"
-
-          # Zip
-          cd "${TARGET}"
-          zip -r "chia-gaming-frontend.zip" "${SHORT_GAME}"
-          zip -r "chia-gaming-lobby.zip" "${SHORT_LOBBY}"
 
       - name: Archive chia-gaming-frontend
         uses: actions/upload-artifact@v4
