@@ -29,8 +29,8 @@ cp -r "${SOURCE}/app/clsp"/* "${GAME}/clsp"
 
 cp -r resources/nginx/game.conf "${GAME}/nginx"
 cp -r resources/nginx/beacon.sh "${GAME}/beacon.sh"
-cp -r resources/nginx/game-install.sh" ${GAME}/game-install.sh"
-cp -r resources/nginx/beacon.service" ${GAME}/beacon.service"
+cp -r resources/nginx/game-install.sh "${GAME}/game-install.sh"
+cp -r resources/nginx/beacon.service "${GAME}/beacon.service"
 cp -r resources/nginx/GAME.md "${GAME}/README.md"
 
 mkdir -p "${LOBBY}/public"
