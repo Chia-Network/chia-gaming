@@ -121,7 +121,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   }
   const setError = (e: any) => {
     if (e !== undefined && error === undefined) {
-      console.error('setError', e);
       setRealError(e);
     }
   };
