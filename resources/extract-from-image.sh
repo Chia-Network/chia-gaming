@@ -23,7 +23,7 @@ mkdir -p "${GAME}/nginx"
 docker run -v "${SOURCE}:/artifacts" -t chia-gaming-test /bin/bash -c "cp -r /app/* /artifacts/app"
 
 cp -r "${SOURCE}/app/game/dist"/*.* "${GAME}/dist"
-cp -r "${SOURCE}/app/game/dist/js/index.js" "${GAME}/dist/js"
+cp -r "${SOURCE}/app/game/dist/js/index-rollup.js" "${GAME}/dist/js"
 cp -r "${SOURCE}/app/game/public"/* "${GAME}/public"
 cp -r "${SOURCE}/app/clsp"/* "${GAME}/clsp"
 

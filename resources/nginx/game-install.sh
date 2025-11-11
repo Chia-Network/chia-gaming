@@ -1,12 +1,15 @@
 #!/bin/sh
 
+set -x
+
 NGINX=/etc/nginx/sites-available
 WEBROOT=/usr/share/nginx/html/chia-gaming-game
 SERVICE=""
 TRACKER=""
+SELF=""
 
-if [ "x$@" = x ] ; then
-	echo "usage: game-install.sh --nginx [nginx-sites-dir] --content-root [server-root] --tracker http://tracker.com --service [dir]"
+if [ "x$1" = x ] ; then
+	echo "usage: game-install.sh --nginx [nginx-sites-dir] --content-root [server-root] --self http://myself.com --tracker http://tracker.com --service [dir]"
 	exit 1
 fi
 
@@ -20,6 +23,11 @@ while [ "x$1" != x ] ; do
 		x--content-root)
 			shift
 			WEBROOT="$1"
+			;;
+
+		x--self)
+			shift
+			SELF="$1"
 			;;
 
 		x--tracker)
@@ -45,6 +53,11 @@ if [ "x$TRACKER" = x ] ; then
 	exit 1
 fi
 
+if [ "x$SELF" = x ] ; then
+	echo "no --self specified"
+	exit 1
+fi
+
 mkdir -p "${WEBROOT}"
 mkdir -p "${NGINX}"
 mkdir -p "${SERVICE}"
@@ -55,12 +68,12 @@ sed -e "s@/app@${WEBROOT}@g" -e "s!http://localhost:3001!${TRACKER}!g" -e "s!ws:
 
 # Install beacon service if we're on a systemd system
 if [ -d /etc/systemd/system ] ; then
-	sed -e "s@/app@${SERVICE}@g" -e "!@TRACKER@!${TRACKER}!g" < ./nginx/beacon.service > /etc/systemd/system
+	sed -e "s@/app@${SERVICE}@g" -e "s!@TRACKER@!${TRACKER}!g" -e "s!@SELF@!${SELF}!g" < ./beacon.service > /etc/systemd/system/beacon.service
 fi
 
-cp -r "${TARGET}/chia-gaming-game/dist" "${WEBROOT}"
-cp -r "${TARGET}/chia-gaming-game/public" "${WEBROOT}"
-cp -r "${TARGET}/chia-gaming-game/clsp" "${WEBROOT}"
+cp -r dist "${WEBROOT}"
+cp -r public "${WEBROOT}"
+cp -r clsp "${WEBROOT}"
 
 # Install beacon
-cp -r "${TARGET}/chia-gaming-game/beacon.sh" "${SERVICE}"
+cp -r beacon.sh "${SERVICE}"
