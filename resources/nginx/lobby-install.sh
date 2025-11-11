@@ -5,11 +5,6 @@ WEBROOT=/usr/share/nginx/html/chia-gaming-lobby
 SERVICE=""
 TRACKER=""
 
-if [ "x$UID" != "x0" ] ; then
-	echo "Run this install script as root"
-	exit 1
-fi
-
 if [ "x$@" = x ] ; then
 	echo "usage: lobby-install.sh --nginx [nginx-sites-dir] --content-root [server-root] --service [dir]"
 	exit 1
