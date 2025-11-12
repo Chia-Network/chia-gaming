@@ -10,6 +10,7 @@ import {
   BlockchainReport,
   OutcomeLogLine,
   handValueToDescription,
+  WasmBlobParams,
 } from '../types/ChiaGaming';
 import { getSearchParams } from '../util';
 
@@ -27,6 +28,7 @@ import { setupBlockchainConnection } from './useBlockchainConnection';
 let blobSingleton: any = null;
 
 function getBlobSingleton(
+  // prams: wasmBlobParams,
   blockchain: InternalBlockchainInterface,
   lobbyUrl: string,
   uniqueId: string,
@@ -58,15 +60,19 @@ function getBlobSingleton(
     return fetch(fetchUrl).then((wasm) => wasm.text());
   }
 
+  let wasmBlobParams: WasmBlobParams = {
+      blockchain: blockchain,
+      peerconn: peerconn,
+      cradle: cradle,
+      uniqueId: uniqueId,
+      iStarted: iStarted,
+      fetchHex: fetchHex,
+  };
+
   blobSingleton = new WasmBlobWrapper(
-    blockchain,
-    uniqueId,
-    amount,
-    perGameAmount,
-    iStarted,
-    doInternalLoadWasm,
-    fetchHex,
-    peercon,
+    params,
+    wasmConnection,
+    perGameAmount
   );
 
   setupBlockchainConnection(uniqueId);
