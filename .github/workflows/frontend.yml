@@ -73,6 +73,10 @@ jobs:
 
           ./resources/extract-from-image.sh "${GW}"
 
+      - name: Prune unreferenced image data
+        run: |
+          docker image prune
+
       - name: Run headless test
         env:
           DETECT_CHROMEDRIVER_VERSION: "true"
