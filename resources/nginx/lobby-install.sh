@@ -50,4 +50,4 @@ fi
 
 sed -e "s!/app!${WEBROOT}!g" < nginx/lobby.conf > "${NGINX}/lobby.conf"
 cp -r public "${WEBROOT}/lobby-view"
-cp service.mjs package.json node_modules "${SERVICE}"
+cp service.js "${SERVICE}"
