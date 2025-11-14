@@ -75,7 +75,7 @@ jobs:
 
       - name: Prune unreferenced image data
         run: |
-          docker image prune
+          docker image prune -f
 
       - name: Run headless test
         env:
