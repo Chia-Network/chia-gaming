@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Box, Typography, Card, CardContent } from '@mui/material';
 import {
   OutcomeLogLine,
@@ -75,13 +75,10 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
     );
     return (
       <Box display='flex' flexDirection='row' alignItems='center' py={0.5}>
-        <Typography aria-label={`${label}-description`} data-hand-description={JSON.stringify(desc)} variant='body2' fontWeight={600} mr={1}>
-          {makeDescription(desc)}:
-      <Box>
-        <Typography sx={{ fontWeight: 600, fontSize: '0.95rem', mb: 0.75, color: '#374151' }}>
+        <Typography sx={{ fontWeight: 600, fontSize: '0.95rem', mb: 0.75, color: '#374151' }} aria-label={`${label}-description`} data-hand-description={JSON.stringify(desc)} variant='body2' fontWeight={600} mr={1}>
           {makeDescription(desc)}
         </Typography>
-        <Box display='flex' flexWrap='wrap' gap={0.5}>
+        <Box data-testid={label} display='flex' flexWrap='wrap' gap={0.5}>
           {cards}
         </Box>
       </Box>
@@ -187,7 +184,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                       mb: isExpanded ? 1.5 : 0,
                     }}
                   >
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Box data-testid={`log-entry-me-${index}`} sx={{ flex: 1, minWidth: 0 }}>
                       <Typography
                         sx={{
                           fontSize: '0.85rem',
@@ -218,6 +215,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                       </Box>
                     </Box>
                     <ExpandMore
+                      data-testid={`log-expand-button-${index}`}
                       sx={{
                         ml: 1,
                         transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
@@ -240,7 +238,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                       }}
                     >
                       {/* You Section */}
-                      <Box>
+                      <Box data-testid={`log-entry-me-${index}`}>
                         <Typography
                           sx={{
                             fontSize: '0.75rem',
@@ -273,7 +271,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                         >
                           Cards
                         </Typography>
-                        <Box display='flex' flexWrap='wrap' gap={0.5}>
+                        <Box data-testid={`my-start-hand-${index}`} display='flex' flexWrap='wrap' gap={0.5}>
                           {entry.myStartHand.map((c, i) =>
                             cardDisplay(
                               c,
@@ -281,6 +279,28 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                               'my-cards',
                               (entry.myPicks & (1 << i)) !== 0,
                             ),
+                          )}
+                        </Box>
+                        <Typography
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: '#1f2937',
+                            mb: 0.75,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                          }}
+                        >
+                          Swapped Cards
+                        </Typography>
+                        <Box data-testid={`my-final-hand-${index}`} display='flex' flexWrap='wrap' gap={0.5}>
+                          {entry.myFinalHand.map((c, i) =>
+                            cardDisplay(
+                              c,
+                              i,
+                              'my-final-cards',
+                              (entry.mySelects & (1 << i)) !== 0,
+                            )
                           )}
                         </Box>
                       </Box>
@@ -317,9 +337,9 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                             letterSpacing: '0.5px',
                           }}
                         >
-                          Cards
+                          Start Cards
                         </Typography>
-                        <Box display='flex' flexWrap='wrap' gap={0.5}>
+                        <Box data-testid={`opponent-start-hand-${index}`} display='flex' flexWrap='wrap' gap={0.5}>
                           {entry.opponentStartHand.map((c, i) =>
                             cardDisplay(
                               c,
@@ -327,6 +347,28 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                               'opponent-cards',
                               (entry.opponentPicks & (1 << i)) !== 0,
                             ),
+                          )}
+                        </Box>
+                        <Typography
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: '#1f2937',
+                            mb: 0.75,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                          }}
+                        >
+                          Swapped Cards
+                        </Typography>
+                        <Box data-testid={`opponent-final-hand-${index}`} display='flex' flexWrap='wrap' gap={0.5}>
+                          {entry.opponentFinalHand.map((c, i) =>
+                            cardDisplay(
+                              c,
+                              i,
+                              'opponent-final-cards',
+                              (entry.opponentSelects & (1 << i)) !== 0,
+                            )
                           )}
                         </Box>
                       </Box>
