@@ -1,31 +1,9 @@
-import { Button, Link, SxProps, Typography } from '@mui/material';
-import { alignSelf, border, borderRadius, Box, display } from '@mui/system';
 import {
   StartConnectResult,
   walletConnectState,
 } from '../hooks/useWalletConnect';
 import { QRCodeModal } from './QRCodeModal';
 import { InfoRounded } from '@mui/icons-material';
-
-const styles: Record<string, SxProps> = {
-  container: {
-    px: { xs: 2, sm: 3 },
-    maxWidth: { xs: '100%', sm: '400px', md: '480px', lg: '100%' },
-    margin: '0 auto',
-  },
-  welcome: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: { xs: '8px', sm: '12px' },
-  },
-  buttonGroup: {
-    display: 'flex',
-    flexDirection: { xs: 'column', sm: 'row' },
-    justifyContent: 'space-between',
-    gap: { xs: 2, sm: 2 },
-    mt: 4,
-  },
-};
 
 interface ShowWalletConnectState {
   initialized: boolean;
@@ -49,162 +27,96 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
   dismiss,
 }) => {
   return (
-    <Box sx={styles.container}>
+    <div className="px-2 sm:px-3 max-w-full sm:max-w-[400px] md:max-w-[480px] lg:max-w-full mx-auto">
       <QRCodeModal open={showQRModal} uri={connectionUri} onClose={dismiss} />
 
       {!initialized ? (
-        <Box sx={styles.welcome}>
-          <Typography variant='h5' fontSize={{ xs: '1.2rem', sm: '1.5rem' }}>
+        <div className="flex flex-col gap-2 sm:gap-3">
+          <h5 className="text-[1.2rem] sm:text-[1.5rem] font-semibold">
             Initializing WalletConnect...
-          </Typography>
-          <Typography variant='body1' mt={2}>
+          </h5>
+          <p className="mt-2 text-[0.95rem]">
             Please wait while we set up the connection.
-          </Typography>
-        </Box>
+          </p>
+        </div>
       ) : !haveClient ? (
-        <Box sx={styles.welcome}>
-          <Typography
-            variant='h5'
-            color='error'
-            fontSize={{ xs: '1.2rem', sm: '1.5rem' }}
-          >
+        <div className="flex flex-col gap-2 sm:gap-3">
+          <h5 className="text-[1.2rem] sm:text-[1.5rem] font-semibold text-(--color-alert-text)">
             WalletConnect Failed to Initialize
-          </Typography>
-          <Typography variant='body1' mt={2}>
+          </h5>
+          <p className="mt-2">
             Please check your environment configuration and try refreshing the
             page.
-          </Typography>
-          <Typography
-            variant='body2'
-            mt={1}
-            color='text.secondary'
-            fontSize={{ xs: '0.85rem', sm: '0.95rem' }}
-          >
+          </p>
+          <p className="mt-1 text-[0.85rem] text-(--color-canvas-text)">
             Make sure you have a .env file with VITE_PROJECT_ID, VITE_RELAY_URL,
             and VITE_CHAIN_ID.
-          </Typography>
-        </Box>
+          </p>
+        </div>
       ) : !haveSession ? (
-        <Box sx={styles.welcome}>
-          <Box sx={styles.buttonGroup}>
-            <Button
-              fullWidth
-              variant='contained'
+        <div className="flex flex-col gap-2 sm:gap-3">
+          <div className="flex md:flex-row flex-col justify-between gap-2 mt-4">
+            <button
               onClick={onConnect}
-              sx={{
-                backgroundColor: '#424F6D',
-                color: '#fff',
-                fontWeight: 600,
-                letterSpacing: '0.5px',
-                textTransform: 'uppercase',
-                borderRadius: '6px',
-                py: 1.2,
-                boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.85)',
-                '&:hover': {
-                  backgroundColor: '#3A4663',
-                  boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
-                },
-              }}
+              className="md:w-full w-auto bg-(--color-secondary-solid) text-(--color-secondary-on-secondary) p-4 font-semibold tracking-wider uppercase rounded-md py-[1.2em] shadow-[0px_4px_8px_rgba(66,79,109,0.85)] hover:bg-(--color-secondary-solid-hover) hover:shadow-[0px_6px_12px_rgba(66,79,109,0.35)] transition-all"
             >
               Link Wallet
-            </Button>
+            </button>
 
-            <Button
-              fullWidth
-              variant='outlined'
-              color='error'
-              sx={{
-                py: 1.2,
-                fontWeight: 600,
-                boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.85)',
-              }}
+            <button
               onClick={() => {
                 localStorage.clear();
                 window.location.href = '';
               }}
+              className="md:w-full w-auto border-2 border-(--color-alert-border) text-(--color-alert-text) p-4 font-semibold shadow-[0px_4px_8px_rgba(66,79,109,0.85)] rounded-md hover:bg-(--color-alert-bg-hover) transition-all"
             >
               Reset Storage
-            </Button>
-          </Box>
-          {/* <Typography
-            variant='h5'
-            fontSize={{ xs: '1.25rem', sm: '1.5rem' }}
-            textAlign='start'
-          >
-            WalletConnect Example
-          </Typography> */}
-          <Box
-            sx={{
-              backgroundColor: 'rgba(66, 81, 196, 0.2)',
-              borderRadius: 2,
-              p: 3,
-              display: 'flex',
-              gap: 2,
-              mt: 3,
-              color: '#1A1A1A',
-            }}
-          >
-            <Box
-              style={{
-                padding: '4px',
-                backgroundColor: 'rgba(66, 81, 196, 0.4)',
-                display: 'flex',
-                borderRadius: '30%',
-                alignSelf: 'baseline',
-              }}
-            >
-              <InfoRounded sx={{ color: '#424F6D' }} />
-            </Box>
-            <Box>
-              <Typography variant='body1' mt={2}>
+            </button>
+          </div>
+
+          <div className="bg-(--color-secondary-bg-subtle) rounded-lg p-4 flex gap-2 mt-3 text-(--color-canvas-text-contrast)">
+            <div className="p-1 bg-(--color-secondary-bg) rounded-full shrink-0 flex items-center justify-center h-fit">
+              <InfoRounded sx={{ color: 'var(--color-secondary-solid)', fontSize: '1.25rem' }} />
+            </div>
+            <div>
+              <p className="mt-2 text-[0.95rem]">
                 Before you can test out WalletConnect, you need to link your
                 Chia wallet. Download the latest wallet from the{' '}
-                <Link
-                  href='https://www.chia.net/downloads'
-                  target='_blank'
-                  rel='noopener'
+                <a
+                  className="text-(--color-secondary-text) underline hover:text-(--color-secondary-text-contrast) transition-colors"
+                  href="https://www.chia.net/downloads"
+                  target="_blank"
+                  rel="noopener"
                 >
                   official download page
-                </Link>
+                </a>
                 .
-              </Typography>
+              </p>
 
-              <Typography variant='body1' mt={2}>
+              <p className="mt-2 text-[0.95rem]">
                 Once the wallet is synced, use the WalletConnect menu on the top
                 right to link it to this site. Then click the button below to
                 begin.
-              </Typography>
+              </p>
               {!haveSession && haveClient && (
-                <Typography
-                  variant='body2'
-                  sx={{
-                    mt: 1,
-                    fontSize: { xs: '0.9rem' },
-                  }}
-                >
+                <p className="mt-1 text-[0.9rem]">
                   Ready to connect. Click "Link Wallet" to start.
-                </Typography>
+                </p>
               )}
-            </Box>
-          </Box>
+            </div>
+          </div>
+
           {haveClient && (
-            <Typography
-              variant='body2'
-              sx={{
-                mt: 1,
-                color: '#666666',
-                fontSize: { xs: '0.85rem' },
-              }}
-            >
+            <p className="mt-1 text-[0.85rem] text-(--color-canvas-text)">
               Client Status: {haveClient ? 'Ready' : 'Not Ready'} | Sessions:{' '}
               {sessions} | Connected: {haveSession ? 'Yes' : 'No'}
-            </Typography>
+            </p>
           )}
-        </Box>
+        </div>
       ) : (
         <div />
       )}
-    </Box>
+    </div>
   );
 };
 

@@ -28,15 +28,10 @@ import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
-import {
-  BugReportOutlined,
-  Close,
-  ContentCopy,
-  LocalActivity,
-} from '@mui/icons-material';
+import { Close } from '@mui/icons-material';
 import WalletBadge from './WalletBadge';
-import WalletStatus from './WalletStatus';
-import { Wrench } from 'lucide-react';
+
+import { Wrench, Sun } from 'lucide-react';
 
 const WalletConnectHeading = (_args: any) => {
   const { wcInfo, setWcInfo } = useDebug();
@@ -65,6 +60,36 @@ const WalletConnectHeading = (_args: any) => {
   const [haveBlock, setHaveBlock] = useState(false);
 
   const uniqueId = generateOrRetrieveUniqueId();
+
+  // Theme state: keep dark/light in sync with document root and localStorage
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('theme');
+      if (stored === 'dark') return true;
+      if (stored === 'light') return false;
+    } catch (e) {
+      // ignore
+    }
+    return document.documentElement.classList.contains('dark');
+  });
+
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      try {
+        localStorage.setItem('theme', 'dark');
+      } catch (e) {}
+    } else {
+      document.documentElement.classList.remove('dark');
+      try {
+        localStorage.setItem('theme', 'light');
+      } catch (e) {}
+    }
+  }, [isDark]);
+
+  const toggleTheme = useCallback(() => {
+    setIsDark((d) => !d);
+  }, []);
 
   const walletConnectStates: any = {
     stateName: setStateName,
@@ -264,13 +289,13 @@ const WalletConnectHeading = (_args: any) => {
         sx={{
           width: { xs: '90%', sm: '75%', md: '50%' },
           mb: 2,
-          backgroundColor: '#E5FE75',
+          backgroundColor: 'var(--primary-solid)',
           boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.85)',
-          color: '#424F6D',
+          color: 'var(--color-secondary-text)',
           fontWeight: 600,
           fontSize: { xs: '0.85rem', sm: '0.95rem', md: '1rem' },
           '&:hover': {
-            backgroundColor: '#bb3',
+            backgroundColor: 'var(--primary-solid-hover)',
           },
         }}
       >
@@ -288,11 +313,11 @@ const WalletConnectHeading = (_args: any) => {
           gap: 1,
         }}
       >
-        <Divider sx={{ flex: 1, borderColor: 'rgba(0,0,0,0.2)' }} />
+        <Divider sx={{ flex: 1, borderColor: 'var(--color-canvas-border)' }} />
         <Typography
           variant='body2'
           sx={{
-            color: '#666',
+            color: 'var(--color-canvas-text)',
             fontWeight: 500,
             whiteSpace: 'nowrap',
             fontSize: { xs: '0.85rem', sm: '0.95rem' },
@@ -300,7 +325,7 @@ const WalletConnectHeading = (_args: any) => {
         >
           OR
         </Typography>
-        <Divider sx={{ flex: 1, borderColor: 'rgba(0,0,0,0.2)' }} />
+        <Divider sx={{ flex: 1, borderColor: 'var(--color-canvas-border)' }} />
       </Box>
 
       {/* WalletConnect Dialog */}
@@ -334,7 +359,6 @@ const WalletConnectHeading = (_args: any) => {
         width: '100%',
         minHeight: 'auto',
         position: 'relative',
-        background: 'white',
         padding: '1em',
         marginTop: 'clamp(26px, 10vw, 26px)',
         gap: '1em',
@@ -354,7 +378,7 @@ const WalletConnectHeading = (_args: any) => {
         flexDirection: 'column',
         height: useHeight,
         width: '100vw',
-        backgroundColor: 'white',
+        backgroundColor: 'var(--color-canvas-bg)',
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'row', height: 'auto' }}>
@@ -370,8 +394,8 @@ const WalletConnectHeading = (_args: any) => {
             flexDirection: { xs: 'column', sm: 'row' },
             alignItems: { xs: 'stretch', sm: 'center' },
             justifyContent: 'space-between',
-            bgcolor: 'white',
-            color: '#424F6D',
+            bgcolor: 'var(--color-canvas-bg)',
+            color: 'var(--color-primary-text)',
             px: { xs: 1.5, sm: 2, md: 3 },
             py: { xs: 1, sm: 0 },
             minHeight: { xs: 'auto', sm: '4.5em' },
@@ -381,13 +405,20 @@ const WalletConnectHeading = (_args: any) => {
           }}
         >
           {/* LEFT: Title */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 'auto' }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              minWidth: 'auto',
+            }}
+          >
             <Typography
               variant='h6'
               fontWeight={600}
               sx={{
                 fontSize: { xs: '0.9rem', sm: '1rem', md: '1.25rem' },
-                color: '#555555',
+                color: 'var(--color-primary-text)',
                 whiteSpace: 'nowrap',
               }}
             >
@@ -449,32 +480,54 @@ const WalletConnectHeading = (_args: any) => {
                 fontWeight='semi-bold'
                 sx={{
                   fontSize: { xs: '0.7rem', sm: '0.85rem', md: '0.95rem' },
-                  color: '#555555',
+                  color: 'var(--color-primary-text)',
                   display: { xs: 'none', sm: 'block' },
                 }}
               >
                 WalletConnect
               </Typography>
               <Box>
-                <WalletBadge sessionConnected={sessionConnected} fakeAddress={fakeAddress} />
+                <WalletBadge
+                  sessionConnected={sessionConnected}
+                  fakeAddress={fakeAddress}
+                />
               </Box>
             </Box>
 
-            {/* BALANCE */}
-            {balance !== undefined && (
-              <Typography
-                variant='body2'
+            {/* BALANCE and Theme Toggle */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {balance !== undefined && (
+                <Typography
+                  variant='body2'
+                  sx={{
+                    color: 'var(--color-primary-text)',
+                    fontWeight: 500,
+                    opacity: 0.8,
+                    fontSize: { xs: '0.65rem', sm: '0.85rem', md: '0.95rem' },
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Bal: {balance} XCH
+                </Typography>
+              )}
+
+              <IconButton
+                aria-label='toggle-theme'
+                onClick={toggleTheme}
+                size='small'
                 sx={{
-                  color: '#424F6D',
-                  fontWeight: 500,
-                  opacity: 0.8,
-                  fontSize: { xs: '0.65rem', sm: '0.85rem', md: '0.95rem' },
-                  whiteSpace: 'nowrap',
+                  bgcolor: 'transparent',
+                  borderColor: 'var(--color-canvas-border)',
+                  border: '1px solid var(--color-canvas-border)',
+                  color: isDark
+                    ? 'var(--color-warning-solid)'
+                    : 'var(--color-canvas-text)',
+                  '&:hover': { bgcolor: 'var(--color-canvas-bg-hover)' },
                 }}
               >
-                Bal: {balance} XCH
-              </Typography>
-            )}
+                <Sun size={16} />
+              </IconButton>
+            </Box>
           </Box>
         </Box>
       </div>
@@ -484,12 +537,12 @@ const WalletConnectHeading = (_args: any) => {
         aria-label='debug'
         onClick={() => setDebugOpen(true)}
         sx={{
-          color: '#000',
+          color: 'var(--color-canvas-text)',
           position: 'fixed',
           bottom: 24,
           right: 24,
-          bgcolor: 'white',
-          border: '1px solid #ccc',
+          bgcolor: 'var(--color-canvas-bg)',
+          border: '1px solid var(--color-canvas-border)',
           borderRadius: '20px', // right rounded
           boxShadow: '0px 4px 12px rgba(0,0,0,0.2)',
           py: 1,
@@ -498,8 +551,8 @@ const WalletConnectHeading = (_args: any) => {
           justifyContent: 'center',
           transition: 'all 0.25s ease',
           '&:hover': {
-            bgcolor: '#7A8398',
-            color: 'white',
+            bgcolor: 'var(--color-primary-solid-hover)',
+            color: 'var(--color-primary-on-primary)',
             transform: 'translateY(-2px)',
             boxShadow: '0px 6px 16px rgba(0,0,0,0.25)',
           },
@@ -521,7 +574,7 @@ const WalletConnectHeading = (_args: any) => {
             alignItems: 'center',
             justifyContent: 'space-between',
             fontWeight: 600,
-            color: '#424F6D',
+            color: 'var(--color-primary-text)',
           }}
         >
           Developer Debug

@@ -1,4 +1,323 @@
+/* Generated with https://designrift.dev */
 @import "tailwindcss";
+
+/* LIGHT THEME */
+:root {
+
+  /* CANVAS */
+  --canvas-base: #fbfcfd;
+  --canvas-bg-subtle: #f8f9fa;
+  --canvas-bg: #f1f3f5;
+  --canvas-bg-hover: #eceef0;
+  --canvas-bg-active: #e6e8eb;
+  --canvas-line: #dfe3e6;
+  --canvas-border: #d7dbdf;
+  --canvas-border-hover: #c1c8cd;
+  --canvas-solid: #889096;
+  --canvas-solid-hover: #7e868c;
+  --canvas-text: #687076;
+  --canvas-text-contrast: #11181c;
+  --canvas-on-canvas: #fff;
+
+  /* PRIMARY */
+  --primary-base: #fdfdf9;
+  --primary-bg-subtle: #fffce8;
+  --primary-bg: #fffbd1;
+  --primary-bg-hover: #fff8bb;
+  --primary-bg-active: #fef2a4;
+  --primary-line: #f9e68c;
+  --primary-border: #efd36c;
+  --primary-border-hover: #ebbc00;
+  --primary-solid: #f5d90a;
+  --primary-solid-hover: #f7ce00;
+  --primary-text: #946800;
+  --primary-text-contrast: #35290f;
+  --primary-on-primary: #000000;
+
+  /* SECONDARY */
+  --secondary-base: #fdfdfe;
+  --secondary-bg-subtle: #f8faff;
+  --secondary-bg: #f0f4ff;
+  --secondary-bg-hover: #e6edfe;
+  --secondary-bg-active: #d9e2fc;
+  --secondary-line: #c6d4f9;
+  --secondary-border: #aec0f5;
+  --secondary-border-hover: #8da4ef;
+  --secondary-solid: #3e63dd;
+  --secondary-solid-hover: #3a5ccc;
+  --secondary-text: #3451b2;
+  --secondary-text-contrast: #101d46;
+  --secondary-on-secondary: #ffffff;
+
+  /* SUCCESS */
+  --success-base: #fbfefc;
+  --success-bg-subtle: #f2fcf5;
+  --success-bg: #e9f9ee;
+  --success-bg-hover: #ddf3e4;
+  --success-bg-active: #ccebd7;
+  --success-line: #b4dfc4;
+  --success-border: #92ceac;
+  --success-border-hover: #5bb98c;
+  --success-solid: #30a46c;
+  --success-solid-hover: #299764;
+  --success-text: #18794e;
+  --success-text-contrast: #153226;
+  --success-on-success: #ffffff;
+
+  /* WARNING */
+  --warning-base: #fefdfb;
+  --warning-bg-subtle: #fff9ed;
+  --warning-bg: #fff4d5;
+  --warning-bg-hover: #ffecbc;
+  --warning-bg-active: #ffe3a2;
+  --warning-line: #ffd386;
+  --warning-border: #f3ba63;
+  --warning-border-hover: #ee9d2b;
+  --warning-solid: #ffb224;
+  --warning-solid-hover: #ffa01c;
+  --warning-text: #ad5700;
+  --warning-text-contrast: #4e2009;
+  --warning-on-warning: #000000;
+
+  /* ALERT */
+  --alert-base: #fffcfc;
+  --alert-bg-subtle: #fff8f8;
+  --alert-bg: #ffefef;
+  --alert-bg-hover: #ffe5e5;
+  --alert-bg-active: #fdd8d8;
+  --alert-line: #f9c6c6;
+  --alert-border: #f3aeaf;
+  --alert-border-hover: #eb9091;
+  --alert-solid: #e5484d;
+  --alert-solid-hover: #dc3d43;
+  --alert-text: #cd2b31;
+  --alert-text-contrast: #381316;
+  --alert-on-alert: #ffffff;
+
+  /* INFO */
+  --info-base: #fbfdff;
+  --info-bg-subtle: #f5faff;
+  --info-bg: #edf6ff;
+  --info-bg-hover: #e1f0ff;
+  --info-bg-active: #cee7fe;
+  --info-line: #b7d9f8;
+  --info-border: #96c7f2;
+  --info-border-hover: #5eb0ef;
+  --info-solid: #0091ff;
+  --info-solid-hover: #0081f1;
+  --info-text: #006adc;
+  --info-text-contrast: #00254d;
+  --info-on-info: #ffffff;
+}
+
+/* DARK THEME */
+.dark {
+
+  /* CANVAS */
+  --canvas-base: #151718;
+  --canvas-bg-subtle: #1a1d1e;
+  --canvas-bg: #202425;
+  --canvas-bg-hover: #26292b;
+  --canvas-bg-active: #2b2f31;
+  --canvas-line: #313538;
+  --canvas-border: #3a3f42;
+  --canvas-border-hover: #4c5155;
+  --canvas-solid: #697177;
+  --canvas-solid-hover: #787f85;
+  --canvas-text: #9ba1a6;
+  --canvas-text-contrast: #ecedee;
+  --canvas-on-canvas: #000;
+
+  /* PRIMARY */
+  --primary-base: #1c1500;
+  --primary-bg-subtle: #221a00;
+  --primary-bg: #2c2100;
+  --primary-bg-hover: #352800;
+  --primary-bg-active: #3e3000;
+  --primary-line: #493c00;
+  --primary-border: #594a05;
+  --primary-border-hover: #705e00;
+  --primary-solid: #f5d90a;
+  --primary-solid-hover: #ffef5c;
+  --primary-text: #f0c000;
+  --primary-text-contrast: #fffad1;
+  --primary-on-primary: #000000;
+
+  /* SECONDARY */
+  --secondary-base: #131620;
+  --secondary-bg-subtle: #15192d;
+  --secondary-bg: #192140;
+  --secondary-bg-hover: #1c274f;
+  --secondary-bg-active: #1f2c5c;
+  --secondary-line: #22346e;
+  --secondary-border: #273e89;
+  --secondary-border-hover: #2f4eb2;
+  --secondary-solid: #3e63dd;
+  --secondary-solid-hover: #5373e7;
+  --secondary-text: #849dff;
+  --secondary-text-contrast: #eef1fd;
+  --secondary-on-secondary: #ffffff;
+
+  /* SUCCESS */
+  --success-base: #0d1912;
+  --success-bg-subtle: #0c1f17;
+  --success-bg: #0f291e;
+  --success-bg-hover: #113123;
+  --success-bg-active: #133929;
+  --success-line: #164430;
+  --success-border: #1b543a;
+  --success-border-hover: #236e4a;
+  --success-solid: #30a46c;
+  --success-solid-hover: #3cb179;
+  --success-text: #4cc38a;
+  --success-text-contrast: #e5fbeb;
+  --success-on-success: #ffffff;
+
+  /* WARNING */
+  --warning-base: #1f1300;
+  --warning-bg-subtle: #271700;
+  --warning-bg: #341c00;
+  --warning-bg-hover: #3f2200;
+  --warning-bg-active: #4a2900;
+  --warning-line: #573300;
+  --warning-border: #693f05;
+  --warning-border-hover: #824e00;
+  --warning-solid: #ffb224;
+  --warning-solid-hover: #ffcb47;
+  --warning-text: #f1a10d;
+  --warning-text-contrast: #fef3dd;
+  --warning-on-warning: #000000;
+
+  /* ALERT */
+  --alert-base: #1f1315;
+  --alert-bg-subtle: #291415;
+  --alert-bg: #3c181a;
+  --alert-bg-hover: #481a1d;
+  --alert-bg-active: #541b1f;
+  --alert-line: #671e22;
+  --alert-border: #822025;
+  --alert-border-hover: #aa2429;
+  --alert-solid: #e5484d;
+  --alert-solid-hover: #f2555a;
+  --alert-text: #ff6369;
+  --alert-text-contrast: #feecee;
+  --alert-on-alert: #ffffff;
+
+  /* INFO */
+  --info-base: #0f1720;
+  --info-bg-subtle: #0f1b2d;
+  --info-bg: #10243e;
+  --info-bg-hover: #102a4c;
+  --info-bg-active: #0f3058;
+  --info-line: #0d3868;
+  --info-border: #0a4481;
+  --info-border-hover: #0954a5;
+  --info-solid: #0091ff;
+  --info-solid-hover: #369eff;
+  --info-text: #52a9ff;
+  --info-text-contrast: #eaf6ff;
+  --info-on-info: #ffffff;
+  /* Color aliases for Tailwind config mapping */
+  --color-canvas-base: var(--canvas-base);
+  --color-canvas-bg-subtle: var(--canvas-bg-subtle);
+  --color-canvas-bg: var(--canvas-bg);
+  --color-canvas-bg-hover: var(--canvas-bg-hover);
+  --color-canvas-bg-active: var(--canvas-bg-active);
+  --color-canvas-line: var(--canvas-line);
+  --color-canvas-border: var(--canvas-border);
+  --color-canvas-border-hover: var(--canvas-border-hover);
+  --color-canvas-solid: var(--canvas-solid);
+  --color-canvas-solid-hover: var(--canvas-solid-hover);
+  --color-canvas-text: var(--canvas-text);
+  --color-canvas-text-contrast: var(--canvas-text-contrast);
+  --color-canvas-on-canvas: var(--canvas-on-canvas);
+
+  --color-primary-base: var(--primary-base);
+  --color-primary-bg-subtle: var(--primary-bg-subtle);
+  --color-primary-bg: var(--primary-bg);
+  --color-primary-bg-hover: var(--primary-bg-hover);
+  --color-primary-bg-active: var(--primary-bg-active);
+  --color-primary-line: var(--primary-line);
+  --color-primary-border: var(--primary-border);
+  --color-primary-border-hover: var(--primary-border-hover);
+  --color-primary-solid: var(--primary-solid);
+  --color-primary-solid-hover: var(--primary-solid-hover);
+  --color-primary-text: var(--primary-text);
+  --color-primary-text-contrast: var(--primary-text-contrast);
+  --color-primary-on-primary: var(--primary-on-primary);
+
+  --color-secondary-base: var(--secondary-base);
+  --color-secondary-bg-subtle: var(--secondary-bg-subtle);
+  --color-secondary-bg: var(--secondary-bg);
+  --color-secondary-bg-hover: var(--secondary-bg-hover);
+  --color-secondary-bg-active: var(--secondary-bg-active);
+  --color-secondary-line: var(--secondary-line);
+  --color-secondary-border: var(--secondary-border);
+  --color-secondary-border-hover: var(--secondary-border-hover);
+  --color-secondary-solid: var(--secondary-solid);
+  --color-secondary-solid-hover: var(--secondary-solid-hover);
+  --color-secondary-text: var(--secondary-text);
+  --color-secondary-text-contrast: var(--secondary-text-contrast);
+  --color-secondary-on-secondary: var(--secondary-on-secondary);
+
+  --color-success-base: var(--success-base);
+  --color-success-bg-subtle: var(--success-bg-subtle);
+  --color-success-bg: var(--success-bg);
+  --color-success-bg-hover: var(--success-bg-hover);
+  --color-success-bg-active: var(--success-bg-active);
+  --color-success-line: var(--success-line);
+  --color-success-border: var(--success-border);
+  --color-success-border-hover: var(--success-border-hover);
+  --color-success-solid: var(--success-solid);
+  --color-success-solid-hover: var(--success-solid-hover);
+  --color-success-text: var(--success-text);
+  --color-success-text-contrast: var(--success-text-contrast);
+  --color-success-on-success: var(--success-on-success);
+
+  --color-warning-base: var(--warning-base);
+  --color-warning-bg-subtle: var(--warning-bg-subtle);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-bg-hover: var(--warning-bg-hover);
+  --color-warning-bg-active: var(--warning-bg-active);
+  --color-warning-line: var(--warning-line);
+  --color-warning-border: var(--warning-border);
+  --color-warning-border-hover: var(--warning-border-hover);
+  --color-warning-solid: var(--warning-solid);
+  --color-warning-solid-hover: var(--warning-solid-hover);
+  --color-warning-text: var(--warning-text);
+  --color-warning-text-contrast: var(--warning-text-contrast);
+  --color-warning-on-warning: var(--warning-on-warning);
+
+  --color-alert-base: var(--alert-base);
+  --color-alert-bg-subtle: var(--alert-bg-subtle);
+  --color-alert-bg: var(--alert-bg);
+  --color-alert-bg-hover: var(--alert-bg-hover);
+  --color-alert-bg-active: var(--alert-bg-active);
+  --color-alert-line: var(--alert-line);
+  --color-alert-border: var(--alert-border);
+  --color-alert-border-hover: var(--alert-border-hover);
+  --color-alert-solid: var(--alert-solid);
+  --color-alert-solid-hover: var(--alert-solid-hover);
+  --color-alert-text: var(--alert-text);
+  --color-alert-text-contrast: var(--alert-text-contrast);
+  --color-alert-on-alert: var(--alert-on-alert);
+
+  --color-info-base: var(--info-base);
+  --color-info-bg-subtle: var(--info-bg-subtle);
+  --color-info-bg: var(--info-bg);
+  --color-info-bg-hover: var(--info-bg-hover);
+  --color-info-bg-active: var(--info-bg-active);
+  --color-info-line: var(--info-line);
+  --color-info-border: var(--info-border);
+  --color-info-border-hover: var(--info-border-hover);
+  --color-info-solid: var(--info-solid);
+  --color-info-solid-hover: var(--info-solid-hover);
+  --color-info-text: var(--info-text);
+  --color-info-text-contrast: var(--info-text-contrast);
+  --color-info-on-info: var(--info-on-info);
+}
+
+/* tailwind import removed (using directives above) */
 
 /* Reset body and html to prevent scrollbar issues on root container */
 html, body {
@@ -59,3 +378,5 @@ html, body {
 		transform: rotateY(180deg);
 	}
 }
+
+

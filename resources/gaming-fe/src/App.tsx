@@ -1,4 +1,3 @@
-import { Box, Typography } from '@mui/material';
 import { useEffect, useState } from 'react';
 
 import Gallery from './components/Gallery';
@@ -61,64 +60,25 @@ const App = () => {
   }
 
   const wcHeading = (
-    <div
-      style={{
-        display: 'flex',
-        flexGrow: 0,
-        flexShrink: 0,
-        height: '3rem',
-        width: '100%',
-      }}
-    >
+    <div className="flex shrink-0 h-12 w-full">
       <WalletConnectHeading />
     </div>
   );
 
   if (!havePeak) {
     return (
-      <div
-        style={{
-          display: 'flex',
-          position: 'relative',
-          left: 0,
-          top: 0,
-          width: '100vw',
-          height: '100vh',
-          flexDirection: 'column',
-        }}
-      >
+      <div className="flex flex-col relative w-screen h-screen" style={{ backgroundColor: 'var(--color-canvas-bg)' }}>
         {wcHeading}
-        {/* <Box p={4} maxWidth={600} mx='auto'>
-          <Typography variant='h4' gutterBottom>
-            Waiting for wallet connect connection (use the menu).
-          </Typography>
-        </Box> */}
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        position: 'relative',
-        left: 0,
-        top: 0,
-        width: '100svw',
-        height: '100svh',
-        flexDirection: 'column',
-      }}
-    >
+    <div className="flex flex-col relative w-screen h-screen" style={{ backgroundColor: 'var(--color-canvas-bg)' }}>
       {wcHeading}
       <iframe
         id='subframe'
-        style={{
-          width: '100%',
-          flex: 1,
-          border: 'none',
-          margin: 0,
-          padding: 0,
-        }}
+        className="w-full flex-1 border-0 m-0 p-0"
         src={iframeUrl}
       ></iframe>
     </div>
