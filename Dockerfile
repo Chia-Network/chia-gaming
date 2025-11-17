@@ -64,6 +64,8 @@ RUN --mount=type=tmpfs,dst=/app \
   mv /app/wc/node_modules /preinst/wc && \
   mv /app/wc/package.json /preinst/wc
 
+RUN rm -rf /root/.cache
+
 #CI FROM node:20.18.1
 #CI RUN apt-get update -y && \
 #CI     apt-get install -y libc6 && \

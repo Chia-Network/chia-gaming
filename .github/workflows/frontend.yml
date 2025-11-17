@@ -42,6 +42,7 @@ jobs:
         with:
             target: wasm32-unknown-unknown
             components: rustfmt
+
       - name: Install wasm-pack
         run: |
           cargo install --version 0.13.1 wasm-pack
@@ -54,6 +55,7 @@ jobs:
           sed -e 's/#CI //g' < Dockerfile.non-ci > Dockerfile
           docker build --platform linux/amd64 --progress=plain -t chia-gaming-test . # TODO: Replace this line with ./build-docker-images.sh
           docker run --name chia-gaming-test --network=host -t chia-gaming-test &
+          docker image prune -f
           cd resources/fe-test
           ./wait-for-it.sh localhost:5800
           # The wc-stub now runs a block update service which mimics coinset.org
