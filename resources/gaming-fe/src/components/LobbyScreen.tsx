@@ -164,6 +164,7 @@ const LobbyScreen = () => {
     } catch (err) {
       console.error('Failed to copy:', err);
     }
+    setGotoUrl(secureUrl);
     setUrlDialogOpen(false);
     closeDialog();
   };

@@ -74,6 +74,9 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
       cardDisplay(c, i, `outcome-${me ? 'me' : 'opponent'}`, false),
     );
     return (
+      <Box display='flex' flexDirection='row' alignItems='center' py={0.5}>
+        <Typography aria-label={`${label}-description`} data-hand-description={JSON.stringify(desc)} variant='body2' fontWeight={600} mr={1}>
+          {makeDescription(desc)}:
       <Box>
         <Typography sx={{ fontWeight: 600, fontSize: '0.95rem', mb: 0.75, color: '#374151' }}>
           {makeDescription(desc)}

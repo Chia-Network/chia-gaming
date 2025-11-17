@@ -204,6 +204,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
             disabled={moveNumber !== 0}
             variant='outlined'
             startIcon={<LogOut />}
+            data-testid='stop-playing'
             sx={{
               borderColor: '#EF4444',
               color: '#EF4444',
