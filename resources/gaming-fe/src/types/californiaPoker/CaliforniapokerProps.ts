@@ -12,4 +12,7 @@ export interface CaliforniapokerProps {
   cardSelections: number;
   setCardSelections: (n: number) => void;
   handleMakeMove: (hex: string) => void;
+  myWinOutcome: "win" | "lose" | "tie" | undefined;
+  banner: string;
+  balanceDisplay: string;
 }

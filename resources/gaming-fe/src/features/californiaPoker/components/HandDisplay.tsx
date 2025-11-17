@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { HandDisplayProps } from "../../../types/californiaPoker";
-import { GAME_STATES } from "../constants/constants";
-import { calculateBalancedRows } from "../utils";
-import Card from "./Card";
+import { useEffect, useRef, useState } from 'react';
+import { HandDisplayProps } from '../../../types/californiaPoker';
+import { GAME_STATES } from '../constants/constants';
+import Card from './Card';
 
 function HandDisplay(props: HandDisplayProps) {
   const {
@@ -23,6 +22,8 @@ function HandDisplay(props: HandDisplayProps) {
   const [containerWidth, setContainerWidth] = useState(600);
   const [winnerIndicatorOffset, setWinnerIndicatorOffset] = useState(0);
   const containerRef = useRef<any | null>(null);
+  const [showPlaceholders, setShowPlaceholders] = useState(false);
+  const [placeholderFlip, setPlaceholderFlip] = useState(false);
 
   useEffect(() => {
     const updateWidth = () => {
@@ -73,37 +74,44 @@ function HandDisplay(props: HandDisplayProps) {
     };
   }, [cards, area]); // Removed winner, winnerType, gameState dependencies
 
+  // Show placeholders if no cards. When cards arrive, run flip animation then hide placeholders.
+  useEffect(() => {
+    if (!cards || cards.length === 0) {
+      setShowPlaceholders(true);
+      setPlaceholderFlip(false);
+    } else if (showPlaceholders && cards.length > 0) {
+      // trigger flip animation
+      setPlaceholderFlip(true);
+      const t = setTimeout(() => {
+        setShowPlaceholders(false);
+        setPlaceholderFlip(false);
+      }, 600); // match animation duration
+      return () => clearTimeout(t);
+    }
+  }, [cards, showPlaceholders]);
+
   const isWinner = winner === winnerType;
   const isTie = winner === 'tie';
   const isPlayer = area === 'player';
 
-  // Determine what text to show
+  // Only show the title, not the hand description
   let displayText = title;
   if (gameState === GAME_STATES.FINAL && bestHand?.cards) {
     displayText = formatHandDescription(bestHand.rank);
   }
-
-  // Calculate balanced rows
-  const rowSizes = calculateBalancedRows(cards.length, containerWidth);
-  const cardRows: any[] = [];
-  let cardIndex = 0;
-
-  rowSizes.forEach((rowSize) => {
-    cardRows.push(cards.slice(cardIndex, cardIndex + rowSize));
-    cardIndex += rowSize;
-  });
+  // We'll render cards in a responsive grid (2 -> 4 -> 6 -> 8 columns)
 
   return (
     <div
       ref={containerRef}
-      className='p-2 rounded-lg max-w-full mx-auto'
+      className='p-1 rounded-lg max-w-full mx-auto gap-8 mb-2 relative'
       data-area={area}
     >
-      {!isPlayer && (
-        <h3 className='text-sm font-bold mb-1 text-center text-gray-700'>
+      {displayText ? (
+        <h3 className='text-sm font-bold py-2 text-center text-gray-700'>
           {displayText}
         </h3>
-      )}
+      ) : null}
 
       <div className='relative'>
         {gameState === GAME_STATES.FINAL && (isWinner || isTie) && (
@@ -118,10 +126,50 @@ function HandDisplay(props: HandDisplayProps) {
           </div>
         )}
 
-        <div className='flex flex-col gap-2 items-center'>
-          {cardRows.map((row, rowIndex) => (
-            <div key={`row-${rowIndex}`} className='flex gap-2 justify-center'>
-              {row.map((card: any, cardInRowIndex: number) => {
+        <div>
+          {showPlaceholders ? (
+            // Use a wrapping flex row so on desktop it appears as a single row
+            // and on smaller screens cards wrap into multiple rows without overflowing.
+            <div className='flex flex-wrap justify-center gap-2'>
+              {Array.from({ length: 8 }).map((_, i) => {
+                const frontCard = cards && cards[i];
+                const originalIndex = frontCard
+                  ? cards.findIndex((c) => c.suit === frontCard.suit && c.rank === frontCard.rank)
+                  : -1;
+
+                return (
+                  <div key={`placeholder-${i}`} className='w-20 h-28 shrink-0'>
+                    <div className='flip-container'>
+                      <div className={`flip-inner ${placeholderFlip ? 'is-flipped' : ''}`}>
+                        <div className='flip-back rounded border border-gray-200' style={{
+                          background: '#F1F3F5',
+                        }}>
+                        </div>
+
+                        <div className='flip-front rounded border' style={{ transform: 'rotateY(180deg)' }}>
+                          {frontCard ? (
+                            <Card
+                              index={i}
+                              id={`card-${playerNumber}-${i}`}
+                              key={`${area}-flip-${i}`}
+                              card={frontCard}
+                              cardId={`${area}-${i}`}
+                              isSelected={selectedCards.includes(originalIndex)}
+                              onClick={() => onCardClick && onCardClick(originalIndex)}
+                              isBeingSwapped={false}
+                              isInBestHand={false}
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className='flex flex-wrap justify-center gap-2'>
+              {cards.map((card: any, idx: number) => {
                 const originalIndex = cards.findIndex(
                   (c) => c.suit === card.suit && c.rank === card.rank,
                 );
@@ -132,35 +180,29 @@ function HandDisplay(props: HandDisplayProps) {
                   gameState === GAME_STATES.FINAL &&
                   bestHand?.cards &&
                   bestHand.cards.some(
-                    (bestCard) =>
-                      bestCard.rank === card.rank &&
-                      bestCard.suit === card.suit,
+                    (bestCard) => bestCard.rank === card.rank && bestCard.suit === card.suit,
                   );
 
                 return (
-                  <Card
-                    index={cardInRowIndex}
-                    id={`card-${playerNumber}-${card}`}
-                    key={`${area}-${originalIndex}`}
-                    card={card}
-                    cardId={`${area}-${originalIndex}`}
-                    isSelected={selectedCards.includes(originalIndex)}
-                    onClick={() => onCardClick && onCardClick(originalIndex)}
-                    isBeingSwapped={isBeingSwapped}
-                    isInBestHand={isInBestHand}
-                  />
+                  <div key={`${area}-${originalIndex}`} className='w-20 h-28 shrink-0'>
+                    <Card
+                      index={idx}
+                      id={`card-${playerNumber}-${idx}`}
+                      key={`${area}-${originalIndex}`}
+                      card={card}
+                      cardId={`${area}-${originalIndex}`}
+                      isSelected={selectedCards.includes(originalIndex)}
+                      onClick={() => onCardClick && onCardClick(originalIndex)}
+                      isBeingSwapped={isBeingSwapped}
+                      isInBestHand={isInBestHand}
+                    />
+                  </div>
                 );
               })}
             </div>
-          ))}
+          )}
         </div>
       </div>
-
-      {isPlayer && (
-        <h3 className='text-sm font-bold mt-1 text-center text-gray-700'>
-          {displayText}
-        </h3>
-      )}
     </div>
   );
 }

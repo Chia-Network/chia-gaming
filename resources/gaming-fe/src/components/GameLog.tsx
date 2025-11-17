@@ -1,28 +1,29 @@
-import React, { useState, useCallback } from 'react';
-import { Box, Typography, Paper, Divider } from '@mui/material';
+import React, { useState } from 'react';
+import { Box, Typography, Card, CardContent } from '@mui/material';
 import {
   OutcomeLogLine,
   OutcomeHandType,
   suitNames,
 } from '../types/ChiaGaming';
-import { ArrowDownward, ChevronRight } from '@mui/icons-material';
+import { ExpandMore } from '@mui/icons-material';
 import { RANK_SYMBOLS } from '../features/californiaPoker/constants/constants';
 
 interface GameLogProps {
   log: OutcomeLogLine[];
 }
 
-const GameLog: React.FC<GameLogProps> = ({ log }) => {
-  const [logOpen, setLogOpen] = useState(false);
-  
-  const makeDescription = (desc: OutcomeHandType) => {
-    if (desc.rank) return `${desc.name} ${desc.values.toString()}`;
-    return `${desc.name} ${suitNames[desc.values[0]]}`;
-  };
+const getRankSymbol = (n: number) => RANK_SYMBOLS[n] ?? n.toString();
 
-  const onClickHandler = useCallback(() => {
-    setLogOpen(!logOpen);
-  }, [logOpen]);
+const GameLog: React.FC<GameLogProps> = ({ log }) => {
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+
+  const makeDescription = (desc: OutcomeHandType) => {
+    const mappedValues = desc.values.map((v: number) => getRankSymbol(v));
+    if (desc.rank) {
+      return `${desc.name} ${mappedValues.join(', ')}`;
+    }
+    return `${desc.name} ${mappedValues[0]}`;
+  };
 
   const cardDisplay = (
     c: number[],
@@ -32,32 +33,34 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
   ) => {
     const suitName = suitNames[c[1]];
     const isRedSuit = suitName === '♥' || suitName === '♦';
-    const suitColor = isRedSuit ? 'red' : 'black';
+    const suitColor = isRedSuit ? '#dc2626' : '#000';
     const rankDisplay = RANK_SYMBOLS[c[0]] ?? c[0];
+
     return (
-      <Paper
+      <Box
         key={`${idPrefix}-${index}`}
         id={`${idPrefix}-${index}`}
-        elevation={1}
         sx={{
           color: suitColor,
-          px: 0.5,
-          py: 0.25,
+          px: 0.75,
+          py: 0.5,
           ml: 0.5,
-          borderRadius: 1,
-          backgroundColor: selected ? '#f2f2f2' : '#fff',
-          fontWeight: selected ? 600 : 400,
-          fontSize: '0.9rem',
-          display: 'flex',
+          borderRadius: '4px',
+          backgroundColor: selected ? '#e5e7eb' : '#f3f4f6',
+          fontWeight: selected ? 600 : 500,
+          fontSize: '0.8rem',
+          border: '1px solid #d1d5db',
+          display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          minWidth: '28px',
+          minWidth: '30px',
           textAlign: 'center',
+          whiteSpace: 'nowrap',
         }}
       >
         {rankDisplay}
         {suitName}
-      </Paper>
+      </Box>
     );
   };
 
@@ -71,16 +74,11 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
       cardDisplay(c, i, `outcome-${me ? 'me' : 'opponent'}`, false),
     );
     return (
-      <Box display='flex' flexDirection='row' alignItems='center' py={0.5}>
-        <Typography variant='body2' fontWeight={600} mr={1}>
-          {makeDescription(desc)}:
+      <Box>
+        <Typography sx={{ fontWeight: 600, fontSize: '0.95rem', mb: 0.75, color: '#374151' }}>
+          {makeDescription(desc)}
         </Typography>
-        <Box
-          aria-label={label}
-          display='flex'
-          flexDirection='row'
-          flexWrap='wrap'
-        >
+        <Box display='flex' flexWrap='wrap' gap={0.5}>
           {cards}
         </Box>
       </Box>
@@ -88,100 +86,191 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
   };
 
   return (
-    <Paper
-      elevation={3}
+    <Card
       sx={{
-        p: 2,
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        borderRadius: 2,
-        bgcolor: '#fafafa',
+        borderRadius: '12px',
+        border: '1px solid #e5e7eb',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+        backgroundColor: '#ffffff',
       }}
     >
-      {/* Header (fixed, not scrolled) */}
-      <Typography
-        variant='h6'
-        onClick={onClickHandler}
+      {/* Header - Non-scrolling */}
+      <CardContent
         sx={{
-          mb: 1,
-          cursor: 'pointer',
-          textAlign: 'center',
-          fontWeight: 700,
-          userSelect: 'none',
-          color: '#333',
-          '&:hover': { color: '#1976d2' },
+          pb: 1,
+          pt: 2,
+          px: 2,
+          borderBottom: '1px solid #f3f4f6',
         }}
-        aria-label='game-log-heading'
       >
-        Game & Transactions Log {logOpen ? <ArrowDownward /> : <ChevronRight />}
-      </Typography>
-      <Divider sx={{ mb: 1 }} />
+        <Typography
+          variant='subtitle1'
+          sx={{
+            fontWeight: 700,
+            fontSize: '1rem',
+            color: '#1f2937',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+          }}
+        >
+          Log {`(${log.length})`}
+        </Typography>
+      </CardContent>
 
       {/* Scrollable Log Content */}
       <Box
-        flex={1}
-        overflow='auto'
         sx={{
-          pr: 1,
-          maxHeight: { xs: 300, md: 'auto' },
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          px: 2,
+          py: 1,
+          '&::-webkit-scrollbar': {
+            width: '6px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: '#f1f5f9',
+            borderRadius: '3px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: '#cbd5e1',
+            borderRadius: '3px',
+            '&:hover': {
+              background: '#94a3b8',
+            },
+          },
         }}
       >
         {log.length === 0 ? (
-          <Typography variant='body2' color='text.secondary' textAlign='center'>
-            No game history yet.
-          </Typography>
+          <Box sx={{ py: 3, textAlign: 'center' }}>
+            <Typography variant='body2' color='#9ca3af'>
+              No game history yet.
+            </Typography>
+          </Box>
         ) : (
-          log.map((entry, index) => {
-            const iWin = entry.topLineOutcome === 'win' ? '🏆 WINNER' : '';
-            const opWin = entry.topLineOutcome === 'lose' ? '🏆 WINNER' : '';
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {log.map((entry, index) => {
+              const isExpanded = expandedIndex === index;
+              const iWin = entry.topLineOutcome === 'win';
+              const opWin = entry.topLineOutcome === 'lose';
 
-            return (
-              <Paper
-                key={`log-entry-${index}`}
-                elevation={1}
-                sx={{
-                  p: 2,
-                  mb: 2,
-                  borderRadius: 2,
-                  bgcolor: '#fff',
-                }}
-              >
-                {/* Responsive player-opponent container */}
-                <Box
-                  display='flex'
-                  flexDirection={{ xs: 'column', sm: 'column' }}
-                  justifyContent='space-between'
-                  gap={2}
+              return (
+                <Card
+                  key={`log-entry-${index}`}
+                  sx={{
+                    p: 1.5,
+                    borderRadius: '8px',
+                    backgroundColor: '#f9fafb',
+                    border: '1px solid #e5e7eb',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    '&:hover': {
+                      backgroundColor: '#f3f4f6',
+                      borderColor: '#d1d5db',
+                    },
+                  }}
+                  onClick={() => setExpandedIndex(isExpanded ? null : index)}
                 >
-                  {/* Player section */}
-                  <Box flex={1}>
-                    <Box
-                      display='flex'
-                      alignItems='center'
-                      justifyContent='space-between'
-                      mb={0.5}
-                    >
-                      {playerDisplay(
-                        true,
-                        `my-used-hand-${index}`,
-                        entry.myHandDescription,
-                        entry.myHand,
-                      )}
-                      <Typography variant='caption' color='success.main' ml={1}>
-                        {iWin}
+                  {/* Compact Summary View */}
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      mb: isExpanded ? 1.5 : 0,
+                    }}
+                  >
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography
+                        sx={{
+                          fontSize: '0.85rem',
+                          fontWeight: 600,
+                          color: iWin ? '#10b981' : opWin ? '#ef4444' : '#6b7280',
+                          mb: 0.5,
+                        }}
+                      >
+                        {iWin ? '🏆 You Won' : opWin ? '🏆 Opponent Won' : '🤝 Tie'}
                       </Typography>
+                      <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+                        <Box>
+                          <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 500 }}>
+                            You
+                          </Typography>
+                          <Typography sx={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151' }}>
+                            {makeDescription(entry.myHandDescription)}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 500 }}>
+                            Opponent
+                          </Typography>
+                          <Typography sx={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151' }}>
+                            {makeDescription(entry.opponentHandDescription)}
+                          </Typography>
+                        </Box>
+                      </Box>
                     </Box>
+                    <ExpandMore
+                      sx={{
+                        ml: 1,
+                        transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                        transition: 'transform 0.2s ease',
+                        color: '#9ca3af',
+                        flexShrink: 0,
+                      }}
+                    />
+                  </Box>
 
-                    {logOpen && (
-                      <Box mt={1}>
-                        <Typography variant='body2' fontWeight={600}>
-                          My Cards:
-                        </Typography>
-                        <Box
-                          display='flex'
-                          flexWrap='wrap'
+                  {/* Expanded Detailed View */}
+                  {isExpanded && (
+                    <Box
+                      sx={{
+                        pt: 1.5,
+                        borderTop: '1px solid #e5e7eb',
+                        display: 'flex',
+                        flexDirection: { xs: 'column', sm: 'column' },
+                        gap: 1.5,
+                      }}
+                    >
+                      {/* You Section */}
+                      <Box>
+                        <Typography
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: '#1f2937',
+                            mb: 0.75,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                          }}
                         >
+                          Your Hand
+                        </Typography>
+                        <Box sx={{ mb: 1 }}>
+                          {playerDisplay(
+                            true,
+                            `my-used-hand-${index}`,
+                            entry.myHandDescription,
+                            entry.myHand,
+                          )}
+                        </Box>
+                        <Typography
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: '#1f2937',
+                            mb: 0.75,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                          }}
+                        >
+                          Cards
+                        </Typography>
+                        <Box display='flex' flexWrap='wrap' gap={0.5}>
                           {entry.myStartHand.map((c, i) =>
                             cardDisplay(
                               c,
@@ -192,46 +281,42 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                           )}
                         </Box>
                       </Box>
-                    )}
-                  </Box>
 
-                  <Divider
-                    orientation='horizontal'
-                    flexItem
-                    sx={{
-                      display: { xs: 'none', md: 'block' },
-                      mx: 1,
-                    }}
-                  />
-
-                  {/* Opponent section */}
-                  <Box flex={1}>
-                    <Box
-                      display='flex'
-                      alignItems='center'
-                      justifyContent='space-between'
-                      mb={0.5}
-                    >
-                      {playerDisplay(
-                        false,
-                        `opponent-used-hand-${index}`,
-                        entry.opponentHandDescription,
-                        entry.opponentHand,
-                      )}
-                      <Typography variant='caption' color='error.main' ml={1}>
-                        {opWin}
-                      </Typography>
-                    </Box>
-
-                    {logOpen && (
-                      <Box mt={1}>
-                        <Typography variant='body2' fontWeight={600}>
-                          Their Cards:
-                        </Typography>
-                        <Box
-                          display='flex'
-                          flexWrap='wrap'
+                      {/* Opponent Section */}
+                      <Box>
+                        <Typography
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: '#1f2937',
+                            mb: 0.75,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                          }}
                         >
+                          Opponent Hand
+                        </Typography>
+                        <Box sx={{ mb: 1 }}>
+                          {playerDisplay(
+                            false,
+                            `opponent-used-hand-${index}`,
+                            entry.opponentHandDescription,
+                            entry.opponentHand,
+                          )}
+                        </Box>
+                        <Typography
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: '#1f2937',
+                            mb: 0.75,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                          }}
+                        >
+                          Cards
+                        </Typography>
+                        <Box display='flex' flexWrap='wrap' gap={0.5}>
                           {entry.opponentStartHand.map((c, i) =>
                             cardDisplay(
                               c,
@@ -242,15 +327,15 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
                           )}
                         </Box>
                       </Box>
-                    )}
-                  </Box>
-                </Box>
-              </Paper>
-            );
-          })
+                    </Box>
+                  )}
+                </Card>
+              );
+            })}
+          </Box>
         )}
       </Box>
-    </Paper>
+    </Card>
   );
 };
 

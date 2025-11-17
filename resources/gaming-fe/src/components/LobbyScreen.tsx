@@ -15,7 +15,7 @@ import {
   Select,
   MenuItem,
 } from '@mui/material';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ChatBubbleOutline,
   Close,
@@ -55,6 +55,10 @@ const LobbyScreen = () => {
   const [chatOpen, setChatOpen] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const [secureUrl, setSecureUrl] = useState('');
+  // UI state for split handle
+  const [splitPct, setSplitPct] = useState(50); // percentage for top (Connected Players)
+  const rightColumnRef = useRef<HTMLDivElement | null>(null);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
   // Calculate per-hand amount
   const setWagerInput = useCallback((newWagerInput: string) => {
     setWagerInputPrimitive(newWagerInput);
@@ -74,6 +78,71 @@ const LobbyScreen = () => {
       setChatInput('');
     }
   };
+
+  // Auto-scroll chat messages to bottom when new messages arrive
+  useEffect(() => {
+    if (messagesRef.current) {
+      const el = messagesRef.current;
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages]);
+
+  // Drag handle logic for resizing the two right-column panels
+  useEffect(() => {
+    let dragging = false;
+
+    const onMove = (clientY: number) => {
+      if (!rightColumnRef.current) return;
+      const rect = rightColumnRef.current.getBoundingClientRect();
+      const rel = (clientY - rect.top) / rect.height;
+      // clamp between 25% and 75% so neither panel gets too small
+      const pct = Math.max(25, Math.min(75, Math.round(rel * 100)));
+      setSplitPct(pct);
+    };
+
+    const mouseMove = (e: MouseEvent) => {
+      if (!dragging) return;
+      onMove(e.clientY);
+    };
+
+    const touchMove = (e: TouchEvent) => {
+      if (!dragging) return;
+      onMove(e.touches[0].clientY);
+    };
+
+    const mouseUp = () => {
+      dragging = false;
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', mouseMove);
+      window.removeEventListener('touchmove', touchMove);
+      window.removeEventListener('mouseup', mouseUp);
+      window.removeEventListener('touchend', mouseUp);
+    };
+
+    const startDrag = (startY: number) => {
+      dragging = true;
+      document.body.style.userSelect = 'none';
+      onMove(startY);
+      window.addEventListener('mousemove', mouseMove);
+      window.addEventListener('touchmove', touchMove, {
+        passive: false,
+      } as any);
+      window.addEventListener('mouseup', mouseUp);
+      window.addEventListener('touchend', mouseUp);
+    };
+
+    // expose startDrag via dataset on ref element for the handle to call
+    if (rightColumnRef.current) {
+      (rightColumnRef.current as any)._startDrag = startDrag;
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', mouseMove);
+      window.removeEventListener('touchmove', touchMove as any);
+      window.removeEventListener('mouseup', mouseUp);
+      window.removeEventListener('touchend', mouseUp);
+    };
+  }, []);
 
   const openDialog = () => setDialogOpen(true);
   const closeDialog = () => setDialogOpen(false);
@@ -187,27 +256,30 @@ const LobbyScreen = () => {
           display: 'flex',
           flexDirection: { xs: 'column', md: 'row' },
           border: { md: '1px solid #d1d5db' },
+          borderRadius: 3,
           gap: { xs: 3, md: 0 },
+          height: { md: 'calc(100vh - 150px)', xs: 'auto' },
         }}
       >
         {/* Active Rooms */}
         <Box
           sx={{
             flex: 2,
-            borderRight: { md: '1px solid #d1d5db' },
             pr: { md: 0, xs: 0 },
+            height: '100%',
           }}
         >
           <Card
             variant='outlined'
             sx={{
-              borderRadius: 0,
+              borderRadius: 3,
               border: 'none',
               boxShadow: 'none',
-              height: { md: 'calc(100vh - 200px)', xs: 'auto' }, // use available height on desktop
+              height: '100%',
+              // use available height on desktop
             }}
           >
-            <CardContent>
+            <CardContent sx={{ height: '100%', pb: 6 }}>
               <Stack
                 direction={{ xs: 'column', sm: 'row' }}
                 justifyContent='space-between'
@@ -243,286 +315,313 @@ const LobbyScreen = () => {
               </Stack>
 
               <Divider sx={{ mb: 3 }} />
-
-              {rooms.length === 0 ? (
-                <Box textAlign='center' py={6} color='text.secondary'>
-                  <SportsEsports
-                    sx={{ fontSize: 48, mb: 1, color: 'action.active' }}
-                  />
-                  <Typography variant='h6' fontWeight={500}>
-                    No Active Rooms
-                  </Typography>
-                  <Typography variant='body2'>
-                    Create a room to start a game.
-                  </Typography>
-                </Box>
-              ) : (
-                rooms.map((r) => (
-                  <Box
-                    key={r.token}
-                    sx={{
-                      p: 2,
-                      mb: 1.5,
-                      borderRadius: 2,
-                      border: '1px solid #e0e0e0',
-                      display: 'flex',
-                      flexDirection: { xs: 'column', sm: 'row' },
-                      justifyContent: 'space-between',
-                      alignItems: { xs: 'flex-start', sm: 'center' },
-                      gap: 1,
-                    }}
-                  >
-                    <Box>
-                      <Typography variant='subtitle1' fontWeight={600}>
-                        {r.token || 'Unknown Game'}
-                      </Typography>
-                      <Typography variant='body2' color='text.secondary'>
-                        Host: {getPlayerAlias(r.host)}
-                      </Typography>
-                      <Typography variant='body2' color='text.secondary'>
-                        Game: {r.game}
-                      </Typography>
-                    </Box>
-                    <Button
-                      size='small'
-                      variant='outlined'
-                      onClick={() => joinRoom(r.token)}
+              <Box sx={{ overflowY: 'auto', height: '100%', pr: 2, pb: 6 }}>
+                {rooms.length === 0 ? (
+                  <Box textAlign='center' py={6} color='text.secondary'>
+                    <SportsEsports
+                      sx={{ fontSize: 48, mb: 1, color: 'action.active' }}
+                    />
+                    <Typography variant='h6' fontWeight={500}>
+                      No Active Rooms
+                    </Typography>
+                    <Typography variant='body2'>
+                      Create a room to start a game.
+                    </Typography>
+                  </Box>
+                ) : (
+                  rooms.map((r) => (
+                    <Box
+                      key={r.token}
                       sx={{
-                        alignSelf: { xs: 'flex-end', sm: 'center' },
-                        backgroundColor: '#424F6D',
-                        color: '#fff',
-                        boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
-                        '&:hover': {
-                          backgroundColor: '#3A4663',
-                          boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.45)',
-                        },
+                        p: 2,
+                        mb: 1.5,
+                        borderRadius: 2,
+                        border: '1px solid #e0e0e0',
+                        display: 'flex',
+                        flexDirection: { xs: 'column', sm: 'row' },
+                        justifyContent: 'space-between',
+                        alignItems: { xs: 'flex-start', sm: 'center' },
+                        gap: 1,
                       }}
                     >
-                      Join
-                    </Button>
-                  </Box>
-                ))
-              )}
+                      <Box>
+                        <Typography variant='subtitle1' fontWeight={600}>
+                          {r.token || 'Unknown Game'}
+                        </Typography>
+                        <Typography variant='body2' color='text.secondary'>
+                          Host: {getPlayerAlias(r.host)}
+                        </Typography>
+                        <Typography variant='body2' color='text.secondary'>
+                          Game: {r.game}
+                        </Typography>
+                      </Box>
+                      <Button
+                        size='small'
+                        variant='outlined'
+                        onClick={() => joinRoom(r.token)}
+                        sx={{
+                          alignSelf: { xs: 'flex-end', sm: 'center' },
+                          backgroundColor: '#424F6D',
+                          color: '#fff',
+                          boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
+                          '&:hover': {
+                            backgroundColor: '#3A4663',
+                            boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.45)',
+                          },
+                        }}
+                      >
+                        Join
+                      </Button>
+                    </Box>
+                  ))
+                )}
+              </Box>
             </CardContent>
           </Card>
         </Box>
 
         {/* Connected Players */}
-        <Box sx={{ flex: 1, borderLeft: { md: '1px solid #d1d5db' } }}>
+        <Box
+          ref={rightColumnRef}
+          sx={{
+            flex: 1,
+            borderLeft: { md: '1px solid #d1d5db' },
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            minWidth: 0,
+          }}
+        >
           <Card
             variant='outlined'
             sx={{
               borderRadius: 0,
               border: 'none',
               boxShadow: 'none',
-              height: { md: 'calc(100vh - 200px)', xs: 'auto' },
+              flexBasis: { md: `${splitPct}%` },
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
             }}
           >
-            <CardContent>
+            <CardContent
+              sx={{
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+              }}
+            >
               <Stack
                 direction='row'
                 justifyContent='space-between'
                 alignItems='center'
-                mb={2}
+                mb={3}
               >
                 <Typography variant='h6' fontWeight={600}>
                   Connected Players
                 </Typography>
               </Stack>
 
-              <Divider sx={{ mb: 3 }} />
+              <Divider sx={{ mb: 2 }} />
 
-              {editingAlias ? (
-                <Stack
-                  direction={{ xs: 'column', sm: 'row' }}
-                  spacing={1}
-                  mb={3}
-                >
-                  <TextField
-                    fullWidth
-                    size='small'
-                    placeholder='Enter new alias'
-                    value={myAlias}
-                    onChange={(e) => setMyAlias(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && commitEdit(e)}
-                    onBlur={commitEdit}
-                  />
-                  <Button
-                    variant='contained'
-                    onClick={commitEdit}
-                    aria-label='save-alias'
-                    sx={{
-                      backgroundColor: '#424F6D',
-                      color: '#fff',
-                      fontWeight: 600,
-                      letterSpacing: '0.5px',
-                      textTransform: 'uppercase',
-                      borderRadius: '6px',
-                      padding: '8px 20px',
-                      boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.25)',
-                      '&:hover': {
-                        backgroundColor: '#3A4663',
-                        boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
-                      },
-                    }}
+              <Box sx={{ flex: 1, overflowY: 'auto', pr: 1 }}>
+                {editingAlias ? (
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={1}
+                    mb={3}
                   >
-                    Save
-                  </Button>
-                  <IconButton
-                    size='small'
-                    color='error'
-                    onClick={() => setEditingAlias(false)}
-                  >
-                    <Close />
-                  </IconButton>
-                </Stack>
-              ) : (
-                <Stack direction='row' alignItems='center' spacing={1} mb={2}>
-                  <Typography variant='body1'>
-                    Alias: <strong>{myAlias}</strong>
-                  </Typography>
-                  <IconButton
-                    size='small'
-                    onClick={() => setEditingAlias(true)}
-                  >
-                    <Edit fontSize='small' />
-                  </IconButton>
-                </Stack>
-              )}
+                    <TextField
+                      fullWidth
+                      size='small'
+                      placeholder='Enter new alias'
+                      value={myAlias}
+                      onChange={(e) => setMyAlias(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && commitEdit(e)}
+                      onBlur={commitEdit}
+                    />
+                    <Button
+                      variant='contained'
+                      onClick={commitEdit}
+                      aria-label='save-alias'
+                      sx={{
+                        backgroundColor: '#424F6D',
+                        color: '#fff',
+                        fontWeight: 600,
+                        letterSpacing: '0.5px',
+                        textTransform: 'uppercase',
+                        borderRadius: '6px',
+                        padding: '8px 20px',
+                        boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.25)',
+                        '&:hover': {
+                          backgroundColor: '#3A4663',
+                          boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
+                        },
+                      }}
+                    >
+                      Save
+                    </Button>
+                    <IconButton
+                      size='small'
+                      color='error'
+                      onClick={() => setEditingAlias(false)}
+                    >
+                      <Close />
+                    </IconButton>
+                  </Stack>
+                ) : (
+                  <Stack direction='row' alignItems='center' spacing={1} mb={2}>
+                    <Typography variant='body1'>
+                      Alias: <strong>{myAlias}</strong>
+                    </Typography>
+                    <IconButton
+                      size='small'
+                      onClick={() => setEditingAlias(true)}
+                    >
+                      <Edit fontSize='small' />
+                    </IconButton>
+                  </Stack>
+                )}
 
-              {players.length === 0 ? (
-                <Box textAlign='center' py={6} color='text.secondary'>
-                  <PeopleAlt
-                    sx={{ fontSize: 48, mb: 1, color: 'action.active' }}
-                  />
-                  <Typography variant='h6' fontWeight={500}>
-                    No Other Players Connected
+                {players.length === 0 ? (
+                  <Box textAlign='center' py={6} color='text.secondary'>
+                    <PeopleAlt
+                      sx={{ fontSize: 48, mb: 1, color: 'action.active' }}
+                    />
+                    <Typography variant='h6' fontWeight={500}>
+                      No Other Players Connected
+                    </Typography>
+                    <Typography variant='body2'>
+                      Waiting for others to join…
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Box>
+                    {players.map((player, index) => (
+                      <Typography key={player.id} variant='body2' mb={0.5}>
+                        {index + 1}:&nbsp;
+                        {player.id === uniqueId ? (
+                          <>
+                            <Box
+                              component='span'
+                              sx={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 0.5,
+                              }}
+                            >
+                              {player.alias}
+                              &nbsp;(You)
+                              <Crown className='w-5 h-5 text-yellow-500' />
+                            </Box>
+                          </>
+                        ) : (
+                          player.alias
+                        )}
+                      </Typography>
+                    ))}
+                  </Box>
+                )}
+              </Box>
+            </CardContent>
+          </Card>
+
+          {/* draggable handle (only shown on md+) */}
+          <Box
+            onMouseDown={(e) => {
+              const el = rightColumnRef.current as any;
+              if (el && typeof el._startDrag === 'function')
+                el._startDrag(e.clientY);
+            }}
+            onTouchStart={(e) => {
+              const el = rightColumnRef.current as any;
+              if (el && typeof el._startDrag === 'function')
+                el._startDrag(e.touches[0].clientY);
+            }}
+            sx={{
+              height: { xs: 8, md: 8 },
+              cursor: { xs: 'default', md: 'row-resize' },
+              background: 'transparent',
+              display: { xs: 'none', md: 'block' },
+            }}
+          />
+
+          <Card
+            sx={{
+              borderRadius: 0,
+              border: 'none',
+              boxShadow: 'none',
+              flexBasis: { md: `${100 - splitPct}%` },
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <CardContent
+              sx={{
+                p: 0,
+                '&:last-child': { padding: 0 },
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+              }}
+            >
+              <Stack
+                direction='row'
+                alignItems='center'
+                justifyContent='space-between'
+                px={2}
+                py={1.5}
+                borderBottom='1px solid #e0e0e0'
+              >
+                <Typography variant='subtitle1' fontWeight={600}>
+                  Lobby Chat
+                </Typography>
+              </Stack>
+              <Divider sx={{ mb: 0 }} />
+
+              {/* Chat Messages */}
+              <Box ref={messagesRef} sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
+                {messages.length === 0 ? (
+                  <Typography color='text.secondary' textAlign='center'>
+                    No messages yet.
                   </Typography>
-                  <Typography variant='body2'>
-                    Waiting for others to join…
-                  </Typography>
-                </Box>
-              ) : (
-                players.map((player, index) => (
-                  <Typography key={player.id} variant='body2' mb={0.5}>
-                    {index + 1}:&nbsp;
-                    {player.id === uniqueId ? (
-                      <>
-                        <Box
-                          component='span'
-                          sx={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 0.5,
-                          }}
-                        >
-                          {player.alias}
-                          &nbsp;(You)
-                          <Crown className='w-5 h-5 text-yellow-500' />
-                        </Box>
-                      </>
-                    ) : (
-                      player.alias
-                    )}
-                  </Typography>
-                ))
-              )}
+                ) : (
+                  messages.map((m, i) => (
+                    <Typography key={i} variant='body2' sx={{ mb: 0.5 }}>
+                      <strong>{m.alias}:</strong> {m.content.text}
+                    </Typography>
+                  ))
+                )}
+              </Box>
+
+              <Divider />
+              {/* Keep the input visible: sticky at the bottom of the card */}
+              <Box
+                sx={{
+                  p: 1.5,
+                  position: 'sticky',
+                  bottom: 0,
+                  bgcolor: 'background.paper',
+                  zIndex: 2,
+                }}
+              >
+                <TextField
+                  fullWidth
+                  size='small'
+                  placeholder='Type your message...'
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                />
+              </Box>
+              <Divider />
             </CardContent>
           </Card>
         </Box>
       </Box>
-
-      {/* Floating Chat Button */}
-      <IconButton
-        sx={{
-          color: '#000',
-          position: 'fixed',
-          bottom: 24,
-          right: 72,
-          bgcolor: 'white',
-          border: '1px solid #ccc',
-          borderRadius: '12px 0 0 12px', // left rounded
-          borderRight: 'none', // removes right border so it connects
-          boxShadow: '0px 4px 12px rgba(0,0,0,0.2)',
-          px: 1.5,
-          py: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.25s ease',
-          '&:hover': {
-            bgcolor: '#7A8398',
-            color: 'white',
-            transform: 'translateY(-2px)',
-            boxShadow: '0px 6px 16px rgba(0,0,0,0.25)',
-          },
-        }}
-        onClick={() => setChatOpen(!chatOpen)}
-        aria-label='open-chat'
-      >
-        <ChatBubbleOutline sx={{ fontSize: 22 }} />
-      </IconButton>
-
-      {/* Chat Window */}
-      {chatOpen && (
-        <Card
-          sx={{
-            position: 'fixed',
-            bottom: 80,
-            right: 24,
-            width: { xs: '90%', sm: 360 },
-            height: 420,
-            borderRadius: 3,
-            boxShadow: 6,
-            display: 'flex',
-            flexDirection: 'column',
-            bgcolor: 'background.paper',
-          }}
-        >
-          <Stack
-            direction='row'
-            alignItems='center'
-            justifyContent='space-between'
-            px={2}
-            py={1.5}
-            borderBottom='1px solid #e0e0e0'
-          >
-            <Typography variant='subtitle1' fontWeight={600}>
-              Lobby Chat
-            </Typography>
-            <IconButton size='small' onClick={() => setChatOpen(false)}>
-              <Close />
-            </IconButton>
-          </Stack>
-
-          {/* Chat Messages */}
-          <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
-            {messages.length === 0 ? (
-              <Typography color='text.secondary' textAlign='center'>
-                No messages yet.
-              </Typography>
-            ) : (
-              messages.map((m, i) => (
-                <Typography key={i} variant='body2' sx={{ mb: 0.5 }}>
-                  <strong>{m.alias}:</strong> {m.content.text}
-                </Typography>
-              ))
-            )}
-          </Box>
-
-          <Divider />
-          <Box sx={{ p: 1.5 }}>
-            <TextField
-              fullWidth
-              size='small'
-              placeholder='Type your message...'
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            />
-          </Box>
-        </Card>
-      )}
 
       {/* Create Room Dialog */}
       <Dialog open={dialogOpen} onClose={closeDialog}>

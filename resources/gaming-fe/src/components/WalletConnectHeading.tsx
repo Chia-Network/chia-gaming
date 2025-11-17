@@ -36,6 +36,7 @@ import {
 } from '@mui/icons-material';
 import WalletBadge from './WalletBadge';
 import WalletStatus from './WalletStatus';
+import { Wrench } from 'lucide-react';
 
 const WalletConnectHeading = (_args: any) => {
   const { wcInfo, setWcInfo } = useDebug();
@@ -243,15 +244,16 @@ const WalletConnectHeading = (_args: any) => {
   const ifSession = (
     <Box
       sx={{
-        mt: 16,
+        mt: { xs: 12, sm: 16, md: 18 },
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
         alignItems: 'center',
         width: '100%',
         height: '100%',
-        px: 2,
-        py: 4,
+        px: { xs: 1.5, sm: 2, md: 4 },
+        py: { xs: 3, sm: 4, md: 6 },
+        gap: { xs: 2, sm: 3 },
       }}
     >
       {/* Simulator Button */}
@@ -260,12 +262,13 @@ const WalletConnectHeading = (_args: any) => {
         onClick={handleConnectSimulator}
         aria-label='select-simulator'
         sx={{
-          width: { xs: '80%', sm: '60%', md: '50%' },
-          mb: 3,
+          width: { xs: '90%', sm: '75%', md: '50%' },
+          mb: 2,
           backgroundColor: '#E5FE75',
           boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.85)',
           color: '#424F6D',
           fontWeight: 600,
+          fontSize: { xs: '0.85rem', sm: '0.95rem', md: '1rem' },
           '&:hover': {
             backgroundColor: '#bb3',
           },
@@ -280,18 +283,19 @@ const WalletConnectHeading = (_args: any) => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: { xs: '85%', sm: '65%', md: '45%' },
-          my: 3,
+          width: { xs: '90%', sm: '75%', md: '45%' },
+          my: { xs: 2, sm: 3 },
+          gap: 1,
         }}
       >
         <Divider sx={{ flex: 1, borderColor: 'rgba(0,0,0,0.2)' }} />
         <Typography
           variant='body2'
           sx={{
-            mx: 2,
             color: '#666',
             fontWeight: 500,
             whiteSpace: 'nowrap',
+            fontSize: { xs: '0.85rem', sm: '0.95rem' },
           }}
         >
           OR
@@ -302,7 +306,7 @@ const WalletConnectHeading = (_args: any) => {
       {/* WalletConnect Dialog */}
       <Box
         sx={{
-          width: { xs: '90%', sm: '70%', md: '50%' },
+          width: { xs: '90%', sm: '75%', md: '50%' },
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
@@ -328,11 +332,11 @@ const WalletConnectHeading = (_args: any) => {
         display: 'flex',
         flexDirection: 'column',
         width: '100%',
-        height: '17em',
+        minHeight: 'auto',
         position: 'relative',
         background: 'white',
         padding: '1em',
-        marginTop: '10em',
+        marginTop: 'clamp(26px, 10vw, 26px)',
         gap: '1em',
       }}
     >
@@ -351,10 +355,9 @@ const WalletConnectHeading = (_args: any) => {
         height: useHeight,
         width: '100vw',
         backgroundColor: 'white',
-        // zIndex: 1000,
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'row', height: '3em' }}>
+      <div style={{ display: 'flex', flexDirection: 'row', height: 'auto' }}>
         {/* Header */}
         {/* Fixed Header */}
         <Box
@@ -364,40 +367,45 @@ const WalletConnectHeading = (_args: any) => {
             left: 0,
             width: '100%',
             display: 'flex',
-            alignItems: 'center',
+            flexDirection: { xs: 'column', sm: 'row' },
+            alignItems: { xs: 'stretch', sm: 'center' },
             justifyContent: 'space-between',
             bgcolor: 'white',
             color: '#424F6D',
-            px: { xs: 2, sm: 3 },
-            height: '4.5em',
+            px: { xs: 1.5, sm: 2, md: 3 },
+            py: { xs: 1, sm: 0 },
+            minHeight: { xs: 'auto', sm: '4.5em' },
             boxShadow: '0px 4px 12px rgba(0,0,0,0.1)',
             zIndex: 1200,
+            gap: { xs: 1, sm: 0 },
           }}
         >
           {/* LEFT: Title */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {/* <img src='../assets/images/chia_logo.png' alt='logo' height={32} /> */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 'auto' }}>
             <Typography
               variant='h6'
               fontWeight={600}
               sx={{
-                whiteSpace: 'nowrap',
-                fontSize: { xs: '1rem', sm: '1.25rem' },
+                fontSize: { xs: '0.9rem', sm: '1rem', md: '1.25rem' },
                 color: '#555555',
+                whiteSpace: 'nowrap',
               }}
             >
               Chia Gaming
             </Typography>
           </Box>
-          <Box>
+
+          {/* CENTER: Debug Status (hidden on mobile) */}
+          <Box sx={{ display: { xs: 'none', md: 'flex' } }}>
             {walletConnectState.getSession() ? (
               <>
                 <Box>
-                  <ButtonGroup variant='outlined' fullWidth>
+                  <ButtonGroup variant='outlined' size='small'>
                     <Button
                       variant='outlined'
                       color='error'
                       onClick={() => walletConnectState.disconnect()}
+                      sx={{ fontSize: { xs: '0.7rem', sm: '0.8rem' } }}
                     >
                       Unlink Wallet
                     </Button>
@@ -408,83 +416,47 @@ const WalletConnectHeading = (_args: any) => {
                         localStorage.clear();
                         window.location.href = '';
                       }}
+                      sx={{ fontSize: { xs: '0.7rem', sm: '0.8rem' } }}
                     >
                       Reset Storage
                     </Button>
                   </ButtonGroup>
                 </Box>
-                <Divider sx={{ mt: 4 }} />
-                <Box mt={3}>
-                  <Typography variant='h5'>Response</Typography>
-                  <Button
-                    fullWidth
-                    variant='outlined'
-                    color='error'
-                    onClick={() => {
-                      localStorage.clear();
-                      window.location.href = '';
-                    }}
-                  >
-                    Unlink Wallet
-                  </Button>
-                </Box>
               </>
-            ) : fakeAddress ? (
-              <></>
-            ) : (
-              <WalletStatus />
-            )}
+            ) : null}
           </Box>
-          {/* RIGHT: WalletConnect + Balance + Burger */}
+
+          {/* RIGHT: WalletConnect + Balance */}
           <Box
             sx={{
               display: 'flex',
               alignItems: 'center',
-              gap: { xs: 4.5, sm: 3, md: 2 },
+              justifyContent: { xs: 'space-between', sm: 'flex-end' },
+              width: { xs: '100%', sm: 'auto' },
+              gap: { xs: 1.5, sm: 2, md: 3 },
             }}
           >
             {/* WalletConnect Status */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: { xs: 0.5, sm: 1 },
+                minWidth: 'auto',
+              }}
+            >
               <Typography
-                fontWeight={'semi-bold'}
+                fontWeight='semi-bold'
                 sx={{
-                  fontSize: { xs: '0.85rem', sm: '0.95rem', color: '#555555' },
+                  fontSize: { xs: '0.7rem', sm: '0.85rem', md: '0.95rem' },
+                  color: '#555555',
+                  display: { xs: 'none', sm: 'block' },
                 }}
               >
                 WalletConnect
               </Typography>
               <Box>
-                <WalletBadge sessionConnected={sessionConnected} />
-              </Box>
-              <Box>
-                {fakeAddress && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography
-                      sx={{
-                        fontSize: { xs: '0.85rem', sm: '0.9rem' },
-                        color: '#424F6D',
-                        fontWeight: 500,
-                      }}
-                    >
-                      {`${fakeAddress.slice(0, 3)}...${fakeAddress.slice(-3)}`}
-                    </Typography>
-
-                    <Tooltip title='Copy address'>
-                      <IconButton
-                        size='small'
-                        onClick={() =>
-                          navigator.clipboard.writeText(fakeAddress)
-                        }
-                        sx={{
-                          color: '#555555',
-                          '&:hover': { color: '#000000' },
-                        }}
-                      >
-                        <ContentCopy sx={{ fontSize: 16 }} />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                )}
+                <WalletBadge sessionConnected={sessionConnected} fakeAddress={fakeAddress} />
               </Box>
             </Box>
 
@@ -496,32 +468,13 @@ const WalletConnectHeading = (_args: any) => {
                   color: '#424F6D',
                   fontWeight: 500,
                   opacity: 0.8,
-                  fontSize: { xs: '0.85rem', sm: '0.95rem' },
+                  fontSize: { xs: '0.65rem', sm: '0.85rem', md: '0.95rem' },
                   whiteSpace: 'nowrap',
                 }}
               >
-                Balance: {balance} XCH
+                Bal: {balance} XCH
               </Typography>
             )}
-
-            {/* BURGER BUTTON */}
-            {/* <Button
-              onClick={toggleExpanded}
-              aria-label='menu-toggle'
-              sx={{
-                minWidth: 'auto',
-                color: '#424F6D',
-                fontSize: 26,
-                fontWeight: 'bold',
-                lineHeight: 1,
-                px: 1,
-                '&:hover': {
-                  bgcolor: 'rgba(66,79,109,0.08)',
-                },
-              }}
-            >
-              ☰
-            </Button> */}
           </Box>
         </Box>
       </div>
@@ -537,9 +490,8 @@ const WalletConnectHeading = (_args: any) => {
           right: 24,
           bgcolor: 'white',
           border: '1px solid #ccc',
-          borderRadius: '0 12px 12px 0', // right rounded
+          borderRadius: '20px', // right rounded
           boxShadow: '0px 4px 12px rgba(0,0,0,0.2)',
-          px: 1.5,
           py: 1,
           display: 'flex',
           alignItems: 'center',
@@ -553,7 +505,7 @@ const WalletConnectHeading = (_args: any) => {
           },
         }}
       >
-        <BugReportOutlined sx={{ fontSize: 22 }} />
+        <Wrench size={'20px'} />
       </IconButton>
 
       {/* Debug Modal */}

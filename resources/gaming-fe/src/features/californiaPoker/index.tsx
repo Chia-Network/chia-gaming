@@ -15,6 +15,7 @@ import {
   BUTTON_BASE,
   BUTTON_DISABLED,
   GAME_STATES,
+  GameColors,
   SWAP_ANIMATION_DURATION,
 } from './constants/constants';
 
@@ -32,7 +33,16 @@ import {
 } from './utils';
 import { HandDisplay, MovingCard } from './components';
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
-import { Button } from '@mui/material';
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Divider,
+  Typography,
+} from '@mui/material';
+import { Wallet } from '@mui/icons-material';
+import { WalletIcon } from 'lucide-react';
 
 // Main Component
 const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
@@ -46,6 +56,9 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   handleMakeMove,
   lastOutcome,
   log,
+  myWinOutcome,
+  banner,
+  balanceDisplay,
 }) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
@@ -57,6 +70,13 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     4: '♣',
   };
 
+  const color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome
+    ? myWinOutcome
+    : isPlayerTurn
+      ? 'success'
+      : 'warning';
+  const [, playerBalance, opponentBalance] =
+    balanceDisplay.match(/(\d+)\s*vs\s*(\d+)/i) || [];
   const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);
   const [opponentCards, setOpponentCards] = useState<CardValueSuit[]>([]);
 
@@ -136,10 +156,42 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     }
   };
 
-  console.log(lastOutcome, 'lastOutcome in doHandleMakeMove');
-  console.log(playerHand, 'playerHand in doHandleMakeMove');
-  console.log(opponentHand, 'opponentHand in doHandleMakeMove');
-  console.log(log, 'gameEnd Log');
+  const isDisabled =
+    !isPlayerTurn ||
+    (moveNumber === 0
+      ? false
+      : moveNumber === 1
+        ? !(
+            (gameState === GAME_STATES.SELECTING &&
+              playerSelected.length === 4) ||
+            gameState === GAME_STATES.SWAPPING
+          )
+        : true);
+
+  const isActive = !isDisabled; // single source of truth
+
+  const bgColor = isActive ? '#3b4a63' : '#cccccc';
+  const textColor = isActive ? 'white' : '#999999';
+  const shadow = isActive ? '0 6px 12px rgba(59,74,99,0.35)' : 'none';
+  const cursor = isActive ? 'pointer' : 'not-allowed';
+  const opacity = isActive ? 1 : 0.6;
+
+  // ---------- TEXT ----------
+  let buttonText = '';
+  if (moveNumber === 0) {
+    buttonText = isPlayerTurn ? 'Start Game' : 'Opponent Turn to Start';
+  } else if (moveNumber === 1) {
+    if (!isPlayerTurn) {
+      buttonText = "Opponent's Move";
+    } else {
+      buttonText =
+        playerSelected.length === 4
+          ? 'Swap Cards'
+          : `Select 4 cards (${playerSelected.length}/4)`;
+    }
+  } else {
+    buttonText = 'Waiting for Opponent...';
+  }
 
   const doHandleMakeMove = () => {
     const moveData = '80';
@@ -351,8 +403,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   }, []);
 
   return (
-    <div className='bg-gray-100 p-2'>
-      <div className='max-w-6xl mx-auto game-container relative'>
+    <div className='flex flex-col w-full h-full overflow-hidden'>
+      <div className='flex-1 relative h-full overflow-y-auto overflow-x-hidden'>
         {gameState === GAME_STATES.INITIAL && (
           <div className='text-center'>
             <button
@@ -365,119 +417,218 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         )}
 
         {gameState !== GAME_STATES.INITIAL && (
-          <>
-            <div className='space-y-0'>
-              <HandDisplay
-                title='Opponent Hand'
-                cards={opponentCards}
-                playerNumber={playerNumber == 1 ? 2 : 1}
-                area='ai'
-                winner={winner}
-                winnerType='ai'
-                bestHand={aiBestHand}
-                swappingCards={swappingCards.ai}
-                showSwapAnimation={showSwapAnimation}
-                gameState={gameState}
-                formatHandDescription={formatHandDescription}
-                selectedCards={[]}
-              />
-
-              <div className='text-center'>
-                <h1 className='text-2xl font-bold text-gray-400'>
-                  California Poker
-                </h1>
+          <div className='h-full flex flex-col overflow-y-auto'>
+            <div className='flex-1'>
+              <div className='text-center relative h-[45%] mb-4 border border-gray-200 bg-white shadow rounded-lg'>
+                {/* small top-right badge like in your screenshot */}
+                <div className='w-full relative'>
+                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2 lg:pb-0 pb-4'>
+                    <h3 className='text-[16px] font-bold text-center text-gray-700'>
+                      Opponent hand
+                    </h3>
+                  </div>
+                  <div className='flex justify-end'>
+                    <div
+                      style={{
+                        border: '1px solid #DDDDDD',
+                        borderRadius: '0px 6px 0px 6px',
+                        padding: '6px',
+                        background: 'white',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                        display: 'flex',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <WalletIcon size={'19.6px'} color='#444444' />
+                      <Typography
+                        component='span'
+                        sx={{
+                          ml: 0.5,
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          color: '#444444',
+                        }}
+                      >
+                        {opponentBalance}
+                      </Typography>
+                    </div>
+                  </div>
+                </div>
+                <div className='flex-1 h-full flex items-center justify-center p-2'>
+                  <HandDisplay
+                    title={''}
+                    cards={opponentCards}
+                    playerNumber={playerNumber == 1 ? 2 : 1}
+                    area={'ai'}
+                    winner={winner}
+                    winnerType={'ai'}
+                    bestHand={aiBestHand}
+                    swappingCards={swappingCards.ai}
+                    showSwapAnimation={showSwapAnimation}
+                    gameState={gameState}
+                    formatHandDescription={formatHandDescription}
+                    selectedCards={[]}
+                  />
+                </div>
               </div>
 
-              <HandDisplay
-                title='Your Hand'
-                cards={playerCards}
-                playerNumber={playerNumber}
-                area='player'
-                winner={winner}
-                winnerType='player'
-                bestHand={playerBestHand}
-                onCardClick={toggleCardSelection}
-                selectedCards={playerSelected}
-                swappingCards={swappingCards.player}
-                showSwapAnimation={showSwapAnimation}
-                gameState={gameState}
-                formatHandDescription={formatHandDescription}
-              />
-            </div>
-
-            <div className='text-center mt-1 h-10'>
-              {(gameState === GAME_STATES.SELECTING ||
-                gameState === GAME_STATES.SWAPPING) && (
-                <>
-                  {(() => {
-                    let label = '';
-                    let disabled = false;
-                    let active = false;
-
-                    if (moveNumber === 0) {
-                      if (isPlayerTurn) {
-                        label = 'Start Game';
-                        disabled = false;
-                        active = true;
-                      } else {
-                        label = 'Opponent Turn to Start';
-                        disabled = true;
-                      }
-                    } else if (moveNumber === 1) {
-                      if (isPlayerTurn) {
-                        label =
-                          playerSelected.length === 4
-                            ? 'Swap Cards'
-                            : `Select 4 cards (${playerSelected.length}/4)`;
-                        disabled = playerSelected.length !== 4;
-                        active = playerSelected.length === 4;
-                      } else {
-                        label = "Opponent's Move";
-                        disabled = true;
-                      }
-                    } else if (moveNumber === 2) {
-                      label = 'Waiting for Opponent to Swap...';
-                      disabled = true;
-                    }
-
-                    return (
-                      <button
-                        onClick={doHandleMakeMove}
-                        disabled={disabled}
-                        className={`${BUTTON_BASE} ${
-                          active && !disabled ? BUTTON_ACTIVE : BUTTON_DISABLED
-                        }`}
+              <div className='text-center relative h-[45%] bg-white border border-gray-200 shadow rounded-lg'>
+                <div className='w-full relative'>
+                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2 lg:pb-0 pb-4'>
+                    <h3 className='text-[16px] font-bold text-center text-gray-700'>
+                      Your hand
+                    </h3>
+                  </div>
+                  <div className='flex justify-end'>
+                    <div
+                      style={{
+                        border: '1px solid #DDDDDD',
+                        borderRadius: '0px 6px 0px 6px',
+                        padding: '6px',
+                        background: 'white',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                        display: 'flex',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <WalletIcon size={'19.6px'} color='#444444' />
+                      <Typography
+                        component='span'
+                        sx={{
+                          ml: 0.5,
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          color: '#444444',
+                        }}
                       >
-                        {label}
-                      </button>
-                    );
-                  })()}
-                </>
-              )}
-              {/* <Button
-                variant='contained'
-                color='secondary'
-                onClick={doHandleMakeMove}
-                disabled={!isPlayerTurn}
-                style={{ marginRight: '8px' }}
-                aria-label='make-move'
-                aria-disabled={!isPlayerTurn}
-              >
-                Make Move
-              </Button> */}
-              {gameState === GAME_STATES.FINAL && (
-                <button
-                  onClick={NewGame}
-                  className={`${BUTTON_BASE} ${isPlayerTurn ? BUTTON_ACTIVE : 'opacity-60 cursor-not-allowed'}`}
-                  disabled={!isPlayerTurn}
-                >
-                  {isPlayerTurn
-                    ? 'Start New Game'
-                    : 'Waiting for Opponent to Start...'}
-                </button>
-              )}
+                        {playerBalance}
+                      </Typography>
+                    </div>
+                  </div>
+                </div>
+
+                <div className='flex-1 h-full flex items-center justify-center p-2'>
+                  <HandDisplay
+                    title={''}
+                    cards={playerCards}
+                    playerNumber={playerNumber}
+                    area={'player'}
+                    winner={winner}
+                    winnerType={'player'}
+                    bestHand={playerBestHand}
+                    onCardClick={toggleCardSelection}
+                    selectedCards={playerSelected}
+                    swappingCards={swappingCards.player}
+                    showSwapAnimation={showSwapAnimation}
+                    gameState={gameState}
+                    formatHandDescription={formatHandDescription}
+                  />
+                </div>
+              </div>
             </div>
-          </>
+
+            <div className='h-[10%] flex p-0 lg:pt-0 pt-4'>
+              <Card
+                elevation={3}
+                sx={{
+                  display: 'flex',
+                  flex: 1,
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  alignItems: 'stretch',
+                  border: '1px solid #DDDDDD',
+                  boxShadow: '0 4px 10px rgba(0,0,0,0.06)',
+                }}
+              >
+                {/* Left banner */}
+                <Box
+                  sx={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'white',
+                  }}
+                >
+                  <Typography
+                    sx={{
+                      color: isPlayerTurn ? '#0f9d58' : '#DF0025',
+                      fontWeight: 700,
+                      fontSize: '18px',
+                    }}
+                  >
+                    {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
+                  </Typography>
+                </Box>
+
+                {/* Middle full-height button with 2px padding */}
+                <Box
+                  sx={{
+                    flex: 1,
+                    p: '2px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'transparent',
+                  }}
+                >
+                  {gameState === GAME_STATES.FINAL ? (
+                    <button
+                      onClick={NewGame}
+                      disabled={!isPlayerTurn}
+                      className={`w-full h-full rounded-md text-white font-semibold uppercase ${isPlayerTurn ? BUTTON_ACTIVE : BUTTON_DISABLED}`}
+                      style={{
+                        background: isPlayerTurn ? '#E5FE75' : '#cccccc',
+                        color: isPlayerTurn ? '#000' : '#999999',
+                        border: '1px solid rgba(0,0,0,0.15)',
+                        padding: '0.6rem 1.2rem',
+                        boxShadow: isPlayerTurn
+                          ? '0 6px 12px rgba(15,157,88,0.35)'
+                          : 'none',
+                        cursor: isPlayerTurn ? 'pointer' : 'not-allowed',
+                        opacity: isPlayerTurn ? 1 : 0.6,
+                      }}
+                    >
+                      {isPlayerTurn ? 'Start New Game' : 'Opponent to Start...'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={doHandleMakeMove}
+                      disabled={isDisabled}
+                      className='w-full h-full rounded-md font-semibold uppercase'
+                      style={{
+                        background: bgColor,
+                        color: textColor,
+                        border: '1px solid rgba(0,0,0,0.15)',
+                        padding: '0.6rem 1.2rem',
+                        boxShadow: shadow,
+                        cursor: cursor,
+                        opacity: opacity,
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      {buttonText}
+                    </button>
+                  )}
+                </Box>
+
+                {/* Right move display */}
+                <Box
+                  sx={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'white',
+                  }}
+                >
+                  <Typography sx={{ fontWeight: 700, fontSize: '20px' }}>
+                    Move {moveNumber}
+                  </Typography>
+                </Box>
+              </Card>
+            </div>
+          </div>
         )}
       </div>
 

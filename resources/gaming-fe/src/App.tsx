@@ -104,8 +104,8 @@ const App = () => {
         position: 'relative',
         left: 0,
         top: 0,
-        width: '100vw',
-        height: '100vh',
+        width: '100svw',
+        height: '100svh',
         flexDirection: 'column',
       }}
     >
@@ -113,12 +113,11 @@ const App = () => {
       <iframe
         id='subframe'
         style={{
-          display: 'flex',
           width: '100%',
-          flexShrink: 1,
-          flexGrow: 1,
-          height: '100%',
-          
+          flex: 1,
+          border: 'none',
+          margin: 0,
+          padding: 0,
         }}
         src={iframeUrl}
       ></iframe>

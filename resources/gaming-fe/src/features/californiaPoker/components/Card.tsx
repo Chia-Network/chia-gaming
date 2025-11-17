@@ -19,31 +19,31 @@ function Card(props: CardRenderProps) {
   const getCardStyles = () => {
     if (isBeingSwapped) {
       return {
-        border: 'border-solid border-gray-300',
-        bg: 'bg-gray-50 opacity-50',
+        border: 'border-gray-300',
+        bg: 'bg-gray-200',
         cursor: '',
       };
     }
 
     if (isInBestHand) {
       return {
-        border: 'border-yellow-500',
-        bg: 'bg-yellow-100',
+        border: 'border-yellow-400',
+        bg: 'bg-yellow-50',
         cursor: 'cursor-pointer',
       };
     }
 
     if (isSelected) {
       return {
-        border: 'border-blue-500',
-        bg: 'bg-blue-100',
+        border: 'border-blue-400',
+        bg: 'bg-blue-50',
         cursor: 'cursor-pointer',
       };
     }
 
     return {
       border: 'border-gray-300 hover:border-gray-400',
-      bg: 'bg-white',
+      bg: 'bg-gray-50',
       cursor: 'cursor-pointer',
     };
   };
@@ -55,7 +55,7 @@ function Card(props: CardRenderProps) {
     <div
       id={id}
       data-card-id={cardId}
-      className={`min-w-12 w-16 h-24 border-2 rounded-lg flex flex-col items-center justify-center font-bold
+      className={`w-20 h-28 border rounded flex flex-col items-center justify-center font-bold
         ${styles.border} ${styles.bg} ${styles.cursor}
         ${isInBestHand ? 'shadow-lg' : ''}`}
       style={{ color: colorClass }}

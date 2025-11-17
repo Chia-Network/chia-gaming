@@ -1,3 +1,4 @@
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   Button,
@@ -6,13 +7,18 @@ import {
   Typography,
   useMediaQuery,
   useTheme,
+  Snackbar,
+  Slide,
+  IconButton,
 } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 
 import { CalpokerOutcome, OutcomeLogLine } from '../../types/ChiaGaming';
 import GameEndPlayer from '../../components/GameEndPlayer';
 import GameLog from '../../components/GameLog';
 import CaliforniaPoker from '../californiaPoker';
 import { StopCircle } from '@mui/icons-material';
+import { Info, LogOut } from 'lucide-react';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
@@ -55,18 +61,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const myWinOutcome = outcome?.my_win_outcome;
-  const colors = {
-    win: 'green',
-    lose: 'red',
-    tie: '#ccc',
-    success: '#363',
-    warning: '#633',
-  };
-  const color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome
-    ? myWinOutcome
-    : isPlayerTurn
-      ? 'success'
-      : 'warning';
+
   const iAmAlice = playerNumber === 2;
   const myHandValue = iAmAlice
     ? outcome?.alice_hand_value
@@ -84,6 +79,26 @@ const Calpoker: React.FC<CalpokerProps> = ({
     'Choose 4 cards to discard',
     'Finish game',
   ][moveNumber];
+
+  // Toast (Snackbar) state for move description
+  const [showMoveToast, setShowMoveToast] = useState(false);
+
+  useEffect(() => {
+    // show toast on mount or when moveNumber changes
+    setShowMoveToast(true);
+  }, [moveNumber]);
+
+  const handleHelpClick = () => {
+    // Re-trigger the toast so it animates again from the top
+    setShowMoveToast(false);
+    // small timeout to allow exit animation before re-opening
+    setTimeout(() => setShowMoveToast(true), 120);
+  };
+
+  const handleCloseMoveToast = (_: any, reason?: string) => {
+    if (reason === 'clickaway') return;
+    setShowMoveToast(false);
+  };
 
   // if (outcome) {
   //   return (
@@ -134,8 +149,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
     <Box
       p={{ xs: 2, sm: 3, md: 4 }}
       sx={{
-        minHeight: '100vh',
-        bgcolor: '#f8fafc',
+        bgcolor: '#fff',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -148,7 +162,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
         flexDirection={{ xs: 'column', sm: 'row' }}
         justifyContent='space-between'
         alignItems='center'
-        mb={3}
+        marginY={3}
       >
         <Typography
           variant={isMobile ? 'h5' : 'h4'}
@@ -158,9 +172,8 @@ const Calpoker: React.FC<CalpokerProps> = ({
             textAlign: { xs: 'center', sm: 'left' },
           }}
         >
-          {`Cal Poker - Move ${moveNumber}`}
+          {`California Poker`}
         </Typography>
-
         <Box
           display='flex'
           alignItems='center'
@@ -168,78 +181,77 @@ const Calpoker: React.FC<CalpokerProps> = ({
           gap={2}
           mt={{ xs: 1, sm: 0 }}
         >
-          <Typography
-            variant='body1'
-            sx={{ color: '#6B7280', fontWeight: 600 }}
-          >
-            {balanceDisplay}
-          </Typography>
-
           <Button
-            onClick={stopPlaying}
-            disabled={moveNumber !== 0}
-            variant='contained'
-            startIcon={<StopCircle />}
+            onClick={handleHelpClick}
+            variant='outlined'
+            startIcon={<Info />}
             sx={{
-              backgroundColor:
-                moveNumber === 0 ? '#EF4444' : 'rgba(239,68,68,0.5)',
-              color: '#fff',
+              backgroundColor: 'white',
+              borderColor: '#e5e7eb',
+              color: '#0f172a',
               fontWeight: 600,
               borderRadius: '8px',
+              px: 2,
               '&:hover': {
-                backgroundColor:
-                  moveNumber === 0 ? '#DC2626' : 'rgba(239,68,68,0.5)',
+                backgroundColor: '#ffffff',
               },
             }}
           >
-            Stop
+            Hint
+          </Button>
+          <Button
+            onClick={stopPlaying}
+            disabled={moveNumber !== 0}
+            variant='outlined'
+            startIcon={<LogOut />}
+            sx={{
+              borderColor: '#EF4444',
+              color: '#EF4444',
+              fontWeight: 600,
+              borderRadius: '8px',
+              px: 2,
+              '&:hover': {
+                backgroundColor: 'rgba(239,68,68,0.04)',
+              },
+            }}
+          >
+            Leave Game
           </Button>
         </Box>
       </Box>
 
       {/* Banner */}
-      <Card
-        elevation={3}
-        sx={{
-          width: '100%',
-          mb: 3,
-          background: `linear-gradient(90deg, ${colors[color]} 0%, #4F5D75 100%)`,
-          color: 'white',
-          borderRadius: '12px',
-          textAlign: 'center',
-          boxShadow: '0 4px 10px rgba(0,0,0,0.1)',
-        }}
-      >
-        <CardContent>
-          <Typography
-            variant={isMobile ? 'h6' : 'h5'}
-            sx={{
-              fontWeight: 600,
-              textShadow: '0 2px 4px rgba(0,0,0,0.3)',
-            }}
-          >
-            {banner || 'Waiting for players...'}
-          </Typography>
-        </CardContent>
-      </Card>
 
       {/* Main Game Layout */}
       <Box
         width='100%'
         display='flex'
-        flexDirection={{ xs: 'column', md: 'row' }}
-        gap={2}
+        justifyContent='center'
+        
+        sx={{
+          overflow: 'visible',
+          height: { md: 'calc(100vh - 150px)', xs: 'auto' },
+        }}
       >
-        {/* Game Section */}
-        <Card
-          elevation={3}
+        <Box
+          width='100%'
+          display='flex'
+          flexDirection={{ xs: 'column', md: 'row' }}
           sx={{
-            flex: { xs: '1 1 100%', md: '3 1 0%' },
-            borderRadius: '12px',
-            p: { xs: 2, sm: 3 },
+            gap: 2,
+            overflow: 'hidden',
+            height: { md: '100%', xs: 'auto' },
           }}
         >
-          <CardContent>
+          {/* Main game pane (75% on md+) */}
+          <Box
+            sx={{
+              flex: { xs: 'unset', md: '3 1 0%' },
+              height: { xs: 'auto', md: '100%' },
+              overflow: 'auto',
+              minHeight: { md: 0 },
+            }}
+          >
             <CaliforniaPoker
               playerNumber={playerNumber}
               isPlayerTurn={isPlayerTurn}
@@ -252,28 +264,64 @@ const Calpoker: React.FC<CalpokerProps> = ({
               iStarted={iStarted}
               lastOutcome={lastOutcome}
               log={log}
+              myWinOutcome={myWinOutcome}
+              banner={banner}
+              balanceDisplay={balanceDisplay}
             />
+          </Box>
 
-            <Typography
-              mt={2}
-              textAlign='center'
+          {/* Game Log Section (25% on md+) */}
+          <Box
+            sx={{
+              flex: { xs: 'unset', md: '1 1 0%' },
+              height: { xs: 'auto', md: '100%' },
+              overflowY: 'auto',
+              minHeight: { md: 0 },
+            }}
+          >
+            <Box
               sx={{
-                color: '#424F6D',
-                fontWeight: 500,
-                fontSize: isMobile ? '0.9rem' : '1rem',
+                height: '100%',
               }}
             >
-              {moveDescription}
-            </Typography>
-          </CardContent>
-        </Card>
-
-        {/* Game Log Section */}
-
-        <GameLog log={log} />
+              <GameLog log={log} />
+            </Box>
+          </Box>
+        </Box>
       </Box>
 
       {/* Hidden blockchain address */}
+      {/* Move description toast */}
+      <Snackbar
+        key={`move-toast-${moveNumber}`}
+        open={showMoveToast}
+        onClose={handleCloseMoveToast}
+        autoHideDuration={4500}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+        TransitionComponent={(props) => <Slide {...props} direction='down' />}
+        message={moveDescription}
+        ContentProps={{
+          sx: {
+            backgroundColor: '#111827',
+            color: '#fff',
+            borderRadius: '12px',
+            px: 3,
+            py: 1.5,
+            boxShadow: '0 6px 18px rgba(17,24,39,0.3)',
+            fontWeight: 600,
+          },
+        }}
+        action={
+          <IconButton
+            size='small'
+            aria-label='close'
+            color='inherit'
+            onClick={() => setShowMoveToast(false)}
+          >
+            <CloseIcon fontSize='small' />
+          </IconButton>
+        }
+      />
       <Box
         id='blockchain-address'
         sx={{ position: 'absolute', width: 0, height: 0, opacity: 0 }}
