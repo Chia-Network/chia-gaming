@@ -66,17 +66,6 @@ RUN --mount=type=tmpfs,dst=/app \
 
 RUN rm -rf /root/.cache
 
-#CI FROM node:20.18.1
-#CI RUN apt-get update -y && \
-#CI     apt-get install -y libc6 && \
-#CI     apt-get install -y python3 python3-dev python3-pip python3-venv clang curl build-essential && \
-#CI     apt-get update && \
-#CI     npm install -g corepack && \
-#CI     yarn set version 1.22.22
-#CI COPY --from=stage1 /preinst /preinst
-#CI COPY --from=stage1 /root /root
-#CI COPY --from=stage1 /app /app
-
 RUN mkdir -p /app/wc/ && \
   ln -s /preinst/node_modules /app && \
   ln -s /preinst/package.json /app && \
@@ -104,12 +93,15 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	wasm-pack build --out-dir=/app/node-pkg --release --target=nodejs && \
 	wasm-pack build --out-dir=/app/dist --release --target=web
 
+RUN rm -rf $HOME/.cargo
+
 # Place wasm backend in docker container
 RUN mkdir -p /app/dist
 
 # Build the front-end / UI / UX within the container env
 COPY resources/gaming-fe /app
 RUN cd /app && yarn run build
+RUN rm -rf /app/node_modules
 
 # walletconnect automation build
 COPY resources/wc-stub/src /app/wc/src/
