@@ -28,8 +28,8 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'linear-gradient(90deg, #f9f9f9 0%, #ffffff 100%)',
-        color: '#1e293b',
+        background: 'var(--color-canvas-bg-subtle)',
+        color: 'var(--color-canvas-text)',
         textAlign: 'center',
         gap: 3,
         overflow: 'hidden',
@@ -46,8 +46,8 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
           fontWeight={700}
           sx={{
             letterSpacing: '0.5px',
-            textShadow: '0 1px 4px rgba(0,0,0,0.1)',
-            color: '#424F6D',
+            textShadow: '0 1px 4px rgba(0,0,0,0.04)',
+            color: 'var(--color-canvas-text-contrast)',
           }}
           aria-label="waiting-state"
         >
@@ -68,10 +68,10 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
             <Typography
               variant="body1"
               sx={{
-                opacity: 0.8,
+                opacity: 0.9,
                 fontSize: '1rem',
                 lineHeight: 1.8,
-                color: '#555',
+                color: 'var(--color-canvas-text)',
               }}
             >
               {messages[currentIndex]}
@@ -95,8 +95,9 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
             size={60}
             thickness={4}
             sx={{
-              color: '#424F6D',
-              filter: 'drop-shadow(0 0 4px rgba(66,79,109,0.3))',
+              color: 'var(--color-canvas-solid)',
+              // small glow using the same solid color with reduced opacity
+              filter: 'drop-shadow(0 0 6px rgba(0,0,0,0.04))',
             }}
           />
         </Box>

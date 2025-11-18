@@ -89,7 +89,8 @@ function HandDisplay(props: HandDisplayProps) {
       return () => clearTimeout(t);
     }
   }, [cards, showPlaceholders]);
-
+  console.log(winnerType,'winnerType');
+  
   const isWinner = winner === winnerType;
   const isTie = winner === 'tie';
   const isPlayer = area === 'player';
@@ -104,19 +105,23 @@ function HandDisplay(props: HandDisplayProps) {
   return (
     <div
       ref={containerRef}
-      className='p-1 rounded-lg max-w-full mx-auto gap-8 mb-2 relative'
+      className='p-1 rounded-lg max-w-full mx-auto gap-8 mb-2 relative text-canvas-text'
       data-area={area}
     >
-      {displayText ? (
-        <h3 className='text-sm font-bold py-2 text-center text-gray-700'>
+      {displayText && (
+        <h3 className='text-sm font-bold py-2 text-center text-canvas-solid'>
           {displayText}
         </h3>
-      ) : null}
+      )}
 
       <div className='relative'>
         {gameState === GAME_STATES.FINAL && (isWinner || isTie) && (
           <div
-            className={`absolute -top-5 ${isWinner ? 'bg-green-500' : 'bg-gray-500'} text-white px-4 py-2 rounded-full font-bold text-base shadow-lg z-10`}
+            className={`absolute -top-5 ${
+              isWinner
+                ? 'bg-success-solid text-success-on-success'
+                : 'bg-canvas-solid text-canvas-on-canvas'
+            } px-4 py-2 rounded-full font-bold text-base shadow-lg z-10`}
             style={{
               left: '50%',
               transform: `translateX(calc(-50% + ${winnerIndicatorOffset}px))`,
@@ -128,26 +133,29 @@ function HandDisplay(props: HandDisplayProps) {
 
         <div>
           {showPlaceholders ? (
-            // Use a wrapping flex row so on desktop it appears as a single row
-            // and on smaller screens cards wrap into multiple rows without overflowing.
             <div className='flex flex-wrap justify-center gap-2'>
               {Array.from({ length: 8 }).map((_, i) => {
                 const frontCard = cards && cards[i];
                 const originalIndex = frontCard
-                  ? cards.findIndex((c) => c.suit === frontCard.suit && c.rank === frontCard.rank)
+                  ? cards.findIndex(
+                      (c) =>
+                        c.suit === frontCard.suit && c.rank === frontCard.rank,
+                    )
                   : -1;
 
                 return (
-                  <div key={`placeholder-${i}`} className='w-20 h-28 shrink-0'>
+                  <div key={`placeholder-${i}`} className='w-24 h-32 shrink-0'>
                     <div className='flip-container'>
-                      <div className={`flip-inner ${placeholderFlip ? 'is-flipped' : ''}`}>
-                        <div className='flip-back rounded border border-gray-200' style={{
-                          background: '#F1F3F5',
-                        }}>
-                        </div>
+                      <div
+                        className={`flip-inner ${placeholderFlip ? 'is-flipped' : ''}`}
+                      >
+                        <div className='flip-back rounded border border-canvas-border bg-canvas-bg-subtle'></div>
 
-                        <div className='flip-front rounded border' style={{ transform: 'rotateY(180deg)' }}>
-                          {frontCard ? (
+                        <div
+                          className='flip-front rounded border border-canvas-border'
+                          style={{ transform: 'rotateY(180deg)' }}
+                        >
+                          {frontCard && (
                             <Card
                               index={i}
                               id={`card-${playerNumber}-${i}`}
@@ -155,11 +163,13 @@ function HandDisplay(props: HandDisplayProps) {
                               card={frontCard}
                               cardId={`${area}-${i}`}
                               isSelected={selectedCards.includes(originalIndex)}
-                              onClick={() => onCardClick && onCardClick(originalIndex)}
+                              onClick={() =>
+                                onCardClick && onCardClick(originalIndex)
+                              }
                               isBeingSwapped={false}
                               isInBestHand={false}
                             />
-                          ) : null}
+                          )}
                         </div>
                       </div>
                     </div>
@@ -178,13 +188,17 @@ function HandDisplay(props: HandDisplayProps) {
                   swappingCards.some((c) => c.originalIndex === originalIndex);
                 const isInBestHand =
                   gameState === GAME_STATES.FINAL &&
-                  bestHand?.cards &&
-                  bestHand.cards.some(
-                    (bestCard) => bestCard.rank === card.rank && bestCard.suit === card.suit,
+                  bestHand?.cards?.some(
+                    (bestCard) =>
+                      bestCard.rank === card.rank &&
+                      bestCard.suit === card.suit,
                   );
 
                 return (
-                  <div key={`${area}-${originalIndex}`} className='w-20 h-28 shrink-0'>
+                  <div
+                    key={`${area}-${originalIndex}`}
+                    className='w-20 h-28 shrink-0'
+                  >
                     <Card
                       index={idx}
                       id={`card-${playerNumber}-${idx}`}

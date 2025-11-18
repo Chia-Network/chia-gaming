@@ -1,6 +1,5 @@
 import {
   Box,
-  Button,
   Card,
   CardContent,
   Dialog,
@@ -15,9 +14,9 @@ import {
   Select,
   MenuItem,
 } from '@mui/material';
+import { Button } from './button';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  ChatBubbleOutline,
   Close,
   Edit,
   SportsEsports,
@@ -204,7 +203,7 @@ const LobbyScreen = () => {
       sx={{
         p: { xs: 2, sm: 3, md: 8 },
         minHeight: '100vh',
-        bgcolor: '#f5f6f8',
+        bgcolor: 'var(--color-canvas-bg-subtle)',
       }}
     >
       {/* Header */}
@@ -216,30 +215,16 @@ const LobbyScreen = () => {
         mb={3}
       >
         <Box>
-          <Typography variant='h5' fontWeight={700}>
+          <Typography
+            variant='h5'
+            fontWeight={700}
+            sx={{ color: 'var(--color-canvas-text-contrast)' }}
+          >
             Game Lobby
           </Typography>
         </Box>
-        <Button
-          variant='outlined'
-          fullWidth={false}
-          sx={{
-            backgroundColor: '#fff',
-            borderColor: '#424F6D',
-            color: '#424F6D',
-            fontWeight: 600,
-            letterSpacing: '0.5px',
-            textTransform: 'uppercase',
-            borderRadius: '6px',
-            padding: '8px 20px',
-            boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
-            '&:hover': {
-              bgcolor: '#EBECEE',
-              boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.45)',
-            },
-          }}
-        >
-          CHANGE WALLETCONNECT CONNECTION
+        <Button variant='surface' color={'secondary'} fullWidth={false}>
+          Change WalletConnect Connection
         </Button>
       </Stack>
 
@@ -256,7 +241,7 @@ const LobbyScreen = () => {
         sx={{
           display: 'flex',
           flexDirection: { xs: 'column', md: 'row' },
-          border: { md: '1px solid #d1d5db' },
+          border: { md: '1px solid var(--color-canvas-border)' },
           borderRadius: 3,
           gap: { xs: 3, md: 0 },
           height: { md: 'calc(100vh - 150px)', xs: 'auto' },
@@ -273,9 +258,10 @@ const LobbyScreen = () => {
           <Card
             variant='outlined'
             sx={{
-              borderRadius: 3,
+              borderRadius: '12px 0 0 12px',
               border: 'none',
               boxShadow: 'none',
+              backgroundColor: 'var(--color-canvas-bg)',
               height: '100%',
               // use available height on desktop
             }}
@@ -288,28 +274,18 @@ const LobbyScreen = () => {
                 spacing={1}
                 mb={2}
               >
-                <Typography variant='h6' fontWeight={600}>
+                <Typography
+                  variant='h6'
+                  fontWeight={600}
+                  sx={{ color: 'var(--color-canvas-text-contrast)' }}
+                >
                   Active Rooms
                 </Typography>
                 <Button
-                  variant='contained'
+                  variant='solid'
+                  color={'secondary'}
                   onClick={openDialog}
                   aria-label='generate-room'
-                  sx={{
-                    width: { xs: '100%', sm: 'auto' },
-                    backgroundColor: '#424F6D',
-                    color: '#fff',
-                    fontWeight: 600,
-                    letterSpacing: '0.5px',
-                    textTransform: 'uppercase',
-                    borderRadius: '6px',
-                    padding: '8px 20px',
-                    boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
-                    '&:hover': {
-                      backgroundColor: '#3A4663',
-                      boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.45)',
-                    },
-                  }}
                 >
                   Generate Room
                 </Button>
@@ -318,14 +294,29 @@ const LobbyScreen = () => {
               <Divider sx={{ mb: 3 }} />
               <Box sx={{ overflowY: 'auto', height: '100%', pr: 2, pb: 6 }}>
                 {rooms.length === 0 ? (
-                  <Box textAlign='center' py={6} color='text.secondary'>
+                  <Box
+                    textAlign='center'
+                    py={6}
+                    sx={{ color: 'var(--color-canvas-text)' }}
+                  >
                     <SportsEsports
-                      sx={{ fontSize: 48, mb: 1, color: 'action.active' }}
+                      sx={{
+                        fontSize: 48,
+                        mb: 1,
+                        color: 'var(--color-canvas-solid)',
+                      }}
                     />
-                    <Typography variant='h6' fontWeight={500}>
+                    <Typography
+                      variant='h6'
+                      fontWeight={500}
+                      sx={{ color: 'var(--color-canvas-text-contrast)' }}
+                    >
                       No Active Rooms
                     </Typography>
-                    <Typography variant='body2'>
+                    <Typography
+                      variant='body2'
+                      sx={{ color: 'var(--color-canvas-text)' }}
+                    >
                       Create a room to start a game.
                     </Typography>
                   </Box>
@@ -337,7 +328,8 @@ const LobbyScreen = () => {
                         p: 2,
                         mb: 1.5,
                         borderRadius: 2,
-                        border: '1px solid #e0e0e0',
+                        border: '1px solid var(--color-canvas-line)',
+                        backgroundColor: 'var(--color-canvas-bg)',
                         display: 'flex',
                         flexDirection: { xs: 'column', sm: 'row' },
                         justifyContent: 'space-between',
@@ -346,30 +338,30 @@ const LobbyScreen = () => {
                       }}
                     >
                       <Box>
-                        <Typography variant='subtitle1' fontWeight={600}>
+                        <Typography
+                          variant='subtitle1'
+                          fontWeight={600}
+                          sx={{ color: 'var(--color-canvas-text-contrast)' }}
+                        >
                           {r.token || 'Unknown Game'}
                         </Typography>
-                        <Typography variant='body2' color='text.secondary'>
+                        <Typography
+                          variant='body2'
+                          sx={{ color: 'var(--color-canvas-text)' }}
+                        >
                           Host: {getPlayerAlias(r.host)}
                         </Typography>
-                        <Typography variant='body2' color='text.secondary'>
+                        <Typography
+                          variant='body2'
+                          sx={{ color: 'var(--color-canvas-text)' }}
+                        >
                           Game: {r.game}
                         </Typography>
                       </Box>
                       <Button
-                        size='small'
-                        variant='outlined'
+                        variant='solid'
+                        color={'secondary'}
                         onClick={() => joinRoom(r.token)}
-                        sx={{
-                          alignSelf: { xs: 'flex-end', sm: 'center' },
-                          backgroundColor: '#424F6D',
-                          color: '#fff',
-                          boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
-                          '&:hover': {
-                            backgroundColor: '#3A4663',
-                            boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.45)',
-                          },
-                        }}
                       >
                         Join
                       </Button>
@@ -386,23 +378,25 @@ const LobbyScreen = () => {
           ref={rightColumnRef}
           sx={{
             flex: 1,
-            borderLeft: { md: '1px solid #d1d5db' },
+            borderLeft: { md: '1px solid var(--color-canvas-border)' },
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
             minWidth: 0,
+            borderRadius: '0px 16px 0px 0px',
           }}
         >
           <Card
             variant='outlined'
             sx={{
-              borderRadius: 0,
               border: 'none',
               boxShadow: 'none',
+              backgroundColor: 'var(--color-canvas-bg)',
               flexBasis: { md: `${splitPct}%` },
               minHeight: 0,
               display: 'flex',
               flexDirection: 'column',
+              borderRadius: '0px 16px 0px 0px',
             }}
           >
             <CardContent
@@ -419,7 +413,11 @@ const LobbyScreen = () => {
                 alignItems='center'
                 mb={3}
               >
-                <Typography variant='h6' fontWeight={600}>
+                <Typography
+                  variant='h6'
+                  fontWeight={600}
+                  sx={{ color: 'var(--color-canvas-text-contrast)' }}
+                >
                   Connected Players
                 </Typography>
               </Stack>
@@ -441,25 +439,22 @@ const LobbyScreen = () => {
                       onChange={(e) => setMyAlias(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && commitEdit(e)}
                       onBlur={commitEdit}
-                    />
-                    <Button
-                      variant='contained'
-                      onClick={commitEdit}
-                      aria-label='save-alias'
                       sx={{
-                        backgroundColor: '#424F6D',
-                        color: '#fff',
-                        fontWeight: 600,
-                        letterSpacing: '0.5px',
-                        textTransform: 'uppercase',
-                        borderRadius: '6px',
-                        padding: '8px 20px',
-                        boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.25)',
-                        '&:hover': {
-                          backgroundColor: '#3A4663',
-                          boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
+                        backgroundColor: 'var(--color-canvas-bg)',
+                        '& .MuiInputBase-input': {
+                          color: 'var(--color-canvas-text)',
+                        },
+                        '& .MuiFormLabel-root': {
+                          color: 'var(--color-canvas-text)',
                         },
                       }}
+                      inputProps={{ 'aria-label': 'alias-input' }}
+                    />
+                    <Button
+                      variant='solid'
+                      color={'secondary'}
+                      onClick={commitEdit}
+                      aria-label='save-alias'
                     >
                       Save
                     </Button>
@@ -473,12 +468,26 @@ const LobbyScreen = () => {
                   </Stack>
                 ) : (
                   <Stack direction='row' alignItems='center' spacing={1} mb={2}>
-                    <Typography variant='body1'>
-                      Alias: <strong>{myAlias}</strong>
+                    <Typography
+                      variant='body1'
+                      sx={{ color: 'var(--color-canvas-text)' }}
+                    >
+                      Alias:&nbsp;
+                      <Box
+                        component='strong'
+                        sx={{
+                          color: 'var(--color-canvas-text-contrast)',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {myAlias}
+                      </Box>
                     </Typography>
                     <IconButton
                       size='small'
                       onClick={() => setEditingAlias(true)}
+                      sx={{ color: 'var(--color-canvas-solid)' }}
+                      aria-label='edit-alias'
                     >
                       <Edit fontSize='small' />
                     </IconButton>
@@ -486,21 +495,40 @@ const LobbyScreen = () => {
                 )}
 
                 {players.length === 0 ? (
-                  <Box textAlign='center' py={6} color='text.secondary'>
+                  <Box
+                    textAlign='center'
+                    py={6}
+                    sx={{ color: 'var(--color-canvas-text)' }}
+                  >
                     <PeopleAlt
-                      sx={{ fontSize: 48, mb: 1, color: 'action.active' }}
+                      sx={{
+                        fontSize: 48,
+                        mb: 1,
+                        color: 'var(--color-canvas-solid)',
+                      }}
                     />
-                    <Typography variant='h6' fontWeight={500}>
+                    <Typography
+                      variant='h6'
+                      fontWeight={500}
+                      sx={{ color: 'var(--color-canvas-text-contrast)' }}
+                    >
                       No Other Players Connected
                     </Typography>
-                    <Typography variant='body2'>
+                    <Typography
+                      variant='body2'
+                      sx={{ color: 'var(--color-canvas-text)' }}
+                    >
                       Waiting for others to join…
                     </Typography>
                   </Box>
                 ) : (
                   <Box>
                     {players.map((player, index) => (
-                      <Typography key={player.id} variant='body2' mb={0.5}>
+                      <Typography
+                        key={player.id}
+                        variant='body2'
+                        sx={{ mb: 0.5, color: 'var(--color-canvas-text)' }}
+                      >
                         {index + 1}:&nbsp;
                         {player.id === uniqueId ? (
                           <>
@@ -514,7 +542,10 @@ const LobbyScreen = () => {
                             >
                               {player.alias}
                               &nbsp;(You)
-                              <Crown className='w-5 h-5 text-yellow-500' />
+                              <Crown
+                                className='w-5 h-5'
+                                style={{ color: 'var(--color-warning-solid)' }}
+                              />
                             </Box>
                           </>
                         ) : (
@@ -550,13 +581,14 @@ const LobbyScreen = () => {
 
           <Card
             sx={{
-              borderRadius: 0,
               border: 'none',
               boxShadow: 'none',
+              backgroundColor: 'var(--color-canvas-bg)',
               flexBasis: { md: `${100 - splitPct}%` },
               minHeight: 0,
               display: 'flex',
               flexDirection: 'column',
+              borderRadius: '0px 0px 12px 0',
             }}
           >
             <CardContent
@@ -575,9 +607,13 @@ const LobbyScreen = () => {
                 justifyContent='space-between'
                 px={2}
                 py={1.5}
-                borderBottom='1px solid #e0e0e0'
+                borderBottom='1px solid var(--color-canvas-line)'
               >
-                <Typography variant='subtitle1' fontWeight={600}>
+                <Typography
+                  variant='subtitle1'
+                  fontWeight={600}
+                  sx={{ color: 'var(--color-canvas-text-contrast)' }}
+                >
                   Lobby Chat
                 </Typography>
               </Stack>
@@ -586,12 +622,21 @@ const LobbyScreen = () => {
               {/* Chat Messages */}
               <Box ref={messagesRef} sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
                 {messages.length === 0 ? (
-                  <Typography color='text.secondary' textAlign='center'>
+                  <Typography
+                    sx={{
+                      color: 'var(--color-canvas-text)',
+                      textAlign: 'center',
+                    }}
+                  >
                     No messages yet.
                   </Typography>
                 ) : (
                   messages.map((m, i) => (
-                    <Typography key={i} variant='body2' sx={{ mb: 0.5 }}>
+                    <Typography
+                      key={i}
+                      variant='body2'
+                      sx={{ mb: 0.5, color: 'var(--color-canvas-text)' }}
+                    >
                       <strong>{m.alias}:</strong> {m.content.text}
                     </Typography>
                   ))
@@ -605,7 +650,8 @@ const LobbyScreen = () => {
                   p: 1.5,
                   position: 'sticky',
                   bottom: 0,
-                  bgcolor: 'background.paper',
+                  bgcolor: 'var(--color-canvas-bg)',
+                  borderTop: '1px solid var(--color-canvas-line)',
                   zIndex: 2,
                 }}
               >
@@ -616,6 +662,16 @@ const LobbyScreen = () => {
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                  sx={{
+                    backgroundColor: 'var(--color-canvas-bg)',
+                    '& .MuiInputBase-input': {
+                      color: 'var(--color-canvas-text)',
+                    },
+                    '& .MuiFormLabel-root': {
+                      color: 'var(--color-canvas-text)',
+                    },
+                  }}
+                  inputProps={{ 'aria-label': 'lobby-chat-input' }}
                 />
               </Box>
               <Divider />
@@ -625,30 +681,43 @@ const LobbyScreen = () => {
       </Box>
 
       {/* Create Room Dialog */}
-      <Dialog open={dialogOpen} onClose={closeDialog}>
-        <DialogTitle>Create a Room</DialogTitle>
+      <Dialog
+        open={dialogOpen}
+        onClose={closeDialog}
+        sx={{
+          '& .MuiPaper-root': {
+            backgroundColor: 'var(--canvas-bg)',
+            color: 'var(--canvas-text)',
+          },
+        }}
+      >
+        <DialogTitle sx={{ color: 'var(--canvas-text)' }}>
+          Create a Room
+        </DialogTitle>
+
         <DialogContent>
           <Select
             label='Game'
             aria-label='game-id'
             fullWidth
-            sx={{ color: '#555555' }}
+            sx={{
+              backgroundColor: 'var(--canvas-bg)',
+              color: 'var(--canvas-text)',
+            }}
             value={gameChoice}
             onChange={(e) => setGameChoice(e.target.value)}
           >
-            {lobbyGames.map((g) => {
-              return (
-                <MenuItem aria-label={`choose-${g.game}`} value={g.game}>
-                  {g.game}
-                </MenuItem>
-              );
-            })}
+            {lobbyGames.map((g) => (
+              <MenuItem value={g.game}>{g.game}</MenuItem>
+            ))}
           </Select>
-          {wagerValidationError ? (
-            <Box mb={1}>{wagerValidationError}</Box>
-          ) : (
-            <div></div>
+
+          {wagerValidationError && (
+            <Box mb={1} sx={{ color: 'var(--secondary-solid)' }}>
+              {wagerValidationError}
+            </Box>
           )}
+
           <TextField
             label='Wager (mojo)'
             aria-label='game-wager'
@@ -657,7 +726,18 @@ const LobbyScreen = () => {
             margin='normal'
             value={wagerInput}
             onChange={(e) => setWagerInput(e.target.value)}
+            sx={{
+              backgroundColor: 'var(--canvas-bg)',
+              '& .MuiInputBase-input::placeholder': {
+                color: 'var(--canvas-text-contrast)',
+                opacity: 1, // important: otherwise MUI reduces opacity
+              },
+              '& .MuiInputBase-input': {
+                color: 'var(--canvas-text)',
+              },
+            }}
           />
+
           <TextField
             label='Each hand (mojo)'
             aria-label='per-hand'
@@ -666,40 +746,43 @@ const LobbyScreen = () => {
             margin='normal'
             value={perHandInput}
             onChange={(e) => setPerHandInput(e.target.value)}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button sx={{ color: '#424F6D' }} onClick={closeDialog}>
-            Cancel
-          </Button>
-          <Button
             sx={{
-              backgroundColor: '#424F6D',
-              color: '#fff',
-              fontWeight: 600,
-              letterSpacing: '0.5px',
-              textTransform: 'uppercase',
-              borderRadius: '6px',
-              padding: '8px 20px',
-              boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.25)',
-              '&:hover': {
-                backgroundColor: '#3A4663',
-                boxShadow: '0px 6px 12px rgba(66, 79, 109, 0.35)',
+              backgroundColor: 'var(--canvas-bg)',
+              '& .MuiInputBase-input::placeholder': {
+                color: 'var(--canvas-text-contrast)',
+                opacity: 1, // important: otherwise MUI reduces opacity
+              },
+              '& .MuiInputBase-input': {
+                color: 'var(--canvas-text)',
               },
             }}
-            onClick={handleCreate}
-            variant='contained'
-          >
+          />
+        </DialogContent>
+
+        <DialogActions>
+          <Button variant='outline' color={'secondary'} onClick={closeDialog}>
+            Cancel
+          </Button>
+
+          <Button onClick={handleCreate} variant='solid' color={'secondary'}>
             Create
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* SHARE DIALOG */}
 
       <Dialog
         open={urlDialogOpen}
         onClose={handleCancelShare}
         maxWidth='xs'
         fullWidth
+        sx={{
+          '& .MuiPaper-root': {
+            backgroundColor: 'var(--canvas-bg)',
+            color: 'var(--canvas-text)',
+          },
+        }}
       >
         <DialogTitle
           sx={{
@@ -711,7 +794,7 @@ const LobbyScreen = () => {
         >
           Room Created 🎉
           <IconButton onClick={handleCancelShare} size='small'>
-            <Close />
+            <Close sx={{ color: 'var(--canvas-text)' }} />
           </IconButton>
         </DialogTitle>
 
@@ -725,10 +808,10 @@ const LobbyScreen = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              bgcolor: '#f6f7fb',
+              bgcolor: 'var(--canvas-bg-subtle)',
               borderRadius: 1,
               p: 1.2,
-              color: '#424F6D',
+              color: 'var(--secondary-solid)',
               fontFamily: 'monospace',
               wordBreak: 'break-all',
             }}
@@ -741,16 +824,18 @@ const LobbyScreen = () => {
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
+                color: 'var(--canvas-text)',
               }}
             >
               {shortenedUrl}
             </Typography>
+
             <IconButton
               size='small'
               onClick={handleCopyAndClose}
               sx={{
-                color: '#424F6D',
-                '&:hover': { color: '#3A4663' },
+                color: 'var(--secondary-solid)',
+                '&:hover': { color: 'var(--secondary-solid-hover)' },
               }}
             >
               <ContentCopy fontSize='small' />

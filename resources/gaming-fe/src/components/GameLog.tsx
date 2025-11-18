@@ -37,30 +37,20 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
     const rankDisplay = RANK_SYMBOLS[c[0]] ?? c[0];
 
     return (
-      <Box
+      <div
         key={`${idPrefix}-${index}`}
         id={`${idPrefix}-${index}`}
-        sx={{
-          color: suitColor,
-          px: 0.75,
-          py: 0.5,
-          ml: 0.5,
-          borderRadius: '4px',
-          backgroundColor: selected ? '#e5e7eb' : '#f3f4f6',
-          fontWeight: selected ? 600 : 500,
-          fontSize: '0.8rem',
-          border: '1px solid #d1d5db',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minWidth: '30px',
-          textAlign: 'center',
-          whiteSpace: 'nowrap',
-        }}
+        className={`
+    inline-flex items-center justify-center ml-1 px-3 py-1
+    rounded-sm border text-center whitespace-nowrap min-w-[30px]
+    ${selected ? 'font-semibold bg-canvas-border' : 'font-medium bg-canvas-light'}
+    border-canvas-border
+  `}
+        style={{ color: suitColor }}
       >
         {rankDisplay}
         {suitName}
-      </Box>
+      </div>
     );
   };
 
@@ -74,313 +64,214 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
       cardDisplay(c, i, `outcome-${me ? 'me' : 'opponent'}`, false),
     );
     return (
-      <Box display='flex' flexDirection='row' alignItems='center' py={0.5}>
-        <Typography sx={{ fontWeight: 600, fontSize: '0.95rem', mb: 0.75, color: '#374151' }} aria-label={`${label}-description`} data-hand-description={JSON.stringify(desc)} variant='body2' fontWeight={600} mr={1}>
+      <div className='flex flex-row items-center py-1'>
+        <span
+          aria-label={`${label}-description`}
+          data-hand-description={JSON.stringify(desc)}
+          className='mr-1 font-semibold text-[0.95rem] text-canvas-solid mb-2'
+        >
           {makeDescription(desc)}
-        </Typography>
-        <Box data-testid={label} display='flex' flexWrap='wrap' gap={0.5}>
+        </span>
+        <div data-testid={label} className='flex flex-wrap gap-1'>
           {cards}
-        </Box>
-      </Box>
+        </div>
+      </div>
     );
   };
 
   return (
-    <Card
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        borderRadius: '12px',
-        border: '1px solid #e5e7eb',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-        backgroundColor: '#ffffff',
-      }}
-    >
-      {/* Header - Non-scrolling */}
-      <CardContent
-        sx={{
-          pb: 1,
-          pt: 2,
-          px: 2,
-          borderBottom: '1px solid #f3f4f6',
-        }}
-      >
-        <Typography
-          variant='subtitle1'
-          sx={{
-            fontWeight: 700,
-            fontSize: '1rem',
-            color: '#1f2937',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1,
-          }}
-        >
-          Log {`(${log.length})`}
-        </Typography>
-      </CardContent>
+    <div className='flex flex-col h-full w-full'>
+      {/* Card Container */}
+      <div className='flex flex-col h-full border border-canvas-border rounded-lg shadow-sm bg-canvas-bg overflow-hidden'>
+        {/* Header - Non-scrolling */}
+        <div className='px-4 pt-2 pb-1 border-b border-canvas-border'>
+          <h2 className='text-base font-bold text-canvas-solid flex items-center gap-1'>
+            Log ({log.length})
+          </h2>
+        </div>
 
-      {/* Scrollable Log Content */}
-      <Box
-        sx={{
-          flex: 1,
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          px: 2,
-          py: 1,
-          '&::-webkit-scrollbar': {
-            width: '6px',
-          },
-          '&::-webkit-scrollbar-track': {
-            background: '#f1f5f9',
-            borderRadius: '3px',
-          },
-          '&::-webkit-scrollbar-thumb': {
-            background: '#cbd5e1',
-            borderRadius: '3px',
-            '&:hover': {
-              background: '#94a3b8',
-            },
-          },
-        }}
-      >
-        {log.length === 0 ? (
-          <Box sx={{ py: 3, textAlign: 'center' }}>
-            <Typography variant='body2' color='#9ca3af'>
-              No game history yet.
-            </Typography>
-          </Box>
-        ) : (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {log.map((entry, index) => {
-              const isExpanded = expandedIndex === index;
-              const iWin = entry.topLineOutcome === 'win';
-              const opWin = entry.topLineOutcome === 'lose';
+        {/* Scrollable Log Content */}
+        <div className='flex-1 overflow-y-auto overflow-x-hidden px-4 py-2'>
+          {log.length === 0 ? (
+            <div className='py-3 text-center'>
+              <p className='text-sm text-canvas-muted'>No game history yet.</p>
+            </div>
+          ) : (
+            <div className='flex flex-col gap-2'>
+              {log.map((entry, index) => {
+                const isExpanded = expandedIndex === index;
+                const iWin = entry.topLineOutcome === 'win';
+                const opWin = entry.topLineOutcome === 'lose';
 
-              return (
-                <Card
-                  key={`log-entry-${index}`}
-                  sx={{
-                    p: 1.5,
-                    borderRadius: '8px',
-                    backgroundColor: '#f9fafb',
-                    border: '1px solid #e5e7eb',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    '&:hover': {
-                      backgroundColor: '#f3f4f6',
-                      borderColor: '#d1d5db',
-                    },
-                  }}
-                  onClick={() => setExpandedIndex(isExpanded ? null : index)}
-                >
-                  {/* Compact Summary View */}
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      mb: isExpanded ? 1.5 : 0,
-                    }}
+                return (
+                  <div
+                    key={`log-entry-${index}`}
+                    className={`p-2 rounded-lg border border-canvas-border cursor-pointer transition-all duration-200 ${
+                      isExpanded ? 'bg-canvas-light' : 'bg-canvas-bg'
+                    } hover:bg-canvas-light hover:border-canvas-border-hover`}
+                    onClick={() => setExpandedIndex(isExpanded ? null : index)}
                   >
-                    <Box data-testid={`log-entry-me-${index}`} sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography
-                        sx={{
-                          fontSize: '0.85rem',
-                          fontWeight: 600,
-                          color: iWin ? '#10b981' : opWin ? '#ef4444' : '#6b7280',
-                          mb: 0.5,
-                        }}
-                      >
-                        {iWin ? '🏆 You Won' : opWin ? '🏆 Opponent Won' : '🤝 Tie'}
-                      </Typography>
-                      <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-                        <Box>
-                          <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 500 }}>
-                            You
-                          </Typography>
-                          <Typography sx={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151' }}>
-                            {makeDescription(entry.myHandDescription)}
-                          </Typography>
-                        </Box>
-                        <Box>
-                          <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 500 }}>
-                            Opponent
-                          </Typography>
-                          <Typography sx={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151' }}>
-                            {makeDescription(entry.opponentHandDescription)}
-                          </Typography>
-                        </Box>
-                      </Box>
-                    </Box>
-                    <ExpandMore
-                      data-testid={`log-expand-button-${index}`}
-                      sx={{
-                        ml: 1,
-                        transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                        transition: 'transform 0.2s ease',
-                        color: '#9ca3af',
-                        flexShrink: 0,
-                      }}
-                    />
-                  </Box>
-
-                  {/* Expanded Detailed View */}
-                  {isExpanded && (
-                    <Box
-                      sx={{
-                        pt: 1.5,
-                        borderTop: '1px solid #e5e7eb',
-                        display: 'flex',
-                        flexDirection: { xs: 'column', sm: 'column' },
-                        gap: 1.5,
-                      }}
+                    {/* Compact Summary */}
+                    <div
+                      className={`flex items-center justify-between mb-${
+                        isExpanded ? '2' : '0'
+                      }`}
                     >
-                      {/* You Section */}
-                      <Box data-testid={`log-entry-me-${index}`}>
-                        <Typography
-                          sx={{
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            color: '#1f2937',
-                            mb: 0.75,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                          }}
+                      <div className='flex-1 min-w-0'>
+                        <p
+                          data-testid={`log-entry-me-${index}`}
+                          className={`text-sm font-semibold mb-1 ${
+                            iWin
+                              ? 'text-success-text'
+                              : opWin
+                                ? 'text-alert-text'
+                                : 'text-canvas-muted'
+                          }`}
                         >
-                          Your Hand
-                        </Typography>
-                        <Box sx={{ mb: 1 }}>
-                          {playerDisplay(
-                            true,
-                            `my-used-hand-${index}`,
-                            entry.myHandDescription,
-                            entry.myHand,
-                          )}
-                        </Box>
-                        <Typography
-                          sx={{
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            color: '#1f2937',
-                            mb: 0.75,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                          }}
-                        >
-                          Cards
-                        </Typography>
-                        <Box data-testid={`my-start-hand-${index}`} display='flex' flexWrap='wrap' gap={0.5}>
-                          {entry.myStartHand.map((c, i) =>
-                            cardDisplay(
-                              c,
-                              i,
-                              'my-cards',
-                              (entry.myPicks & (1 << i)) !== 0,
-                            ),
-                          )}
-                        </Box>
-                        <Typography
-                          sx={{
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            color: '#1f2937',
-                            mb: 0.75,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                          }}
-                        >
-                          Swapped Cards
-                        </Typography>
-                        <Box data-testid={`my-final-hand-${index}`} display='flex' flexWrap='wrap' gap={0.5}>
-                          {entry.myFinalHand.map((c, i) =>
-                            cardDisplay(
-                              c,
-                              i,
-                              'my-final-cards',
-                              (entry.mySelects & (1 << i)) !== 0,
-                            )
-                          )}
-                        </Box>
-                      </Box>
+                          {iWin
+                            ? '🏆 You Won'
+                            : opWin
+                              ? '🏆 Opponent Won'
+                              : '🤝 Tie'}
+                        </p>
+                        <div className='flex flex-wrap gap-2'>
+                          <div>
+                            <p className='text-xs font-medium text-canvas-muted'>
+                              You
+                            </p>
+                            <p className='text-sm font-semibold text-canvas-solid'>
+                              {makeDescription(entry.myHandDescription)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className='text-xs font-medium text-canvas-muted'>
+                              Opponent
+                            </p>
+                            <p className='text-sm font-semibold text-canvas-solid'>
+                              {makeDescription(entry.opponentHandDescription)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
 
-                      {/* Opponent Section */}
-                      <Box>
-                        <Typography
-                          sx={{
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            color: '#1f2937',
-                            mb: 0.75,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                          }}
-                        >
-                          Opponent Hand
-                        </Typography>
-                        <Box sx={{ mb: 1 }}>
-                          {playerDisplay(
-                            false,
-                            `opponent-used-hand-${index}`,
-                            entry.opponentHandDescription,
-                            entry.opponentHand,
-                          )}
-                        </Box>
-                        <Typography
-                          sx={{
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            color: '#1f2937',
-                            mb: 0.75,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                          }}
-                        >
-                          Start Cards
-                        </Typography>
-                        <Box data-testid={`opponent-start-hand-${index}`} display='flex' flexWrap='wrap' gap={0.5}>
-                          {entry.opponentStartHand.map((c, i) =>
-                            cardDisplay(
-                              c,
-                              i,
-                              'opponent-cards',
-                              (entry.opponentPicks & (1 << i)) !== 0,
-                            ),
-                          )}
-                        </Box>
-                        <Typography
-                          sx={{
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            color: '#1f2937',
-                            mb: 0.75,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                          }}
-                        >
-                          Swapped Cards
-                        </Typography>
-                        <Box data-testid={`opponent-final-hand-${index}`} display='flex' flexWrap='wrap' gap={0.5}>
-                          {entry.opponentFinalHand.map((c, i) =>
-                            cardDisplay(
-                              c,
-                              i,
-                              'opponent-final-cards',
-                              (entry.opponentSelects & (1 << i)) !== 0,
-                            )
-                          )}
-                        </Box>
-                      </Box>
-                    </Box>
-                  )}
-                </Card>
-              );
-            })}
-          </Box>
-        )}
-      </Box>
-    </Card>
+                      <ExpandMore
+                        data-testid={`log-expand-button-${index}`}
+                        className={`ml-1 flex-shrink-0 transform transition-transform duration-200 ${
+                          isExpanded ? 'rotate-180' : 'rotate-0'
+                        } text-canvas-muted`}
+                      />
+                    </div>
+
+                    {/* Expanded Details */}
+                    {isExpanded && (
+                      <div className='pt-2 border-t border-canvas-border flex flex-col gap-2'>
+                        {/* You Section */}
+                        <div data-testid={`log-entry-me-${index}`}>
+                          <p className='text-xs font-bold text-canvas-solid mb-1 uppercase tracking-wide'>
+                            Your Hand
+                          </p>
+                          <div className='mb-1'>
+                            {playerDisplay(
+                              true,
+                              `my-used-hand-${index}`,
+                              entry.myHandDescription,
+                              entry.myHand,
+                            )}
+                          </div>
+
+                          <p className='text-xs font-bold text-canvas-solid mb-1 uppercase tracking-wide'>
+                            Cards
+                          </p>
+                          <div
+                            data-testid={`my-start-hand-${index}`}
+                            className='flex flex-wrap gap-1'
+                          >
+                            {entry.myStartHand.map((c, i) =>
+                              cardDisplay(
+                                c,
+                                i,
+                                'my-cards',
+                                (entry.myPicks & (1 << i)) !== 0,
+                              ),
+                            )}
+                          </div>
+
+                          <p className='text-xs font-bold text-canvas-solid mb-1 uppercase tracking-wide'>
+                            Swapped Cards
+                          </p>
+                          <div
+                            data-testid={`my-final-hand-${index}`}
+                            className='flex flex-wrap gap-1'
+                          >
+                            {entry.myFinalHand.map((c, i) =>
+                              cardDisplay(
+                                c,
+                                i,
+                                'my-final-cards',
+                                (entry.mySelects & (1 << i)) !== 0,
+                              ),
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Opponent Section */}
+                        <div>
+                          <p className='text-xs font-bold text-canvas-solid mb-1 uppercase tracking-wide'>
+                            Opponent Hand
+                          </p>
+                          <div className='mb-1'>
+                            {playerDisplay(
+                              false,
+                              `opponent-used-hand-${index}`,
+                              entry.opponentHandDescription,
+                              entry.opponentHand,
+                            )}
+                          </div>
+
+                          <p className='text-xs font-bold text-canvas-solid mb-1 uppercase tracking-wide'>
+                            Start Cards
+                          </p>
+                          <div
+                            data-testid={`opponent-start-hand-${index}`}
+                            className='flex flex-wrap gap-1'
+                          >
+                            {entry.opponentStartHand.map((c, i) =>
+                              cardDisplay(
+                                c,
+                                i,
+                                'opponent-cards',
+                                (entry.opponentPicks & (1 << i)) !== 0,
+                              ),
+                            )}
+                          </div>
+
+                          <p className='text-xs font-bold text-canvas-solid mb-1 uppercase tracking-wide'>
+                            Swapped Cards
+                          </p>
+                          <div
+                            data-testid={`opponent-final-hand-${index}`}
+                            className='flex flex-wrap gap-1'
+                          >
+                            {entry.opponentFinalHand.map((c, i) =>
+                              cardDisplay(
+                                c,
+                                i,
+                                'opponent-final-cards',
+                                (entry.opponentSelects & (1 << i)) !== 0,
+                              ),
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 };
 

@@ -7,6 +7,8 @@ import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 import WaitingScreen from './WaitingScreen';
 import Calpoker from '../features/calPoker';
 import GameLog from './GameLog';
+import { useEffect } from 'react';
+import installThemeSyncListener from '../utils/themeSyncListener';
 
 
 
@@ -35,6 +37,12 @@ const Game = () => {
   } = useWasmBlob(params.lobbyUrl, uniqueId);
 
   // All early returns need to be after all useEffect, etc.
+  useEffect(() => {
+    // If this page is loaded inside an iframe, accept theme-sync messages
+    // from the parent so CSS variables and dark class can be applied.
+    const uninstall = installThemeSyncListener();
+    return () => uninstall();
+  }, []);
   if (error) {
     return <div>{error}</div>;
   }

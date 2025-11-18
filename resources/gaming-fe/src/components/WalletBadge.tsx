@@ -14,21 +14,21 @@ const WalletBadge = ({ sessionConnected, fakeAddress }: WalletBadgeProps) => {
 
   switch (sessionConnected) {
     case 'connected':
-      bgColor = '#D4EDDA';
-      textColor = '#155724';
-      borderColor = '#28A745';
+      bgColor = 'var(--color-success-bg)';
+      textColor = 'var(--color-success-text)';
+      borderColor = 'var(--color-success-border)';
       label = 'Connected';
       break;
     case 'simulator':
-      bgColor = '#FFF3CD';
-      textColor = '#856404';
-      borderColor = '#FFC107';
+      bgColor = 'var(--color-warning-bg)';
+      textColor = 'var(--color-warning-text)';
+      borderColor = 'var(--color-warning-border)';
       label = 'Simulator';
       break;
     default:
-      bgColor = '#FBFCFD';
-      textColor = '#5A666E';
-      borderColor = '#D3DBE1';
+      bgColor = 'var(--color-canvas-bg)';
+      textColor = 'var(--color-canvas-text)';
+      borderColor = 'var(--color-canvas-border)';
       label = 'Disconnected';
       break;
   }

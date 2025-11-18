@@ -1,19 +1,16 @@
 import {
   Badge,
   Box,
-  Button,
   ButtonGroup,
   Dialog,
   DialogContent,
   DialogTitle,
   Divider,
-  Fab,
   IconButton,
-  Tooltip,
   Typography,
 } from '@mui/material';
 import { useCallback, useState, useEffect } from 'react';
-
+import { Button } from './button';
 import { blockchainConnector } from '../hooks/BlockchainConnector';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
@@ -281,27 +278,24 @@ const WalletConnectHeading = (_args: any) => {
         gap: { xs: 2, sm: 3 },
       }}
     >
-      {/* Simulator Button */}
-      <Button
-        variant='contained'
-        onClick={handleConnectSimulator}
-        aria-label='select-simulator'
+      <Box
         sx={{
           width: { xs: '90%', sm: '75%', md: '50%' },
-          mb: 2,
-          backgroundColor: 'var(--primary-solid)',
-          boxShadow: '0px 4px 8px rgba(66, 79, 109, 0.85)',
-          color: 'var(--color-secondary-text)',
-          fontWeight: 600,
-          fontSize: { xs: '0.85rem', sm: '0.95rem', md: '1rem' },
-          '&:hover': {
-            backgroundColor: 'var(--primary-solid-hover)',
-          },
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
         }}
       >
-        CONTINUE WITH SIMULATOR
-      </Button>
-
+        {/* Simulator Button */}
+        <Button
+          variant='solid'
+          onClick={handleConnectSimulator}
+          aria-label='select-simulator'
+          fullWidth
+        >
+          Continue with Simulator
+        </Button>
+      </Box>
       {/* Divider with OR in the middle */}
       <Box
         sx={{
@@ -418,7 +412,7 @@ const WalletConnectHeading = (_args: any) => {
               fontWeight={600}
               sx={{
                 fontSize: { xs: '0.9rem', sm: '1rem', md: '1.25rem' },
-                color: 'var(--color-primary-text)',
+                color: 'var(--color-canvas-text)',
                 whiteSpace: 'nowrap',
               }}
             >
@@ -433,21 +427,17 @@ const WalletConnectHeading = (_args: any) => {
                 <Box>
                   <ButtonGroup variant='outlined' size='small'>
                     <Button
-                      variant='outlined'
-                      color='error'
+                      variant='outline'
                       onClick={() => walletConnectState.disconnect()}
-                      sx={{ fontSize: { xs: '0.7rem', sm: '0.8rem' } }}
                     >
                       Unlink Wallet
                     </Button>
                     <Button
-                      variant='outlined'
-                      color='error'
+                      variant='outline'
                       onClick={() => {
                         localStorage.clear();
                         window.location.href = '';
                       }}
-                      sx={{ fontSize: { xs: '0.7rem', sm: '0.8rem' } }}
                     >
                       Reset Storage
                     </Button>
@@ -480,7 +470,7 @@ const WalletConnectHeading = (_args: any) => {
                 fontWeight='semi-bold'
                 sx={{
                   fontSize: { xs: '0.7rem', sm: '0.85rem', md: '0.95rem' },
-                  color: 'var(--color-primary-text)',
+                  color: 'var(--color-canvas-solid)',
                   display: { xs: 'none', sm: 'block' },
                 }}
               >
@@ -500,7 +490,7 @@ const WalletConnectHeading = (_args: any) => {
                 <Typography
                   variant='body2'
                   sx={{
-                    color: 'var(--color-primary-text)',
+                    color: 'var(--color-canvas-solid)',
                     fontWeight: 500,
                     opacity: 0.8,
                     fontSize: { xs: '0.65rem', sm: '0.85rem', md: '0.95rem' },
@@ -567,6 +557,12 @@ const WalletConnectHeading = (_args: any) => {
         onClose={() => setDebugOpen(false)}
         fullWidth
         maxWidth='sm'
+        sx={{
+          '& .MuiPaper-root': {
+            backgroundColor: 'var(--canvas-bg)',
+            color: 'var(--canvas-text)',
+          },
+        }}
       >
         <DialogTitle
           sx={{
@@ -574,19 +570,32 @@ const WalletConnectHeading = (_args: any) => {
             alignItems: 'center',
             justifyContent: 'space-between',
             fontWeight: 600,
-            color: 'var(--color-primary-text)',
+            color: 'var(--canvas-text)',
           }}
         >
           Developer Debug
           <IconButton
             aria-label='close'
             onClick={() => setDebugOpen(false)}
-            sx={{ color: '#424F6D' }}
+            sx={{
+              color: 'var(--canvas-text)',
+              '&:hover': {
+                color: 'var(--secondary-solid)',
+              },
+            }}
           >
             <Close />
           </IconButton>
         </DialogTitle>
-        <DialogContent dividers>
+
+        <DialogContent
+          dividers
+          sx={{
+            borderColor: 'var(--canvas-bg-subtle)', // divider color
+            backgroundColor: 'var(--canvas-bg)',
+            color: 'var(--canvas-text)',
+          }}
+        >
           <Debug connectString={wcInfo} setConnectString={setWcInfo} />
         </DialogContent>
       </Dialog>

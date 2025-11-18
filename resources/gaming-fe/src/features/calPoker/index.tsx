@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   Box,
-  Button,
-  Card,
-  CardContent,
   Typography,
   useMediaQuery,
   useTheme,
@@ -11,13 +8,12 @@ import {
   Slide,
   IconButton,
 } from '@mui/material';
+import { Button } from '../../components/button';
 import CloseIcon from '@mui/icons-material/Close';
 
 import { CalpokerOutcome, OutcomeLogLine } from '../../types/ChiaGaming';
-import GameEndPlayer from '../../components/GameEndPlayer';
 import GameLog from '../../components/GameLog';
 import CaliforniaPoker from '../californiaPoker';
-import { StopCircle } from '@mui/icons-material';
 import { Info, LogOut } from 'lucide-react';
 
 export interface CalpokerProps {
@@ -100,46 +96,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
     setShowMoveToast(false);
   };
 
-  // if (outcome) {
-  //   return (
-  //     <div id='total'>
-  //       <div id='overlay'> </div>
-  //       <Box p={4}>
-  //         <Typography variant='h4' align='center'>
-  //           {`Cal Poker - move ${moveNumber}`}
-  //         </Typography>
-  //         <br />
-  //         <Typography variant='h6' align='center' color={colors[color]}>
-  //           {banner}
-  //         </Typography>
-  //         <br />
-  //         <Box
-  //           display='flex'
-  //           flexDirection={{ xs: 'column', md: 'row' }}
-  //           alignItems='stretch'
-  //           gap={2}
-  //           mb={4}
-  //         >
-  //           <Box flex={1} display='flex' flexDirection='column'>
-  //             <GameEndPlayer
-  //               iStarted={iStarted}
-  //               playerNumber={iStarted ? 1 : 2}
-  //               outcome={outcome}
-  //             />
-  //           </Box>
-  //           <Box flex={1} display='flex' flexDirection='column'>
-  //             <GameEndPlayer
-  //               iStarted={iStarted}
-  //               playerNumber={iStarted ? 2 : 1}
-  //               outcome={outcome}
-  //             />
-  //           </Box>
-  //         </Box>
-  //       </Box>
-  //     </div>
-  //   );
-  // }
-
   const balanceDisplay =
     ourShare !== undefined && theirShare !== undefined
       ? ` - Our Share ${ourShare} vs ${theirShare}`
@@ -149,10 +105,12 @@ const Calpoker: React.FC<CalpokerProps> = ({
     <Box
       p={{ xs: 2, sm: 3, md: 4 }}
       sx={{
-        bgcolor: '#fff',
+        bgcolor: 'var(--canvas-bg-subtle)',
+        color: 'var(--canvas-text)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
+        minHeight: '100%',
       }}
     >
       {/* Header */}
@@ -168,12 +126,13 @@ const Calpoker: React.FC<CalpokerProps> = ({
           variant={isMobile ? 'h5' : 'h4'}
           sx={{
             fontWeight: 700,
-            color: '#424F6D',
+            color: 'var(--canvas-text-contrast)',
             textAlign: { xs: 'center', sm: 'left' },
           }}
         >
-          {`California Poker`}
+          California Poker
         </Typography>
+
         <Box
           display='flex'
           alignItems='center'
@@ -181,54 +140,36 @@ const Calpoker: React.FC<CalpokerProps> = ({
           gap={2}
           mt={{ xs: 1, sm: 0 }}
         >
+          {/* HINT button */}
           <Button
             onClick={handleHelpClick}
-            variant='outlined'
-            startIcon={<Info />}
-            sx={{
-              backgroundColor: 'white',
-              borderColor: '#e5e7eb',
-              color: '#0f172a',
-              fontWeight: 600,
-              borderRadius: '8px',
-              px: 2,
-              '&:hover': {
-                backgroundColor: '#ffffff',
-              },
-            }}
+            color={'neutral'}
+            variant={'ghost'}
+            size={'sm'}
+            leadingIcon={<Info />}
           >
             Hint
           </Button>
+
+          {/* Leave */}
           <Button
+            variant={'destructive'}
             onClick={stopPlaying}
+            size={'sm'}
             disabled={moveNumber !== 0}
-            variant='outlined'
-            startIcon={<LogOut />}
-            data-testid='stop-playing'
-            sx={{
-              borderColor: '#EF4444',
-              color: '#EF4444',
-              fontWeight: 600,
-              borderRadius: '8px',
-              px: 2,
-              '&:hover': {
-                backgroundColor: 'rgba(239,68,68,0.04)',
-              },
-            }}
+            leadingIcon={<LogOut />}
+            fullWidth
           >
             Leave Game
           </Button>
         </Box>
       </Box>
 
-      {/* Banner */}
-
       {/* Main Game Layout */}
       <Box
         width='100%'
         display='flex'
         justifyContent='center'
-        
         sx={{
           overflow: 'visible',
           height: { md: 'calc(100vh - 150px)', xs: 'auto' },
@@ -244,7 +185,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
             height: { md: '100%', xs: 'auto' },
           }}
         >
-          {/* Main game pane (75% on md+) */}
+          {/* MAIN GAME AREA */}
           <Box
             sx={{
               flex: { xs: 'unset', md: '3 1 0%' },
@@ -271,28 +212,24 @@ const Calpoker: React.FC<CalpokerProps> = ({
             />
           </Box>
 
-          {/* Game Log Section (25% on md+) */}
+          {/* GAME LOG */}
           <Box
             sx={{
               flex: { xs: 'unset', md: '1 1 0%' },
               height: { xs: 'auto', md: '100%' },
               overflowY: 'auto',
               minHeight: { md: 0 },
+              bgcolor: 'var(--canvas-bg)',
             }}
           >
-            <Box
-              sx={{
-                height: '100%',
-              }}
-            >
+            <Box sx={{ height: '100%' }}>
               <GameLog log={log} />
             </Box>
           </Box>
         </Box>
       </Box>
 
-      {/* Hidden blockchain address */}
-      {/* Move description toast */}
+      {/* Move Description Toast */}
       <Snackbar
         key={`move-toast-${moveNumber}`}
         open={showMoveToast}
@@ -303,12 +240,12 @@ const Calpoker: React.FC<CalpokerProps> = ({
         message={moveDescription}
         ContentProps={{
           sx: {
-            backgroundColor: '#111827',
-            color: '#fff',
+            backgroundColor: 'var(--canvas-bg-subtle)',
+            color: 'var(--canvas-text-contrast)',
             borderRadius: '12px',
             px: 3,
             py: 1.5,
-            boxShadow: '0 6px 18px rgba(17,24,39,0.3)',
+            border: '1px solid var(--canvas-line)',
             fontWeight: 600,
           },
         }}
@@ -318,11 +255,14 @@ const Calpoker: React.FC<CalpokerProps> = ({
             aria-label='close'
             color='inherit'
             onClick={() => setShowMoveToast(false)}
+            sx={{ color: 'var(--canvas-text)' }}
           >
             <CloseIcon fontSize='small' />
           </IconButton>
         }
       />
+
+      {/* Hidden blockchain address */}
       <Box
         id='blockchain-address'
         sx={{ position: 'absolute', width: 0, height: 0, opacity: 0 }}

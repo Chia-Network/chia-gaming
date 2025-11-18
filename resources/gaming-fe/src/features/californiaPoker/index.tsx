@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 // Types
 import {
   BestHandType,
@@ -7,41 +7,26 @@ import {
   MovingCardData,
   SwappingCards,
 } from '../../types/californiaPoker';
-
+import { Button } from '../../components/button';
 // Constants
 import {
   ANIMATION_DELAY,
   BUTTON_ACTIVE,
   BUTTON_BASE,
-  BUTTON_DISABLED,
   GAME_STATES,
-  GameColors,
   SWAP_ANIMATION_DURATION,
 } from './constants/constants';
 
 // Utils
 import {
   compareRanks,
-  createDeck,
   evaluateHand,
   formatHandDescription,
   getCombinations,
-  getSwapCombinations,
-  scoreKeepCombination,
-  shuffleArray,
-  sortHand,
 } from './utils';
 import { HandDisplay, MovingCard } from './components';
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
-import {
-  Box,
-  Button,
-  Card,
-  CardContent,
-  Divider,
-  Typography,
-} from '@mui/material';
-import { Wallet } from '@mui/icons-material';
+
 import { WalletIcon } from 'lucide-react';
 
 // Main Component
@@ -169,12 +154,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         : true);
 
   const isActive = !isDisabled; // single source of truth
-
-  const bgColor = isActive ? '#3b4a63' : '#cccccc';
-  const textColor = isActive ? 'white' : '#999999';
-  const shadow = isActive ? '0 6px 12px rgba(59,74,99,0.35)' : 'none';
-  const cursor = isActive ? 'pointer' : 'not-allowed';
-  const opacity = isActive ? 1 : 0.6;
 
   // ---------- TEXT ----------
   let buttonText = '';
@@ -403,7 +382,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   }, []);
 
   return (
-    <div className='flex flex-col w-full h-full overflow-hidden'>
+    <div className='flex flex-col w-full h-full overflow-hidden text-canvas-text'>
       <div className='flex-1 relative h-full overflow-y-auto overflow-x-hidden'>
         {gameState === GAME_STATES.INITIAL && (
           <div className='text-center'>
@@ -419,49 +398,36 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         {gameState !== GAME_STATES.INITIAL && (
           <div className='h-full flex flex-col overflow-y-auto'>
             <div className='flex-1'>
-              <div className='text-center relative h-[45%] mb-4 border border-gray-200 bg-white shadow rounded-lg'>
-                {/* small top-right badge like in your screenshot */}
+              {/* OPPONENT PANEL */}
+              <div className='text-center lg:gap-0 gap-4 relative h-[45%] mb-4 border border-canvas-line bg-canvas-bg shadow-md rounded-lg'>
                 <div className='w-full relative'>
-                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2 lg:pb-0 pb-4'>
-                    <h3 className='text-[16px] font-bold text-center text-gray-700'>
+                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2'>
+                    <h3 className='text-[16px] font-bold text-center text-canvas-solid'>
                       Opponent hand
                     </h3>
                   </div>
+
+                  {/* Opponent balance */}
                   <div className='flex justify-end'>
-                    <div
-                      style={{
-                        border: '1px solid #DDDDDD',
-                        borderRadius: '0px 6px 0px 6px',
-                        padding: '6px',
-                        background: 'white',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                        display: 'flex',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <WalletIcon size={'19.6px'} color='#444444' />
-                      <Typography
-                        component='span'
-                        sx={{
-                          ml: 0.5,
-                          fontWeight: 700,
-                          fontSize: '12px',
-                          color: '#444444',
-                        }}
-                      >
+                    <div className='flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-1.5 py-1 shadow-sm'>
+                      <span className='text-canvas-solid'>
+                        <WalletIcon size='19.6px' />
+                      </span>
+                      <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>
                         {opponentBalance}
-                      </Typography>
+                      </span>
                     </div>
                   </div>
                 </div>
-                <div className='flex-1 h-full flex items-center justify-center p-2'>
+
+                <div className='flex-1 h-full lg:mt-0 mt-4 flex items-center justify-center p-2'>
                   <HandDisplay
-                    title={''}
+                    title=''
                     cards={opponentCards}
                     playerNumber={playerNumber == 1 ? 2 : 1}
-                    area={'ai'}
+                    area='ai'
                     winner={winner}
-                    winnerType={'ai'}
+                    winnerType='ai'
                     bestHand={aiBestHand}
                     swappingCards={swappingCards.ai}
                     showSwapAnimation={showSwapAnimation}
@@ -472,49 +438,36 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 </div>
               </div>
 
-              <div className='text-center relative h-[45%] bg-white border border-gray-200 shadow rounded-lg'>
+              {/* PLAYER PANEL */}
+              <div className='text-center relative lg:gap-0 gap-4 h-[45%] bg-canvas-bg border border-canvas-line shadow-md rounded-lg'>
                 <div className='w-full relative'>
-                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2 lg:pb-0 pb-4'>
-                    <h3 className='text-[16px] font-bold text-center text-gray-700'>
+                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2'>
+                    <h3 className='text-[16px] font-bold text-center text-canvas-solid'>
                       Your hand
                     </h3>
                   </div>
+
+                  {/* Player balance */}
                   <div className='flex justify-end'>
-                    <div
-                      style={{
-                        border: '1px solid #DDDDDD',
-                        borderRadius: '0px 6px 0px 6px',
-                        padding: '6px',
-                        background: 'white',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                        display: 'flex',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <WalletIcon size={'19.6px'} color='#444444' />
-                      <Typography
-                        component='span'
-                        sx={{
-                          ml: 0.5,
-                          fontWeight: 700,
-                          fontSize: '12px',
-                          color: '#444444',
-                        }}
-                      >
+                    <div className='flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-1.5 py-1 bg-canvas-bg shadow-sm'>
+                      <span className='text-canvas-solid'>
+                        <WalletIcon size='19.6px' />
+                      </span>
+                      <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>
                         {playerBalance}
-                      </Typography>
+                      </span>
                     </div>
                   </div>
                 </div>
 
-                <div className='flex-1 h-full flex items-center justify-center p-2'>
+                <div className='flex-1 lg:mt-0 mt-4 h-full flex items-center justify-center p-2'>
                   <HandDisplay
-                    title={''}
+                    title=''
                     cards={playerCards}
                     playerNumber={playerNumber}
-                    area={'player'}
+                    area='player'
                     winner={winner}
-                    winnerType={'player'}
+                    winnerType='player'
                     bestHand={playerBestHand}
                     onCardClick={toggleCardSelection}
                     selectedCards={playerSelected}
@@ -527,112 +480,60 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
               </div>
             </div>
 
-            <div className='h-[10%] flex p-0 lg:pt-0 pt-4'>
-              <Card
-                elevation={3}
-                sx={{
-                  display: 'flex',
-                  flex: 1,
-                  borderRadius: '12px',
-                  overflow: 'hidden',
-                  alignItems: 'stretch',
-                  border: '1px solid #DDDDDD',
-                  boxShadow: '0 4px 10px rgba(0,0,0,0.06)',
-                }}
-              >
+            {/* ACTION BAR */}
+            <div className='h-[10%] flex pt-4 lg:pt-0'>
+              <div className='flex flex-1 rounded-xl overflow-hidden border border-canvas-line shadow-md bg-canvas-bg'>
                 {/* Left banner */}
-                <Box
-                  sx={{
-                    flex: 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: 'white',
-                  }}
-                >
-                  <Typography
-                    sx={{
-                      color: isPlayerTurn ? '#0f9d58' : '#DF0025',
-                      fontWeight: 700,
-                      fontSize: '18px',
-                    }}
+                <div className='flex flex-1 items-center justify-center'>
+                  <span
+                    className={`font-bold text-xl ${
+                      isPlayerTurn ? 'text-success-text' : 'text-alert-text'
+                    }`}
                   >
                     {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
-                  </Typography>
-                </Box>
+                  </span>
+                </div>
 
-                {/* Middle full-height button with 2px padding */}
-                <Box
-                  sx={{
-                    flex: 1,
-                    p: '2px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: 'transparent',
-                  }}
-                >
+                {/* Button */}
+                <div className='flex flex-1 p-0.5 items-center justify-center bg-transparent'>
                   {gameState === GAME_STATES.FINAL ? (
-                    <button
+                    <Button
+                      variant={'solid'}
+                      color={'primary'}
                       onClick={NewGame}
                       disabled={!isPlayerTurn}
-                      className={`w-full h-full rounded-md text-white font-semibold uppercase ${isPlayerTurn ? BUTTON_ACTIVE : BUTTON_DISABLED}`}
-                      style={{
-                        background: isPlayerTurn ? '#E5FE75' : '#cccccc',
-                        color: isPlayerTurn ? '#000' : '#999999',
-                        border: '1px solid rgba(0,0,0,0.15)',
-                        padding: '0.6rem 1.2rem',
-                        boxShadow: isPlayerTurn
-                          ? '0 6px 12px rgba(15,157,88,0.35)'
-                          : 'none',
-                        cursor: isPlayerTurn ? 'pointer' : 'not-allowed',
-                        opacity: isPlayerTurn ? 1 : 0.6,
-                      }}
+                      fullWidth
+                      className='h-full'
                     >
                       {isPlayerTurn ? 'Start New Game' : 'Opponent to Start...'}
-                    </button>
+                    </Button>
                   ) : (
-                    <button
+                    <Button
+                      variant={'solid'}
+                      color={'primary'}
                       onClick={doHandleMakeMove}
                       disabled={isDisabled}
-                      className='w-full h-full rounded-md font-semibold uppercase'
-                      style={{
-                        background: bgColor,
-                        color: textColor,
-                        border: '1px solid rgba(0,0,0,0.15)',
-                        padding: '0.6rem 1.2rem',
-                        boxShadow: shadow,
-                        cursor: cursor,
-                        opacity: opacity,
-                        transition: 'all 0.2s ease',
-                      }}
+                      fullWidth
+                      className='h-full'
                     >
                       {buttonText}
-                    </button>
+                    </Button>
                   )}
-                </Box>
+                </div>
 
-                {/* Right move display */}
-                <Box
-                  sx={{
-                    flex: 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: 'white',
-                  }}
-                >
-                  <Typography sx={{ fontWeight: 700, fontSize: '20px' }}>
+                {/* Move number */}
+                <div className='flex flex-1 items-center justify-center'>
+                  <span className='font-bold text-xl text-canvas-solid'>
                     Move {moveNumber}
-                  </Typography>
-                </Box>
-              </Card>
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Moving Cards */}
+      {/* Animations */}
       {movingCards.map((cardData) => (
         <MovingCard
           key={cardData.id}
@@ -642,21 +543,14 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       ))}
 
       <style>{`
-        .animate-move {
-          animation: moveCard 2s ease-in-out forwards;
-        }
-
-        @keyframes moveCard {
-          from {
-            left: var(--start-x);
-            top: var(--start-y);
-          }
-          to {
-            left: var(--end-x);
-            top: var(--end-y);
-          }
-        }
-      `}</style>
+    .animate-move {
+      animation: moveCard 2s ease-in-out forwards;
+    }
+    @keyframes moveCard {
+      from { left: var(--start-x); top: var(--start-y); }
+      to { left: var(--end-x); top: var(--end-y); }
+    }
+  `}</style>
     </div>
   );
 };
