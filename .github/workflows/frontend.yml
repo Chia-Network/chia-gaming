@@ -39,13 +39,6 @@ jobs:
           node-version: 20.18.1
       - name: Install latest rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-            target: wasm32-unknown-unknown
-            components: rustfmt
-
-      - name: Install wasm-pack
-        run: |
-          cargo install --version 0.13.1 wasm-pack
 
       - name: Smoke test docker image
         run: |
