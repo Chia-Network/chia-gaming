@@ -37,7 +37,7 @@ mkdir -p "${LOBBY}/public"
 mkdir -p "${LOBBY}/nginx"
 
 cp -r "${SOURCE}/app/lobby-view/public"/* "${LOBBY}/public"
-cp -r "${SOURCE}/app/lobby-service/dist/index.js" "${LOBBY}/service.js"
+cp -r "${SOURCE}/app/lobby-service/dist/index-rollup.cjs" "${LOBBY}/service.js"
 
 cp -r resources/nginx/lobby-install.sh "${LOBBY}/lobby-install.sh"
 cp -r resources/nginx/lobby.service "${LOBBY}/lobby.service"

@@ -1,12 +1,12 @@
 #!/bin/sh
 
 NGINX=/etc/nginx/sites-available
-WEBROOT=/usr/share/nginx/html/chia-gaming-lobby
+WEBROOT=/usr/share/nginx/html/lobby-view
+SELF_URL=""
 SERVICE=""
-TRACKER=""
 
-if [ "x$@" = x ] ; then
-	echo "usage: lobby-install.sh --nginx [nginx-sites-dir] --content-root [server-root] --service [dir]"
+if [ "x$1" = x ] ; then
+	echo "usage: lobby-install.sh --nginx [nginx-sites-dir] --content-root [server-root] --service [dir] --self-url [url]"
 	exit 1
 fi
 
@@ -22,14 +22,14 @@ while [ "x$1" != x ] ; do
 			WEBROOT="$1"
 			;;
 
-		x--tracker)
-			shift
-			TRACKER="$1"
-			;;
-
 		x--service)
 			shift
 			SERVICE="$1"
+			;;
+
+		x--self-url)
+			shift
+			SELF_URL="$1"
 			;;
 
 		*)
@@ -40,8 +40,12 @@ while [ "x$1" != x ] ; do
 	shift
 done
 
-if [ "x$TRACKER" = x ] ; then
-	echo "no --tracker specified"
+if [ "x$SERVICE" = x ] ; then
+	echo "no --service dir specified"
+	exit 1
+fi
+if [ "x$SELF_URL" = x ] ; then
+	echo "no --self-url provided"
 	exit 1
 fi
 
@@ -51,10 +55,9 @@ mkdir -p "${SERVICE}"
 
 # Install service if we're on a systemd system
 if [ -d /etc/systemd/system ] ; then
-	sed -e "s@/app@${SERVICE}@g" < ./nginx/lobby.service > /etc/systemd/system
+	sed -e "s@/app@${SERVICE}@g" -e "s!@SELF_URL@!${SELF_URL}!g" < ./lobby.service > /etc/systemd/system/lobby.service
 fi
 
-cp -r "${TARGET}/chia-gaming-lobby/dist" "${WEBROOT}"
-cp -r "${TARGET}/chia-gaming-lobby/public" "${WEBROOT}"
-
-cp -r "${TARGET}/chia-gaming-lobby/dist/service.js" "${SERVICE}"
+sed -e "s!/app!${WEBROOT}!g" < nginx/lobby.conf > "${NGINX}/lobby.conf"
+cp -r public "${WEBROOT}/lobby-view"
+cp service.js "${SERVICE}"

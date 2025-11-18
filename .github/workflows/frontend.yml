@@ -73,17 +73,22 @@ jobs:
 
           ./resources/extract-from-image.sh "${GW}"
 
+      - name: Prune unreferenced image data
+        run: |
+          docker image prune -f
+
       - name: Run headless test
         env:
           DETECT_CHROMEDRIVER_VERSION: "true"
           FIREFOX_HEADLESS: "true"
         run: |
-          (cd resources/gaming-fe &&
-              yarn install &&
-              yarn run build) &&
           sudo apt update
           sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
           (cd resources/fe-test && xvfb-run -a ./test.sh)
+
+      - name: Remove node_modules in tests
+        run: |
+          rm -rf resources/fe-test/node_modules
 
       - name: Cleanup xvfb pidx
         run: |
@@ -94,6 +99,12 @@ jobs:
           else
               echo "No xvfb processes to kill"
           fi
+
+      - name: Extract Game side Artifact
+        run: |
+          export GW=${{ github.workspace }}
+
+          ./resources/extract-from-image.sh "${GW}"
 
       - name: Archive chia-gaming-frontend
         uses: actions/upload-artifact@v4
