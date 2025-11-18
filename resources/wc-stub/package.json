@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "./node_modules/.bin/tsc --project .",
-    "start": "node dist/index-rollup.js",
+    "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn src/index.ts",
     "test": "jest",
     "lint": "eslint . --ext .ts",

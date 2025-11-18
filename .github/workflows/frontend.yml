@@ -45,6 +45,7 @@ jobs:
       - name: Install wasm-pack
         run: |
           cargo install --version 0.13.1 wasm-pack
+          python -m pip install toml
 
       - name: Smoke test docker image
         run: |
@@ -65,6 +66,12 @@ jobs:
         run: |
          # Expects chia-gaming-test to exist
          docker run -t chia-gaming-test /app/test.sh
+
+      - name: Extract Game side Artifact
+        run: |
+          export GW=${{ github.workspace }}
+
+          ./resources/extract-from-image.sh "${GW}"
 
       - name: Run headless test
         env:
@@ -87,3 +94,16 @@ jobs:
           else
               echo "No xvfb processes to kill"
           fi
+
+      - name: Archive chia-gaming-frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: chia-gaming-frontend.zip
+          path: ${{ github.workspace }}/chia-gaming-deploy/g
+
+      - name: Archive chia-gaming-lobby
+        uses: actions/upload-artifact@v4
+        with:
+          name: chia-gaming-lobby.zip
+          path: ${{ github.workspace }}/chia-gaming-deploy/l
+

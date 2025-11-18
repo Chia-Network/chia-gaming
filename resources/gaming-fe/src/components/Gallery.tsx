@@ -4,7 +4,6 @@ import { ErrorBoundary } from './ErrorBoundary';
 import Calpoker from './Calpoker';
 import GameEndPlayer from './GameEndPlayer';
 import GameLog from './GameLog';
-import LobbyScreen from './LobbyScreen';
 import OpponentSection from './OpponentSection';
 import PlayerSection from './PlayerSection';
 import PlayingCard from './PlayingCard';
@@ -14,7 +13,6 @@ import { WalletConnectDialog } from './WalletConnect';
 import WalletConnectHeading from './WalletConnectHeading';
 
 const componentList: Record<string, any> = {
-  LobbyScreen: LobbyScreen as any,
   Calpoker: Calpoker as any,
   PlayerSection: PlayerSection as any,
   OpponentSection: OpponentSection as any,

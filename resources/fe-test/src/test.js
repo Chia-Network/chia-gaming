@@ -223,10 +223,13 @@ async function initiateGame(driver, gameTotal, eachHand) {
     1000,
   );
   await gameId.click();
-  let choice = await driver.wait(
-    until.elementLocated(byAttribute("aria-label", "choose-calpoker")),
-    1000,
+  let choice = await waitForNonError(
+    driver,
+    () => driver.wait(until.elementLocated(byAttribute("aria-label", "choose-calpoker"))),
+    () => true,
+    1.0
   );
+  console.log('choice element', choice);
   await choice.click();
 
   let wager = await driver.wait(

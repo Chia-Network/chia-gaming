@@ -1,0 +1,9 @@
+[Unit]
+Description=Chia Gaming beacon
+After=network.target
+
+[Service]
+ExecStart=/app/beacon.sh @SELF@ @TRACKER@
+
+[Install]
+WantedBy=sysinit.target
