@@ -217,7 +217,9 @@
   --info-text: #52a9ff;
   --info-text-contrast: #eaf6ff;
   --info-on-info: #ffffff;
-  /* Color aliases for Tailwind config mapping */
+
+}
+@theme inline {
   --color-canvas-base: var(--canvas-base);
   --color-canvas-bg-subtle: var(--canvas-bg-subtle);
   --color-canvas-bg: var(--canvas-bg);
@@ -315,8 +317,8 @@
   --color-info-text: var(--info-text);
   --color-info-text-contrast: var(--info-text-contrast);
   --color-info-on-info: var(--info-on-info);
-}
 
+}
 /* tailwind import removed (using directives above) */
 
 /* Reset body and html to prevent scrollbar issues on root container */
