@@ -348,6 +348,7 @@ export class WasmBlobWrapper {
   }
 
   loadWasm(wasmConnection: WasmConnection): any {
+    console.log("loadWasm", wasmConnection);
     if (this.wc !== undefined) { throw new Error("this.wc is undefined") }
     if (!wasmConnection) { throw new Error("wasmConnection is falsey") }
 

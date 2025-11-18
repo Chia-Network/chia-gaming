@@ -228,7 +228,7 @@ it(
       },
     };
     console.log("after peer_conn1");
-    let wsi = new WasmStateInit(doInternalLoadWasm, fetchHex);
+    let wasm_init1 = new WasmStateInit(doInternalLoadWasm, fetchHex);
     storeInitArgs(() => {}, WholeWasmObject);
     console.log("afer WasmStateInit");
 
@@ -237,7 +237,7 @@ it(
       'a11ce000',
       true,
       peer_conn1,
-      wsi
+      wasm_init1
     );
     console.log("after wasm_blob1");
     cradle1.set_blob(wasm_blob1);
@@ -248,12 +248,13 @@ it(
         cradle2.add_outbound_message(message);
       },
     };
+    let wasm_init2 = new WasmStateInit(doInternalLoadWasm, fetchHex);
     let wasm_blob2 = await initWasmBlobWrapper(
       blockchainInterface,
       'b0b77777',
       false,
       peer_conn2,
-      wsi
+      wasm_init2
     );
     console.log("after wasm_blob2");
 
