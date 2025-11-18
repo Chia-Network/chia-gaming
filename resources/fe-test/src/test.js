@@ -111,6 +111,7 @@ async function firefox_start_and_first_move(selectWallet, driver, baseUrl) {
 }
 
 const cardNumericRanks = {
+  'T': 10,
   'J': 11,
   'Q': 12,
   'K': 13,
@@ -271,7 +272,7 @@ function stripCards(cards) {
 
 async function getCards(driver, label) {
   console.log('getCards', label);
-  const hand = await driver.wait(until.elementLocated(byAttribute("aria-label", label)));
+  const hand = await driver.wait(until.elementLocated(byAttribute("data-testid", label)));
   return getCardText(driver, hand);
 }
 
@@ -279,9 +280,9 @@ async function verifyCardsWithLog(driver, cards) {
   await wait(driver, 5.0);
 
   await driver.executeScript('window.scroll(0, 0);');
-  const gameLogHeadingTitle = await driver.wait(until.elementLocated(byAttribute("aria-label", "game-log-heading")));
+  const gameLogExpandButton = await driver.wait(until.elementLocated(byAttribute("data-testid", "log-expand-button-0")));
   console.log('gonna click the game log heading');
-  await gameLogHeadingTitle.click();
+  await gameLogExpandButton.click();
 
   console.log('gonna find our hand in the most recent log entry');
   const rawCardList = await getCards(driver, "my-start-hand-0");
@@ -317,6 +318,8 @@ async function verifyCardsWithLog(driver, cards) {
         }
       });
       if (count !== 1) {
+        console.log("used", used);
+        console.log("final", final);
         throw new Error(`Card ${u} didn't appear in final hand ${myFinalList}`);
       }
     });
@@ -422,7 +425,6 @@ describe("Out of money test", function () {
     console.log('selecting alice cards');
     let allAliceCards = await clickFourCards(driver, 'alice', 0x55);
 
-    // Hit the title for the expanded view
     console.log('bob cards', allBobCards);
     console.log('alice cards', allAliceCards);
 
@@ -461,17 +463,11 @@ describe("Out of money test", function () {
       const logEntryMe = await driver.wait(
         until.elementLocated(byAttribute("data-testid", `log-entry-me-${i}`)),
       );
-      const logEntryOpponent = await driver.wait(
-        until.elementLocated(
-          byAttribute("data-testid", `log-entry-opponent-${i}`),
-        ),
-      );
       const outcomeMe = await logEntryMe.getAttribute("textContent");
-      const outcomeOpponent = await logEntryOpponent.getAttribute("textContent");
       const addition =
-        outcomeMe.indexOf("WINNER") != -1
+        outcomeMe.indexOf("You Won") != -1
           ? 10
-          : outcomeOpponent.indexOf("WINNER") != -1
+          : outcomeMe.indexOf("Opponent Won") != -1
             ? -10
             : 0;
       expectedPost1 += addition;

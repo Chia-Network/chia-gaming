@@ -285,16 +285,16 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     const isPlayerAlice = playerNumber === 1;
 
     // Map the correct hands depending on perspective
-    const playerOriginal = isPlayerAlice
+    const playerOriginal = !isPlayerAlice
       ? gameRoundData.alice_cards
       : gameRoundData.bob_cards;
-    const playerFinal = isPlayerAlice
+    const playerFinal = !isPlayerAlice
       ? gameRoundData.alice_final_hand
       : gameRoundData.bob_final_hand;
-    const opponentOriginal = isPlayerAlice
+    const opponentOriginal = !isPlayerAlice
       ? gameRoundData.bob_cards
       : gameRoundData.alice_cards;
-    const opponentFinal = isPlayerAlice
+    const opponentFinal = !isPlayerAlice
       ? gameRoundData.bob_final_hand
       : gameRoundData.alice_final_hand;
 

@@ -64,6 +64,8 @@ RUN --mount=type=tmpfs,dst=/app \
   mv /app/wc/node_modules /preinst/wc && \
   mv /app/wc/package.json /preinst/wc
 
+RUN rm -rf $HOME/.cache
+
 #CI FROM node:20.18.1
 #CI RUN apt-get update -y && \
 #CI     apt-get install -y libc6 && \
@@ -101,6 +103,9 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	cargo clean -p chia_gaming_wasm && \
 	wasm-pack build --out-dir=/app/node-pkg --release --target=nodejs && \
 	wasm-pack build --out-dir=/app/dist --release --target=web
+
+RUN rm -rf $HOME/.cargo
+RUN du / | sort -rn
 
 # Place wasm backend in docker container
 RUN mkdir -p /app/dist
