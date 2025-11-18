@@ -109,6 +109,9 @@
     "testMatch": [
       "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"
     ],
+    "testPathIgnorePatterns": [
+      "/Users/aqk/chia-gaming/resources/gaming-fe/dist/js/__mocks__/socket.io-client.js"
+    ],
     "moduleDirectories": [
       "node_modules",
       "node-pkg",

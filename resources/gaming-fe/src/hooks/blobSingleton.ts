@@ -23,11 +23,20 @@ async function fetchHex(fetchUrl: string): Promise<string> {
     return fetch(fetchUrl).then((wasm) => wasm.text());
 }
 
-export async function getX(iStarted: boolean, wasmStateInit: WasmStateInit, gameObject: WasmBlobWrapper, calpokerHex: string, blockchain:InternalBlockchainInterface, uniqueId: string, amount: number): Promise<WasmBlobWrapper> {
+export async function configGameObject(
+  gameObject: WasmBlobWrapper,
+  iStarted: boolean,
+  wasmStateInit: WasmStateInit,
+  calpokerHex: string,
+  blockchain:InternalBlockchainInterface,
+  uniqueId: string,
+  amount: number,
+): Promise<WasmBlobWrapper> {
   let wasmConnection = await wasmStateInit.getWasmConnection();
   gameObject.loadWasm(wasmConnection);
   let seed = getRandomInt(1<<31);
   let seedStr = getEvenHexString(seed);
+  console.log("configGameObject wasmConnection", wasmConnection);
   let rngId = wasmConnection.create_rng(seedStr);
   let identity = wasmConnection.chia_identity(rngId);
   let address = await blockchain.getAddress();

@@ -120,6 +120,7 @@ export class WasmBlobWrapper {
   }
 
   activateSpend(coin: string) {
+    if (!this.wc) { throw new Error("this.wc is falsey") }
     this.cradle?.opening_coin(coin);
 
     this.rxjsEmitter?.next({
@@ -139,6 +140,9 @@ export class WasmBlobWrapper {
   }
 
   kickSystem(flags: number) {
+    if (!(this.qualifyingEvents & flags)) {
+      console.log("kickSystem", flags, this.wc);
+    }
     this.qualifyingEvents |= flags;
     if (this.qualifyingEvents == 7) {
       this.qualifyingEvents |= 8;
@@ -201,18 +205,8 @@ export class WasmBlobWrapper {
   }
 
   handleOneMessage(msg: any): any {
-    console.log('handleOneMessage', Object.keys(msg));
-    // if (msg.loadWasmEvent) {
-    //   return this.internalLoadWasm(
-    //     msg.loadWasmEvent.chia_gaming_init,
-    //     msg.loadWasmEvent.cg,
-    //   );
-    //} else if (msg.loadPresets) {
-    //  return this.loadPresets(msg.loadPresets);
-    //} else if (msg.createStartCoin) {
-    //  return this.createStartCoin();
-    //} else if (msg.loadCalpoker) {
-    //  return this.loadCalpoker();
+    //console.log('handleOneMessage', Object.keys(msg));
+
     if (msg.deliverMessage) {
       return this.internalDeliverMessage(msg.deliverMessage);
     } else if (msg.move) {
@@ -354,6 +348,9 @@ export class WasmBlobWrapper {
   }
 
   loadWasm(wasmConnection: WasmConnection): any {
+    if (this.wc !== undefined) { throw new Error("this.wc is undefined") }
+    if (!wasmConnection) { throw new Error("wasmConnection is falsey") }
+
     this.wc = wasmConnection;
     //this.loadWasmEvent = { loadWasmEvent: { chia_gaming_init, cg } };
     this.kickSystem(1);
@@ -365,6 +362,7 @@ export class WasmBlobWrapper {
   }
 
   internalDeliverMessage(msg: string): any {
+    if (!this.wc) { throw new Error("this.wc is falsey") }
     if (!this.cradle) {
       this.storedMessages.push(msg);
       return empty();

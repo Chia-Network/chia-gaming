@@ -18,7 +18,7 @@ import {
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
-import { getBlobSingleton, initStarted, setInitStarted } from './blobSingleton';
+import { configGameObject, getBlobSingleton, initStarted, setInitStarted } from './blobSingleton';
 
 let blobSingleton: any = null;
 
@@ -190,19 +190,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
     // pass wasmconnection into wasmblobwrapper
     empty().then(async () => {
-      let wasmConnection = await wasmStateInit.getWasmConnection();
-      gameObject.loadWasm(wasmConnection);
       let calpokerHex = await loadCalpoker(fetchHex);
-      let seed = getRandomInt(1<<31);
-      let seedStr = getEvenHexString(seed);
-      let rngId = wasmConnection.create_rng(seedStr);
-      let identity = wasmConnection.chia_identity(rngId);
-      let address = await blockchain.getAddress();
-      gameObject.setBlockchainAddress(address);
-      let cradle = wasmStateInit.createGame(calpokerHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
-      gameObject.setGameCradle(cradle);
-      let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
-      gameObject.activateSpend(coin.coinString);
+      await configGameObject(gameObject, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
     });
 
     return () => {

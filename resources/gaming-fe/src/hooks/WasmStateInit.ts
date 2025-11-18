@@ -17,7 +17,8 @@ var logInitialized = false;
 export const readyToInit = new Subject<boolean>();
 export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
   console.log('subscriber added to waitForReadyToInit');
-  console.log('chia_gaming_init={chia_gaming_init} cg={cg}');
+  console.log('chia_gaming_init=', chia_gaming_init);
+  console.log('cg=', cg);
   if (chia_gaming_init && cg) {
     subscriber.next(true);
     subscriber.complete();
@@ -65,6 +66,7 @@ export class WasmStateInit {
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.fetchHex = fetchHex;
     this.deferredWasmConnection = new Subject<WasmConnection>();
+    console.log("WasmStateInit created")
   }
 
   /*
