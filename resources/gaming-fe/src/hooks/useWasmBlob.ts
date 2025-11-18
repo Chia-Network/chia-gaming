@@ -7,11 +7,9 @@ import {
   storeInitArgs,
   loadCalpoker,
 } from './WasmStateInit';
-import { GAME_SERVICE_URL } from '../settings';
 import {
   GameConnectionState,
   CalpokerOutcome,
-  InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   BlockchainReport,
   OutcomeLogLine,
@@ -19,71 +17,10 @@ import {
   RngId,
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
-
-import { blockchainConnector } from './BlockchainConnector';
-import { blockchainDataEmitter } from './BlockchainInfo';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
-import {
-  PARENT_FRAME_BLOCKCHAIN_ID,
-  parentFrameBlockchainInfo,
-} from './ParentFrameBlockchainInfo';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
-
 import { getBlobSingleton, initStarted, setInitStarted } from './blobSingleton';
 
-import useGameSocket from 'chia-gaming-lobby-connection';
-import { setupBlockchainConnection } from './useBlockchainConnection';
-
 let blobSingleton: any = null;
-
-function getBlobSingleton(
-  blockchain: InternalBlockchainInterface,
-  lobbyUrl: string,
-  uniqueId: string,
-  amount: number,
-  perGameAmount: number,
-  iStarted: boolean,
-) {
-  if (blobSingleton) {
-    return blobSingleton;
-  }
-
-  const deliverMessage = (msg: string) => {
-    blobSingleton?.deliverMessage(msg);
-  };
-  const peercon = useGameSocket(lobbyUrl, deliverMessage, () => {
-    blobSingleton?.kickSystem(2);
-  }, getSearchParams());
-
-  const doInternalLoadWasm = async () => {
-    const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
-    return fetch(fetchUrl)
-      .then((wasm) => wasm.blob())
-      .then((blob) => {
-        return blob.arrayBuffer();
-      });
-  };
-
-  async function fetchHex(fetchUrl: string): Promise<string> {
-    return fetch(fetchUrl).then((wasm) => wasm.text());
-  }
-
-  blobSingleton = new WasmBlobWrapper(
-    blockchain,
-    uniqueId,
-    amount,
-    perGameAmount,
-    iStarted,
-    doInternalLoadWasm,
-    fetchHex,
-    peercon,
-  );
-
-  setupBlockchainConnection(uniqueId);
-
-  return blobSingleton;
-}
-
 
 export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [realPublicKey] = useState<string | undefined>(undefined);

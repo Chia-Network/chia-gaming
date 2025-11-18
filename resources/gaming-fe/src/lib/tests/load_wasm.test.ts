@@ -42,8 +42,11 @@ import {
 import { ChildFrameBlockchainInterface } from '../../hooks/ChildFrameBlockchainInterface';
 
 import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
+// @ts-ignore
 import * as fs from 'fs';
+// @ts-ignore
 import { resolve } from 'path';
+// @ts-ignore
 import * as assert from 'assert';
 import { getBlobSingleton, initStarted } from '../../hooks/blobSingleton';
 
@@ -52,6 +55,7 @@ async function fetchHex(key: string): Promise<string> {
 }
 
 function rooted(name: string) {
+  // @ts-ignore
   return resolve(__dirname, '../../../../..', name);
 }
 

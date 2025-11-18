@@ -1,13 +1,14 @@
 
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 import { GAME_SERVICE_URL } from '../settings';
-import useGameSocket from './useGameSocket';
+// import getGameSocket from './getGameSocket';
 import { setupBlockchainConnection } from './useBlockchainConnection';
 import { WasmStateInit, loadCalpoker } from './WasmStateInit';
 import {
   InternalBlockchainInterface,
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
+import { getGameSocket } from '../services/GameSocket';
 
 // TODO: Maybe migrate this file's contents to WasmStateInit.ts
 
@@ -54,7 +55,7 @@ export function getBlobSingleton(
   const deliverMessage = (msg: string) => {
     blobSingleton?.deliverMessage(msg);
   };
-  const peercon = useGameSocket(lobbyUrl, deliverMessage, () => {
+  const peercon = getGameSocket(lobbyUrl, deliverMessage, () => {
     blobSingleton?.kickSystem(2);
   });
 
