@@ -14,6 +14,14 @@ import {
   IdleCallbacks,
   IdleResult,
 } from '../../../node-pkg/chia_gaming_wasm.js';
+import {
+  WasmStateInit,
+  doInternalLoadWasm,
+  //fetchHex,
+  storeInitArgs,
+  loadCalpoker,
+} from '../../hooks/WasmStateInit';
+import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../../util';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import {
   InternalBlockchainInterface,
@@ -37,6 +45,11 @@ import { WasmBlobWrapper } from '../../hooks/WasmBlobWrapper';
 import * as fs from 'fs';
 import { resolve } from 'path';
 import * as assert from 'assert';
+import { getBlobSingleton, initStarted } from '../../hooks/blobSingleton';
+
+async function fetchHex(key: string): Promise<string> {
+  return fs.readFileSync(rooted(key), 'utf8');
+}
 
 function rooted(name: string) {
   return resolve(__dirname, '../../../../..', name);
@@ -158,15 +171,12 @@ async function action_with_messages(
   }
 }
 
-async function fetchHex(key: string): Promise<string> {
-  return fs.readFileSync(rooted(key), 'utf8');
-}
-
 async function initWasmBlobWrapper(
-  blockchainInterface: InternalBlockchainInterface,
+  blockchain: InternalBlockchainInterface,
   uniqueId: string,
   iStarted: boolean,
   peer_conn: PeerConnectionResult,
+  wasmStateInit: WasmStateInit,
 ) {
   const amount = 100;
   const doInternalLoadWasm = async () => {
@@ -176,8 +186,9 @@ async function initWasmBlobWrapper(
   await fetch(`${BLOCKCHAIN_SERVICE_URL}/register?name=${uniqueId}`, {
     method: 'POST',
   });
-  let wbw = new WasmBlobWrapper(
-    blockchainInterface,
+  // let wbw = new WasmBlobWrapper(
+  let gameObject = new WasmBlobWrapper(
+    blockchain,
     uniqueId,
     amount,
     amount / 10,
@@ -186,13 +197,28 @@ async function initWasmBlobWrapper(
     fetchHex,
     peer_conn,
   );
-  let ob = wbw.getObservable();
-  console.log('WasmBlobWrapper Observable: ', ob);
+
+  //let ob = wbw.getObservable();
+
+  let wasmConnection = await wasmStateInit.getWasmConnection();
+  gameObject.loadWasm(wasmConnection);
+  let calpokerHex = await loadCalpoker(fetchHex);
+  let seed = getRandomInt(1<<31);
+  let seedStr = getEvenHexString(seed);
+  let rngId = wasmConnection.create_rng(seedStr);
+  let identity = wasmConnection.chia_identity(rngId);
+  let address = await blockchain.getAddress();
+  gameObject.setBlockchainAddress(address);
+  let cradle = wasmStateInit.createGame(calpokerHex, rngId, wasmConnection, identity.private_key, iStarted, amount, amount, address.puzzleHash);
+  gameObject.setGameCradle(cradle);
+  let coin = await wasmStateInit.createStartCoin(blockchain, uniqueId, identity, amount, wasmConnection);
+  gameObject.activateSpend(coin.coinString);
+
+  //console.log('WasmBlobWrapper Observable: ', ob);
   let wwo = Object.assign({}, WholeWasmObject);
   wwo.init = () => {};
-  wbw.loadWasm(() => {}, wwo);//
 
-  return wbw;
+  return gameObject;
 }
 
 it(
@@ -211,11 +237,13 @@ it(
         cradle1.add_outbound_message(message);
       },
     };
+    let wsi = new WasmStateInit(doInternalLoadWasm, fetchHex);
     let wasm_blob1 = await initWasmBlobWrapper(
       blockchainInterface,
       'a11ce000',
       true,
       peer_conn1,
+      wsi
     );
     cradle1.set_blob(wasm_blob1);
 
@@ -230,6 +258,7 @@ it(
       'b0b77777',
       false,
       peer_conn2,
+      wsi
     );
     cradle2.set_blob(wasm_blob2);
 
