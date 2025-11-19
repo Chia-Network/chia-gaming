@@ -158,8 +158,10 @@ RUN ln -s /app/game/resources /resources
 ADD clsp /app/game/clsp
 RUN ln -s /app/game/clsp /clsp
 COPY resources/gaming-fe/package.json /app/package.json
-RUN sed -e 's!@PORT@!3000!g' < resources/nginx/game.conf > /etc/nginx/sites-enabled/game.conf
-RUN sed -e 's!@PORT@!3001!g' <  resources/nginx/lobby.conf > /etc/nginx/sites-enabled/lobby.conf
+COPY resources/nginx/game.conf /tmp/game.conf
+COPY resources/nginx/lobby.conf /tmp/game.conf
+RUN sed -e 's!@PORT@!3000!g' < /tmp/game.conf > /etc/nginx/sites-enabled/game.conf
+RUN sed -e 's!@PORT@!3001!g' < /tmp/lobby.conf > /etc/nginx/sites-enabled/lobby.conf
 COPY resources/nginx/urls /app/dist
 COPY resources/nginx/beacon.sh /app
 COPY resources/gaming-fe/test.sh /app
