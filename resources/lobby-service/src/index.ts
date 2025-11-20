@@ -8,7 +8,7 @@ import helmet from 'helmet';
 import minimist from 'minimist';
 import { Server as SocketIOServer } from 'socket.io';
 
-import { Lobby } from './lobby/lobbyState';
+import { Lobby } from './lobbyState';
 import { GenerateRoomResult, Room } from './types/lobby';
 
 const lobby = new Lobby();
@@ -23,7 +23,7 @@ function parseArgs() {
   const args = minimist(process.argv.slice(2));
 
   if (!args.self) {
-    console.warn('usage: lobby --self [own-url]');
+    console.warn('usage: lobby --self [own-url] --dir [serve-directory]');
     process.exit(1);
   }
 
@@ -65,6 +65,9 @@ app.use(
 );
 
 app.use(express.json());
+if (args.dir) {
+  app.use(express.static(args.dir));
+}
 
 const TOKEN_TTL = 10 * 60 * 1000;
 
@@ -94,21 +97,6 @@ function leaveLobby(id: string): any {
   return undefined;
 }
 
-// Kick the root.
-async function serveFile(file: string, contentType: string, res: any) {
-  const content = await readFile(file);
-  res.set('Content-Type', contentType);
-  res.send(content);
-}
-app.get('/', async (_req: any, res: any) => {
-  serveFile('public/index.html', 'text/html', res);
-});
-app.get('/index.css', async (req: any, res: any) => {
-  serveFile('dist/css/index.css', 'text/css', res);
-});
-app.get('/index.js', async (_req: any, res: any) => {
-  serveFile('dist/js/index-rollup.js', 'application/javascript', res);
-});
 app.post('/lobby/change-alias', (req, res) => {
   const { id, newAlias } = req.body;
   if (!id || !newAlias)
@@ -250,7 +238,10 @@ setInterval(() => {
   io.emit('lobby_update', lobby.getPlayers());
 }, 15000);
 
-const port = process.env.PORT || 3001;
-httpServer.listen(port, () => {
+const port = process.env.PORT || 5801;
+httpServer.listen({
+  host: '0.0.0.0',
+  port: port
+}, () => {
   console.log(`Server running on port ${port}`);
 });

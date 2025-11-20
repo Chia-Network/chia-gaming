@@ -345,7 +345,7 @@ const WalletConnectHeading = (_args: any) => {
     </Box>
   );
 
-  const ifExpanded = expanded && (
+  const ifExpanded = expanded ? 
     <div
       style={{
         display: 'flex',
@@ -359,8 +359,7 @@ const WalletConnectHeading = (_args: any) => {
       }}
     >
       {ifSession}
-    </div>
-  );
+    </div> : <div style={{ display: 'none' }} />;
 
   const balanceDisplay =
     balance !== undefined ? <div>- Balance {balance}</div> : <div />;

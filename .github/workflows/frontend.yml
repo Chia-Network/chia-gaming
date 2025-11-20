@@ -37,8 +37,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20.18.1
-      - name: Install latest rust toolchain
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Smoke test docker image
         run: |
@@ -66,6 +64,10 @@ jobs:
           export GW=${{ github.workspace }}
 
           ./resources/extract-from-image.sh "${GW}"
+
+      - name: Prune unreferenced image data
+        run: |
+          docker image prune -f
 
       - name: Run headless test
         env:

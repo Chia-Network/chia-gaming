@@ -2,9 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 
 import { ErrorBoundary } from './ErrorBoundary';
 import CaliforniaPoker from '../features/californiaPoker';
-
-import LobbyScreen from './LobbyScreen';
-
 import { QRCodeModal } from './QRCodeModal';
 import WaitingScreen from './WaitingScreen';
 import { WalletConnectDialog } from './WalletConnect';
@@ -15,16 +12,13 @@ import {
   PlayerSection,
   PlayingCard,
 } from '../features/calPoker/components';
-import GameEndPlayer from './GameEndPlayer';
 import GameLog from './GameLog';
 
 const componentList: Record<string, any> = {
-  LobbyScreen: LobbyScreen as any,
   BramVibe1: CaliforniaPoker as any,
   Calpoker: Calpoker as any,
   PlayerSection: PlayerSection as any,
   OpponentSection: OpponentSection as any,
-  GameEndPlayer: GameEndPlayer as any,
   GameLog: GameLog as any,
   WaitingScreen: WaitingScreen as any,
   PlayingCard: PlayingCard as any,

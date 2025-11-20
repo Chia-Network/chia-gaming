@@ -1,0 +1,9 @@
+[Unit]
+Description=Chia Gaming lobby
+After=network.target
+
+[Service]
+ExecStart=/bin/sh -c "cd /app && node ./service.js --self @SELF_URL@ --dir ./public"
+
+[Install]
+WantedBy=sysinit.target

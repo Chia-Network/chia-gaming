@@ -1,7 +1,7 @@
 import { Edit, Cross, User, Crown } from 'lucide-react';
 import { Dispatch, SetStateAction } from 'react';
 
-import { Player } from '../../types/lobby';
+import { Player } from 'chia-gaming-lobby-connection';
 
 type PlayerForUI = Pick<Player, 'id' | 'alias'>;
 
