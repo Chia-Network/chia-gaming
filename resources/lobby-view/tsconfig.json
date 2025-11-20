@@ -22,5 +22,5 @@
     "noEmitOnError": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["dist", "build", "coverage", "src/lib"]
+  "exclude": ["node_modules", "dist", "build", "coverage", "src/lib"]
 }

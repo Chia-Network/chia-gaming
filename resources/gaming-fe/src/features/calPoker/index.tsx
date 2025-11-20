@@ -153,6 +153,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
 
           {/* Leave */}
           <Button
+	    data-testid='stop-playing'
             variant={'destructive'}
             onClick={stopPlaying}
             size={'sm'}

@@ -1,3 +1,5 @@
+import React from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   Card,
@@ -15,17 +17,19 @@ import {
   MenuItem,
 } from '@mui/material';
 import { Button } from './button';
-import { useState, useEffect, useCallback, useRef } from 'react';
 import { Close, SportsEsports, ContentCopy } from '@mui/icons-material';
-import { useLobbySocket } from '../hooks/useLobbyConnection';
-import { generateOrRetrieveAlias, updateAlias } from '../util';
-import ConnectedPlayers from '../features/lobbyComponents/ConnectedPlayers';
-import CardDivider from '../features/lobbyComponents/CardDivider';
-import Chat from '../features/lobbyComponents/Chat';
-import ActiveRooms from '../features/lobbyComponents/ActiveRooms';
+import { useLobbySocket } from 'chia-gaming-lobby-connection';
+import { getSearchParams, getFragmentParams, generateOrRetrieveAlias, updateAlias } from './util';
+import ConnectedPlayers from './features/lobbyComponents/ConnectedPlayers';
+import CardDivider from './features/lobbyComponents/CardDivider';
+import Chat from './features/lobbyComponents/Chat';
+import ActiveRooms from './features/lobbyComponents/ActiveRooms';
 
 const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
+  const params = getSearchParams();
+  const fragment = getFragmentParams();
+  const uniqueId = params.uniqueId;
   const {
     players,
     rooms,
@@ -34,10 +38,19 @@ const LobbyScreen = () => {
     setLobbyAlias,
     generateRoom,
     joinRoom,
-    uniqueId,
-    fragment,
     lobbyGames,
-  } = useLobbySocket(myAlias, true);
+  } = useLobbySocket(
+    window.location.origin,
+    uniqueId,
+    myAlias,
+    true,
+    params,
+    fragment,
+    (newUrl: string) => {
+      console.warn(`from tryJoinRoom, navigate ${newUrl}`);
+      window.location.href = newUrl;
+    }
+  );
 
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -309,7 +322,7 @@ const LobbyScreen = () => {
             onChange={(e) => setGameChoice(e.target.value)}
           >
             {lobbyGames.map((g) => (
-              <MenuItem value={g.game}>{g.game}</MenuItem>
+              <MenuItem data-testid={`choose-${g.game}`} value={g.game}>{g.game}</MenuItem>
             ))}
           </Select>
 

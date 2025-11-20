@@ -1,5 +1,5 @@
 import { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import { ChatEnvelope } from '../../types/lobby';
+import { ChatEnvelope } from 'chia-gaming-lobby-connection';
 
 interface ChatProps {
   splitPct: number;
