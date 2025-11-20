@@ -16,17 +16,13 @@ import {
 } from '@mui/material';
 import { Button } from './button';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  Close,
-  Edit,
-  SportsEsports,
-  PeopleAlt,
-  ContentCopy,
-  WorkspacePremiumOutlined,
-} from '@mui/icons-material';
+import { Close, SportsEsports, ContentCopy } from '@mui/icons-material';
 import { useLobbySocket } from '../hooks/useLobbyConnection';
 import { generateOrRetrieveAlias, updateAlias } from '../util';
-import { Crown } from 'lucide-react';
+import ConnectedPlayers from '../features/lobbyComponents/ConnectedPlayers';
+import CardDivider from '../features/lobbyComponents/CardDivider';
+import Chat from '../features/lobbyComponents/Chat';
+import ActiveRooms from '../features/lobbyComponents/ActiveRooms';
 
 const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
@@ -202,6 +198,7 @@ const LobbyScreen = () => {
     <Box
       sx={{
         p: { xs: 2, sm: 3, md: 8 },
+        pb: 0,
         minHeight: '100vh',
         bgcolor: 'var(--color-canvas-bg-subtle)',
       }}
@@ -248,436 +245,40 @@ const LobbyScreen = () => {
         }}
       >
         {/* Active Rooms */}
-        <Box
-          sx={{
-            flex: 2,
-            pr: { md: 0, xs: 0 },
-            height: '100%',
-          }}
-        >
-          <Card
-            variant='outlined'
-            sx={{
-              borderRadius: '12px 0 0 12px',
-              border: 'none',
-              boxShadow: 'none',
-              backgroundColor: 'var(--color-canvas-bg)',
-              height: '100%',
-              // use available height on desktop
-            }}
-          >
-            <CardContent sx={{ height: '100%', pb: 6 }}>
-              <Stack
-                direction={{ xs: 'column', sm: 'row' }}
-                justifyContent='space-between'
-                alignItems={{ xs: 'flex-start', sm: 'center' }}
-                spacing={1}
-                mb={2}
-              >
-                <Typography
-                  variant='h6'
-                  fontWeight={600}
-                  sx={{ color: 'var(--color-canvas-text-contrast)' }}
-                >
-                  Active Rooms
-                </Typography>
-                <Button
-                  variant='solid'
-                  color={'secondary'}
-                  onClick={openDialog}
-                  aria-label='generate-room'
-                >
-                  Generate Room
-                </Button>
-              </Stack>
-
-              <Divider sx={{ mb: 3 }} />
-              <Box sx={{ overflowY: 'auto', height: '100%', pr: 2, pb: 6 }}>
-                {rooms.length === 0 ? (
-                  <Box
-                    textAlign='center'
-                    py={6}
-                    sx={{ color: 'var(--color-canvas-text)' }}
-                  >
-                    <SportsEsports
-                      sx={{
-                        fontSize: 48,
-                        mb: 1,
-                        color: 'var(--color-canvas-solid)',
-                      }}
-                    />
-                    <Typography
-                      variant='h6'
-                      fontWeight={500}
-                      sx={{ color: 'var(--color-canvas-text-contrast)' }}
-                    >
-                      No Active Rooms
-                    </Typography>
-                    <Typography
-                      variant='body2'
-                      sx={{ color: 'var(--color-canvas-text)' }}
-                    >
-                      Create a room to start a game.
-                    </Typography>
-                  </Box>
-                ) : (
-                  rooms.map((r) => (
-                    <Box
-                      key={r.token}
-                      sx={{
-                        p: 2,
-                        mb: 1.5,
-                        borderRadius: 2,
-                        border: '1px solid var(--color-canvas-line)',
-                        backgroundColor: 'var(--color-canvas-bg)',
-                        display: 'flex',
-                        flexDirection: { xs: 'column', sm: 'row' },
-                        justifyContent: 'space-between',
-                        alignItems: { xs: 'flex-start', sm: 'center' },
-                        gap: 1,
-                      }}
-                    >
-                      <Box>
-                        <Typography
-                          variant='subtitle1'
-                          fontWeight={600}
-                          sx={{ color: 'var(--color-canvas-text-contrast)' }}
-                        >
-                          {r.token || 'Unknown Game'}
-                        </Typography>
-                        <Typography
-                          variant='body2'
-                          sx={{ color: 'var(--color-canvas-text)' }}
-                        >
-                          Host: {getPlayerAlias(r.host)}
-                        </Typography>
-                        <Typography
-                          variant='body2'
-                          sx={{ color: 'var(--color-canvas-text)' }}
-                        >
-                          Game: {r.game}
-                        </Typography>
-                      </Box>
-                      <Button
-                        variant='solid'
-                        color={'secondary'}
-                        onClick={() => joinRoom(r.token)}
-                      >
-                        Join
-                      </Button>
-                    </Box>
-                  ))
-                )}
-              </Box>
-            </CardContent>
-          </Card>
-        </Box>
+        <ActiveRooms
+          rooms={rooms}
+          openDialog={openDialog}
+          joinRoom={joinRoom}
+          getPlayerAlias={getPlayerAlias}
+        />
 
         {/* Connected Players */}
-        <Box
+        <div
           ref={rightColumnRef}
-          sx={{
-            flex: 1,
-            borderLeft: { md: '1px solid var(--color-canvas-border)' },
-            height: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-            minWidth: 0,
-            borderRadius: '0px 16px 0px 0px',
-          }}
+          className='flex w-full md:w-1/3 flex-col min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl'
         >
-          <Card
-            variant='outlined'
-            sx={{
-              border: 'none',
-              boxShadow: 'none',
-              backgroundColor: 'var(--color-canvas-bg)',
-              flexBasis: { md: `${splitPct}%` },
-              minHeight: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              borderRadius: '0px 16px 0px 0px',
-            }}
-          >
-            <CardContent
-              sx={{
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                minHeight: 0,
-              }}
-            >
-              <Stack
-                direction='row'
-                justifyContent='space-between'
-                alignItems='center'
-                mb={3}
-              >
-                <Typography
-                  variant='h6'
-                  fontWeight={600}
-                  sx={{ color: 'var(--color-canvas-text-contrast)' }}
-                >
-                  Connected Players
-                </Typography>
-              </Stack>
-
-              <Divider sx={{ mb: 2 }} />
-
-              <Box sx={{ flex: 1, overflowY: 'auto', pr: 1 }}>
-                {editingAlias ? (
-                  <Stack
-                    direction={{ xs: 'column', sm: 'row' }}
-                    spacing={1}
-                    mb={3}
-                  >
-                    <TextField
-                      fullWidth
-                      size='small'
-                      placeholder='Enter new alias'
-                      value={myAlias}
-                      onChange={(e) => setMyAlias(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && commitEdit(e)}
-                      onBlur={commitEdit}
-                      sx={{
-                        backgroundColor: 'var(--color-canvas-bg)',
-                        '& .MuiInputBase-input': {
-                          color: 'var(--color-canvas-text)',
-                        },
-                        '& .MuiFormLabel-root': {
-                          color: 'var(--color-canvas-text)',
-                        },
-                      }}
-                      inputProps={{ 'aria-label': 'alias-input' }}
-                    />
-                    <Button
-                      variant='solid'
-                      color={'secondary'}
-                      onClick={commitEdit}
-                      aria-label='save-alias'
-                    >
-                      Save
-                    </Button>
-                    <IconButton
-                      size='small'
-                      color='error'
-                      onClick={() => setEditingAlias(false)}
-                    >
-                      <Close />
-                    </IconButton>
-                  </Stack>
-                ) : (
-                  <Stack direction='row' alignItems='center' spacing={1} mb={2}>
-                    <Typography
-                      variant='body1'
-                      sx={{ color: 'var(--color-canvas-text)' }}
-                    >
-                      Alias:&nbsp;
-                      <Box
-                        component='strong'
-                        sx={{
-                          color: 'var(--color-canvas-text-contrast)',
-                          fontWeight: 700,
-                        }}
-                      >
-                        {myAlias}
-                      </Box>
-                    </Typography>
-                    <IconButton
-                      size='small'
-                      onClick={() => setEditingAlias(true)}
-                      sx={{ color: 'var(--color-canvas-solid)' }}
-                      aria-label='edit-alias'
-                    >
-                      <Edit fontSize='small' />
-                    </IconButton>
-                  </Stack>
-                )}
-
-                {players.length === 0 ? (
-                  <Box
-                    textAlign='center'
-                    py={6}
-                    sx={{ color: 'var(--color-canvas-text)' }}
-                  >
-                    <PeopleAlt
-                      sx={{
-                        fontSize: 48,
-                        mb: 1,
-                        color: 'var(--color-canvas-solid)',
-                      }}
-                    />
-                    <Typography
-                      variant='h6'
-                      fontWeight={500}
-                      sx={{ color: 'var(--color-canvas-text-contrast)' }}
-                    >
-                      No Other Players Connected
-                    </Typography>
-                    <Typography
-                      variant='body2'
-                      sx={{ color: 'var(--color-canvas-text)' }}
-                    >
-                      Waiting for others to join…
-                    </Typography>
-                  </Box>
-                ) : (
-                  <Box>
-                    {players.map((player, index) => (
-                      <Typography
-                        key={player.id}
-                        variant='body2'
-                        sx={{ mb: 0.5, color: 'var(--color-canvas-text)' }}
-                      >
-                        {index + 1}:&nbsp;
-                        {player.id === uniqueId ? (
-                          <>
-                            <Box
-                              component='span'
-                              sx={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 0.5,
-                              }}
-                            >
-                              {player.alias}
-                              &nbsp;(You)
-                              <Crown
-                                className='w-5 h-5'
-                                style={{ color: 'var(--color-warning-solid)' }}
-                              />
-                            </Box>
-                          </>
-                        ) : (
-                          player.alias
-                        )}
-                      </Typography>
-                    ))}
-                  </Box>
-                )}
-              </Box>
-            </CardContent>
-          </Card>
-
-          {/* draggable handle (only shown on md+) */}
-          <Box
-            onMouseDown={(e) => {
-              const el = rightColumnRef.current as any;
-              if (el && typeof el._startDrag === 'function')
-                el._startDrag(e.clientY);
-            }}
-            onTouchStart={(e) => {
-              const el = rightColumnRef.current as any;
-              if (el && typeof el._startDrag === 'function')
-                el._startDrag(e.touches[0].clientY);
-            }}
-            sx={{
-              height: { xs: 8, md: 8 },
-              cursor: { xs: 'default', md: 'row-resize' },
-              background: 'transparent',
-              display: { xs: 'none', md: 'block' },
-            }}
+          <ConnectedPlayers
+            splitPct={splitPct}
+            editingAlias={editingAlias}
+            myAlias={myAlias}
+            setMyAlias={setMyAlias}
+            commitEdit={commitEdit}
+            setEditingAlias={setEditingAlias}
+            players={players}
+            uniqueId={uniqueId}
           />
 
-          <Card
-            sx={{
-              border: 'none',
-              boxShadow: 'none',
-              backgroundColor: 'var(--color-canvas-bg)',
-              flexBasis: { md: `${100 - splitPct}%` },
-              minHeight: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              borderRadius: '0px 0px 12px 0',
-            }}
-          >
-            <CardContent
-              sx={{
-                p: 0,
-                '&:last-child': { padding: 0 },
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                minHeight: 0,
-              }}
-            >
-              <Stack
-                direction='row'
-                alignItems='center'
-                justifyContent='space-between'
-                px={2}
-                py={1.5}
-                borderBottom='1px solid var(--color-canvas-line)'
-              >
-                <Typography
-                  variant='subtitle1'
-                  fontWeight={600}
-                  sx={{ color: 'var(--color-canvas-text-contrast)' }}
-                >
-                  Lobby Chat
-                </Typography>
-              </Stack>
-              <Divider sx={{ mb: 0 }} />
+          <CardDivider rightColumnRef={rightColumnRef} />
 
-              {/* Chat Messages */}
-              <Box ref={messagesRef} sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
-                {messages.length === 0 ? (
-                  <Typography
-                    sx={{
-                      color: 'var(--color-canvas-text)',
-                      textAlign: 'center',
-                    }}
-                  >
-                    No messages yet.
-                  </Typography>
-                ) : (
-                  messages.map((m, i) => (
-                    <Typography
-                      key={i}
-                      variant='body2'
-                      sx={{ mb: 0.5, color: 'var(--color-canvas-text)' }}
-                    >
-                      <strong>{m.alias}:</strong> {m.content.text}
-                    </Typography>
-                  ))
-                )}
-              </Box>
-
-              <Divider />
-              {/* Keep the input visible: sticky at the bottom of the card */}
-              <Box
-                sx={{
-                  p: 1.5,
-                  position: 'sticky',
-                  bottom: 0,
-                  bgcolor: 'var(--color-canvas-bg)',
-                  borderTop: '1px solid var(--color-canvas-line)',
-                  zIndex: 2,
-                }}
-              >
-                <TextField
-                  fullWidth
-                  size='small'
-                  placeholder='Type your message...'
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                  sx={{
-                    backgroundColor: 'var(--color-canvas-bg)',
-                    '& .MuiInputBase-input': {
-                      color: 'var(--color-canvas-text)',
-                    },
-                    '& .MuiFormLabel-root': {
-                      color: 'var(--color-canvas-text)',
-                    },
-                  }}
-                  inputProps={{ 'aria-label': 'lobby-chat-input' }}
-                />
-              </Box>
-              <Divider />
-            </CardContent>
-          </Card>
-        </Box>
+          <Chat
+            splitPct={splitPct}
+            messagesRef={messagesRef}
+            messages={messages}
+            chatInput={chatInput}
+            setChatInput={setChatInput}
+            handleSend={handleSend}
+          />
+        </div>
       </Box>
 
       {/* Create Room Dialog */}

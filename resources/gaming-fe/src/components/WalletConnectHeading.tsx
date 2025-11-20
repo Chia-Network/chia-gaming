@@ -367,238 +367,197 @@ const WalletConnectHeading = (_args: any) => {
 
   return (
     <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: useHeight,
-        width: '100vw',
-        backgroundColor: 'var(--color-canvas-bg)',
-      }}
+      className='flex flex-col w-screen'
+      style={{ height: useHeight, backgroundColor: 'var(--color-canvas-bg)' }}
     >
-      <div style={{ display: 'flex', flexDirection: 'row', height: 'auto' }}>
+      <div className='flex flex-row h-auto'>
         {/* Header */}
         {/* Fixed Header */}
-        <Box
-          sx={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            width: '100%',
-            display: 'flex',
-            flexDirection: { xs: 'column', sm: 'row' },
-            alignItems: { xs: 'stretch', sm: 'center' },
+        <div
+          className='fixed top-0 left-0 w-full flex gap-1 shadow-md z-1200'
+          style={{
+            flexDirection: window.innerWidth < 640 ? 'column' : 'row',
+            alignItems: window.innerWidth < 640 ? 'stretch' : 'center',
             justifyContent: 'space-between',
-            bgcolor: 'var(--color-canvas-bg)',
+            paddingLeft:
+              window.innerWidth < 768
+                ? '0.375rem'
+                : window.innerWidth < 1024
+                  ? '0.5rem'
+                  : '0.75rem',
+            paddingRight:
+              window.innerWidth < 768
+                ? '0.375rem'
+                : window.innerWidth < 1024
+                  ? '0.5rem'
+                  : '0.75rem',
+            paddingTop: window.innerWidth < 640 ? '0.25rem' : 0,
+            minHeight: window.innerWidth < 640 ? 'auto' : '4.5em',
+            backgroundColor: 'var(--color-canvas-bg)',
             color: 'var(--color-primary-text)',
-            px: { xs: 1.5, sm: 2, md: 3 },
-            py: { xs: 1, sm: 0 },
-            minHeight: { xs: 'auto', sm: '4.5em' },
-            boxShadow: '0px 4px 12px rgba(0,0,0,0.1)',
-            zIndex: 1200,
-            gap: { xs: 1, sm: 0 },
           }}
         >
           {/* LEFT: Title */}
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1,
-              minWidth: 'auto',
-            }}
-          >
-            <Typography
-              variant='h6'
-              fontWeight={600}
-              sx={{
-                fontSize: { xs: '0.9rem', sm: '1rem', md: '1.25rem' },
+          <div className='flex items-center gap-1 min-w-auto'>
+            <span
+              className='font-semibold whitespace-nowrap'
+              style={{
+                fontSize:
+                  window.innerWidth < 640
+                    ? '0.9rem'
+                    : window.innerWidth < 768
+                      ? '1rem'
+                      : '1.25rem',
                 color: 'var(--color-canvas-text)',
-                whiteSpace: 'nowrap',
               }}
             >
               Chia Gaming
-            </Typography>
-          </Box>
+            </span>
+          </div>
 
           {/* CENTER: Debug Status (hidden on mobile) */}
-          <Box sx={{ display: { xs: 'none', md: 'flex' } }}>
-            {walletConnectState.getSession() ? (
-              <>
-                <Box>
-                  <ButtonGroup variant='outlined' size='small'>
-                    <Button
-                      variant='outline'
-                      onClick={() => walletConnectState.disconnect()}
-                    >
-                      Unlink Wallet
-                    </Button>
-                    <Button
-                      variant='outline'
-                      onClick={() => {
-                        localStorage.clear();
-                        window.location.href = '';
-                      }}
-                    >
-                      Reset Storage
-                    </Button>
-                  </ButtonGroup>
-                </Box>
-              </>
-            ) : null}
-          </Box>
+          <div className='hidden md:flex'>
+            {walletConnectState.getSession() && (
+              <div className='flex gap-2'>
+                <button
+                  className='border border-gray-300 px-2 py-1 rounded hover:bg-gray-100'
+                  onClick={() => walletConnectState.disconnect()}
+                >
+                  Unlink Wallet
+                </button>
+                <button
+                  className='border border-gray-300 px-2 py-1 rounded hover:bg-gray-100'
+                  onClick={() => {
+                    localStorage.clear();
+                    window.location.href = '';
+                  }}
+                >
+                  Reset Storage
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* RIGHT: WalletConnect + Balance */}
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: { xs: 'space-between', sm: 'flex-end' },
-              width: { xs: '100%', sm: 'auto' },
-              gap: { xs: 1.5, sm: 2, md: 3 },
-            }}
+          <div
+            className={`flex items-center gap-1.5 sm:gap-2 md:gap-3 ${
+              window.innerWidth < 640
+                ? 'justify-between w-full'
+                : 'justify-end w-auto'
+            }`}
           >
             {/* WalletConnect Status */}
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: { xs: 0.5, sm: 1 },
-                minWidth: 'auto',
-              }}
-            >
-              <Typography
-                fontWeight='semi-bold'
-                sx={{
-                  fontSize: { xs: '0.7rem', sm: '0.85rem', md: '0.95rem' },
+            <div className='flex items-center gap-1 min-w-auto'>
+              <span
+                className='font-semibold hidden sm:block'
+                style={{
+                  fontSize:
+                    window.innerWidth < 640
+                      ? '0.7rem'
+                      : window.innerWidth < 768
+                        ? '0.85rem'
+                        : '0.95rem',
                   color: 'var(--color-canvas-solid)',
-                  display: { xs: 'none', sm: 'block' },
                 }}
               >
                 WalletConnect
-              </Typography>
-              <Box>
+              </span>
+              <div>
                 <WalletBadge
                   sessionConnected={sessionConnected}
                   fakeAddress={fakeAddress}
                 />
-              </Box>
-            </Box>
+              </div>
+            </div>
 
             {/* BALANCE and Theme Toggle */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <div className='flex items-center gap-1'>
               {balance !== undefined && (
-                <Typography
-                  variant='body2'
-                  sx={{
+                <span
+                  className='font-medium opacity-80 whitespace-nowrap'
+                  style={{
+                    fontSize:
+                      window.innerWidth < 640
+                        ? '0.65rem'
+                        : window.innerWidth < 768
+                          ? '0.85rem'
+                          : '0.95rem',
                     color: 'var(--color-canvas-solid)',
-                    fontWeight: 500,
-                    opacity: 0.8,
-                    fontSize: { xs: '0.65rem', sm: '0.85rem', md: '0.95rem' },
-                    whiteSpace: 'nowrap',
                   }}
                 >
                   Bal: {balance} XCH
-                </Typography>
+                </span>
               )}
 
-              <IconButton
-                aria-label='toggle-theme'
+              <button
                 onClick={toggleTheme}
-                size='small'
-                sx={{
-                  bgcolor: 'transparent',
-                  borderColor: 'var(--color-canvas-border)',
-                  border: '1px solid var(--color-canvas-border)',
-                  color: isDark
-                    ? 'var(--color-warning-solid)'
-                    : 'var(--color-canvas-text)',
-                  '&:hover': { bgcolor: 'var(--color-canvas-bg-hover)' },
-                }}
+                className={`p-1 border border-(--color-canvas-border) rounded ${
+                  isDark
+                    ? 'text-warning-solid'
+                    : 'text-canvas-text'
+                } hover:bg-canvas-bg-hover`}
               >
                 <Sun size={16} />
-              </IconButton>
-            </Box>
-          </Box>
-        </Box>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {ifExpanded}
-      <IconButton
-        aria-label='debug'
+
+      {/* Debug IconButton */}
+      <button
         onClick={() => setDebugOpen(true)}
-        sx={{
+        className='fixed bottom-6 right-6 flex items-center justify-center p-1.5 rounded-full border border-canvas-border shadow-md'
+        style={{
+          backgroundColor: 'var(--color-canvas-bg)',
           color: 'var(--color-canvas-text)',
-          position: 'fixed',
-          bottom: 24,
-          right: 24,
-          bgcolor: 'var(--color-canvas-bg)',
-          border: '1px solid var(--color-canvas-border)',
-          borderRadius: '20px', // right rounded
-          boxShadow: '0px 4px 12px rgba(0,0,0,0.2)',
-          py: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
+          borderRadius: '20px',
           transition: 'all 0.25s ease',
-          '&:hover': {
-            bgcolor: 'var(--color-primary-solid-hover)',
-            color: 'var(--color-primary-on-primary)',
-            transform: 'translateY(-2px)',
-            boxShadow: '0px 6px 16px rgba(0,0,0,0.25)',
-          },
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor =
+            'var(--color-primary-solid-hover)';
+          e.currentTarget.style.color = 'var(--color-primary-on-primary)';
+          e.currentTarget.style.transform = 'translateY(-2px)';
+          e.currentTarget.style.boxShadow = '0px 6px 16px rgba(0,0,0,0.25)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = 'var(--color-canvas-bg)';
+          e.currentTarget.style.color = 'var(--color-canvas-text)';
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0px 4px 12px rgba(0,0,0,0.2)';
         }}
       >
         <Wrench size={'20px'} />
-      </IconButton>
+      </button>
 
       {/* Debug Modal */}
-      <Dialog
-        open={debugOpen}
-        onClose={() => setDebugOpen(false)}
-        fullWidth
-        maxWidth='sm'
-        sx={{
-          '& .MuiPaper-root': {
-            backgroundColor: 'var(--canvas-bg)',
-            color: 'var(--canvas-text)',
-          },
-        }}
-      >
-        <DialogTitle
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            fontWeight: 600,
-            color: 'var(--canvas-text)',
-          }}
-        >
-          Developer Debug
-          <IconButton
-            aria-label='close'
-            onClick={() => setDebugOpen(false)}
-            sx={{
-              color: 'var(--canvas-text)',
-              '&:hover': {
-                color: 'var(--secondary-solid)',
-              },
-            }}
-          >
-            <Close />
-          </IconButton>
-        </DialogTitle>
-
-        <DialogContent
-          dividers
-          sx={{
-            borderColor: 'var(--canvas-bg-subtle)', // divider color
-            backgroundColor: 'var(--canvas-bg)',
-            color: 'var(--canvas-text)',
-          }}
-        >
-          <Debug connectString={wcInfo} setConnectString={setWcInfo} />
-        </DialogContent>
-      </Dialog>
+      {debugOpen && (
+        <div className='fixed inset-0 flex items-center justify-center z-1300'>
+          <div className='bg-canvas-bg-active text-canvas-text w-full max-w-sm rounded shadow-lg'>
+            <div className='flex items-center justify-between p-4 font-semibold'>
+              Developer Debug
+              <button
+                onClick={() => setDebugOpen(false)}
+                className='text-canvas-text hover:text-secondary-solid'
+              >
+                <Close />
+              </button>
+            </div>
+            <div
+              className='p-4 border-t border-canvas-bg-subtle'
+              style={{
+                backgroundColor: 'var(--canvas-bg)',
+                color: 'var(--canvas-text)',
+              }}
+            >
+              <Debug connectString={wcInfo} setConnectString={setWcInfo} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

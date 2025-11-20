@@ -1,4 +1,4 @@
-import { Box, Button, Typography, TextField } from '@mui/material';
+import {Button} from './button'
 import React from 'react';
 //import { useWalletConnect } from "../hooks/WalletConnectContext";
 
@@ -30,39 +30,45 @@ const setWCStringButtonHandler = () => void 0;
 // Rename: DebugPanel, DebugSection ...
 const Debug: React.FC<DebugProps> = ({ connectString, setConnectString }) => {
   return (
-    <Box>
-      {/* <Typography variant='h5'>Debug Controls:</Typography>
-      <br /> */}
+    <div className='flex flex-col gap-3 w-full'>
+      {/* Connect String Input */}
+      <div className='flex flex-col w-full'>
+        <label className='mb-1 text-sm font-medium text-gray-700'>
+          Connect String
+        </label>
+        <input
+          type='text'
+          value={connectString}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setConnectString(e.target.value)
+          }
+          placeholder='e.g. wc:ffffff....'
+          className='w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500'
+        />
+      </div>
 
-      <TextField
-        label='Connect String'
-        type='text'
-        value={connectString}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-          setConnectString(e.target.value)
-        }
-        placeholder='e.g. wc:ffffff....'
-        fullWidth
-        margin='normal'
-      />
+      {/* Set WC String Button */}
       <Button
-        variant='contained'
-        color='primary'
+        variant={'solid'}
+        color={'secondary'}
         onClick={setWCStringButtonHandler}
+        fullWidth
       >
         Set WC string
       </Button>
-      {/*}
+
+      {/* Optional Link Wallet button (commented out) */}
+      {/*
       <Button
-                        fullWidth
-                        variant='contained'
-                        onClick={onConnect}
-                        sx={{ mt: 3 }}
-                    >
-                        Link Wallet
-                    </Button>
-*/}
-    </Box>
+        variant={'solid'}
+        color={'primary'}
+        onClick={onConnect}
+        fullWidth
+      >
+        Link Wallet
+      </Button>
+      */}
+    </div>
   );
 };
 

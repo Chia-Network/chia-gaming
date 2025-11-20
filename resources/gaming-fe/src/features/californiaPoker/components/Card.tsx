@@ -53,7 +53,7 @@ function Card(props: CardRenderProps) {
     <div
       id={id}
       data-card-id={cardId}
-      className={`w-24 h-32 border-2 rounded flex flex-col items-center justify-center font-bold
+      className={`w-20 h-28 border-2 rounded flex flex-col items-center justify-center font-bold
         ${styles.border} ${styles.bg} ${styles.cursor}
         ${isInBestHand ? 'shadow-lg' : ''}`}
       style={{ color: colorClass }}
