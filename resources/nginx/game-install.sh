@@ -90,7 +90,7 @@ mkdir -p "${WEBROOT}"
 mkdir -p "${NGINX}"
 mkdir -p "${SERVICE}"
 
-TRACKER_WS="$(echo "${TRACKER}" | sed -e 's/^http/^ws/g')"
+TRACKER_WS="$(echo "${TRACKER}" | sed -e 's/http/ws/g')"
 
 sed -e "s@/app@${WEBROOT}@g" -e "s!http://localhost:3001!${TRACKER}!g" -e "s!ws://localhost:3001!${TRACKER_WS}!g" -e "s!@PORT@!${PORT}!g" < ./nginx/game.conf > "${NGINX}/game.conf"
 
