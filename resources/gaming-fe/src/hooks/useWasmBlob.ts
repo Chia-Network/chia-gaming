@@ -1,78 +1,26 @@
 import { useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-
-import { GAME_SERVICE_URL } from '../settings';
+import {
+  WasmStateInit,
+  doInternalLoadWasm,
+  fetchHex,
+  storeInitArgs,
+  loadCalpoker,
+} from './WasmStateInit';
 import {
   GameConnectionState,
   CalpokerOutcome,
-  InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   BlockchainReport,
   OutcomeLogLine,
   handValueToDescription,
+  RngId,
 } from '../types/ChiaGaming';
-import { getSearchParams } from '../util';
-
-import { blockchainConnector } from './BlockchainConnector';
-import { blockchainDataEmitter } from './BlockchainInfo';
+import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
-import {
-  PARENT_FRAME_BLOCKCHAIN_ID,
-  parentFrameBlockchainInfo,
-} from './ParentFrameBlockchainInfo';
-import { WasmBlobWrapper } from './WasmBlobWrapper';
-import useGameSocket from 'chia-gaming-lobby-connection';
-import { setupBlockchainConnection } from './useBlockchainConnection';
+import { configGameObject, getBlobSingleton, initStarted, setInitStarted } from './blobSingleton';
 
 let blobSingleton: any = null;
-
-function getBlobSingleton(
-  blockchain: InternalBlockchainInterface,
-  lobbyUrl: string,
-  uniqueId: string,
-  amount: number,
-  perGameAmount: number,
-  iStarted: boolean,
-) {
-  if (blobSingleton) {
-    return blobSingleton;
-  }
-
-  const deliverMessage = (msg: string) => {
-    blobSingleton?.deliverMessage(msg);
-  };
-  const peercon = useGameSocket(lobbyUrl, deliverMessage, () => {
-    blobSingleton?.kickSystem(2);
-  }, getSearchParams());
-
-  const doInternalLoadWasm = async () => {
-    const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
-    return fetch(fetchUrl)
-      .then((wasm) => wasm.blob())
-      .then((blob) => {
-        return blob.arrayBuffer();
-      });
-  };
-
-  async function fetchHex(fetchUrl: string): Promise<string> {
-    return fetch(fetchUrl).then((wasm) => wasm.text());
-  }
-
-  blobSingleton = new WasmBlobWrapper(
-    blockchain,
-    uniqueId,
-    amount,
-    perGameAmount,
-    iStarted,
-    doInternalLoadWasm,
-    fetchHex,
-    peercon,
-  );
-
-  setupBlockchainConnection(uniqueId);
-
-  return blobSingleton;
-}
 
 export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [realPublicKey] = useState<string | undefined>(undefined);
@@ -108,6 +56,9 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
+  const [wasmStateInit, setWasmStateInit] = useState<WasmStateInit>(
+    new WasmStateInit(doInternalLoadWasm, fetchHex),
+  );
   const amount = parseInt(searchParams.amount);
 
   let perGameAmount = amount / 10;
@@ -211,26 +162,54 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setLastOutcome: setLastOutcome,
   };
 
+  function setState(state: any): void {
+    if (state.setMyTurn !== undefined) {
+      console.log('state.setMyTurn:', state);
+    }
+    const keys = Object.keys(state);
+    keys.forEach((k) => {
+      if (settable[k]) {
+        // console.warn(k, state[k]);
+        settable[k](state[k]);
+      }
+    });
+  }
+
   useEffect(() => {
-    if (!gameObject) {
-      return;
+    const subscription = gameObject.getObservable().subscribe({
+      next: (state: any) => setState(state)
+    });
+
+    if (initStarted) {
+      return () => {
+        subscription.unsubscribe();
+      };
+    } else {
+      setInitStarted(true);
     }
 
-    const subscription = gameObject.getObservable().subscribe({
-      next: (state: any) => {
-        const keys = Object.keys(state);
-        keys.forEach((k) => {
-          if (settable[k]) {
-            console.warn(k, state[k]);
-            settable[k](state[k]);
-          }
-        });
-      },
+    // pass wasmconnection into wasmblobwrapper
+    empty().then(async () => {
+      let calpokerHex = await loadCalpoker(fetchHex);
+      await configGameObject(gameObject, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
     });
+
     return () => {
       subscription.unsubscribe();
-    };
+    }
   });
+
+
+  // Called once at an arbitrary time.
+  (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
+    console.log(
+      'Wasm init: storing chia_gaming_init=',
+      chia_gaming_init,
+      'and cg=',
+      cg,
+    );
+    storeInitArgs(chia_gaming_init, cg);
+  }, []);
 
   return {
     error,

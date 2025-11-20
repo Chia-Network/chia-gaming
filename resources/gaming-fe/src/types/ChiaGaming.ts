@@ -64,6 +64,16 @@ export interface GameCradleConfig {
   receive_error: string | undefined;
 }
 
+export interface GameInitParams {
+  env: any;
+  rng: RngId;
+  chiaIdentity: IChiaIdentity;
+  iStarted: boolean; // iStarted, aka have_potato
+  // TODO: IEEE float ('number') is a slightly smaller range than MAX_NUM_MOJOS
+  myContribution: number;
+  theirContribution: number;
+}
+
 export type IChiaIdentityFun = (seed: string) => IChiaIdentity;
 
 export interface IdleCallbacks {
@@ -141,6 +151,11 @@ export interface CoinOutput {
   amount: number;
 }
 
+export interface CreateStartCoinReturn {
+  coinString: string;
+  blockchainInboundAddressResult: BlockchainInboundAddressResult;
+}
+
 export class ChiaGame {
   wasm: WasmConnection;
   waiting_messages: string[];
@@ -150,32 +165,16 @@ export class ChiaGame {
 
   constructor(
     wasm: WasmConnection,
-    env: any,
-    seed: string,
-    identity: IChiaIdentity,
+    cradleId: number,
+    private_key: string,  //identity: IChiaIdentity,
     have_potato: boolean,
-    my_contribution: number,
-    their_contribution: number,
-    rewardPuzzleHash: string,
   ) {
     this.wasm = wasm;
     this.waiting_messages = [];
-    this.private_key = identity.private_key;
+    this.private_key = private_key;
     this.have_potato = have_potato;
-    this.cradle = wasm.create_game_cradle(
-      {
-        rng_id: env.rng_id,
-        game_types: env.game_types,
-        identity: identity.private_key,
-        have_potato: have_potato,
-        my_contribution: { amt: my_contribution },
-        their_contribution: { amt: their_contribution },
-        channel_timeout: env.timeout,
-        unroll_timeout: env.unroll_timeout,
-        reward_puzzle_hash: rewardPuzzleHash,
-      }
-    );
-    console.log('constructed', have_potato, "with cradle=", this.cradle);
+    this.cradle = cradleId;
+    console.log('constructed', have_potato, "with cradle=", cradleId);
   }
 
   start_games(initiator: boolean, game: any): string[] {
@@ -242,6 +241,16 @@ export class ChiaGame {
       block_data.deleted_watched,
       block_data.timed_out,
     );
+  }
+}
+
+export class RngId {
+  rngId: number;
+  constructor(rngId: number) {
+    this.rngId = rngId;
+  }
+  getId() {
+    return this.rngId;
   }
 }
 
