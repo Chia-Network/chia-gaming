@@ -105,5 +105,7 @@ cp -r dist "${WEBROOT}"
 cp -r public "${WEBROOT}"
 cp -r clsp "${WEBROOT}"
 
+sed -e 's@http://localhost:3001@${TRACKER}@g' < dist/urls > "${WEBROOT}/dist/urls"
+
 # Install beacon
 cp -r beacon.sh "${SERVICE}"
