@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "build": "./node_modules/.bin/tsc --project . && ./node_modules/.bin/esbuild dist/js/index.js --bundle --outfile=dist/js/index-rollup.js",
-    "test": "./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node --experimental-require-module node_modules/.bin/jest --useStderr",
+    "test": "./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node --experimental-require-module node_modules/.bin/jest --silent=false --useStderr --ci",
     "lint": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs",
     "lint:fix": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs --fix",
     "lint:check": "eslint src/ --ext .ts,.tsx,.js,.jsx,.mjs --max-warnings 0",
@@ -108,6 +108,9 @@
     "preset": "ts-jest",
     "testMatch": [
       "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"
+    ],
+    "testPathIgnorePatterns": [
+      "/Users/aqk/chia-gaming/resources/gaming-fe/dist/js/__mocks__/socket.io-client.js"
     ],
     "moduleDirectories": [
       "node_modules",

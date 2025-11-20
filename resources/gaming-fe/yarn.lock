@@ -2443,13 +2443,6 @@
   dependencies:
     csstype "^3.0.2"
 
-"@types/react@^19.2.2":
-  version "19.2.2"
-  resolved "https://registry.npmjs.org/@types/react/-/react-19.2.2.tgz#ba123a75d4c2a51158697160a4ea2ff70aa6bf36"
-  integrity sha512-6mDvHUFSjyT2B2yeNx2nUgMxh9LtOWvkhIU3uePn2I2oyNymUAX1NIsdgviM4CH+JSrp2D2hsMvJOkxY+0wNRA==
-  dependencies:
-    csstype "^3.0.2"
-
 "@types/resolve@1.20.2":
   version "1.20.2"
   resolved "https://registry.npmjs.org/@types/resolve/-/resolve-1.20.2.tgz"
@@ -4141,14 +4134,12 @@ chia-gaming-lobby-connection@../lobby-connection/:
     "@types/express" "^5.0.5"
     "@types/minimist" "^1.2.5"
     "@types/node" "^24.9.2"
-    "@types/react" "^19.2.2"
     cors "^2.8.5"
     crypto "^1.0.1"
     esbuild "^0.25.11"
     express "^5.1.0"
     helmet "^8.1.0"
     minimist "^1.2.8"
-    react "19.2.0"
     socket.io-client "^4.8.1"
     typescript "^5.9.3"
     uuid "^13.0.0"
