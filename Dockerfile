@@ -19,7 +19,7 @@ RUN apt-get update -y && \
     mkdir -p /app/rust/src && mkdir -p /app/rust/wasm/src && \
     sh -c "echo > /app/rust/src/lib.rs" && \
     sh -c "echo > /app/rust/wasm/src/mod.rs"
-    
+
 WORKDIR /app
 ADD clsp /app/clsp
 
