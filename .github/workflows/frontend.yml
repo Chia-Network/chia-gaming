@@ -37,15 +37,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20.18.1
-      - name: Install latest rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-            target: wasm32-unknown-unknown
-            components: rustfmt
-      - name: Install wasm-pack
-        run: |
-          cargo install --version 0.13.1 wasm-pack
-          python -m pip install toml
 
       - name: Smoke test docker image
         run: |
@@ -55,6 +46,7 @@ jobs:
           sed -e 's/#CI //g' < Dockerfile.non-ci > Dockerfile
           docker build --platform linux/amd64 --progress=plain -t chia-gaming-test . # TODO: Replace this line with ./build-docker-images.sh
           docker run --name chia-gaming-test --network=host -t chia-gaming-test &
+          docker image prune -f
           cd resources/fe-test
           ./wait-for-it.sh localhost:5800
           # The wc-stub now runs a block update service which mimics coinset.org
@@ -86,10 +78,6 @@ jobs:
           sudo apt-get install -qy xvfb libnss3-dev libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm-dev libasound2t64
           (cd resources/fe-test && xvfb-run -a ./test.sh)
 
-      - name: Remove node_modules in tests
-        run: |
-          rm -rf resources/fe-test/node_modules
-
       - name: Cleanup xvfb pidx
         run: |
           xvfb_pids="$(pgrep tmp/xvfb-run | grep -v grep | awk '{print $2}')"
@@ -99,12 +87,6 @@ jobs:
           else
               echo "No xvfb processes to kill"
           fi
-
-      - name: Extract Game side Artifact
-        run: |
-          export GW=${{ github.workspace }}
-
-          ./resources/extract-from-image.sh "${GW}"
 
       - name: Archive chia-gaming-frontend
         uses: actions/upload-artifact@v4
