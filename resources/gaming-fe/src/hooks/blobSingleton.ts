@@ -48,6 +48,21 @@ export async function configGameObject(
   return gameObject;
 }
 
+export async function deserializeGameObject(
+  gameObject: WasmBlobWrapper,
+  wasmStateInit: WasmStateInit,
+  blockchain:InternalBlockchainInterface,
+  serialized: any
+): Promise<WasmBlobWrapper> {
+  let wasmConnection = await wasmStateInit.getWasmConnection();
+  gameObject.loadWasm(wasmConnection);
+  let address = await blockchain.getAddress();
+  gameObject.setBlockchainAddress(address);
+  let cradle = wasmStateInit.deserializeGame(wasmConnection, serialized);
+  gameObject.setGameCradle(cradle);
+  return gameObject;
+}
+
 export function getBlobSingleton(
   blockchain: InternalBlockchainInterface,
   lobbyUrl: string,

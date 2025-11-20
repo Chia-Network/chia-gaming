@@ -98,6 +98,7 @@ export interface WasmConnection {
   init: (print: any) => any;
   create_rng: (seed: string) => number;
   create_game_cradle: (config: any) => number;
+  create_serialized_game: (serialized: any) => number;
   deposit_file: (name: string, data: string) => any;
 
   // Blockchain
@@ -140,6 +141,7 @@ export interface WasmConnection {
   cradle_our_share: (cid: number) => any;
   cradle_their_share: (cid: number) => any;
   idle: (cid: number, callbacks: any) => any;
+  get_identity: (cid: number) => IChiaIdentity;
 
   // Misc
   chia_identity: (id: number) => any;
@@ -161,20 +163,17 @@ export class ChiaGame {
   waiting_messages: string[];
   private_key: string;
   cradle: number;
-  have_potato: boolean;
 
   constructor(
     wasm: WasmConnection,
     cradleId: number,
     private_key: string,  //identity: IChiaIdentity,
-    have_potato: boolean,
   ) {
     this.wasm = wasm;
     this.waiting_messages = [];
     this.private_key = private_key;
-    this.have_potato = have_potato;
     this.cradle = cradleId;
-    console.log('constructed', have_potato, "with cradle=", cradleId);
+    console.log('constructed with cradle=', cradleId);
   }
 
   start_games(initiator: boolean, game: any): string[] {

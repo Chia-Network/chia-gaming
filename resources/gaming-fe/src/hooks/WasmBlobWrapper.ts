@@ -150,40 +150,6 @@ export class WasmBlobWrapper {
     }
   }
 
-  loadPresets(presetFiles: string[]) {
-    const presetFetches = presetFiles.map((partialUrl) => {
-      return this.fetchHex(partialUrl).then((text) => {
-        return {
-          name: partialUrl,
-          content: text,
-        };
-      });
-    });
-    return Promise.all(presetFetches).then((presets) => {
-      presets.forEach((nameAndContent) => {
-        console.log(
-          `preset load ${nameAndContent.name} ${nameAndContent.content.length}`,
-        );
-        this.wc?.deposit_file(nameAndContent.name, nameAndContent.content);
-      });
-      const rngId = this.wc?.create_rng(this.rngSeed);
-      if (rngId === undefined) {
-        throw("Unvalid rngId");
-      }
-      this.rngId = rngId;
-      const newGameIdentity = this.wc?.chia_identity(rngId);
-      this.identity = newGameIdentity;
-      //this.pushEvent({ loadCalpoker: true });
-      return {
-        setGameConnectionState: {
-          stateIdentifier: 'starting',
-          stateDetail: ['loaded preset files'],
-        },
-        setGameIdentity: newGameIdentity,
-      };
-    });
-  }
-
   internalKickIdle(): any {
     let idle_info;
     do {
