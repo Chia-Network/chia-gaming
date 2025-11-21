@@ -8,7 +8,7 @@ import {
   InternalBlockchainInterface,
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
-import { getGameSocket } from '../services/GameSocket';
+import { GameSocketReturn, getGameSocket } from '../services/GameSocket';
 
 // TODO: Maybe migrate this file's contents to WasmStateInit.ts
 
@@ -70,18 +70,11 @@ export function getBlobSingleton(
   amount: number,
   perGameAmount: number,
   iStarted: boolean,
-
+  peerconn: GameSocketReturn,
 ) {
   if (blobSingleton) {
     return blobSingleton;
   }
-
-  const deliverMessage = (msg: string) => {
-    blobSingleton?.deliverMessage(msg);
-  };
-  const peercon = getGameSocket(lobbyUrl, deliverMessage, (saves: string[]) => {
-    blobSingleton?.kickSystem(2);
-  });
 
   const doInternalLoadWasm = async () => {
     const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
@@ -100,7 +93,7 @@ export function getBlobSingleton(
     iStarted,
     doInternalLoadWasm,
     fetchHex,
-    peercon,
+    peerconn,
   );
 
   setupBlockchainConnection(uniqueId);

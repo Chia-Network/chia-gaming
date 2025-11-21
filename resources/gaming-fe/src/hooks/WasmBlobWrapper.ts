@@ -64,6 +64,7 @@ export class WasmBlobWrapper {
   rxjsMessageSingleon: Observable<any>;
   rxjsEmitter: NextObserver<any> | undefined;
   blockchain: InternalBlockchainInterface;
+  currentSave: string | undefined;
 
   constructor(
     blockchain: InternalBlockchainInterface,
@@ -487,6 +488,12 @@ export class WasmBlobWrapper {
       this.blockchain.spend(cvt, blob).then((res) => {
         console.log('spend res', res);
       });
+    }
+
+    const newGameId = this.cradle?.get_game_state_id();
+    if (newGameId !== this.currentSave) {
+      this.currentSave = newGameId;
+      result.setSavedGame(this.cradle?.serialize());
     }
 
     this.rxjsEmitter?.next({

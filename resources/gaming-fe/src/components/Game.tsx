@@ -52,13 +52,13 @@ const Game = () => {
           {`Cal Poker - shutdown succeeded`}
         </Typography>
         <Box>
-          {gameConnectionState.stateDetail.map((c) => (
+          {gameConnectionState.stateDetail.map((c: any) => (
             <Typography variant='h5' align='center'>
               {c}
             </Typography>
           ))}
           <Box>
-            {gameConnectionState.stateDetail.map((c) => (
+            {gameConnectionState.stateDetail.map((c: any) => (
               <Typography variant='h5' align='center'>
                 {c}
               </Typography>

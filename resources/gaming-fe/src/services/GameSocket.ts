@@ -44,7 +44,8 @@ export interface GameSocketReturn {
 export const getGameSocket = (
   lobbyUrl: string,
   deliverMessage: (m: string) => void,
-  setSocketEnabled: (e: boolean) => void,
+  setSocketEnabled: (saves: string[]) => void,
+  saves: string[],
 ): GameSocketReturn => {
   const searchParams = getSearchParams();
   const token = searchParams.token;
@@ -81,7 +82,7 @@ export const getGameSocket = (
 
     // Try to get through a 'peer' message until we succeed.
     const beacon = setInterval(() => {
-      socketRef?.emit('peer', { iStarted });
+      socketRef?.emit('peer', { iStarted, saves });
     }, 500);
 
     // When we receive a message from our peer, we know we're connected.
@@ -90,9 +91,9 @@ export const getGameSocket = (
         // If they haven't seen our message yet, we know we're connected so
         // we can send a ping to them now.
         fullyConnected = true;
-        socketRef?.emit('peer', { iStarted });
+        socketRef?.emit('peer', { iStarted, saves });
         clearInterval(beacon);
-        setSocketEnabled(true);
+        setSocketEnabled(msg.saves);
       }
     });
 

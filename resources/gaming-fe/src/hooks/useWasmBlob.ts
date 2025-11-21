@@ -19,7 +19,21 @@ import {
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
-import { configGameObject, getBlobSingleton, initStarted, setInitStarted } from './blobSingleton';
+import {
+  configGameObject,
+  getBlobSingleton,
+  initStarted,
+  setInitStarted,
+  deserializeGameObject,
+} from './blobSingleton';
+import { getGameSocket } from '../services/GameSocket';
+import {
+  findMatchingGame,
+  loadSave,
+  startNewSession,
+  getSaveList,
+  saveGame,
+} from './save';
 
 let blobSingleton: any = null;
 
@@ -79,6 +93,32 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   const blockchain = new ChildFrameBlockchainInterface();
 
+  const deliverMessage = (msg: string) => {
+    gameObject?.deliverMessage(msg);
+  };
+
+  const peerconn = getGameSocket(
+    lobbyUrl,
+    deliverMessage,
+    (saves: string[]) => {
+      empty().then(async () => {
+        const matchingSave = findMatchingGame(saves);
+        if (matchingSave) {
+          const loadedSave = loadSave(matchingSave);
+          await deserializeGameObject(gameObject, wasmStateInit, blockchain, loadedSave);
+          gameObject.kickSystem(2);
+          return;
+        }
+
+        startNewSession();
+        let calpokerHex = await loadCalpoker(fetchHex);
+        await configGameObject(gameObject, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
+        gameObject.kickSystem(2);
+      });
+    },
+    getSaveList()
+  );
+
   const gameObject = uniqueId
     ? getBlobSingleton(
         blockchain,
@@ -87,6 +127,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         amount,
         perGameAmount,
         iStarted,
+        peerconn,
       )
     : null;
 
@@ -148,8 +189,8 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     }
   };
 
-  const setSavedGame = (saveData: SaveData) => {
-    
+  const setSavedGame = (game: any) => {
+    saveGame(game);
   };
 
   const settable: any = {
@@ -193,12 +234,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     } else {
       setInitStarted(true);
     }
-
-    // pass wasmconnection into wasmblobwrapper
-    empty().then(async () => {
-      let calpokerHex = await loadCalpoker(fetchHex);
-      await configGameObject(gameObject, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
-    });
 
     return () => {
       subscription.unsubscribe();

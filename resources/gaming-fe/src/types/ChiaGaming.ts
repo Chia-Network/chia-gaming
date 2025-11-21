@@ -150,6 +150,7 @@ export interface WasmConnection {
   idle: (cid: number, callbacks: any) => any;
   get_identity: (cid: number) => IChiaIdentity;
   get_game_state_id: (cid: number) => string | undefined;
+  serialize_cradle: (cid: number) => any;
 
   // Misc
   chia_identity: (id: number) => any;
@@ -198,6 +199,14 @@ export class ChiaGame {
 
   their_share() {
     return this.wasm.cradle_their_share(this.cradle);
+  }
+
+  get_game_state_id() {
+    return this.wasm.get_game_state_id(this.cradle);
+  }
+
+  serialize() {
+    return this.wasm.serialize_cradle(this.cradle);
   }
 
   accept(id: string) {
