@@ -21,7 +21,7 @@ export function startNewSession() {
 export function saveGame(g: any) {
   const saveList = getSaveList();
   saveList.unshift(g.id);
-  localStorage.set(`save-${g.id}`, JSON.stringify(g));
+  localStorage.setItem(`save-${g.id}`, JSON.stringify(g));
   setSaveList(saveList);
 }
 

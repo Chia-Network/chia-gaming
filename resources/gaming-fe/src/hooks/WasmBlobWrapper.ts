@@ -106,6 +106,8 @@ export class WasmBlobWrapper {
     });
   }
 
+  systemState(): number { return this.qualifyingEvents; }
+
   reportError(err: any) {
     // TODO: Use this method to report all errors
     this.rxjsEmitter?.next({
@@ -113,11 +115,21 @@ export class WasmBlobWrapper {
     });
   }
 
-  setGameCradle(cradle: ChiaGame) {
-    this.cradle = cradle;
-    this.storedMessages.forEach((m) => {
+  spillStoredMessages() {
+    if (this.qualifyingEvents != 15 || !this.cradle) {
+      return
+    }
+    const storedMessages = this.storedMessages;
+    this.storedMessages = [];
+    storedMessages.forEach((m) => {
+      console.log('stored message', m);
       this.cradle?.deliver_message(m);
     });
+  }
+
+  setGameCradle(cradle: ChiaGame) {
+    this.cradle = cradle;
+    this.spillStoredMessages();
   }
 
   activateSpend(coin: string) {
@@ -147,6 +159,7 @@ export class WasmBlobWrapper {
     this.qualifyingEvents |= flags;
     if (this.qualifyingEvents == 7) {
       this.qualifyingEvents |= 8;
+      this.spillStoredMessages();
       // this.pushEvent(this.loadWasmEvent);
     }
   }
@@ -331,7 +344,7 @@ export class WasmBlobWrapper {
 
   internalDeliverMessage(msg: string): any {
     if (!this.wc) { throw new Error("this.wc is falsey") }
-    if (!this.cradle) {
+    if (!this.cradle || this.qualifyingEvents != 15) {
       this.storedMessages.push(msg);
       return empty();
     }
@@ -493,7 +506,7 @@ export class WasmBlobWrapper {
     const newGameId = this.cradle?.get_game_state_id();
     if (newGameId !== this.currentSave) {
       this.currentSave = newGameId;
-      result.setSavedGame(this.cradle?.serialize());
+      result.setSavedGame = this.cradle?.serialize();
     }
 
     this.rxjsEmitter?.next({

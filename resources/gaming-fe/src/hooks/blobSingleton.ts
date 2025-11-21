@@ -9,6 +9,12 @@ import {
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
 import { GameSocketReturn, getGameSocket } from '../services/GameSocket';
+import {
+  findMatchingGame,
+  loadSave,
+  startNewSession,
+  getSaveList,
+} from './save';
 
 // TODO: Maybe migrate this file's contents to WasmStateInit.ts
 
@@ -70,7 +76,6 @@ export function getBlobSingleton(
   amount: number,
   perGameAmount: number,
   iStarted: boolean,
-  peerconn: GameSocketReturn,
 ) {
   if (blobSingleton) {
     return blobSingleton;
@@ -84,6 +89,37 @@ export function getBlobSingleton(
         return blob.arrayBuffer();
       });
   };
+
+  const deliverMessage = (msg: string) => {
+    blobSingleton?.deliverMessage(msg);
+  };
+
+  const peerconn = getGameSocket(
+    lobbyUrl,
+    deliverMessage,
+    (saves: string[]) => {
+      const systemState = blobSingleton.systemState();
+      blobSingleton.kickSystem(2);
+      if ((systemState & 2) == 0) {
+        console.log('Game Socket: peer active, initialize wasm blob');
+        const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
+        empty().then(async () => {
+          const matchingSave = findMatchingGame(saves);
+          if (matchingSave) {
+            const loadedSave = loadSave(matchingSave);
+            await deserializeGameObject(blobSingleton, wasmStateInit, blockchain, loadedSave);
+
+            return;
+          }
+
+          startNewSession();
+          let calpokerHex = await loadCalpoker(fetchHex);
+          await configGameObject(blobSingleton, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
+        });
+      }
+    },
+    getSaveList()
+  );
 
   blobSingleton = new WasmBlobWrapper(
     blockchain,

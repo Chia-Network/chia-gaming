@@ -26,12 +26,7 @@ import {
   setInitStarted,
   deserializeGameObject,
 } from './blobSingleton';
-import { getGameSocket } from '../services/GameSocket';
 import {
-  findMatchingGame,
-  loadSave,
-  startNewSession,
-  getSaveList,
   saveGame,
 } from './save';
 
@@ -71,9 +66,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [moveNumber, setMoveNumber] = useState<number>(0);
   const [error, setRealError] = useState<string | undefined>(undefined);
   const [cardSelections, setOurCardSelections] = useState<number>(0);
-  const [wasmStateInit, setWasmStateInit] = useState<WasmStateInit>(
-    new WasmStateInit(doInternalLoadWasm, fetchHex),
-  );
   const amount = parseInt(searchParams.amount);
 
   let perGameAmount = amount / 10;
@@ -93,32 +85,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   const blockchain = new ChildFrameBlockchainInterface();
 
-  const deliverMessage = (msg: string) => {
-    gameObject?.deliverMessage(msg);
-  };
-
-  const peerconn = getGameSocket(
-    lobbyUrl,
-    deliverMessage,
-    (saves: string[]) => {
-      empty().then(async () => {
-        const matchingSave = findMatchingGame(saves);
-        if (matchingSave) {
-          const loadedSave = loadSave(matchingSave);
-          await deserializeGameObject(gameObject, wasmStateInit, blockchain, loadedSave);
-          gameObject.kickSystem(2);
-          return;
-        }
-
-        startNewSession();
-        let calpokerHex = await loadCalpoker(fetchHex);
-        await configGameObject(gameObject, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
-        gameObject.kickSystem(2);
-      });
-    },
-    getSaveList()
-  );
-
   const gameObject = uniqueId
     ? getBlobSingleton(
         blockchain,
@@ -127,7 +93,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
         amount,
         perGameAmount,
         iStarted,
-        peerconn,
       )
     : null;
 
