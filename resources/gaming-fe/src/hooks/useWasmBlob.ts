@@ -15,6 +15,7 @@ import {
   OutcomeLogLine,
   handValueToDescription,
   RngId,
+  SaveData,
 } from '../types/ChiaGaming';
 import { getSearchParams, empty, getRandomInt, getEvenHexString } from '../util';
 import { ChildFrameBlockchainInterface } from './ChildFrameBlockchainInterface';
@@ -147,6 +148,10 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     }
   };
 
+  const setSavedGame = (saveData: SaveData) => {
+    
+  };
+
   const settable: any = {
     setGameConnectionState: setGameConnectionState,
     setPlayerHand: setPlayerHand,
@@ -160,6 +165,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setOurShare: setOurShare,
     setTheirShare: setTheirShare,
     setLastOutcome: setLastOutcome,
+    setSavedGame: setSavedGame,
   };
 
   function setState(state: any): void {

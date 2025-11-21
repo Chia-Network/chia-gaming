@@ -35,6 +35,13 @@ export interface GameConnectionState {
   stateDetail: string[];
 }
 
+export interface SaveData {
+  ourTurn: boolean;
+  turnNumber: number;
+  unrollPuzzleHash: string;
+  gameCradle: any;
+}
+
 export type OpponentMove = [string, string];
 export type GameFinished = [string, number];
 

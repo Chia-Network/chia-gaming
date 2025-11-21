@@ -1913,6 +1913,26 @@ impl PotatoHandler {
 
         Ok(false)
     }
+
+    pub fn get_game_state_id<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<Option<Hash>, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
+            return on_chain.get_game_state_id(penv);
+        }
+
+        let (env, _) = penv.env();
+        let player_ch = self.channel_handler().ok();
+        if let Some(player_ch) = player_ch {
+            return player_ch.get_game_state_id(env).map(Some);
+        }
+
+        Ok(None)
+    }
 }
 
 impl<G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender, R: Rng>
