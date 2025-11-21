@@ -1,9 +1,13 @@
 export function getSaveList(): string[] {
-  return localStorage.get('saveNames').split(',');
+  const result = localStorage.getItem('saveNames');
+  if (result) {
+    return result.split(',');
+  }
+  return [];
 }
 
 function setSaveList(saveList: string[]) {
-  localStorage.set('saveNames', saveList.join(','));
+  localStorage.setItem('saveNames', saveList.join(','));
 }
 
 export function startNewSession() {
@@ -36,7 +40,7 @@ export function findMatchingGame(peerSaves: string[]): string | undefined {
 }
 
 export function loadSave(saveId: string): any | undefined {
-  const data = localStorage.get(`save-${saveId}`);
+  const data = localStorage.getItem(`save-${saveId}`);
   if (data) {
     return JSON.parse(data);
   }

@@ -1,6 +1,16 @@
-import { Box, Button, ButtonGroup, Divider, Typography } from '@mui/material';
+import {
+  Badge,
+  Box,
+  ButtonGroup,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  IconButton,
+  Typography,
+} from '@mui/material';
 import { useCallback, useState, useEffect } from 'react';
-
+import { Button } from './button';
 import { blockchainConnector } from '../hooks/BlockchainConnector';
 import { blockchainDataEmitter } from '../hooks/BlockchainInfo';
 import { FAKE_BLOCKCHAIN_ID } from '../hooks/FakeBlockchainInterface';
@@ -15,6 +25,10 @@ import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
+import { Close } from '@mui/icons-material';
+import WalletBadge from './WalletBadge';
+
+import { Wrench, Sun } from 'lucide-react';
 
 const WalletConnectHeading = (_args: any) => {
   const { wcInfo, setWcInfo } = useDebug();
@@ -23,9 +37,10 @@ const WalletConnectHeading = (_args: any) => {
     string | undefined
   >();
   const [fakeAddress, setFakeAddress] = useState<string | undefined>();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [showQRModal, setShowQRModal] = useState(false);
   const [connectionUri, setConnectionUri] = useState<string | undefined>();
+  const [debugOpen, setDebugOpen] = useState(false);
 
   // Wallet connect state.
   const [_stateName, setStateName] = useState('empty');
@@ -43,6 +58,36 @@ const WalletConnectHeading = (_args: any) => {
 
   const uniqueId = generateOrRetrieveUniqueId();
 
+  // Theme state: keep dark/light in sync with document root and localStorage
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('theme');
+      if (stored === 'dark') return true;
+      if (stored === 'light') return false;
+    } catch (e) {
+      // ignore
+    }
+    return document.documentElement.classList.contains('dark');
+  });
+
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      try {
+        localStorage.setItem('theme', 'dark');
+      } catch (e) {}
+    } else {
+      document.documentElement.classList.remove('dark');
+      try {
+        localStorage.setItem('theme', 'light');
+      } catch (e) {}
+    }
+  }, [isDark]);
+
+  const toggleTheme = useCallback(() => {
+    setIsDark((d) => !d);
+  }, []);
+
   const walletConnectStates: any = {
     stateName: setStateName,
     initializing: setInitializing,
@@ -59,7 +104,7 @@ const WalletConnectHeading = (_args: any) => {
   function requestBalance() {
     blockchainConnector.getOutbound().next({
       requestId: -1,
-      getBalance: true
+      getBalance: true,
     });
   }
 
@@ -67,7 +112,7 @@ const WalletConnectHeading = (_args: any) => {
     const subscription = walletConnectState.getObservable().subscribe({
       next: (evt: any) => {
         if (evt.stateName === 'connected') {
-          setExpanded(false);
+          toggleExpanded();
           setAlreadyConnected(true);
           console.log('doing connect real blockchain');
           blockchainDataEmitter.select({
@@ -187,7 +232,7 @@ const WalletConnectHeading = (_args: any) => {
         // Trigger fake connect if not connected.
         console.warn('fake address is', res);
         setFakeAddress(res);
-        setExpanded(false);
+        toggleExpanded();
         blockchainDataEmitter.select({
           selection: FAKE_BLOCKCHAIN_ID,
           uniqueId,
@@ -209,7 +254,7 @@ const WalletConnectHeading = (_args: any) => {
   }, []);
 
   const onWalletDismiss = useCallback(() => {
-    setExpanded(false);
+    toggleExpanded();
   }, []);
 
   const sessionConnected = connected
@@ -218,156 +263,300 @@ const WalletConnectHeading = (_args: any) => {
       ? 'simulator'
       : 'disconnected';
 
-  const ifSession = walletConnectState.getSession() ? (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      <Box>
-        <ButtonGroup variant='outlined' fullWidth>
-          <Button
-            variant='outlined'
-            color='error'
-            onClick={() => walletConnectState.disconnect()}
-          >
-            Unlink Wallet
-          </Button>
-          <Button
-            variant='outlined'
-            color='error'
-            onClick={() => {
-              localStorage.clear();
-              window.location.href = '';
-            }}
-          >
-            Reset Storage
-          </Button>
-        </ButtonGroup>
-      </Box>
-      <Divider sx={{ mt: 4 }} />
-      <Box mt={3}>
-        <Typography variant='h5'>Response</Typography>
-        <Button
-          fullWidth
-          variant='outlined'
-          color='error'
-          onClick={() => {
-            localStorage.clear();
-            window.location.href = '';
-          }}
-        >
-          Unlink Wallet
-        </Button>
-      </Box>
-    </div>
-  ) : fakeAddress ? (
-    <Typography variant='h5' style={{ background: '#aa2' }}>
-      Simulator {fakeAddress}
-    </Typography>
-  ) : (
-    <div
-      style={{
+  const ifSession = (
+    <Box
+      sx={{
+        mt: { xs: 12, sm: 16, md: 18 },
         display: 'flex',
         flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
         width: '100%',
         height: '100%',
+        px: { xs: 1.5, sm: 2, md: 4 },
+        py: { xs: 3, sm: 4, md: 6 },
+        gap: { xs: 2, sm: 3 },
       }}
     >
-      <Button
-        variant='contained'
-        onClick={handleConnectSimulator}
-        sx={{ mt: 3 }}
-        style={{ background: '#aa2' }}
-        aria-label='select-simulator'
+      <Box
+        sx={{
+          width: { xs: '90%', sm: '75%', md: '50%' },
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
       >
-        Simulator
-      </Button>
-      <WalletConnectDialog
-        initialized={initialized}
-        haveClient={haveClient}
-        haveSession={haveSession}
-        sessions={sessions}
-        showQRModal={showQRModal}
-        connectionUri={connectionUri}
-        onConnect={onDoWalletConnect}
-        dismiss={onWalletDismiss}
-      ></WalletConnectDialog>
-    </div>
+        {/* Simulator Button */}
+        <Button
+          variant='solid'
+          onClick={handleConnectSimulator}
+          aria-label='select-simulator'
+          fullWidth
+        >
+          Continue with Simulator
+        </Button>
+      </Box>
+      {/* Divider with OR in the middle */}
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: { xs: '90%', sm: '75%', md: '45%' },
+          my: { xs: 2, sm: 3 },
+          gap: 1,
+        }}
+      >
+        <Divider sx={{ flex: 1, borderColor: 'var(--color-canvas-border)' }} />
+        <Typography
+          variant='body2'
+          sx={{
+            color: 'var(--color-canvas-text)',
+            fontWeight: 500,
+            whiteSpace: 'nowrap',
+            fontSize: { xs: '0.85rem', sm: '0.95rem' },
+          }}
+        >
+          OR
+        </Typography>
+        <Divider sx={{ flex: 1, borderColor: 'var(--color-canvas-border)' }} />
+      </Box>
+
+      {/* WalletConnect Dialog */}
+      <Box
+        sx={{
+          width: { xs: '90%', sm: '75%', md: '50%' },
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
+        <WalletConnectDialog
+          initialized={initialized}
+          haveClient={haveClient}
+          haveSession={haveSession}
+          sessions={sessions}
+          showQRModal={showQRModal}
+          connectionUri={connectionUri}
+          onConnect={onDoWalletConnect}
+          dismiss={onWalletDismiss}
+        />
+      </Box>
+    </Box>
   );
 
-  const ifExpanded = expanded ? (
+  const ifExpanded = expanded ? 
     <div
       style={{
         display: 'flex',
         flexDirection: 'column',
         width: '100%',
-        height: '17em',
+        minHeight: 'auto',
         position: 'relative',
-        background: 'white',
         padding: '1em',
+        marginTop: 'clamp(26px, 10vw, 26px)',
+        gap: '1em',
       }}
     >
       {ifSession}
-      <Debug connectString={wcInfo} setConnectString={setWcInfo} />
-    </div>
-  ) : (
-    <div style={{ display: 'flex', width: '100%', height: 0 }}></div>
-  );
+    </div> : <div style={{ display: 'none' }} />;
 
-  const balanceDisplay = (balance !== undefined) ? (
-    <div>- Balance {balance}</div>
-  ) : (
-    <div/>
-  );
+  const balanceDisplay =
+    balance !== undefined ? <div>- Balance {balance}</div> : <div />;
 
   return (
     <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: useHeight,
-        width: '100vw',
-      }}
+      className='flex flex-col w-screen'
+      style={{ height: useHeight, backgroundColor: 'var(--color-canvas-bg)' }}
     >
-      <div style={{ display: 'flex', flexDirection: 'row', height: '3em' }}>
+      <div className='flex flex-row h-auto'>
+        {/* Header */}
+        {/* Fixed Header */}
         <div
+          className='fixed top-0 left-0 w-full flex gap-1 shadow-md z-1200'
           style={{
-            display: 'flex',
-            flexGrow: 0,
-            flexShrink: 0,
-            height: '100%',
-            padding: '1em',
+            flexDirection: window.innerWidth < 640 ? 'column' : 'row',
+            alignItems: window.innerWidth < 640 ? 'stretch' : 'center',
+            justifyContent: 'space-between',
+            paddingLeft:
+              window.innerWidth < 768
+                ? '0.375rem'
+                : window.innerWidth < 1024
+                  ? '0.5rem'
+                  : '0.75rem',
+            paddingRight:
+              window.innerWidth < 768
+                ? '0.375rem'
+                : window.innerWidth < 1024
+                  ? '0.5rem'
+                  : '0.75rem',
+            paddingTop: window.innerWidth < 640 ? '0.25rem' : 0,
+            minHeight: window.innerWidth < 640 ? 'auto' : '4.5em',
+            backgroundColor: 'var(--color-canvas-bg)',
+            color: 'var(--color-primary-text)',
           }}
         >
-          Chia Gaming - WalletConnect {sessionConnected}
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            flexGrow: 1,
-            flexShrink: 0,
-            height: '100%',
-            padding: '1em',
-          }}
-        >
-          {balanceDisplay}
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            flexGrow: 0,
-            flexShrink: 0,
-            width: '3em',
-            height: '3em',
-            padding: '1em',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-          }}
-          onClick={toggleExpanded}
-          aria-label='control-menu'
-        >
-          ☰
+          {/* LEFT: Title */}
+          <div className='flex items-center gap-1 min-w-auto'>
+            <span
+              className='font-semibold whitespace-nowrap'
+              style={{
+                fontSize:
+                  window.innerWidth < 640
+                    ? '0.9rem'
+                    : window.innerWidth < 768
+                      ? '1rem'
+                      : '1.25rem',
+                color: 'var(--color-canvas-text)',
+              }}
+            >
+              Chia Gaming
+            </span>
+          </div>
+
+          {/* CENTER: Debug Status (hidden on mobile) */}
+          <div className='hidden md:flex'>
+            {walletConnectState.getSession() && (
+              <div className='flex gap-2'>
+                <button
+                  className='border border-gray-300 px-2 py-1 rounded hover:bg-gray-100'
+                  onClick={() => walletConnectState.disconnect()}
+                >
+                  Unlink Wallet
+                </button>
+                <button
+                  className='border border-gray-300 px-2 py-1 rounded hover:bg-gray-100'
+                  onClick={() => {
+                    localStorage.clear();
+                    window.location.href = '';
+                  }}
+                >
+                  Reset Storage
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT: WalletConnect + Balance */}
+          <div
+            className={`flex items-center gap-1.5 sm:gap-2 md:gap-3 ${
+              window.innerWidth < 640
+                ? 'justify-between w-full'
+                : 'justify-end w-auto'
+            }`}
+          >
+            {/* WalletConnect Status */}
+            <div className='flex items-center gap-1 min-w-auto'>
+              <span
+                className='font-semibold hidden sm:block'
+                style={{
+                  fontSize:
+                    window.innerWidth < 640
+                      ? '0.7rem'
+                      : window.innerWidth < 768
+                        ? '0.85rem'
+                        : '0.95rem',
+                  color: 'var(--color-canvas-solid)',
+                }}
+              >
+                WalletConnect
+              </span>
+              <div>
+                <WalletBadge
+                  sessionConnected={sessionConnected}
+                  fakeAddress={fakeAddress}
+                />
+              </div>
+            </div>
+
+            {/* BALANCE and Theme Toggle */}
+            <div className='flex items-center gap-1'>
+              {balance !== undefined && (
+                <span
+                  className='font-medium opacity-80 whitespace-nowrap'
+                  style={{
+                    fontSize:
+                      window.innerWidth < 640
+                        ? '0.65rem'
+                        : window.innerWidth < 768
+                          ? '0.85rem'
+                          : '0.95rem',
+                    color: 'var(--color-canvas-solid)',
+                  }}
+                >
+                  Bal: {balance} XCH
+                </span>
+              )}
+
+              <button
+                onClick={toggleTheme}
+                className={`p-1 border border-(--color-canvas-border) rounded ${
+                  isDark
+                    ? 'text-warning-solid'
+                    : 'text-canvas-text'
+                } hover:bg-canvas-bg-hover`}
+              >
+                <Sun size={16} />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
+
       {ifExpanded}
+
+      {/* Debug IconButton */}
+      <button
+        onClick={() => setDebugOpen(true)}
+        className='fixed bottom-6 right-6 flex items-center justify-center p-1.5 rounded-full border border-canvas-border shadow-md'
+        style={{
+          backgroundColor: 'var(--color-canvas-bg)',
+          color: 'var(--color-canvas-text)',
+          borderRadius: '20px',
+          transition: 'all 0.25s ease',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor =
+            'var(--color-primary-solid-hover)';
+          e.currentTarget.style.color = 'var(--color-primary-on-primary)';
+          e.currentTarget.style.transform = 'translateY(-2px)';
+          e.currentTarget.style.boxShadow = '0px 6px 16px rgba(0,0,0,0.25)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = 'var(--color-canvas-bg)';
+          e.currentTarget.style.color = 'var(--color-canvas-text)';
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0px 4px 12px rgba(0,0,0,0.2)';
+        }}
+      >
+        <Wrench size={'20px'} />
+      </button>
+
+      {/* Debug Modal */}
+      {debugOpen && (
+        <div className='fixed inset-0 flex items-center justify-center z-1300'>
+          <div className='bg-canvas-bg-active text-canvas-text w-full max-w-sm rounded shadow-lg'>
+            <div className='flex items-center justify-between p-4 font-semibold'>
+              Developer Debug
+              <button
+                onClick={() => setDebugOpen(false)}
+                className='text-canvas-text hover:text-secondary-solid'
+              >
+                <Close />
+              </button>
+            </div>
+            <div
+              className='p-4 border-t border-canvas-bg-subtle'
+              style={{
+                backgroundColor: 'var(--canvas-bg)',
+                color: 'var(--canvas-text)',
+              }}
+            >
+              <Debug connectString={wcInfo} setConnectString={setWcInfo} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

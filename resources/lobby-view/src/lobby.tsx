@@ -1,42 +1,29 @@
 import React from 'react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
-  Button,
+  Card,
+  CardContent,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  List,
-  ListItem,
-  ListItemText,
+  Divider,
+  IconButton,
+  Stack,
   TextField,
   Typography,
   Select,
   MenuItem,
 } from '@mui/material';
-import { v4 as uuidv4 } from 'uuid';
-
+import { Button } from './button';
+import { Close, SportsEsports, ContentCopy } from '@mui/icons-material';
 import { useLobbySocket } from 'chia-gaming-lobby-connection';
-
-import { getFragmentParams, getSearchParams } from './util';
-
-export function generateOrRetrieveAlias(): string {
-  let previousName = localStorage.getItem('alias');
-  if (previousName) {
-    return previousName;
-  }
-
-  previousName = `newUser${uuidv4()}`;
-  updateAlias(previousName);
-  return previousName;
-}
-
-export function updateAlias(alias: string) {
-  localStorage.setItem('alias', alias);
-}
-
-interface LobbyComponentProps {}
+import { getSearchParams, getFragmentParams, generateOrRetrieveAlias, updateAlias } from './util';
+import ConnectedPlayers from './features/lobbyComponents/ConnectedPlayers';
+import CardDivider from './features/lobbyComponents/CardDivider';
+import Chat from './features/lobbyComponents/Chat';
+import ActiveRooms from './features/lobbyComponents/ActiveRooms';
 
 const LobbyScreen = () => {
   const [myAlias, setMyAlias] = useState(generateOrRetrieveAlias());
@@ -64,15 +51,23 @@ const LobbyScreen = () => {
       window.location.href = newUrl;
     }
   );
+
   const [chatInput, setChatInput] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [gameChoice, setGameChoice] = useState('');
+  const [gameChoice, setGameChoice] = useState(lobbyGames[0]?.game || '');
   const [wagerInput, setWagerInputPrimitive] = useState('');
   const [wagerValidationError, setWagerValidationError] = useState('');
   const [perHandInput, setPerHandInput] = useState('');
   const [editingAlias, setEditingAlias] = useState(false);
   const [gotoUrl, setGotoUrl] = useState('');
-
+  const [chatOpen, setChatOpen] = useState(false);
+  const [urlDialogOpen, setUrlDialogOpen] = useState(false);
+  const [secureUrl, setSecureUrl] = useState('');
+  // UI state for split handle
+  const [splitPct, setSplitPct] = useState(50); // percentage for top (Connected Players)
+  const rightColumnRef = useRef<HTMLDivElement | null>(null);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
+  // Calculate per-hand amount
   const setWagerInput = useCallback((newWagerInput: string) => {
     setWagerInputPrimitive(newWagerInput);
     try {
@@ -92,6 +87,71 @@ const LobbyScreen = () => {
     }
   };
 
+  // Auto-scroll chat messages to bottom when new messages arrive
+  useEffect(() => {
+    if (messagesRef.current) {
+      const el = messagesRef.current;
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages]);
+
+  // Drag handle logic for resizing the two right-column panels
+  useEffect(() => {
+    let dragging = false;
+
+    const onMove = (clientY: number) => {
+      if (!rightColumnRef.current) return;
+      const rect = rightColumnRef.current.getBoundingClientRect();
+      const rel = (clientY - rect.top) / rect.height;
+      // clamp between 25% and 75% so neither panel gets too small
+      const pct = Math.max(25, Math.min(75, Math.round(rel * 100)));
+      setSplitPct(pct);
+    };
+
+    const mouseMove = (e: MouseEvent) => {
+      if (!dragging) return;
+      onMove(e.clientY);
+    };
+
+    const touchMove = (e: TouchEvent) => {
+      if (!dragging) return;
+      onMove(e.touches[0].clientY);
+    };
+
+    const mouseUp = () => {
+      dragging = false;
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', mouseMove);
+      window.removeEventListener('touchmove', touchMove);
+      window.removeEventListener('mouseup', mouseUp);
+      window.removeEventListener('touchend', mouseUp);
+    };
+
+    const startDrag = (startY: number) => {
+      dragging = true;
+      document.body.style.userSelect = 'none';
+      onMove(startY);
+      window.addEventListener('mousemove', mouseMove);
+      window.addEventListener('touchmove', touchMove, {
+        passive: false,
+      } as any);
+      window.addEventListener('mouseup', mouseUp);
+      window.addEventListener('touchend', mouseUp);
+    };
+
+    // expose startDrag via dataset on ref element for the handle to call
+    if (rightColumnRef.current) {
+      (rightColumnRef.current as any)._startDrag = startDrag;
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', mouseMove);
+      window.removeEventListener('touchmove', touchMove as any);
+      window.removeEventListener('mouseup', mouseUp);
+      window.removeEventListener('touchend', mouseUp);
+    };
+  }, []);
+
   const openDialog = () => setDialogOpen(true);
   const closeDialog = () => setDialogOpen(false);
 
@@ -102,151 +162,176 @@ const LobbyScreen = () => {
       wagerInput,
       perHandInput,
     );
+    setSecureUrl(secureUrl);
+    setUrlDialogOpen(true);
+  };
+
+  const handleCopyAndClose = async () => {
+    try {
+      await navigator.clipboard.writeText(secureUrl);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
     setGotoUrl(secureUrl);
-    window.prompt('Share this room URL:', secureUrl);
+    setUrlDialogOpen(false);
+    closeDialog();
+  };
+
+  const handleCancelShare = () => {
+    setUrlDialogOpen(false);
     closeDialog();
   };
 
   useEffect(() => {
-    console.log('check fragment', fragment);
-    if (fragment.token) {
-      console.log('joining channel', fragment);
-      joinRoom(fragment.token);
-    }
-  });
+    if (fragment.token) joinRoom(fragment.token);
+  }, [fragment, joinRoom]);
 
   function commitEdit(e: any) {
-    console.log('commit edit', e.target.value);
+    const value = e.target.value;
     setEditingAlias(false);
-    updateAlias(e.target.value);
-    setLobbyAlias(uniqueId, e.target.value);
+    updateAlias(value);
+    setLobbyAlias(uniqueId, value);
   }
 
   function getPlayerAlias(id: string): string {
-    const index = players.findIndex((p) => p.id === id);
-    if (index === -1) {
-      return `unknown player id: ${id}`;
-    }
-    return players[index].alias;
+    const player = players.find((p) => p.id === id);
+    return player ? player.alias : `Unknown Player (${id})`;
   }
 
-  let aliasDisplay;
-  if (editingAlias) {
-    aliasDisplay = (
-      <TextField
-        fullWidth
-        placeholder='Display name'
-        value={myAlias}
-        onChange={(e) => setMyAlias(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && commitEdit(e)}
-        onBlur={commitEdit}
-      />
-    );
-  } else {
-    aliasDisplay = <span onClick={() => setEditingAlias(true)}>{myAlias}</span>;
-  }
+  useEffect(() => {
+    if (lobbyGames.length > 0 && !gameChoice) {
+      setGameChoice(lobbyGames[0].game);
+    }
+  }, [lobbyGames, gameChoice]);
+
+  const shortenedUrl =
+    secureUrl?.length > 40 ? `${secureUrl.slice(0, 40)}...` : secureUrl;
 
   return (
-    <Box p={4} maxWidth={600} mx='auto'>
-      <Typography variant='h4' gutterBottom>
-        Lobby — Alias: {aliasDisplay}
-      </Typography>
-      <div
-        style={{ position: 'relative', width: '0', height: '0', opacity: '0' }}
+    <Box
+      sx={{
+        p: { xs: 2, sm: 3, md: 8 },
+        pb: 0,
+        minHeight: '100vh',
+        bgcolor: 'var(--color-canvas-bg-subtle)',
+      }}
+    >
+      {/* Header */}
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        justifyContent='space-between'
+        alignItems={{ xs: 'flex-start', sm: 'center' }}
+        spacing={2}
+        mb={3}
+      >
+        <Box>
+          <Typography
+            variant='h5'
+            fontWeight={700}
+            sx={{ color: 'var(--color-canvas-text-contrast)' }}
+          >
+            Game Lobby
+          </Typography>
+        </Box>
+        <Button variant='surface' color={'secondary'} fullWidth={false}>
+          Change WalletConnect Connection
+        </Button>
+      </Stack>
+
+      {/* Hidden automation URL */}
+      <Box
+        sx={{ position: 'absolute', opacity: 0 }}
         aria-label='partner-target-url'
       >
         {gotoUrl}
-      </div>
-
-      <Box mb={3}>
-        <Typography variant='h6'>Connected Players</Typography>
-        <List>
-          {players.map((p) => (
-            <ListItem key={p.id} dense>
-              <ListItemText
-                primary={p.id === uniqueId ? `${p.alias} (You)` : p.alias}
-              />
-            </ListItem>
-          ))}
-        </List>
       </Box>
 
-      <Box mb={3}>
-        <Typography variant='h6'>Active Rooms</Typography>
-        <List>
-          {rooms.map((r) => (
-            <ListItem
-              key={r.token}
-              dense
-              secondaryAction={
-                <Button size='small' onClick={() => joinRoom(r.token)}>
-                  Join
-                </Button>
-              }
-            >
-              <ListItemText
-                primary={r.token}
-                secondary={`Host: ${getPlayerAlias(r.host)} | Token: ${r.token}`}
-              />
-            </ListItem>
-          ))}
-        </List>
-      </Box>
+      {/* Main Content */}
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: { xs: 'column', md: 'row' },
+          border: { md: '1px solid var(--color-canvas-border)' },
+          borderRadius: 3,
+          gap: { xs: 3, md: 0 },
+          height: { md: 'calc(100vh - 150px)', xs: 'auto' },
+        }}
+      >
+        {/* Active Rooms */}
+        <ActiveRooms
+          rooms={rooms}
+          openDialog={openDialog}
+          joinRoom={joinRoom}
+          getPlayerAlias={getPlayerAlias}
+        />
 
-      <Box mb={3}>
-        <Typography variant='h6'>Chat</Typography>
-        <Box mb={1} height={200} overflow='auto' border='1px solid #ccc' p={1}>
-          {messages.map((m, i) => (
-            <Typography key={i} variant='body2'>
-              <strong>{m.alias}:</strong> <span>{m.content.text}</span>
-            </Typography>
-          ))}
-        </Box>
-        <Box display='flex'>
-          <TextField
-            fullWidth
-            placeholder='Type a message'
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-          />
-          <Button onClick={handleSend} variant='contained' sx={{ ml: 1 }}>
-            Send
-          </Button>
-        </Box>
-      </Box>
-
-      <Box display='flex' justifyContent='space-between'>
-        <Button
-          variant='outlined'
-          onClick={openDialog}
-          aria-label='generate-room'
+        {/* Connected Players */}
+        <div
+          ref={rightColumnRef}
+          className='flex w-full md:w-1/3 flex-col min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl'
         >
-          Generate Room
-        </Button>
+          <ConnectedPlayers
+            splitPct={splitPct}
+            editingAlias={editingAlias}
+            myAlias={myAlias}
+            setMyAlias={setMyAlias}
+            commitEdit={commitEdit}
+            setEditingAlias={setEditingAlias}
+            players={players}
+            uniqueId={uniqueId}
+          />
+
+          <CardDivider rightColumnRef={rightColumnRef} />
+
+          <Chat
+            splitPct={splitPct}
+            messagesRef={messagesRef}
+            messages={messages}
+            chatInput={chatInput}
+            setChatInput={setChatInput}
+            handleSend={handleSend}
+          />
+        </div>
       </Box>
 
-      <Dialog open={dialogOpen} onClose={closeDialog}>
-        <DialogTitle>Create a Room</DialogTitle>
+      {/* Create Room Dialog */}
+      <Dialog
+        open={dialogOpen}
+        onClose={closeDialog}
+        sx={{
+          '& .MuiPaper-root': {
+            backgroundColor: 'var(--canvas-bg)',
+            color: 'var(--canvas-text)',
+          },
+        }}
+      >
+        <DialogTitle sx={{ color: 'var(--canvas-text)' }}>
+          Create a Room
+        </DialogTitle>
+
         <DialogContent>
           <Select
             label='Game'
             aria-label='game-id'
             fullWidth
+            sx={{
+              backgroundColor: 'var(--canvas-bg)',
+              color: 'var(--canvas-text)',
+            }}
             value={gameChoice}
             onChange={(e) => setGameChoice(e.target.value)}
           >
-            {lobbyGames.map((g) => {
-              return (
-                <MenuItem aria-label={`choose-${g.game}`} value={g.game}>{g.game}</MenuItem>
-              );
-            })}
+            {lobbyGames.map((g) => (
+              <MenuItem data-testid={`choose-${g.game}`} value={g.game}>{g.game}</MenuItem>
+            ))}
           </Select>
-          {wagerValidationError ? (
-            <Box mb={1}>{wagerValidationError}</Box>
-          ) : (
-            <div></div>
+
+          {wagerValidationError && (
+            <Box mb={1} sx={{ color: 'var(--secondary-solid)' }}>
+              {wagerValidationError}
+            </Box>
           )}
+
           <TextField
             label='Wager (mojo)'
             aria-label='game-wager'
@@ -255,7 +340,18 @@ const LobbyScreen = () => {
             margin='normal'
             value={wagerInput}
             onChange={(e) => setWagerInput(e.target.value)}
+            sx={{
+              backgroundColor: 'var(--canvas-bg)',
+              '& .MuiInputBase-input::placeholder': {
+                color: 'var(--canvas-text-contrast)',
+                opacity: 1, // important: otherwise MUI reduces opacity
+              },
+              '& .MuiInputBase-input': {
+                color: 'var(--canvas-text)',
+              },
+            }}
           />
+
           <TextField
             label='Each hand (mojo)'
             aria-label='per-hand'
@@ -264,14 +360,102 @@ const LobbyScreen = () => {
             margin='normal'
             value={perHandInput}
             onChange={(e) => setPerHandInput(e.target.value)}
+            sx={{
+              backgroundColor: 'var(--canvas-bg)',
+              '& .MuiInputBase-input::placeholder': {
+                color: 'var(--canvas-text-contrast)',
+                opacity: 1, // important: otherwise MUI reduces opacity
+              },
+              '& .MuiInputBase-input': {
+                color: 'var(--canvas-text)',
+              },
+            }}
           />
         </DialogContent>
+
         <DialogActions>
-          <Button onClick={closeDialog}>Cancel</Button>
-          <Button onClick={handleCreate} variant='contained'>
+          <Button variant='outline' color={'secondary'} onClick={closeDialog}>
+            Cancel
+          </Button>
+
+          <Button onClick={handleCreate} variant='solid' color={'secondary'}>
             Create
           </Button>
         </DialogActions>
+      </Dialog>
+
+      {/* SHARE DIALOG */}
+
+      <Dialog
+        open={urlDialogOpen}
+        onClose={handleCancelShare}
+        maxWidth='xs'
+        fullWidth
+        sx={{
+          '& .MuiPaper-root': {
+            backgroundColor: 'var(--canvas-bg)',
+            color: 'var(--canvas-text)',
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            pr: 1,
+          }}
+        >
+          Room Created 🎉
+          <IconButton onClick={handleCancelShare} size='small'>
+            <Close sx={{ color: 'var(--canvas-text)' }} />
+          </IconButton>
+        </DialogTitle>
+
+        <DialogContent>
+          <Typography variant='body1' sx={{ mb: 1 }}>
+            Share this room URL:
+          </Typography>
+
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              bgcolor: 'var(--canvas-bg-subtle)',
+              borderRadius: 1,
+              p: 1.2,
+              color: 'var(--secondary-solid)',
+              fontFamily: 'monospace',
+              wordBreak: 'break-all',
+            }}
+          >
+            <Typography
+              variant='body2'
+              sx={{
+                flexGrow: 1,
+                mr: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                color: 'var(--canvas-text)',
+              }}
+            >
+              {shortenedUrl}
+            </Typography>
+
+            <IconButton
+              size='small'
+              onClick={handleCopyAndClose}
+              sx={{
+                color: 'var(--secondary-solid)',
+                '&:hover': { color: 'var(--secondary-solid-hover)' },
+              }}
+            >
+              <ContentCopy fontSize='small' />
+            </IconButton>
+          </Box>
+        </DialogContent>
       </Dialog>
     </Box>
   );

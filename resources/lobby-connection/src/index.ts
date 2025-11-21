@@ -162,6 +162,20 @@ export interface Player {
   parameters: any;
 }
 
+export interface UseLobbySocketReturn {
+    players: Player[];
+    rooms: Room[];
+    messages: ChatEnvelope[];
+    sendMessage: (message: string) => void;
+    generateRoom: (game: string, amount: string, perGame: string) => Promise<GenerateRoomResult>;
+    joinRoom: (token: string) => Promise<Room>;
+    leaveRoom: (token: string) => void;
+    setLobbyAlias: (id: string, alias: string) => void;
+    uniqueId: string;
+    fragment: any;
+    lobbyGames: GameDefinition[];
+};
+
 export function useLobbySocket(
   lobbyUrl: string,
   uniqueId: string,
@@ -170,7 +184,7 @@ export function useLobbySocket(
   params: any,
   fragment: any,
   navigate: (url: string) => void,
-) {
+): UseLobbySocketReturn {
   const [players, setPlayers] = useState<Player[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<ChatEnvelope[]>([]);

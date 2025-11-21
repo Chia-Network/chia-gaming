@@ -1,3 +1,5 @@
+import { v4 as uuidv4 } from 'uuid';
+
 export type FragmentData = Record<string, string>;
 
 export function getParamsFromString(paramString: string): any {
@@ -28,4 +30,19 @@ export function getSearchParams(): any {
   }
   const search = window.location.search.substring(1);
   return getParamsFromString(search);
+}
+
+export function updateAlias(alias: string) {
+  localStorage.setItem('alias', alias);
+}
+
+export function generateOrRetrieveAlias(): string {
+  let previousName = localStorage.getItem('alias');
+  if (previousName) {
+    return previousName;
+  }
+
+  previousName = `newUser${uuidv4()}`;
+  updateAlias(previousName);
+  return previousName;
 }

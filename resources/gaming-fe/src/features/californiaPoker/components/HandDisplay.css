@@ -1,0 +1,29 @@
+@layer components {
+  .flip-container {
+    perspective: 1000px;
+  }
+
+  .flip-inner {
+    @apply relative w-full h-full;
+    transition: transform 600ms ease-in-out;
+    transform-style: preserve-3d;
+  }
+
+  .flip-inner.is-flipped {
+    transform: rotateY(180deg);
+  }
+
+  .flip-front,
+  .flip-back {
+    @apply absolute w-full h-full top-0 left-0;
+    backface-visibility: hidden;
+  }
+
+  .flip-back {
+    transform: rotateY(0deg);
+  }
+
+  .flip-front {
+    transform: rotateY(180deg);
+  }
+}

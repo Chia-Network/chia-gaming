@@ -1,36 +1,10 @@
-import { Button, Link, SxProps, Typography } from '@mui/material';
-import { Box } from '@mui/system';
-
 import {
   StartConnectResult,
   walletConnectState,
 } from '../hooks/useWalletConnect';
-
 import { QRCodeModal } from './QRCodeModal';
-
-const styles: Record<string, SxProps> = {
-  welcome: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-  container: {
-    paddingTop: '60px',
-    width: { xs: '340px', md: '460px', lg: '540px' },
-    marginLeft: 'auto',
-    marginRight: 'auto',
-  },
-  command: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    borderRadius: '8px',
-  },
-  response: {
-    borderRadius: '8px',
-  },
-};
-
+import { InfoRounded } from '@mui/icons-material';
+import { Button } from './button';
 interface ShowWalletConnectState {
   initialized: boolean;
   haveClient: boolean;
@@ -53,89 +27,96 @@ export const WalletConnectDialog: React.FC<ShowWalletConnectState> = ({
   dismiss,
 }) => {
   return (
-    <Box sx={styles.container}>
+    <div className='px-2 sm:px-3 max-w-full sm:max-w-[400px] md:max-w-[480px] lg:max-w-full mx-auto'>
       <QRCodeModal open={showQRModal} uri={connectionUri} onClose={dismiss} />
 
       {!initialized ? (
-        <Box sx={styles.welcome}>
-          <Typography variant='h5'>Initializing WalletConnect...</Typography>
-          <Typography variant='body1' mt={2}>
+        <div className='flex flex-col gap-2 sm:gap-3'>
+          <h5 className='text-[1.2rem] sm:text-[1.5rem] font-semibold'>
+            Initializing WalletConnect...
+          </h5>
+          <p className='mt-2 text-base'>
             Please wait while we set up the connection.
-          </Typography>
-        </Box>
+          </p>
+        </div>
       ) : !haveClient ? (
-        <Box sx={styles.welcome}>
-          <Typography variant='h5' color='error'>
+        <div className='flex flex-col gap-2 sm:gap-3'>
+          <h5 className='text-[1.2rem] sm:text-[1.5rem] font-semibold text-(--color-alert-text)'>
             WalletConnect Failed to Initialize
-          </Typography>
-          <Typography variant='body1' mt={2}>
+          </h5>
+          <p className='mt-2'>
             Please check your environment configuration and try refreshing the
             page.
-          </Typography>
-          <Typography variant='body2' mt={1} color='text.secondary'>
+          </p>
+          <p className='mt-1 text-[0.85rem] text-(--color-canvas-text)'>
             Make sure you have a .env file with VITE_PROJECT_ID, VITE_RELAY_URL,
             and VITE_CHAIN_ID.
-          </Typography>
-        </Box>
+          </p>
+        </div>
       ) : !haveSession ? (
-        <Box sx={styles.welcome}>
-          <Typography variant='h5'>WalletConnect Example</Typography>
+        <div className='flex flex-col gap-2 sm:gap-3'>
+          <div className='flex md:flex-row flex-col justify-between gap-2 mt-4'>
+            <Button onClick={onConnect} variant={'solid'} color={'secondary'} fullWidth>
+              Link Wallet
+            </Button>
 
-          <Typography variant='body1' mt={2}>
-            Before you can test out the WalletConnect commands, you will need to
-            link the Chia wallet to this site. You can download the latest
-            version of the wallet on the{' '}
-            <Link href='https://www.chia.net/downloads'>
-              official download page
-            </Link>
-            .
-          </Typography>
+            <Button
+              variant={'destructive'}
+              fullWidth
+              onClick={() => {
+                localStorage.clear();
+                window.location.href = '';
+              }}
+            >
+              Reset Storage
+            </Button>
+          </div>
 
-          <Typography variant='body1' mt={2}>
-            Once you have downloaded and started the wallet, make sure it has
-            completed syncing before connecting it. The WalletConnect menu can
-            be found on the top right corner of the wallet. Click the button
-            below to begin the connection.
-          </Typography>
+          <div className='bg-(--color-info-bg-subtle) rounded-lg p-4 flex gap-2 mt-3 text-(--color-info-text-contrast)'>
+            <div className='p-1 bg-(--color-info-bg) rounded-full shrink-0 flex items-center justify-center h-fit'>
+              <InfoRounded
+                sx={{ color: 'var(--color-info-solid)', fontSize: '1.25rem' }}
+              />
+            </div>
+            <div>
+              <p className='mt-2 text-[0.95rem]'>
+                Before you can test out WalletConnect, you need to link your
+                Chia wallet. Download the latest wallet from the{' '}
+                <a
+                  className='text-(--color-info-solid) underline hover:text-(--color-info-solid-hover) transition-colors'
+                  href='https://www.chia.net/downloads'
+                  target='_blank'
+                  rel='noopener'
+                >
+                  official download page
+                </a>
+                .
+              </p>
+
+              <p className='mt-2 text-base'>
+                Once the wallet is synced, use the WalletConnect menu on the top
+                right to link it to this site. Then click the button below to
+                begin.
+              </p>
+              {!haveSession && haveClient && (
+                <p className='mt-1 text-[0.9rem]'>
+                  Ready to connect. Click "Link Wallet" to start.
+                </p>
+              )}
+            </div>
+          </div>
 
           {haveClient && (
-            <Typography variant='body2' sx={{ mt: 1, color: 'text.secondary' }}>
+            <p className='mt-1 text-[0.85rem] text-(--color-canvas-text)'>
               Client Status: {haveClient ? 'Ready' : 'Not Ready'} | Sessions:{' '}
               {sessions} | Connected: {haveSession ? 'Yes' : 'No'}
-            </Typography>
+            </p>
           )}
-
-          {!haveSession && haveClient && (
-            <Typography variant='body2' sx={{ mt: 1, color: 'warning.main' }}>
-              ⚠️ Ready to connect. Click "Link Wallet" to start.
-            </Typography>
-          )}
-
-          <Button
-            fullWidth
-            variant='contained'
-            onClick={onConnect}
-            sx={{ mt: 3 }}
-          >
-            Link Wallet
-          </Button>
-
-          <Button
-            fullWidth
-            variant='outlined'
-            color='error'
-            onClick={() => {
-              localStorage.clear();
-              window.location.href = '';
-            }}
-          >
-            Reset Storage
-          </Button>
-        </Box>
+        </div>
       ) : (
         <div />
       )}
-    </Box>
+    </div>
   );
 };
 

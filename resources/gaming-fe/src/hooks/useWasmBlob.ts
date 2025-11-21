@@ -166,6 +166,11 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
     setOutcome(outcome);
     if (outcome) {
+      console.log('recognizeOutcome', outcome);
+      const mySelects = !iStarted ? outcome.alice_selects : outcome.bob_selects;
+      const theirSelects = !iStarted ? outcome.bob_selects : outcome.alice_selects;
+      const myFinalHand = !iStarted ? outcome.alice_final_hand : outcome.bob_final_hand;
+      const opponentFinalHand = !iStarted ? outcome.bob_final_hand : outcome.alice_final_hand;
       const myCards = !iStarted ? outcome.alice_used_cards : outcome.bob_used_cards;
       const myValue = !iStarted
         ? outcome.alice_hand_value
@@ -174,14 +179,20 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       const theirValue = !iStarted
         ? outcome.bob_hand_value
         : outcome.alice_hand_value;
+      const myHandDescription = handValueToDescription(myValue, myCards);
+      const opponentHandDescription = handValueToDescription(theirValue, theirCards);
       let newLogObject = {
         topLineOutcome: outcome.my_win_outcome,
-        myHandDescription: handValueToDescription(myValue, myCards),
-        opponentHandDescription: handValueToDescription(theirValue, theirCards),
+        myHandDescription,
+        opponentHandDescription,
         myHand: myCards,
         opponentHand: theirCards,
         myStartHand: playerHand,
         opponentStartHand: opponentHand,
+        myFinalHand,
+        opponentFinalHand,
+        mySelects,
+        opponentSelects: theirSelects,
         myPicks: iStarted ? outcome.alice_discards : outcome.bob_discards,
         opponentPicks: iStarted ? outcome.bob_discards : outcome.alice_discards
       };

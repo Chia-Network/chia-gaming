@@ -226,9 +226,9 @@ io.on('connection', (socket) => {
     io.emit('game_message', { party, token, msg });
   });
 
-  socket.on('peer', ({ iStarted }) => {
+  socket.on('peer', ({ iStarted, saves }) => {
     console.log('peer', iStarted);
-    io.emit('peer', { iStarted });
+    io.emit('peer', { iStarted, saves });
   });
 });
 
