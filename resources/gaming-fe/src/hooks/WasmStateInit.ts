@@ -7,7 +7,6 @@ import {
   IChiaIdentity,
 } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
-import { GAME_SERVICE_URL } from '../settings';
 import { WasmBlobWrapper } from './WasmBlobWrapper';
 
 var chia_gaming_init: any = undefined;
@@ -28,7 +27,7 @@ export const waitForReadyToInit = new Observable<boolean>((subscriber) => {
 });
 
 export const doInternalLoadWasm = async () => {
-  const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';
+  const fetchUrl = '/chia_gaming_wasm_bg.wasm';
   return fetch(fetchUrl)
     .then((wasm) => wasm.blob())
     .then((blob) => {

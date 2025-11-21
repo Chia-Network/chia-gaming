@@ -27,6 +27,7 @@ cp -r "${SOURCE}/app/game/dist/js/index-rollup.js" "${GAME}/dist/js"
 cp -r "${SOURCE}/app/game/public"/* "${GAME}/public"
 cp -r "${SOURCE}/app/clsp"/* "${GAME}/clsp"
 
+cp -r resources/nginx/urls "${GAME}/dist"
 cp -r resources/nginx/game.conf "${GAME}/nginx"
 cp -r resources/nginx/beacon.sh "${GAME}/beacon.sh"
 cp -r resources/nginx/game-install.sh "${GAME}/game-install.sh"
