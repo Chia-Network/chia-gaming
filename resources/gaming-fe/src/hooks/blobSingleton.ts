@@ -79,7 +79,7 @@ export function getBlobSingleton(
   const deliverMessage = (msg: string) => {
     blobSingleton?.deliverMessage(msg);
   };
-  const peercon = getGameSocket(lobbyUrl, deliverMessage, () => {
+  const peercon = getGameSocket(lobbyUrl, deliverMessage, (saves: string[]) => {
     blobSingleton?.kickSystem(2);
   });
 

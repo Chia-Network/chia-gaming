@@ -149,6 +149,7 @@ export interface WasmConnection {
   cradle_their_share: (cid: number) => any;
   idle: (cid: number, callbacks: any) => any;
   get_identity: (cid: number) => IChiaIdentity;
+  get_game_state_id: (cid: number) => string | undefined;
 
   // Misc
   chia_identity: (id: number) => any;
