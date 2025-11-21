@@ -1,5 +1,6 @@
 import { Paper, Typography } from '@mui/material';
-import { suitNames } from '../types/ChiaGaming';
+import { suitNames } from '../../../types/ChiaGaming';
+
 
 interface PlayingCardProps {
   id: string;

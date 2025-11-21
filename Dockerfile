@@ -121,6 +121,9 @@ RUN --mount=type=tmpfs,dst=/tmp/rust \
 	wasm-pack build --out-dir=/app/game/node-pkg --release --target=nodejs && \
 	wasm-pack build --out-dir=/app/game/dist --release --target=web
 
+RUN rm -rf $HOME/.cargo
+RUN du / | sort -rn
+
 # Place wasm backend in docker container
 RUN mkdir -p /app/dist
 

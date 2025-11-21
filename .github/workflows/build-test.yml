@@ -181,6 +181,7 @@ jobs:
           export CARGO_TARGET_DIR=$(pwd)/target
           python -m venv venv
           source venv/bin/activate
+          pip install chiavdf==1.1.12
           pip install chia-blockchain==2.5.5-rc3
           python -m pip install maturin==1.9.2
           maturin build --features sim-tests
