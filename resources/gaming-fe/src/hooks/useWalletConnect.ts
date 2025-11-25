@@ -135,7 +135,7 @@ class WalletState {
     const { uri, approval } = await this.client.connect({
       requiredNamespaces: {
         chia: {
-          methods: ['chia_getCurrentAddress', 'chia_sendTransaction'],
+          methods: ['chia_getCurrentAddress', 'chia_getWalletBalance', 'chia_sendTransaction'],
           chains: [CHAIN_ID],
           events: [],
         },

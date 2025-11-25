@@ -6,8 +6,10 @@ FRONTEND_JS=/app/dist/js/index-rollup.js
 (nginx -g "daemon off;" &)
 
 # Patch the frontend code for use in the test rig
-sed -e 's/https:\/\/api.coinset.org/http:\/\/localhost:3002/g' < "${FRONTEND_JS}" > /tmp/index-rollup.js
-mv /tmp/index-rollup.js "${FRONTEND_JS}"
+if [ "x$1" = "xrewrite" ] ; then
+	sed -e 's/https:\/\/api.coinset.org/http:\/\/localhost:3002/g' < "${FRONTEND_JS}" > /tmp/index-rollup.js
+	mv /tmp/index-rollup.js "${FRONTEND_JS}"
+fi
 
 # Run the walletconnect simulator
 (cd /app/wc && node ./dist/index.js &)
