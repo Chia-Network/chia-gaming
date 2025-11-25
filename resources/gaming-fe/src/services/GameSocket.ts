@@ -87,13 +87,16 @@ export const getGameSocket = (
 
     // When we receive a message from our peer, we know we're connected.
     socket?.on('peer', (msg) => {
-      if (msg.iStarted != iStarted && !fullyConnected) {
-        // If they haven't seen our message yet, we know we're connected so
-        // we can send a ping to them now.
-        fullyConnected = true;
+      if (msg.iStarted != iStarted) {
+        if (!fullyConnected) {
+          // If they haven't seen our message yet, we know we're connected so
+          // we can send a ping to them now.
+          fullyConnected = true;
+          clearInterval(beacon);
+          setSocketEnabled(msg.saves);
+        }
+        console.log(iStarted, 'sending saves to peeer', saves);
         socketRef?.emit('peer', { iStarted, saves });
-        clearInterval(beacon);
-        setSocketEnabled(msg.saves);
       }
     });
 

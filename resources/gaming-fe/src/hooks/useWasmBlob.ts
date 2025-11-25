@@ -28,6 +28,7 @@ import {
 } from './blobSingleton';
 import {
   saveGame,
+  startNewSession,
 } from './save';
 
 let blobSingleton: any = null;
@@ -68,65 +69,32 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
   const [cardSelections, setOurCardSelections] = useState<number>(0);
   const amount = parseInt(searchParams.amount);
 
-  let perGameAmount = amount / 10;
-  try {
-    perGameAmount = parseInt(searchParams.perGame);
-  } catch (e) {
-    // not ok if perGame wasn't empty.
-    if (searchParams.perGame) {
-      throw e;
-    }
-  }
-  const setError = (e: any) => {
-    if (e !== undefined && error === undefined) {
-      setRealError(e);
-    }
-  };
-
-  const blockchain = new ChildFrameBlockchainInterface();
-
-  const gameObject = uniqueId
-    ? getBlobSingleton(
-        blockchain,
-        lobbyUrl,
-        uniqueId,
-        amount,
-        perGameAmount,
-        iStarted,
-      )
-    : null;
-
-  const setCardSelections = useCallback(
-    (mask: number) => {
-      gameObject?.setCardSelections(mask);
-    },
-    [gameObject],
-  );
-
-  const stopPlaying = useCallback(() => {
-    gameObject?.shutDown();
-  }, [gameObject]);
-
-  useEffect(() => {
-    const subscription = blockchain.getObservable().subscribe({
-      next: (e: BlockchainReport) => {
-        gameObject?.blockNotification(e.peak, e.block, e.report);
-      },
-    });
-
-    return () => {
-      subscription.unsubscribe();
+  const setSavedGame = (game: any) => {
+    console.log('setSaveGame', game);
+    let ui: any = {
+      setGameConnectionState: gameConnectionState,
+      setPlayerHand: playerHand,
+      setOpponentHand: opponentHand,
+      setMyTurn: isPlayerTurn,
+      setMoveNumber: moveNumber,
+      setCardSelections: cardSelections,
+      setAddressData: addressData,
+      setOurShare: ourShare,
+      setTheirShare: theirShare,
     };
-  });
+    if (error) {
+      ui.setError = error;
+    }
+    if (outcome) {
+      ui.outcome = outcome;
+    }
+    if (lastOutcome) {
+      ui.lastOutcome = lastOutcome;
+    }
 
-  const handleMakeMove = useCallback((move: any) => {
-    gameObject?.makeMove(move);
-  }, []);
-
-  (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
-    console.log('start loading wasm', gameObject);
-    gameObject?.loadWasm(chia_gaming_init, cg);
-  }, []);
+    let serialized = { game, ui, searchParams, id: game.id };
+    saveGame(serialized);
+  };
 
   const recognizeOutcome = (outcome: CalpokerOutcome | undefined) => {
     setOutcome(outcome);
@@ -165,24 +133,26 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     }
   };
 
-  const setSavedGame = (game: any) => {
-    saveGame(game);
-  };
+  const recognizeGameConnectionState = async (cs: GameConnectionState) => {
+    if (cs.stateIdentifier === 'shutdown') {
+      startNewSession();
+    }
+    setGameConnectionState(cs);
+  }
 
   const settable: any = {
-    setGameConnectionState: setGameConnectionState,
-    setPlayerHand: setPlayerHand,
-    setOpponentHand: setOpponentHand,
-    setMyTurn: setMyTurn,
-    setMoveNumber: setMoveNumber,
-    setError: setError,
+    setGameConnectionState: recognizeGameConnectionState,
+    setPlayerHand,
+    setOpponentHand,
+    setMyTurn,
+    setMoveNumber,
     setCardSelections: setOurCardSelections,
     setOutcome: recognizeOutcome,
-    setAddressData: setAddressData,
-    setOurShare: setOurShare,
-    setTheirShare: setTheirShare,
-    setLastOutcome: setLastOutcome,
-    setSavedGame: setSavedGame,
+    setAddressData,
+    setOurShare,
+    setTheirShare,
+    setLastOutcome,
+    setSavedGame,
   };
 
   function setState(state: any): void {
@@ -197,6 +167,67 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       }
     });
   }
+
+  let perGameAmount = amount / 10;
+  try {
+    perGameAmount = parseInt(searchParams.perGame);
+  } catch (e) {
+    // not ok if perGame wasn't empty.
+    if (searchParams.perGame) {
+      throw e;
+    }
+  }
+  const setError = (e: any) => {
+    if (e !== undefined && error === undefined) {
+      setRealError(e);
+    }
+  };
+
+  const blockchain = new ChildFrameBlockchainInterface();
+
+  const gameObject = uniqueId
+    ? getBlobSingleton(
+        blockchain,
+        lobbyUrl,
+        uniqueId,
+        amount,
+        perGameAmount,
+        iStarted,
+        setState,
+      )
+    : null;
+
+  const setCardSelections = useCallback(
+    (mask: number) => {
+      gameObject?.setCardSelections(mask);
+    },
+    [gameObject],
+  );
+
+  const stopPlaying = useCallback(() => {
+    gameObject?.shutDown();
+  }, [gameObject]);
+
+  useEffect(() => {
+    const subscription = blockchain.getObservable().subscribe({
+      next: (e: BlockchainReport) => {
+        gameObject?.blockNotification(e.peak, e.block, e.report);
+      },
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  });
+
+  const handleMakeMove = useCallback((move: any) => {
+    gameObject?.makeMove(move);
+  }, []);
+
+  (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
+    console.log('start loading wasm', gameObject);
+    gameObject?.loadWasm(chia_gaming_init, cg);
+  }, []);
 
   useEffect(() => {
     const subscription = gameObject.getObservable().subscribe({

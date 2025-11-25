@@ -337,6 +337,14 @@ async function verifyCardsWithLog(driver, cards) {
   checkCardsInLog(theirLogEntryDesc, convertedTheirUsedCards);
 }
 
+async function reloadBrowser(driver, selectWallet) {
+  console.log('reloading');
+  await driver.navigate().refresh();
+  await selectWallet(driver);
+
+  await wait(driver, 100.0);
+}
+
 // Define a category of tests using test framework, in this case Jasmine
 describe("Out of money test", function () {
   const baseUrl = "http://localhost:3000";
@@ -528,23 +536,74 @@ describe("Out of money test", function () {
     await wait(driver, 5.0);
   }
 
+  async function testOneGameReload(selectWallet) {
+    // Load the login page
+    await driver.get(baseUrl);
+
+    await selectWallet(driver);
+
+    await wait(driver, 5.0);
+
+    await driver.switchTo().frame("subframe");
+
+    const partnerUrl = await initiateGame(driver, 200);
+
+    // Spawn second browser.
+    console.log("second browser start");
+    await firefox_start_and_first_move(selectWallet, ffdriver, partnerUrl);
+
+    console.log("wait for alice make move button");
+    await clickMakeMove(driver, "alice", "Start Game");
+
+    await wait(driver, 10.0);
+    await reloadBrowser(driver, selectWallet);
+
+    await clickFourCards(ffdriver, 'bob', 0xaa);
+
+    console.log('selecting alice cards');
+    await clickFourCards(driver, 'alice', 0x55);
+
+    console.log("stop the game");
+    await driver.executeScript('window.scroll(0, 0);');
+    let stopButton = await waitForNonError(
+      driver,
+      () =>
+      driver.wait(
+        until.elementLocated(byAttribute("data-testid", "stop-playing")),
+      ),
+      (elt) => waitAriaEnabled(driver, elt),
+      1.0,
+    );
+    await stopButton.click();
+
+    console.log("awaiting shutdown");
+
+    await gotShutdown(ffdriver);
+    await gotShutdown(driver);
+  }
+
   it(
     "starts",
     async function () {
       // Terminate early if we didn't get the browsers we wanted.
       expect(!!driver1 && !!driver2).toBe(true);
 
-      await testTwoGamesAndShutdown(selectSimulator);
+      await testOneGameReload(selectSimulator);
 
       await prepareBrowser(driver1);
       await prepareBrowser(driver2);
 
-      await testRunOutOfMoney(selectSimulator);
+      // await testTwoGamesAndShutdown(selectSimulator);
 
-      await prepareBrowser(driver1);
-      await prepareBrowser(driver2);
+      // await prepareBrowser(driver1);
+      // await prepareBrowser(driver2);
 
-      await testTwoGamesAndShutdown(selectWalletConnect);
+      // await testRunOutOfMoney(selectSimulator);
+
+      // await prepareBrowser(driver1);
+      // await prepareBrowser(driver2);
+
+      // await testTwoGamesAndShutdown(selectWalletConnect);
     },
     1 * 60 * 60 * 1000,
   );

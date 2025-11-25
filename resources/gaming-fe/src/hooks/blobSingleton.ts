@@ -76,6 +76,7 @@ export function getBlobSingleton(
   amount: number,
   perGameAmount: number,
   iStarted: boolean,
+  setUIState: (state: any) => void,
 ) {
   if (blobSingleton) {
     return blobSingleton;
@@ -98,6 +99,7 @@ export function getBlobSingleton(
     lobbyUrl,
     deliverMessage,
     (saves: string[]) => {
+      console.log('peer saves', saves);
       const systemState = blobSingleton.systemState();
       blobSingleton.kickSystem(2);
       if ((systemState & 2) == 0) {
@@ -107,7 +109,8 @@ export function getBlobSingleton(
           const matchingSave = findMatchingGame(saves);
           if (matchingSave) {
             const loadedSave = loadSave(matchingSave);
-            await deserializeGameObject(blobSingleton, wasmStateInit, blockchain, loadedSave);
+            setUIState(loadedSave.ui);
+            await deserializeGameObject(blobSingleton, wasmStateInit, blockchain, loadedSave.game);
 
             return;
           }

@@ -227,7 +227,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('peer', ({ iStarted, saves }) => {
-    console.log('peer', iStarted);
+    console.log('peer', iStarted, saves);
     io.emit('peer', { iStarted, saves });
   });
 });

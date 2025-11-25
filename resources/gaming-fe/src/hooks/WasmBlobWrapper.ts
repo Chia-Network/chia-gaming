@@ -506,7 +506,9 @@ export class WasmBlobWrapper {
     const newGameId = this.cradle?.get_game_state_id();
     if (newGameId !== this.currentSave) {
       this.currentSave = newGameId;
-      result.setSavedGame = this.cradle?.serialize();
+      const saveData = this.cradle?.serialize();
+      saveData.id = newGameId;
+      result.setSavedGame = saveData;
     }
 
     this.rxjsEmitter?.next({

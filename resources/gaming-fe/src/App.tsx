@@ -4,13 +4,15 @@ import Gallery from './components/Gallery';
 import Game from './components/Game';
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
+import { getSaveList } from './hooks/save';
 import { getGameSelection, getSearchParams, generateOrRetrieveUniqueId } from './util';
 
 const App = () => {
   const uniqueId = generateOrRetrieveUniqueId();
   const gameSelection = getGameSelection();
   const params = getSearchParams();
-  const shouldRedirectToLobby = !params.lobby && !params.iStarted;
+  const saveList = getSaveList();
+  const shouldRedirectToLobby = !params.lobby && !params.iStarted && saveList.length === 0;
   const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
 
@@ -152,6 +154,10 @@ const App = () => {
       <WalletConnectHeading />
     </div>
   );
+
+  if (saveList.length) {
+    return <div>Currently have saves: {saveList.toString()}</div>;
+  }
 
   if (!havePeak) {
     return (
