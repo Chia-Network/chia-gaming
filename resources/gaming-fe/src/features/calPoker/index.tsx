@@ -144,17 +144,18 @@ const Calpoker: React.FC<CalpokerProps> = ({
           <Button
             onClick={handleHelpClick}
             color={'neutral'}
-            variant={'ghost'}
+            variant={'outline'}
             size={'sm'}
-            leadingIcon={<Info />}
+            leadingIcon={<Info size={'16px'} />}
           >
             Hint
           </Button>
 
           {/* Leave */}
           <Button
-	    data-testid='stop-playing'
+            data-testid='stop-playing'
             variant={'destructive'}
+            color={'outline'}
             onClick={stopPlaying}
             size={'sm'}
             disabled={moveNumber !== 0}
