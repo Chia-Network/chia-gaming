@@ -80,7 +80,7 @@ const GameLog: React.FC<GameLogProps> = ({ log }) => {
   };
 
   return (
-    <div className='flex flex-col h-full w-full'>
+    <div className='flex flex-col h-full w-full rounded-lg'>
       {/* Card Container */}
       <div className='flex flex-col h-full border border-canvas-border rounded-lg shadow-sm bg-canvas-bg overflow-hidden'>
         {/* Header - Non-scrolling */}

@@ -6,6 +6,7 @@ import WalletConnectHeading from './components/WalletConnectHeading';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
 import { getSaveList, loadSave } from './hooks/save';
 import { getGameSelection, getSearchParams, generateOrRetrieveUniqueId } from './util';
+import GameRedirectPopup from './components/GameRedirectPopup';
 
 const App = () => {
   const uniqueId = generateOrRetrieveUniqueId();
@@ -25,6 +26,10 @@ const App = () => {
   const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
   const [fetchedUrls, setFetchedUrls] = useState(false);
   const [iframeAllowed, setIframeAllowed] = useState('');
+  const gameName = params.game;
+  const joinCode = params.join;
+  const [showPopup, setShowPopup] = useState(false);
+  const [pendingGameUrl, setPendingGameUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
@@ -43,9 +48,9 @@ const App = () => {
       setFetchedUrls(true);
       fetch('/urls')
         .then((res) => res.json())
-	.then((urls) => {
-	  let trackerURL = new URL(urls.tracker);
-	  setIframeAllowed(trackerURL.origin);
+        .then((urls) => {
+          let trackerURL = new URL(urls.tracker);
+          setIframeAllowed(trackerURL.origin);
         });
     }
   }, [fetchedUrls]);
@@ -57,21 +62,28 @@ const App = () => {
   // connection soon.  I think we can change the iframe location from the outside
   // in that scenario.
   useEffect(() => {
-    if (shouldRedirectToLobby) {
-      fetch('/urls')
-        .then((res) => res.json())
-        .then((urls) => {
-          console.log('navigate to lobby', urls);
-          if (gameSelection) {
-            setIframeUrl(
-              `${urls.tracker}&uniqueId=${uniqueId}&token=${gameSelection.token}&view=game`,
-            );
-          } else {
-            setIframeUrl(`${urls.tracker}&view=game&uniqueId=${uniqueId}`);
-          }
-        });
-    }
-  }, [params]);
+    fetch("/urls")
+      .then((res) => res.json())
+      .then((urls) => {
+        const baseUrl = urls.tracker;
+        const gameUrl = gameSelection
+          ? `${baseUrl}&uniqueId=${uniqueId}&token=${gameSelection.token}&view=game`
+          : `${baseUrl}&view=game&uniqueId=${uniqueId}`;
+
+        if (params.join) {
+          // It's an invite → wait for user to accept
+          setPendingGameUrl(gameUrl);
+          setShowPopup(true);
+        } else {
+          // No invite → go straight to game
+          setIframeUrl(gameUrl);
+        }
+      });
+  }, []);
+  // no dependency on params so URL stays the same
+
+
+
 
   // Keep iframe in sync with the parent theme (CSS variables and dark class).
   // If the iframe is same-origin we copy the CSS custom properties and `dark` class
@@ -165,12 +177,23 @@ const App = () => {
     };
   }, [iframeUrl]);
 
+  const handleAccept = () => {
+    if (pendingGameUrl) setIframeUrl(pendingGameUrl);
+    setShowPopup(false);
+  };
+
+  const handleCancel = () => {
+    setShowPopup(false);
+    // Redirect to lobby
+    window.location.href = "/?lobby=1";
+  };
+
   if (params.gallery) {
     return <Gallery />;
   }
 
-  if (params.game && !params.join) {
-    return <Game params={params}/>;
+  if (params.game && !params.join && !showPopup) {
+    return <Game params={params} />;
   }
 
   const wcHeading = (
@@ -179,21 +202,21 @@ const App = () => {
     </div>
   );
 
-const pre_lobby_status = (
-  <div
-    /*className="flex flex-col relative w-screen h-screen"*/
-    className="w-full flex-1 border-0 m-0 p-0"
-    style={{
+  const pre_lobby_status = (
+    <div
+      /*className="flex flex-col relative w-screen h-screen"*/
+      className="w-full flex-1 border-0 m-0 p-0"
+      style={{
         backgroundColor: 'var(--color-canvas-bg-subtle)',
         display: 'flex',          // Enables flexbox
         alignItems: 'center',     // Centers children vertically
         justifyContent: 'center', // Optional: centers children horizontally as well
         height: '100vh',          // Optional: ensures the container takes up the full viewport height
       }}
-  >
-  Waiting for peak from coinset.org ...
-  </div>
-);
+    >
+      Waiting for peak from coinset.org ...
+    </div>
+  );
 
   if (!havePeak) {
     return (
@@ -205,14 +228,24 @@ const pre_lobby_status = (
   }
 
   return (
-    <div className="flex flex-col relative w-screen h-screen" style={{ backgroundColor: 'var(--color-canvas-bg-subtle)' }}>
+    <div className="flex flex-col relative w-screen h-screen bg-canvas-bg-subtle" style={{ backgroundColor: 'var(--color-canvas-bg-subtle)' }}>
       {wcHeading}
-      <iframe
-        id='subframe'
-        className="w-full flex-1 border-0 m-0 p-0"
-        src={iframeUrl}
-	allow={`clipboard-write self ${iframeAllowed}`}
-      ></iframe>
+      <div className="relative z-0 w-full flex-1">
+        <iframe
+          id='subframe'
+          className="w-full h-full border-0 m-0 p-0"
+          src={iframeUrl}
+          allow={`clipboard-write self ${iframeAllowed}`}
+        ></iframe>
+      </div>
+      <GameRedirectPopup
+        open={showPopup}
+        gameName={params.game}          // "calpoker"
+        message="You have been invited to join this game."
+        onAccept={handleAccept}
+        onCancel={handleCancel}
+      />
+
     </div>
   );
 };
