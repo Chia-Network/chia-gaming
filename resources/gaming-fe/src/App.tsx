@@ -190,7 +190,7 @@ const App = () => {
       <div className="relative z-0 w-full flex-1">
         <iframe
           id='subframe'
-          className="w-full h-full border-0 m-0 p-0"
+          className="w-full h-full border-0 m-0 md:py-0 py-6"
           src={iframeUrl}
         ></iframe>
       </div>

@@ -28,6 +28,7 @@ import { HandDisplay, MovingCard } from './components';
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 
 import { WalletIcon } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/src/components/ui/card';
 
 // Main Component
 const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
@@ -147,10 +148,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       ? false
       : moveNumber === 1
         ? !(
-            (gameState === GAME_STATES.SELECTING &&
-              playerSelected.length === 4) ||
-            gameState === GAME_STATES.SWAPPING
-          )
+          (gameState === GAME_STATES.SELECTING &&
+            playerSelected.length === 4) ||
+          gameState === GAME_STATES.SWAPPING
+        )
         : true);
 
   const isActive = !isDisabled; // single source of truth
@@ -382,151 +383,107 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   }, []);
 
   return (
-    <div className='flex flex-col w-full h-full overflow-hidden text-canvas-text'>
-      <div className='flex-1 relative h-full overflow-y-auto overflow-x-hidden'>
+    <div className='flex flex-col w-full h-full min-h-0 text-canvas-text'>
+      <div className='flex-1 h-full min-h-0 overflow-hidden'>
         {gameState === GAME_STATES.INITIAL && (
           <div className='text-center'>
-            <button
-              onClick={dealCards}
-              className={`${BUTTON_BASE} ${BUTTON_ACTIVE}`}
-            >
+            <Button onClick={dealCards} className='px-6 py-2'>
               Deal Cards
-            </button>
+            </Button>
           </div>
         )}
 
         {gameState !== GAME_STATES.INITIAL && (
-          <div className='h-full flex flex-col overflow-y-auto'>
-            <div className='flex-1'>
-              {/* OPPONENT PANEL */}
-              <div className='text-center lg:gap-0 gap-4 relative h-[45%] mb-4 border border-canvas-line bg-canvas-bg shadow-md rounded-lg'>
-                <div className='w-full relative'>
-                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2'>
-                    <h3 className='text-[16px] font-bold text-center text-canvas-solid'>
-                      Opponent hand
-                    </h3>
-                  </div>
+          <div className='flex flex-col gap-4 h-full flex-1 min-h-0'>
+            {/* OPPONENT PANEL */}
+            <Card className='flex flex-col min-h-[260px] w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
+              {/* Make Card relative so absolute div is positioned relative to it */}
+              <div className='w-full flex justify-end'>
 
-                  {/* Opponent balance */}
-                  <div className='flex justify-end'>
-                    <div className='flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-1.5 py-1 shadow-sm'>
-                      <span className='text-canvas-solid'>
-                        <WalletIcon size='19.6px' />
-                      </span>
-                      <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>
-                        {opponentBalance}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className='flex-1 h-full lg:mt-0 mt-4 flex items-center justify-center p-2'>
-                  <HandDisplay
-                    title=''
-                    cards={opponentCards}
-                    playerNumber={playerNumber == 1 ? 2 : 1}
-                    area='ai'
-                    winner={winner}
-                    winnerType='ai'
-                    bestHand={aiBestHand}
-                    swappingCards={swappingCards.ai}
-                    showSwapAnimation={showSwapAnimation}
-                    gameState={gameState}
-                    formatHandDescription={formatHandDescription}
-                    selectedCards={[]}
-                  />
+                <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
+                  <WalletIcon size='19.6px' />
+                  <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{opponentBalance}</span>
                 </div>
               </div>
 
-              {/* PLAYER PANEL */}
-              <div className='text-center relative lg:gap-0 gap-4 h-[45%] bg-canvas-bg border border-canvas-line shadow-md rounded-lg'>
-                <div className='w-full relative'>
-                  <div className='absolute left-1/2 top-5 transform -translate-x-1/2'>
-                    <h3 className='text-[16px] font-bold text-center text-canvas-solid'>
-                      Your hand
-                    </h3>
-                  </div>
+              <CardHeader className='w-full flex justify-center items-center'>
+                <CardTitle>Opponent Hand</CardTitle>
+              </CardHeader>
 
-                  {/* Player balance */}
-                  <div className='flex justify-end'>
-                    <div className='flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-1.5 py-1 bg-canvas-bg shadow-sm'>
-                      <span className='text-canvas-solid'>
-                        <WalletIcon size='19.6px' />
-                      </span>
-                      <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>
-                        {playerBalance}
-                      </span>
-                    </div>
+              <CardContent className='flex flex-1 items-center justify-center p-2 min-h-0'>
+                <HandDisplay
+                  title=''
+                  cards={opponentCards}
+                  playerNumber={playerNumber == 1 ? 2 : 1}
+                  area='ai'
+                  winner={winner}
+                  winnerType='ai'
+                  bestHand={aiBestHand}
+                  swappingCards={swappingCards.ai}
+                  showSwapAnimation={showSwapAnimation}
+                  gameState={gameState}
+                  formatHandDescription={formatHandDescription}
+                  selectedCards={[]}
+                />
+              </CardContent>
+            </Card>
+
+
+            {/* PLAYER PANEL */}
+            <Card className='flex flex-col py-0 w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
+              <CardHeader className='relative w-full flex justify-center items-center'>
+                <CardTitle>Your Hand</CardTitle>
+                <div className='w-full flex justify-end'>
+                  <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
+                    <WalletIcon size='19.6px' />
+                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{playerBalance}</span>
                   </div>
                 </div>
 
-                <div className='flex-1 lg:mt-0 mt-4 h-full flex items-center justify-center p-2'>
-                  <HandDisplay
-                    title=''
-                    cards={playerCards}
-                    playerNumber={playerNumber}
-                    area='player'
-                    winner={winner}
-                    winnerType='player'
-                    bestHand={playerBestHand}
-                    onCardClick={toggleCardSelection}
-                    selectedCards={playerSelected}
-                    swappingCards={swappingCards.player}
-                    showSwapAnimation={showSwapAnimation}
-                    gameState={gameState}
-                    formatHandDescription={formatHandDescription}
-                  />
-                </div>
-              </div>
-            </div>
+                {/* Player balance on top-left corner */}
+              </CardHeader>
+              <CardContent className='flex flex-1 items-center justify-center p-2 min-h-0'>
+                <HandDisplay
+                  title=''
+                  cards={playerCards}
+                  playerNumber={playerNumber}
+                  area='player'
+                  winner={winner}
+                  winnerType='player'
+                  bestHand={playerBestHand}
+                  onCardClick={toggleCardSelection}
+                  selectedCards={playerSelected}
+                  swappingCards={swappingCards.player}
+                  showSwapAnimation={showSwapAnimation}
+                  gameState={gameState}
+                  formatHandDescription={formatHandDescription}
+                />
+              </CardContent>
+            </Card>
 
             {/* ACTION BAR */}
-            <div className='h-[10%] flex pt-4 lg:pt-0'>
-              <div className='flex flex-1 rounded-xl overflow-hidden border border-canvas-line shadow-md bg-canvas-bg'>
-                {/* Left banner */}
-                <div className='flex flex-1 items-center justify-center'>
-                  <span
-                    className={`font-bold text-xl ${
-                      isPlayerTurn ? 'text-success-text' : 'text-alert-text'
-                    }`}
-                  >
-                    {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
-                  </span>
-                </div>
 
-                {/* Button */}
-                <div className='flex flex-1 p-0.5 items-center justify-center bg-transparent'>
-                  {gameState === GAME_STATES.FINAL ? (
-                    <Button
-                      variant={'solid'}
-                      color={'primary'}
-                      onClick={NewGame}
-                      disabled={!isPlayerTurn}
-                      fullWidth
-                      className='h-full'
-                    >
-                      {isPlayerTurn ? 'Start New Game' : 'Opponent to Start...'}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant={'solid'}
-                      color={'primary'}
-                      onClick={doHandleMakeMove}
-                      disabled={isDisabled}
-                      fullWidth
-                      className='h-full'
-                    >
-                      {buttonText}
-                    </Button>
-                  )}
-                </div>
+            <div className='flex rounded-lg flex-col md:flex-row bg-canvas-bg shadow-md border border-canvas-line md:flex-[0_0_10%]'>
+              <div className='flex flex-1 p-4 md:p-0 items-center justify-center'>
+                <span className={`font-bold text-xl ${isPlayerTurn ? 'text-success-text' : 'text-alert-text'}`}>
+                  {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
+                </span>
+              </div>
 
-                {/* Move number */}
-                <div className='flex flex-1 items-center justify-center'>
-                  <span className='font-bold text-xl text-canvas-solid'>
-                    Move {moveNumber}
-                  </span>
-                </div>
+              <div className='flex w-full flex-1 h-full items-center justify-center bg-transparent'>
+                {gameState === GAME_STATES.FINAL ? (
+                  <Button variant='solid' color='primary' onClick={NewGame} disabled={!isPlayerTurn} className='h-full w-full p-4 md:p-0'>
+                    {isPlayerTurn ? 'Start New Game' : 'Opponent to Start...'}
+                  </Button>
+                ) : (
+                  <Button variant='solid' color='primary' onClick={doHandleMakeMove} disabled={isDisabled} className='h-full w-full p-4 md:p-0'>
+                    {buttonText}
+                  </Button>
+                )}
+              </div>
+
+              <div className='flex flex-1 items-center justify-center p-4 md:p-0'>
+                <span className='font-bold text-xl text-canvas-solid'>Move {moveNumber}</span>
               </div>
             </div>
           </div>

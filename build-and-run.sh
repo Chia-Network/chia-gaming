@@ -17,14 +17,16 @@ done
 # Step 2: Build the frontend (using yarn)
 cd resources/gaming-fe
 yarn build
-# cd ../
-# cd lobby-view
-# yarn build
-cd ../../
+cd ../lobby-view
+yarn build
+cd ../..
+
 
 # Step 3: Run the Docker container with volume mounts
 docker run -p 3000:3000 -p 3001:3001 -p 5800:5800 \
     -v "$(pwd)/resources/gaming-fe/dist/js:/app/dist/js" \
     -v "$(pwd)/resources/gaming-fe/dist/css:/app/dist/css" \
     -v "$(pwd)/resources/gaming-fe/public:/app/public" \
+    -v "$(pwd)/resources/lobby-view/public:/app/lobby-view/public" \
+    -v "$(pwd)/resources/lobby-view/dist:/app/lobby-view/dist" \
     calpoker:latest

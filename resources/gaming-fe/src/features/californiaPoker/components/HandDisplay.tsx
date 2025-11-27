@@ -133,7 +133,7 @@ function HandDisplay(props: HandDisplayProps) {
 
         <div>
           {showPlaceholders ? (
-            <div className='flex flex-wrap justify-center gap-2'>
+            <div className='flex flex-wrap h-full justify-center gap-2'>
               {Array.from({ length: 8 }).map((_, i) => {
                 const frontCard = cards && cards[i];
                 const originalIndex = frontCard
@@ -144,7 +144,7 @@ function HandDisplay(props: HandDisplayProps) {
                   : -1;
 
                 return (
-                  <div key={`placeholder-${i}`} className='w-24 h-32 shrink-0'>
+                  <div key={`placeholder-${i}`} className='w-24 h-32'>
                     <div className='flip-container'>
                       <div
                         className={`flip-inner ${placeholderFlip ? 'is-flipped' : ''}`}
@@ -178,7 +178,7 @@ function HandDisplay(props: HandDisplayProps) {
               })}
             </div>
           ) : (
-            <div className='flex flex-wrap justify-center gap-2'>
+            <div className='flex flex-wrap h-full justify-center gap-2'>
               {cards.map((card: any, idx: number) => {
                 const originalIndex = cards.findIndex(
                   (c) => c.suit === card.suit && c.rank === card.rank,
@@ -197,7 +197,7 @@ function HandDisplay(props: HandDisplayProps) {
                 return (
                   <div
                     key={`${area}-${originalIndex}`}
-                    className='w-20 h-28 shrink-0'
+                    className='w-20 h-28'
                   >
                     <Card
                       index={idx}
