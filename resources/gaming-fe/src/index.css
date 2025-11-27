@@ -1,6 +1,7 @@
 /* Generated with https://designrift.dev */
 @import "tailwindcss";
-
+@import "tw-animate-css";
+@custom-variant dark (&:is(.dark *));
 /* LIGHT THEME */
 :root {
 
@@ -339,6 +340,15 @@ html, body {
 
 /* Component-level flip styles for HandDisplay (processed by Tailwind) */
 @layer components {
+  * {
+    @apply border-canvas-line shadow-[0_0_0_2px_rgba(147,197,253,0.5)];
+  }
+  
+  
+  body {
+    @apply bg-canvas-bg-subtle text-canvas-text;
+  }
+
 	.flip-container {
 		perspective: 1000px;
 		width: 100%;

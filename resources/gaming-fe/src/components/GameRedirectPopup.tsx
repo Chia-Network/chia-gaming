@@ -21,7 +21,7 @@ const GameRedirectPopup = ({
     if (!open) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-transparent">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-canvas-bg-subtle">
             <div
                 className="
           w-11/12 max-w-sm 

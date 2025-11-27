@@ -26,8 +26,6 @@ const App = () => {
   const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
   const [fetchedUrls, setFetchedUrls] = useState(false);
   const [iframeAllowed, setIframeAllowed] = useState('');
-  const gameName = params.game;
-  const joinCode = params.join;
   const [showPopup, setShowPopup] = useState(false);
   const [pendingGameUrl, setPendingGameUrl] = useState<string | null>(null);
 
@@ -62,23 +60,25 @@ const App = () => {
   // connection soon.  I think we can change the iframe location from the outside
   // in that scenario.
   useEffect(() => {
-    fetch("/urls")
-      .then((res) => res.json())
-      .then((urls) => {
-        const baseUrl = urls.tracker;
-        const gameUrl = gameSelection
-          ? `${baseUrl}&uniqueId=${uniqueId}&token=${gameSelection.token}&view=game`
-          : `${baseUrl}&view=game&uniqueId=${uniqueId}`;
+    if (shouldRedirectToLobby) {
+      fetch("/urls")
+        .then((res) => res.json())
+        .then((urls) => {
+          const baseUrl = urls.tracker;
+          const gameUrl = gameSelection
+            ? `${baseUrl}&uniqueId=${uniqueId}&token=${gameSelection.token}&view=game`
+            : `${baseUrl}&view=game&uniqueId=${uniqueId}`;
 
-        if (params.join) {
-          // It's an invite → wait for user to accept
-          setPendingGameUrl(gameUrl);
-          setShowPopup(true);
-        } else {
-          // No invite → go straight to game
-          setIframeUrl(gameUrl);
-        }
-      });
+          if (params.join) {
+            // It's an invite → wait for user to accept
+            setPendingGameUrl(gameUrl);
+            setShowPopup(true);
+          } else {
+            // No invite → go straight to game
+            setIframeUrl(gameUrl);
+          }
+        });
+    }
   }, []);
   // no dependency on params so URL stays the same
 
@@ -178,7 +178,7 @@ const App = () => {
   }, [iframeUrl]);
 
   const handleAccept = () => {
-    if (pendingGameUrl) setIframeUrl(pendingGameUrl);
+    if (pendingGameUrl) { setIframeUrl(pendingGameUrl) };
     setShowPopup(false);
   };
 
@@ -233,7 +233,7 @@ const App = () => {
       <div className="relative z-0 w-full flex-1">
         <iframe
           id='subframe'
-          className="w-full h-full border-0 m-0 p-0"
+          className="w-full h-full border-0 m-0 md:py-0 py-6"
           src={iframeUrl}
           allow={`clipboard-write self ${iframeAllowed}`}
         ></iframe>

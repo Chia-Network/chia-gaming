@@ -1,20 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import {
-  Box,
-  Typography,
-  useMediaQuery,
-  useTheme,
-  Snackbar,
-  Slide,
-  IconButton,
-} from '@mui/material';
 import { Button } from '../../components/button';
-import CloseIcon from '@mui/icons-material/Close';
 
 import { CalpokerOutcome, OutcomeLogLine } from '../../types/ChiaGaming';
 import GameLog from '../../components/GameLog';
 import CaliforniaPoker from '../californiaPoker';
-import { Info, LogOut } from 'lucide-react';
+import { Info, LogOut, X } from 'lucide-react';
+import { Alert } from '../../components/ui/alert';
+import { cn } from '../../lib/utils';
 
 export interface CalpokerProps {
   outcome: CalpokerOutcome | undefined;
@@ -51,9 +43,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
   addressData,
   log,
 }) => {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-
   const myWinOutcome = outcome?.my_win_outcome;
 
   const iAmAlice = playerNumber === 2;
@@ -89,8 +78,14 @@ const Calpoker: React.FC<CalpokerProps> = ({
     setTimeout(() => setShowMoveToast(true), 120);
   };
 
-  const handleCloseMoveToast = (_: any, reason?: string) => {
-    if (reason === 'clickaway') return;
+  useEffect(() => {
+    if (!showMoveToast) return;
+
+    const timer = setTimeout(() => setShowMoveToast(false), 4500);
+    return () => clearTimeout(timer);
+  }, [showMoveToast, moveNumber]);
+
+  const handleCloseMoveToast = () => {
     setShowMoveToast(false);
   };
 
@@ -101,21 +96,15 @@ const Calpoker: React.FC<CalpokerProps> = ({
 
   return (
     <div
-      className='relative gap-4 flex min-h-screen w-full flex-col justify-center items-center bg-canvas-bg-subtle px-4 text-canvas-text sm:px-6 md:px-8'
+      className='relative gap-4 flex min-h-screen w-full flex-col justify-center items-center bg-canvas-bg-subtle px-4 py-4 text-canvas-text sm:px-6 md:px-8'
     >
       {/* Header */}
-      <div className='flex w-full flex-col items-center pt-4 justify-between gap-4 sm:flex-row sm:gap-6'>
-        <h1 className='w-full text-3xl font-bold text-canvas-text-contrast sm:text-left sm:text-4xl'>
+      <div className=' flex w-full flex-col items-center justify-between gap-4 sm:flex-row sm:gap-6'>
+        <h1 className='text-center text-3xl font-bold text-canvas-text-contrast sm:text-left sm:text-4xl'>
           California Poker
-        </Typography>
+        </h1>
 
-        <Box
-          display='flex'
-          alignItems='center'
-          justifyContent={{ xs: 'center', sm: 'flex-end' }}
-          gap={2}
-          mt={{ xs: 1, sm: 0 }}
-        >
+        <div className='flex flex-col items-center gap-2 sm:flex-row sm:justify-end'>
           {/* HINT button */}
           <Button
             onClick={handleHelpClick}
@@ -140,31 +129,14 @@ const Calpoker: React.FC<CalpokerProps> = ({
           >
             Leave Game
           </Button>
-        </Box>
-      </Box>
+        </div>
+      </div>
 
       {/* Main Game Layout */}
-      <Box
-        width='100%'
-        display='flex'
-        justifyContent='center'
-        sx={{
-          overflow: 'visible',
-          height: { md: 'calc(100vh - 150px)', xs: 'auto' },
-        }}
-      >
-        <Box
-          width='100%'
-          display='flex'
-          flexDirection={{ xs: 'column', md: 'row' }}
-          sx={{
-            gap: 2,
-            overflow: 'hidden',
-            height: { md: '100%', xs: 'auto' },
-          }}
-        >
+      <div className='flex w-full justify-center overflow-visible md:h-[calc(100vh-150px)]'>
+        <div className='flex w-full flex-col gap-2 overflow-hidden md:h-full md:min-h-0 md:flex-row'>
           {/* MAIN GAME AREA */}
-          <div className='flex-1 overflow-auto lg:flex-[18_1_0%] lg:min-h-0'>
+          <div className='flex-1 overflow-auto md:flex-[3_1_0%] md:min-h-0'>
             <CaliforniaPoker
               playerNumber={playerNumber}
               isPlayerTurn={isPlayerTurn}
@@ -181,58 +153,47 @@ const Calpoker: React.FC<CalpokerProps> = ({
               banner={banner}
               balanceDisplay={balanceDisplay}
             />
-          </Box>
+          </div>
 
           {/* GAME LOG */}
-          <div className='bg-canvas-bg lg:flex-[7_1_0%] lg:min-h-0 lg:overflow-y-auto'>
+          <div className='bg-canvas-bg md:flex-[1_1_0%] md:min-h-0 md:overflow-y-auto'>
             <div className='h-full'>
               <GameLog log={log} />
-            </Box>
-          </Box>
-        </Box>
-      </Box>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Move Description Toast */}
-      <Snackbar
-        key={`move-toast-${moveNumber}`}
-        open={showMoveToast}
-        onClose={handleCloseMoveToast}
-        autoHideDuration={4500}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        TransitionComponent={(props) => <Slide {...props} direction='down' />}
-        message={moveDescription}
-        ContentProps={{
-          sx: {
-            backgroundColor: 'var(--canvas-bg-subtle)',
-            color: 'var(--canvas-text-contrast)',
-            borderRadius: '12px',
-            px: 3,
-            py: 1.5,
-            border: '1px solid var(--canvas-line)',
-            fontWeight: 600,
-          },
-        }}
-        action={
-          <IconButton
-            size='small'
-            aria-label='close'
-            color='inherit'
-            onClick={() => setShowMoveToast(false)}
-            sx={{ color: 'var(--canvas-text)' }}
+      <div
+        className={cn(
+          'pointer-events-none fixed inset-x-0 top-6 z-50 flex justify-center px-4 transition-all duration-300 ease-out',
+          showMoveToast
+            ? 'pointer-events-auto translate-y-0 opacity-100'
+            : '-translate-y-4 opacity-0',
+        )}
+      >
+        <Alert className='flex items-center gap-3 rounded-2xl border border-canvas-line bg-canvas-bg-subtle px-5 py-3 font-semibold text-canvas-text-contrast shadow-lg'>
+          <span>{moveDescription}</span>
+          <button
+            type='button'
+            aria-label='close move description'
+            className='ml-2 rounded-full p-1 text-canvas-text transition hover:bg-canvas-bg)]'
+            onClick={handleCloseMoveToast}
           >
-            <CloseIcon fontSize='small' />
-          </IconButton>
-        }
-      />
+            <X className='h-4 w-4' />
+          </button>
+        </Alert>
+      </div>
 
       {/* Hidden blockchain address */}
-      <Box
+      <div
         id='blockchain-address'
-        sx={{ position: 'absolute', width: 0, height: 0, opacity: 0 }}
+        className='absolute h-0 w-0 opacity-0'
       >
         {JSON.stringify(addressData)}
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 };
 
