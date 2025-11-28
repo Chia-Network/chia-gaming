@@ -21,7 +21,7 @@ export default function ActiveRooms({
   getPlayerAlias,
 }: ActiveRoomsProps) {
   return (
-    <div className='flex w-full md:w-2/3 pr-0 h-full'>
+    <div className='flex w-full lg:w-2/3 pr-0 h-full'>
       {/* Card */}
       <div className='bg-canvas-bg w-full rounded-l-xl h-full shadow-none border-none'>
         <div className='h-full pb-24 flex flex-col'>

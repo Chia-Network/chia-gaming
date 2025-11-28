@@ -11,14 +11,13 @@ import { Button } from '../../components/button';
 // Constants
 import {
   ANIMATION_DELAY,
-  BUTTON_ACTIVE,
-  BUTTON_BASE,
   GAME_STATES,
   SWAP_ANIMATION_DURATION,
 } from './constants/constants';
 
 // Utils
 import {
+  calculateMovingCards,
   compareRanks,
   evaluateHand,
   formatHandDescription,
@@ -29,6 +28,8 @@ import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 
 import { WalletIcon } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/src/components/ui/card';
+import GameBottomBar from './components/GameBottomBar';
+
 
 // Main Component
 const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
@@ -56,15 +57,21 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     4: '♣',
   };
 
-  const color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome
-    ? myWinOutcome
-    : isPlayerTurn
-      ? 'success'
-      : 'warning';
   const [, playerBalance, opponentBalance] =
     balanceDisplay.match(/(\d+)\s*vs\s*(\d+)/i) || [];
   const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);
   const [opponentCards, setOpponentCards] = useState<CardValueSuit[]>([]);
+  // const [opponentCards, setAiHand] = useState<CardValueSuit[]>([]);
+  const [playerSelected, setPlayerSelected] = useState<number[]>([]);
+  const [winner, setWinner] = useState<string | null>(null);
+  const [playerBestHand, setPlayerBestHand] = useState<BestHandType | undefined>();
+  const [aiBestHand, setAiBestHand] = useState<BestHandType | undefined>();
+  const [swappingCards, setSwappingCards] = useState<SwappingCards>({
+    player: [],
+    ai: [],
+  });
+  const [showSwapAnimation, setShowSwapAnimation] = useState(false);
+  const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
 
   useEffect(() => {
     swapCards();
@@ -90,19 +97,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setOpponentCards(mappedOpponent);
   }, [playerHand, opponentHand]);
 
-  // const [opponentCards, setAiHand] = useState<CardValueSuit[]>([]);
-  const [playerSelected, setPlayerSelected] = useState<number[]>([]);
-  const [winner, setWinner] = useState<string | null>(null);
-  const [playerBestHand, setPlayerBestHand] = useState<
-    BestHandType | undefined
-  >();
-  const [aiBestHand, setAiBestHand] = useState<BestHandType | undefined>();
-  const [swappingCards, setSwappingCards] = useState<SwappingCards>({
-    player: [],
-    ai: [],
-  });
-  const [showSwapAnimation, setShowSwapAnimation] = useState(false);
-  const [movingCards, setMovingCards] = useState<MovingCardData[]>([]);
 
   const dealCards = () => {
     setGameState(GAME_STATES.SELECTING);
@@ -177,82 +171,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     const moveData = '80';
 
     handleMakeMove(moveData);
-  };
-  const calculateMovingCards = (
-    playerSwapIndices: number[],
-    aiSwapIndices: number[],
-    playerNumber: number,
-    playerCards: CardValueSuit[],
-    opponentCards: CardValueSuit[],
-  ): MovingCardData[] => {
-    const movingCardData: MovingCardData[] = [];
-    const isPlayerAlice = playerNumber === 1;
-
-    // Prefixes for DOM selectors (myPrefix = viewer's hand in DOM)
-    const myPrefix = isPlayerAlice ? 'player' : 'ai';
-    const oppPrefix = isPlayerAlice ? 'ai' : 'player';
-
-    // If one side swapped more cards, handle each side independently
-    // Player -> Opponent animations
-    playerSwapIndices.forEach((swapIndex, i) => {
-      // Choose a target ai index — prefer aligned index if exists, otherwise reuse swapIndex
-      const aiIndex = aiSwapIndices[i] ?? swapIndex;
-
-      const mySource = document.querySelector(
-        `[data-card-id="${myPrefix}-${swapIndex}"]`,
-      );
-      const oppTarget = document.querySelector(
-        `[data-card-id="${oppPrefix}-${aiIndex}"]`,
-      );
-
-      if (mySource && oppTarget) {
-        const myRect = (mySource as Element).getBoundingClientRect();
-        const oppRect = (oppTarget as Element).getBoundingClientRect();
-
-        movingCardData.push({
-          id: `${myPrefix}-to-${oppPrefix}-${swapIndex}`,
-          card: playerCards[swapIndex],
-          startX: myRect.left,
-          startY: myRect.top,
-          endX: oppRect.left,
-          endY: oppRect.top,
-          width: myRect.width,
-          height: myRect.height,
-          direction: isPlayerAlice ? 'playerToAi' : 'aiToPlayer',
-        });
-      }
-    });
-
-    // Opponent -> Player animations
-    aiSwapIndices.forEach((swapIndex, i) => {
-      const playerIndex = playerSwapIndices[i] ?? swapIndex;
-
-      const oppSource = document.querySelector(
-        `[data-card-id="${oppPrefix}-${swapIndex}"]`,
-      );
-      const myTarget = document.querySelector(
-        `[data-card-id="${myPrefix}-${playerIndex}"]`,
-      );
-
-      if (oppSource && myTarget) {
-        const oppRect = (oppSource as Element).getBoundingClientRect();
-        const myRect = (myTarget as Element).getBoundingClientRect();
-
-        movingCardData.push({
-          id: `${oppPrefix}-to-${myPrefix}-${swapIndex}`,
-          card: opponentCards[swapIndex],
-          startX: oppRect.left,
-          startY: oppRect.top,
-          endX: myRect.left,
-          endY: myRect.top,
-          width: oppRect.width,
-          height: oppRect.height,
-          direction: isPlayerAlice ? 'aiToPlayer' : 'playerToAi',
-        });
-      }
-    });
-
-    return movingCardData;
   };
 
   const swapCards = () => {
@@ -396,18 +314,17 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
         {gameState !== GAME_STATES.INITIAL && (
           <div className='flex flex-col gap-4 h-full flex-1 min-h-0'>
             {/* OPPONENT PANEL */}
-            <Card className='flex flex-col min-h-[260px] w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
+            <Card className='flex flex-col py-0 min-h-[260px] w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
               {/* Make Card relative so absolute div is positioned relative to it */}
-              <div className='w-full flex justify-end'>
-
-                <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
-                  <WalletIcon size='19.6px' />
-                  <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{opponentBalance}</span>
+              <CardHeader className='relative p-0 w-full flex justify-center items-center'>
+                <CardTitle className='w-full pl-4'>Opponent Hand</CardTitle>
+                <div className='w-full flex justify-end'>
+                  <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
+                    <WalletIcon size='19.6px' />
+                    <span className='ml-2 font-bold text-sm text-canvas-text-contrast'>{playerBalance}</span>
+                  </div>
                 </div>
-              </div>
 
-              <CardHeader className='w-full flex justify-center items-center'>
-                <CardTitle>Opponent Hand</CardTitle>
               </CardHeader>
 
               <CardContent className='flex flex-1 items-center justify-center p-2 min-h-0'>
@@ -431,8 +348,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
             {/* PLAYER PANEL */}
             <Card className='flex flex-col py-0 w-full flex-1 lg:flex-[0_0_43%] border border-canvas-line shadow-md overflow-hidden'>
-              <CardHeader className='relative w-full flex justify-center items-center'>
-                <CardTitle>Your Hand</CardTitle>
+              <CardHeader className='relative p-0 w-full flex justify-center items-center'>
+                <CardTitle className='w-full pl-4'>Your Hand</CardTitle>
                 <div className='w-full flex justify-end'>
                   <div className=' flex items-center border border-canvas-line rounded-tr-md rounded-bl-md px-2 py-1 shadow-sm bg-canvas-bg'>
                     <WalletIcon size='19.6px' />
@@ -463,29 +380,17 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
             {/* ACTION BAR */}
 
-            <div className='flex rounded-lg flex-col md:flex-row bg-canvas-bg shadow-md border border-canvas-line md:flex-[0_0_10%]'>
-              <div className='flex flex-1 p-4 md:p-0 items-center justify-center'>
-                <span className={`font-bold text-xl ${isPlayerTurn ? 'text-success-text' : 'text-alert-text'}`}>
-                  {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
-                </span>
-              </div>
+            <GameBottomBar
+              isPlayerTurn={isPlayerTurn}
+              gameState={gameState}
+              buttonText={buttonText}
+              moveNumber={moveNumber}
+              isDisabled={isDisabled}
+              NewGame={NewGame}
+              doHandleMakeMove={doHandleMakeMove}
+              GAME_STATES={GAME_STATES}
+            />
 
-              <div className='flex w-full flex-1 h-full items-center justify-center bg-transparent'>
-                {gameState === GAME_STATES.FINAL ? (
-                  <Button variant='solid' color='primary' onClick={NewGame} disabled={!isPlayerTurn} className='h-full w-full p-4 md:p-0'>
-                    {isPlayerTurn ? 'Start New Game' : 'Opponent to Start...'}
-                  </Button>
-                ) : (
-                  <Button variant='solid' color='primary' onClick={doHandleMakeMove} disabled={isDisabled} className='h-full w-full p-4 md:p-0'>
-                    {buttonText}
-                  </Button>
-                )}
-              </div>
-
-              <div className='flex flex-1 items-center justify-center p-4 md:p-0'>
-                <span className='font-bold text-xl text-canvas-solid'>Move {moveNumber}</span>
-              </div>
-            </div>
           </div>
         )}
       </div>
