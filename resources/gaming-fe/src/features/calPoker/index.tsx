@@ -100,18 +100,18 @@ const Calpoker: React.FC<CalpokerProps> = ({
     >
       {/* Header */}
       <div className=' flex w-full flex-col items-center justify-between gap-4 sm:flex-row sm:gap-6'>
-        <h1 className='text-center text-3xl font-bold text-canvas-text-contrast sm:text-left sm:text-4xl'>
+        <h1 className='w-full text-3xl font-bold text-canvas-text-contrast sm:text-left sm:text-4xl'>
           California Poker
         </h1>
 
-        <div className='flex flex-col items-center gap-2 sm:flex-row sm:justify-end'>
+        <div className='flex w-full items-center gap-2 flex-row justify-end'>
           {/* HINT button */}
           <Button
             onClick={handleHelpClick}
             color={'neutral'}
             variant={'outline'}
             size={'sm'}
-            leadingIcon={<Info size={'16px'} />}
+            leadingIcon={<Info size={'20px'} />}
           >
             Hint
           </Button>
@@ -125,18 +125,17 @@ const Calpoker: React.FC<CalpokerProps> = ({
             size={'sm'}
             disabled={moveNumber !== 0}
             leadingIcon={<LogOut />}
-            fullWidth
           >
-            Leave Game
+            End Session
           </Button>
         </div>
       </div>
 
       {/* Main Game Layout */}
-      <div className='flex w-full justify-center overflow-visible md:h-[calc(100vh-150px)]'>
-        <div className='flex w-full flex-col gap-2 overflow-hidden md:h-full md:min-h-0 md:flex-row'>
+      <div className='flex w-full justify-center overflow-visible lg:h-[calc(100vh-100px)]'>
+        <div className='flex w-full flex-col gap-2 overflow-hidden lg:h-full lg:min-h-0 lg:flex-row'>
           {/* MAIN GAME AREA */}
-          <div className='flex-1 overflow-auto md:flex-[3_1_0%] md:min-h-0'>
+          <div className='flex-1 overflow-auto lg:flex-[3_1_0%] lg:min-h-0'>
             <CaliforniaPoker
               playerNumber={playerNumber}
               isPlayerTurn={isPlayerTurn}
@@ -156,7 +155,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
           </div>
 
           {/* GAME LOG */}
-          <div className='bg-canvas-bg md:flex-[1_1_0%] md:min-h-0 md:overflow-y-auto'>
+          <div className='bg-canvas-bg lg:flex-[1_1_0%] lg:min-h-0 lg:overflow-y-auto'>
             <div className='h-full'>
               <GameLog log={log} />
             </div>
@@ -167,10 +166,10 @@ const Calpoker: React.FC<CalpokerProps> = ({
       {/* Move Description Toast */}
       <div
         className={cn(
-          'pointer-events-none fixed inset-x-0 top-6 z-50 flex justify-center px-4 transition-all duration-300 ease-out',
+          'pointer-events-none fixed top-6 left-1/2 -translate-x-1/2 z-50 flex justify-center px-4 transition-all duration-300 ease-out',
           showMoveToast
             ? 'pointer-events-auto translate-y-0 opacity-100'
-            : '-translate-y-4 opacity-0',
+            : '-translate-y-4 opacity-0'
         )}
       >
         <Alert className='flex items-center gap-3 rounded-2xl border border-canvas-line bg-canvas-bg-subtle px-5 py-3 font-semibold text-canvas-text-contrast shadow-lg'>
@@ -178,13 +177,14 @@ const Calpoker: React.FC<CalpokerProps> = ({
           <button
             type='button'
             aria-label='close move description'
-            className='ml-2 rounded-full p-1 text-canvas-text transition hover:bg-canvas-bg)]'
+            className='ml-2 rounded-full p-1 text-canvas-text transition hover:bg-canvas-bg'
             onClick={handleCloseMoveToast}
           >
             <X className='h-4 w-4' />
           </button>
         </Alert>
       </div>
+
 
       {/* Hidden blockchain address */}
       <div

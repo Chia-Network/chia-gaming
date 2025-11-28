@@ -11,14 +11,13 @@ import { Button, } from '../../components/button';
 // Constants
 import {
   ANIMATION_DELAY,
-  BUTTON_ACTIVE,
-  BUTTON_BASE,
   GAME_STATES,
   SWAP_ANIMATION_DURATION,
 } from './constants/constants';
 
 // Utils
 import {
+  calculateMovingCards,
   compareRanks,
   evaluateHand,
   formatHandDescription,
@@ -37,6 +36,8 @@ function translateTopline(topline: string | undefined): string | null {
   const res = { 'win': 'player', 'lose': 'ai' }[topline];
   return res ? res : 'tie';
 }
+import GameBottomBar from './components/GameBottomBar';
+
 
 // Main Component
 const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
@@ -65,11 +66,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     4: '♣',
   };
 
-  const color: 'success' | 'warning' | 'win' | 'lose' | 'tie' = myWinOutcome
-    ? myWinOutcome
-    : isPlayerTurn
-      ? 'success'
-      : 'warning';
   const [, playerBalance, opponentBalance] =
     balanceDisplay.match(/(\d+)\s*vs\s*(\d+)/i) || [];
   const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);

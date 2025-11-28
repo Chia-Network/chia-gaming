@@ -340,9 +340,9 @@ html, body {
 
 /* Component-level flip styles for HandDisplay (processed by Tailwind) */
 @layer components {
-  * {
+  /* * {
     @apply border-canvas-line shadow-[0_0_0_2px_rgba(147,197,253,0.5)];
-  }
+  } */
   
   
   body {
@@ -390,5 +390,11 @@ html, body {
 		transform: rotateY(180deg);
 	}
 }
-
+@layer utilities {
+  @media (max-width: 366px) {
+    .grid-cols-2-xs {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+}
 

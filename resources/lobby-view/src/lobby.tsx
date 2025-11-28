@@ -277,7 +277,7 @@ const LobbyScreen = () => {
         {/* Connected Players */}
         <div
           ref={rightColumnRef}
-          className='flex w-full md:w-1/3 flex-col min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl'
+          className='flex w-full lg:w-1/3 flex-col min-w-0 h-full md:border-l border-canvas-border rounded-tr-2xl'
         >
           <ConnectedPlayers
             splitPct={splitPct}
