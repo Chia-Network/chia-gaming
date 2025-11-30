@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import { getSearchParams } from '../util';
 import io, { Socket } from 'socket.io-client';
 
@@ -31,7 +32,6 @@ export interface GameSocketReturn {
   wagerAmount: string;
   setWagerAmount: (value: string) => void;
   opponentWager: string;
-  log: string[];
   playerHand: string[];
   opponentHand: string[];
   playerCoins: number;
@@ -39,15 +39,17 @@ export interface GameSocketReturn {
   opponentCoins: number;
   isPlayerTurn: boolean;
   playerNumber: number;
+  hostLog: (msg: string) => void;
 }
 
 export const getGameSocket = (
+  searchParams: any,
   lobbyUrl: string,
   deliverMessage: (m: string) => void,
   setSocketEnabled: (saves: string[]) => void,
-  saves: string[],
+  saves: () => string[],
 ): GameSocketReturn => {
-  const searchParams = getSearchParams();
+  console.log('gameSocket: lobbyUrl', lobbyUrl);
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
 
@@ -57,7 +59,6 @@ export const getGameSocket = (
   let gameState: GameState = 'idle';
   let wagerAmount = '';
   let opponentWager = '';
-  let log: string[] = [];
   let playerHand: string[] = [];
   let opponentHand: string[] = [];
   let playerCoins = 100;
@@ -66,56 +67,68 @@ export const getGameSocket = (
   let isPlayerTurn = false;
   let playerNumber = 0;
 
-  const eff = () => {
-    let fullyConnected = false;
-    if (!socketRef) {
-      const socketResult: any = io(lobbyUrl);
-      socketRef = socketResult;
-    }
-    const socket = socketRef;
+  let fullyConnected = false;
+  const socketResult: any = io(lobbyUrl);
+  socketRef = socketResult;
+  const socket = socketRef;
 
-    const handleWaiting = () => {
-      gameState = 'searching';
-    };
-
-    socket?.on('waiting', handleWaiting);
-
-    // Try to get through a 'peer' message until we succeed.
-    const beacon = setInterval(() => {
-      socketRef?.emit('peer', { iStarted, saves });
-    }, 500);
-
-    // When we receive a message from our peer, we know we're connected.
-    socket?.on('peer', (msg) => {
-      if (msg.iStarted != iStarted) {
-        if (!fullyConnected) {
-          // If they haven't seen our message yet, we know we're connected so
-          // we can send a ping to them now.
-          fullyConnected = true;
-          clearInterval(beacon);
-          setSocketEnabled(msg.saves);
-        }
-        console.log(iStarted, 'sending saves to peeer', saves);
-        socketRef?.emit('peer', { iStarted, saves });
-      }
-    });
-
-    socket?.on('game_message', (input: SendMessageInput) => {
-      console.log('raw message', input);
-      if (input.token !== token || input.party === iStarted) {
-        return;
-      }
-
-      console.log('got remote message', input.msg);
-      deliverMessage(input.msg);
-    });
-
-    return () => {
-      socket?.off('game_message', handleWaiting);
-    };
+  const hostLog = (msg: string) => {
+    console.log('hostLog', msg);
+    socket?.emit('log', msg);
   };
 
-  eff();
+  const handleWaiting = () => {
+    gameState = 'searching';
+  };
+
+  socket?.on('waiting', handleWaiting);
+
+  // Try to get through a 'peer' message until we succeed.
+  const beaconId = uuidv4();
+  let receivedBeaconId: string | undefined = undefined;
+  const beacon = setInterval(() => {
+    hostLog(`sending peer msg ${iStarted} ${beaconId}`);
+    socketRef?.emit('peer', { iStarted, beaconId });
+  }, 500);
+
+  // When we receive a message from our peer, we know we're connected.
+  socket?.on('peer', (msg) => {
+    if (msg.iStarted == iStarted) {
+      return;
+    }
+
+    hostLog(`${iStarted} got peer msg ${JSON.stringify(msg)}`);
+
+    if (!fullyConnected) {
+      // If they haven't seen our message yet, we know we're connected so
+      // we can send a ping to them now.
+      hostLog(`${iStarted} fullyConnected`);
+      fullyConnected = true;
+      clearInterval(beacon);
+    }
+    if (msg.beaconId != receivedBeaconId) {
+      receivedBeaconId = msg.beaconId;
+      hostLog(`${iStarted} new beacon id from ${receivedBeaconId}`);
+      socketRef?.emit('peer', { iStarted, beaconId });
+      socketRef?.emit('saves', { iStarted, saves: saves() });
+    }
+  });
+
+  socket?.on('saves', (msg) => {
+    if (msg.iStarted != iStarted) {
+      setSocketEnabled(msg.saves);
+    }
+  });
+
+  socket?.on('game_message', (input: SendMessageInput) => {
+    console.log('raw message', input);
+    if (input.token !== token || input.party === iStarted) {
+      return;
+    }
+
+    console.log('got remote message', input.msg);
+    deliverMessage(input.msg);
+  });
 
   const sendMessage = (msg: string) => {
     socketRef?.emit('game_message', {
@@ -139,7 +152,6 @@ export const getGameSocket = (
     wagerAmount,
     setWagerAmount,
     opponentWager,
-    log,
     playerHand,
     opponentHand,
     playerCoins,
@@ -147,5 +159,6 @@ export const getGameSocket = (
     opponentCoins,
     isPlayerTurn,
     playerNumber,
+    hostLog,
   };
 };

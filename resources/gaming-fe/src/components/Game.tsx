@@ -10,11 +10,12 @@ import GameLog from './GameLog';
 import { useEffect } from 'react';
 import installThemeSyncListener from '../utils/themeSyncListener';
 
+export interface GameParams {
+  params: any;
+}
 
-
-const Game = () => {
+const Game: React.FC<GameParams> = ({ params }) => {
   const uniqueId = generateOrRetrieveUniqueId();
-  const params = getSearchParams();
   const {
     error,
     log,
@@ -34,7 +35,7 @@ const Game = () => {
     outcome,
     lastOutcome,
     stopPlaying,
-  } = useWasmBlob(params.lobbyUrl, uniqueId);
+  } = useWasmBlob(params, params.lobbyUrl, uniqueId);
 
   // All early returns need to be after all useEffect, etc.
   useEffect(() => {

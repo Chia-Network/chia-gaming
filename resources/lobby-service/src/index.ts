@@ -213,6 +213,11 @@ io.on('connection', (socket) => {
     io.emit('lobby_update', lobby.getPlayers());
   });
 
+  socket.on('log', msg => {
+    const time = new Date().getTime();
+    console.log(time, 'log', msg);
+  });
+
   socket.on('leave', ({ id }) => {
     leaveLobby(id);
   });
@@ -223,12 +228,18 @@ io.on('connection', (socket) => {
 
   // Game socket messages.
   socket.on('game_message', ({ party, token, msg }) => {
+    console.log('game_message', party, token, msg);
     io.emit('game_message', { party, token, msg });
   });
 
-  socket.on('peer', ({ iStarted, saves }) => {
-    console.log('peer', iStarted, saves);
-    io.emit('peer', { iStarted, saves });
+  socket.on('saves', ({ iStarted, saves }) => {
+    console.log('saves', iStarted, saves);
+    io.emit('saves', { iStarted, saves });
+  });
+
+  socket.on('peer', ({ iStarted, beaconId }) => {
+    console.log('peer', iStarted, beaconId);
+    io.emit('peer', { iStarted, beaconId });
   });
 });
 
