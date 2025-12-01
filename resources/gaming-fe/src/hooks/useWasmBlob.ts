@@ -188,21 +188,20 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   const blockchain = new ChildFrameBlockchainInterface();
 
-  const gameObject = uniqueId
-    ? getBlobSingleton(
-        blockchain,
-      searchParams,
-        lobbyUrl,
-        uniqueId,
-        amount,
-        perGameAmount,
-        iStarted,
-        setState,
-      )
-    : null;
+  const { gameObject, hostLog } = getBlobSingleton(
+    blockchain,
+    searchParams,
+    lobbyUrl,
+    uniqueId,
+    amount,
+    perGameAmount,
+    iStarted,
+    setState,
+  );
 
   const setCardSelections = useCallback(
     (mask: number) => {
+      hostLog(`${iStarted} setCardSelections ${mask}`);
       gameObject?.setCardSelections(mask);
     },
     [gameObject],
@@ -225,6 +224,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   });
 
   const handleMakeMove = useCallback((move: any) => {
+    hostLog(`${iStarted} handleMakeMove ${move}`);
     gameObject?.makeMove(move);
   }, []);
 
@@ -250,7 +250,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       subscription.unsubscribe();
     }
   });
-
 
   // Called once at an arbitrary time.
   (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {

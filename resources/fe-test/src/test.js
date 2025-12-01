@@ -346,8 +346,8 @@ async function reloadBrowser(driver, selectWallet) {
 // Define a category of tests using test framework, in this case Jasmine
 describe("Out of money test", function () {
   const baseUrl = "http://localhost:3000";
-  const driver = driver1;
-  const ffdriver = driver2;
+  const driver = driver2;
+  const ffdriver = driver1;
 
   async function testOneGameEconomicResult(selectWallet) {
     // Load the login page
@@ -553,8 +553,11 @@ describe("Out of money test", function () {
     console.log("wait for alice make move button");
     await clickMakeMove(driver, "alice", "Start Game");
 
+    console.log('wait before reloading');
     await wait(driver, 10.0);
-    await reloadBrowser(ffdriver, selectWallet);
+    await reloadBrowser(driver, selectWallet);
+    console.log('wait after reloading');
+    await wait(driver, 10.0);
 
     await clickFourCards(ffdriver, 'bob', 0xaa);
 

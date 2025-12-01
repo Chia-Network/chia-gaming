@@ -77,8 +77,11 @@ export async function deserializeGameObject(
   log(`${iStarted} deserializeGameObject has new cradle`);
   gameObject.setGameCradle(cradle);
   log(`${iStarted} deserializeGameObject deserialized cradle`);
+  gameObject.takeWrapperSerialization(serializedGame.wrapper);
   return gameObject;
 }
+
+let hostLog: (msg: string) => void = (msg) => {};
 
 export function getBlobSingleton(
   blockchain: InternalBlockchainInterface,
@@ -91,7 +94,7 @@ export function getBlobSingleton(
   setUIState: (state: any) => void,
 ) {
   if (blobSingleton) {
-    return blobSingleton;
+    return { gameObject: blobSingleton, hostLog };
   }
 
   const doInternalLoadWasm = async () => {
@@ -107,6 +110,7 @@ export function getBlobSingleton(
     blobSingleton?.deliverMessage(msg);
   };
 
+  let signaledSave: string | undefined = undefined;
   console.log('getGameSocket');
   const peerconn = getGameSocket(
     searchParams,
@@ -116,9 +120,9 @@ export function getBlobSingleton(
       peerconn.hostLog(`${iStarted} peer saves ${saves}`);
       const systemState = blobSingleton.systemState();
       const handleMatchingSave = async (matchingSave: string) => {
+        blobSingleton?.setReloading();
         peerconn.hostLog(`${iStarted} peer has matching save ${matchingSave}`);
         const loadedSave = loadSave(matchingSave);
-        setUIState(loadedSave.ui);
         await deserializeGameObject(
           peerconn.hostLog,
           blobSingleton,
@@ -128,19 +132,33 @@ export function getBlobSingleton(
           loadedSave.game,
           loadedSave.addressData
         );
+        setUIState(loadedSave.ui);
+        peerconn.hostLog(`${iStarted} do idle after load`);
+        blobSingleton?.idle();
       };
       const newSession = async () => {
         peerconn.hostLog(`${iStarted} new session`);
         startNewSession();
         let calpokerHex = await loadCalpoker(fetchHex);
-        await configGameObject(blobSingleton, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
+        await configGameObject(
+          blobSingleton,
+          iStarted,
+          wasmStateInit,
+          calpokerHex,
+          blockchain,
+          uniqueId,
+          amount
+        );
       };
       const matchingSave = findMatchingGame(saves);
       const wasmStateInit = new WasmStateInit(doInternalLoadWasm, fetchHex);
 
       blobSingleton.kickSystem(2);
       if (matchingSave) {
-        handleMatchingSave(matchingSave);
+        if (matchingSave != signaledSave) {
+          signaledSave = matchingSave;
+          handleMatchingSave(matchingSave);
+        }
         return;
       }
 
@@ -155,6 +173,7 @@ export function getBlobSingleton(
 
   peerconn.hostLog(`${iStarted} constructing wasm blob wrapper`);
 
+  hostLog = peerconn.hostLog;
   blobSingleton = new WasmBlobWrapper(
     blockchain,
     uniqueId,
@@ -168,5 +187,5 @@ export function getBlobSingleton(
 
   setupBlockchainConnection(uniqueId);
 
-  return blobSingleton;
+  return { gameObject: blobSingleton, hostLog };
 }

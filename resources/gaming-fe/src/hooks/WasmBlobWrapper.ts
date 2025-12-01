@@ -1,9 +1,8 @@
-import { Observable, NextObserver } from 'rxjs';
+import { Subject, NextObserver } from 'rxjs';
 
 import {
   PeerConnectionResult,
   WasmConnection,
-  IChiaIdentity,
   ChiaGame,
   CalpokerOutcome,
   WatchReport,
@@ -35,12 +34,9 @@ export class WasmBlobWrapper {
   amount: number;
   wc: WasmConnection | undefined;
   sendMessage: (msg: string) => void;
-  rngSeed: string;
-  rngId: number | undefined;
-  identity: IChiaIdentity | undefined;
+  hostLog: (msg: string) => void;
   cradle: ChiaGame | undefined;
   uniqueId: string;
-  calpokerHex: string | undefined;
   handshakeDone: boolean;
   handlingMessage: boolean;
   currentBlock: number;
@@ -57,11 +53,12 @@ export class WasmBlobWrapper {
   opponentHand: number[][];
   shutdownCalled: boolean;
   finished: boolean;
+  reloading: boolean;
   perGameAmount: number;
   gameOutcome: CalpokerOutcome | undefined;
   fetchHex: (path: string) => Promise<string>;
   doInternalLoadWasm: () => Promise<ArrayBuffer>;
-  rxjsMessageSingleon: Observable<any>;
+  rxjsMessageSingleton: Subject<any>;
   rxjsEmitter: NextObserver<any> | undefined;
   blockchain: InternalBlockchainInterface;
   currentSave: string | undefined;
@@ -76,11 +73,11 @@ export class WasmBlobWrapper {
     fetchHex: (key: string) => Promise<string>,
     peer_conn: PeerConnectionResult,
   ) {
-    const { sendMessage } = peer_conn;
+    const { hostLog, sendMessage } = peer_conn;
     this.uniqueId = uniqueId;
-    this.rngSeed = this.uniqueId.substr(0, 8);
-    this.rngId = undefined;
+
     this.sendMessage = sendMessage;
+    this.hostLog = hostLog;
     this.amount = amount;
     this.currentBlock = 0;
     this.handlingMessage = false;
@@ -96,15 +93,17 @@ export class WasmBlobWrapper {
     this.opponentHand = [];
     this.shutdownCalled = false;
     this.finished = false;
+    this.reloading = false;
     this.perGameAmount = perGameAmount;
     this.qualifyingEvents = 0;
     this.fetchHex = fetchHex;
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.blockchain = blockchain;
-    this.rxjsMessageSingleon = new Observable<any>((emitter) => {
-      this.rxjsEmitter = emitter;
-    });
+    this.rxjsMessageSingleton = new Subject<any>();
+    this.rxjsEmitter = this.rxjsMessageSingleton;
   }
+
+  setReloading() { this.reloading = true; }
 
   systemState(): number { return this.qualifyingEvents; }
 
@@ -118,8 +117,8 @@ export class WasmBlobWrapper {
   }
 
   spillStoredMessages() {
-    if (this.qualifyingEvents != 15 || !this.cradle) {
-      return
+    if (this.qualifyingEvents != 15 || !this.cradle || this.reloading) {
+      return;
     }
     const storedMessages = this.storedMessages;
     this.storedMessages = [];
@@ -151,7 +150,7 @@ export class WasmBlobWrapper {
   }
 
   getObservable() {
-    return this.rxjsMessageSingleon;
+    return this.rxjsMessageSingleton;
   }
 
   kickSystem(flags: number) {
@@ -346,7 +345,7 @@ export class WasmBlobWrapper {
 
   internalDeliverMessage(msg: string): any {
     if (!this.wc) { throw new Error("this.wc is falsey") }
-    if (!this.cradle || this.qualifyingEvents != 15) {
+    if (!this.cradle || this.qualifyingEvents != 15 || this.reloading) {
       this.storedMessages.push(msg);
       return empty();
     }
@@ -383,8 +382,40 @@ export class WasmBlobWrapper {
   idle(): any {
     const result: any = {};
 
+    this.reloading = false;
+    this.spillStoredMessages();
+
     result.setOurShare = this.cradle?.our_share()?.amt;
     result.setTheirShare = this.cradle?.their_share()?.amt;
+
+    // Create the save before we do any post-action items such as
+    // sending packets so we can send them again when we deserialize.
+    const newGameId = this.cradle?.get_game_state_id();
+    if (newGameId !== this.currentSave) {
+      this.currentSave = newGameId;
+      const saveData = this.cradle?.serialize();
+      saveData.id = newGameId;
+      saveData.wrapper = {
+        uniqueId: this.uniqueId,
+        handshakeDone: this.handshakeDone,
+        currentBlock: this.currentBlock,
+        iStarted: this.iStarted,
+        gameIds: this.gameIds,
+        storedMessages: this.storedMessages,
+        myTurn: this.myTurn,
+        moveNumber: this.moveNumber,
+        qualifyingEvents: this.qualifyingEvents,
+        cardSelections: this.cardSelections,
+        playerHand: this.playerHand,
+        opponentHand: this.opponentHand,
+        shutdownCalled: this.shutdownCalled,
+        finished: this.finished,
+        perGameAmount: this.perGameAmount,
+        gameOutcome: this.gameOutcome,
+      };
+      this.hostLog(`${this.iStarted} setting saved game ${newGameId}`);
+      result.setSavedGame = saveData;
+    }
 
     const idle = this.cradle?.idle({
       // Local ui callbacks.
@@ -505,20 +536,20 @@ export class WasmBlobWrapper {
       });
     }
 
-    const newGameId = this.cradle?.get_game_state_id();
-    if (newGameId !== this.currentSave) {
-      this.currentSave = newGameId;
-      const saveData = this.cradle?.serialize();
-      saveData.id = newGameId;
-      result.setSavedGame = saveData;
-    }
-
     this.rxjsEmitter?.next({
       setOurShare: this.cradle?.our_share()?.amt,
       setTheirShare: this.cradle?.their_share()?.amt
     });
 
     return result;
+  }
+
+  takeWrapperSerialization(wrapper: any) {
+    const keys = Object.keys(wrapper);
+    this.hostLog(`${this.iStarted} setting wrapper keys ${keys}`);
+    keys.forEach((k) => {
+      (this as any)[k] = wrapper[k];
+    });
   }
 
   generateEntropy() {
@@ -537,11 +568,14 @@ export class WasmBlobWrapper {
     return this.handshakeDone;
   }
 
-  internalMakeMove(_move: any): any {
+  internalMakeMove(move: any): any {
+    this.hostLog(`${this.iStarted} internalMakeMove ${move}`);
     if (!this.handshakeDone || !this.wc || !this.cradle) {
+      this.hostLog(`${this.iStarted} internalMakeMove leave early due to !${this.handshakeDone} || !${this.wc} || $(this.cradle}`);
       return empty();
     }
 
+    this.hostLog(`${this.iStarted} move number ${this.moveNumber}`);
     if (this.moveNumber === 0) {
       const entropy = this.generateEntropy();
       console.log('move 0 with entropy', entropy);
@@ -587,6 +621,7 @@ export class WasmBlobWrapper {
   }
 
   makeMove(move: any) {
+    this.hostLog(`${this.iStarted} making move ${move}`);
     this.pushEvent({ move });
   }
 
