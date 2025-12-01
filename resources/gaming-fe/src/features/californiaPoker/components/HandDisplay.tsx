@@ -109,7 +109,7 @@ function HandDisplay(props: HandDisplayProps) {
       data-area={area}
     >
       {displayText && (
-        <h3 className='text-sm font-bold py-2 text-center text-canvas-solid'>
+        <h3 className='text-sm font-bold py-2 text-center text-success-text-contrast'>
           {displayText}
         </h3>
       )}
@@ -154,7 +154,7 @@ function HandDisplay(props: HandDisplayProps) {
                   : -1;
 
                 return (
-                  <div key={`placeholder-${i}`} className="w-24 h-32 flex items-center justify-center">
+                  <div key={`placeholder-${i}`} className="w-20 h-28 lg:w-24 lg:h-32 flex items-center justify-center">
                     <div className="flip-container">
                       <div className={`flip-inner ${placeholderFlip ? 'is-flipped' : ''}`}>
                         {/* Back of the card */}
@@ -222,7 +222,7 @@ function HandDisplay(props: HandDisplayProps) {
                 return (
                   <div
                     key={`${area}-${originalIndex}`}
-                    className='w-24 h-32 flex items-center justify-center'
+                    className='w-20 h-28 lg:w-24 lg:h-32 flex items-center justify-center'
                   >
                     <Card
                       index={idx}

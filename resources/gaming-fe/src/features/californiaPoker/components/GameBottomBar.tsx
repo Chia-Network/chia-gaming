@@ -1,5 +1,5 @@
 import { Button } from '@/src/components/button';
-import {GAME_STATES} from '../constants/constants';
+import { GAME_STATES } from '../constants/constants';
 interface GameBottomBarProps {
   isPlayerTurn: boolean,
   gameState: string,
@@ -20,14 +20,13 @@ const GameBottomBar = ({
   NewGame,
   doHandleMakeMove,
   GAME_STATES
-}:GameBottomBarProps) => {
+}: GameBottomBarProps) => {
   return (
     <div className='flex rounded-lg flex-col lg:flex-row bg-canvas-bg shadow-md border border-canvas-line lg:flex-[0_0_10%]'>
       <div className='flex flex-1 p-4 lg:p-0 items-center justify-center'>
         <span
-          className={`font-bold text-xl ${
-            isPlayerTurn ? 'text-success-text' : 'text-alert-text'
-          }`}
+          className={`font-bold text-xl ${isPlayerTurn ? 'text-success-text' : 'text-alert-text'
+            }`}
         >
           {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
         </span>
@@ -39,22 +38,24 @@ const GameBottomBar = ({
             variant='solid'
             color='primary'
             onClick={NewGame}
-            disabled={!isPlayerTurn}
+            // allow both players to start if it's the first move
+            disabled={!isPlayerTurn && moveNumber !== 0}
             className='h-full w-full p-4 lg:p-0'
           >
-            {isPlayerTurn ? 'Start New Game' : 'Opponent to Start...'}
+            {isPlayerTurn || moveNumber === 0 ? 'Start New Game' : 'Opponent to Start...'}
           </Button>
         ) : (
           <Button
             variant='solid'
             color='primary'
             onClick={doHandleMakeMove}
-            disabled={isDisabled}
+            disabled={isDisabled && moveNumber !== 0} // allow move 0
             className='h-full w-full p-4 lg:p-0'
           >
             {buttonText}
           </Button>
         )}
+
       </div>
 
       <div className='flex flex-1 items-center justify-center p-4 lg:p-0'>

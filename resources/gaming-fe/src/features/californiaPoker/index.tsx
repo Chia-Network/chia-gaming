@@ -152,8 +152,10 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   // ---------- TEXT ----------
   let buttonText = '';
+
   if (moveNumber === 0) {
-    buttonText = isPlayerTurn ? 'Start Game' : 'Opponent Turn to Start';
+    // Both players can start the game
+    buttonText = 'Start Game';
   } else if (moveNumber === 1) {
     if (!isPlayerTurn) {
       buttonText = "Opponent's Move";
