@@ -439,7 +439,7 @@ function compare_card(a: number[], b: number[]): number {
 }
 
 export interface PeerConnectionResult {
-  sendMessage: (input: string) => void;
+  sendMessage: (msgno: number, input: string) => void;
   hostLog: (msg: string) => void;
 }
 

@@ -107,8 +107,8 @@ export function getBlobSingleton(
       });
   };
 
-  const deliverMessage = (msg: string) => {
-    blobSingleton?.deliverMessage(msg);
+  const deliverMessage = (msgno: number, msg: string) => {
+    blobSingleton?.deliverMessage(msgno, msg);
   };
 
   let signaledSave: string | undefined = undefined;

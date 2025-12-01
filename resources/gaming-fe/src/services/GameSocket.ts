@@ -23,11 +23,12 @@ interface ActionData {
 interface SendMessageInput {
   party: boolean;
   token: string;
+  msgno: number;
   msg: string;
 }
 
 export interface GameSocketReturn {
-  sendMessage: (input: string) => void;
+  sendMessage: (msgno: number, input: string) => void;
   gameState: GameState;
   wagerAmount: string;
   setWagerAmount: (value: string) => void;
@@ -45,7 +46,7 @@ export interface GameSocketReturn {
 export const getGameSocket = (
   searchParams: any,
   lobbyUrl: string,
-  deliverMessage: (m: string) => void,
+  deliverMessage: (msgno: number, m: string) => void,
   setSocketEnabled: (saves: string[]) => void,
   saves: () => string[],
 ): GameSocketReturn => {
@@ -127,12 +128,13 @@ export const getGameSocket = (
     }
 
     console.log('got remote message', input.msg);
-    deliverMessage(input.msg);
+    deliverMessage(input.msgno, input.msg);
   });
 
-  const sendMessage = (msg: string) => {
+  const sendMessage = (msgno: number, msg: string) => {
     socketRef?.emit('game_message', {
       party: iStarted,
+      msgno,
       token,
       msg,
     });

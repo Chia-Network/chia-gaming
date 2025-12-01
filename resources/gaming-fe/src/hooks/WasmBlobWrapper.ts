@@ -33,7 +33,9 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 export class WasmBlobWrapper {
   amount: number;
   wc: WasmConnection | undefined;
-  sendMessage: (msg: string) => void;
+  sendMessage: (msgno: number, msg: string) => void;
+  messageNumber: number;
+  remoteNumber: number;
   hostLog: (msg: string) => void;
   cradle: ChiaGame | undefined;
   uniqueId: string;
@@ -77,6 +79,8 @@ export class WasmBlobWrapper {
     const { hostLog, sendMessage } = peer_conn;
     this.uniqueId = uniqueId;
 
+    this.messageNumber = 1;
+    this.remoteNumber = 0;
     this.sendMessage = sendMessage;
     this.hostLog = hostLog;
     this.amount = amount;
@@ -199,7 +203,7 @@ export class WasmBlobWrapper {
     //console.log('handleOneMessage', Object.keys(msg));
 
     if (msg.deliverMessage) {
-      return this.internalDeliverMessage(msg.deliverMessage);
+      return this.internalDeliverMessage(msg.deliverMessage.msgno, msg.deliverMessage.msg);
     } else if (msg.move) {
       return this.internalMakeMove(msg.move);
     } else if (msg.takeOpponentMove) {
@@ -349,15 +353,20 @@ export class WasmBlobWrapper {
     return empty();
   }
 
-  deliverMessage(msg: string) {
-    this.pushEvent({ deliverMessage: msg });
+  deliverMessage(msgno: number, msg: string) {
+    this.pushEvent({ deliverMessage: { msg, msgno } });
   }
 
-  internalDeliverMessage(msg: string): any {
+  internalDeliverMessage(msgno: number, msg: string): any {
     if (!this.wc || !this.cradle || this.qualifyingEvents != 15 || this.reloading) {
       this.storedMessages.push(msg);
       return empty();
     }
+    if (this.remoteNumber >= msgno) {
+      this.hostLog(`${this.iStarted} ignoring msgno ${msgno}`);
+      return empty();
+    }
+    this.remoteNumber = msgno;
     console.log('deliver message', msg);
     this.cradle?.deliver_message(msg);
     return empty();
@@ -406,6 +415,7 @@ export class WasmBlobWrapper {
       saveData.id = newGameId;
       saveData.wrapper = {
         uniqueId: this.uniqueId,
+        messageNumber: this.messageNumber,
         handshakeDone: this.handshakeDone,
         currentBlock: this.currentBlock,
         iStarted: this.iStarted,
@@ -531,7 +541,7 @@ export class WasmBlobWrapper {
     console.log('idle2', idle.incoming_messages);
     for (const message of idle.outbound_messages) {
       console.log('send message to remote');
-      this.sendMessage(message);
+      this.sendMessage(this.messageNumber++, message);
     }
 
     for (const tx of idle.outbound_transactions) {

@@ -227,9 +227,9 @@ io.on('connection', (socket) => {
   });
 
   // Game socket messages.
-  socket.on('game_message', ({ party, token, msg }) => {
-    console.log('game_message', party, token, msg);
-    io.emit('game_message', { party, token, msg });
+  socket.on('game_message', ({ party, token, msgno, msg }) => {
+    console.log('game_message', party, token, msgno, msg);
+    io.emit('game_message', { party, token, msgno, msg });
   });
 
   socket.on('saves', ({ iStarted, saves }) => {
