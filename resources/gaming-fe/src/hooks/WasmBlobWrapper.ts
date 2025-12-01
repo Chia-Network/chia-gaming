@@ -416,6 +416,7 @@ export class WasmBlobWrapper {
       saveData.wrapper = {
         uniqueId: this.uniqueId,
         messageNumber: this.messageNumber,
+        remoteNumber: this.remoteNumber,
         handshakeDone: this.handshakeDone,
         currentBlock: this.currentBlock,
         iStarted: this.iStarted,
