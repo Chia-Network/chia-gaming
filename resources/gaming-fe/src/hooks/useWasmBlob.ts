@@ -91,7 +91,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
       ui.lastOutcome = lastOutcome;
     }
 
-    let serialized = { game, ui, searchParams, id: game.id };
+    let serialized = { game, ui, searchParams, id: game.id, addressData };
     saveGame(serialized);
   };
 
@@ -151,7 +151,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     setOurShare,
     setTheirShare,
     setLastOutcome,
-    setSavedGame,
   };
 
   function setState(state: any): void {
@@ -165,6 +164,11 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
         settable[k](state[k]);
       }
     });
+
+    // Save last so we can observe all ui updates.
+    if (state.setSavedGame) {
+      setSavedGame(state.setSavedGame);
+    }
   }
 
   let perGameAmount = amount / 10;

@@ -55,17 +55,28 @@ export async function configGameObject(
 }
 
 export async function deserializeGameObject(
+  log: (msg: string) => void,
   gameObject: WasmBlobWrapper,
+  iStarted: boolean,
   wasmStateInit: WasmStateInit,
   blockchain:InternalBlockchainInterface,
-  serialized: any
+  serializedGame: any,
+  address: any,
 ): Promise<WasmBlobWrapper> {
-  let wasmConnection = await wasmStateInit.getWasmConnection();
-  gameObject.loadWasm(wasmConnection);
-  let address = await blockchain.getAddress();
+  log(`${iStarted} deserializeGameObject with agreed state`);
+  let wasmConnection = gameObject.getWasmConnection();
+  if (!wasmConnection) {
+    wasmConnection = await wasmStateInit.getWasmConnection();
+    log(`${iStarted} deserializeGameObject got wasm connection`);
+    gameObject.loadWasm(wasmConnection);
+  }
+  log(`${iStarted} deserializeGameObject setting address`);
   gameObject.setBlockchainAddress(address);
-  let cradle = wasmStateInit.deserializeGame(wasmConnection, serialized);
+  log(`${iStarted} deserializeGameObject gameObject notified of wasm connection`);
+  let cradle = wasmStateInit.deserializeGame(wasmConnection, serializedGame);
+  log(`${iStarted} deserializeGameObject has new cradle`);
   gameObject.setGameCradle(cradle);
+  log(`${iStarted} deserializeGameObject deserialized cradle`);
   return gameObject;
 }
 
@@ -108,7 +119,15 @@ export function getBlobSingleton(
         peerconn.hostLog(`${iStarted} peer has matching save ${matchingSave}`);
         const loadedSave = loadSave(matchingSave);
         setUIState(loadedSave.ui);
-        await deserializeGameObject(blobSingleton, wasmStateInit, blockchain, loadedSave.game);
+        await deserializeGameObject(
+          peerconn.hostLog,
+          blobSingleton,
+          iStarted,
+          wasmStateInit,
+          blockchain,
+          loadedSave.game,
+          loadedSave.addressData
+        );
       };
       const newSession = async () => {
         peerconn.hostLog(`${iStarted} new session`);

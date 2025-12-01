@@ -108,6 +108,8 @@ export class WasmBlobWrapper {
 
   systemState(): number { return this.qualifyingEvents; }
 
+  getWasmConnection(): WasmConnection | undefined { return this.wc; }
+
   reportError(err: any) {
     // TODO: Use this method to report all errors
     this.rxjsEmitter?.next({
