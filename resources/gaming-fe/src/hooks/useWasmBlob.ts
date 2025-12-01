@@ -70,28 +70,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   const setSavedGame = (game: any) => {
     console.log('setSaveGame', game);
-    let ui: any = {
-      setGameConnectionState: gameConnectionState,
-      setPlayerHand: playerHand,
-      setOpponentHand: opponentHand,
-      setMyTurn: isPlayerTurn,
-      setMoveNumber: moveNumber,
-      setCardSelections: cardSelections,
-      setAddressData: addressData,
-      setOurShare: ourShare,
-      setTheirShare: theirShare,
-    };
-    if (error) {
-      ui.setError = error;
-    }
-    if (outcome) {
-      ui.outcome = outcome;
-    }
-    if (lastOutcome) {
-      ui.lastOutcome = lastOutcome;
-    }
-
-    let serialized = { game, ui, searchParams, id: game.id, addressData };
+    let serialized = { game, searchParams, id: game.id, addressData };
     saveGame(serialized);
   };
 

@@ -72,7 +72,7 @@ export async function deserializeGameObject(
   }
   log(`${iStarted} deserializeGameObject setting address`);
   gameObject.setBlockchainAddress(address);
-  log(`${iStarted} deserializeGameObject gameObject notified of wasm connection`);
+  log(`${iStarted} deserializeGameObject has address`);
   let cradle = wasmStateInit.deserializeGame(wasmConnection, serializedGame);
   log(`${iStarted} deserializeGameObject has new cradle`);
   gameObject.setGameCradle(cradle);
@@ -132,7 +132,7 @@ export function getBlobSingleton(
           loadedSave.game,
           loadedSave.addressData
         );
-        setUIState(loadedSave.ui);
+        setUIState(loadedSave.game.ui);
         peerconn.hostLog(`${iStarted} do idle after load`);
         blobSingleton?.idle();
       };

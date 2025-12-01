@@ -61,6 +61,7 @@ export class WasmBlobWrapper {
   rxjsMessageSingleton: Subject<any>;
   rxjsEmitter: NextObserver<any> | undefined;
   blockchain: InternalBlockchainInterface;
+  uiUpdates: any;
   currentSave: string | undefined;
 
   constructor(
@@ -99,8 +100,16 @@ export class WasmBlobWrapper {
     this.fetchHex = fetchHex;
     this.doInternalLoadWasm = doInternalLoadWasm;
     this.blockchain = blockchain;
+    this.uiUpdates = {};
     this.rxjsMessageSingleton = new Subject<any>();
-    this.rxjsEmitter = this.rxjsMessageSingleton;
+    this.rxjsEmitter = {
+      next: (settings: any) => {
+        Object.keys(settings).forEach((k) => {
+          this.uiUpdates[k] = settings[k];
+        });
+        this.rxjsMessageSingleton.next(settings);
+      }
+    };
   }
 
   setReloading() { this.reloading = true; }
@@ -413,6 +422,7 @@ export class WasmBlobWrapper {
         perGameAmount: this.perGameAmount,
         gameOutcome: this.gameOutcome,
       };
+      saveData.ui = this.uiUpdates;
       this.hostLog(`${this.iStarted} setting saved game ${newGameId}`);
       result.setSavedGame = saveData;
     }
