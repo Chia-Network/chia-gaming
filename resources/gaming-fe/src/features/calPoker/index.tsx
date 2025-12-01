@@ -96,10 +96,10 @@ const Calpoker: React.FC<CalpokerProps> = ({
 
   return (
     <div
-      className='relative gap-4 flex min-h-screen w-full flex-col justify-center items-center bg-canvas-bg-subtle px-4 py-4 text-canvas-text sm:px-6 md:px-8'
+      className='relative gap-4 flex min-h-screen w-full flex-col justify-center items-center bg-canvas-bg-subtle px-4 py-8 text-canvas-text sm:px-6 md:px-8'
     >
       {/* Header */}
-      <div className=' flex w-full flex-col items-center justify-between gap-4 sm:flex-row sm:gap-6'>
+      <div className='flex w-full flex-col items-center justify-between gap-4 sm:flex-row sm:gap-6'>
         <h1 className='w-full text-3xl font-bold text-canvas-text-contrast sm:text-left sm:text-4xl'>
           California Poker
         </h1>
