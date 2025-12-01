@@ -66,6 +66,7 @@ export async function deserializeGameObject(
   log(`${iStarted} deserializeGameObject with agreed state`);
   let wasmConnection = gameObject.getWasmConnection();
   if (!wasmConnection) {
+    log(`${iStarted} deserializeGameObject getting wasm connection`);
     wasmConnection = await wasmStateInit.getWasmConnection();
     log(`${iStarted} deserializeGameObject got wasm connection`);
     gameObject.loadWasm(wasmConnection);
@@ -132,6 +133,7 @@ export function getBlobSingleton(
           loadedSave.game,
           loadedSave.addressData
         );
+        peerconn.hostLog(`${iStarted} setting ui keys ${Object.keys(loadedSave.game.ui)}`);
         setUIState(loadedSave.game.ui);
         peerconn.hostLog(`${iStarted} do idle after load`);
         blobSingleton?.idle();

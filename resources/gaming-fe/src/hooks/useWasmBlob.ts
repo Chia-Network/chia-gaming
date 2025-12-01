@@ -207,11 +207,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
     gameObject?.makeMove(move);
   }, []);
 
-  (window as any).loadWasm = useCallback((chia_gaming_init: any, cg: any) => {
-    console.log('start loading wasm', gameObject);
-    gameObject?.loadWasm(chia_gaming_init, cg);
-  }, []);
-
   useEffect(() => {
     const subscription = gameObject.getObservable().subscribe({
       next: (state: any) => setState(state)

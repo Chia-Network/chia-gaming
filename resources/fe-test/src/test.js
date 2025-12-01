@@ -346,8 +346,8 @@ async function reloadBrowser(driver, selectWallet) {
 // Define a category of tests using test framework, in this case Jasmine
 describe("Out of money test", function () {
   const baseUrl = "http://localhost:3000";
-  const driver = driver2;
-  const ffdriver = driver1;
+  const driver = driver1;
+  const ffdriver = driver2;
 
   async function testOneGameEconomicResult(selectWallet) {
     // Load the login page

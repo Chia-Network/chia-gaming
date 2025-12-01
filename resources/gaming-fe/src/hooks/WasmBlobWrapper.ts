@@ -106,6 +106,7 @@ export class WasmBlobWrapper {
       next: (settings: any) => {
         Object.keys(settings).forEach((k) => {
           this.uiUpdates[k] = settings[k];
+          delete this.uiUpdates['setSavedGame'];
         });
         this.rxjsMessageSingleton.next(settings);
       }
@@ -353,8 +354,7 @@ export class WasmBlobWrapper {
   }
 
   internalDeliverMessage(msg: string): any {
-    if (!this.wc) { throw new Error("this.wc is falsey") }
-    if (!this.cradle || this.qualifyingEvents != 15 || this.reloading) {
+    if (!this.wc || !this.cradle || this.qualifyingEvents != 15 || this.reloading) {
       this.storedMessages.push(msg);
       return empty();
     }
