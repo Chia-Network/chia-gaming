@@ -9,7 +9,7 @@ use clvmr::{run_program, Allocator, NodePtr};
 use log::debug;
 use rand::Rng;
 
-use serde::{Deserialize, Serialize, Serializer, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
@@ -54,12 +54,16 @@ pub type GameStartInfoPair = (
 fn serialize_game_type_map<S: Serializer>(
     map: &BTreeMap<GameType, GameFactory>,
     s: S,
-) -> Result<S::Ok, S::Error>
-{
-    map.iter().map(|(k,v)| (k.clone(), v.clone())).collect::<Vec<(GameType, GameFactory)>>().serialize(s)
+) -> Result<S::Ok, S::Error> {
+    map.iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect::<Vec<(GameType, GameFactory)>>()
+        .serialize(s)
 }
 
-fn deserialize_game_type_map<'de, D>(deserializer: D) -> Result<BTreeMap<GameType, GameFactory>, D::Error>
+fn deserialize_game_type_map<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<GameType, GameFactory>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -115,7 +119,10 @@ pub struct PotatoHandler {
     channel_initiation_transaction: Option<SpendBundle>,
     channel_finished_transaction: Option<SpendBundle>,
 
-    #[serde(serialize_with = "serialize_game_type_map", deserialize_with = "deserialize_game_type_map")]
+    #[serde(
+        serialize_with = "serialize_game_type_map",
+        deserialize_with = "deserialize_game_type_map"
+    )]
     game_types: BTreeMap<GameType, GameFactory>,
 
     private_keys: ChannelHandlerPrivateKeys,

@@ -36,13 +36,13 @@ use crate::common::standard_coin::{
     puzzle_for_synthetic_public_key, puzzle_hash_for_pk, puzzle_hash_for_synthetic_public_key,
     standard_solution_partial, ChiaIdentity,
 };
+use crate::common::types::Sha256Input;
 use crate::common::types::{
     usize_from_atom, Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID,
     CoinSpend, CoinString, Error, GameID, GetCoinStringParts, Hash, IntoErr, Node, PrivateKey,
     Program, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, SpendBundle, SpendRewardResult,
     Timeout,
 };
-use crate::common::types::Sha256Input;
 use crate::potato_handler::types::GameAction;
 use crate::referee::types::{GameMoveDetails, RefereeOnChainTransaction, TheirTurnCoinSpentResult};
 use crate::referee::{RefereeInterface, RefereeMaker};
@@ -2282,10 +2282,7 @@ impl ChannelHandler {
         Ok(None)
     }
 
-    pub fn get_game_state_id<R: Rng>(
-        &self,
-        env: &mut ChannelHandlerEnv<R>,
-    ) -> Result<Hash, Error> {
+    pub fn get_game_state_id<R: Rng>(&self, env: &mut ChannelHandlerEnv<R>) -> Result<Hash, Error> {
         let mut bytes: Vec<u8> = vec![];
         for l in self.live_games.iter() {
             let mut v = l.current_puzzle_hash(env.allocator)?.bytes().to_vec();

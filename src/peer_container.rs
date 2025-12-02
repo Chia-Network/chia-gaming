@@ -283,7 +283,7 @@ pub trait GameCradle {
     fn get_game_state_id<R: Rng>(
         &mut self,
         allocator: &mut AllocEncoder,
-        rng: &mut R
+        rng: &mut R,
     ) -> Result<Option<Hash>, Error>;
 }
 
