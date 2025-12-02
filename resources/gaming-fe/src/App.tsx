@@ -220,7 +220,7 @@ const App = () => {
 
   if (!havePeak) {
     return (
-      <div className="flex flex-col relative w-screen h-screen" style={{ backgroundColor: 'var(--color-canvas-bg-subtle)' }}>
+      <div className="flex flex-col relative w-screen h-screen bg-canvas-bg-subtle" >
         {wcHeading}
         {pre_lobby_status}
       </div>
@@ -228,12 +228,12 @@ const App = () => {
   }
 
   return (
-    <div className="flex flex-col relative w-screen h-screen bg-canvas-bg-subtle" style={{ backgroundColor: 'var(--color-canvas-bg-subtle)' }}>
+    <div className="flex flex-col relative w-screen h-screen bg-canvas-bg-subtle" >
       {wcHeading}
-      <div className="relative z-0 w-full flex-1">
+      <div className="relative z-0 w-full flex-1 bg-canvas-bg-subtle">
         <iframe
           id='subframe'
-          className="w-full h-full border-0 m-0 md:py-0 py-6"
+          className="w-full h-full border-0 m-0 md:py-0 py-6 bg-canvas-bg-subtle"
           src={iframeUrl}
           allow={`clipboard-write self ${iframeAllowed}`}
         ></iframe>

@@ -60,7 +60,6 @@ const LobbyScreen = () => {
   const [perHandInput, setPerHandInput] = useState('');
   const [editingAlias, setEditingAlias] = useState(false);
   const [gotoUrl, setGotoUrl] = useState('');
-  const [chatOpen, setChatOpen] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const [secureUrl, setSecureUrl] = useState('');
   // UI state for split handle
