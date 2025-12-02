@@ -68,7 +68,7 @@ where
     D: Deserializer<'de>,
 {
     let v = Vec::<(GameType, GameFactory)>::deserialize(deserializer)?;
-    let b: BTreeMap<GameType, GameFactory> = v.iter().map(|kv| kv.clone()).collect();
+    let b: BTreeMap<GameType, GameFactory> = v.iter().cloned().collect();
     Ok(b)
 }
 
