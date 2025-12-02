@@ -461,8 +461,14 @@ describe("Out of money test", function () {
 
     console.log("stop the game (2)");
     await driver.executeScript('window.scroll(0, 0);');
-    let stopButton = await driver.wait(
-      until.elementLocated(byAttribute("data-testid", "stop-playing")),
+    let stopButton = await waitForNonError(
+      driver,
+      () =>
+      driver.wait(
+        until.elementLocated(byAttribute("data-testid", "stop-playing")),
+      ),
+      (elt) => waitEnabled(driver, elt),
+      1.0,
     );
     await stopButton.click();
 
