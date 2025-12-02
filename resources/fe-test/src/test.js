@@ -340,7 +340,11 @@ async function verifyCardsWithLog(driver, cards) {
 async function reloadBrowser(driver, selectWallet) {
   console.log('reloading');
   await driver.navigate().refresh();
+  console.log('selecting wallet');
   await selectWallet(driver);
+  console.log('done reloading?');
+  await driver.wait(until.elementLocated(byAttribute('id', 'subframe')));
+  await driver.switchTo().frame("subframe");
 }
 
 // Define a category of tests using test framework, in this case Jasmine
@@ -381,7 +385,7 @@ describe("Out of money test", function () {
       driver.wait(
         until.elementLocated(byAttribute("data-testid", "stop-playing")),
       ),
-      (elt) => waitAriaEnabled(driver, elt),
+      (elt) => waitEnabled(driver, elt),
       1.0,
     );
     await stopButton.click();
@@ -505,7 +509,7 @@ describe("Out of money test", function () {
     console.log("driver.get", baseUrl, driver);
     await driver.get(baseUrl);
 
-    await selectSimulator(driver);
+    await selectWallet(driver);
 
     await wait(driver, 5.0);
 
@@ -559,10 +563,13 @@ describe("Out of money test", function () {
     console.log('wait after reloading');
     await wait(driver, 10.0);
 
+    console.log('selecting bob cards');
     await clickFourCards(ffdriver, 'bob', 0xaa);
 
     console.log('selecting alice cards');
     await clickFourCards(driver, 'alice', 0x55);
+
+    await wait(driver, 5.0);
 
     console.log("stop the game");
     await driver.executeScript('window.scroll(0, 0);');
@@ -572,15 +579,19 @@ describe("Out of money test", function () {
       driver.wait(
         until.elementLocated(byAttribute("data-testid", "stop-playing")),
       ),
-      (elt) => waitAriaEnabled(driver, elt),
+      (elt) => waitEnabled(driver, elt),
       1.0,
     );
     await stopButton.click();
 
     console.log("awaiting shutdown");
 
+    console.warn("get ff shutdown");
     await gotShutdown(ffdriver);
+    console.warn("get chrome shutdown");
     await gotShutdown(driver);
+
+    await wait(driver, 5.0);
   }
 
   it(
@@ -594,17 +605,17 @@ describe("Out of money test", function () {
       await prepareBrowser(driver1);
       await prepareBrowser(driver2);
 
-      // await testTwoGamesAndShutdown(selectSimulator);
+      await testTwoGamesAndShutdown(selectSimulator);
 
-      // await prepareBrowser(driver1);
-      // await prepareBrowser(driver2);
+      await prepareBrowser(driver1);
+      await prepareBrowser(driver2);
 
-      // await testRunOutOfMoney(selectSimulator);
+      await testRunOutOfMoney(selectSimulator);
 
-      // await prepareBrowser(driver1);
-      // await prepareBrowser(driver2);
+      await prepareBrowser(driver1);
+      await prepareBrowser(driver2);
 
-      // await testTwoGamesAndShutdown(selectWalletConnect);
+      await testTwoGamesAndShutdown(selectWalletConnect);
     },
     1 * 60 * 60 * 1000,
   );

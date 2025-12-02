@@ -70,7 +70,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   const setSavedGame = (game: any) => {
     console.log('setSaveGame', game);
-    let serialized = { game, searchParams, id: game.id, addressData };
+    let serialized = { game, searchParams, id: game.id, addressData, url: window.location.toString() };
     saveGame(serialized);
   };
 
@@ -187,6 +187,7 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   );
 
   const stopPlaying = useCallback(() => {
+    hostLog(`${iStarted} shutdown pressed`);
     gameObject?.shutDown();
   }, [gameObject]);
 

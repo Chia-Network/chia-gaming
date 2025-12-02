@@ -49,7 +49,6 @@ export class WasmBlobWrapper {
   myTurn: boolean;
   moveNumber: number;
   qualifyingEvents: number;
-  // loadWasmEvent: any | undefined;
   cardSelections: number;
   playerHand: number[][];
   opponentHand: number[][];
@@ -175,7 +174,6 @@ export class WasmBlobWrapper {
     if (this.qualifyingEvents == 7) {
       this.qualifyingEvents |= 8;
       this.spillStoredMessages();
-      // this.pushEvent(this.loadWasmEvent);
     }
   }
 
@@ -193,8 +191,10 @@ export class WasmBlobWrapper {
 
   pushEvent(msg: any): any {
     if (this.finished) {
+      this.hostLog(`${this.iStarted} pushEvent aborted due to finished ${this.finished}`);
       return;
     }
+    this.hostLog(`${this.iStarted} pushMessage ${Object.keys(msg)}`);
     this.messageQueue.push(msg);
     return this.kickMessageHandling();
   }
@@ -319,6 +319,7 @@ export class WasmBlobWrapper {
 
   kickMessageHandling(): any {
     if (this.messageQueue.length == 0 || this.handlingMessage) {
+      this.hostLog(`${this.iStarted} kickMessageHandling leave early ${this.messageQueue.length} or ${this.handlingMessage}`);
       return empty();
     }
 
@@ -374,27 +375,34 @@ export class WasmBlobWrapper {
 
   internalStartGame(): any {
     if (this.finished || this.shutdownCalled) {
+      this.hostLog(`${this.iStarted} ignoring internalStartGame: ${this.finished} ${this.shutdownCalled}`);
       return empty();
     }
 
     let result: any = {};
-    let gids = this.cradle?.start_games(!this.iStarted, {
-      game_type: '63616c706f6b6572',
-      timeout: 100,
-      amount: this.perGameAmount,
-      my_contribution: this.perGameAmount / 2,
-      my_turn: !this.iStarted,
-      parameters: '80',
-    });
-    console.log('gameIds', gids);
-    if (gids) {
-      gids.forEach((g) => {
-        this.gameIds.push(g);
+    try {
+      this.hostLog(`${this.iStarted} doing start games`);
+      let gids = this.cradle?.start_games(!this.iStarted, {
+        game_type: '63616c706f6b6572',
+        timeout: 100,
+        amount: this.perGameAmount,
+        my_contribution: this.perGameAmount / 2,
+        my_turn: !this.iStarted,
+        parameters: '80',
       });
-      result.setGameIds = this.gameIds;
+      this.hostLog(`${this.iStarted} gameIds ${gids}`);
+      if (gids) {
+        gids.forEach((g) => {
+          this.gameIds.push(g);
+        });
+        result.setGameIds = this.gameIds;
+      }
+      result.setMyTurn = !this.iStarted;
+      return empty().then(() => result);
+    } catch (e) {
+      this.hostLog(`${this.iStarted} exception starting new game ${JSON.stringify(e)}`);
+      throw e;
     }
-    result.setMyTurn = !this.iStarted;
-    return empty().then(() => result);
   }
 
   idle(): any {
@@ -421,10 +429,10 @@ export class WasmBlobWrapper {
         currentBlock: this.currentBlock,
         iStarted: this.iStarted,
         gameIds: this.gameIds,
-        storedMessages: this.storedMessages,
+        storedMessages: [...this.storedMessages],
+        messageQueue: [...this.messageQueue],
         myTurn: this.myTurn,
         moveNumber: this.moveNumber,
-        qualifyingEvents: this.qualifyingEvents,
         cardSelections: this.cardSelections,
         playerHand: this.playerHand,
         opponentHand: this.opponentHand,
@@ -657,11 +665,13 @@ export class WasmBlobWrapper {
   }
 
   shutDown(condition: string | undefined) {
+    this.hostLog(`${this.iStarted} WasmBlobWrapper got shutdown ${condition} finished ${this.finished} reloading ${this.reloading} shutdownCalled ${this.shutdownCalled} qe ${this.qualifyingEvents}`);
     this.pushEvent({ shutDown: true, condition });
   }
 
   internalShutdown(condition: string) {
     const details: string[] = [];
+    this.hostLog(`${this.iStarted} WasmBlobWrapper got internalShutdown ${condition}`);
     if (condition) {
       details.push(condition);
     }

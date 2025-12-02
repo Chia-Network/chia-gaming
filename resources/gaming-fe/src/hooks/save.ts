@@ -16,7 +16,7 @@ function setSaveList(saveList: string[]) {
 export function startNewSession() {
   const names = getSaveList();
   for (let n of names) {
-    localStorage.remove(`save-${n}`);
+    localStorage.removeItem(`save-${n}`);
   }
   setSaveList([]);
 }

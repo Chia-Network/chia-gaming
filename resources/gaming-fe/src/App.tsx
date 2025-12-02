@@ -10,16 +10,18 @@ import { getGameSelection, getSearchParams, generateOrRetrieveUniqueId } from '.
 const App = () => {
   const uniqueId = generateOrRetrieveUniqueId();
   const gameSelection = getGameSelection();
-  let params = getSearchParams();
+  const params = getSearchParams();
+  let useParams = params;
+  let useIframeUrl = 'about:blank';
   const saveList = getSaveList();
+  const shouldRedirectToLobby = saveList.length == 0 && !params.lobby && !params.iStarted;
   if (saveList.length > 0) {
     const decodedSave = loadSave(saveList[0]);
-    params = decodedSave.searchParams;
-    console.log('params from save', params);
+    useParams = decodedSave.searchParams;
+    useIframeUrl = decodedSave.url;
   }
-  const shouldRedirectToLobby = !params.lobby && !params.iStarted;
   const [havePeak, setHavePeak] = useState(false);
-  const [iframeUrl, setIframeUrl] = useState('about:blank');
+  const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
   const [fetchedUrls, setFetchedUrls] = useState(false);
   const [iframeAllowed, setIframeAllowed] = useState('');
 

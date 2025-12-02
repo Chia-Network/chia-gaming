@@ -34,7 +34,11 @@ async function sendEnter(element) {
 
 async function waitEnabled(driver, element) {
   const actions = driver.actions({ async: true });
-  for (var i = 0; i < WAIT_ITERATIONS && !element.isEnabled(); i++) {
+  for (var i = 0; i < WAIT_ITERATIONS; i++) {
+    const enabled = await element.isEnabled();
+    if (enabled) {
+      return;
+    }
     await actions.pause(HALF_SECOND).perform();
   }
 
@@ -71,10 +75,13 @@ async function waitAriaDisabled(driver, element) {
 }
 
 async function selectSimulator(driver) {
+  console.log('finding simulator button');
   const simulatorButton = await driver.wait(
     until.elementLocated(byAttribute("aria-label", "select-simulator")),
   );
+  console.log('clicking simulator button');
   await simulatorButton.click();
+  console.log('done selecting wallet');
 }
 
 async function waitForNonError(driver, select, extra, time) {
