@@ -606,17 +606,17 @@ describe("Out of money test", function () {
       // Terminate early if we didn't get the browsers we wanted.
       expect(!!driver1 && !!driver2).toBe(true);
 
-      await testOneGameReload(selectSimulator);
-
-      await prepareBrowser(driver1);
-      await prepareBrowser(driver2);
-
       await testTwoGamesAndShutdown(selectSimulator);
 
       await prepareBrowser(driver1);
       await prepareBrowser(driver2);
 
       await testRunOutOfMoney(selectSimulator);
+
+      await prepareBrowser(driver1);
+      await prepareBrowser(driver2);
+
+      await testOneGameReload(selectSimulator);
 
       await prepareBrowser(driver1);
       await prepareBrowser(driver2);
