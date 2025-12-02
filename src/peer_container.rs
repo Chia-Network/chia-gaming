@@ -278,6 +278,13 @@ pub trait GameCradle {
         allocator: &mut AllocEncoder,
         rng: &mut R,
     ) -> Result<PuzzleHash, Error>;
+
+    /// Get an id which uniquely identifies this game state.
+    fn get_game_state_id<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<Option<Hash>, Error>;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -793,6 +800,19 @@ impl GameCradle for SynchronousGameCradle {
             system_interface: &mut self.state,
         };
         self.peer.get_reward_puzzle_hash(&mut penv)
+    }
+
+    fn get_game_state_id<R: Rng>(
+        &mut self,
+        allocator: &mut AllocEncoder,
+        rng: &mut R,
+    ) -> Result<Option<Hash>, Error> {
+        let mut env = channel_handler_env(allocator, rng)?;
+        let mut penv: SynchronousGamePeerEnv<R> = SynchronousGamePeerEnv {
+            env: &mut env,
+            system_interface: &mut self.state,
+        };
+        self.peer.get_game_state_id(&mut penv)
     }
 
     fn opening_coin<R: Rng>(

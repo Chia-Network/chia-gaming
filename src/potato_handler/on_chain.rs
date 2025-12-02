@@ -700,4 +700,15 @@ impl PotatoHandlerImpl for OnChainPotatoHandler {
 
         Ok(true)
     }
+
+    fn get_game_state_id<'a, G, R: Rng + 'a>(
+        &self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<Option<Hash>, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        let (env, _) = penv.env();
+        self.player_ch.get_game_state_id(env).map(Some)
+    }
 }

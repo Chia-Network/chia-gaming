@@ -4,15 +4,26 @@ import Gallery from './components/Gallery';
 import Game from './components/Game';
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
+import { getSaveList, loadSave } from './hooks/save';
 import { getGameSelection, getSearchParams, generateOrRetrieveUniqueId } from './util';
 
 const App = () => {
   const uniqueId = generateOrRetrieveUniqueId();
   const gameSelection = getGameSelection();
   const params = getSearchParams();
-  const shouldRedirectToLobby = !params.lobby && !params.iStarted;
+  let useParams = params;
+  let useIframeUrl = 'about:blank';
+  const saveList = getSaveList();
+  const shouldRedirectToLobby = saveList.length == 0 && !params.lobby && !params.iStarted;
+  if (saveList.length > 0) {
+    const decodedSave = loadSave(saveList[0]);
+    useParams = decodedSave.searchParams;
+    useIframeUrl = decodedSave.url;
+  }
   const [havePeak, setHavePeak] = useState(false);
-  const [iframeUrl, setIframeUrl] = useState('about:blank');
+  const [iframeUrl, setIframeUrl] = useState(useIframeUrl);
+  const [fetchedUrls, setFetchedUrls] = useState(false);
+  const [iframeAllowed, setIframeAllowed] = useState('');
 
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
@@ -23,6 +34,20 @@ const App = () => {
 
     return () => subscription.unsubscribe();
   });
+
+  // Fetch the urls document and get the tracker url so we know to allow the iframe
+  // to use the clipboard.
+  useEffect(() => {
+    if (!fetchedUrls) {
+      setFetchedUrls(true);
+      fetch('/urls')
+        .then((res) => res.json())
+	.then((urls) => {
+	  let trackerURL = new URL(urls.tracker);
+	  setIframeAllowed(trackerURL.origin);
+        });
+    }
+  }, [fetchedUrls]);
 
   // Redirect to the lobby if we haven't been given enough information to render
   // the game yet.
@@ -144,7 +169,7 @@ const App = () => {
   }
 
   if (params.game && !params.join) {
-    return <Game />;
+    return <Game params={params}/>;
   }
 
   const wcHeading = (
@@ -168,6 +193,7 @@ const App = () => {
         id='subframe'
         className="w-full flex-1 border-0 m-0 p-0"
         src={iframeUrl}
+	allow={`clipboard-write self ${iframeAllowed}`}
       ></iframe>
     </div>
   );

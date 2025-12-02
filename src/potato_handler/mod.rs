@@ -9,8 +9,7 @@ use clvmr::{run_program, Allocator, NodePtr};
 use log::debug;
 use rand::Rng;
 
-use serde::{Deserialize, Serialize};
-use serde_json_any_key::*;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::channel_handler::types::{
     ChannelCoinSpendInfo, ChannelHandlerInitiationData, ChannelHandlerPrivateKeys, GameStartInfo,
@@ -51,6 +50,27 @@ pub type GameStartInfoPair = (
     Vec<Rc<dyn GameStartInfoInterface>>,
     Vec<Rc<dyn GameStartInfoInterface>>,
 );
+
+fn serialize_game_type_map<S: Serializer>(
+    map: &BTreeMap<GameType, GameFactory>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    map.iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect::<Vec<(GameType, GameFactory)>>()
+        .serialize(s)
+}
+
+fn deserialize_game_type_map<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<GameType, GameFactory>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Vec::<(GameType, GameFactory)>::deserialize(deserializer)?;
+    let b: BTreeMap<GameType, GameFactory> = v.iter().cloned().collect();
+    Ok(b)
+}
 
 /// Handle potato in flight when I request potato:
 ///
@@ -99,7 +119,10 @@ pub struct PotatoHandler {
     channel_initiation_transaction: Option<SpendBundle>,
     channel_finished_transaction: Option<SpendBundle>,
 
-    #[serde(with = "any_key_map")]
+    #[serde(
+        serialize_with = "serialize_game_type_map",
+        deserialize_with = "deserialize_game_type_map"
+    )]
     game_types: BTreeMap<GameType, GameFactory>,
 
     private_keys: ChannelHandlerPrivateKeys,
@@ -997,6 +1020,8 @@ impl PotatoHandler {
     where
         G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
     {
+        debug!("Starting game with game type {:?}", game_start.game_type);
+        debug!("Game types {:?}", self.game_types);
         let starter = if let Some(starter) = self.game_types.get(&game_start.game_type) {
             starter
         } else {
@@ -1912,6 +1937,26 @@ impl PotatoHandler {
         }
 
         Ok(false)
+    }
+
+    pub fn get_game_state_id<'a, G, R: Rng + 'a>(
+        &mut self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<Option<Hash>, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a,
+    {
+        if let HandshakeState::OnChain(on_chain) = &mut self.handshake_state {
+            return on_chain.get_game_state_id(penv);
+        }
+
+        let (env, _) = penv.env();
+        let player_ch = self.channel_handler().ok();
+        if let Some(player_ch) = player_ch {
+            return player_ch.get_game_state_id(env).map(Some);
+        }
+
+        Ok(None)
     }
 }
 

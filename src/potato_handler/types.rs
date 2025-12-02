@@ -492,6 +492,13 @@ pub trait PotatoHandlerImpl {
 
     fn my_move_in_game(&self, game_id: &GameID) -> Option<bool>;
 
+    fn get_game_state_id<'a, G, R: Rng + 'a>(
+        &self,
+        penv: &mut dyn PeerEnv<'a, G, R>,
+    ) -> Result<Option<Hash>, Error>
+    where
+        G: ToLocalUI + BootstrapTowardWallet + WalletSpendInterface + PacketSender + 'a;
+
     fn check_game_coin_spent<'a, G, R: Rng + 'a>(
         &mut self,
         penv: &mut dyn PeerEnv<'a, G, R>,
