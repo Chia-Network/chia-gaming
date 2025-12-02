@@ -45746,7 +45746,6 @@ To suppress this warning, you need to explicitly provide the \`palette.${key}Cha
     const [perHandInput, setPerHandInput] = (0, import_react14.useState)("");
     const [editingAlias, setEditingAlias] = (0, import_react14.useState)(false);
     const [gotoUrl, setGotoUrl] = (0, import_react14.useState)("");
-    const [chatOpen, setChatOpen] = (0, import_react14.useState)(false);
     const [urlDialogOpen, setUrlDialogOpen] = (0, import_react14.useState)(false);
     const [secureUrl, setSecureUrl] = (0, import_react14.useState)("");
     const [splitPct, setSplitPct] = (0, import_react14.useState)(50);
