@@ -1,5 +1,4 @@
-import React, { useState, useCallback } from 'react';
-import { Box, Typography, Card, CardContent } from '@mui/material';
+import React, { useState} from 'react';
 import {
   OutcomeLogLine,
   OutcomeHandType,
