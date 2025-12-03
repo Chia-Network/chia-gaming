@@ -31,6 +31,8 @@ import { WalletIcon } from 'lucide-react';
 
 // Main Component
 const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
+  setSuspended,
+  suspended,
   moveNumber,
   isPlayerTurn,
   playerNumber,
@@ -46,6 +48,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   balanceDisplay,
 }) => {
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
+  const [lastMoveNumber, setLastMoveNumber] = useState(moveNumber);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
   const suitMap: Record<number, SuitName> = {
     0: 'Q',
@@ -64,10 +67,15 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     balanceDisplay.match(/(\d+)\s*vs\s*(\d+)/i) || [];
   const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);
   const [opponentCards, setOpponentCards] = useState<CardValueSuit[]>([]);
+  const [rememberedCards, setRememberedCards] = useState<CardValueSuit[][]>([playerCards, opponentCards]);
 
   useEffect(() => {
+    setLastMoveNumber(moveNumber);
+    if (lastMoveNumber <= moveNumber) return;
+
     swapCards();
-  }, [lastOutcome]);
+  }, [lastMoveNumber, moveNumber, lastOutcome]);
+
   // whenever playerHand or aiHand changes → convert into CardValueSuit[]
   useEffect(() => {
     if (playerHand.length === 0 || opponentHand.length === 0) {
@@ -255,11 +263,16 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   };
 
   const swapCards = () => {
-    if (!lastOutcome) return;
-
     const gameRoundData = lastOutcome;
     setGameState(GAME_STATES.SWAPPING);
+    setSuspended(true);
 
+    setTimeout(() => {
+      setSuspended(false);
+      setGameState(GAME_STATES.FINAL);
+    }, SWAP_ANIMATION_DURATION);
+
+    /*
     // Determine who is the player in JSON
     const isPlayerAlice = playerNumber === 1;
 
@@ -358,24 +371,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       const comparison = compareRanks(playerBest.rank, aiBest.rank);
       setWinner(comparison > 0 ? 'player' : comparison < 0 ? 'ai' : 'tie');
     }, SWAP_ANIMATION_DURATION);
+    */
   };
-
-  function getBestHand(cards: CardValueSuit[]): BestHandType {
-    const combinations = getCombinations(cards);
-
-    let bestHand = combinations[0];
-    let bestRank = evaluateHand(combinations[0]);
-
-    combinations.forEach((hand) => {
-      const rank = evaluateHand(hand);
-      if (compareRanks(rank, bestRank) > 0) {
-        bestHand = hand;
-        bestRank = rank;
-      }
-    });
-
-    return { cards: bestHand, rank: bestRank };
-  }
 
   useEffect(() => {
     dealCards();
@@ -423,6 +420,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 <div className='flex-1 h-full lg:mt-0 mt-4 flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
+                    rememberedCards={rememberedCards[playerNumber-1]}
                     cards={opponentCards}
                     playerNumber={playerNumber == 1 ? 2 : 1}
                     area='ai'
@@ -463,6 +461,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 <div className='flex-1 lg:mt-0 mt-4 h-full flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
+                    rememberedCards={rememberedCards[playerNumber-1]}
                     cards={playerCards}
                     playerNumber={playerNumber}
                     area='player'
@@ -490,7 +489,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                       isPlayerTurn ? 'text-success-text' : 'text-alert-text'
                     }`}
                   >
-                    {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
+                    {(suspended ? 'Suspended: ' : '') + (isPlayerTurn ? 'Your Turn' : "Opponent's turn")}
                   </span>
                 </div>
 

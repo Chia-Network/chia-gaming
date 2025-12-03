@@ -7,34 +7,54 @@ import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 import WaitingScreen from './WaitingScreen';
 import Calpoker from '../features/calPoker';
 import GameLog from './GameLog';
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import installThemeSyncListener from '../utils/themeSyncListener';
 
+let plainDataCalpokerKeys = [
+  'log',
+  'addressData',
+  'ourShare',
+  'theirShare',
+  'isPlayerTurn',
+  'iStarted',
+  'moveNumber',
+  'playerHand',
+  'opponentHand',
+  'playerNumber',
+  'cardSelections',
+  'setCardSelections',
+  'outcome',
+  'lastOutcome'
+];
 
+function copyKeys(source: any, keys: string[]): any {
+  const result: any = {};
+  keys.forEach((k) => result[k] = source[k]);
+  return result;
+}
 
 const Game = () => {
+  let [updatesSuspended, setUpdatesSuspended] = useState(false);
   const uniqueId = generateOrRetrieveUniqueId();
   const params = getSearchParams();
-  const {
+  const nativeWasmBlobData = useWasmBlob(params.lobbyUrl, uniqueId);
+  const capturedPlainWasmBlobData = copyKeys(nativeWasmBlobData, plainDataCalpokerKeys);
+  let [calpokerGameDisplayData, setCalpokerGameDisplayData] = useState<any>(capturedPlainWasmBlobData);
+  let showCalpokerData = updatesSuspended ? calpokerGameDisplayData : nativeWasmBlobData;
+  let {
     error,
-    log,
-    addressData,
-    ourShare,
-    theirShare,
     gameConnectionState,
-    isPlayerTurn,
-    iStarted,
-    moveNumber,
     handleMakeMove,
-    playerHand,
-    opponentHand,
-    playerNumber,
-    cardSelections,
-    setCardSelections,
-    outcome,
-    lastOutcome,
     stopPlaying,
-  } = useWasmBlob(params.lobbyUrl, uniqueId);
+    setCardSelections
+  } = nativeWasmBlobData;
+
+  let downstreamSetSuspended = useCallback((suspended: boolean) => {
+    if (suspended) {
+      setCalpokerGameDisplayData(capturedPlainWasmBlobData);
+    }
+    setUpdatesSuspended(suspended);
+  }, [capturedPlainWasmBlobData]);
 
   // All early returns need to be after all useEffect, etc.
   useEffect(() => {
@@ -74,7 +94,7 @@ const Game = () => {
                 {c}
               </Typography>
             ))}
-            <GameLog log={log} />
+            <GameLog log={showCalpokerData.log} />
           </Box>
         </Box>
       </Box>
@@ -83,22 +103,24 @@ const Game = () => {
 
   return (
     <Calpoker
-      outcome={outcome}
-      lastOutcome={lastOutcome}
-      moveNumber={moveNumber}
-      iStarted={iStarted}
-      isPlayerTurn={isPlayerTurn}
-      playerNumber={playerNumber}
-      playerHand={playerHand}
-      opponentHand={opponentHand}
-      cardSelections={cardSelections}
+      setSuspended={downstreamSetSuspended}
+      suspended={updatesSuspended}
+      outcome={showCalpokerData.outcome}
+      lastOutcome={showCalpokerData.lastOutcome}
+      moveNumber={showCalpokerData.moveNumber}
+      iStarted={showCalpokerData.iStarted}
+      isPlayerTurn={showCalpokerData.isPlayerTurn}
+      playerNumber={showCalpokerData.playerNumber}
+      playerHand={showCalpokerData.playerHand}
+      opponentHand={showCalpokerData.opponentHand}
+      cardSelections={showCalpokerData.cardSelections}
+      log={showCalpokerData.log}
+      addressData={showCalpokerData.addressData}
+      ourShare={showCalpokerData.ourShare}
+      theirShare={showCalpokerData.theirShare}
       setCardSelections={setCardSelections}
       handleMakeMove={handleMakeMove}
       stopPlaying={stopPlaying}
-      log={log}
-      addressData={addressData}
-      ourShare={ourShare}
-      theirShare={theirShare}
     />
   );
 };

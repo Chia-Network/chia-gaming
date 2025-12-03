@@ -6,6 +6,7 @@ interface HandDisplayProps {
   title: string;
   playerNumber: number;
   cards: CardValueSuit[];
+  rememberedCards: CardValueSuit[];
   area: string;
   winner: string | null;
   winnerType: string;

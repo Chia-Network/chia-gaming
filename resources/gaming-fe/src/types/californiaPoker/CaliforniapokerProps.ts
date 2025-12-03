@@ -1,6 +1,8 @@
 import { CalpokerOutcome, OutcomeLogLine } from "../ChiaGaming";
 
 export interface CaliforniapokerProps {
+  setSuspended: (suspended: boolean) => void;
+  suspended: boolean;
   lastOutcome: CalpokerOutcome | undefined;
   log: OutcomeLogLine[]
   moveNumber: number;
