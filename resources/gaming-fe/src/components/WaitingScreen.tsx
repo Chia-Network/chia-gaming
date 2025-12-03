@@ -1,4 +1,5 @@
-import { Box, Typography, CircularProgress } from '@mui/material';
+
+import { CircularProgress } from '@mui/material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
 
@@ -20,43 +21,23 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
   }, [messages, cycleInterval]);
 
   return (
-    <Box
-      sx={{
-        height: '100vh',
-        width: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'var(--color-canvas-bg-subtle)',
-        color: 'var(--color-canvas-text)',
-        textAlign: 'center',
-        gap: 3,
-        overflow: 'hidden',
-      }}
-    >
+     <div className="h-screen w-full flex flex-col items-center justify-center text-center gap-3 bg-canvas-bg-subtle text-canvas-text overflow-hidden">
       {/* Title */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8 }}
       >
-        <Typography
-          variant="h4"
-          fontWeight={700}
-          sx={{
-            letterSpacing: '0.5px',
-            textShadow: '0 1px 4px rgba(0,0,0,0.04)',
-            color: 'var(--color-canvas-text-contrast)',
-          }}
+        <h4
           aria-label="waiting-state"
+          className="font-bold text-2xl tracking-wide text-canvas-text-contrast drop-shadow-sm"
         >
           {stateName}
-        </Typography>
+        </h4>
       </motion.div>
 
       {/* Animated message area */}
-      <Box sx={{ minHeight: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="min-h-10 flex items-center justify-center">
         <AnimatePresence mode="wait">
           <motion.div
             key={messages[currentIndex]}
@@ -65,44 +46,30 @@ const WaitingScreen = ({ stateName, messages, cycleInterval = 2000 }: WaitingScr
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.6 }}
           >
-            <Typography
-              variant="body1"
-              sx={{
-                opacity: 0.9,
-                fontSize: '1rem',
-                lineHeight: 1.8,
-                color: 'var(--color-canvas-text)',
-              }}
-            >
+            <p className="text-base leading-7 text-opacity-90 text-canvas-text">
               {messages[currentIndex]}
-            </Typography>
+            </p>
           </motion.div>
         </AnimatePresence>
-      </Box>
+      </div>
 
       {/* Circular Progress */}
       <motion.div
         animate={{ rotate: 360 }}
         transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-        style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-        }}
+        className="flex justify-center items-center"
       >
-        <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-          <CircularProgress
-            size={60}
-            thickness={4}
-            sx={{
-              color: 'var(--color-canvas-solid)',
-              // small glow using the same solid color with reduced opacity
-              filter: 'drop-shadow(0 0 6px rgba(0,0,0,0.04))',
-            }}
-          />
-        </Box>
+        <div className="relative inline-flex">
+          <div className="w-15 h-15">
+            <CircularProgress
+              className="w-full h-full text-canvas-solid drop-shadow-[0_0_6px_rgba(0,0,0,0.04)]"
+              value={100} // full circle
+              thickness={4}
+            />
+          </div>
+        </div>
       </motion.div>
-    </Box>
+    </div>
   );
 };
 
