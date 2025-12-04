@@ -17,10 +17,7 @@ import CaliforniaPoker from '../californiaPoker';
 import { Info, LogOut } from 'lucide-react';
 
 export interface CalpokerProps {
-  setSuspended: (suspended: boolean) => void;
-  suspended: boolean;
   outcome: CalpokerOutcome | undefined;
-  lastOutcome: CalpokerOutcome | undefined;
   ourShare: number | undefined;
   theirShare: number | undefined;
   moveNumber: number;
@@ -38,10 +35,7 @@ export interface CalpokerProps {
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
-  setSuspended,
-  suspended,
   outcome,
-  lastOutcome,
   ourShare,
   theirShare,
   moveNumber,
@@ -200,8 +194,6 @@ const Calpoker: React.FC<CalpokerProps> = ({
             }}
           >
             <CaliforniaPoker
-              setSuspended={setSuspended}
-              suspended={suspended}
               playerNumber={playerNumber}
               isPlayerTurn={isPlayerTurn}
               moveNumber={moveNumber}
@@ -211,7 +203,7 @@ const Calpoker: React.FC<CalpokerProps> = ({
               setCardSelections={setCardSelections}
               handleMakeMove={handleMakeMove}
               iStarted={iStarted}
-              lastOutcome={lastOutcome}
+              outcome={outcome}
               log={log}
               myWinOutcome={myWinOutcome}
               banner={banner}

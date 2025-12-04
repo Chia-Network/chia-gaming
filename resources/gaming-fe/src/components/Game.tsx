@@ -7,56 +7,34 @@ import { getSearchParams, generateOrRetrieveUniqueId } from '../util';
 import WaitingScreen from './WaitingScreen';
 import Calpoker from '../features/calPoker';
 import GameLog from './GameLog';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect } from 'react';
 import installThemeSyncListener from '../utils/themeSyncListener';
 
-let plainDataCalpokerKeys = [
-  'log',
-  'addressData',
-  'ourShare',
-  'theirShare',
-  'isPlayerTurn',
-  'iStarted',
-  'moveNumber',
-  'playerHand',
-  'opponentHand',
-  'playerNumber',
-  'cardSelections',
-  'setCardSelections',
-  'outcome',
-  'lastOutcome'
-];
 
-function copyKeys(source: any, keys: string[]): any {
-  const result: any = {};
-  keys.forEach((k) => result[k] = source[k]);
-  return result;
-}
 
 const Game = () => {
-  let [updatesSuspended, setUpdatesSuspended] = useState(false);
   const uniqueId = generateOrRetrieveUniqueId();
   const params = getSearchParams();
-  const nativeWasmBlobData = useWasmBlob(params.lobbyUrl, uniqueId);
-  const capturedPlainWasmBlobData = copyKeys(nativeWasmBlobData, plainDataCalpokerKeys);
-  let [calpokerGameDisplayData, setCalpokerGameDisplayData] = useState<any>(capturedPlainWasmBlobData);
-  let showCalpokerData = updatesSuspended ? calpokerGameDisplayData : nativeWasmBlobData;
-  let {
+  const {
     error,
+    log,
+    addressData,
+    ourShare,
+    theirShare,
     gameConnectionState,
+    isPlayerTurn,
+    iStarted,
+    moveNumber,
     handleMakeMove,
+    playerHand,
+    opponentHand,
+    playerNumber,
+    cardSelections,
+    setCardSelections,
+    outcome,
+    lastOutcome,
     stopPlaying,
-    setCardSelections
-  } = nativeWasmBlobData;
-
-  let downstreamSetSuspended = useCallback((suspended: boolean) => {
-    if (suspended) {
-      setCalpokerGameDisplayData(capturedPlainWasmBlobData);
-    }
-    console.log('suspend changed', suspended);
-    console.log('cards (incoming)', nativeWasmBlobData.playerHand);
-    setUpdatesSuspended(suspended);
-  }, [capturedPlainWasmBlobData]);
+  } = useWasmBlob(params.lobbyUrl, uniqueId);
 
   // All early returns need to be after all useEffect, etc.
   useEffect(() => {
@@ -96,7 +74,7 @@ const Game = () => {
                 {c}
               </Typography>
             ))}
-            <GameLog log={showCalpokerData.log} />
+            <GameLog log={log} />
           </Box>
         </Box>
       </Box>
@@ -105,24 +83,21 @@ const Game = () => {
 
   return (
     <Calpoker
-      setSuspended={downstreamSetSuspended}
-      suspended={updatesSuspended}
-      outcome={showCalpokerData.outcome}
-      lastOutcome={showCalpokerData.lastOutcome}
-      moveNumber={showCalpokerData.moveNumber}
-      iStarted={showCalpokerData.iStarted}
-      isPlayerTurn={showCalpokerData.isPlayerTurn}
-      playerNumber={showCalpokerData.playerNumber}
-      playerHand={showCalpokerData.playerHand}
-      opponentHand={showCalpokerData.opponentHand}
-      cardSelections={showCalpokerData.cardSelections}
-      log={showCalpokerData.log}
-      addressData={showCalpokerData.addressData}
-      ourShare={showCalpokerData.ourShare}
-      theirShare={showCalpokerData.theirShare}
+      outcome={outcome ? outcome : lastOutcome}
+      moveNumber={moveNumber}
+      iStarted={iStarted}
+      isPlayerTurn={isPlayerTurn}
+      playerNumber={playerNumber}
+      playerHand={playerHand}
+      opponentHand={opponentHand}
+      cardSelections={cardSelections}
       setCardSelections={setCardSelections}
       handleMakeMove={handleMakeMove}
       stopPlaying={stopPlaying}
+      log={log}
+      addressData={addressData}
+      ourShare={ourShare}
+      theirShare={theirShare}
     />
   );
 };

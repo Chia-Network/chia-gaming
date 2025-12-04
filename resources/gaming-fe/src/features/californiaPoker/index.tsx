@@ -25,14 +25,19 @@ import {
   getCombinations,
 } from './utils';
 import { HandDisplay, MovingCard } from './components';
+import { CalpokerOutcome } from '../../types/ChiaGaming';
 import { SuitName } from '../../types/californiaPoker/CardValueSuit';
 
 import { WalletIcon } from 'lucide-react';
 
+function translateTopline(topline: string | undefined): string | null {
+  if (!topline) return null;
+  const res = {'win':'player', 'lose':'ai'}[topline];
+  return res ? res : 'tie';
+}
+
 // Main Component
 const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
-  setSuspended,
-  suspended,
   moveNumber,
   isPlayerTurn,
   playerNumber,
@@ -41,7 +46,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   cardSelections,
   setCardSelections,
   handleMakeMove,
-  lastOutcome,
+  outcome,
   log,
   myWinOutcome,
   banner,
@@ -67,14 +72,8 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     balanceDisplay.match(/(\d+)\s*vs\s*(\d+)/i) || [];
   const [playerCards, setPlayerCards] = useState<CardValueSuit[]>([]);
   const [opponentCards, setOpponentCards] = useState<CardValueSuit[]>([]);
+  const [rememberedOutcome, setRememberedOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [rememberedCards, setRememberedCards] = useState<CardValueSuit[][]>([playerCards, opponentCards]);
-
-  useEffect(() => {
-    setLastMoveNumber(moveNumber);
-    if (lastMoveNumber <= moveNumber) return;
-
-    swapCards();
-  }, [lastMoveNumber, moveNumber, lastOutcome]);
 
   // whenever playerHand or aiHand changes → convert into CardValueSuit[]
   useEffect(() => {
@@ -100,7 +99,17 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       console.log('setRememberedCards', newRemCards);
       setRememberedCards(newRemCards);
     }
-  }, [playerHand, opponentHand]);
+    if (outcome) {
+      setRememberedOutcome(outcome);
+    }
+  }, [playerHand, opponentHand, outcome]);
+
+  useEffect(() => {
+    if (rememberedOutcome && gameState != GAME_STATES.FINAL && gameState != GAME_STATES.SWAPPING) {
+      setLastMoveNumber(moveNumber);
+      swapCards();
+    }
+  }, [lastMoveNumber, moveNumber, rememberedOutcome]);
 
   // const [opponentCards, setAiHand] = useState<CardValueSuit[]>([]);
   const [playerSelected, setPlayerSelected] = useState<number[]>([]);
@@ -268,14 +277,20 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   };
 
   const swapCards = () => {
-    const gameRoundData = lastOutcome;
+    const liveWinner = translateTopline(rememberedOutcome?.my_win_outcome);
+    console.log('swapping, outcome', liveWinner, rememberedOutcome);
+    setWinner(liveWinner);
     setGameState(GAME_STATES.SWAPPING);
-    setSuspended(true);
 
     setTimeout(() => {
-      setRememberedCards([[],[]]);
-      setSuspended(false);
+      console.log('done swapping');
       setGameState(GAME_STATES.FINAL);
+      setTimeout(() => {
+        console.log('starting again');
+        setRememberedCards([[],[]]);
+        setWinner(null);
+        setRememberedOutcome(undefined);
+      }, SWAP_ANIMATION_DURATION);
     }, SWAP_ANIMATION_DURATION);
 
     /*
@@ -493,7 +508,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                       isPlayerTurn ? 'text-success-text' : 'text-alert-text'
                     }`}
                   >
-                    {(suspended ? 'Suspended: ' : '') + (isPlayerTurn ? 'Your Turn' : "Opponent's turn")}
+                    {isPlayerTurn ? 'Your Turn' : "Opponent's turn"}
                   </span>
                 </div>
 
