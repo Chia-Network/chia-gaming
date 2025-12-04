@@ -39,11 +39,13 @@ const GAME_STATES = {
   INITIAL: 'initial',
   SELECTING: 'selecting',
   SWAPPING: 'swapping',
+  AWAITING_SWAP: 'awaiting_swap',
   FINAL: 'final',
 };
 
 const ANIMATION_DELAY = 100;
 const SWAP_ANIMATION_DURATION = 2500;
+const WIN_CONDITION_DURATION = 2500;
 
 // Button styling classes
 const BUTTON_BASE = 'font-bold rounded-lg w-full h-full text-center';
@@ -57,6 +59,7 @@ export {
   GAME_STATES,
   ANIMATION_DELAY,
   SWAP_ANIMATION_DURATION,
+  WIN_CONDITION_DURATION,
   BUTTON_BASE,
   BUTTON_ACTIVE,
   BUTTON_DISABLED,

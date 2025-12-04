@@ -277,7 +277,9 @@ export class WasmBlobWrapper {
       this.iStarted ? this.playerHand : this.opponentHand,
       readable,
     );
+    console.log('finalOutcome', JSON.stringify(this.gameOutcome));
     result.setOutcome = this.gameOutcome;
+    result.setLastOutcome = this.gameOutcome;
   }
 
   takeOpponentMove(
@@ -450,7 +452,6 @@ export class WasmBlobWrapper {
         result.setPlayerHand = [];
         result.setOpponentHand = [];
         result.setOutcome = undefined;
-        result.setLastOutcome = this.gameOutcome;
         result.setGameConnectionState = {
           stateIdentifier: 'running',
           stateDetail: [],

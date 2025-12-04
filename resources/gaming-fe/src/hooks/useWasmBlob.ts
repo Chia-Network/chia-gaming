@@ -125,7 +125,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setOutcome(outcome);
     if (outcome) {
       console.log('recognizeOutcome', outcome);
-      setLastOutcome(outcome);
       const mySelects = !iStarted ? outcome.alice_selects : outcome.bob_selects;
       const theirSelects = !iStarted ? outcome.bob_selects : outcome.alice_selects;
       const myFinalHand = !iStarted ? outcome.alice_final_hand : outcome.bob_final_hand;
@@ -171,6 +170,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     setAddressData: setAddressData,
     setOurShare: setOurShare,
     setTheirShare: setTheirShare,
+    setLastOutcome: setLastOutcome,
   };
 
   function setState(state: any): void {
