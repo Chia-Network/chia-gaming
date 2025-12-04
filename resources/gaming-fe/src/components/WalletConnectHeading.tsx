@@ -245,7 +245,8 @@ const WalletConnectHeading = (_args: any) => {
   }, []);
 
   const onWalletDismiss = useCallback(() => {
-    toggleExpanded();
+    // toggleExpanded();
+    setShowQRModal(false)
   }, []);
 
   const sessionConnected = connected

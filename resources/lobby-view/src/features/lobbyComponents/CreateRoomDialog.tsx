@@ -1,4 +1,5 @@
 import React from 'react';
+import { Button } from '../../button';
 
 interface CreateRoomDialogProps {
   dialogOpen: boolean;
@@ -88,18 +89,22 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
 
         {/* Actions */}
         <div className="flex justify-end gap-2 mt-4">
-          <button
+          <Button
+            variant={'destructive'}
+            color={'outline'}
             onClick={closeDialog}
             className="px-4 py-2 border border-secondary-solid text-secondary-solid rounded hover:bg-secondary-solid/10"
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={'solid'}
+            color={'secondary'}
             onClick={handleCreate}
             className="px-4 py-2 bg-secondary-solid text-canvas-bg rounded hover:bg-secondary-solid/90"
           >
             Create
-          </button>
+          </Button>
         </div>
       </div>
     </div>

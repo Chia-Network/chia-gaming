@@ -65,7 +65,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [playerSelected, setPlayerSelected] = useState<number[]>([]);
   const [winner, setWinner] = useState<string | null>(null);
   const [playerBestHand, setPlayerBestHand] = useState<BestHandType | undefined>();
-  const [aiBestHand, setAiBestHand] = useState<BestHandType | undefined>();
+  const [opponentBestHand, setOpponentBestHand] = useState<BestHandType | undefined>();
   const [swappingCards, setSwappingCards] = useState<SwappingCards>({
     player: [],
     ai: [],
@@ -108,7 +108,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setPlayerSelected([]);
     setWinner(null);
     setPlayerBestHand(undefined);
-    setAiBestHand(undefined);
+    setOpponentBestHand(undefined);
     setSwappingCards({ player: [], ai: [] });
     setShowSwapAnimation(false);
     setMovingCards([]);
@@ -271,12 +271,12 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setGameState(GAME_STATES.FINAL);
 
       const playerBest = getBestHand(newPlayerHand);
-      const aiBest = getBestHand(newOpponentHand);
+      const opponentBest = getBestHand(newOpponentHand);
 
       setPlayerBestHand(playerBest);
-      setAiBestHand(aiBest);
+      setOpponentBestHand(opponentBest);
 
-      const comparison = compareRanks(playerBest.rank, aiBest.rank);
+      const comparison = compareRanks(playerBest.rank, opponentBest.rank);
       setWinner(comparison > 0 ? 'player' : comparison < 0 ? 'ai' : 'tie');
     }, SWAP_ANIMATION_DURATION);
   };
@@ -337,7 +337,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                   area='ai'
                   winner={winner}
                   winnerType='ai'
-                  bestHand={aiBestHand}
+                  bestHand={opponentBestHand}
                   swappingCards={swappingCards.ai}
                   showSwapAnimation={showSwapAnimation}
                   gameState={gameState}
