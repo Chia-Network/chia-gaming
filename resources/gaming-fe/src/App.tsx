@@ -5,6 +5,7 @@ import Game from './components/Game';
 import WalletConnectHeading from './components/WalletConnectHeading';
 import { blockchainDataEmitter } from './hooks/BlockchainInfo';
 import { getGameSelection, getSearchParams, generateOrRetrieveUniqueId } from './util';
+import GameRedirectPopup from './components/GameRedirectPopup';
 
 const App = () => {
   const uniqueId = generateOrRetrieveUniqueId();
@@ -13,6 +14,10 @@ const App = () => {
   const shouldRedirectToLobby = !params.lobby && !params.iStarted;
   const [havePeak, setHavePeak] = useState(false);
   const [iframeUrl, setIframeUrl] = useState('about:blank');
+  const gameName = params.game;
+  const joinCode = params.join;
+  const [showPopup, setShowPopup] = useState(false);
+  const [pendingGameUrl, setPendingGameUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const subscription = blockchainDataEmitter.getObservable().subscribe({
@@ -31,21 +36,28 @@ const App = () => {
   // connection soon.  I think we can change the iframe location from the outside
   // in that scenario.
   useEffect(() => {
-    if (shouldRedirectToLobby) {
-      fetch('/urls')
-        .then((res) => res.json())
-        .then((urls) => {
-          console.log('navigate to lobby', urls);
-          if (gameSelection) {
-            setIframeUrl(
-              `${urls.tracker}&uniqueId=${uniqueId}&token=${gameSelection.token}&view=game`,
-            );
-          } else {
-            setIframeUrl(`${urls.tracker}&view=game&uniqueId=${uniqueId}`);
-          }
-        });
-    }
-  }, [params]);
+    fetch("/urls")
+      .then((res) => res.json())
+      .then((urls) => {
+        const baseUrl = urls.tracker;
+        const gameUrl = gameSelection
+          ? `${baseUrl}&uniqueId=${uniqueId}&token=${gameSelection.token}&view=game`
+          : `${baseUrl}&view=game&uniqueId=${uniqueId}`;
+
+        if (params.join) {
+          // It's an invite → wait for user to accept
+          setPendingGameUrl(gameUrl);
+          setShowPopup(true);
+        } else {
+          // No invite → go straight to game
+          setIframeUrl(gameUrl);
+        }
+      });
+  }, []);
+  // no dependency on params so URL stays the same
+
+
+
 
   // Keep iframe in sync with the parent theme (CSS variables and dark class).
   // If the iframe is same-origin we copy the CSS custom properties and `dark` class
@@ -139,11 +151,22 @@ const App = () => {
     };
   }, [iframeUrl]);
 
+  const handleAccept = () => {
+    if (pendingGameUrl) setIframeUrl(pendingGameUrl);
+    setShowPopup(false);
+  };
+
+  const handleCancel = () => {
+    setShowPopup(false);
+    // Redirect to lobby
+    window.location.href = "/?lobby=1";
+  };
+
   if (params.gallery) {
     return <Gallery />;
   }
 
-  if (params.game && !params.join) {
+  if (params.game && !params.join && !showPopup) {
     return <Game />;
   }
 
@@ -155,20 +178,30 @@ const App = () => {
 
   if (!havePeak) {
     return (
-      <div className="flex flex-col relative w-screen h-screen" style={{ backgroundColor: 'var(--color-canvas-bg-subtle)' }}>
+      <div className="flex flex-col relative w-screen h-screen bg-canvas-bg-subtle" >
         {wcHeading}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col relative w-screen h-screen" style={{ backgroundColor: 'var(--color-canvas-bg-subtle)' }}>
+    <div className="flex flex-col relative w-screen h-screen bg-canvas-bg-subtle" >
       {wcHeading}
-      <iframe
-        id='subframe'
-        className="w-full flex-1 border-0 m-0 p-0"
-        src={iframeUrl}
-      ></iframe>
+      <div className="relative z-0 w-full flex-1 bg-canvas-bg-subtle">
+        <iframe
+          id='subframe'
+          className="w-full h-full border-0 m-0 md:py-0 py-6 bg-canvas-bg-subtle"
+          src={iframeUrl}
+        ></iframe>
+      </div>
+      <GameRedirectPopup
+        open={showPopup}
+        gameName={params.game}          // "calpoker"
+        message="You have been invited to join this game."
+        onAccept={handleAccept}
+        onCancel={handleCancel}
+      />
+
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import { Gamepad } from 'lucide-react';
-import { Dispatch, SetStateAction } from 'react';
+import { Button } from '../../button';
 
 interface Room {
   token: string;
@@ -21,7 +21,7 @@ export default function ActiveRooms({
   getPlayerAlias,
 }: ActiveRoomsProps) {
   return (
-    <div className='flex w-full md:w-2/3 pr-0 h-full'>
+    <div className='flex w-full lg:w-2/3 pr-0 h-full'>
       {/* Card */}
       <div className='bg-canvas-bg w-full rounded-l-xl h-full shadow-none border-none'>
         <div className='h-full pb-24 flex flex-col'>
@@ -30,13 +30,14 @@ export default function ActiveRooms({
             <h6 className='text-lg font-semibold text-canvas-text-contrast'>
               Active Rooms
             </h6>
-            <button
+            <Button
+              variant={'solid'}
+              color={'secondary'}
               onClick={openDialog}
               aria-label='generate-room'
-              className='px-4 py-2 bg-secondary text-white rounded font-medium'
             >
-              Generate Room
-            </button>
+              Generate Rooms
+            </Button>
           </div>
 
           <div className='border-b border-canvas-line mb-3'></div>
@@ -74,12 +75,13 @@ export default function ActiveRooms({
                     </p>
                     <p className='text-sm text-canvas-text'>Game: {r.game}</p>
                   </div>
-                  <button
+                  <Button
+                    variant={'solid'}
+                    color={'secondary'}
                     onClick={() => joinRoom(r.token)}
-                    className='px-3 py-1 bg-secondary text-white rounded font-medium'
                   >
                     Join
-                  </button>
+                  </Button>
                 </div>
               ))
             )}
