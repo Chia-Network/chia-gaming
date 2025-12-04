@@ -11,6 +11,8 @@ import { Button, } from '../../components/button';
 // Constants
 import {
   ANIMATION_DELAY,
+  BUTTON_ACTIVE,
+  BUTTON_BASE,
   GAME_STATES,
   SWAP_ANIMATION_DURATION,
 } from './constants/constants';

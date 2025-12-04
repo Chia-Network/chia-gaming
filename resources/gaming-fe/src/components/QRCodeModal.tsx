@@ -72,12 +72,13 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
         className={`
-      ${isMobile ? "rounded-none h-screen max-h-screen" : "rounded-2xl"}
-      border border-canvas-border
-      bg-canvas-bg
-      shadow-[0_8px_32px_-12px_rgba(0,0,0,0.1)]
-      p-0 overflow-hidden
-    `}
+             ${isMobile
+            ? "w-full max-w-full rounded-none p-0 pt-16"
+            : "w-full max-w-xl rounded-2xl p-0"
+          }
+            border border-canvas-border bg-canvas-bg shadow-xl
+            overflow-hidden
+          `}
       >
         {/* HEADER */}
         <DialogHeader
@@ -126,8 +127,8 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
           {/* QR CODE */}
           <div
             className="
-          inline-block p-4 mb-6 rounded-xl border-2 border-canvas-border
-          bg-white shadow-md
+          w-full max-w-[220px] mx-auto p-4 mb-6 rounded-xl border-2 border-canvas-border bg-white shadow-md
+
         "
           >
             {isGenerating ? (
@@ -149,8 +150,7 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
             ) : (
               <img
                 src={qrCodeDataUrl}
-                alt="WalletConnect QR Code"
-                className="max-w-full h-auto rounded-md transition-opacity"
+                className="w-full max-w-[200px] mx-auto h-auto rounded-md transition-opacity"
               />
             )}
           </div>
@@ -186,7 +186,8 @@ export function QRCodeModal({ open, uri, onClose }: QRCodeModalProps) {
         </div>
 
         {/* FOOTER */}
-        <DialogFooter className="flex items-center justify-end gap-2 p-4">
+        <DialogFooter className="flex flex-row items-center justify-end gap-2 p-4">
+
           <Button
             variant="outline"
             onClick={copyToClipboard}
