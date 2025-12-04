@@ -53,6 +53,8 @@ const Game = () => {
     if (suspended) {
       setCalpokerGameDisplayData(capturedPlainWasmBlobData);
     }
+    console.log('suspend changed', suspended);
+    console.log('cards (incoming)', nativeWasmBlobData.playerHand);
     setUpdatesSuspended(suspended);
   }, [capturedPlainWasmBlobData]);
 

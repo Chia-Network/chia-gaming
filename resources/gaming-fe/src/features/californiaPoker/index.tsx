@@ -78,9 +78,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
   // whenever playerHand or aiHand changes → convert into CardValueSuit[]
   useEffect(() => {
-    if (playerHand.length === 0 || opponentHand.length === 0) {
-      return;
-    }
     const mappedPlayer = playerHand.map(([rank, suit], index) => ({
       rank,
       suit: suitMap[suit],
@@ -95,6 +92,14 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
 
     setPlayerCards(mappedPlayer);
     setOpponentCards(mappedOpponent);
+    if (mappedPlayer.length && mappedOpponent.length) {
+      const newRemCards = [
+        mappedPlayer,
+        mappedOpponent
+      ];
+      console.log('setRememberedCards', newRemCards);
+      setRememberedCards(newRemCards);
+    }
   }, [playerHand, opponentHand]);
 
   // const [opponentCards, setAiHand] = useState<CardValueSuit[]>([]);
@@ -268,6 +273,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setSuspended(true);
 
     setTimeout(() => {
+      setRememberedCards([[],[]]);
       setSuspended(false);
       setGameState(GAME_STATES.FINAL);
     }, SWAP_ANIMATION_DURATION);
@@ -420,8 +426,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 <div className='flex-1 h-full lg:mt-0 mt-4 flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
-                    rememberedCards={rememberedCards[playerNumber-1]}
-                    cards={opponentCards}
+                    cards={opponentCards.length ? opponentCards : rememberedCards[1]}
                     playerNumber={playerNumber == 1 ? 2 : 1}
                     area='ai'
                     winner={winner}
@@ -461,8 +466,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 <div className='flex-1 lg:mt-0 mt-4 h-full flex items-center justify-center p-2'>
                   <HandDisplay
                     title=''
-                    rememberedCards={rememberedCards[playerNumber-1]}
-                    cards={playerCards}
+                    cards={playerCards.length ? playerCards : rememberedCards[0]}
                     playerNumber={playerNumber}
                     area='player'
                     winner={winner}

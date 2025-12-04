@@ -7,7 +7,6 @@ function HandDisplay(props: HandDisplayProps) {
   const {
     title,
     cards,
-    rememberedCards,
     playerNumber,
     area,
     winner,
