@@ -517,7 +517,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 {/* Move number */}
                 <div className='flex flex-1 items-center justify-center'>
                   <span className='font-bold text-xl text-canvas-solid'>
-                    Move {moveNumber} {rememberedCardSelections}
+                    Move {moveNumber}
                   </span>
                 </div>
               </div>
