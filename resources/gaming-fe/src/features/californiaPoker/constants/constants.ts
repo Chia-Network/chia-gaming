@@ -39,6 +39,7 @@ const GAME_STATES = {
   INITIAL: 'initial',
   SELECTING: 'selecting',
   SWAPPING: 'swapping',
+  AWAITING_SWAP: 'awaiting_swap',
   FINAL: 'final',
 };
 
