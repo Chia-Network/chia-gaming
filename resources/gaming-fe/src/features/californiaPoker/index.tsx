@@ -15,7 +15,6 @@ import {
   BUTTON_BASE,
   GAME_STATES,
   SWAP_ANIMATION_DURATION,
-  WIN_CONDITION_DURATION,
 } from './constants/constants';
 
 // Utils
