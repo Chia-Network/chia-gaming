@@ -129,6 +129,19 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setPlayerSelected([]);
     setWinner(null);
   };
+  const NewGame = () => {
+    console.log('starting again');
+    doHandleMakeMove();
+    setGameState(GAME_STATES.SELECTING);
+    setRememberedCards([[],[]]);
+    setWinner(null);
+    setRememberedOutcome(undefined);
+    setMovingCards([]);
+    setCardSelections(0);
+    setPlayerSelected([]);
+    setShowSwapAnimation(false);
+    setSwappingCards({ player: [], ai: [] });
+  };
   const toggleCardSelection = (cardIndex: number) => {
     if (gameState !== GAME_STATES.SELECTING) return;
 
@@ -185,7 +198,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const doHandleMakeMove = () => {
     const moveData = '80';
 
-    if (playerSelected.length > 0) {
+    if (gameState === GAME_STATES.SELECTING && playerSelected.length > 0) {
       setGameState(GAME_STATES.AWAITING_SWAP);
     }
 
@@ -302,34 +315,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     return movingCardData;
   };
 
-  function opponentSelectedCards() {
-    if (gameState !== GAME_STATES.SWAPPING || !rememberedOutcome) {
-      return [];
-    }
-    const selected = isPlayerAlice ? rememberedOutcome.bob_discards : rememberedOutcome.alice_discards;
-    const result = [];
-    for (let i = 0; i < 8; i++) {
-      if (selected & (1 << i)) {
-        result.push(i);
-      }
-    }
-    return result;
-  }
-
-  function playerSelectedCards() {
-    if (gameState !== GAME_STATES.SWAPPING || !rememberedOutcome) {
-      return playerSelected;
-    }
-    const selected = isPlayerAlice ? rememberedOutcome.alice_discards : rememberedOutcome.bob_discards;
-    const result = [];
-    for (let i = 0; i < 8; i++) {
-      if (selected & (1 << i)) {
-        result.push(i);
-      }
-    }
-    return result;
-  }
-
   const swapCards = (rememberedOutcome: CalpokerOutcome) => {
     const liveWinner = translateTopline(rememberedOutcome.my_win_outcome);
     console.log('swapping, outcome', liveWinner, rememberedOutcome);
@@ -380,18 +365,6 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
     setTimeout(() => {
       console.log('done swapping');
       setGameState(GAME_STATES.FINAL);
-      setTimeout(() => {
-        setGameState(GAME_STATES.SELECTING);
-        console.log('starting again');
-        setRememberedCards([[],[]]);
-        setWinner(null);
-        setRememberedOutcome(undefined);
-        setMovingCards([]);
-        setCardSelections(0);
-        setPlayerSelected([]);
-        setShowSwapAnimation(false);
-        setSwappingCards({ player: [], ai: [] });
-      }, WIN_CONDITION_DURATION);
     }, SWAP_ANIMATION_DURATION);
   };
 
@@ -451,7 +424,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                     showSwapAnimation={showSwapAnimation}
                     gameState={gameState}
                     formatHandDescription={formatHandDescription}
-                    selectedCards={opponentSelectedCards()}
+                    selectedCards={[]}
                   />
                 </div>
               </div>
@@ -488,7 +461,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                     winnerType='player'
                     bestHand={playerBestHand}
                     onCardClick={toggleCardSelection}
-                    selectedCards={playerSelectedCards()}
+                    selectedCards={playerSelected}
                     swappingCards={swappingCards.player}
                     showSwapAnimation={showSwapAnimation}
                     gameState={gameState}
@@ -518,7 +491,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                     <Button
                       variant={'solid'}
                       color={'primary'}
-                      onClick={() => {}}
+                      onClick={NewGame}
                       disabled={!isPlayerTurn}
                       fullWidth
                       className='h-full'
