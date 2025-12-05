@@ -52,7 +52,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   banner,
   balanceDisplay,
 }) => {
-  const isPlayerAlice = playerNumber !== 1;
+  const isPlayerAlice = playerNumber === 1;
   const [gameState, setGameState] = useState(GAME_STATES.INITIAL);
   // const [playerCards, setPlayerHand] = useState<CardValueSuit[]>([]);
   const suitMap: Record<number, SuitName> = {
@@ -74,6 +74,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
   const [opponentCards, setOpponentCards] = useState<CardValueSuit[]>([]);
   const [rememberedOutcome, setRememberedOutcome] = useState<CalpokerOutcome | undefined>(undefined);
   const [rememberedCards, setRememberedCards] = useState<CardValueSuit[][]>([playerCards, opponentCards]);
+  const [rememberedCardSelections, setRememberedCardSelections] = useState(0);
 
   const cvsFromCard: (card: number[], index: number) => CardValueSuit = ([rank, suit], index) => ({
     rank,
@@ -152,6 +153,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       let selections = cardSelections;
       selections &= ~(1 << cardIndex); // clear bit
       setCardSelections(selections);
+      setRememberedCardSelections(selections);
     } else if (playerSelected.length < 4) {
       const newSelection = [...playerSelected, cardIndex];
       setPlayerSelected(newSelection);
@@ -160,6 +162,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       let selections = cardSelections;
       selections |= 1 << cardIndex; // set bit
       setCardSelections(selections);
+      setRememberedCardSelections(selections);
     }
   };
 
@@ -514,7 +517,7 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
                 {/* Move number */}
                 <div className='flex flex-1 items-center justify-center'>
                   <span className='font-bold text-xl text-canvas-solid'>
-                    Move {moveNumber}
+                    Move {moveNumber} {rememberedCardSelections}
                   </span>
                 </div>
               </div>
