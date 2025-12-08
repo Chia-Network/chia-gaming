@@ -138,10 +138,10 @@ function HandDisplay(props: HandDisplayProps) {
                             gap-4
                             h-full
                             justify-center
-                            grid-cols-4
-                            sm:grid-cols-6
-                            md:grid-cols-8
+                            grid-cols-3
+                            md:grid-cols-4
                             lg:grid-cols-8
+                            xl:grid-cols-8
                             grid-cols-2-xs
                           ">
 
@@ -154,7 +154,7 @@ function HandDisplay(props: HandDisplayProps) {
                   : -1;
 
                 return (
-                  <div key={`placeholder-${i}`} className="w-20 h-28 lg:w-24 lg:h-32 flex items-center justify-center">
+                  <div key={`placeholder-${i}`} className="w-20 h-28 lg:w-20 lg:h-28 md:w-24 md:h-32 xl:w-24 xl:h-32 flex items-center justify-center">
                     <div className="flip-container">
                       <div className={`flip-inner ${placeholderFlip ? 'is-flipped' : ''}`}>
                         {/* Back of the card */}
@@ -201,7 +201,7 @@ function HandDisplay(props: HandDisplayProps) {
                             justify-center
                             grid-cols-3
                             md:grid-cols-4
-                            lg:grid-cols-6
+                            lg:grid-cols-
                             xl:grid-cols-8
                             grid-cols-2-xs'>
               {cards.map((card: any, idx: number) => {
@@ -222,7 +222,7 @@ function HandDisplay(props: HandDisplayProps) {
                 return (
                   <div
                     key={`${area}-${originalIndex}`}
-                    className='w-20 h-28 lg:w-24 lg:h-32 flex items-center justify-center'
+                    className='w-20 h-28 lg:w-20 lg:h-28 md:w-24 md:h-32 xl:w-24 xl:h-32  flex items-center justify-center'
                   >
                     <Card
                       index={idx}

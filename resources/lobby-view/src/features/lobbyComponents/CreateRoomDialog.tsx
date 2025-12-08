@@ -32,7 +32,7 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-canvas-overlay bg-opacity-50"
       onClick={closeDialog}
     >
       <div
@@ -90,10 +90,9 @@ const CreateRoomDialog: React.FC<CreateRoomDialogProps> = ({
         {/* Actions */}
         <div className="flex justify-end gap-2 mt-4">
           <Button
-            variant={'destructive'}
-            color={'outline'}
+            variant={'outline'}
+            color={'secondary'}
             onClick={closeDialog}
-            className="px-4 py-2 border border-secondary-solid text-secondary-solid rounded hover:bg-secondary-solid/10"
           >
             Cancel
           </Button>

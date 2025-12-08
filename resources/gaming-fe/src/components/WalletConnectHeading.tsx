@@ -16,10 +16,9 @@ import { generateOrRetrieveUniqueId } from '../util';
 
 import Debug from './Debug';
 import { WalletConnectDialog, doConnectWallet } from './WalletConnect';
-import { Close } from '@mui/icons-material';
 import WalletBadge from './WalletBadge';
 
-import { Wrench, Sun } from 'lucide-react';
+import { Wrench, Sun, Cross } from 'lucide-react';
 
 const WalletConnectHeading = (_args: any) => {
   const { wcInfo, setWcInfo } = useDebug();
@@ -496,7 +495,7 @@ const WalletConnectHeading = (_args: any) => {
                 onClick={() => setDebugOpen(false)}
                 className='text-canvas-text hover:text-secondary-solid'
               >
-                <Close />
+                <Cross />
               </button>
             </div>
             <div
