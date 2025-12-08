@@ -22,7 +22,7 @@ import { configGameObject, getBlobSingleton, initStarted, setInitStarted } from 
 
 let blobSingleton: any = null;
 
-export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
+export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: string) {
   const [realPublicKey] = useState<string | undefined>(undefined);
   const [gameIdentity] = useState<any | undefined>(undefined);
   const [uniqueWalletConnectionId] = useState(uuidv4());
@@ -35,7 +35,6 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
       stateDetail: ['before handshake'],
     });
 
-  const searchParams = getSearchParams();
   const iStarted = searchParams.iStarted !== 'false';
   const playerNumber = iStarted ? 1 : 2;
   const [log, setLog] = useState<OutcomeLogLine[]>([]);
@@ -80,6 +79,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
 
   const gameObject = uniqueId
     ? getBlobSingleton(
+        searchParams,
         blockchain,
         lobbyUrl,
         uniqueId,
@@ -202,7 +202,7 @@ export function useWasmBlob(lobbyUrl: string, uniqueId: string) {
     // pass wasmconnection into wasmblobwrapper
     empty().then(async () => {
       let calpokerHex = await loadCalpoker(fetchHex);
-      await configGameObject(gameObject, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
+      await configGameObject(searchParams, gameObject, iStarted, wasmStateInit, calpokerHex, blockchain, uniqueId, amount);
     });
 
     return () => {

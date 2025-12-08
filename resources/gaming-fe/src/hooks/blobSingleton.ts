@@ -24,6 +24,7 @@ async function fetchHex(fetchUrl: string): Promise<string> {
 }
 
 export async function configGameObject(
+  params: any,
   gameObject: WasmBlobWrapper,
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
@@ -49,6 +50,7 @@ export async function configGameObject(
 }
 
 export function getBlobSingleton(
+  params: any,
   blockchain: InternalBlockchainInterface,
   lobbyUrl: string,
   uniqueId: string,
@@ -61,12 +63,12 @@ export function getBlobSingleton(
     return blobSingleton;
   }
 
-  const deliverMessage = (msg: string) => {
+  const deliverMessage = (msgno: number, msg: string) => {
     blobSingleton?.deliverMessage(msg);
   };
-  const peercon = getGameSocket(lobbyUrl, deliverMessage, () => {
+  const peercon = getGameSocket(params, lobbyUrl, deliverMessage, () => {
     blobSingleton?.kickSystem(2);
-  });
+  }, () => []);
 
   const doInternalLoadWasm = async () => {
     const fetchUrl = GAME_SERVICE_URL + '/chia_gaming_wasm_bg.wasm';

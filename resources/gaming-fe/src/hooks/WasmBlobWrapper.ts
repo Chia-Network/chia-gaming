@@ -34,7 +34,8 @@ function combine_reports(old_report: WatchReport, new_report: WatchReport) {
 export class WasmBlobWrapper {
   amount: number;
   wc: WasmConnection | undefined;
-  sendMessage: (msg: string) => void;
+  sendMessage: (msgno: number, msg: string) => void;
+  messageNumber: number;
   rngSeed: string;
   rngId: number | undefined;
   identity: IChiaIdentity | undefined;
@@ -80,6 +81,7 @@ export class WasmBlobWrapper {
     this.rngSeed = this.uniqueId.substr(0, 8);
     this.rngId = undefined;
     this.sendMessage = sendMessage;
+    this.messageNumber = 1;
     this.amount = amount;
     this.currentBlock = 0;
     this.handlingMessage = false;
@@ -508,7 +510,7 @@ export class WasmBlobWrapper {
     console.log('idle2', idle.incoming_messages);
     for (const message of idle.outbound_messages) {
       console.log('send message to remote');
-      this.sendMessage(message);
+      this.sendMessage(this.messageNumber++, message);
     }
 
     for (const tx of idle.outbound_transactions) {

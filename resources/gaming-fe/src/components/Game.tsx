@@ -34,7 +34,7 @@ const Game = () => {
     outcome,
     lastOutcome,
     stopPlaying,
-  } = useWasmBlob(params.lobbyUrl, uniqueId);
+  } = useWasmBlob(params, params.lobbyUrl, uniqueId);
 
   // All early returns need to be after all useEffect, etc.
   useEffect(() => {
