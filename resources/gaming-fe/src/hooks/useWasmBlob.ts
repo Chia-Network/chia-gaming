@@ -69,7 +69,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   const amount = parseInt(searchParams.amount);
 
   const setSavedGame = (game: any) => {
-    console.log('setSaveGame', game);
     let serialized = { game, searchParams, id: game.id, addressData, url: window.location.toString() };
     saveGame(serialized);
   };
@@ -180,14 +179,12 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
 
   const setCardSelections = useCallback(
     (mask: number) => {
-      hostLog(`${iStarted} setCardSelections ${mask}`);
       gameObject?.setCardSelections(mask);
     },
     [gameObject],
   );
 
   const stopPlaying = useCallback(() => {
-    hostLog(`${iStarted} shutdown pressed`);
     gameObject?.shutDown();
   }, [gameObject]);
 
@@ -204,7 +201,6 @@ export function useWasmBlob(searchParams: any, lobbyUrl: string, uniqueId: strin
   });
 
   const handleMakeMove = useCallback((move: any) => {
-    hostLog(`${iStarted} handleMakeMove ${move}`);
     gameObject?.makeMove(move);
   }, []);
 

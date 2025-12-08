@@ -55,7 +55,6 @@ export async function configGameObject(
 }
 
 export async function deserializeGameObject(
-  log: (msg: string) => void,
   gameObject: WasmBlobWrapper,
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
@@ -63,21 +62,14 @@ export async function deserializeGameObject(
   serializedGame: any,
   address: any,
 ): Promise<WasmBlobWrapper> {
-  log(`${iStarted} deserializeGameObject with agreed state`);
   let wasmConnection = gameObject.getWasmConnection();
   if (!wasmConnection) {
-    log(`${iStarted} deserializeGameObject getting wasm connection`);
     wasmConnection = await wasmStateInit.getWasmConnection();
-    log(`${iStarted} deserializeGameObject got wasm connection`);
     gameObject.loadWasm(wasmConnection);
   }
-  log(`${iStarted} deserializeGameObject setting address`);
   gameObject.setBlockchainAddress(address);
-  log(`${iStarted} deserializeGameObject has address`);
   let cradle = wasmStateInit.deserializeGame(wasmConnection, serializedGame);
-  log(`${iStarted} deserializeGameObject has new cradle`);
   gameObject.setGameCradle(cradle);
-  log(`${iStarted} deserializeGameObject deserialized cradle`);
   gameObject.takeWrapperSerialization(serializedGame.wrapper);
   return gameObject;
 }
@@ -118,14 +110,11 @@ export function getBlobSingleton(
     lobbyUrl,
     deliverMessage,
     (saves: string[]) => {
-      peerconn.hostLog(`${iStarted} peer saves ${saves}`);
       const systemState = blobSingleton.systemState();
       const handleMatchingSave = async (matchingSave: string) => {
         blobSingleton?.setReloading();
-        peerconn.hostLog(`${iStarted} peer has matching save ${matchingSave}`);
         const loadedSave = loadSave(matchingSave);
         await deserializeGameObject(
-          peerconn.hostLog,
           blobSingleton,
           iStarted,
           wasmStateInit,
@@ -133,13 +122,10 @@ export function getBlobSingleton(
           loadedSave.game,
           loadedSave.addressData
         );
-        peerconn.hostLog(`${iStarted} setting ui keys ${Object.keys(loadedSave.game.ui)}`);
         setUIState(loadedSave.game.ui);
-        peerconn.hostLog(`${iStarted} do idle after load`);
         blobSingleton?.idle();
       };
       const newSession = async () => {
-        peerconn.hostLog(`${iStarted} new session`);
         startNewSession();
         let calpokerHex = await loadCalpoker(fetchHex);
         await configGameObject(
@@ -165,15 +151,12 @@ export function getBlobSingleton(
       }
 
       if ((systemState & 2) == 0) {
-        peerconn.hostLog(`${iStarted} peer first time connection`);
         newSession();
         return;
       }
     },
     () => getSaveList()
   );
-
-  peerconn.hostLog(`${iStarted} constructing wasm blob wrapper`);
 
   hostLog = peerconn.hostLog;
   blobSingleton = new WasmBlobWrapper(
