@@ -50,7 +50,6 @@ export const getGameSocket = (
   setSocketEnabled: (saves: string[]) => void,
   saves: () => string[],
 ): GameSocketReturn => {
-  console.log('gameSocket: lobbyUrl', lobbyUrl);
   const token = searchParams.token;
   const iStarted = searchParams.iStarted !== 'false';
 
@@ -88,7 +87,6 @@ export const getGameSocket = (
   const beaconId = uuidv4();
   let receivedBeaconId: string | undefined = undefined;
   const beacon = setInterval(() => {
-    hostLog(`sending peer msg ${iStarted} ${beaconId}`);
     socketRef?.emit('peer', { iStarted, beaconId });
   }, 500);
 
@@ -98,18 +96,14 @@ export const getGameSocket = (
       return;
     }
 
-    hostLog(`${iStarted} got peer msg ${JSON.stringify(msg)}`);
-
     if (!fullyConnected) {
       // If they haven't seen our message yet, we know we're connected so
       // we can send a ping to them now.
-      hostLog(`${iStarted} fullyConnected`);
       fullyConnected = true;
       clearInterval(beacon);
     }
     if (msg.beaconId != receivedBeaconId) {
       receivedBeaconId = msg.beaconId;
-      hostLog(`${iStarted} new beacon id from ${receivedBeaconId}`);
       socketRef?.emit('peer', { iStarted, beaconId });
       socketRef?.emit('saves', { iStarted, saves: saves() });
     }
@@ -122,12 +116,10 @@ export const getGameSocket = (
   });
 
   socket?.on('game_message', (input: SendMessageInput) => {
-    console.log('raw message', input);
     if (input.token !== token || input.party === iStarted) {
       return;
     }
 
-    console.log('got remote message', input.msg);
     deliverMessage(input.msgno, input.msg);
   });
 

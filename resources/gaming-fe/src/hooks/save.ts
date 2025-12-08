@@ -1,15 +1,12 @@
 export function getSaveList(): string[] {
   const result = localStorage.getItem('saveNames');
   if (result) {
-    console.log('getSaveList', result);
     return result.split(',');
   }
-  console.log('getSaveList: empty');
   return [];
 }
 
 function setSaveList(saveList: string[]) {
-  console.log('setSaveList', saveList);
   localStorage.setItem('saveNames', saveList.join(','));
 }
 

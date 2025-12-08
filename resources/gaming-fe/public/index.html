@@ -34,8 +34,7 @@
      }
 
      const params = getSearchParams();
-     // XXX we should re-load once more when we detect reloading with the correct parameters.
-     // if (params.game) {
+     if (params.game) {
          const body = document.getElementById('body');
          const scriptElement = document.createElement('script');
          const text = [
@@ -50,7 +49,7 @@
          scriptElement.setAttribute('type', 'module');
          scriptElement.appendChild(document.createTextNode(text.join('\n')));
          body.appendChild(scriptElement);
-     // }
+     }
     </script>
     <script src="index.js"></script>
   </body>

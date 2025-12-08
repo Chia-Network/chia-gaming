@@ -228,17 +228,14 @@ io.on('connection', (socket) => {
 
   // Game socket messages.
   socket.on('game_message', ({ party, token, msgno, msg }) => {
-    console.log('game_message', party, token, msgno, msg);
     io.emit('game_message', { party, token, msgno, msg });
   });
 
   socket.on('saves', ({ iStarted, saves }) => {
-    console.log('saves', iStarted, saves);
     io.emit('saves', { iStarted, saves });
   });
 
   socket.on('peer', ({ iStarted, beaconId }) => {
-    console.log('peer', iStarted, beaconId);
     io.emit('peer', { iStarted, beaconId });
   });
 });

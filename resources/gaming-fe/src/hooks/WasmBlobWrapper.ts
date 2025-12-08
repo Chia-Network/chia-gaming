@@ -36,7 +36,6 @@ export class WasmBlobWrapper {
   sendMessage: (msgno: number, msg: string) => void;
   messageNumber: number;
   remoteNumber: number;
-  hostLog: (msg: string) => void;
   cradle: ChiaGame | undefined;
   uniqueId: string;
   handshakeDone: boolean;
@@ -75,13 +74,12 @@ export class WasmBlobWrapper {
     fetchHex: (key: string) => Promise<string>,
     peer_conn: PeerConnectionResult,
   ) {
-    const { hostLog, sendMessage } = peer_conn;
+    const { sendMessage } = peer_conn;
     this.uniqueId = uniqueId;
 
     this.messageNumber = 1;
     this.remoteNumber = 0;
     this.sendMessage = sendMessage;
-    this.hostLog = hostLog;
     this.amount = amount;
     this.currentBlock = 0;
     this.handlingMessage = false;
@@ -136,7 +134,6 @@ export class WasmBlobWrapper {
     const storedMessages = this.storedMessages;
     this.storedMessages = [];
     storedMessages.forEach((m) => {
-      console.log('stored message', m);
       this.cradle?.deliver_message(m);
     });
   }
@@ -191,10 +188,8 @@ export class WasmBlobWrapper {
 
   pushEvent(msg: any): any {
     if (this.finished) {
-      this.hostLog(`${this.iStarted} pushEvent aborted due to finished ${this.finished}`);
       return;
     }
-    this.hostLog(`${this.iStarted} pushMessage ${Object.keys(msg)}`);
     this.messageQueue.push(msg);
     return this.kickMessageHandling();
   }
@@ -319,7 +314,6 @@ export class WasmBlobWrapper {
 
   kickMessageHandling(): any {
     if (this.messageQueue.length == 0 || this.handlingMessage) {
-      this.hostLog(`${this.iStarted} kickMessageHandling leave early ${this.messageQueue.length} or ${this.handlingMessage}`);
       return empty();
     }
 
@@ -364,7 +358,6 @@ export class WasmBlobWrapper {
       return empty();
     }
     if (this.remoteNumber >= msgno) {
-      this.hostLog(`${this.iStarted} ignoring msgno ${msgno}`);
       return empty();
     }
     this.remoteNumber = msgno;
@@ -375,34 +368,27 @@ export class WasmBlobWrapper {
 
   internalStartGame(): any {
     if (this.finished || this.shutdownCalled) {
-      this.hostLog(`${this.iStarted} ignoring internalStartGame: ${this.finished} ${this.shutdownCalled}`);
       return empty();
     }
 
     let result: any = {};
-    try {
-      this.hostLog(`${this.iStarted} doing start games`);
-      let gids = this.cradle?.start_games(!this.iStarted, {
-        game_type: '63616c706f6b6572',
-        timeout: 100,
-        amount: this.perGameAmount,
-        my_contribution: this.perGameAmount / 2,
-        my_turn: !this.iStarted,
-        parameters: '80',
+    let gids = this.cradle?.start_games(!this.iStarted, {
+      game_type: '63616c706f6b6572',
+      timeout: 100,
+      amount: this.perGameAmount,
+      my_contribution: this.perGameAmount / 2,
+      my_turn: !this.iStarted,
+      parameters: '80',
+    });
+    console.log('gameIds', gids);
+    if (gids) {
+      gids.forEach((g) => {
+        this.gameIds.push(g);
       });
-      this.hostLog(`${this.iStarted} gameIds ${gids}`);
-      if (gids) {
-        gids.forEach((g) => {
-          this.gameIds.push(g);
-        });
-        result.setGameIds = this.gameIds;
-      }
-      result.setMyTurn = !this.iStarted;
-      return empty().then(() => result);
-    } catch (e) {
-      this.hostLog(`${this.iStarted} exception starting new game ${JSON.stringify(e)}`);
-      throw e;
+      result.setGameIds = this.gameIds;
     }
+    result.setMyTurn = !this.iStarted;
+    return empty().then(() => result);
   }
 
   idle(): any {
@@ -442,7 +428,6 @@ export class WasmBlobWrapper {
         gameOutcome: this.gameOutcome,
       };
       saveData.ui = this.uiUpdates;
-      this.hostLog(`${this.iStarted} setting saved game ${newGameId}`);
       result.setSavedGame = saveData;
     }
 
@@ -575,7 +560,6 @@ export class WasmBlobWrapper {
 
   takeWrapperSerialization(wrapper: any) {
     const keys = Object.keys(wrapper);
-    this.hostLog(`${this.iStarted} setting wrapper keys ${keys}`);
     keys.forEach((k) => {
       (this as any)[k] = wrapper[k];
     });
@@ -598,13 +582,10 @@ export class WasmBlobWrapper {
   }
 
   internalMakeMove(move: any): any {
-    this.hostLog(`${this.iStarted} internalMakeMove ${move}`);
     if (!this.handshakeDone || !this.wc || !this.cradle) {
-      this.hostLog(`${this.iStarted} internalMakeMove leave early due to !${this.handshakeDone} || !${this.wc} || $(this.cradle}`);
       return empty();
     }
 
-    this.hostLog(`${this.iStarted} move number ${this.moveNumber}`);
     if (this.moveNumber === 0) {
       const entropy = this.generateEntropy();
       console.log('move 0 with entropy', entropy);
@@ -650,7 +631,6 @@ export class WasmBlobWrapper {
   }
 
   makeMove(move: any) {
-    this.hostLog(`${this.iStarted} making move ${move}`);
     this.pushEvent({ move });
   }
 
@@ -665,13 +645,11 @@ export class WasmBlobWrapper {
   }
 
   shutDown(condition: string | undefined) {
-    this.hostLog(`${this.iStarted} WasmBlobWrapper got shutdown ${condition} finished ${this.finished} reloading ${this.reloading} shutdownCalled ${this.shutdownCalled} qe ${this.qualifyingEvents}`);
     this.pushEvent({ shutDown: true, condition });
   }
 
   internalShutdown(condition: string) {
     const details: string[] = [];
-    this.hostLog(`${this.iStarted} WasmBlobWrapper got internalShutdown ${condition}`);
     if (condition) {
       details.push(condition);
     }

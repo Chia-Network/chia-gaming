@@ -75,13 +75,10 @@ async function waitAriaDisabled(driver, element) {
 }
 
 async function selectSimulator(driver) {
-  console.log('finding simulator button');
   const simulatorButton = await driver.wait(
     until.elementLocated(byAttribute("aria-label", "select-simulator")),
   );
-  console.log('clicking simulator button');
   await simulatorButton.click();
-  console.log('done selecting wallet');
 }
 
 async function waitForNonError(driver, select, extra, time) {
